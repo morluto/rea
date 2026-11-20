@@ -147,9 +147,10 @@ Complete-within-view coverage covers returned candidates; discovery completeness
 remains unknown even for an empty or exhausted collection. Analysis still runs;
 delivery selection does not save interpreter work or change source parameters.
 Compiler-artifact summaries retain exact selection, diagnostics and reference
-facts. They omit the object bytecode text and raw metadata text, recording
-`object_code_units` and metadata `raw_code_units` instead (null means absent).
-Parsed compiler version/settings and metadata parse status remain visible.
+facts. They omit the object bytecode text, raw metadata text and settings JSON,
+recording `object_code_units`, metadata `raw_code_units` and
+`settings_code_units` instead (null means absent). Parsed compiler version and
+metadata parse status remain visible; read settings from the parent Evidence.
 Access exact omitted source fields from the complete parent Evidence through the
 normal ledger/export workflow using `parent_evidence_id`; views do not reacquire
 or reinterpret the compiler output. When inference is unavailable, summary/function coverage is `unknown`,

@@ -39,7 +39,7 @@ export const evmViewItemSchema = z.union([
   analysisTextPageItemSchema,
 ]);
 
-/** Selected compiler facts without duplicate bytecode or raw metadata text. */
+/** Selected compiler facts without duplicate bytecode, raw metadata or settings text. */
 const {
   object: _objectSchema,
   metadata: _metadataSchema,
@@ -48,18 +48,25 @@ const {
 const compilerArtifactSummarySchema = z.strictObject({
   ...compilerFactsShape,
   object_code_units: z.number().int().nonnegative().nullable(),
-  metadata: solcArtifactSchema.shape.metadata.omit({ raw: true }).extend({
-    raw_code_units: z.number().int().nonnegative().nullable(),
-  }),
+  metadata: solcArtifactSchema.shape.metadata
+    .omit({ raw: true, settings_json: true })
+    .extend({
+      raw_code_units: z.number().int().nonnegative().nullable(),
+      settings_code_units: z.number().int().nonnegative().nullable(),
+    }),
 });
 
 const compilerArtifactSummary = (artifact: SolcArtifact) => {
   const { object, metadata, ...facts } = artifact;
-  const { raw, ...metadataFacts } = metadata;
+  const { raw, settings_json: settings, ...metadataFacts } = metadata;
   return {
     ...facts,
     object_code_units: object?.length ?? null,
-    metadata: { ...metadataFacts, raw_code_units: raw?.length ?? null },
+    metadata: {
+      ...metadataFacts,
+      raw_code_units: raw?.length ?? null,
+      settings_code_units: settings?.length ?? null,
+    },
   };
 };
 

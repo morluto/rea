@@ -128,7 +128,7 @@ it.each([
             compiler_version: "0.8.30",
             parse_status: "valid",
             raw_code_units: expect.any(Number),
-            settings_json: expect.any(String),
+            settings_code_units: expect.any(Number),
           },
           diagnostics: [
             {
@@ -147,6 +147,9 @@ it.each([
         : undefined;
     expect(summary?.compiler_artifact).not.toHaveProperty("object");
     expect(summary?.compiler_artifact.metadata).not.toHaveProperty("raw");
+    expect(summary?.compiler_artifact.metadata).not.toHaveProperty(
+      "settings_json",
+    );
     expect(
       (parent.normalizedResult as EvmInterface).compiler_artifact?.object,
     ).toBe(object ?? null);

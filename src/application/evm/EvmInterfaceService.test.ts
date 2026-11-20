@@ -144,6 +144,39 @@ it("keeps malformed interface output ahead of a late cancellation", async () => 
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
+it.each([
+  { encoding: "solc-json" },
+  {
+    encoding: "hex",
+    compiler_selection: {
+      source_unit: "a.sol",
+      contract_name: "C",
+      bytecode_kind: "creation",
+    },
+  },
+])(
+  "refuses a compiler selection that disagrees with the encoding before provider work",
+  async (selection) => {
+    let called = false;
+    const result = await new EvmInterfaceService({
+      inspect: () => {
+        called = true;
+        return Promise.resolve(
+          ok(evmInterfaceExecution(evmInterfaceFixture())),
+        );
+      },
+    }).inspect({ path: "/artifacts/carrier", ...selection });
+    expect(called).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["compiler_selection"] }],
+      },
+    });
+  },
+);
+
 it.each([false, true])(
   "retains compiler selection through late cancellation, rejecting mismatches first: %s",
   async (mismatched) => {
