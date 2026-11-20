@@ -399,6 +399,7 @@
 * **desktop:** validate ELF table extents before inventory limits ([66bb3e9](https://github.com/morluto/rea/commit/66bb3e932eebce7bc2ba4273e05d5b47536b8620))
 * **desktop:** validate guest file replies at their shared boundary ([#10224](https://github.com/morluto/rea/issues/10224)) ([50d4f7b](https://github.com/morluto/rea/commit/50d4f7bea42d171a839e1dd76d191209816da4de))
 * **desktop:** validate guest launcher entry bytes before rewriting ([#12212](https://github.com/morluto/rea/issues/12212)) ([954a251](https://github.com/morluto/rea/commit/954a2511b7e8dafc863c197922baa5f8c51c374a))
+* **desktop:** verify single-stanza APT source identity ([#12363](https://github.com/morluto/rea/issues/12363)) ([192934c](https://github.com/morluto/rea/commit/192934c5b15c1e80869d0224f2a417ee86807174))
 * **desktop:** verify ZIP directory record counts ([#12184](https://github.com/morluto/rea/issues/12184)) ([c61b478](https://github.com/morluto/rea/commit/c61b4789ada804305ba968708885b25937204051))
 * **devicetree:** report nonzero structure padding ([#12361](https://github.com/morluto/rea/issues/12361)) ([370602c](https://github.com/morluto/rea/commit/370602cfbb99a5b40fcda4456c8841a5950fd2db))
 * **devicetree:** share structure bounds with FIT recognition ([#12298](https://github.com/morluto/rea/issues/12298)) ([7b85358](https://github.com/morluto/rea/commit/7b85358a504991dfe93309d9026d965e01f3c99b))
