@@ -189,3 +189,83 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "accepts three manifests within max-manifest-bytes through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-vsix-three-manifests-");
+    const path = join(root, "dir-main.vsix");
+    const vsixmanifest = `<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
+  <Metadata>
+    <Identity Id="demo.hello" Version="1.2.3" Publisher="demo" />
+    <DisplayName>Hello Demo</DisplayName>
+    <Description xml:space="preserve">${"x".repeat(350)}</Description>
+  </Metadata>
+  <Installation>
+    <InstallationTarget Id="Microsoft.VisualStudio.Code" />
+  </Installation>
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" />
+  </Assets>
+</PackageManifest>
+`;
+    const packageJson = JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+      description: "p".repeat(780),
+    });
+    const outPackageJson = JSON.stringify({
+      main: "./start.js",
+      padding: "q".repeat(860),
+    });
+    await writeFile(
+      path,
+      await vsixPackageFixture({
+        vsixmanifest,
+        packageJson,
+        includeMain: false,
+        extraMembers: {
+          "extension/out/package.json": outPackageJson,
+          "extension/out/start.js": "exports.activate = () => {};",
+        },
+      }),
+    );
+    const output = await cli.run({
+      arguments: [
+        "inspect-vsix-package",
+        path,
+        "--json",
+        "--max-manifest-bytes",
+        "1024",
+      ],
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const cliReport = completeVsixEvidenceSchema.parse(
+      output.json,
+    ).normalized_result;
+    expect(cliReport.entry_points.main).toEqual({
+      path: "extension/out/start.js",
+      present: true,
+    });
+    expect(cliReport.coverage.examined_manifest_bytes).toBeGreaterThan(2048);
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_vsix_package", {
+      path,
+      max_manifest_bytes: 1024,
+    });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    const mcpReport = completeVsixEvidenceSchema.parse(
+      reply.structuredContent,
+    ).normalized_result;
+    expect(mcpReport.entry_points.main).toEqual({
+      path: "extension/out/start.js",
+      present: true,
+    });
+    expect(mcpReport.coverage.examined_manifest_bytes).toBeGreaterThan(2048);
+    expect(mcpReport).toEqual(cliReport);
+  },
+);

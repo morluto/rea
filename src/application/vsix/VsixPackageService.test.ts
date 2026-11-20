@@ -5,6 +5,7 @@ import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 
 const identity = {
@@ -183,3 +184,28 @@ it.each([undefined, 67108864, 128])(
     expect(result.value.parameters).toEqual(input);
   },
 );
+
+it("allows examined_manifest_bytes across three manifest reads and rejects more", async () => {
+  let examined = 2700;
+  const service = new VsixPackageService({
+    close: async () => {},
+    identity,
+    inspect: async () =>
+      ok({
+        ...report,
+        coverage: { ...report.coverage, examined_manifest_bytes: examined },
+      }),
+  });
+  const allowed = await service.inspect({
+    path: report.artifact.path,
+    max_manifest_bytes: 1024,
+  });
+  expect(allowed.ok).toBe(true);
+  examined = 3073;
+  const rejected = await service.inspect({
+    path: report.artifact.path,
+    max_manifest_bytes: 1024,
+  });
+  expect(rejected.ok).toBe(false);
+  if (!rejected.ok) expect(rejected.error).toBeInstanceOf(AnalysisOutputError);
+});

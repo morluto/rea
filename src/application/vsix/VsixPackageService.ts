@@ -89,7 +89,8 @@ const validReport = (
     report.artifact.bytes > input.max_file_bytes ||
     report.coverage.entries > input.max_entries ||
     report.contents.length > input.max_entries ||
-    report.coverage.examined_manifest_bytes > input.max_manifest_bytes * 2
+    // vsixmanifest, extension/package.json, and the directory main package.json.
+    report.coverage.examined_manifest_bytes > input.max_manifest_bytes * 3
   )
     return false;
   if (
