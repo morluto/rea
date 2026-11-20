@@ -828,6 +828,28 @@ it.each([
   },
 );
 
+it("verifies complete bullets without counting inline code as credit or references", async () => {
+  const f = await fixture();
+  const changelog = join(f.directory, "CHANGELOG.md");
+  const example = "`literal #999\n  and @unverified`";
+  const bullet = f.bullet
+    .replace(
+      "#101",
+      "[the implementation](https://github.com/fixture/rea/pull/101)",
+    )
+    .replace("Thanks", `Example ${example}.\n  Thanks`);
+  const notes = f.notes.replace(f.bullet, bullet);
+  await writeFile(changelog, notes);
+  await f.invoke(["check", "--manifest", f.manifest]);
+
+  await writeFile(changelog, notes.replace(", @bob", ", `@bob`"));
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("Missing Thanks @bob for PR #101"),
+  });
+});
+
 it("requires editorial headings in release prose outside code fences", async () => {
   const f = await fixture();
   const notes = f.notes.replace(

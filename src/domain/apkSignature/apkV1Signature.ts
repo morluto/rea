@@ -18,11 +18,16 @@
  */
 import { boundedList } from "../boundedList.js";
 import { BinaryReader } from "../binaryContainer.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
 import {
   ZIP_CENTRAL_HEADER,
   readZipCentralExtent,
 } from "../zip/zipCentralHeader.js";
+import {
+  ZIP_LOCAL_HEADER_BYTES,
+  ZIP_LOCAL_HEADER_SIGNATURE,
+} from "../zip/zipLocalHeader.js";
 import {
   canonicalNameHash,
   compareCanonicalNames,
@@ -47,11 +52,7 @@ export type ApkCentralDirectoryError =
       readonly offset: number;
       readonly detail: string;
     }
-  | {
-      readonly kind: "budget-exceeded";
-      readonly resource: "v1-signature-entries";
-      readonly limit: number;
-    };
+  | ParseFailureError<"limit">;
 
 /**
  * Signing-relevant `META-INF/` entries retained. A signed APK holds a manifest
@@ -321,11 +322,17 @@ export const centralDirectoryV1SignatureEntries = (
       const name = decodeZipName(rawName);
       if (isV1SignatureMetadataName(name)) {
         if (entries.length >= MAX_V1_SIGNATURE_ENTRIES)
-          return err({
-            kind: "budget-exceeded",
-            resource: "v1-signature-entries",
-            limit: MAX_V1_SIGNATURE_ENTRIES,
-          });
+          return err(
+            decodeLimit(
+              "apk-v1-central-directory",
+              `The central directory holds more than ${String(MAX_V1_SIGNATURE_ENTRIES)} META-INF v1 signing entries.`,
+              {
+                name: "max_v1_signature_entries",
+                maximum: MAX_V1_SIGNATURE_ENTRIES,
+              },
+              { offset: at },
+            ),
+          );
         entries.push({
           name,
           rawName,
@@ -395,8 +402,6 @@ export const detectV1Signature = (
   };
 };
 
-const LOCAL_SIGNATURE = 0x04034b50;
-const LOCAL_FIXED_SIZE = 30;
 const ZIP64_SENTINEL = 0xffffffff;
 const FLAG_ENCRYPTED = 0x1;
 const FLAG_DATA_DESCRIPTOR = 0x8;
@@ -441,16 +446,20 @@ export const localEntryData = (
     return err({ detail: "Zip64 entry sizes are not read" });
   const at = entry.localHeaderOffset;
   const limit = Math.min(entriesEnd, bytes.length);
-  if (at + LOCAL_FIXED_SIZE > limit)
+  if (at + ZIP_LOCAL_HEADER_BYTES > limit)
     return err({
       detail: `local header at byte ${String(at)} is out of range`,
     });
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (dv.getUint32(at, true) !== LOCAL_SIGNATURE)
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
+  if (reader.u32(at) !== ZIP_LOCAL_HEADER_SIGNATURE)
     return err({
       detail: `local header signature mismatch at byte ${String(at)}`,
     });
-  const flags = dv.getUint16(at + 6, true);
+  const flags = reader.u16(at + 6);
   const descriptor = (flags & FLAG_DATA_DESCRIPTOR) !== 0;
   if (descriptor !== ((entry.flags & FLAG_DATA_DESCRIPTOR) !== 0))
     return err({
@@ -463,14 +472,14 @@ export const localEntryData = (
       ["compressed size", 18, entry.compressedSize],
       ["uncompressed size", 22, entry.uncompressedSize],
     ] as const) {
-      const local = dv.getUint32(at + offset, true);
+      const local = reader.u32(at + offset);
       if (local !== expected)
         return err({
           detail: `local header ${field} ${String(local)} differs from the central directory's ${String(expected)}`,
         });
     }
-  const nameLength = dv.getUint16(at + 26, true);
-  const nameStart = at + LOCAL_FIXED_SIZE;
+  const nameLength = reader.u16(at + 26);
+  const nameStart = at + ZIP_LOCAL_HEADER_BYTES;
   if (
     nameStart + nameLength > limit ||
     // apksig refuses a local name longer in bytes before decoding either.
@@ -483,7 +492,7 @@ export const localEntryData = (
     return err({
       detail: "local header name differs from the central directory's",
     });
-  const start = nameStart + nameLength + dv.getUint16(at + 28, true);
+  const start = nameStart + nameLength + reader.u16(at + 28);
   const end = start + entry.compressedSize;
   if (end > limit)
     return err({

@@ -6,10 +6,44 @@ import { createKernelModuleService } from "../../../src/composition/binaryDiagno
 import {
   compressedKernelModuleContainer,
   kernelModuleFixture,
+  moduleSignatureTrailer,
 } from "../../../src/native/elf/KernelModule.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("kernel module stable filesystem boundary", () => {
+  it("retains trailer fields but withholds an empty PKCS#7 range", async () => {
+    const root = await createTestTempDirectory("rea-kernel-module-empty-sig-");
+    const path = join(root, "demo.ko");
+    await writeFile(
+      path,
+      kernelModuleFixture({
+        signature: moduleSignatureTrailer(Buffer.alloc(0)),
+      }),
+    );
+    const service = createKernelModuleService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        coverage: { status: "partial" },
+        modinfo: {
+          entries: expect.arrayContaining([
+            expect.objectContaining({ key: "license", value: "GPL" }),
+          ]),
+        },
+        signature: {
+          status: "malformed",
+          reason: "signature_length_inconsistent",
+          magic: { bytes: 28 },
+          info: { sig_len: 0, id_type: 2 },
+          pkcs7: null,
+        },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
   it("reports non-file and malformed ELF selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-kernel-module-files-");
     const path = join(root, "demo.ko");
@@ -69,23 +103,26 @@ describe("kernel module stable filesystem boundary", () => {
     }
   });
 
-  it("reports a gzip container as unsupported without treating it as a module", async () => {
-    const root = await createTestTempDirectory("rea-kernel-module-gzip-");
-    const path = join(root, "demo.ko.gz");
-    await writeFile(path, compressedKernelModuleContainer("gzip"));
-    const service = createKernelModuleService();
-    try {
-      const result = await service.inspect({ path });
-      if (!result.ok) throw result.error;
-      expect(fileIdentity(result.value.subject).format).toBe("file");
-      expect(result.value.normalized_result).toMatchObject({
-        applicability: "unsupported",
-        compression: { codec: "gzip", status: "unsupported" },
-        next_probe: { operation: "external_decompression" },
-        modinfo: null,
-      });
-    } finally {
-      await service.close();
-    }
-  });
+  it.each(["gzip", "xz", "zstd"] as const)(
+    "reports a %s container as unsupported without treating it as a module",
+    async (codec) => {
+      const root = await createTestTempDirectory(`rea-kernel-module-${codec}-`);
+      const path = join(root, `demo.ko.${codec === "gzip" ? "gz" : codec}`);
+      await writeFile(path, compressedKernelModuleContainer(codec));
+      const service = createKernelModuleService();
+      try {
+        const result = await service.inspect({ path });
+        if (!result.ok) throw result.error;
+        expect(fileIdentity(result.value.subject).format).toBe("file");
+        expect(result.value.normalized_result).toMatchObject({
+          applicability: "unsupported",
+          compression: { codec, status: "unsupported" },
+          next_probe: { operation: "external_decompression" },
+          modinfo: null,
+        });
+      } finally {
+        await service.close();
+      }
+    },
+  );
 });

@@ -145,6 +145,7 @@ const TARGETS: TargetFixtures = {
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },
   "source-map": { ...artifact, format: "source-map" },
+  uefi: { ...artifact, format: "uefi" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;

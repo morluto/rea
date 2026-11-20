@@ -5,6 +5,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
 import {
+  fixtureDosLoadImage,
   fixtureDosOverlapLoadImage,
   compareDosClientFixture,
 } from "../../../src/ghidra/GhidraLoadImage.fixture.js";
@@ -76,7 +77,10 @@ it("retains complete load-image facts and pages selected relocations through the
       source_analysis_profile_digest: complete.analysis_profile?.digest,
       source_parameters: complete.parameters,
       summary: {
-        verification: { status: "verified", format: "dos-mz" },
+        verification: {
+          status: "unsupported",
+          reason: expect.stringContaining("no established application order"),
+        },
         counts: { relocations: 2 },
       },
     });
@@ -94,7 +98,7 @@ it("retains complete load-image facts and pages selected relocations through the
     const parsed = analysisViewResultSchema.parse(page.normalized_result);
     if (parsed.kind !== "native-load-image")
       throw new Error("Expected load-image page");
-    expect(parsed.verification_status).toBe("verified");
+    expect(parsed.verification_status).toBe("unsupported");
     expect(parsed.items.rows).toEqual([
       {
         source_index: 1,
@@ -117,26 +121,24 @@ it("retains complete load-image facts and pages selected relocations through the
 
 it.each([
   { state: "final", failed: [] },
-  { state: "intermediate", failed: ["relocation_records"] },
+  { state: "wrong-window", failed: ["relocation_records"] },
   { state: "missing-record", failed: ["relocation_records"] },
   { state: "duplicate-record", failed: ["relocation_records"] },
-  { state: "reversed-records", failed: [] },
   { state: "bad-source", failed: ["modified_file_sha256"] },
   { state: "bad-mapping", failed: ["mapping[1].memory_sha256"] },
 ])(
-  "retains final overlapping MZ relocation Evidence through MCP ($state)",
+  "retains MZ relocation verification through MCP ($state)",
   async ({ state, failed }) => {
-    const fixture = fixtureDosOverlapLoadImage();
+    const fixture = fixtureDosLoadImage();
     const first = fixture.observation.relocations[0];
     const source = fixture.observation.source_files[0];
     const mapping = fixture.observation.mappings[1];
     if (first === undefined || source === undefined || mapping === undefined)
       throw new Error("Missing authored overlap facts");
-    if (state === "intermediate") first.memory_bytes_hex = "0410";
+    if (state === "wrong-window") first.memory_bytes_hex = "0400";
     if (state === "missing-record") fixture.observation.relocations.pop();
     if (state === "duplicate-record")
       fixture.observation.relocations.push(structuredClone(first));
-    if (state === "reversed-records") fixture.observation.relocations.reverse();
     if (state === "bad-source") source.modified_sha256 = "f".repeat(64);
     if (state === "bad-mapping") mapping.sha256 = "f".repeat(64);
     const directory = await createTestTempDirectory("rea-mcp-mz-overlap-");

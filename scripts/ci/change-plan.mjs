@@ -304,10 +304,12 @@ export function planChanges(request, repository) {
       .filter(([, { paths }]) => matchesAny(file, paths))
       .map(([owner]) => owner);
     for (const owner of owners) selected[owner] = true;
+    // Workflow callers can become invalid when local action inputs or outputs change.
+    selected.workflows ||= /^\.github\/actions\/.+\/action\.ya?ml$/u.test(file);
     if (
       file.startsWith(".github/workflows/") ||
       file.startsWith(".github/codeql/") ||
-      file === ".github/actionlint.yaml"
+      /^\.github\/actionlint\.ya?ml$/u.test(file)
     ) {
       selected.workflows = true;
       if (GUARDED_WORKFLOWS.has(file) || file.startsWith(".github/codeql/"))

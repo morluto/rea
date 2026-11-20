@@ -91,7 +91,7 @@ it("parses metadata, tables, remote regions, and embedded configuration", async 
     data: { length: original.length },
     transpiled: { length: transpiled.length },
   });
-  expect(parsed.specifierText?.get(1)).toBe("https://example.com/mod.ts");
+  expect(parsed.specifierText.get(1)).toBe("https://example.com/mod.ts");
   expect(parsed.vfs.listing).toBe("listed");
   expect(parsed.vfs.members[0]).toMatchObject({
     role: "vfs-file",
@@ -215,7 +215,7 @@ it("stops on unrecognized remote flags and duplicate specifier ids", async () =>
     parseDenoSectionBytes(
       buildDenoSection({
         specifiers: [
-          { text: "file:///a.ts", id: 0 },
+          { bytes: Buffer.from([0xff]), id: 0 },
           { text: "file:///b.ts", id: 0 },
         ],
       }),
@@ -226,14 +226,22 @@ it("stops on unrecognized remote flags and duplicate specifier ids", async () =>
   });
 });
 
-it("reports an invalid specifier as an unsupported listing", async () => {
+it("limits unsupported listings to the tables that need invalid specifier text", async () => {
   const parsed = await parseDenoSectionBytes(
     buildDenoSection({
-      specifiers: [{ bytes: Buffer.from([0xff]), id: 0 }],
+      specifiers: [
+        { bytes: Buffer.from([0xff]), id: 0 },
+        { text: "https://example.com/mod.ts", id: 1 },
+        { text: "https://example.com/start.ts", id: 2 },
+      ],
+      redirects: [{ from: 2, to: 1 }],
+      remoteModules: [{ specifierId: 1, data: "known" }],
     }),
   );
   expect(parsed.specifiers.listing).toBe("unsupported");
-  expect(parsed.specifierText).toBeNull();
+  expect(parsed.redirects.listing).toBe("listed");
+  expect(parsed.remoteModules.listing).toBe("listed");
+  expect(parsed.specifierText.get(0)).toBeNull();
 });
 
 it("keeps decoded specifiers when another remote id is missing", async () => {
@@ -247,8 +255,8 @@ it("keeps decoded specifiers when another remote id is missing", async () => {
     }),
   );
   expect(parsed.remoteModules.listing).toBe("unsupported");
-  expect(parsed.specifierText?.get(1)).toBe("https://example.com/mod.ts");
-  expect(parsed.specifierText?.has(2)).toBe(false);
+  expect(parsed.specifierText.get(1)).toBe("https://example.com/mod.ts");
+  expect(parsed.specifierText.has(2)).toBe(false);
 });
 
 it("honors cancellation before parsing", async () => {

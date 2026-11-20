@@ -13,6 +13,44 @@ import {
   createGlobalReferenceReader,
 } from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
+
+it.each([
+  ["writes", "protos[0].return = () => ({});", true],
+  ["escapes", "configure(protos[0]);", true],
+  ["unrelated writes", "protos[0].unrelated = true;", false],
+] as const)(
+  "indexes %s to spread-stored Iterator.prototype before member analysis",
+  (_name, effect, observed) => {
+    const parsed = parseJavaScriptSource(`
+    const protos = [...[Iterator.prototype]];
+    const box = [0, { mode: 'before' }];
+    const [before] = box;
+    ${effect}
+    const [after] = box;
+  `);
+    if (parsed === null) throw new Error("Expected a parsed iterator fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    const observations: boolean[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (t.isArrayPattern(node))
+          observations.push(
+            ambientPathMayObserveAt(
+              index.bindings,
+              node,
+              ["global", "Iterator", "prototype", "return"],
+              "contents",
+            ),
+          );
+      },
+    });
+    expect(observations).toEqual([false, observed]);
+  },
+);
 
 it.each([
   [
@@ -459,6 +497,30 @@ function expectAmbientEffectPaths({
     escapes: escapes.map((path) => JSON.stringify(path)),
   });
 }
+
+it.each([
+  {
+    source:
+      "const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};",
+    writes: [["global", "Array", "prototype", null]],
+    escapes: [],
+  },
+  {
+    source:
+      "change();function change(){const proto=Reflect.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};}",
+    writes: [["global", "Array", "prototype", null]],
+    escapes: [],
+  },
+  {
+    source:
+      "const Object={getPrototypeOf:()=>({})};const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};",
+    writes: [],
+    escapes: [],
+  },
+])(
+  "keeps native array prototype identity through $source",
+  expectAmbientEffectPaths,
+);
 
 it.each([
   { source: "(function(g){})(this);", writes: [], escapes: [] },

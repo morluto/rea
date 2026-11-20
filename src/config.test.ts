@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { launchAnalysisSetting } from "./config/analysisSettings.js";
 import { runtimeAnalysisConfig } from "./config/runtimeAnalysisSettings.js";
 import { runWithAnalysisOperationSnapshot } from "./domain/analysisOperationSnapshot.js";
+import { DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS } from "./domain/analysisResourceLimits.js";
 import { ConfigurationError } from "./domain/configurationErrors.js";
 import {
   inspectNativeAnalysisConfiguration,
@@ -420,7 +421,7 @@ describe("configuration failure diagnostics", () => {
         ok: true,
         value: {
           hopperStartupTimeoutMs: Number(value),
-          ghidraStartupTimeoutMs: 330_000,
+          ghidraStartupTimeoutMs: DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
         },
       });
     },

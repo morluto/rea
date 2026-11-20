@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -147,6 +148,54 @@ describe("native export stable filesystem boundary", () => {
     }
     await service.close();
   });
+});
+
+it("observes cancellation during a bounded ELF export inventory", async () => {
+  const root = await createTestTempDirectory("rea-native-export-cancel-");
+  const path = join(root, "libfixture.so");
+  const bytes = elfExportImage({
+    symbols: Array.from({ length: 1025 }, () => ({ name: "exported" })),
+  });
+  await writeFile(path, bytes);
+  const service = createNativeExportsService();
+  const controller = new AbortController();
+  const reason = new Error("stop during export rows");
+  const yieldToEventLoop = scheduler.yield.bind(scheduler);
+  const pause = vi
+    .spyOn(scheduler, "yield")
+    .mockImplementationOnce(async () => {
+      await yieldToEventLoop();
+      controller.abort(reason);
+    });
+  try {
+    const result = await service.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation during export rows");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_native_exports",
+      cause: reason,
+      partialObservation: {
+        kind: "file-snapshot-hash",
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      },
+    });
+    const retry = await service.inspect(
+      { path },
+      { signal: new AbortController().signal },
+    );
+    if (!retry.ok) throw retry.error;
+    expect(retry.value.normalized_result).toMatchObject({
+      coverage: { status: "complete", examined_entries: 1025, exports: 1025 },
+    });
+  } finally {
+    pause.mockRestore();
+    await service.close();
+  }
 });
 
 describe("native export text capacity", () => {
