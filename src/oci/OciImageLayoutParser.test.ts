@@ -405,6 +405,42 @@ it("records nested index depth as a finding once the bound is exceeded", async (
   expect(report.coverage.status).toBe("partial");
 });
 
+it("leaves blobs past a truncated index walk unknown instead of unreferenced", async () => {
+  const root = await createTestTempDirectory("rea-oci-truncated-walk-");
+  const written = await writeOciImageLayoutFixture(root);
+  const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
+  const index = (manifests: unknown[]) =>
+    `${JSON.stringify({ schemaVersion: 2, mediaType: OCI_INDEX, manifests })}\n`;
+  const descriptor = async (body: string) => ({
+    mediaType: OCI_INDEX,
+    digest: await putOciBlob(root, body),
+    size: Buffer.byteLength(body),
+  });
+  // Root -> A -> B -> manifest; depth 1 stops before B.
+  const b = await descriptor(
+    index([
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        digest: written.manifestDigest,
+        size: written.manifestSize,
+      },
+    ]),
+  );
+  const a = await descriptor(index([b]));
+  await writeFile(join(root, "index.json"), index([a]));
+  const report = await inspectLayout(root, { max_index_depth: 1 });
+  expect(
+    report.findings.filter((finding) => finding.kind === "unreferenced_blob"),
+  ).toEqual([]);
+  expect(report.blobs.every((blob) => blob.referenced)).toBe(true);
+  expect(report.coverage.status).toBe("partial");
+  expect(
+    report.limitations.some((limitation) =>
+      limitation.includes("reference graph was not fully examined"),
+    ),
+  ).toBe(true);
+});
+
 it("inventories an index a deeper path reaches first at its shallowest depth", async () => {
   const root = await createTestTempDirectory("rea-oci-shared-index-");
   const written = await writeOciImageLayoutFixture(root);
@@ -569,7 +605,7 @@ it("records unreferenced blobs, unknown media types and unsupported digests", as
       size: 11,
     },
     {
-      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      mediaType: "application/vnd.oci.image.layer.v1.tar",
       digest: "sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       size: 4,
     },

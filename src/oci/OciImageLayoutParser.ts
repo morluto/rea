@@ -677,6 +677,9 @@ const inventoryOciImageLayout = async (
   // A referenced index, manifest or config that could not be read leaves its
   // facts unexamined, whatever finding explains why.
   let referencedJsonSkipped = false;
+  // An index or manifest left unexamined may reference any blob, so the
+  // walk no longer proves which blobs nothing references.
+  let referenceGraphTruncated = false;
   const readReferencedJson = async (
     digest: string,
     label: string,
@@ -774,6 +777,7 @@ const inventoryOciImageLayout = async (
     visited.add(digest);
     chargeDescriptor();
     if (depth > input.max_index_depth) {
+      referenceGraphTruncated = true;
       recordFinding(
         findings,
         "nested_index_depth_exceeded",
@@ -783,6 +787,7 @@ const inventoryOciImageLayout = async (
       return;
     }
     if (!isRecord(document.value)) {
+      referenceGraphTruncated = true;
       recordFinding(
         findings,
         "malformed_blob_json",
@@ -804,6 +809,7 @@ const inventoryOciImageLayout = async (
       chargeDescriptor();
       const descriptor = descriptorOf(item);
       if (descriptor === undefined) {
+        referenceGraphTruncated = true;
         recordFinding(
           findings,
           "malformed_blob_json",
@@ -842,6 +848,7 @@ const inventoryOciImageLayout = async (
         // or a shallower one.
         if (queuedIndexes.has(descriptor.digest)) continue;
         if (depth + 1 > input.max_index_depth) {
+          referenceGraphTruncated = true;
           recordFinding(
             findings,
             "nested_index_depth_exceeded",
@@ -871,8 +878,12 @@ const inventoryOciImageLayout = async (
     visited.add(`manifest:${digest}`);
     chargeDescriptor();
     const document = await readReferencedJson(digest, `manifest ${digest}`);
-    if (document === undefined) return;
+    if (document === undefined) {
+      referenceGraphTruncated = true;
+      return;
+    }
     if (!isRecord(document.value)) {
+      referenceGraphTruncated = true;
       recordFinding(
         findings,
         "malformed_blob_json",
@@ -882,13 +893,15 @@ const inventoryOciImageLayout = async (
       return;
     }
     const configDescriptor = descriptorOf(document.value.config);
-    if (configDescriptor === undefined && document.value.config !== undefined)
+    if (configDescriptor === undefined && document.value.config !== undefined) {
+      referenceGraphTruncated = true;
       recordFinding(
         findings,
         "malformed_blob_json",
         `Manifest ${digest} config ${descriptorDefect(document.value.config)}; the config is not modeled.`,
         digest,
       );
+    }
     const layers: OciImageLayoutImage["layers"] = [];
     const layerItems = Array.isArray(document.value.layers)
       ? document.value.layers
@@ -897,6 +910,7 @@ const inventoryOciImageLayout = async (
       chargeDescriptor();
       const descriptor = descriptorOf(item);
       if (descriptor === undefined) {
+        referenceGraphTruncated = true;
         recordFinding(
           findings,
           "malformed_blob_json",
@@ -992,8 +1006,8 @@ const inventoryOciImageLayout = async (
       next.digest,
       `index ${next.digest}`,
     );
-    if (nested !== undefined)
-      await walkIndex(next.digest, next.mediaType, nested, next.depth);
+    if (nested === undefined) referenceGraphTruncated = true;
+    else await walkIndex(next.digest, next.mediaType, nested, next.depth);
   }
 
   const blobs: OciImageLayoutBlob[] = [];
@@ -1211,7 +1225,13 @@ const inventoryOciImageLayout = async (
     }
   }
 
-  for (const entry of entries) {
+  // Unreferenced status is only definite once the whole reference graph was
+  // examined; otherwise blobs outside the walked part stay unknown.
+  if (referenceGraphTruncated)
+    limitations.push(
+      "The reference graph was not fully examined, so blobs it did not reach are neither inventoried nor reported as unreferenced.",
+    );
+  for (const entry of referenceGraphTruncated ? [] : entries) {
     if (!entry.path.startsWith("blobs/") || entry.path === "blobs") continue;
     const parts = entry.path.split("/");
     if (parts.length !== 3) continue;
