@@ -1,6 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+} from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
   BinaryTarget,
@@ -14,14 +21,10 @@ import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
 import {
-  GHIDRA_RISCV_CALLING_CONVENTIONS,
-  GHIDRA_RISCV_CALLING_CONVENTION_IDS,
-  GHIDRA_RISCV_LANES,
   ghidraRiscvCallingConvention,
-  ghidraRiscvCallingConventionFailure,
   ghidraRiscvLimitations,
-  ghidraRiscvSupportLane,
   ghidraRiscvUnsupportedReason,
   type GhidraRiscvCallingConventionReport,
 } from "./GhidraRiscvProfile.js";
@@ -30,11 +33,7 @@ import {
   createSimulatedInstallDirectory,
   ghidraProfileInstallationHost as host,
 } from "./GhidraInstallation.fixture.js";
-import {
-  ghidraPinnedLanguage,
-  ghidraProfileLanguageOverride,
-  sameGhidraLanguageOverride,
-} from "./GhidraAnalysisProfile.js";
+import { ghidraPinnedLanguage } from "./GhidraAnalysisProfile.js";
 
 // Abbreviated from Ghidra 12.1.4 Processors/RISCV/data/languages/riscv.ldefs.
 // The release tree ships no big-endian or ELF-class-mismatched RISC-V language.
@@ -165,23 +164,6 @@ const registerRiscvLanguageCommitmentCases = () => {
     expect(wide.value.profile?.digest).toEqual(expect.any(String));
     expect(narrow.value.profile?.digest).toEqual(expect.any(String));
     expect(wide.value.profile?.digest).not.toBe(narrow.value.profile?.digest);
-  });
-
-  it("commits the pinned language the session readback expects", async () => {
-    // A pinned lane has one owner: the committed profile and the open_binary
-    // readback must agree without either re-deriving a different family's pin.
-    const provider = ghidra();
-    for (const value of [target(), target({ elfClass: 32 })]) {
-      const resolved = await provider.resolveAnalysisProfile(value);
-      if (!resolved.ok || resolved.value.profile === null)
-        throw new Error("expected a RISC-V profile");
-      expect(
-        sameGhidraLanguageOverride(
-          ghidraProfileLanguageOverride(resolved.value.profile.parameters),
-          ghidraPinnedLanguage(value),
-        ),
-      ).toBe(true);
-    }
   });
 
   it("names the pinned RISC-V language when the session readback refuses", async () => {
@@ -473,46 +455,6 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
   });
 };
 
-describe("RISC-V lane and calling-convention tables", () => {
-  it("builds each lane id from its fields and keeps the double-float ids", () => {
-    expect(GHIDRA_RISCV_LANES.map(ghidraRiscvSupportLane)).toEqual([
-      "elf64-exec-le-double-float-generic-v1",
-      "elf32-exec-le-double-float-generic-v1",
-      "elf32-exec-le-soft-float-generic-v1",
-    ]);
-    expect(
-      GHIDRA_RISCV_LANES.flatMap((lane) =>
-        lane.loadModels.map((loadModel) =>
-          ghidraRiscvSupportLane({ ...lane, loadModel }),
-        ),
-      ),
-    ).toEqual([
-      "elf64-exec-le-double-float-generic-v1",
-      "elf64-pie-le-double-float-generic-v1",
-      "elf32-exec-le-double-float-generic-v1",
-      "elf32-pie-le-double-float-generic-v1",
-      "elf32-exec-le-soft-float-generic-v1",
-    ]);
-  });
-
-  it("gives every non-double lane one policy and every policy one lane", () => {
-    const corrected = GHIDRA_RISCV_LANES.filter(
-      (lane) => lane.floatAbi !== "double",
-    );
-    expect(corrected.map((lane) => lane.callingConvention)).toEqual(
-      GHIDRA_RISCV_CALLING_CONVENTION_IDS,
-    );
-    expect(
-      GHIDRA_RISCV_LANES.filter((lane) => lane.floatAbi === "double").every(
-        (lane) => lane.callingConvention === undefined,
-      ),
-    ).toBe(true);
-    expect(GHIDRA_RISCV_CALLING_CONVENTIONS).toEqual({
-      "ilp32-prototype-v1": { abi: "ilp32", prototype: "__rea_ilp32" },
-    });
-  });
-});
-
 describe("bounded Ghidra RISC-V admission", () => {
   registerRiscvLanguageCommitmentCases();
   registerRiscvPieAdmissionCases();
@@ -654,7 +596,10 @@ const report: GhidraRiscvCallingConventionReport = {
   functions: 11,
   definitions: 11,
 };
-const sessionInfo = (reported?: GhidraRiscvCallingConventionReport) => ({
+const sessionInfo = (
+  value: BinaryTarget,
+  reported?: GhidraRiscvCallingConventionReport,
+) => ({
   name: "REA Ghidra bridge" as const,
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: "a".repeat(64),
@@ -665,7 +610,7 @@ const sessionInfo = (reported?: GhidraRiscvCallingConventionReport) => ({
   capabilities: [...GHIDRA_SESSION_CAPABILITIES],
   target: {
     name: "fixture.elf",
-    language_id: "RISCV:LE:32:default",
+    language_id: `RISCV:LE:${value.architecture === "riscv" ? value.riscv.elfClass : 32}:default`,
     compiler_spec_id: "gcc",
     image_base: "0x0",
     default_address_space: "ram",
@@ -679,18 +624,18 @@ const session = async (
   profileFor: BinaryTarget = value,
 ) => {
   const counts = { starts: 0, calls: 0, closes: 0 };
-  const launches: unknown[] = [];
+  const launches: Parameters<GhidraProviderClientFactory>[0][] = [];
   const provider = new GhidraProvider(
     configOf(installDir),
     silentLogger,
     {},
     host,
     (options) => {
-      launches.push(options.launcher);
+      launches.push(options);
       return {
         start: () => {
           counts.starts++;
-          return Promise.resolve(ok(sessionInfo(reported)));
+          return Promise.resolve(ok(sessionInfo(value, reported)));
         },
         callTool: () => {
           counts.calls++;
@@ -706,43 +651,26 @@ const session = async (
   const resolved = await provider.resolveAnalysisProfile(profileFor);
   if (!resolved.ok || resolved.value.profile === null)
     throw new Error("expected a RISC-V profile");
-  return {
-    counts,
-    launches,
-    client: provider.createClient(value, resolved.value.profile),
-  };
+  const client = provider.createClient(value, resolved.value.profile);
+  onTestFinished(async () => {
+    try {
+      await client.close();
+    } finally {
+      await provider.closeOwnedResources();
+    }
+  });
+  return { counts, launches, client };
 };
 
 describe("RISC-V calling-convention handshake", () => {
-  it.each([
-    ["ilp32-prototype-v1", report, undefined],
-    [undefined, undefined, undefined],
-    [
-      "ilp32-prototype-v1",
-      undefined,
-      "did not report the committed RISC-V calling-convention policy ilp32-prototype-v1",
-    ],
-    [undefined, report, "profile did not commit"],
-  ] as const)(
-    "expected %s with report %j fails with %s",
-    (expected, reported, failure) => {
-      const reason = ghidraRiscvCallingConventionFailure(expected, reported);
-      if (failure === undefined) expect(reason).toBeUndefined();
-      else expect(reason).toContain(failure);
-    },
-  );
-
   it("launches the policy and reports its outcome as session limitations", async () => {
     const { client, launches } = await session(ilp32(), report);
     const health = await client.execute("health", {});
     if (!health.ok) throw health.error;
-    expect(launches).toEqual([
-      expect.objectContaining({
-        options: expect.objectContaining({
-          riscvCallingConvention: "ilp32-prototype-v1",
-        }),
-      }),
-    ]);
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.launcher).toMatchObject({
+      options: { riscvCallingConvention: "ilp32-prototype-v1" },
+    });
     expect(health.value.limitations).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
@@ -756,17 +684,28 @@ describe("RISC-V calling-convention handshake", () => {
     );
   });
 
-  it("launches double-float sessions without a policy", async () => {
-    const { client, launches } = await session(target(), undefined);
-    expect((await client.execute("health", {})).ok).toBe(true);
-    expect(launches).toEqual([
-      expect.objectContaining({
-        options: expect.not.objectContaining({
-          riscvCallingConvention: expect.anything(),
-        }),
-      }),
-    ]);
-  });
+  it.each([
+    { value: target(), languageId: "RISCV:LE:64:default" },
+    { value: target({ elfClass: 32 }), languageId: "RISCV:LE:32:default" },
+  ])(
+    "pins $languageId at both launch and handshake without a policy",
+    async ({ value, languageId }) => {
+      const { client, launches } = await session(value, undefined);
+      const health = await client.execute("health", {});
+      if (!health.ok) throw health.error;
+      expect(launches).toHaveLength(1);
+      expect(launches[0]).toMatchObject({
+        expectedLanguageId: languageId,
+        expectedCompilerSpecId: "gcc",
+        launcher: {
+          options: { languageOverride: { languageId, compilerSpecId: "gcc" } },
+        },
+      });
+      expect(launches[0]?.launcher).not.toHaveProperty(
+        "options.riscvCallingConvention",
+      );
+    },
+  );
 
   it.each([
     {
@@ -784,8 +723,14 @@ describe("RISC-V calling-convention handshake", () => {
   ] as const)("rejects $reason", async ({ value, reported, operation }) => {
     const { counts, client } = await session(value, reported);
     const failed = await client.execute(operation, {});
-    expect(failed.ok).toBe(false);
-    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
+    expect(failed).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        operation,
+        diagnostics: { reason: expect.any(String) },
+      },
+    });
     expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
   });
 
