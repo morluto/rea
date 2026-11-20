@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
+import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   importReferenceSource,
@@ -89,26 +90,38 @@ describe("reference import native entry failure details", () => {
         [join(root, "events.pipe"), join(root, "secret-events.pipe")],
         { timeout: 2_000 },
       );
+      const read = await readReferenceSource(root, {
+        shouldExclude: (path) => path !== "events.pipe",
+      });
+      if (!read.ok) throw read.error;
+      expect(read.value.entries).toEqual([
+        expect.objectContaining({
+          path: "events.pipe",
+          kind: "other",
+          status: "failed",
+          code: "unsupported",
+        }),
+      ]);
+      const [projected] = parseReferenceSourceEntries(read.value, []).entries;
+      if (projected === undefined)
+        throw new Error("Expected projected FIFO diagnostics");
+      expect(projected.limitations).toContainEqual(
+        expect.stringMatching(/\S/u),
+      );
+
       const imported = await importReferenceSource({
         root,
         caller: "native-entry-failure-detail-test",
         policy: { secretPatterns: ["*secret*"] },
       });
       if (!imported.ok) throw imported.error;
-      expect(imported.value.entries).toContainEqual(
+      expect(imported.value.entries).toEqual([
         expect.objectContaining({
           path: "events.pipe",
           kind: "unknown",
-          limitations: [
-            "Entry is not a regular file Exclude this entry or replace it with a regular file.",
-          ],
+          limitations: projected.limitations,
         }),
-      );
-      expect(
-        imported.value.entries.some(
-          ({ path }) => path === "secret-events.pipe",
-        ),
-      ).toBe(false);
+      ]);
       expect(imported.value.exclusions).toContainEqual({
         path: "secret-events.pipe",
         entry_kind: "other",

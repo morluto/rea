@@ -749,8 +749,10 @@ it("bounds running directory admissions while slow siblings are buried by deeper
   const names = ["a", "b", "c", "d"];
   await Promise.all(
     names.flatMap((parent) =>
-      names.map((child) =>
-        mkdir(join(root, parent, child), { recursive: true }),
+      names.flatMap((child) =>
+        names.map((leaf) =>
+          mkdir(join(root, parent, child, leaf), { recursive: true }),
+        ),
       ),
     ),
   );
@@ -777,20 +779,23 @@ it("bounds running directory admissions while slow siblings are buried by deeper
       return false;
     },
     beforeDirectory: async (path) => {
-      if (path.includes("/")) descended.arrive();
+      if (path.split("/").length === 3) descended.arrive();
       return ok(undefined);
     },
   });
   try {
-    await descended.reached(read, "descent beneath held siblings");
+    await descended.reached(read, "third level admitted with siblings held");
+    // All counted admissions remain held, so started is also their peak.
+    // Each held path is a pending sibling, outside the active descent.
     expect(started).toBeGreaterThan(1);
-    // Four started ahead plus the popped directory's own admission.
-    expect(started).toBeLessThanOrEqual(5);
+    expect(started).toBeLessThanOrEqual(4);
   } finally {
     siblings.release();
     await read;
   }
   const result = await read;
   if (!result.ok) throw result.error;
-  expect(result.value.entries).toHaveLength(names.length * (1 + names.length));
+  expect(result.value.entries).toHaveLength(
+    names.length + names.length ** 2 + names.length ** 3,
+  );
 });
