@@ -66,18 +66,23 @@ export function selectRecoveryRelease({
       }),
     )
     .parse(jobs);
-  const requireJob = (name) => {
-    const matches = parsedJobs.filter((job) => job.name === name);
+  const requireJob = (...names) => {
+    const matches = parsedJobs.filter((job) => names.includes(job.name));
     if (matches.length !== 1 || matches[0].status !== "completed")
-      throw new Error(`Expected one completed original job: ${name}`);
+      throw new Error(
+        `Expected one completed original job: ${names.join(" or ")}`,
+      );
     return matches[0];
   };
-  for (const name of [
-    "Release reviewed main merge",
-    "Qualify exact release revision / CI required",
+  for (const job of [
+    requireJob(
+      "Create qualified GitHub release",
+      "Release reviewed main merge",
+    ),
+    requireJob("Qualify exact release revision / CI required"),
   ])
-    if (requireJob(name).conclusion !== "success")
-      throw new Error(`Original release did not pass ${name}`);
+    if (job.conclusion !== "success")
+      throw new Error(`Original release did not pass ${job.name}`);
   const publish = requireJob("Publish to npm");
   const writes = publish.steps.filter((step) => step.name === "Publish");
   const verificationJobs = parsedJobs.filter(

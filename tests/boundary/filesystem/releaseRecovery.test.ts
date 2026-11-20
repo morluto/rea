@@ -55,6 +55,16 @@ it("recovers a failed post-publication run using its successful original qualifi
   });
 });
 
+it("recovers after qualification precedes tagging and requires the tag job to pass", () => {
+  const input = selection();
+  input.jobs[0] = job("Create qualified GitHub release");
+  expect(selectRecoveryRelease(input)).toMatchObject({ source_sha: sourceSha });
+  input.jobs[0] = job("Create qualified GitHub release", "failure");
+  expect(() => selectRecoveryRelease(input)).toThrow(
+    "did not pass Create qualified GitHub release",
+  );
+});
+
 it.each(["legacy publisher", "separate verification"])(
   "recovers a byte-verified existing version from %s when the npm write was skipped",
   (location) => {

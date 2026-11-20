@@ -1,30 +1,30 @@
 # Releasing REA
 
 Pushes to main automatically open or refresh a Release Please PR with the next
-version and changelog. Review its migration notes and wait for its current CI
-checks to pass. Merging that PR into main starts publication automatically.
+version and changelog. The required `CI required` check runs full qualification
+on the release PR's merge candidate. Review its migration notes and wait for
+that check to pass. Merging the PR into main starts the release workflow.
 
 The push caused by merging a same-repository Release Please PR skips proposal
 generation: the separate merged-release workflow owns tag creation and
 publication. This avoids looking for the new version's tag before that workflow
-has created it. The next ordinary main push resumes proposals. API lookup
+has created it. Once the tag exists, ordinary main pushes resume proposals. API lookup
 failures and missing release boundaries on ordinary pushes or manual preparation
 still fail closed.
 
-The Release workflow validates the merged release metadata and ancestry before
-creating a tag. npm and MCP Registry publication use the exact reviewed merge
-SHA returned by Release Please. Before either registry is published, the release
-run calls full CI qualification at that exact revision, including coverage,
+The Release workflow validates the merged release metadata and ancestry, then
+runs full CI qualification at that exact revision. This covers coverage checks,
 portable providers, and every native package host. Later main commits cannot
-change or cancel that proof.
+change or cancel that proof. Release Please creates the GitHub release and tag
+after both qualification and the package rehearsal pass. Registry publication
+then uses that same commit.
 After qualification, a separate runner with read-only repository/actions
 permissions restores the retained tarball and verifier runtime. It installs
 that exact archive into an empty prefix, then exercises CLI help/discovery and
 the real stdio MCP catalog/session contract. Installation finishes before the
-protocol deadline begins, with dependency lifecycle scripts disabled. Only a
-successful rehearsal enables the job with npm publishing authority. The publisher
-downloads only
-the original qualified archive and manifest, validates their source/run/attempt,
+protocol deadline begins, with dependency lifecycle scripts disabled. After
+tagging, the npm publisher downloads the original qualified archive and
+manifest, validates their source/run/attempt,
 version, Node identity and streamed digest using Node built-ins, then invokes
 `npm publish --ignore-scripts` against the official registry. A shared built-in
 registry reader checks existing bytes and tags afresh on every publisher attempt,
@@ -38,9 +38,12 @@ qualification retains its broader native-host and real-provider checks.
 Before publishing, npm lookup failures and malformed metadata stop the job.
 An existing version must match the qualified tarball's SHA-512 and intended
 `latest`/`next` dist-tag before it can be reused. Publication never overwrites
-an existing version or silently changes a dist-tag. After publication, only
-confirmed registry absence is retried within the propagation window. Content
-or tag mismatches fail immediately. A separate post-publication job with read-only
+an existing version or silently changes a dist-tag. After publication, confirmed
+registry absence is polled every 30 seconds for a 75-minute retry window. This
+covers the roughly 55 minutes between npm accepting 6.10.1 and the registry
+recording it. Lookup errors and content or tag mismatches fail immediately. If
+visibility takes longer, rerun the failed jobs in the original workflow once the
+package appears. A separate post-publication job with read-only
 repository/actions permissions verifies registry bytes and tags, then installs
 from npm and repeats the same CLI/MCP checks; it also exercises a real update
 from an older stable release. For a prerelease on `next`, that updater still
@@ -358,8 +361,9 @@ Stable versions publish to npm's `latest` tag; prerelease versions publish to
 the `next` tag so they cannot replace the stable install by default.
 The publish dispatch runs from the frozen release branch so npm's provenance
 records the actual release commit. Before Release Please creates a tag, the
-workflow accepts only `prepare` or `publish` and requires the selected branch
-tip to equal the dispatch SHA. Registry jobs run only during `publish`. After
+workflow validates the dispatch, qualifies and rehearses the selected revision,
+and rechecks that the branch tip still equals the dispatch SHA. Registry jobs
+run only during `publish`. After
 a tag exists, a mismatch between that tag's SHA and the dispatch SHA stops
 both registry publishes.
 See [npm's provenance implementation](https://github.com/npm/cli/blob/v11.16.0/workspaces/libnpmpublish/lib/provenance.js)
