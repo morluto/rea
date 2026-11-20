@@ -13,6 +13,7 @@ import {
   V8_CODE_CACHE_FORMAT,
   v8CodeCacheBudgetFailure,
 } from "../v8/V8CodeCache.errors.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
@@ -77,15 +78,23 @@ export const parseV8CodeCache = (
       `Selected file is shorter than the ${String(V8_CODE_CACHE_HEADER_BYTES)}-byte V8 code cache header.`,
     );
 
-  const field = (index: number): number => bytes.readUInt32LE(index * 4);
-  const magic = field(0);
+  const headerReader = new BinaryReader(
+    bytes.subarray(0, V8_CODE_CACHE_HEADER_BYTES),
+    true,
+    V8_CODE_CACHE_FORMAT,
+  );
+  const fields = HEADER_ROLES.map((entry, index) => {
+    const offset = index * 4;
+    return { offset, value: headerReader.u32(offset), ...entry };
+  });
+  const magic = fields[0]!.value;
   const magicHigh = magic >>> 16;
   if (magicHigh !== V8_CODE_CACHE_MAGIC_HIGH)
     unsupported(
       `Container magic 0x${magic.toString(16).padStart(8, "0")} does not carry the V8 code cache high half 0x${V8_CODE_CACHE_MAGIC_HIGH.toString(16)}; this file is not a V8 code cache.`,
     );
 
-  const declaredPayload = field(5);
+  const declaredPayload = fields[5]!.value;
   const payloadOffset = V8_CODE_CACHE_HEADER_BYTES;
   const expectedPayload = bytes.length - payloadOffset;
   if (declaredPayload !== expectedPayload)
@@ -93,7 +102,7 @@ export const parseV8CodeCache = (
       `Header declares a ${String(declaredPayload)}-byte payload but ${String(expectedPayload)} bytes follow the ${String(V8_CODE_CACHE_HEADER_BYTES)}-byte header; the container is truncated or corrupt.`,
     );
 
-  const sourceWord = field(2);
+  const sourceWord = fields[2]!.value;
   const sourceLength = sourceWord & V8_CODE_CACHE_SOURCE_LENGTH_MASK;
   // Bit 30 marks a `vm.SourceTextModule` cache and bit 29 a `vm.compileFunction` one.
   // Measured on Node 24.22.1, a 19-unit module source reads `0x40000013` while a script of
@@ -162,12 +171,7 @@ export const parseV8CodeCache = (
     header: {
       magic,
       magic_build_stable: magicHigh,
-      fields: HEADER_ROLES.map((entry, index) => ({
-        offset: index * 4,
-        value: field(index),
-        role: entry.role,
-        status: entry.status,
-      })),
+      fields,
       header_bytes: V8_CODE_CACHE_HEADER_BYTES,
       source_length: sourceLength,
       producer,
