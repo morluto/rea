@@ -417,7 +417,7 @@ const blobRecord = (
   path: string,
   mediaType: string | null,
   declaredSize: number | null,
-  referenced: boolean,
+  referenced: boolean | null,
   kind: OciImageLayoutBlob["kind"],
   extras: Partial<OciImageLayoutBlob> = {},
 ): OciImageLayoutBlob => ({
@@ -1303,32 +1303,34 @@ const inventoryOciImageLayout = async (
   }
 
   // Unreferenced status is only definite once the whole reference graph was
-  // examined; otherwise blobs outside the walked part stay unknown.
+  // examined; otherwise blobs outside the walked part keep their inventory
+  // row with an unknown referenced status.
   if (referenceGraphTruncated)
     limitations.push(
-      "The reference graph was not fully examined, so blobs it did not reach are neither inventoried nor reported as unreferenced.",
+      "The reference graph was not fully examined, so blobs it did not reach are listed with an unknown referenced status instead of being reported as unreferenced.",
     );
-  for (const entry of referenceGraphTruncated ? [] : entries) {
+  for (const entry of entries) {
     if (!entry.path.startsWith("blobs/") || entry.path === "blobs") continue;
     const parts = entry.path.split("/");
     if (parts.length !== 3) continue;
     const digest = `${parts[1]}:${parts[2]}`;
     if (referenced.has(digest) || referencedPaths.has(entry.path)) continue;
     if (entry.kind === "directory") continue;
-    recordFinding(
-      findings,
-      "unreferenced_blob",
-      `Blob ${entry.path} is not referenced by the index, manifests, or configs.`,
-      digest,
-      entry.path,
-    );
+    if (!referenceGraphTruncated)
+      recordFinding(
+        findings,
+        "unreferenced_blob",
+        `Blob ${entry.path} is not referenced by the index, manifests, or configs.`,
+        digest,
+        entry.path,
+      );
     blobs.push(
       blobRecord(
         digest,
         entry.path,
         null,
         entry.declaredSize,
-        false,
+        referenceGraphTruncated ? null : false,
         entry.kind === "symlink"
           ? "symlink"
           : entry.kind === "file"

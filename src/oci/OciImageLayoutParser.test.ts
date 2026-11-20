@@ -641,7 +641,21 @@ it("leaves blobs past a truncated index walk unknown instead of unreferenced", a
   expect(
     report.findings.filter((finding) => finding.kind === "unreferenced_blob"),
   ).toEqual([]);
-  expect(report.blobs.every((blob) => blob.referenced)).toBe(true);
+  // B is named by A, so it stays referenced; the manifest graph below B was
+  // never walked, so its blobs keep their rows with an unknown status.
+  const rowOf = (digest: string) =>
+    report.blobs.find((blob) => blob.digest === digest);
+  expect(rowOf(b.digest)?.referenced).toBe(true);
+  expect(rowOf(written.manifestDigest)).toMatchObject({
+    referenced: null,
+    present: true,
+    kind: "file",
+  });
+  const unknown = report.blobs.filter((blob) => blob.referenced === null);
+  expect(unknown).toHaveLength(3);
+  expect(report.blobs.some((blob) => blob.referenced === false)).toBe(false);
+  for (const blob of unknown)
+    expect(blob).toMatchObject({ present: true, kind: "file", hashed: false });
   expect(report.coverage.status).toBe("partial");
   expect(
     report.limitations.some((limitation) =>

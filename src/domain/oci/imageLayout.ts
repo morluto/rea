@@ -271,7 +271,12 @@ const blobSchema = z.strictObject({
   hashed: z.boolean(),
   sha256: digestSchema.nullable(),
   sha512: z.string().regex(SHA512_HEX_PATTERN).nullable(),
-  referenced: z.boolean(),
+  referenced: z
+    .boolean()
+    .nullable()
+    .describe(
+      "Whether the reference graph names this blob; null when the graph was not fully examined",
+    ),
   kind: z.enum(["file", "symlink", "missing", "other"]),
 });
 
