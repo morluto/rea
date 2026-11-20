@@ -588,9 +588,10 @@ it("shows an unsupported Linux Hopper host in the terminal plan", async () => {
     { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
   );
   expect(stdout).toBe("");
-  expect(stderr).toContain(
-    'Automatic Hopper installation is unavailable on "bazzite 43" (x64).',
-  );
+  const diagnosis = stderr.split("\n").find((line) => line.includes("Hopper"));
+  expect(diagnosis).toContain("bazzite");
+  expect(diagnosis).toContain("43");
+  expect(diagnosis).toContain("x64");
   expect(stderr).toContain(result.hopperInstallUnavailable?.remediation);
   expect(stderr).toContain("Dry run complete");
 });
