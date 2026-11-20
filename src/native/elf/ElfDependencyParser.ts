@@ -351,10 +351,7 @@ class DynamicStrings {
       entry = { state: "outside", name: null, location: null };
     else if (observed.state === "truncated")
       entry = {
-        state:
-          observed.examinedBytes === ELF_STRING_SCAN_BYTES
-            ? "scan-limit"
-            : "unterminated",
+        state: observed.scanLimited ? "scan-limit" : "unterminated",
         name: null,
         location: this.table.offset + offset,
       };
@@ -1172,15 +1169,15 @@ const parseInterpreter = (
   try {
     const body = reader.range(interp.offset, interp.bytes, "PT_INTERP");
     const observed = observeElfStringTableEntry(body, 0, ELF_STRING_SCAN_BYTES);
-    if (observed.state !== "terminated" || observed.bytes === null) {
+    if (observed.state !== "terminated") {
       issues.push({
         code: "name_unreadable",
         location: hex(interp.offset),
-        message: `PT_INTERP path ${unreadString(interp.bytes > ELF_STRING_SCAN_BYTES)}`,
+        message: `PT_INTERP path ${unreadString(observed.state === "truncated" && observed.scanLimited)}`,
       });
       return { status: "unreadable", path: null, location: interp };
     }
-    const path = observed.bytes.toString("latin1");
+    const path = elfStringTableText(observed);
     if (path.length === 0) {
       issues.push({
         code: "name_unreadable",
