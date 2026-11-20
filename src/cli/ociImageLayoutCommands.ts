@@ -28,7 +28,7 @@ export const registerOciImageLayoutCommands = (
         path: { description: "Local OCI image-layout directory" },
         include_env_values: {
           description:
-            "Include config Env values (default true); false leaves each value null and keeps only the names",
+            "Include config Env values; use --no-include-env-values to leave each value null and keep only the names",
         },
       },
     },

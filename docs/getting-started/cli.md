@@ -681,8 +681,8 @@ rea inspect-oci-image-layout /absolute/path/to/busybox.oci --json
 
 The workflow reports layout version, index entries, image config facts, layers,
 and streamed digest verification of present referenced blobs. Missing blobs,
-digest mismatches, and similar defects are findings. Env values stay omitted
-unless `--include-env-values` is selected. Directory form only. See
+digest mismatches, and similar defects are findings. Env values are kept
+unless `--no-include-env-values` is selected. Directory form only. See
 [OCI image layouts](../guides/artifacts/oci-image-layout.md).
 
 Complete `rea decompile --json` Evidence can be saved and inspected through

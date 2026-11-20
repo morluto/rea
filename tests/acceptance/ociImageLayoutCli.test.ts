@@ -7,6 +7,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import { writeOciImageLayoutFixture } from "../../src/oci/OciImageLayout.fixture.js";
+import { OCI_IMAGE_LAYOUT_LIMITATIONS } from "../../src/oci/OciImageLayoutParser.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -41,9 +42,12 @@ cliTest(
     });
     expect(evidence.normalized_result.images[0]?.env).toEqual(
       expect.arrayContaining([
-        { name: "PATH", value: null },
-        { name: "SECRET", value: null },
+        { name: "PATH", value: "/usr/bin" },
+        { name: "SECRET", value: "redact-me" },
       ]),
+    );
+    expect(evidence.normalized_result.limitations).not.toContain(
+      OCI_IMAGE_LAYOUT_LIMITATIONS.envRedacted,
     );
     expect(evidence.normalized_result.coverage.status).toBe("complete");
   },
@@ -95,24 +99,27 @@ cliTest(
         "inspect-oci-image-layout",
         path,
         "--json",
-        "--include-env-values",
+        "--no-include-env-values",
       ],
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const cliEvidence = completeLayoutEvidenceSchema.parse(output.json);
     expect(cliEvidence.parameters).toEqual({
       path,
-      include_env_values: true,
+      include_env_values: false,
     });
     expect(cliEvidence.normalized_result.images[0]?.env).toEqual(
       expect.arrayContaining([
-        { name: "PATH", value: "/usr/bin" },
-        { name: "SECRET", value: "redact-me" },
+        { name: "PATH", value: null },
+        { name: "SECRET", value: null },
       ]),
+    );
+    expect(cliEvidence.normalized_result.limitations).toContain(
+      OCI_IMAGE_LAYOUT_LIMITATIONS.envRedacted,
     );
     const reply = await call("inspect_oci_image_layout", {
       path,
-      include_env_values: true,
+      include_env_values: false,
     });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     const evidence = completeLayoutEvidenceSchema.parse(
