@@ -385,28 +385,25 @@ describe("analysis provider registry: selection failures", () => {
     }
   });
 
-  it("keeps artifact-only targets unbound under auto or environment preference", async () => {
+  it("refuses artifact-only targets under auto or environment preference", async () => {
     const alpha = candidate("alpha");
     const environment = new AnalysisProviderRegistry([alpha.provider], "alpha");
     const automatic = new AnalysisProviderRegistry([alpha.provider]);
 
     for (const registry of [environment, automatic]) {
       const selected = await registry.select(ARTIFACT_TARGET);
-      expect(selected).toMatchObject({
-        ok: true,
-        value: {
-          binding: null,
-          candidates: [
-            {
-              selected: false,
-              targetSupport: {
-                status: "unsupported",
-                code: "target_kind_unsupported",
-              },
-            },
-          ],
-        },
-      });
+      expect(selected.ok).toBe(false);
+      if (selected.ok) throw new Error("expected target rejection");
+      expect(selected.error).toBeInstanceOf(ProviderSelectionError);
+      if (selected.error instanceof ProviderSelectionError) {
+        expect(selected.error.reason).toBe("target_unsupported");
+        expect(selected.error.rejections).toMatchObject([
+          {
+            origin: "target",
+            code: "target_kind_unsupported",
+          },
+        ]);
+      }
     }
     const explicit = await automatic.select(ARTIFACT_TARGET, "alpha");
     if (explicit.ok) throw new Error("expected provider selection rejection");
@@ -643,7 +640,7 @@ describe("analysis provider registry: rejection diagnostics", () => {
     expect([...alpha.created, ...beta.created, ...gamma.created]).toEqual([]);
   });
 
-  it("keeps unresolved profiles and unavailable candidates in an unbound result", async () => {
+  it("refuses unresolved profiles and unavailable candidates instead of opening unbound", async () => {
     const unresolved = candidate("alpha", { profile: "missing" });
     const unavailable = candidate("beta", { available: false });
     const registry = new AnalysisProviderRegistry([
@@ -652,46 +649,27 @@ describe("analysis provider registry: rejection diagnostics", () => {
     ]);
 
     const selected = await registry.select(DATABASE_TARGET);
-    expect(selected).toMatchObject({
-      ok: true,
-      value: {
-        requestedProviderId: "auto",
-        binding: null,
-        candidates: [
-          {
-            provider: { id: "alpha" },
-            selected: false,
-            selectionSource: null,
-            availability: {
-              status: "unavailable",
-              code: "version_unresolved",
-            },
-            rejections: [
-              {
-                providerId: "alpha",
-                origin: "availability",
-                code: "version_unresolved",
-                // doctor cannot check this provider, so it is not offered.
-                remediation: expect.not.stringContaining(
-                  "rea doctor",
-                ) as unknown,
-              },
-            ],
-          },
-          {
-            provider: { id: "beta" },
-            selected: false,
-            selectionSource: null,
-            rejections: [
-              {
-                providerId: "beta",
-                origin: "availability",
-                code: "runtime_missing",
-              },
-            ],
-          },
-        ],
-      },
+    expect(selected.ok).toBe(false);
+    if (selected.ok) throw new Error("expected provider_unavailable");
+    expect(selected.error).toBeInstanceOf(ProviderSelectionError);
+    if (!(selected.error instanceof ProviderSelectionError)) return;
+    expect(selected.error).toMatchObject({
+      reason: "provider_unavailable",
+      requestedProviderId: "auto",
+      rejections: [
+        {
+          providerId: "alpha",
+          origin: "availability",
+          code: "version_unresolved",
+          // doctor cannot check this provider, so it is not offered.
+          remediation: expect.not.stringContaining("rea doctor") as unknown,
+        },
+        {
+          providerId: "beta",
+          origin: "availability",
+          code: "runtime_missing",
+        },
+      ],
     });
     expect([...unresolved.created, ...unavailable.created]).toEqual([]);
   });
@@ -701,33 +679,22 @@ describe("analysis provider registry: rejection diagnostics", () => {
     const registry = new AnalysisProviderRegistry([alpha.provider], "alpha");
 
     const unbound = await registry.select(ARTIFACT_TARGET);
-    expect(unbound).toMatchObject({
-      ok: true,
-      value: {
-        binding: null,
-        candidates: [
-          {
-            provider: { id: "alpha" },
-            selected: false,
-            selectionSource: null,
-            targetSupport: {
-              status: "unsupported",
-              code: "target_kind_unsupported",
-            },
-            rejections: [
-              {
-                providerId: "alpha",
-                origin: "target",
-                code: "target_kind_unsupported",
-                reason: expect.stringContaining(
-                  "only accepts analysis databases",
-                ) as unknown,
-                diagnostics: { target_kind: "archive" },
-              },
-            ],
-          },
-        ],
-      },
+    expect(unbound.ok).toBe(false);
+    if (unbound.ok) throw new Error("expected target_unsupported");
+    expect(unbound.error).toMatchObject({
+      reason: "target_unsupported",
+      requestedProviderId: "alpha",
+      rejections: [
+        {
+          providerId: "alpha",
+          origin: "target",
+          code: "target_kind_unsupported",
+          reason: expect.stringContaining(
+            "only accepts analysis databases",
+          ) as unknown,
+          diagnostics: { target_kind: "archive" },
+        },
+      ],
     });
 
     const explicit = await registry.select(ARTIFACT_TARGET, "alpha");
@@ -795,10 +762,9 @@ describe("analysis provider registry: rejection origins", () => {
       candidate("gamma", { available: false, unconfigured: true }).provider,
     ]);
     const selection = await registry.select(DATABASE_TARGET);
-    if (!selection.ok) throw selection.error;
-    const projected = projectAnalysisError(
-      registry.unboundOperationError("binary_overview", selection.value),
-    );
+    expect(selection.ok).toBe(false);
+    if (selection.ok) throw new Error("expected provider_unavailable");
+    const projected = projectAnalysisError(selection.error);
     expect(projected.message).toContain(
       "Provider selection failed local readiness checks. No target-support refusal was reported.",
     );
@@ -852,14 +818,11 @@ describe("analysis provider registry: rejection origins", () => {
     ]);
     const availabilitySelection =
       await availabilityOnly.select(DATABASE_TARGET);
-    expect(availabilitySelection.ok).toBe(true);
-    if (availabilitySelection.ok) {
-      const { details } = projectAnalysisError(
-        availabilityOnly.unboundOperationError(
-          "binary_overview",
-          availabilitySelection.value,
-        ),
-      );
+    expect(availabilitySelection.ok).toBe(false);
+    if (availabilitySelection.ok)
+      throw new Error("expected provider_unavailable");
+    {
+      const { details } = projectAnalysisError(availabilitySelection.error);
       const rejections = details?.rejections as unknown as readonly {
         origin: string;
       }[];
@@ -892,11 +855,10 @@ describe("analysis provider registry: rejection origins", () => {
       refusingTarget,
     ]);
     const mixedSelection = await mixed.select(ARTIFACT_TARGET);
-    expect(mixedSelection.ok).toBe(true);
-    if (mixedSelection.ok) {
-      const projected = projectAnalysisError(
-        mixed.unboundOperationError("binary_overview", mixedSelection.value),
-      );
+    expect(mixedSelection.ok).toBe(false);
+    if (mixedSelection.ok) throw new Error("expected provider_unavailable");
+    {
+      const projected = projectAnalysisError(mixedSelection.error);
       expect(projected.message).toContain(
         "The selected analysis provider is unavailable",
       );
@@ -921,20 +883,18 @@ describe("analysis provider registry: profile and cleanup failures", () => {
     const automatic = await new AnalysisProviderRegistry([
       unresolved.provider,
     ]).select(DATABASE_TARGET);
-    expect(automatic).toMatchObject({
-      ok: true,
-      value: {
-        binding: null,
-        candidates: [
-          {
-            availability: {
-              status: "unavailable",
-              code: "version_unresolved",
-            },
-          },
-        ],
-      },
-    });
+    expect(automatic.ok).toBe(false);
+    if (automatic.ok) throw new Error("expected provider_unavailable");
+    expect(automatic.error).toBeInstanceOf(ProviderSelectionError);
+    if (automatic.error instanceof ProviderSelectionError) {
+      expect(automatic.error.reason).toBe("provider_unavailable");
+      expect(automatic.error.rejections).toMatchObject([
+        {
+          origin: "availability",
+          code: "version_unresolved",
+        },
+      ]);
+    }
 
     const explicit = await new AnalysisProviderRegistry([
       failed.provider,

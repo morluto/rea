@@ -552,11 +552,7 @@ export class AnalysisProviderRegistry {
           ({ targetSupport }) => targetSupport.status === "unsupported",
         )
       )
-        return ok({
-          requestedProviderId: selector,
-          binding: null,
-          candidates: baseline,
-        });
+        return err(selectionError("target_unsupported", selector, baseline));
       if (selector !== "auto")
         return await this.#selectConcrete(
           {
@@ -735,12 +731,14 @@ export class AnalysisProviderRegistry {
         readonly profile: AnalysisProfileCommitment;
       } => evaluation.profile !== undefined,
     );
-    if (usable.length === 0)
-      return ok({
-        requestedProviderId: "auto",
-        binding: null,
-        candidates: statuses,
-      });
+    if (usable.length === 0) {
+      const reason: ProviderSelectionFailureReason = statuses.every(
+        ({ targetSupport }) => targetSupport.status === "unsupported",
+      )
+        ? "target_unsupported"
+        : "provider_unavailable";
+      return err(selectionError(reason, "auto", statuses));
+    }
     if (usable.length > 1)
       return err(
         selectionError(
