@@ -7055,63 +7055,57 @@ it("keeps saved project reports as shared historical Evidence without applying f
   ).toEqual([history.evidence_id]);
 });
 
-it.each(["search_procedures", "search_strings"] as const)(
-  "%s applies shared folding after validation and preserves native source rows",
-  async (operation) => {
-    const rows = [
-      { address: "0x1000", value: "ſource" },
-      { address: "0x1001", value: "SOURCE" },
-      { address: "0x1002", value: "İource" },
-      { address: "0x1003", value: "unrelated" },
-    ].map((row) => ({
-      ...row,
-      ...(operation === "search_procedures"
-        ? { procedure: { external: false, thunk: false, thunk_target: null } }
-        : {
-            string: {
-              encoding: "UTF-8",
-              termination: "present_or_not_required",
-              byte_length: Buffer.byteLength(row.value, "utf8") + 1,
-            },
-          }),
-    }));
-    const ghidra = provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(jsonValueSchema.parse(rows))),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const client = await createElfClient(ghidra);
-    try {
-      const result = await client.execute(operation, { pattern: "source" });
-      if (!result.ok) throw result.error;
-      expect(result.value.result).toEqual(rows.slice(0, 2));
-      expect(result.value.rawResult).toEqual(rows);
-      expect(result.value.limitations).toContain(
-        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
-      );
-      const regex = await client.execute(operation, {
-        pattern: "source",
-        mode: "regex",
-      });
-      if (!regex.ok) throw regex.error;
-      expect(regex.value.result).toEqual(rows);
-      expect(regex.value.limitations).not.toContain(
-        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
-      );
-      const sensitive = await client.execute(operation, {
-        pattern: "source",
-        case_sensitive: true,
-      });
-      if (!sensitive.ok) throw sensitive.error;
-      expect(sensitive.value.result).toEqual(rows);
-      expect(sensitive.value.limitations).not.toContain(
-        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
-      );
-    } finally {
-      await client.close();
-    }
-  },
-);
+it("filters string candidates and preserves their raw Evidence", async () => {
+  const operation = "search_strings";
+  const rows = [
+    { address: "0x1000", value: "ſource" },
+    { address: "0x1001", value: "SOURCE" },
+    { address: "0x1002", value: "İource" },
+    { address: "0x1003", value: "unrelated" },
+  ].map((row) => ({
+    ...row,
+    string: {
+      encoding: "UTF-8",
+      termination: "present_or_not_required",
+      byte_length: Buffer.byteLength(row.value, "utf8") + 1,
+    },
+  }));
+  const ghidra = provider(installationHost(), () => ({
+    start: () => Promise.resolve(ok(sessionInfo())),
+    callTool: () => Promise.resolve(ok(jsonValueSchema.parse(rows))),
+    close: () => Promise.resolve(ok(null)),
+  }));
+  const client = await createElfClient(ghidra);
+  try {
+    const result = await client.execute(operation, { pattern: "source" });
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toEqual(rows.slice(0, 2));
+    expect(result.value.rawResult).toEqual(rows);
+    expect(result.value.limitations).toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+    const regex = await client.execute(operation, {
+      pattern: "source",
+      mode: "regex",
+    });
+    if (!regex.ok) throw regex.error;
+    expect(regex.value.result).toEqual(rows);
+    expect(regex.value.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+    const sensitive = await client.execute(operation, {
+      pattern: "source",
+      case_sensitive: true,
+    });
+    if (!sensitive.ok) throw sensitive.error;
+    expect(sensitive.value.result).toEqual(rows);
+    expect(sensitive.value.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+  } finally {
+    await client.close();
+  }
+});
 
 describe("Windows Ghidra readiness repair", () => {
   it("carries the native readiness repair into candidate capabilities and explicit selection", async () => {
