@@ -487,8 +487,7 @@ const remoteDestination = (
   module: DenoRemoteModule,
 ): RemoteDestination => {
   const fallback = `deno-remote/${String(module.index)}`;
-  // A listed remote table has every specifier. Missing text is unsupported.
-  const text = section.specifierText?.get(module.specifierId) ?? null;
+  const text = section.specifierText.get(module.specifierId) ?? null;
   if (text === null)
     return {
       path: fallback,

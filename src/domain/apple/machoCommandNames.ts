@@ -13,7 +13,7 @@ import {
   readMachoLoadCommandTableHeader,
 } from "./machoLoadCommands.js";
 import {
-  MACHO_VERSION_MIN_PLATFORMS,
+  classifyMachoVersionMinCommand,
   type MachoVersionMinPlatform,
 } from "./machoPlatform.js";
 import {
@@ -508,17 +508,20 @@ export const readMachoCommandNames = async (
         throw malformedInput("macho", "Mach-O linker option is unterminated");
     }
     let legacyBuild: MachoCommandNames["commands"][number]["legacyBuild"];
-    const legacyPlatform = MACHO_VERSION_MIN_PLATFORMS.get(frame.command);
-    if (legacyPlatform !== undefined) {
-      if (frame.size < 16)
-        throw malformedInput(
-          "macho",
-          "Mach-O minimum version command is truncated",
-        );
+    const versionMin = classifyMachoVersionMinCommand(
+      frame.command,
+      frame.size,
+    );
+    if (versionMin?.kind === "truncated")
+      throw malformedInput(
+        "macho",
+        "Mach-O minimum version command is truncated",
+      );
+    if (versionMin?.kind === "exact") {
       const bytes = await exact(at + 8, 8);
       const view = machoWordReader(bytes, table.littleEndian);
       legacyBuild = {
-        platform: legacyPlatform,
+        platform: versionMin.platform,
         version: view.u32(0),
         sdk: view.u32(4),
       };
@@ -627,7 +630,7 @@ export const readMachoCommandNames = async (
       (fixedNames !== undefined && frame.size === 8 + fixedNames.length * 4) ||
       (uuid !== undefined && frame.size === 24) ||
       (entrypoint !== undefined && frame.size === 24) ||
-      (legacyBuild !== undefined && frame.size === 16) ||
+      legacyBuild !== undefined ||
       (segmentWide !== null &&
         sections !== undefined &&
         frame.size ===

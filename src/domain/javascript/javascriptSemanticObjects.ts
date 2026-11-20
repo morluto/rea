@@ -14,11 +14,19 @@ import {
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
+  semanticBindingMayRejectAssignment,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
-import { createSemanticReadPresenceQuery } from "./javascriptSemanticReadPresence.js";
+import {
+  createSemanticReadPresenceQuery,
+  isKnownDefinedSource,
+} from "./javascriptSemanticReadPresence.js";
+import {
+  isLexicalPatternDeclaration,
+  semanticArrayPatternCanResumeAfterClose,
+} from "./javascriptSemanticReferenceSources.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
@@ -146,23 +154,29 @@ const collectDestructuring = (
 ): void => {
   const source = expressionObjectIdentity(initializer, state);
   const rootArray = t.isArrayPattern(root);
+  const owner = state.parentsByNode.get(root);
+  const assignment = t.isAssignmentExpression(owner);
   const sourcePresence =
     initializer != null && source.path !== null
-      ? readPresence(
-          source.bindingId,
-          initializer,
-          rootArray ? source.path : undefined,
-        )
+      ? readPresence(source.bindingId, initializer, {
+          path: source.path,
+          selection: rootArray ? "array-iterator" : "own-data",
+        })
       : undefined;
   let ownSlot = sourcePresence?.read;
-  // An unsupported property still occupies its place in the pattern's
-  // evaluation order, even when it cannot produce a graph operation.
-  const pending: ({
-    readonly pattern: t.Node | undefined;
-    readonly path: readonly string[];
-    readonly plainObjectPath?: boolean;
-    readonly lookup?: "own" | "unproven";
-  } | null)[] = [{ pattern: root, path: [], plainObjectPath: !rootArray }];
+  let assignmentBlocked = false;
+  // A null path keeps a target in evaluation order without emitting an
+  // operation for a source slot we cannot identify.
+  const pending: (
+    | {
+        readonly pattern: t.Node | undefined;
+        readonly path: readonly string[] | null;
+        readonly plainObjectPath?: boolean;
+        readonly lookup?: "own" | "unproven";
+      }
+    | { readonly resume: NonNullable<typeof ownSlot> }
+    | null
+  )[] = [{ pattern: root, path: [], plainObjectPath: !rootArray }];
   while (pending.length > 0) {
     const next = pending.pop();
     if (next === undefined) break;
@@ -170,9 +184,13 @@ const collectDestructuring = (
       ownSlot = undefined;
       continue;
     }
+    if ("resume" in next) {
+      if (ownSlot !== undefined) ownSlot = next.resume;
+      continue;
+    }
     const { path } = next;
     const propertyPath =
-      source.path === null ? null : [...source.path, ...path];
+      source.path === null || path === null ? null : [...source.path, ...path];
     const selected =
       next.lookup === "own" && propertyPath !== null
         ? ownSlot?.(propertyPath)
@@ -186,65 +204,96 @@ const collectDestructuring = (
     // contributes no binding once the shared slot check has run.
     if (next.pattern === undefined) continue;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
-    const plainObjectPath =
-      next.plainObjectPath === true && !t.isAssignmentPattern(occurrence);
-    if (t.isAssignmentPattern(occurrence)) ownSlot = undefined;
-    const pattern = t.isAssignmentPattern(occurrence)
+    const hasDefault = t.isAssignmentPattern(occurrence);
+    const plainObjectPath = next.plainObjectPath === true && !hasDefault;
+    if (
+      hasDefault &&
+      (!isKnownDefinedSource(selected) ||
+        !isLexicalPatternDeclaration(owner, state))
+    )
+      ownSlot = undefined;
+    const pattern = hasDefault
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
+    if (t.isRestElement(pattern)) {
+      ownSlot = undefined;
+      if (assignment) pending.push({ pattern: pattern.argument, path: null });
+      continue;
+    }
     if (t.isObjectPattern(pattern)) {
-      // A nested pattern needs a proved object even if it has no children.
+      // Later siblings require the nested receiver check to complete.
       if (
         ownSlot !== sourcePresence?.read ||
-        (rootArray && !t.isObjectExpression(selected))
+        (pattern !== root &&
+          !t.isObjectExpression(selected) &&
+          (rootArray ||
+            pattern.properties.length !== 0 ||
+            t.isNullLiteral(selected) ||
+            !isKnownDefinedSource(selected)))
       )
         ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
-        if (!t.isObjectProperty(property)) {
-          pending.push(null);
-          continue;
-        }
-        const name = semanticStaticPropertyKey(property.key, property.computed);
-        if (name === null) {
-          pending.push(null);
+        const prop = t.isObjectProperty(property) ? property : undefined;
+        const name =
+          prop === undefined
+            ? null
+            : semanticStaticPropertyKey(prop.key, prop.computed);
+        if (path === null || prop === undefined || name === null) {
+          pending.push(
+            assignment
+              ? {
+                  pattern: prop?.value ?? property,
+                  path: null,
+                  lookup: "unproven",
+                }
+              : null,
+          );
           continue;
         }
         pending.push({
-          pattern: property.value,
+          pattern: prop.value,
           path: [...path, name],
-          plainObjectPath: plainObjectPath && !property.computed,
-          lookup: property.computed ? "unproven" : "own",
+          plainObjectPath: plainObjectPath && !prop.computed,
+          lookup: prop.computed ? "unproven" : "own",
         });
       }
       continue;
     }
     if (t.isArrayPattern(pattern)) {
       if (pattern !== root) {
+        const parentRead = ownSlot;
         ownSlot =
-          ownSlot !== undefined &&
-          ownSlot === sourcePresence?.read &&
-          (!rootArray || path.length === 1) &&
+          parentRead !== undefined &&
+          parentRead === sourcePresence?.read &&
+          (!rootArray || path?.length === 1) &&
           t.isArrayExpression(selected) &&
+          path !== null &&
           propertyPath !== null
-            ? sourcePresence?.readNestedArray?.(
+            ? sourcePresence?.readNestedArray(
                 selected,
                 propertyPath,
                 path,
                 pattern,
               )
             : undefined;
-        // IteratorClose can run after these elements and before the next
-        // sibling. Reaching this boundary ends the current presence proof.
-        if (ownSlot !== undefined) pending.push(null);
+        // Resume only after all inner bindings retained their proof and the
+        // native close cannot run a hook. Assignment targets can still throw.
+        if (ownSlot !== undefined)
+          pending.push(
+            parentRead !== undefined &&
+              semanticArrayPatternCanResumeAfterClose(pattern, owner, state)
+              ? { resume: parentRead }
+              : null,
+          );
       }
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
-        if (element === undefined || t.isRestElement(element))
+        if (element === undefined || (!assignment && t.isRestElement(element)))
           pending.push(null);
         else
           pending.push({
             pattern: element ?? undefined,
-            path: [...path, String(index)],
+            path: path === null ? null : [...path, String(index)],
             lookup: "own",
           });
       }
@@ -259,7 +308,12 @@ const collectDestructuring = (
       pattern,
       pattern.name,
     );
-    if (targetBinding === undefined) ownSlot = undefined;
+    assignmentBlocked ||=
+      assignment &&
+      targetBinding !== undefined &&
+      semanticBindingMayRejectAssignment(targetBinding, owner, state);
+    if (targetBinding === undefined || assignmentBlocked) ownSlot = undefined;
+    if (path === null) continue;
     addObjectOperation(
       {
         node: occurrence,
@@ -268,12 +322,14 @@ const collectDestructuring = (
         objectBindingId: source.bindingId,
         targetBindingId: targetBinding?.bindingId ?? null,
         propertyPath,
+        partial: assignmentBlocked,
         provenOwnSlot:
-          ownSlot !== undefined ||
-          (plainObjectPath &&
-            targetBinding !== undefined &&
-            propertyPath !== null &&
-            sourcePresence?.read(propertyPath, occurrence) !== undefined),
+          !assignmentBlocked &&
+          (ownSlot !== undefined ||
+            (plainObjectPath &&
+              targetBinding !== undefined &&
+              propertyPath !== null &&
+              sourcePresence?.read(propertyPath, occurrence) !== undefined)),
       },
       state,
       output,
@@ -289,6 +345,7 @@ interface AddObjectOperationInput {
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
   readonly provenOwnSlot?: boolean;
+  readonly partial?: boolean;
 }
 
 const addObjectOperation = (
@@ -314,6 +371,7 @@ const addObjectOperation = (
     targetBindingId: input.targetBindingId,
     propertyPath: input.propertyPath,
     resolution:
+      input.partial === true ||
       input.objectBindingId === null ||
       input.propertyPath === null ||
       (input.kind === "destructure" && input.targetBindingId === null)

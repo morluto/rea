@@ -104,8 +104,12 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
   const path = join(root, "probe.apk");
   await writeFile(path, "apk-bytes");
   installLauncher();
+  const command =
+    process.platform === "win32"
+      ? "C:\\opt\\apktool\\apktool"
+      : "/opt/apktool/apktool";
   const provider = new ApktoolProvider({
-    environment: { REA_APKTOOL_COMMAND: "/opt/apktool/apktool" },
+    environment: { REA_APKTOOL_COMMAND: command },
   });
   try {
     const omitted = await decode(provider, path);

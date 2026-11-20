@@ -8,6 +8,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
+import { javaScriptStrictnessAt } from "./javascriptSourceParser.js";
 
 import type {
   JavaScriptSemanticPropertyPath,
@@ -104,7 +105,23 @@ export interface JavaScriptSemanticBindingState {
   readonly directOrigins: JavaScriptModuleOrigin[];
   /** An ECMAScript import that exists at runtime, excluding type-only and import-equals syntax. */
   runtimeImport: boolean;
+  /** Immutable self-name binding created by evaluating a class or named function expression. */
+  selfNameAssignment?: "always-throws" | "throws-in-strict-mode";
 }
+
+/** Classify rejection independently from whether a syntactic write was recorded. */
+export const semanticBindingMayRejectAssignment = (
+  binding: JavaScriptSemanticBindingState,
+  site: t.Node,
+  { parentsByNode }: JavaScriptSemanticAnalysisState,
+): boolean =>
+  binding.runtimeImport ||
+  binding.declarationKinds.has("const") ||
+  binding.declarationKinds.has("using") ||
+  binding.declarationKinds.has("await using") ||
+  binding.selfNameAssignment === "always-throws" ||
+  (binding.selfNameAssignment === "throws-in-strict-mode" &&
+    javaScriptStrictnessAt(site, parentsByNode) !== "sloppy");
 
 /** Mutable lexical-scope state used only during AST recovery. */
 export interface JavaScriptSemanticScopeState {

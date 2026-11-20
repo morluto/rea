@@ -27,6 +27,7 @@ import {
  * throw. Absence of the block is `ok(null)` (the APK is v1-only or unsigned),
  * not an error. All integers are little-endian (ZIP).
  */
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
 
 /** "APK Sig Block 42" — the 16-byte block magic (JAR/APK signing block spec). */
@@ -68,11 +69,7 @@ export type ApkSigningBlockError =
       readonly offset: number;
       readonly detail: string;
     }
-  | {
-      readonly kind: "budget-exceeded";
-      readonly resource: "signing-block-pairs";
-      readonly limit: number;
-    };
+  | ParseFailureError<"limit">;
 
 export interface ZipTail {
   readonly eocdOffset: number;
@@ -397,11 +394,17 @@ export const locateApkSigningBlock = (
         detail: "pair length out of range",
       });
     if (pairs.length >= APK_SIGNING_BLOCK_MAX_PAIRS)
-      return err({
-        kind: "budget-exceeded",
-        resource: "signing-block-pairs",
-        limit: APK_SIGNING_BLOCK_MAX_PAIRS,
-      });
+      return err(
+        decodeLimit(
+          "apk-signing-block",
+          `APK Signing Block holds more signing-block-pairs than the ${String(APK_SIGNING_BLOCK_MAX_PAIRS)} limit.`,
+          {
+            name: "max_signing_block_pairs",
+            maximum: APK_SIGNING_BLOCK_MAX_PAIRS,
+          },
+          { offset: cursor },
+        ),
+      );
     const id = reader.u32(cursor + 8);
     const valueStart = cursor + 12;
     pairs.push({

@@ -43,11 +43,15 @@ describe.skipIf(
           "fixture-user:fixture,password@vendor.invalid",
         ),
       );
+      // APT continues across the indented blank line. The active deb822
+      // source below must still match native targets at stanza 2.
+      const disabled =
+        "Types: deb\nURIs: https://disabled.invalid/\nSuites: stable\nComponents: main\n \nEnabled: no\n\n";
       await writeFile(
         sources,
         format === "list"
-          ? `deb [arch=amd64,arm64 signed-by=${key}] ${declaredUris[0]} stable,updates main,extra contrib\n`
-          : `Types: deb\nURIs: ${declaredUris.join("/\n ")}/\nSuites: stable,updates\nComponents: main,extra contrib\nArchitectures: amd64 arm64\nSigned-By: ${key}\n`,
+          ? `deb [arch=amd64,arm64 arch+=i386 arch-=arm64 signed-by=${key}] ${declaredUris[0]} stable,updates main,extra contrib\n`
+          : `${disabled}Types: deb\nURIs: ${declaredUris.join("/\n ")}/\nSuites: stable,updates\nComponents: main,extra contrib\nArchitectures: amd64 arm64\nArchitectures-Add: i386\nArchitectures-Remove: arm64\nSigned-By: ${key}\n`,
       );
       // No update, download or package installation: APT only describes the
       // configured targets, with source and state paths confined to this root.
@@ -81,6 +85,16 @@ describe.skipIf(
       if (typeof output !== "object" || output.exitCode !== 0)
         throw new Error(`APT target query failed: ${JSON.stringify(output)}`);
       const targets = parseAptIndexTargets(output.stdout);
+      expect(new Set(targets.map(({ position }) => position))).toEqual(
+        new Set([format === "sources" ? 2 : 1]),
+      );
+      const descriptions = targets.map((target) => target.description);
+      expect(descriptions).toContainEqual(
+        expect.stringMatching(/ i386 Packages$/u),
+      );
+      expect(descriptions).not.toContainEqual(
+        expect.stringMatching(/ arm64 Packages$/u),
+      );
       const selected = targets.filter(
         (target) =>
           target.component === "main,extra" &&
@@ -109,7 +123,7 @@ describe.skipIf(
             uri_credentials_removed: uri === uris[0],
             suite: "stable,updates",
             components: ["main,extra", "contrib"],
-            architectures: ["amd64", "arm64"],
+            architectures: ["amd64", "i386"],
             signing_key: expect.objectContaining({
               path: key,
               fingerprint: VENDOR_A.fingerprint,
