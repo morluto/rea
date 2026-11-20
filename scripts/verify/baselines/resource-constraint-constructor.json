@@ -71,7 +71,6 @@
   "src/domain/pngVisualDiff.ts": 1,
   "src/domain/wasm/wasmInterfaceBudget.ts": 1,
   "src/dotnet/ManagedSnapshot.ts": 1,
-  "src/electron/ElectronFuseFailures.ts": 1,
   "src/erlang/BeamProvider.ts": 1,
   "src/evm/EvmoleFailures.ts": 3,
   "src/firmware/FirmwareFailures.ts": 1,
