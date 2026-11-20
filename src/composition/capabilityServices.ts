@@ -1,3 +1,6 @@
+import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
+import { createUefiAnalysisProvider } from "./uefi.js";
 import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import {
   locateWiresharkTool,
@@ -26,6 +29,7 @@ import {
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
 import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
+import { readHostFile } from "../desktop/HostFileRead.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
@@ -147,6 +151,7 @@ export interface CapabilityServiceOptions {
   readonly mavenGradleMetadata?: MavenGradleMetadataService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
+  readonly uefiAnalysis?: UefiAnalysisPort;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
@@ -355,6 +360,7 @@ const modules = {
     ({ providerEnvironment, options }) =>
       new DesktopBuildComputers(
         providerEnvironment,
+        readHostFile,
         options.desktopBuildSettle,
         options.desktopBuildDefaults,
         options.desktopBuildStartTiming,
@@ -479,6 +485,12 @@ const modules = {
             isAbsolute(environment.REA_UNBLOB_COMMAND ?? "")),
       },
     }),
+  ),
+  uefiAnalysis: service(
+    ({ options }) =>
+      new UefiAnalysisService(
+        options.uefiAnalysis ?? createUefiAnalysisProvider(),
+      ),
   ),
   gdbSessions: capability(
     ({ providerEnvironment, platform }) =>

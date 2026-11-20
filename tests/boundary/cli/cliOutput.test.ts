@@ -286,7 +286,7 @@ describe("CLI output flag value forms", () => {
   });
 });
 
-describe("unclosed CLI output filter slices", () => {
+describe("CLI output filter slice validation", () => {
   it.each([
     "providers[",
     "providers[0,1].name[",
@@ -355,6 +355,30 @@ describe("unclosed CLI output filter slices", () => {
         ok: false,
         error: { code: "INVALID_OUTPUT_FILTER" },
       });
+    },
+  );
+
+  workspaceCliTest(
+    "refuses extra slice bounds instead of returning a partial selection",
+    async ({ cli }) => {
+      const result = await cli.run({
+        freshProcess: true,
+        arguments: [
+          "providers",
+          "--json",
+          "--filter-output",
+          "capabilities[0,1,2].provider.id",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        ok: false,
+        error: {
+          code: "INVALID_OUTPUT_FILTER",
+          message: expect.stringContaining("Use [start,end]."),
+        },
+      });
+      expect(result.stderr).toBe("");
     },
   );
 
@@ -716,6 +740,8 @@ describe("CLI update root alias", () => {
 describe("version report requests", () => {
   it.each([
     [["--version", "--format=toon"], "toon"],
+    [["--version", "--json", "--", "--no-timings"], undefined],
+    [["--version", "--json", "--filter-output", "--no-timings"], undefined],
     // A command keeps its own --version option.
     [["providers", "--version", "--json"], undefined],
     [["--version", "1", "--json"], undefined],

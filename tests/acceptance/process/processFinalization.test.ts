@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
 
@@ -23,6 +22,7 @@ import {
   itWithCaptureCapability as captureTest,
 } from "../../boundary/process/processCaptureCapability.js";
 import { expectSerializedUnverifiedHostCleanup } from "../../support/hostCleanup.js";
+import { waitFor } from "../../support/testWait.js";
 
 const finalizationFixture = fileURLToPath(
   new URL("../../fixtures/processFinalization.mjs", import.meta.url),
@@ -117,60 +117,27 @@ const captureViaMcp = async (
   };
 };
 
-const waitFor = async (
-  description: string,
-  predicate: () => Promise<boolean>,
-  deadlineMs = 7_500,
-): Promise<void> => {
-  const deadline = Date.now() + deadlineMs;
-  while (!(await predicate())) {
-    if (Date.now() >= deadline)
-      throw new Error(`timed out waiting for ${description}`);
-    await delay(25);
-  }
-};
-
-const fixturePid = async (root: string): Promise<number> => {
-  let pid = Number.NaN;
-  await waitFor("the finalization fixture PID", async () => {
-    try {
-      pid = Number.parseInt(await readFile(join(root, "pid.txt"), "utf8"), 10);
-      return Number.isSafeInteger(pid) && pid > 0;
-    } catch {
-      return false;
-    }
+const fixturePid = (root: string): Promise<number> =>
+  waitFor(async () => {
+    const pid = Number(await readFile(join(root, "pid.txt"), "utf8"));
+    expect(Number.isSafeInteger(pid) && pid > 0, "fixture PID").toBe(true);
+    return pid;
   });
-  return pid;
-};
 
 const waitForFinalization = async (root: string): Promise<number> => {
   // The fixture writes the PID before it can receive SIGTERM, so once the
   // marker exists the PID file is complete.
-  await waitFor("the finalization fixture to receive SIGTERM", async () => {
-    try {
-      await access(join(root, "sigterm-received"));
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  await waitFor(() => access(join(root, "sigterm-received")));
   return fixturePid(root);
 };
 
-const waitForProcessExit = async (pid: number): Promise<void> =>
-  waitFor(`finalization fixture ${String(pid)} to exit`, async () => {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch (error: unknown) {
-      return (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ESRCH"
-      );
-    }
+const waitForProcessExit = async (pid: number): Promise<void> => {
+  await waitFor(() => {
+    expect(() => process.kill(pid, 0), "the captured PID has exited").toThrow(
+      expect.objectContaining({ code: "ESRCH" }),
+    );
   });
+};
 
 const finalizationFromPartial = (partial: unknown) => {
   const parsed = partialProcessCaptureObservationSchema.parse(partial);
@@ -192,7 +159,7 @@ const completedCaptureFromOutcome = (outcome: CaptureOutcome) => {
 const expectCooperativeFinalization = async (
   outcome: CaptureOutcome,
   root: string,
-  expectedExitCode = 0,
+  expectedExitCode: number,
 ): Promise<void> => {
   const capture = completedCaptureFromOutcome(outcome);
   expect(capture.exit.reason, "the deadline remains the exit reason").toBe(
@@ -274,37 +241,24 @@ const expectIgnoringFinalization = (outcome: CaptureOutcome): void => {
   ).toBeUndefined();
 };
 
-cliCaptureTest.for(["CLI", "MCP"] as const)(
-  "captures a cooperative finalizer through the compiled %s workflow",
-  async (adapter, { cli }) => {
-    const root = await createTestTempDirectory("rea-finalization-accept-");
-    const scenario = captureScenario("cooperative", root, {
-      timeout_ms: 1_500,
-      finalization_ms: 1_500,
-    });
-    const outcome =
-      adapter === "CLI"
-        ? await captureViaCli(cli, root, scenario)
-        : await captureViaMcp(scenario);
-    await expectCooperativeFinalization(outcome, root);
-  },
-);
-
-cliCaptureTest.for(["CLI", "MCP"] as const)(
-  "records the non-zero exit code of a finalizer through the compiled %s workflow",
-  async (adapter, { cli }) => {
+cliCaptureTest.for([
+  { adapter: "CLI", exitCode: 0 },
+  { adapter: "MCP", exitCode: 3 },
+] as const)(
+  "captures a cooperative finalizer with exit $exitCode through the compiled $adapter workflow",
+  async ({ adapter, exitCode }, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario(
       "cooperative",
       root,
       { timeout_ms: 1_500, finalization_ms: 1_500 },
-      3,
+      exitCode,
     );
     const outcome =
       adapter === "CLI"
         ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
-    await expectCooperativeFinalization(outcome, root, 3);
+    await expectCooperativeFinalization(outcome, root, exitCode);
   },
 );
 
@@ -493,7 +447,7 @@ captureTest(
       await cliClosed;
     });
     const cliFixturePid = await waitForFinalization(cliRoot);
-    const cliStarted = Date.now();
+    const cliStarted = performance.now();
     cli.kill("SIGINT");
     const cliExit = await cliClosed;
     await waitForProcessExit(cliFixturePid);
@@ -501,7 +455,7 @@ captureTest(
       130,
     );
     expect(
-      Date.now() - cliStarted,
+      performance.now() - cliStarted,
       "CLI cancellation does not wait for the grace interval",
     ).toBeLessThan(8_000);
     const cliDocument: unknown = JSON.parse(stdout);
@@ -562,7 +516,7 @@ captureTest(
       }),
     ]);
     const mcpFixturePid = await waitForFinalization(mcpRoot);
-    const mcpStarted = Date.now();
+    const mcpStarted = performance.now();
     controller.abort(new Error("cancel finalization acceptance fixture"));
     await expect(
       call,
@@ -574,7 +528,7 @@ captureTest(
       "the server accepts a follow-up request after cancelling the capture",
     ).resolves.toMatchObject({ tools: expect.any(Array) });
     expect(
-      Date.now() - mcpStarted,
+      performance.now() - mcpStarted,
       "MCP cancellation does not wait for the grace interval",
     ).toBeLessThan(8_000);
   },

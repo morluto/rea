@@ -227,7 +227,7 @@ it("requires absolute bundle paths without changing server-cwd semantics", async
 });
 
 describe("bundle comparison MCP integration", () => {
-  it("reads caller-selected bundle files and returns complete Evidence", async () => {
+  it("retains both sources from caller-selected bundles without explicit pairs", async () => {
     const root = await createTestTempDirectory("rea-bundle-mcp-");
     const leftPath = join(root, "left.json");
     const rightPath = join(root, "right.json");
@@ -250,19 +250,23 @@ describe("bundle comparison MCP integration", () => {
         arguments: {
           left_bundle_path: leftPath,
           right_bundle_path: rightPath,
-          record_pairs: [
-            {
-              left_evidence_id: leftRecord.evidence_id,
-              right_evidence_id: rightRecord.evidence_id,
-            },
-          ],
+          record_pairs: [],
         },
       });
       expect(result.isError).not.toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        normalized_result: { status: "changed" },
+      const evidence = toolContract("compare_bundles").outputSchema.parse(
+        result.structuredContent,
+      );
+      expect(evidence).toMatchObject({
+        normalized_result: { status: "unknown", summary: { unresolved: 2 } },
+        evidence_links: [leftRecord.evidence_id, rightRecord.evidence_id],
         evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
       });
+      const retained = connected.session.exportEvidenceBundle().records;
+      expect(retained).toHaveLength(3);
+      expect(retained).toEqual(
+        expect.arrayContaining([leftRecord, rightRecord, evidence]),
+      );
     } finally {
       await connected.close();
     }

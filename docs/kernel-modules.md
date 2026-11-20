@@ -64,10 +64,10 @@ limitation that the decoded size is unknown.
 The signature trailer is the 28-byte magic `~Module signature appended~\n`
 preceded by a 12-byte `module_signature` (`algo`, `hash`, `id_type`,
 `signer_len`, `key_id_len`, three pad bytes, and big-endian `sig_len`). When
-those parameter fields are zero and `id_type` is PKCS#7 (`2`), the preceding
-`sig_len` bytes are the PKCS#7 range and its SHA-256. The range is not parsed
-and no certificate, signer, or digest-coverage claim is made. An absent
-trailer is observed absence, not proof the module is unsigned.
+those parameter fields are zero, `id_type` is PKCS#7 (`2`), and `sig_len` is
+positive, the report gives the preceding PKCS#7 range and its SHA-256.
+Certificate, signer, and digest coverage remain unobserved. An absent trailer
+records observed absence for this input.
 
 When section names are incomplete, a missing named section is `unknown`
 rather than `absent`. An empty file-backed section is present and empty.
@@ -119,7 +119,7 @@ entries. `SHT_NOBITS` or a declared range that leaves the file is
 `signature_trailer_truncated` is reserved for an appended magic with fewer
 than 12 preceding bytes. ELF admission requires at least 52 (ELF32) or 64
 (ELF64) bytes, so this inspection never returns it for an admitted file. A
-`sig_len` that does not leave at least one module byte is
+`sig_len` that leaves no module bytes or names an empty PKCS#7 range is
 `signature_length_inconsistent`. Nonzero `algo`, `hash`, signer, key-id, or
 pad fields for PKCS#7 are `signature_parameters_nonzero`.
 A parameter block whose `id_type` is not PKCS#7 is

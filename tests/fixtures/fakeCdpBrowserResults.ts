@@ -39,7 +39,7 @@ export const resultFor = (
     case "Debugger.getScriptSource":
       return scriptSourceResult();
     case "Network.getResponseBody":
-      return responseBodyResult(options);
+      return responseBodyResult();
     case "Page.captureScreenshot":
       return screenshotResult();
     case "Browser.getVersion":
@@ -119,9 +119,7 @@ const frameTreeResult = (
         ? ":"
         : (options.electronFileUrl ?? options.attachedFrameUrl),
     options.extraCollections === true,
-    options.webMcpSameUrlRegistrations === undefined
-      ? options.webMcpFrameCount
-      : "same-url",
+    options.webMcpFrameCount,
   );
 
 const resourceTreeResult = (port: number, options: FakeOptions) =>
@@ -142,16 +140,13 @@ const scriptSourceResult = () => ({
   scriptSource: "export const observed = 'source-secret';",
 });
 
-const responseBodyResult = (options: FakeOptions) =>
-  options.invalidResponseBodyBase64 === true
-    ? { body: "%%%not-base64%%%", base64Encoded: true }
-    : {
-        body: JSON.stringify({
-          result: { ok: true, token: "response-body-secret" },
-          items: [{ id: 1 }, { id: 2 }],
-        }),
-        base64Encoded: false,
-      };
+const responseBodyResult = () => ({
+  body: JSON.stringify({
+    result: { ok: true, token: "response-body-secret" },
+    items: [{ id: 1 }, { id: 2 }],
+  }),
+  base64Encoded: false,
+});
 
 const screenshotResult = () => ({
   data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
@@ -291,7 +286,7 @@ const frameTree = (
   port: number,
   overrideUrl?: string,
   extraCollections = false,
-  webMcpFrameCount: number | "same-url" = 0,
+  webMcpFrameCount = 0,
 ): Readonly<Record<string, unknown>> => ({
   frameTree: {
     frame: {
@@ -314,17 +309,14 @@ const frameTree = (
             },
           ]
         : []),
-      ...Array.from(
-        { length: webMcpFrameCount === "same-url" ? 2 : webMcpFrameCount },
-        (_value, index) => ({
-          frame: {
-            id: `webmcp-frame-${String(index)}`,
-            parentId: "frame-main",
-            loaderId: `loader-webmcp-${String(index)}`,
-            url: `http://127.0.0.1:${String(port)}/webmcp-frame/${webMcpFrameCount === "same-url" ? "shared" : String(index)}`,
-          },
-        }),
-      ),
+      ...Array.from({ length: webMcpFrameCount }, (_value, index) => ({
+        frame: {
+          id: `webmcp-frame-${String(index)}`,
+          parentId: "frame-main",
+          loaderId: `loader-webmcp-${String(index)}`,
+          url: `http://127.0.0.1:${String(port)}/webmcp-frame/${String(index)}`,
+        },
+      })),
       {
         frame: {
           id: "frame-private",

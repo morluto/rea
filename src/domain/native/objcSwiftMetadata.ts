@@ -378,12 +378,12 @@ export type ObjcClassDiscoveryCoverage = z.infer<
   typeof objcClassDiscoveryCoverageSchema
 >;
 
-/** Nominal Swift type kinds recorded by `__swift5_types` descriptors. */
+/** Nominal Swift type kinds recorded by `__swift5_types` and `__swift5_types2` descriptors. */
 export const swiftDeclKindSchema = z.enum(["class", "struct", "enum", "actor"]);
 
 /**
  * One nominal type context descriptor. `location` is the descriptor itself;
- * evidence cites its `__swift5_types` record. `qualified_name` is null when a
+ * evidence cites its type record by section. `qualified_name` is null when a
  * parent context is unresolved, rather than a shortened guess.
  */
 export const swiftDeclSchema = z.strictObject({

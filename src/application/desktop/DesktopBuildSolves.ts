@@ -50,7 +50,7 @@ import {
   resolveBuildComputerEnvironment,
   type BuildComputerDefaults,
 } from "../../desktop/BuildComputerEnvironment.js";
-import { readHostFile } from "../../desktop/HostFileRead.js";
+import type { HostFileReader } from "../../ports/HostFileReader.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
   silentProgressReporter,
@@ -131,6 +131,7 @@ const recordsSchema = z.looseObject({
 const taskDigest = async (
   bundle: string,
   task: string,
+  readHostFile: HostFileReader,
   signal: AbortSignal,
 ): Promise<Result<string, AnalysisError>> => {
   const paths = [`tasks/${task}.json`, `artifacts/${task}-check/verify.py`];
@@ -196,6 +197,7 @@ interface BundleRecords {
 /** The bundle's records, a missing file read as none; a file REA cannot read or parse is refused, so it is never replaced. */
 const readRecords = async (
   bundle: string,
+  readHostFile: HostFileReader,
   signal: AbortSignal,
 ): Promise<Result<BundleRecords, AnalysisError>> => {
   const unreadable = (file: string, why: string) =>
@@ -259,9 +261,10 @@ const recordMeasure = (
   record: DifficultyRecord,
   signal: AbortSignal,
   resources: ArtifactResourceScope,
+  readHostFile: HostFileReader,
 ): Promise<Result<string, AnalysisError>> =>
   afterEarlierWrites(bundle, async () => {
-    const current = await readRecords(bundle, signal);
+    const current = await readRecords(bundle, readHostFile, signal);
     if (!current.ok) return current;
     const tasks = { ...current.value.tasks, [task]: record };
     const path = join(bundle, DIFFICULTY_FILE);
@@ -292,6 +295,7 @@ export const measureBuildTask = async (
   request: MeasureRequest,
   solver: Solver,
   signal: AbortSignal,
+  readHostFile: HostFileReader,
   progress: ProgressReporter = silentProgressReporter,
   resources: ArtifactResourceScope = new ArtifactResourceScope(),
 ): Promise<Result<MeasuredTask, AnalysisError>> => {
@@ -312,10 +316,10 @@ export const measureBuildTask = async (
   let agentenv: string | null = null;
   let stopped: StopReason = "decided";
   try {
-    const digest = await taskDigest(request.bundle, task, signal);
+    const digest = await taskDigest(request.bundle, task, readHostFile, signal);
     if (!digest.ok) return digest;
     // Refuse records REA could not keep before any solve is paid for.
-    const records = await readRecords(request.bundle, signal);
+    const records = await readRecords(request.bundle, readHostFile, signal);
     if (!records.ok) return records;
     for (;;) {
       const decision = nextSolve(solves, request.budget_usd);
@@ -360,6 +364,7 @@ export const measureBuildTask = async (
       record,
       signal,
       resources,
+      readHostFile,
     );
     if (!file.ok) return err(retainSolves(file.error));
     const { versions: _versions, ...reported } = record;
@@ -433,6 +438,7 @@ export const measureInFreshComputers = async (
     readonly defaults: BuildComputerDefaults;
     readonly retainCleanup: (owner: SolveCleanupOwner) => void;
     readonly resources: ArtifactResourceScope;
+    readonly readHostFile: HostFileReader;
   },
   signal: AbortSignal,
   progress?: ProgressReporter,
@@ -455,6 +461,7 @@ export const measureInFreshComputers = async (
         retainCleanup: host.retainCleanup,
       }),
     signal,
+    host.readHostFile,
     progress,
     host.resources,
   );

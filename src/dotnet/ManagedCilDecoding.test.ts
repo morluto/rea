@@ -93,6 +93,32 @@ const tinyBody = (il: readonly number[]) => {
   return { body: inspection.methods[0]?.body, coverage: inspection.coverage };
 };
 
+it.each([0x20, 0x30])(
+  "does not use an overlay byte (%i) to interpret a mapped fat method header",
+  (outsideSection) => {
+    const original = buildManagedPeFixture();
+    const methodRow = inspectManagedMembersBytes(
+      original,
+      managedPeFixtureTarget(original),
+    ).methods[0]?.row_offset;
+    expect(methodRow).toBeDefined();
+    if (methodRow === undefined) return;
+    const bytes = Buffer.concat([original, Buffer.alloc(11)]);
+    bytes.writeUInt32LE(0x2dff, methodRow);
+    bytes[0xfff] = 0x03;
+    bytes[0x1000] = outsideSection;
+
+    expect(
+      inspectManagedMembersBytes(bytes, managedPeFixtureTarget(bytes))
+        .methods[0]?.body,
+    ).toMatchObject({
+      status: "malformed",
+      header_format: "unknown",
+      issue: "Method body leaves file-backed PE section data",
+    });
+  },
+);
+
 describe("managed CIL decoding", () => {
   it("reads fat method header size from the full flags-and-size word", () => {
     const il = Buffer.from([

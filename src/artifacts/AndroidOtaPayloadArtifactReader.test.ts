@@ -340,3 +340,39 @@ it("applies the caller's integrity policy to a partition hash mismatch", async (
     await resourceScope.close();
   }
 });
+
+it("checks the stored OTA operation bytes when a partition hash is absent", async () => {
+  const original = Buffer.from("BOOT");
+  const dataHash = createHash("sha256").update(original).digest();
+  for (const data of [original, Buffer.from("BOAT")]) {
+    const path = await writeCarrier(
+      "payload.bin",
+      buildAndroidOtaPayload({
+        partitions: [
+          {
+            name: "boot",
+            omitNewHash: true,
+            operations: [{ type: 0, data, dataHash }],
+          },
+        ],
+      }),
+    );
+    const reader = new AndroidOtaPayloadArtifactReader(path);
+    try {
+      for await (const entry of reader.entries()) {
+        expect(entry.path).toBe("boot.img");
+        const opened = reader.open(entry).then(buffer);
+        if (data === original) {
+          expect((await opened).equals(original)).toBe(true);
+        } else {
+          await expect(opened).rejects.toMatchObject({
+            reason: "integrity",
+            message: expect.stringContaining("operation 0"),
+          });
+        }
+      }
+    } finally {
+      await reader.close();
+    }
+  }
+});

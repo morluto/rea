@@ -52,20 +52,6 @@ const laterInWindowRequest = (
   },
 });
 
-const expectNoCommittedFrameWithInvalidTimeline = (
-  observation: Awaited<ReturnType<typeof observeWithFake>>["observation"],
-) => {
-  expect(observation.timeline).not.toContainEqual(
-    expect.objectContaining({ type: "navigation_committed" }),
-  );
-  expect(observation.completeness.excluded).toContainEqual(
-    expect.objectContaining({
-      section: "timeline",
-      reason: "invalid_protocol_value",
-    }),
-  );
-};
-
 it("fails closed on an untimestamped cross-origin main-frame commit during clock sampling", async () => {
   const { observation } = await observeDuringClockSampling(
     (command, origin) => {
@@ -97,22 +83,11 @@ it("fails closed on an untimestamped cross-origin main-frame commit during clock
   );
 });
 
-it("keeps an unidentifiable frame commit unknown without inventing a main-frame event", async () => {
-  const { observation } = await observeDuringClockSampling((command) =>
-    command.method === "Performance.getMetrics"
-      ? [frameNavigated(command, { url: "https://outside.invalid/unknown" })]
-      : undefined,
-  );
-
-  expect(observation.window.end_reason).toBe("window_elapsed");
-  expectNoCommittedFrameWithInvalidTimeline(observation);
-  expect(observation.completeness.unavailable_sections).toContain("timeline");
-});
-
-it("records a malformed child identity without treating it as the main frame", async () => {
+it("accounts for each malformed frame commit without inventing a main-frame navigation", async () => {
   const { observation } = await observeDuringClockSampling((command) =>
     command.method === "Performance.getMetrics"
       ? [
+          frameNavigated(command, { url: "https://outside.invalid/unknown" }),
           frameNavigated(command, {
             id: 3,
             parentId: "frame-main",
@@ -123,7 +98,17 @@ it("records a malformed child identity without treating it as the main frame", a
   );
 
   expect(observation.window.end_reason).toBe("window_elapsed");
-  expectNoCommittedFrameWithInvalidTimeline(observation);
+  expect(observation.timeline).not.toContainEqual(
+    expect.objectContaining({ type: "navigation_committed" }),
+  );
+  expect(observation.completeness.unavailable_sections).toContain("timeline");
+  expect(observation.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+      count: 2,
+    }),
+  );
 });
 
 it("updates the main frame from a pre-arm root replacement without inventing a navigation row", async () => {
@@ -459,10 +444,10 @@ const redirectCases = [
       ["null status", null],
       ["boolean status", false],
       ["object status", {}],
+      ["zero status", 0],
     ] as const
   ).map(([name, status]) => ({
     name,
-    invalidStatus: true,
     response: (origin: string) => ({ url: `${origin}/prior`, status }),
     expected: (origin: string) => ({
       url: `${origin}/prior`,
@@ -492,15 +477,6 @@ const redirectCases = [
     expected: (origin: string) => ({
       url: `${origin}/prior`,
       status: null,
-      scope: "approved",
-    }),
-  },
-  {
-    name: "zero status",
-    response: (origin: string) => ({ url: `${origin}/prior`, status: 0 }),
-    expected: (origin: string) => ({
-      url: `${origin}/prior`,
-      status: 0,
       scope: "approved",
     }),
   },
@@ -544,73 +520,58 @@ const redirectCases = [
   },
 ];
 
-it.each(redirectCases)(
-  "preserves scoped redirect response facts with $name",
-  async (testCase) => {
-    const { response, expected } = testCase;
-    const { browser, observation } = await observeDuringClockSampling(
-      (command, origin) => {
-        if (command.method !== "Performance.getMetrics") return undefined;
-        return [
-          {
-            method: "Network.requestWillBeSent",
-            sessionId: command.sessionId,
-            params: {
-              requestId: "redirect-context",
-              timestamp: 21,
-              type: "Document",
-              frameId: "frame-main",
-              request: { url: `${origin}/next`, method: "GET" },
-              redirectResponse: {
-                ...response(origin),
-                headers: { Authorization: "discard-redirect-header" },
-              },
-            },
+it("retains scoped redirect response facts for each request", async () => {
+  const { browser, observation } = await observeDuringClockSampling(
+    (command, origin) => {
+      if (command.method !== "Performance.getMetrics") return undefined;
+      return redirectCases.map(({ name, response }, index) => ({
+        method: "Network.requestWillBeSent",
+        sessionId: command.sessionId,
+        params: {
+          requestId: name,
+          timestamp: 21 + index,
+          type: "Document",
+          frameId: "frame-main",
+          request: { url: `${origin}/next`, method: "GET" },
+          redirectResponse: {
+            ...response(origin),
+            headers: { Authorization: "discard-redirect-header" },
           },
-        ];
-      },
-    );
-    expect(observation.timeline).toContainEqual(
-      expect.objectContaining({
-        type: "redirect",
-        request_id: "redirect-context",
-        redirect_response: expected(browser.allowedOrigin),
-      }),
-    );
-    if (
-      expected(browser.allowedOrigin).scope === null ||
-      "invalidStatus" in testCase
-    )
-      expect(observation.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section: "timeline",
-          reason: "invalid_protocol_value",
-        }),
-      );
-    else
-      expect(observation.completeness.excluded).not.toContainEqual(
-        expect.objectContaining({
-          section: "timeline",
-          reason: "invalid_protocol_value",
-        }),
-      );
-    const scope = expected(browser.allowedOrigin).scope;
-    if (scope === "outside_policy" || scope === "unsupported") {
-      expect(observation.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section: "timeline",
-          reason:
-            scope === "outside_policy"
-              ? "disallowed_origin"
-              : "unsupported_url",
-        }),
-      );
-      expect(observation.completeness.policy_filtered_sections).toContain(
-        "timeline",
-      );
-    }
-    const serialized = JSON.stringify(observation);
-    expect(serialized).not.toContain("discard-redirect-");
-    expect(serialized).not.toContain("outside.invalid");
-  },
-);
+        },
+      }));
+    },
+  );
+
+  expect(observation.window.end_reason).toBe("window_elapsed");
+  expect(
+    observation.timeline
+      .filter(({ type }) => type === "redirect")
+      .map(({ request_id, redirect_response }) => ({
+        request_id,
+        redirect_response,
+      })),
+  ).toEqual(
+    redirectCases.map(({ name, expected }) => ({
+      request_id: name,
+      redirect_response: expected(browser.allowedOrigin),
+    })),
+  );
+
+  const timelineExclusions = observation.completeness.excluded.filter(
+    ({ section }) => section === "timeline",
+  );
+  expect(timelineExclusions).toHaveLength(3);
+  expect(timelineExclusions).toEqual(
+    expect.arrayContaining([
+      { section: "timeline", reason: "invalid_protocol_value", count: 8 },
+      { section: "timeline", reason: "disallowed_origin", count: 1 },
+      { section: "timeline", reason: "unsupported_url", count: 1 },
+    ]),
+  );
+  expect(observation.completeness.policy_filtered_sections).toContain(
+    "timeline",
+  );
+  const serialized = JSON.stringify(observation);
+  expect(serialized).not.toContain("discard-redirect-");
+  expect(serialized).not.toContain("outside.invalid");
+});

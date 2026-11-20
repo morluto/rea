@@ -206,6 +206,29 @@ const PRESENTERS = [
 ] as const;
 
 describe("advertised pattern presentation", () => {
+  it.each(PRESENTERS)(
+    "omits overlapping widened alternatives from the %s schema",
+    (_kind, present) => {
+      for (const pattern of ["^(?:é|è)+$", "^(?:é|[èa])+$", "^(?:(?:é|è))+$"]) {
+        const canonical = new Ajv({ strict: false }).compile({
+          type: "string",
+          pattern,
+        });
+        const schema = present(property({ type: "string", pattern }));
+        expect(
+          (schema.properties as Record<string, unknown>).name,
+        ).not.toHaveProperty("pattern");
+        const validate = new Ajv({ strict: false }).compile(schema);
+        expect(validate({ name: "é".repeat(1000) + "A" })).toBe(true);
+        expect(canonical("éè"), pattern).toBe(true);
+        expect(canonical("éèA"), pattern).toBe(false);
+      }
+      expect(projectPortablePattern("^(?:a|b)+$").kind).toBe("exact");
+      expect(projectPortablePattern("^[éè]+$").kind).toBe("wider");
+      expect(projectPortablePattern("^é(?:a|b)+$").kind).toBe("wider");
+    },
+  );
+
   const lookAround = "^(?!con$)[a-z]+$";
   const property = (schema: Record<string, unknown>) => ({
     type: "object",

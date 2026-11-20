@@ -18,7 +18,7 @@ export interface AnalysisAccumulator {
   readonly edges: BundleObservations["chunks"]["edges"];
   readonly routes: BundleObservations["routes"];
   readonly endpoints: BundleObservations["endpoints"];
-  /** Browser requests whose URL argument is not a string literal. */
+  /** Browser requests whose URL argument could not be resolved statically. */
   readonly unresolvedEndpoints: WebBundleCallSite[];
   readonly webMcp: BundleObservations["webmcp_declarations"];
   readonly inferences: WebBundleAnalysis["inferences"];

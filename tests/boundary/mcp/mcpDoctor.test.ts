@@ -26,6 +26,7 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+import { processHasStopped } from "../../support/process/observePosixProcess.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { createCliCommandSession } from "../../support/cli/cliCommandSession.js";
@@ -998,13 +999,7 @@ const runNoisyDoctorChild = async (body: string) => {
 
 const waitForExit = async (pid: number): Promise<void> => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    try {
-      process.kill(pid, 0);
-    } catch (cause: unknown) {
-      if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
-        return;
-      throw cause;
-    }
+    if (await processHasStopped(pid)) return;
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`MCP doctor fixture process ${String(pid)} remained alive`);

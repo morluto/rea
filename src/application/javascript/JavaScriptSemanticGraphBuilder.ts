@@ -603,6 +603,26 @@ function* projectFileSteps(
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   state: BuilderState,
+  paths: readonly ElectronCallPath[],
+): Generator<void, JavaScriptSemanticFingerprint[]> {
+  if (ir.loaderCondition === undefined)
+    return yield* projectFileWithEvidenceSteps(file, ir, state, paths);
+  state.evidenceContexts.sourceLoaderCondition = {
+    path: file.path,
+    sha256: file.sha256,
+    limitation: ir.loaderCondition,
+  };
+  try {
+    return yield* projectFileWithEvidenceSteps(file, ir, state, paths);
+  } finally {
+    state.evidenceContexts.sourceLoaderCondition = undefined;
+  }
+}
+
+function* projectFileWithEvidenceSteps(
+  file: JavaScriptArtifactFile,
+  ir: JavaScriptSemanticIr,
+  state: BuilderState,
   paths: readonly ElectronCallPath[] = [],
 ): Generator<void, JavaScriptSemanticFingerprint[]> {
   yield;

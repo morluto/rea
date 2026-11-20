@@ -142,6 +142,7 @@ const createRizinCommandEvidence = ({
       },
       result: { ...result },
       rawResult: { ...result },
+      authority: "controlled-replay",
       limitations: [
         RIZIN_SESSION_TARGET_LIMITATION,
         ...(launchTarget.unobservedReason === undefined

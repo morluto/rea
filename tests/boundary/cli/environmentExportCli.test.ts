@@ -115,14 +115,25 @@ cliTest(
   "writes the bundle folder from the fixture pair and prints the written files with sizes",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-environment-export-cli-");
-    const files = await writeEnvironmentServeFiles(root);
+    const { manifest, capture } = environmentServeFixture();
+    const manifestPath = join(root, "manifest.json");
+    const capturePath = join(root, "capture.json");
+    const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+    const captureBytes = Buffer.from(`${JSON.stringify(capture)}\n\n`);
+    await Promise.all([
+      writeFile(manifestPath, manifestBytes),
+      writeFile(capturePath, captureBytes),
+    ]);
+    const packageManifest = JSON.parse(
+      await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { name: string; version: string };
     const directory = join(root, "bundle");
     const result = await cli.run({
       arguments: [
         "environment-export",
-        files.manifestPath,
+        manifestPath,
         "--evidence",
-        files.capturePath,
+        capturePath,
         directory,
         "--json",
       ],
@@ -135,8 +146,13 @@ cliTest(
       name: "grafana-example",
       // The served read tools of the state the export derived, as the bundle's server serves them.
       tool_count: 14,
+      evidence_id: capture.evidence_id,
+      manifest_evidence_id: manifest.evidence_id,
       state: { served: true, evidence_id: expect.stringMatching(/^ev_/u) },
-      package_source: { kind: "registry" },
+      package_source: {
+        kind: "registry",
+        specifier: `${packageManifest.name}@${packageManifest.version}`,
+      },
     });
     const document = result.json as {
       files: { path: string; bytes: number }[];
@@ -144,8 +160,12 @@ cliTest(
     expect(document.files.map((file) => file.path).sort()).toEqual(
       BUNDLE_FILES,
     );
-    for (const file of document.files)
-      expect(file.bytes).toBe((await stat(join(directory, file.path))).size);
+    for (const file of document.files) {
+      const { size, mode } = await stat(join(directory, file.path));
+      expect(file.bytes, file.path).toBe(size);
+      if (process.platform !== "win32")
+        expect(mode & 0o777, file.path).toBe(0o600);
+    }
     const written = (
       await readdir(directory, { recursive: true, withFileTypes: true })
     )
@@ -161,15 +181,17 @@ cliTest(
     expect(
       Buffer.compare(
         await readFile(join(directory, "envs/grafana-example/manifest.json")),
-        await readFile(files.manifestPath),
+        manifestBytes,
       ),
     ).toBe(0);
     expect(
       Buffer.compare(
         await readFile(join(directory, "envs/grafana-example/evidence.json")),
-        await readFile(files.capturePath),
+        captureBytes,
       ),
     ).toBe(0);
+    expect(Buffer.compare(await readFile(manifestPath), manifestBytes)).toBe(0);
+    expect(Buffer.compare(await readFile(capturePath), captureBytes)).toBe(0);
     const dockerfile = await readFile(
       join(directory, "envs/grafana-example/Dockerfile"),
       "utf8",
@@ -177,9 +199,6 @@ cliTest(
     const pinnedNodeVersion = (
       await readFile(new URL("../../../.nvmrc", import.meta.url), "utf8")
     ).trim();
-    const packageManifest = JSON.parse(
-      await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
-    ) as { name: string; version: string };
     const lines = dockerfile.trimEnd().split("\n");
     expect(lines[0]).toBe(`FROM node:${pinnedNodeVersion}-bookworm-slim`);
     expect(supportsNodeVersion(pinnedNodeVersion)).toBe(true);

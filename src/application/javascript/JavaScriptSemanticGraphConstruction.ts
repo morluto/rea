@@ -196,7 +196,7 @@ export const retainSemanticGraphNode = (
 };
 
 /** Retain one canonical semantic node. */
-export const addSemanticGraphNode = (
+const addSemanticGraphNode = (
   state: SemanticGraphProjectionState,
   node: JavaScriptSemanticGraphNode,
   knownLookupKey?: string,
