@@ -495,8 +495,9 @@ const unixExecutable = (entry: FileEntry): boolean => {
 interface ParsedVsixManifest {
   readonly identity: VsixPackage["vsix_identity"];
   readonly engine: string | null;
-  readonly extensionDependencies: string[];
-  readonly extensionPack: string[];
+  // null when the document could not be parsed, so its ids are unknown.
+  readonly extensionDependencies: string[] | null;
+  readonly extensionPack: string[] | null;
   readonly extensionKind: string[];
   readonly assets: VsixPackage["assets"];
 }
@@ -509,8 +510,8 @@ const parseVsixManifestDocument = (
   const empty: ParsedVsixManifest = {
     identity: null,
     engine: null,
-    extensionDependencies: [],
-    extensionPack: [],
+    extensionDependencies: null,
+    extensionPack: null,
     extensionKind: [],
     assets: [],
   };
@@ -599,8 +600,9 @@ interface ParsedPackageJson {
   readonly browser: string | null;
   readonly activationEvents: string[];
   readonly contributes: VsixPackage["contributes"];
-  readonly extensionDependencies: string[];
-  readonly extensionPack: string[];
+  // null when the document could not be parsed, so its ids are unknown.
+  readonly extensionDependencies: string[] | null;
+  readonly extensionPack: string[] | null;
   readonly extensionKind: string[];
   readonly capabilities: VsixPackage["capabilities"];
   readonly enabledApiProposals: string[];
@@ -623,8 +625,8 @@ const parsePackageJsonDocument = (
       commands_total: 0,
       commands_omitted: 0,
     },
-    extensionDependencies: [],
-    extensionPack: [],
+    extensionDependencies: null,
+    extensionPack: null,
     extensionKind: [],
     capabilities: {
       untrusted_workspaces: null,
@@ -1155,23 +1157,26 @@ export const parseVsixPackage = async (
           );
       }
     }
-    const extensionDependencies = {
-      vsixmanifest: vsixParsed?.extensionDependencies ?? [],
-      package_json: packageParsed?.extensionDependencies ?? [],
-      disagreement: false,
-    };
-    extensionDependencies.disagreement = !sameIdSet(
-      extensionDependencies.vsixmanifest,
-      extensionDependencies.package_json,
+    // Compare declared ids only when both manifests were read: an unread side
+    // is unknown, not an empty list.
+    const declaredIds = (
+      vsixmanifest: string[] | null,
+      packageJson: string[] | null,
+    ): VsixPackage["extension_dependencies"] => ({
+      vsixmanifest,
+      package_json: packageJson,
+      disagreement:
+        vsixmanifest !== null &&
+        packageJson !== null &&
+        !sameIdSet(vsixmanifest, packageJson),
+    });
+    const extensionDependencies = declaredIds(
+      vsixParsed?.extensionDependencies ?? null,
+      packageParsed?.extensionDependencies ?? null,
     );
-    const extensionPack = {
-      vsixmanifest: vsixParsed?.extensionPack ?? [],
-      package_json: packageParsed?.extensionPack ?? [],
-      disagreement: false,
-    };
-    extensionPack.disagreement = !sameIdSet(
-      extensionPack.vsixmanifest,
-      extensionPack.package_json,
+    const extensionPack = declaredIds(
+      vsixParsed?.extensionPack ?? null,
+      packageParsed?.extensionPack ?? null,
     );
     const mainEntry =
       mainPath === null

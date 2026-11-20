@@ -239,9 +239,11 @@ const contributeCommandSchema = z.strictObject({
   title: nullableText,
 });
 
+// A side is null when its manifest was not read, so no disagreement is
+// claimed against a declaration that was never seen.
 const declaredIdsSchema = z.strictObject({
-  vsixmanifest: z.array(z.string().min(1)),
-  package_json: z.array(z.string().min(1)),
+  vsixmanifest: z.array(z.string().min(1)).nullable(),
+  package_json: z.array(z.string().min(1)).nullable(),
   disagreement: z.boolean(),
 });
 

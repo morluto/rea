@@ -300,6 +300,13 @@ it("inventories a package with no vsixmanifest and leaves vsix identity unknown"
     true,
   );
   expect(report.limitations).toContain(VSIX_LIMITATIONS.noVsixmanifest);
+  expect(report.extension_dependencies).toEqual({
+    vsixmanifest: null,
+    package_json: ["other.dep"],
+    disagreement: false,
+  });
+  expect(report.extension_pack.vsixmanifest).toBeNull();
+  expect(report.extension_pack.disagreement).toBe(false);
 });
 
 it("inventories a package whose vsixmanifest is not well-formed XML", async () => {
@@ -311,6 +318,10 @@ it("inventories a package whose vsixmanifest is not well-formed XML", async () =
   expect(report.vsixmanifest?.path).toBe("extension.vsixmanifest");
   expect(report.package_identity?.name).toBe("hello");
   expect(report.limitations).toContain(VSIX_LIMITATIONS.malformedVsixmanifest);
+  expect(report.extension_dependencies.vsixmanifest).toBeNull();
+  expect(report.extension_dependencies.disagreement).toBe(false);
+  expect(report.extension_pack.vsixmanifest).toBeNull();
+  expect(report.extension_pack.disagreement).toBe(false);
 });
 
 it("inventories a package whose package.json is not well-formed JSON", async () => {
@@ -322,6 +333,10 @@ it("inventories a package whose package.json is not well-formed JSON", async () 
   expect(report.package_json?.path).toBe("extension/package.json");
   expect(report.vsix_identity?.id).toBe("demo.hello");
   expect(report.limitations).toContain(VSIX_LIMITATIONS.malformedPackageJson);
+  expect(report.extension_dependencies.package_json).toBeNull();
+  expect(report.extension_dependencies.disagreement).toBe(false);
+  expect(report.extension_pack.package_json).toBeNull();
+  expect(report.extension_pack.disagreement).toBe(false);
 });
 
 it("records a path-traversal member without extracting it", async () => {

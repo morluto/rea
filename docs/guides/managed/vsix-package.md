@@ -49,7 +49,9 @@ exists.
 and `onStartupFinished`. `contributes` lists contribute key names and counts,
 and a capped command list (`commands_total` and `commands_omitted` keep the
 remainder). `extension_dependencies` and `extension_pack` keep both
-manifests' declared ids and a `disagreement` flag. `extension_kind`,
+manifests' declared ids and a `disagreement` flag. A side is `null` when its
+manifest was missing or could not be read, and `disagreement` is only true
+when both sides were read. `extension_kind`,
 `capabilities.untrusted_workspaces` / `virtual_workspaces`, and
 `enabled_api_proposals` come from package.json when present.
 `assets` lists vsixmanifest Asset Type/Path pairs and whether each path is
