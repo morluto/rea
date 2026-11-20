@@ -120,7 +120,7 @@
   "src/native/pe/PeResourcesProvider.ts": 1,
   "src/native/pwntools/PwntoolsDecoder.ts": 1,
   "src/native/pwntools/PwntoolsFailures.ts": 2,
-  "src/native/windows/WindowsShortcutProvider.ts": 2,
+  "src/native/windows/WindowsShortcutProvider.ts": 1,
   "src/pcap/PcapOutput.ts": 3,
   "src/pcap/PcapSnapshot.ts": 1,
   "src/process/ArtifactAnalysisResources.ts": 2,
