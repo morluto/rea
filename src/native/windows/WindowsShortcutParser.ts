@@ -724,13 +724,14 @@ const readUtf16At = (
 };
 
 const parseVolume = (
-  view: Buffer,
+  linkInfo: BinaryReader,
   base: number,
   offset: number,
   field: number,
   walk: Walk,
 ): NonNullable<WindowsShortcut["link_info"]>["volume"] => {
   if (offset === 0) return null;
+  const view = linkInfo.bytes;
   if (!fits(view, offset, 16)) {
     note(
       walk,
@@ -740,7 +741,7 @@ const parseVolume = (
     );
     return null;
   }
-  const size = view.readUInt32LE(offset);
+  const size = linkInfo.u32(offset);
   if (size < 16 || !fits(view, offset, size)) {
     note(
       walk,
@@ -751,7 +752,8 @@ const parseVolume = (
     return null;
   }
   const volume = view.subarray(offset, offset + size);
-  const labelOffset = volume.readUInt32LE(12);
+  const reader = new BinaryReader(volume, linkInfo.little, linkInfo.format);
+  const labelOffset = reader.u32(12);
   // MS-SHLLINK 2.3.1: exactly 0x14 selects VolumeLabelOffsetUnicode, and that
   // field exists for no other value. The two label encodings never coexist.
   const hasUnicodeLabel = labelOffset === VOLUME_UNICODE_LABEL_SELECTOR;
@@ -763,27 +765,20 @@ const parseVolume = (
       "VolumeID ends before VolumeLabelOffsetUnicode",
     );
   return {
-    drive_type: driveType(volume.readUInt32LE(4)),
-    serial: volume.readUInt32LE(8).toString(16).toUpperCase().padStart(8, "0"),
+    drive_type: driveType(reader.u32(4)),
+    serial: reader.u32(8).toString(16).toUpperCase().padStart(8, "0"),
     label: hasUnicodeLabel
       ? null
       : readAnsiAt(volume, base + offset, labelOffset, 12, walk, 16),
     label_unicode:
       hasUnicodeLabel && size >= 20
-        ? readUtf16At(
-            volume,
-            base + offset,
-            volume.readUInt32LE(16),
-            16,
-            walk,
-            20,
-          )
+        ? readUtf16At(volume, base + offset, reader.u32(16), 16, walk, 20)
         : null,
   };
 };
 
 const parseNetwork = (
-  view: Buffer,
+  linkInfo: BinaryReader,
   base: number,
   offset: number,
   field: number,
@@ -792,6 +787,7 @@ const parseNetwork = (
   WindowsShortcut["link_info"]
 >["common_network_relative_link"] => {
   if (offset === 0) return null;
+  const view = linkInfo.bytes;
   if (!fits(view, offset, 20)) {
     note(
       walk,
@@ -801,7 +797,7 @@ const parseNetwork = (
     );
     return null;
   }
-  const size = view.readUInt32LE(offset);
+  const size = linkInfo.u32(offset);
   if (size < 20 || !fits(view, offset, size)) {
     note(
       walk,
@@ -812,13 +808,14 @@ const parseNetwork = (
     return null;
   }
   const block = view.subarray(offset, offset + size);
+  const reader = new BinaryReader(block, linkInfo.little, linkInfo.format);
   // MS-SHLLINK 2.3.2: DeviceNameOffset (and its Unicode twin) are only
   // meaningful when ValidDevice is set; otherwise the fields are ignored.
-  const flags = block.readUInt32LE(4);
+  const flags = reader.u32(4);
   const validDevice = (flags & 0x1) !== 0;
   const validNetType = (flags & 0x2) !== 0;
-  const netNameOffset = block.readUInt32LE(8);
-  const deviceNameOffset = validDevice ? block.readUInt32LE(12) : 0;
+  const netNameOffset = reader.u32(8);
+  const deviceNameOffset = validDevice ? reader.u32(12) : 0;
   const declaresUnicode = netNameOffset > 0x14;
   if (declaresUnicode && size < 0x1c)
     note(
@@ -828,9 +825,8 @@ const parseNetwork = (
       "CommonNetworkRelativeLink ends before its declared Unicode offsets",
     );
   const unicode = declaresUnicode && size >= 0x1c;
-  const netNameOffsetUnicode = unicode ? block.readUInt32LE(20) : 0;
-  const deviceNameOffsetUnicode =
-    unicode && validDevice ? block.readUInt32LE(24) : 0;
+  const netNameOffsetUnicode = unicode ? reader.u32(20) : 0;
+  const deviceNameOffsetUnicode = unicode && validDevice ? reader.u32(24) : 0;
   // If the optional header is truncated, keep readable ANSI data after the
   // fixed header while the existing truncation issue marks coverage partial.
   const dataOffset = unicode ? 0x1c : 0x14;
@@ -867,7 +863,7 @@ const parseNetwork = (
       walk,
       dataOffset,
     ),
-    network_provider_type: validNetType ? block.readUInt32LE(16) : null,
+    network_provider_type: validNetType ? reader.u32(16) : null,
   };
   walk.pathUncertainty.network ||=
     (declaresUnicode && !unicode) ||
@@ -881,14 +877,15 @@ const parseNetwork = (
 };
 
 const parseLinkInfo = (
-  bytes: Buffer,
+  file: BinaryReader,
   walk: Walk,
 ): WindowsShortcut["link_info"] => {
+  const { bytes } = file;
   if (!fits(bytes, walk.offset, 8)) {
     note(walk, "truncated", walk.offset, "LinkInfo is truncated", true);
     return null;
   }
-  const size = bytes.readUInt32LE(walk.offset);
+  const size = file.u32(walk.offset);
   if (size < LINK_INFO_FIXED_HEADER_BYTES || !fits(bytes, walk.offset, size)) {
     note(
       walk,
@@ -900,7 +897,8 @@ const parseLinkInfo = (
     return null;
   }
   const view = bytes.subarray(walk.offset, walk.offset + size);
-  const headerSize = view.readUInt32LE(4);
+  const reader = new BinaryReader(view, file.little, file.format);
+  const headerSize = reader.u32(4);
   const declaresUnicodeOffsets = headerSize >= LINK_INFO_UNICODE_HEADER_BYTES;
   if (
     headerSize > size ||
@@ -912,15 +910,15 @@ const parseLinkInfo = (
       walk.offset + 4,
       `LinkInfoHeaderSize ${String(headerSize)} must be 0x1C or at least 0x24 and fit within LinkInfoSize (${String(size)})`,
     );
-  const flags = view.readUInt32LE(8);
-  const volumeOffset = view.readUInt32LE(12);
-  const localOffset = view.readUInt32LE(16);
-  const networkOffset = view.readUInt32LE(20);
-  const suffixOffset = view.readUInt32LE(24);
+  const flags = reader.u32(8);
+  const volumeOffset = reader.u32(12);
+  const localOffset = reader.u32(16);
+  const networkOffset = reader.u32(20);
+  const suffixOffset = reader.u32(24);
   const hasUnicodeOffsets =
     declaresUnicodeOffsets && size >= LINK_INFO_UNICODE_HEADER_BYTES;
-  const localUnicodeOffset = hasUnicodeOffsets ? view.readUInt32LE(28) : 0;
-  const suffixUnicodeOffset = hasUnicodeOffsets ? view.readUInt32LE(32) : 0;
+  const localUnicodeOffset = hasUnicodeOffsets ? reader.u32(28) : 0;
+  const suffixUnicodeOffset = hasUnicodeOffsets ? reader.u32(32) : 0;
   // A declared HeaderSize below the mandatory 0x1C must not expose those
   // fields as string data. Larger declared headers, including reserved
   // 0x1D..0x23 sizes, keep their own end as the floor.
@@ -935,7 +933,7 @@ const parseLinkInfo = (
     },
     volume:
       (flags & 0x1) !== 0
-        ? parseVolume(view, walk.offset, volumeOffset, 12, walk)
+        ? parseVolume(reader, walk.offset, volumeOffset, 12, walk)
         : null,
     local_base_path:
       (flags & 0x1) !== 0
@@ -954,7 +952,7 @@ const parseLinkInfo = (
         : null,
     common_network_relative_link:
       (flags & 0x2) !== 0
-        ? parseNetwork(view, walk.offset, networkOffset, 20, walk)
+        ? parseNetwork(reader, walk.offset, networkOffset, 20, walk)
         : null,
     common_path_suffix: readAnsiAt(
       view,
@@ -1372,9 +1370,10 @@ export const parseWindowsShortcut = async (
     (flags & 0x00000001) !== 0
       ? await parseIdList(bytes, walk, input.max_id_list_items, signal)
       : null;
+  const reader = new BinaryReader(bytes, true, "windows-shortcut");
   const linkInfo =
     (flags & 0x00000002) !== 0 && !walk.stopped
-      ? parseLinkInfo(bytes, walk)
+      ? parseLinkInfo(reader, walk)
       : null;
   const stringData: WindowsShortcut["string_data"] = {
     name: null,
@@ -1393,7 +1392,6 @@ export const parseWindowsShortcut = async (
     [0x00000040, "icon_location", "ICON_LOCATION"],
   ];
   if (!walk.stopped) {
-    const reader = new BinaryReader(bytes, true, "windows-shortcut");
     for (const [bit, key, label] of stringFlags) {
       if ((flags & bit) === 0) continue;
       const field = parseStringField(reader, walk, unicode, label);

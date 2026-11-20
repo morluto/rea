@@ -1,4 +1,5 @@
 import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
@@ -56,6 +57,7 @@ export const prepareGhidraDosLoadImage = (
     return err("DOS MZ initialized image was not completely captured");
   const loadSegment = 0x1000;
   const modified = Buffer.from(bytes.subarray(0, header.imageBytes));
+  const reader = new BinaryReader(modified, true, "dos-mz");
   const applied = [];
   for (const {
     segment,
@@ -66,8 +68,7 @@ export const prepareGhidraDosLoadImage = (
     const original = modified
       .subarray(fileOffset, fileOffset + 2)
       .toString("hex");
-    const relocated =
-      (modified.readUInt16LE(fileOffset) + loadSegment) & 0xffff;
+    const relocated = (reader.u16(fileOffset) + loadSegment) & 0xffff;
     modified.writeUInt16LE(relocated, fileOffset);
     applied.push({
       segment,
