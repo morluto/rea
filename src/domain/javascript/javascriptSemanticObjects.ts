@@ -157,11 +157,10 @@ const collectDestructuring = (
   const rootArray = t.isArrayPattern(root);
   const sourcePresence =
     initializer != null && source.path !== null
-      ? readPresence(
-          source.bindingId,
-          initializer,
-          rootArray ? source.path : undefined,
-        )
+      ? readPresence(source.bindingId, initializer, {
+          path: source.path,
+          selection: rootArray ? "array-iterator" : "own-data",
+        })
       : undefined;
   let ownSlot = sourcePresence?.read;
   // An unsupported property still occupies its place in the pattern's

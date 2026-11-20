@@ -56,7 +56,7 @@ const expectedDependencies = [
   ["arrayObject", ["0", "mode"]],
   ["nestedElement", ["items", "0"]],
   ["siblingObjectElement", ["sibling", "0"]],
-  ["numericInnerElement", ["0", "0"]],
+  ["projectedNumericInnerElement", ["pairs", "0", "0"]],
   ["unreachedSibling", ["sibling", "0"], "candidate"],
   ["innerElement", ["0", "0"]],
   ["siblingInnerElement", ["1", "0"]],
@@ -82,7 +82,7 @@ const tracedBindings = [
   "arrayObject",
   "nestedElement",
   "siblingObjectElement",
-  "numericInnerElement",
+  "projectedNumericInnerElement",
   "unreachedSibling",
   "innerElement",
   "siblingInnerElement",
@@ -139,9 +139,9 @@ cliTest(
     const { items: [nestedElement], empty: {}, sibling: [siblingObjectElement] } = nestedSource;
     nestedSource.items[0] = "later";
     nestedSource.sibling[0] = "later";
-    const numericSource = [["read-time"]];
-    const { 0: [numericInnerElement] } = numericSource;
-    numericSource[0][0] = "later";
+    const numericSource = { pairs: [["read-time"]] };
+    const { 0: [projectedNumericInnerElement] } = numericSource.pairs;
+    numericSource.pairs[0][0] = "later";
     const nestedPairs = [["read-time"], ["sibling"]];
     const [[innerElement], [siblingInnerElement]] = nestedPairs;
     nestedPairs[0][0] = "later";
