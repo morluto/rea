@@ -397,6 +397,14 @@ const parseNuspecDocument = (
     const element = firstNamed(metadata, local, namespace);
     return element === undefined ? null : elementText(element);
   };
+  const publisherFields = new Map<string, string>();
+  for (const element of childElements(metadata)) {
+    const name = element.localName.toLowerCase();
+    if (publisherFields.has(name) || childElements(element).length > 0)
+      continue;
+    const value = elementText(element);
+    if (value !== null) publisherFields.set(name, value);
+  }
   const licenseElement = firstNamed(metadata, "license", metadataNamespace);
   const licenseType = licenseElement ? attribute(licenseElement, "type") : null;
   const repositoryElement = firstNamed(
@@ -408,8 +416,8 @@ const parseNuspecDocument = (
     identity: {
       id: metadataText("id", metadataNamespace),
       version: metadataText("version", metadataNamespace),
-      authors: metadataText("authors"),
-      description: metadataText("description"),
+      authors: publisherFields.get("authors") ?? null,
+      description: publisherFields.get("description") ?? null,
     },
     license:
       licenseElement === undefined

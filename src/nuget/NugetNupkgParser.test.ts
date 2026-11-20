@@ -808,3 +808,23 @@ it("keeps a foreign group from suppressing ungrouped NuGet dependencies", async 
     { target_framework: null, dependencies: [{ id: "Declared" }] },
   ]);
 });
+
+it("uses the first nonempty leaf publisher value by case-insensitive local name", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: `<package><metadata>
+      <ID>Ignored</ID><id>Ungrouped.Package</id><version>1.0</version>
+      <authors>Wrong <team>nested</team></authors><authors/>
+      <x:Authors xmlns:x="urn:extension">First publisher</x:Authors>
+      <authors>Later publisher</authors>
+      <Description>Published description</Description>
+    </metadata></package>`,
+  });
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.identity).toMatchObject({
+    id: "Ungrouped.Package",
+    authors: "First publisher",
+    description: "Published description",
+  });
+});
