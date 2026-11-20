@@ -341,6 +341,40 @@ it("reports cancellation during a member read with the caller's reason", async (
   }
 });
 
+it("keeps the ZIP directory failure when cancellation reuses that error", async () => {
+  // A local header signature without a central directory is not a valid ZIP.
+  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+  const controller = new AbortController();
+  const original = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      try {
+        return yield* original.call(this, options);
+      } catch (cause: unknown) {
+        controller.abort(cause);
+        throw cause;
+      }
+    });
+  try {
+    const failure: unknown = await parseNugetNupkg(
+      bytes,
+      artifactOf(bytes),
+      defaults,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    if (!(failure instanceof ParseFailureError))
+      throw new Error("expected malformed ZIP failure", { cause: failure });
+    expect(failure.failure.kind).toBe("malformed");
+    expect(failure.cause).toBeInstanceOf(ArtifactReaderFailure);
+    expect((failure.cause as ArtifactReaderFailure).cause).toBe(
+      controller.signal.reason,
+    );
+  } finally {
+    enumeration.mockRestore();
+  }
+});
+
 const largeRelsFixture = () =>
   nugetNupkgFixture({
     includeRels: false,

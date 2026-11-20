@@ -116,17 +116,7 @@ const zipSize = (value: number | undefined): number | null =>
 const asFileEntry = (entry: Entry): entry is FileEntry =>
   !entry.directory && "getData" in entry;
 
-const wrapZipFailure = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-  compressionMethod?: number,
-): never => {
-  // zip.js rejects with the caller's abort reason; keep it as cancellation
-  // rather than reporting the package as damaged.
-  if (signal?.aborted === true && Object.is(cause, signal.reason))
-    throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
-      cause: signal.reason,
-    });
+const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
   if (
     cause instanceof ArtifactReaderFailure ||
     cause instanceof ParseFailureError
@@ -198,7 +188,7 @@ const readMemberBytes = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    return wrapZipFailure(cause, signal, entry.compressionMethod);
+    return wrapZipFailure(cause, entry.compressionMethod);
   }
 };
 
@@ -541,6 +531,18 @@ export const parseNugetNupkg = async (
     );
   const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
   const limitations: string[] = [...BASE_LIMITATIONS];
+  const zipAbort = signal === undefined ? undefined : new AbortController();
+  const zipSignal = zipAbort?.signal;
+  // zip.js throws its signal's reason. Give it an owned cancellation record
+  // so an independent ZIP failure cannot be confused with the caller's reason.
+  const onAbort = () =>
+    zipAbort?.abort(
+      new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
+        cause: signal?.reason,
+      }),
+    );
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
   try {
     // Count while enumerating so an oversized directory stops at the budget
     // instead of materializing and decoding every member first.
@@ -548,7 +550,7 @@ export const parseNugetNupkg = async (
     try {
       for await (const entry of reader.getEntriesGenerator({
         decodeText: decodeZipEntryText,
-        ...(signal === undefined ? {} : { signal }),
+        ...(zipSignal === undefined ? {} : { signal: zipSignal }),
       })) {
         if (entries.length >= input.max_entries)
           throw decodeLimit(
@@ -563,7 +565,7 @@ export const parseNugetNupkg = async (
         entries.push(entry);
       }
     } catch (cause: unknown) {
-      return wrapZipFailure(cause, signal);
+      return wrapZipFailure(cause);
     }
     // The inventory comes from the central directory; local entries it omits
     // are only visible as bytes no listed record accounts for.
@@ -626,7 +628,7 @@ export const parseNugetNupkg = async (
       else {
         const relsBytes = await readMemberBytes(
           rels.entry,
-          signal,
+          zipSignal,
           input.max_nuspec_bytes,
           "OPC relationships member",
         );
@@ -691,7 +693,7 @@ export const parseNugetNupkg = async (
     }
     const nuspecBytes = await readMemberBytes(
       selected.member.entry,
-      signal,
+      zipSignal,
       input.max_nuspec_bytes,
       "Selected .nuspec",
     );
@@ -758,6 +760,7 @@ export const parseNugetNupkg = async (
       limitations,
     };
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     await reader.close().catch(() => undefined);
   }
 };
