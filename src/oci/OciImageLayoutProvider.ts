@@ -25,6 +25,7 @@ import {
   type OciImageLayout,
 } from "../domain/oci/imageLayout.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { err, ok } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import {
@@ -134,6 +135,27 @@ const layoutFailure = (cause: unknown, input: InspectOciImageLayoutInput) => {
   );
 };
 
+const ociImageLayoutEvidence = (
+  input: InspectOciImageLayoutInput,
+  report: OciImageLayout,
+): Evidence =>
+  createEvidence(
+    {
+      path: report.artifact.path,
+      format: "directory",
+      sha256: report.artifact.snapshot_sha256,
+    },
+    OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY,
+    {
+      operation: OPERATION,
+      parameters: input,
+      result: report,
+      confidence: "observed",
+      limitations: report.limitations,
+      locations: [{ kind: "artifact-path", path: input.path }],
+    },
+  );
+
 /** Portable parser over one bounded, identity-checked directory. */
 export class OciImageLayoutProvider {
   readonly identity = OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY;
@@ -176,11 +198,17 @@ export class OciImageLayoutProvider {
         }
         const closed = await this.#resources.release(owner);
         if (closed.kind === "failed") {
+          // A completed inventory survives as the cleanup failure's partial.
+          if (outcome.kind === "completed")
+            throw this.#resources.cleanupFailure(
+              outcome,
+              [closed],
+              ociImageLayoutEvidence(input, outcome.value),
+            );
           const cleanup = this.#resources.cleanupFailure(
             { kind: "completed" },
             [closed],
           );
-          if (outcome.kind === "completed") throw cleanup;
           // The parse's own failure, with its partial facts, stays primary.
           return err(
             analysisErrorWithCleanupDependencies(

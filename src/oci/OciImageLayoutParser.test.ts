@@ -9,6 +9,7 @@ import {
 } from "../domain/oci/imageLayout.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { parseEvidence } from "../domain/evidence.js";
 import {
   ArtifactReaderFailure,
   DirectoryArtifactReader,
@@ -632,6 +633,39 @@ it("keeps the parse refusal and its layout snapshot when reader cleanup also fai
       kind: "file-snapshot-hash",
       path: "oci-layout",
     });
+  } finally {
+    close.mockRestore();
+    await provider.close();
+  }
+});
+
+it("keeps the completed inventory when reader cleanup fails, then retries cleanup", async () => {
+  const root = await createTestTempDirectory("rea-oci-cleanup-completed-");
+  await writeOciImageLayoutFixture(root);
+  const nativeClose = DirectoryArtifactReader.prototype.close;
+  let attempts = 0;
+  const close = vi
+    .spyOn(DirectoryArtifactReader.prototype, "close")
+    .mockImplementation(async function (this: DirectoryArtifactReader) {
+      attempts++;
+      if (attempts === 1) throw new Error("controlled close failure");
+      await nativeClose.call(this);
+    });
+  const provider = new OciImageLayoutProvider();
+  try {
+    const result = await provider.inspect(
+      inspectOciImageLayoutInputSchema.parse({ path: root }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    const report = ociImageLayoutSchema.parse(
+      parseEvidence(result.error.partialObservation).normalized_result,
+    );
+    expect(report.artifact.path).toBe(root);
+    expect(report.images.length).toBeGreaterThan(0);
+    await provider.close();
+    expect(attempts).toBe(2);
   } finally {
     close.mockRestore();
     await provider.close();
