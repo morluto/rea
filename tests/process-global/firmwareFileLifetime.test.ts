@@ -768,7 +768,8 @@ it("preserves primitive cancellation before publication commit and rolls back th
   await fixture.context.files.close();
 });
 
-it.each(["caller", "deadline"])(
+// This fixture cancels from the directory fsync that Windows intentionally skips.
+it.skipIf(process.platform === "win32").each(["caller", "deadline"])(
   "preserves %s cancellation during directory sync plus failed close and rollback",
   async (kind) => {
     const controller = new AbortController();
