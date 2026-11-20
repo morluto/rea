@@ -57,6 +57,66 @@ it("applies the shared absolute local-path policy to the public input", () => {
   );
 });
 
+const unknownIdentityReport = {
+  artifact: {
+    path: "/artifacts/pkg.vsix",
+    sha256: "a".repeat(64),
+    bytes: 16,
+  },
+  vsix_identity: null,
+  package_identity: null,
+  identity_disagreements: [],
+  engine: { vsixmanifest: null, package_json: null, disagreement: false },
+  target_platform: null,
+  entry_points: { main: null, browser: null },
+  activation_events: [],
+  contributes: {
+    keys: [],
+    commands: [],
+    commands_total: 0,
+    commands_omitted: 0,
+  },
+  extension_dependencies: {
+    vsixmanifest: [],
+    package_json: [],
+    disagreement: false,
+  },
+  extension_pack: {
+    vsixmanifest: [],
+    package_json: [],
+    disagreement: false,
+  },
+  extension_kind: [],
+  capabilities: {
+    untrusted_workspaces: null,
+    virtual_workspaces: null,
+  },
+  enabled_api_proposals: [],
+  assets: [],
+  signatures: { p7s: false, manifest: false },
+  contents: [],
+  member_kind_counts: {
+    vsixmanifest: 0,
+    package_json: 0,
+    content_types: 0,
+    opc: 0,
+    signature: 0,
+    javascript: 0,
+    native_addon: 0,
+    wasm: 0,
+    executable: 0,
+    shell_script: 0,
+    nested_archive: 0,
+    unknown: 0,
+  },
+  interesting_members: [],
+  duplicate_paths: [],
+  vsixmanifest: null,
+  package_json: null,
+  coverage: { status: "complete", entries: 0, examined_manifest_bytes: 0 },
+  limitations: ["No extension.vsixmanifest was selected."],
+};
+
 it("rejects extra caller arguments and admits a package with unknown identity", () => {
   expect(
     inspectVsixPackageInputSchema.safeParse({
@@ -64,67 +124,25 @@ it("rejects extra caller arguments and admits a package with unknown identity", 
       extra: true,
     }).success,
   ).toBe(false);
-  const report = vsixPackageSchema.parse({
-    artifact: {
-      path: "/artifacts/pkg.vsix",
-      sha256: "a".repeat(64),
-      bytes: 16,
-    },
-    vsix_identity: null,
-    package_identity: null,
-    identity_disagreements: [],
-    engine: { vsixmanifest: null, package_json: null, disagreement: false },
-    target_platform: null,
-    entry_points: { main: null, browser: null },
-    activation_events: [],
-    contributes: {
-      keys: [],
-      commands: [],
-      commands_total: 0,
-      commands_omitted: 0,
-    },
-    extension_dependencies: {
-      vsixmanifest: [],
-      package_json: [],
-      disagreement: false,
-    },
-    extension_pack: {
-      vsixmanifest: [],
-      package_json: [],
-      disagreement: false,
-    },
-    extension_kind: [],
-    capabilities: {
-      untrusted_workspaces: null,
-      virtual_workspaces: null,
-    },
-    enabled_api_proposals: [],
-    assets: [],
-    signatures: { p7s: false, manifest: false },
-    contents: [],
-    member_kind_counts: {
-      vsixmanifest: 0,
-      package_json: 0,
-      content_types: 0,
-      opc: 0,
-      signature: 0,
-      javascript: 0,
-      native_addon: 0,
-      wasm: 0,
-      executable: 0,
-      shell_script: 0,
-      nested_archive: 0,
-      unknown: 0,
-    },
-    interesting_members: [],
-    duplicate_paths: [],
-    vsixmanifest: null,
-    package_json: null,
-    coverage: { status: "complete", entries: 0, examined_manifest_bytes: 0 },
-    limitations: ["No extension.vsixmanifest was selected."],
-  });
+  const report = vsixPackageSchema.parse(unknownIdentityReport);
   expect(report.vsix_identity).toBeNull();
   expect(report.vsixmanifest).toBeNull();
+});
+
+it("admits a ZIP64 interesting member larger than 4 GiB without a digest", () => {
+  const report = vsixPackageSchema.parse({
+    ...unknownIdentityReport,
+    interesting_members: [
+      {
+        path: "extension/dist/module.wasm",
+        kind: "wasm",
+        bytes: 0x1_0000_0001,
+        sha256: null,
+        classification: "inferred",
+      },
+    ],
+  });
+  expect(report.interesting_members[0]?.bytes).toBe(0x1_0000_0001);
 });
 
 it("derives member kinds from ZIP names", () => {

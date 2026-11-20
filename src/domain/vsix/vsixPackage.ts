@@ -268,7 +268,7 @@ const contentSchema = z.strictObject({
 const interestingMemberSchema = z.strictObject({
   path: z.string().min(1),
   kind: z.enum(VSIX_INTERESTING_MEMBER_KINDS),
-  bytes: uint.nullable(),
+  bytes: z.number().int().nonnegative().nullable(),
   sha256: digestSchema.nullable(),
   classification: z.enum(["observed", "inferred"]),
 });
