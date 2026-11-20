@@ -3,6 +3,11 @@ import type {
   ZeroFillMapping,
 } from "../../domain/virtualFileMapping.js";
 import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
+import {
+  CPU,
+  fatImage,
+  machoImage,
+} from "../../artifacts/apple/MachoImage.fixture.js";
 import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
@@ -349,6 +354,29 @@ it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count
     new BinaryFormatFailure(
       "malformed",
       "FAT header declares no architectures",
+    ),
+  );
+});
+
+it("requires an observed thin slice before identifying a FAT image", () => {
+  const cpu = CPU.arm64;
+  const thin = machoImage({ cpu, wide: true });
+  const read = (bytes: Uint8Array) =>
+    readBinaryContainer(
+      Buffer.from(fatImage([{ cpu, bytes }])),
+      "elf-directory",
+    );
+
+  expect(() => read(thin)).toThrow(
+    new BinaryFormatFailure(
+      "unsupported",
+      "Universal/fat Mach-O containers require selecting a thin slice",
+    ),
+  );
+  expect(() => read(Buffer.alloc(thin.length))).toThrow(
+    new BinaryFormatFailure(
+      "unsupported",
+      "Only ELF, PE, and thin Mach-O native images are supported",
     ),
   );
 });

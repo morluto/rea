@@ -8,7 +8,11 @@ import {
 
 const MACHO_LOAD_COMMAND_HEADER_BYTES = 8;
 
-const wordReader = (bytes: Uint8Array, littleEndian: boolean): BinaryReader =>
+/** Read numeric fields from exactly the supplied Mach-O view. */
+export const machoWordReader = (
+  bytes: Uint8Array,
+  littleEndian: boolean,
+): BinaryReader =>
   new BinaryReader(
     Buffer.isBuffer(bytes)
       ? bytes
@@ -47,7 +51,7 @@ export const readMachoHeaderDeclarations = (
     return err(
       `truncated Mach-O header: a ${wide ? 64 : 32}-bit header needs ${headerSize} bytes; the file has ${fileSize}`,
     );
-  const reader = wordReader(bytes, littleEndian);
+  const reader = machoWordReader(bytes, littleEndian);
   const commandBytes = reader.u32(20);
   return ok({
     headerSize,
@@ -145,7 +149,7 @@ export class MachoLoadCommandCursor {
       bytes.byteLength < MACHO_LOAD_COMMAND_HEADER_BYTES
     )
       return err(`load command ${this.#index} starts beyond sizeofcmds`);
-    const reader = wordReader(bytes, littleEndian);
+    const reader = machoWordReader(bytes, littleEndian);
     const size = reader.u32(4);
     if (
       size < MACHO_LOAD_COMMAND_HEADER_BYTES ||
@@ -179,7 +183,23 @@ export class MachoLoadCommandCursor {
 
 // Fields with fixed uint32 layouts in mach-o/loader.h. This table is the single
 // owner of those layouts; consumers read decoded fields rather than offsets.
-const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
+const DYLD_INFO_WORD_FIELDS = [
+  "rebase_off",
+  "rebase_size",
+  "bind_off",
+  "bind_size",
+  "weak_bind_off",
+  "weak_bind_size",
+  "lazy_bind_off",
+  "lazy_bind_size",
+  "export_off",
+  "export_size",
+] as const;
+
+const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map<
+  number,
+  readonly string[]
+>([
   [LC.SYMTAB, ["symoff", "nsyms", "stroff", "strsize"]],
   [LC.SYMSEG, ["offset", "size"]],
   [
@@ -210,36 +230,8 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
   [LC.CODE_SIGNATURE, ["dataoff", "datasize"]],
   [LC.SEGMENT_SPLIT_INFO, ["dataoff", "datasize"]],
   [LC.ENCRYPTION_INFO, ["cryptoff", "cryptsize", "cryptid"]],
-  [
-    LC.DYLD_INFO,
-    [
-      "rebase_off",
-      "rebase_size",
-      "bind_off",
-      "bind_size",
-      "weak_bind_off",
-      "weak_bind_size",
-      "lazy_bind_off",
-      "lazy_bind_size",
-      "export_off",
-      "export_size",
-    ],
-  ],
-  [
-    LC.DYLD_INFO_ONLY,
-    [
-      "rebase_off",
-      "rebase_size",
-      "bind_off",
-      "bind_size",
-      "weak_bind_off",
-      "weak_bind_size",
-      "lazy_bind_off",
-      "lazy_bind_size",
-      "export_off",
-      "export_size",
-    ],
-  ],
+  [LC.DYLD_INFO, DYLD_INFO_WORD_FIELDS],
+  [LC.DYLD_INFO_ONLY, DYLD_INFO_WORD_FIELDS],
   [LC.FUNCTION_STARTS, ["dataoff", "datasize"]],
   [LC.DATA_IN_CODE, ["dataoff", "datasize"]],
   [LC.DYLIB_CODE_SIGN_DRS, ["dataoff", "datasize"]],
@@ -250,6 +242,7 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
   [LC.ATOM_INFO, ["dataoff", "datasize"]],
   [LC.FUNCTION_VARIANTS, ["dataoff", "datasize"]],
   [LC.FUNCTION_VARIANT_FIXUPS, ["dataoff", "datasize"]],
+  [LC.LAZY_LOAD_DYLIB_INFO, ["dataoff", "datasize"]],
 ]);
 
 /** Names of a command's fixed uint32 fields, or undefined for other layouts. */
@@ -267,13 +260,29 @@ export const decodeMachoFixedWordFields = (
   littleEndian: boolean,
 ): Readonly<Record<string, number>> | null | undefined => {
   const names = FIXED_WORD_FIELDS.get(command);
-  if (names === undefined) return undefined;
+  return names === undefined
+    ? undefined
+    : decodeMachoWordFields(names, fieldBytes, littleEndian);
+};
+
+const decodeMachoWordFields = <Field extends string>(
+  names: readonly Field[],
+  fieldBytes: Uint8Array,
+  littleEndian: boolean,
+): Readonly<Record<Field, number>> | null => {
   if (fieldBytes.byteLength < names.length * 4) return null;
-  const reader = wordReader(fieldBytes, littleEndian);
+  const reader = machoWordReader(fieldBytes, littleEndian);
   return Object.fromEntries(
     names.map((name, index) => [name, reader.u32(index * 4)]),
-  );
+  ) as Readonly<Record<Field, number>>;
 };
+
+/** Typed `dyld_info_command` facts from a framed command, including its header. */
+export const readMachoDyldInfoCommand = (
+  body: Uint8Array,
+  littleEndian: boolean,
+) =>
+  decodeMachoWordFields(DYLD_INFO_WORD_FIELDS, body.subarray(8), littleEndian);
 
 interface MachoSymtabDeclaration {
   readonly symoff: number;
@@ -367,7 +376,7 @@ export const readMachoCommandStringBytes = (
       _tag: "InvalidMachoCommandString",
       reason: "truncated-offset",
     });
-  const reader = wordReader(body, littleEndian);
+  const reader = machoWordReader(body, littleEndian);
   const offset = reader.u32(8);
   if (offset < minimumOffset || offset >= body.byteLength)
     return err({

@@ -70,7 +70,7 @@ export const ghidraRiscvSupportLane = (lane: {
  * the names `Tag_RISCV_arch` records. Lanes with a calling-convention policy
  * admit an image only when it declares an RV32I base and only these.
  */
-export const GHIDRA_RISCV32_DECODED_EXTENSIONS: ReadonlySet<string> = new Set([
+const GHIDRA_RISCV32_DECODED_EXTENSIONS: ReadonlySet<string> = new Set([
   "m",
   "a",
   "f",

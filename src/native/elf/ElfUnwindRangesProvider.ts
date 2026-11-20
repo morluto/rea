@@ -103,23 +103,18 @@ const elfUnwindFailurePrimary = (
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
   if (isParseLimit(cause, ELF_UNWIND_FORMAT)) {
-    const { detail, limit } = cause.failure;
+    const { limit } = cause.failure;
     const records = limit.name === ELF_UNWIND_RECORD_LIMIT;
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      detail,
-      records
-        ? { max_file_bytes: input.max_file_bytes, max_ranges: limit.maximum }
-        : { limit: input.limit, maximum_bytes: limit.maximum },
-      {
-        cause,
-        retryable: false,
-        remediationAction: records
-          ? recordBudgetRemediation(limit.maximum)
-          : `Request a smaller limit than ${String(input.limit)}, or page with offset; the ${String(limit.maximum)}-byte symbol-name text allowance is fixed, and max_ranges and max_file_bytes do not raise it.`,
-      },
-    );
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      legacyMaximumKey: records ? "max_ranges" : "maximum_bytes",
+      reportedLimitContext: records
+        ? { max_file_bytes: input.max_file_bytes }
+        : { limit: input.limit },
+      retryable: false,
+      remediationAction: records
+        ? recordBudgetRemediation(limit.maximum)
+        : `Request a smaller limit than ${String(input.limit)}, or page with offset; the ${String(limit.maximum)}-byte symbol-name text allowance is fixed, and max_ranges and max_file_bytes do not raise it.`,
+    });
   }
   if (cause instanceof BinaryResourceFailure)
     return parseLimitConstraint(

@@ -14,6 +14,7 @@ import {
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import type { ArtifactLimitBoundary } from "../artifactOperationError.js";
+import { BinaryReader } from "../binaryContainer.js";
 import { jsonParts } from "../jsonSerialization.js";
 import type {
   InspectPeResourcesInput,
@@ -369,19 +370,20 @@ const readIconGroups = (
     )
     .map((group) => {
       const { offset, bytes: size } = group.payload.location;
-      if (
-        size < 6 ||
-        bytes.readUInt16LE(offset) !== 0 ||
-        bytes.readUInt16LE(offset + 2) !== 1
-      )
+      const reader = new BinaryReader(
+        bytes.subarray(offset, offset + size),
+        true,
+        "pe",
+      );
+      if (size < 6 || reader.u16(0) !== 0 || reader.u16(2) !== 1)
         peFailure("Malformed RT_GROUP_ICON header.");
-      const count = bytes.readUInt16LE(offset + 4);
+      const count = reader.u16(4);
       if (size !== 6 + count * 14)
         peFailure("RT_GROUP_ICON length does not match its image count.");
       const images: PeResources["icon_groups"][number]["images"] = [];
       for (let index = 0; index < count; index++) {
-        const at = offset + 6 + index * 14;
-        const id = bytes.readUInt16LE(at + 12);
+        const at = 6 + index * 14;
+        const id = reader.u16(at + 12);
         const candidates = imagesById.get(id) ?? [];
         const exact = candidates.find(
           (resource) =>
@@ -390,15 +392,15 @@ const readIconGroups = (
         // Indices are uint32 values and each needs at most ten decimal digits
         // plus a comma. Check the expanded candidate list before allocating it.
         ensureCapacity(302 + candidates.length * 11);
-        const declaredBytes = bytes.readUInt32LE(at + 8);
+        const declaredBytes = reader.u32(at + 8);
         const image = {
-          location: { offset: at, bytes: 14 },
-          width: bytes[at] ?? 0,
-          height: bytes[at + 1] ?? 0,
-          color_count: bytes[at + 2] ?? 0,
-          reserved: bytes[at + 3] ?? 0,
-          planes: bytes.readUInt16LE(at + 4),
-          bit_count: bytes.readUInt16LE(at + 6),
+          location: { offset: offset + at, bytes: 14 },
+          width: reader.u8(at),
+          height: reader.u8(at + 1),
+          color_count: reader.u8(at + 2),
+          reserved: reader.u8(at + 3),
+          planes: reader.u16(at + 4),
+          bit_count: reader.u16(at + 6),
           declared_bytes: declaredBytes,
           resource_id: id,
           candidate_resource_indices: candidates.map(({ index }) => index),

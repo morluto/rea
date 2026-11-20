@@ -77,6 +77,7 @@ Terminal=true
         categories: ["Utility", "TextEditor", "GTK"],
         mime_types: ["text/plain"],
         terminal: false,
+        hidden: false,
       },
     });
   });

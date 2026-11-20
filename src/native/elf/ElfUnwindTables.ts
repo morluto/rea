@@ -1,4 +1,5 @@
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { readLeb128, SLEB64, ULEB64 } from "../../domain/leb128.js";
 import {
   allKeyed,
@@ -296,8 +297,8 @@ const elfUnwindRangesFromDirectory = (
   signal?: AbortSignal,
 ): ElfUnwindRanges => {
   assertArtifactReadActive(signal);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const little = directory.little;
+  const reader = new BinaryReader(bytes, little, "elf");
   const bits = directory.bits;
   const addressSize = bits === 64 ? 8 : 4;
   const limitations: string[] = [];
@@ -474,36 +475,22 @@ const elfUnwindRangesFromDirectory = (
     size <= bytes.length - offset;
   const readU8 = (offset: number, end: number): number | null =>
     offset < end && offset < bytes.length ? (bytes[offset] ?? null) : null;
-  const readU32 = (offset: number, end: number): number | null => {
-    if (offset < 0 || offset + 4 > end || offset + 4 > bytes.length)
-      return null;
-    return view.getUint32(offset, little);
-  };
-  const readU64 = (offset: number, end: number): bigint | null => {
-    if (offset < 0 || offset + 8 > end || offset + 8 > bytes.length)
-      return null;
-    return view.getBigUint64(offset, little);
-  };
-  const readS16 = (offset: number, end: number): number | null => {
-    if (offset < 0 || offset + 2 > end || offset + 2 > bytes.length)
-      return null;
-    return view.getInt16(offset, little);
-  };
-  const readU16 = (offset: number, end: number): number | null => {
-    if (offset < 0 || offset + 2 > end || offset + 2 > bytes.length)
-      return null;
-    return view.getUint16(offset, little);
-  };
-  const readS32 = (offset: number, end: number): number | null => {
-    if (offset < 0 || offset + 4 > end || offset + 4 > bytes.length)
-      return null;
-    return view.getInt32(offset, little);
-  };
-  const readS64 = (offset: number, end: number): bigint | null => {
-    if (offset < 0 || offset + 8 > end || offset + 8 > bytes.length)
-      return null;
-    return view.getBigInt64(offset, little);
-  };
+  // A field must fit its record as well as the file, even if another record
+  // makes bytes available at the same offset.
+  const fieldFits = (offset: number, size: number, end: number): boolean =>
+    offset + size <= end && within(offset, size);
+  const readU32 = (offset: number, end: number): number | null =>
+    fieldFits(offset, 4, end) ? reader.u32(offset) : null;
+  const readU64 = (offset: number, end: number): bigint | null =>
+    fieldFits(offset, 8, end) ? reader.word(offset, 64) : null;
+  const readS16 = (offset: number, end: number): number | null =>
+    fieldFits(offset, 2, end) ? reader.i16(offset) : null;
+  const readU16 = (offset: number, end: number): number | null =>
+    fieldFits(offset, 2, end) ? reader.u16(offset) : null;
+  const readS32 = (offset: number, end: number): number | null =>
+    fieldFits(offset, 4, end) ? reader.i32(offset) : null;
+  const readS64 = (offset: number, end: number): bigint | null =>
+    fieldFits(offset, 8, end) ? reader.i64(offset) : null;
   const readLeb = (
     offset: number,
     end: number,

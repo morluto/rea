@@ -57,15 +57,25 @@ export const SECTION_TYPE_NAME_BY_CODE: Readonly<Record<number, string>> =
 export const COMPRESSION_GUID_BY_DISPLAY: Readonly<
   Record<
     string,
-    "lzma-custom" | "lzmaf86" | "ami-zlib" | "tiano" | "crc32-guided"
+    "lzma-custom" | "lzmaf86" | "amd-zlib" | "tiano" | "crc32-guided"
   >
 > = {
   "ee4e5898-3914-4259-9d6e-dc7bd79403cf": "lzma-custom",
   "d42ae6bd-1352-4bfb-909a-ca72a6eae889": "lzmaf86",
-  "ce3233f5-2cd6-4d87-9152-4a238bb6d1c4": "ami-zlib",
+  "ce3233f5-2cd6-4d87-9152-4a238bb6d1c4": "amd-zlib",
   "a31280ad-481e-41b6-95e8-127f4c984779": "tiano",
   "fc1bcdb0-7d31-49aa-936a-a4600d9dd083": "crc32-guided",
 };
+
+/** Known GUID-defined wrappers whose payload needs a handler before section traversal. */
+export const OPAQUE_GUIDED_SECTION_GUIDS: ReadonlySet<string> = new Set([
+  "0f9d89e8-9259-4f76-a5af-0c89e34023df", // PI firmware contents signed
+  "a7717414-c616-4977-9420-844712a735bf", // RSA2048/SHA256
+  "0ed85e23-f253-413f-a03c-901987b04397", // HP LZMA
+  "bd9921ea-ed91-404a-8b2f-b4d724747c8c", // Microsoft LZMA
+  "1d301fe9-be79-4353-91c2-d23bc959ae0c", // Gzip
+  "3d532050-5cda-4fd0-879e-0f7f630d5afb", // Brotli
+]);
 
 /** FFS attributes (PI Specification 3.3.1): raw flags, data alignment and checksum bit. */
 export const FFS_ATTRIBUTE_MASKS = {
@@ -74,16 +84,6 @@ export const FFS_ATTRIBUTE_MASKS = {
   fixed: 0x04,
   dataAlignment: 0x38,
   checksumValid: 0x40,
-} as const;
-
-/** FFS state bits after erase-polarity normalization (PI Specification 3.3.5). */
-export const FFS_STATE_BITS = {
-  headerConstruction: 0x01,
-  headerValid: 0x02,
-  dataValid: 0x04,
-  markedForUpdate: 0x08,
-  deleted: 0x10,
-  headerInvalid: 0x20,
 } as const;
 
 /** FIRMWARE_VOLUME_ATTRIBUTES: bit 0x800 marks bits-on-erased-when-set polarity. */
@@ -131,6 +131,7 @@ export const SECTION_LAYOUT = {
   compressionFieldsLength: 5,
   compressionTypeFieldOffset: 4,
   guidedFieldsLength: 20,
+  guidedCrc32Length: 4,
   guidDataOffsetFieldOffset: 16,
   guidAttributesFieldOffset: 18,
 } as const;

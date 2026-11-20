@@ -22,6 +22,11 @@ export const lzmaReplySchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
     lzma_version: z.string(),
+    input_bytes_consumed: z
+      .number()
+      .int()
+      .min(1)
+      .max(UEFI_FIRMWARE_LIMITS.inputBytes),
     output: z.strictObject({
       sha256: digestSchema,
       bytes: z.number().int().min(0),

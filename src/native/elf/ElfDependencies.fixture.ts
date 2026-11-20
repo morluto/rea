@@ -120,8 +120,12 @@ export interface ElfDependencyFixtureOptions {
   readonly sectionEntrySizes?: Readonly<Record<string, number>>;
   /** Leaves DT_SYMENT out of the dynamic table. */
   readonly omitSymentTag?: boolean;
+  /** Leaves DT_SYMTAB out of the dynamic table. */
+  readonly omitSymtabTag?: boolean;
   /** Splits the identity PT_LOAD in two halfway through the .hash table. */
   readonly splitLoadAtHash?: boolean;
+  /** Adds a one-byte zero-fill load alias at this offset into .gnu.version. */
+  readonly versymZeroFillOffset?: number;
 }
 
 const defaultNeeded = (): string[] => [
@@ -325,6 +329,7 @@ const writeProgramHeader = (
   size: number,
   align: number,
   vaddr = offset,
+  memorySize = size,
 ): void => {
   write32(bytes, at, type, little);
   if (bits === 64) {
@@ -333,7 +338,7 @@ const writeProgramHeader = (
     writeWord(bytes, at + 16, vaddr, bits, little);
     writeWord(bytes, at + 24, vaddr, bits, little);
     writeWord(bytes, at + 32, size, bits, little);
-    writeWord(bytes, at + 40, size, bits, little);
+    writeWord(bytes, at + 40, memorySize, bits, little);
     writeWord(bytes, at + 48, align, bits, little);
     return;
   }
@@ -341,7 +346,7 @@ const writeProgramHeader = (
   writeWord(bytes, at + 8, vaddr, bits, little);
   writeWord(bytes, at + 12, vaddr, bits, little);
   writeWord(bytes, at + 16, size, bits, little);
-  writeWord(bytes, at + 20, size, bits, little);
+  writeWord(bytes, at + 20, memorySize, bits, little);
   write32(bytes, at + 24, flags, little);
   writeWord(bytes, at + 28, align, bits, little);
 };
@@ -408,7 +413,9 @@ interface FixtureConfig {
   readonly sectionSizes: Readonly<Record<string, number>>;
   readonly sectionEntrySizes: Readonly<Record<string, number>>;
   readonly omitSymentTag: boolean;
+  readonly omitSymtabTag: boolean;
   readonly splitLoadAtHash: boolean;
+  readonly versymZeroFillOffset: number | undefined;
 }
 
 interface DependencyTables {
@@ -505,7 +512,9 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     sectionSizes: options.sectionSizes ?? {},
     sectionEntrySizes: options.sectionEntrySizes ?? {},
     omitSymentTag: options.omitSymentTag === true,
+    omitSymtabTag: options.omitSymtabTag === true,
     splitLoadAtHash: options.splitLoadAtHash === true,
+    versymZeroFillOffset: options.versymZeroFillOffset,
   };
 };
 
@@ -643,7 +652,7 @@ const buildDynamicTags = (
     addTag(4, offsets.hashOff);
   if (tables.gnuHashBytes.length !== 0) addTag(0x6ffffef5, offsets.gnuHashOff);
   addTag(5, offsets.dynstrOff);
-  addTag(6, offsets.dynsymOff);
+  if (!config.omitSymtabTag) addTag(6, offsets.dynsymOff);
   addTag(10, tables.dynstrBytes.length);
   if (!config.omitSymentTag) addTag(11, bits === 64 ? 24 : 16);
   addTag(0x6ffffff0, offsets.versymOff);
@@ -680,7 +689,8 @@ const layoutDependencyImage = (
   const programCount =
     (config.interpreter === null ? 0 : 1) +
     (config.splitLoadAtHash ? 2 : 1) +
-    (config.omitDynamic ? 0 : 1);
+    (config.omitDynamic ? 0 : 1) +
+    (config.versymZeroFillOffset === undefined ? 0 : 1);
   const phoff = headerSize;
   let cursor = phoff + programCount * phent;
   const place = (size: number): number => {
@@ -830,6 +840,20 @@ const writeDependencyPrograms = (
   } else add(1, 5, 0, layout.fileSize, 0x1000);
   if (!config.omitDynamic)
     add(2, 6, layout.dynamicOff, layout.dynamicBytes.length, 8);
+  if (config.versymZeroFillOffset !== undefined)
+    writeProgramHeader(
+      bytes,
+      layout.phoff + programIndex * layout.phent,
+      config.bits,
+      config.little,
+      1,
+      4,
+      0,
+      0,
+      1,
+      layout.versymOff + config.versymZeroFillOffset,
+      1,
+    );
 };
 
 const writeDependencySections = (

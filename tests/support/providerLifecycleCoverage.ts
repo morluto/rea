@@ -2,11 +2,9 @@
  * Lifecycle regression coverage for every provider id in
  * `CAPABILITY_DECLARATIONS`.
  *
- * Each stage either names real regression tests (file and literal test title),
- * is not applicable for a stated reason, or is an explicit gap. Gaps are also
- * listed in `PROVIDER_LIFECYCLE_GAPS`; that list may only shrink, so closing a
- * gap means naming its tests here and removing the gap entry. A newly
- * registered provider must add its own entry.
+ * Each stage names a regression by file and title at its registration site,
+ * or states why the stage does not apply. The coverage check reports any
+ * applicable stage still marked as a gap.
  *
  * Stages: `launch` starts the owned process (including launch failure and
  * refusal at the launch boundary); `handshake` is the first readiness or
@@ -34,7 +32,7 @@ export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
 export interface LifecycleRegression {
   /** Repository-relative test file. */
   readonly path: string;
-  /** Literal title of a test in that file. */
+  /** Title at the test registration site, before any parameter expansion. */
   readonly title: string;
 }
 
@@ -65,7 +63,6 @@ const notApplicable = (reason: string): StageCoverage => ({
   kind: "not_applicable",
   reason,
 });
-const gap = (reason: string): StageCoverage => ({ kind: "gap", reason });
 
 const ONE_SHOT = notApplicable(
   "One-shot command per request: there is no handshake after launch.",
@@ -1679,7 +1676,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/v8CodeCacheCli.test.ts",
-        "reports the observed header and payload through the public CLI",
+        "reports wide and synthetic narrow header extents through the public CLI",
       ),
     ),
     covered(
@@ -2189,9 +2186,3 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
 };
-
-/**
- * Every stage marked as a gap above, as `providerId:stage`. This list may only
- * shrink: close a gap by naming its regression tests and removing the entry.
- */
-export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [];

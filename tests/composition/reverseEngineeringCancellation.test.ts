@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 type PromiseOutcome<Value> =
   | { readonly status: "fulfilled"; readonly value: Value }
@@ -159,44 +160,39 @@ const cleanupCancellationScenario = async (options: {
   readonly pending: Promise<CancellationResult> | undefined;
   readonly service: ReverseEngineeringService;
   readonly processIds: CancellationProcessIds | undefined;
-  readonly directory: string;
 }): Promise<void> => {
   options.controller.abort();
-  try {
-    if (options.pending !== undefined) {
-      try {
-        if (options.processIds !== undefined)
-          await settleCancelledProvider(options.pending);
-        else await settleWithin(options.pending, 10_000);
-      } catch {
-        // Main assertions report operation failures; continue cleanup.
-      }
+  if (options.pending !== undefined) {
+    try {
+      if (options.processIds !== undefined)
+        await settleCancelledProvider(options.pending);
+      else await settleWithin(options.pending, 10_000);
+    } catch {
+      // Main assertions report operation failures; continue cleanup.
     }
-    let cleanup = await settleWithin(options.service.close(), 7_000);
-    if (cleanup.status === "timeout" && options.processIds !== undefined) {
-      await killCancellationProcesses(options.processIds);
-      cleanup = await settleWithin(options.service.close(), 3_000);
+  }
+  let cleanup = await settleWithin(options.service.close(), 7_000);
+  if (cleanup.status === "timeout" && options.processIds !== undefined) {
+    await killCancellationProcesses(options.processIds);
+    cleanup = await settleWithin(options.service.close(), 3_000);
+  }
+  if (cleanup.status === "timeout")
+    throw new Error("Service cleanup did not settle within its deadline.");
+  if (cleanup.status === "rejected") throw cleanup.reason;
+  if (options.processIds !== undefined) {
+    for (const pid of [
+      options.processIds.providerPid,
+      options.processIds.descendantPid,
+    ]) {
+      if (processIsRunning(pid)) await killProcessAndWait(pid, 2_000);
     }
-    if (cleanup.status === "timeout")
-      throw new Error("Service cleanup did not settle within its deadline.");
-    if (cleanup.status === "rejected") throw cleanup.reason;
-    if (options.processIds !== undefined) {
-      for (const pid of [
-        options.processIds.providerPid,
-        options.processIds.descendantPid,
-      ]) {
-        if (processIsRunning(pid)) await killProcessAndWait(pid, 2_000);
-      }
-    }
-  } finally {
-    await rm(options.directory, { recursive: true, force: true });
   }
 };
 
 it.skipIf(process.platform === "win32")(
   "waits for a cancelled Rizin process to exit before returning",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-cancel-settle-"));
+    const directory = await createTestTempDirectory("rea-rizin-cancel-settle-");
     const path = join(directory, "fixture.bin");
     const providerPidMarker = join(directory, "provider-pid");
     const descendantStartedMarker = join(directory, "descendant-started");
@@ -261,7 +257,6 @@ setInterval(() => {}, 1000);
         pending,
         service,
         processIds,
-        directory,
       });
     }
   },
