@@ -924,11 +924,12 @@ const inventoryOciImageLayout = async (
   // An OCI 1.1 subject names the manifest an index or manifest refers to.
   // The subject may legitimately be absent from the layout, so only a
   // subject blob present at its layout path joins the referenced set, where
-  // it is hashed and no longer reported as unreferenced. A present subject is
-  // walked like any other reference: a manifest through walkManifest, an
-  // index through the breadth-first queue one level below its owner, so the
-  // blobs it names are not reported as unreferenced either. A present
-  // subject with an unfamiliar media type is still reported as unknown.
+  // it is hashed and no longer reported as unreferenced. A present subject
+  // manifest is queued and walked after its owner finishes, and a present
+  // subject index goes through the breadth-first queue one level below its
+  // owner, so the blobs it names are not reported as unreferenced either. A
+  // present subject with an unfamiliar media type is still reported as
+  // unknown.
   const rememberSubject = async (
     owner: string,
     ownerDigest: string,
@@ -1072,8 +1073,15 @@ const inventoryOciImageLayout = async (
     }
   };
 
+  // Manifests are drained iteratively so a chain of local subject links
+  // finishes each owner (charging its config bytes, recording its image, and
+  // dropping its parsed JSON document) before reading the next manifest.
+  const manifestQueue: { digest: string; mediaType: string; depth: number }[] =
+    [];
+  let drainingManifests = false;
+
   /** `depth` is that of the index whose walk reached this manifest. */
-  const walkManifest = async (
+  const walkOneManifest = async (
     digest: string,
     mediaType: string,
     depth: number,
@@ -1235,6 +1243,27 @@ const inventoryOciImageLayout = async (
       ...configFacts,
       layers,
     });
+  };
+
+  const walkManifest = async (
+    digest: string,
+    mediaType: string,
+    depth: number,
+  ): Promise<void> => {
+    manifestQueue.push({ digest, mediaType, depth });
+    if (drainingManifests) return;
+    drainingManifests = true;
+    try {
+      for (
+        let next = manifestQueue.shift();
+        next !== undefined;
+        next = manifestQueue.shift()
+      )
+        await walkOneManifest(next.digest, next.mediaType, next.depth);
+    } finally {
+      manifestQueue.length = 0;
+      drainingManifests = false;
+    }
   };
 
   const topMediaType =

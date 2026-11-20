@@ -897,17 +897,31 @@ const OCI_EMPTY_CONFIG = {
   size: 2,
 };
 
-/** A manifest with the empty config and one layer, as written bytes. */
+/** A manifest with a config and one layer, as written bytes. */
 const putLayerManifest = async (
   root: string,
   layerBody: string,
-): Promise<{ digest: string; layer: string; json: string }> => {
-  const emptyConfig = await putOciBlob(root, "{}");
+  options: { configBody?: string; subject?: unknown } = {},
+): Promise<{
+  digest: string;
+  config: string;
+  layer: string;
+  json: string;
+}> => {
+  const configBody = options.configBody ?? "{}";
+  const config = await putOciBlob(root, configBody);
   const layer = await putOciBlob(root, layerBody);
   const json = JSON.stringify({
     schemaVersion: 2,
     mediaType: "application/vnd.oci.image.manifest.v1+json",
-    config: { ...OCI_EMPTY_CONFIG, digest: emptyConfig },
+    config:
+      options.configBody === undefined
+        ? { ...OCI_EMPTY_CONFIG, digest: config }
+        : {
+            mediaType: "application/vnd.oci.image.config.v1+json",
+            digest: config,
+            size: Buffer.byteLength(configBody),
+          },
     layers: [
       {
         mediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
@@ -915,8 +929,9 @@ const putLayerManifest = async (
         size: Buffer.byteLength(layerBody),
       },
     ],
+    ...(options.subject === undefined ? {} : { subject: options.subject }),
   });
-  return { digest: await putOciBlob(root, json), layer, json };
+  return { digest: await putOciBlob(root, json), config, layer, json };
 };
 
 /** An index whose manifests are `entries`, as written bytes. */
@@ -997,6 +1012,68 @@ it("walks local subjects as references and hashes them", async () => {
     report.indexes.find((entry) => entry.digest === indexSubject.digest)?.depth,
   ).toBe(1);
   expect(report.coverage.status).toBe("complete");
+});
+
+it("walks a chain of manifest subjects iteratively in owner-first order", async () => {
+  const root = await createTestTempDirectory("rea-oci-subject-chain-");
+  await mkdir(root, { recursive: true });
+  await writeFile(
+    join(root, "oci-layout"),
+    `${JSON.stringify({ imageLayoutVersion: "1.0.0" })}\n`,
+  );
+  const manifestDescriptor = (manifest: { digest: string; json: string }) => ({
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: manifest.digest,
+    size: Buffer.byteLength(manifest.json),
+  });
+  const configFor = (architecture: string) =>
+    JSON.stringify({
+      architecture,
+      os: "linux",
+      rootfs: { type: "layers", diff_ids: [] },
+    });
+  const m3 = await putLayerManifest(root, "chain-layer-3", {
+    configBody: configFor("riscv64"),
+  });
+  const m2 = await putLayerManifest(root, "chain-layer-2", {
+    configBody: configFor("arm64"),
+    subject: manifestDescriptor(m3),
+  });
+  const m1 = await putLayerManifest(root, "chain-layer-1", {
+    configBody: configFor("amd64"),
+    subject: manifestDescriptor(m2),
+  });
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests: [manifestDescriptor(m1)],
+    })}\n`,
+  );
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([]);
+  expect(report.coverage.status).toBe("complete");
+  expect(report.images.map((image) => image.digest)).toEqual([
+    m1.digest,
+    m2.digest,
+    m3.digest,
+  ]);
+  expect(report.images.map((image) => image.architecture)).toEqual([
+    "amd64",
+    "arm64",
+    "riscv64",
+  ]);
+  for (const manifest of [m1, m2, m3]) {
+    for (const digest of [manifest.digest, manifest.config, manifest.layer]) {
+      const row = report.blobs.find((entry) => entry.digest === digest);
+      expect(row).toMatchObject({
+        referenced: true,
+        hashed: true,
+        sha256: digest.slice("sha256:".length),
+      });
+    }
+  }
 });
 
 it("keeps a present subject index within max_index_depth", async () => {
