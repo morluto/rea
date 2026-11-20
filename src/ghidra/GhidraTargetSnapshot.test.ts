@@ -23,7 +23,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
-      // Only hook the companion DWARF member, not the staged target copies.
+      // Hook every companion DWARF member open, source and staged; only the
+      // source is chunk-read, so the read spy never affects the staged copy.
       // Match both separators: the fixture joins platform-native paths.
       if (/Contents[\\/]Resources[\\/]DWARF[\\/]/.test(String(args[0])))
         controls.read?.(handle);
@@ -61,6 +62,7 @@ const writeCompanionDwarf = async (root: string, bytes: Buffer) => {
     recursive: true,
   });
   await writeFile(dwarf, bytes);
+  return dwarf;
 };
 
 let spies: MockInstance[] = [];
@@ -122,6 +124,36 @@ it("still skips silently when the staged companion bundle itself cannot be creat
     join(runtime, `target-${sha256.slice(0, 12)}.bin.dSYM`),
     "not a bundle",
   );
+  const snapshot = await createGhidraTargetSnapshot(source, runtime, sha256, {
+    platform: "linux",
+  });
+  expect(snapshot.sha256).toBe(sha256);
+  await expect(
+    stat(join(runtime, `target-${sha256.slice(0, 12)}.bin.dSYM`)),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("drops the partial companion and keeps the snapshot when the source changes mid-copy", async () => {
+  const { root, runtime, source, sha256 } = await fixture();
+  const dwarfBytes = Buffer.alloc(4 * 1024 * 1024, 0x64);
+  const dwarf = await writeCompanionDwarf(root, dwarfBytes);
+  let reads = 0;
+  controls.read = (handle) => {
+    const read = handle.read.bind(handle);
+    spies.push(
+      vi
+        .spyOn(handle, "read")
+        .mockImplementation(async (...args: Parameters<typeof read>) => {
+          const result = await read(...args);
+          if (++reads === 1)
+            await writeFile(
+              dwarf,
+              Buffer.concat([dwarfBytes, Buffer.from("!")]),
+            );
+          return result;
+        }),
+    );
+  };
   const snapshot = await createGhidraTargetSnapshot(source, runtime, sha256, {
     platform: "linux",
   });

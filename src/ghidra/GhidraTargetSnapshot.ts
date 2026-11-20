@@ -13,6 +13,7 @@ import {
 } from "../resources/index.js";
 import {
   NonRegularFileReadError,
+  RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
@@ -189,14 +190,26 @@ const stageCompanionDsym = async (
           signal,
           async (destination) => {
             await destination.chmod(0o600);
-            for await (const chunk of readArtifactFileChunks(source, {
+            const input = readArtifactFileChunks(source, {
               end: initial.size,
               signal,
-            })) {
+            });
+            for await (const chunk of input) {
               assertArtifactReadActive(signal);
               await destination.writeFile(chunk);
               assertArtifactReadActive(signal);
             }
+            // A companion that shifts mid-copy would stage truncated or mixed
+            // bytes; treat it like the digest probe and fall into the
+            // optional-companion skip below instead of staging bad DWARF.
+            if (
+              input.readCoverage().kind !== "complete" ||
+              !sameRegularFileState(
+                initial,
+                await source.stat({ bigint: true }),
+              )
+            )
+              throw new RegularFileChangedError(sourceDwarf);
           },
         );
       },
