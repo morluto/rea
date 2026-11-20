@@ -435,6 +435,7 @@
 * **elf:** require sizes for declared Android RELR tables ([#12067](https://github.com/morluto/rea/issues/12067)) ([f7849ca](https://github.com/morluto/rea/commit/f7849cad3fe3bffb207b4dc30f34394978c20297))
 * **elf:** resolve extended symbol section references ([#11924](https://github.com/morluto/rea/issues/11924)) ([1290ab4](https://github.com/morluto/rea/commit/1290ab401c50d2e465219407dd545eb921158a98))
 * **elf:** retain Android relocation declarations in MIPS coverage ([ed05170](https://github.com/morluto/rea/commit/ed051704243f90bfbc6d38080f820d08a716b340))
+* **elf:** retain mapped leading GNU symbol version slots ([#12685](https://github.com/morluto/rea/issues/12685)) ([ea26a4a](https://github.com/morluto/rea/commit/ea26a4a46c69dc4f9bf663a39138a4a386b964e8))
 * **elf:** retain readable build IDs beside compressed notes ([#12674](https://github.com/morluto/rea/issues/12674)) ([0fcbfe8](https://github.com/morluto/rea/commit/0fcbfe83dc269e666a4b9621d6d814e87f8d8368))
 * **elf:** share dynamic table framing and admission ([#12445](https://github.com/morluto/rea/issues/12445)) ([49981ca](https://github.com/morluto/rea/commit/49981ca7094b5f6463e47b6c88aa3046ee43d576))
 * **elf:** validate note framing before entry limits ([#12380](https://github.com/morluto/rea/issues/12380)) ([5bcf33f](https://github.com/morluto/rea/commit/5bcf33f6aca19dbc71b8abd70228c744ed4914d5))
