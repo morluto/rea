@@ -732,6 +732,12 @@ export class AnalysisProviderRegistry {
       } => evaluation.profile !== undefined,
     );
     if (usable.length === 0) {
+      if (statuses.length === 0)
+        return ok({
+          requestedProviderId: "auto",
+          binding: null,
+          candidates: statuses,
+        });
       const reason: ProviderSelectionFailureReason = statuses.every(
         ({ targetSupport }) => targetSupport.status === "unsupported",
       )

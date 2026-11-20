@@ -873,6 +873,18 @@ describe("analysis provider registry: rejection origins", () => {
       ]);
     }
   });
+
+  it("keeps auto unbound when no deep providers are registered", async () => {
+    const registry = new AnalysisProviderRegistry([]);
+    expect(await registry.select(DATABASE_TARGET)).toMatchObject({
+      ok: true,
+      value: {
+        requestedProviderId: "auto",
+        binding: null,
+        candidates: [],
+      },
+    });
+  });
 });
 
 describe("analysis provider registry: profile and cleanup failures", () => {
