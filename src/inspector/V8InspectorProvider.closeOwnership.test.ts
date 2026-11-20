@@ -15,6 +15,8 @@ import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgem
 import { CdpConnection } from "../browser/CdpConnection.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { observeJavaScriptRuntime } from "../application/javascript/JavaScriptRuntimeObservationService.js";
 import { observeJavaScriptRuntimeInputSchema } from "../domain/javascript/javascriptRuntimeObservation.js";
@@ -22,6 +24,39 @@ import {
   V8InspectorAdmission,
   V8InspectorProvider,
 } from "./V8InspectorProvider.js";
+
+it("tracks file and transport releases separately across close retries", async () => {
+  const owner = new V8InspectorAdmission();
+  const transportRelease = new AnalysisCleanupRelease();
+  const fileRelease = new AnalysisCleanupRelease();
+  const transport = transportRelease.bind(
+    new ProviderCleanupError("inspector", ["browser_transport"], {}),
+  );
+  const file = fileRelease.bind(
+    new ProviderCleanupError("inspector", ["fixture.asar"], {}),
+  );
+  vi.spyOn(owner.connections, "retryPending").mockRejectedValueOnce(transport);
+  vi.spyOn(owner.files, "retryCleanup")
+    .mockRejectedValueOnce(file)
+    .mockRejectedValueOnce(file);
+
+  const failure: unknown = await owner.close().catch((cause: unknown) => cause);
+  if (!(failure instanceof ProviderCleanupError))
+    throw new Error("Expected both cleanup failures");
+  expect(failure.cause).toMatchObject({ errors: [transport, file] });
+  expect(failure.cleanupResources).toEqual([
+    "browser_transport",
+    "fixture.asar",
+  ]);
+
+  transportRelease.confirm();
+  expect(failure.cleanupResources).toEqual(["fixture.asar"]);
+  await expect(owner.close()).rejects.toBe(file);
+  fileRelease.confirm();
+  await owner.close();
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(failure.cleanupResources).toEqual([]);
+});
 
 const inspectorCloseFixture = async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-inspector-close-owner-"));
