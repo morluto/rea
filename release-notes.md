@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **native:** To inspect a plist outside an opened app bundle or resource root, open the plist as a separate target.
 * **debuggers:** preserve exact Cutter output and GNU MI escapes ([#12457](https://github.com/morluto/rea/issues/12457))
 * **ghidra:** A DOS COM file that ComLoader accepts now loads at linear 0x100 instead of 0x10100. Read load_address. The BinaryLoader fallback remains at 1000:0100.
 * **ghidra:** Ghidra 12.1.x is rejected. Use Ghidra 12.2 or another 12.x build at or above minor 2, and a JDK inside that installation's declared range (25 or newer for the verified 12.2 build).
@@ -661,6 +662,7 @@
 * **native:** report an unexamined thunk target in value traces ([8578daf](https://github.com/morluto/rea/commit/8578daf8b7f3ee7caf9a3b897501835e0a1573d3))
 * **native:** report Objective-C class import binding coverage unknown when candidate completeness is unstated ([#11139](https://github.com/morluto/rea/issues/11139)) ([1682d9c](https://github.com/morluto/rea/commit/1682d9c645b68bf871519c70e0dc4fb709f4d172))
 * **native:** report undecoded Objective-C category class properties ([#11722](https://github.com/morluto/rea/issues/11722)) ([e2ccd68](https://github.com/morluto/rea/commit/e2ccd682cb441436c6c13e180fbb315788212364))
+* **native:** require separate inspection for plists outside bundles ([#9754](https://github.com/morluto/rea/issues/9754)) ([8c7977f](https://github.com/morluto/rea/commit/8c7977f17443e1b7d660b8ff79a8483b31f83650))
 * **native:** retain the dispatch reader failure when the symbol fallback fails ([3a1db29](https://github.com/morluto/rea/commit/3a1db29166ec459b0172028d1ed4c63f61a436af)), closes [#8036](https://github.com/morluto/rea/issues/8036)
 * **native:** scale the NativeAOT work budget with the admitted image ([c8d5413](https://github.com/morluto/rea/commit/c8d5413d0fe54c5f8236e1cb8f61ad462d08fd1d)), closes [#4445](https://github.com/morluto/rea/issues/4445) [#4559](https://github.com/morluto/rea/issues/4559)
 * **native:** select same-family universal slices by subtype name ([d5dd0b6](https://github.com/morluto/rea/commit/d5dd0b6fd9849aad7ac3349f2b783661e0a40e9c))
