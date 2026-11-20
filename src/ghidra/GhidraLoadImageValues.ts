@@ -1,4 +1,5 @@
 import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
@@ -26,6 +27,7 @@ const limitations = [
 ];
 
 export type GhidraDosImage = {
+  readonly kind: "exact";
   readonly header: DosMzHeader;
   readonly loadSegment: number;
   readonly modified: Buffer;
@@ -36,11 +38,13 @@ export type GhidraDosImage = {
   >[];
 };
 
+type GhidraDosOrderDependent = { readonly kind: "order-dependent" };
+
 /** Prepare initialized bytes and relocation facts without copying overlays. */
 export const prepareGhidraDosLoadImage = (
   bytes: Buffer,
   evidence: MzHeaderEvidence,
-): Result<GhidraDosImage, string> => {
+): Result<GhidraDosImage | GhidraDosOrderDependent, string> => {
   if (evidence.windowsHeader.state === "candidate")
     return err("MZ Windows new-header candidate is unresolved");
   if (evidence.windowsHeader.state === "header-needed")
@@ -56,52 +60,52 @@ export const prepareGhidraDosLoadImage = (
     return err("DOS MZ initialized image was not completely captured");
   const loadSegment = 0x1000;
   const modified = Buffer.from(bytes.subarray(0, header.imageBytes));
-  const applied = [];
+  const reader = new BinaryReader(bytes, true, "dos-mz");
+  const fixedOffsets = new Set<number>();
+  const expectedRelocations: GhidraDosImage["expectedRelocations"][number][] =
+    [];
   for (const {
     segment,
     offset,
     moduleOffset,
     fileOffset,
   } of header.relocations) {
-    const original = modified
-      .subarray(fileOffset, fileOffset + 2)
-      .toString("hex");
-    const relocated =
-      (modified.readUInt16LE(fileOffset) + loadSegment) & 0xffff;
+    // Ghidra derives each word from file bytes, then applies the fixups in
+    // an unspecified order. Adjacent words disagree at the shared byte:
+    // one adds 0x10 to it as a high byte and the other keeps it as a low byte.
+    if (fixedOffsets.has(fileOffset - 1) || fixedOffsets.has(fileOffset + 1))
+      return ok({ kind: "order-dependent" });
+    fixedOffsets.add(fileOffset);
+    const relocated = (reader.u16(fileOffset) + loadSegment) & 0xffff;
     modified.writeUInt16LE(relocated, fileOffset);
-    applied.push({
-      segment,
-      offset,
-      moduleOffset,
-      fileOffset,
-      original,
-      relocated,
-    });
-  }
-  // Application records describe their own fixup; the bridge reads memory
-  // once all fixups have completed, including later overlapping writes.
-  const expectedRelocations = applied.map(
-    ({ segment, offset, moduleOffset, fileOffset, original, relocated }) => ({
+    // The exact layout admits disjoint or identical writes, so later records
+    // cannot change this final memory window.
+    expectedRelocations.push({
       address: address(loadSegment * 16 + moduleOffset),
       segment: (loadSegment + segment) & 0xffff,
       offset,
       status: "APPLIED",
       type: 0,
       values: [segment, offset, relocated],
-      original_bytes_hex: original,
-      memory_bytes_hex: modified
-        .subarray(fileOffset, fileOffset + 2)
-        .toString("hex"),
-    }),
-  );
-  return ok({ header, loadSegment, modified, expectedRelocations });
+      original_bytes_hex: bytes.toString("hex", fileOffset, fileOffset + 2),
+      memory_bytes_hex: modified.toString("hex", fileOffset, fileOffset + 2),
+    });
+  }
+  return ok({
+    kind: "exact",
+    header,
+    loadSegment,
+    modified,
+    expectedRelocations,
+  });
 };
 
 export type GhidraDosLoadImageSource = {
   readonly sha256: string;
   readonly fileBytes: number;
-  readonly modifiedSha256: string;
-  readonly image: GhidraDosImage;
+  readonly image:
+    | (GhidraDosImage & { readonly modifiedSha256: string })
+    | GhidraDosOrderDependent;
 };
 
 /** Verify measured MZ import state against complete identity and prepared image facts. */
@@ -114,7 +118,20 @@ export const attestGhidraDosLoadImage = (
     return err(
       "Ghidra load-image snapshot digest does not match the admitted target",
     );
-  const { header, loadSegment, modified, expectedRelocations } = source.image;
+  if (source.image.kind === "order-dependent")
+    return ok(
+      nativeLoadImageSchema.parse({
+        status: "unsupported",
+        reason:
+          "Overlapping DOS MZ relocation writes have no established application order.",
+        observations,
+        limitations: [
+          "Ghidra derives relocation values from original file words. The reported relocation records and memory bytes are measurements from this import; independent final-byte verification requires an established write order.",
+        ],
+      }),
+    );
+  const { header, loadSegment, modified, modifiedSha256, expectedRelocations } =
+    source.image;
   const { checks, check } = createLoadImageChecks();
   check(
     "executable_format",
@@ -135,7 +152,7 @@ export const attestGhidraDosLoadImage = (
   );
   check(
     "modified_file_sha256",
-    source.modifiedSha256,
+    modifiedSha256,
     observedSource?.modified_sha256 ?? null,
   );
   const entryAddress = address(

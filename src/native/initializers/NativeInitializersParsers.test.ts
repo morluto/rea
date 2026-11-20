@@ -1,3 +1,8 @@
+import {
+  BinaryReader,
+  BinaryFormatFailure,
+} from "../../domain/binaryContainer.js";
+import { readInitializerWord } from "./initializerWord.js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { deflateSync } from "node:zlib";
 import { riscvInitializers } from "./RiscvInitializers.fixture.js";
@@ -96,7 +101,6 @@ import {
 } from "../../domain/native/nativeInitializers.js";
 import { buildAddressRangeIndex } from "./addressRangeIndex.js";
 import { InitializerNotes } from "./initializerNotes.js";
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 
 const artifact = (bytes: Buffer) => ({
@@ -1909,6 +1913,33 @@ it("reports an object-file import name over the name budget as partial coverage"
   );
 });
 
+it("resolves the same high nlist value by address and by relocation index", async () => {
+  const image = machoX8664ObjectInitializers();
+  const base = 0x8000_0001_0000_0000n;
+  image.writeBigUInt64LE(base, 32 + 24); // segment vmaddr
+  image.writeBigUInt64LE(base, 104 + 32); // __text
+  image.writeBigUInt64LE(base + 0x20n, 184 + 32); // __mod_init_func
+  image.writeBigUInt64LE(base, 0x258); // _before
+  image.writeBigUInt64LE(base + 0x10n, 0x268); // _startup
+  image.writeBigUInt64LE(base + 0x10n, 0x228); // local section relocation
+  const resolved = await read(image);
+  expect(row(resolved)).toMatchObject([
+    {
+      value: "0x8000000100000010",
+      symbol: "_startup",
+      resolution: "symbol_addend",
+    },
+    { value: "0x8000000100000010", symbol: "_startup", resolution: "raw" },
+  ]);
+
+  image[0x264] = 0xe0; // A debugger record at the same address.
+  const debug = await read(image);
+  expect(row(debug)).toMatchObject([
+    { value: null, symbol: null, resolution: "unresolved" },
+    { value: "0x8000000100000010", symbol: null, resolution: "raw" },
+  ]);
+});
+
 describe("Initializer target semantics", () => {
   it.each([32, 64] as const)(
     "does not interpret a defined RV%s TLS offset as an initializer address or name",
@@ -2330,4 +2361,18 @@ it("keeps a linked section-fallback slot unresolved when its load mapping disagr
     value_va: null,
     slot_file_offset: 0x260,
   });
+});
+
+it("reads initializer addends at the edge of the mapped word", () => {
+  const bytes = Buffer.from([
+    0, 0x81, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+  ]);
+  const big = new BinaryReader(bytes, false, "elf");
+  const little = new BinaryReader(bytes, true, "macho");
+  expect(readInitializerWord(big, 1, 64)).toBe(0x8123456789abcdefn);
+  expect(readInitializerWord(little, 1, 64)).toBe(0xefcdab8967452381n);
+  expect(readInitializerWord(big, 5, 32)).toBe(0x89abcdefn);
+  expect(readInitializerWord(little, 5, 32)).toBe(0xefcdab89n);
+  expect(readInitializerWord(big, 2, 64)).toBeNull();
+  expect(readInitializerWord(little, null, 32)).toBeNull();
 });

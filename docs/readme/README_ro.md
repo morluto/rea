@@ -439,7 +439,6 @@ Pentru opțiunile exacte, cerințele preliminare și contractele rezultatelor:
 - [CLI și Evidence](../getting-started/cli.md): comenzi, selectarea motorului, instantanee, import/export și coduri de ieșire.
 - [Contracte MCP](../reference/mcp-contracts.md) și [prompturi pentru agenți](../getting-started/mcp-prompts.md): rezultatele uneltelor, sesiuni și investigații ghidate.
 - [Catalogul uneltelor](../reference/mcp-contracts.md#generated-catalog): inventarul generat al uneltelor, motoarelor de analiză și comenzilor CLI.
-- [Plan de dezvoltare](../development/roadmap.md): lucrări planificate și urmărirea progresului funcționalităților.
 
 Raportează vulnerabilitățile conform [SECURITY.md](../../SECURITY.md).
 
@@ -478,9 +477,7 @@ pentru a raporta o eroare sau a propune o funcționalitate ori
 codul sau documentația.
 
 Consultă [CONTRIBUTING.md](../../CONTRIBUTING.md) pentru pregătirea mediului de dezvoltare
-și verificări, [ghidul de testare](../development/testing.md) pentru categoriile de verificări
-și [diagrama arhitecturii](../architecture/architecture.mermaid) pentru anumite straturi și
-relații de dependență.
+și verificări, [ghidul de testare](../development/testing.md) pentru categoriile de verificări.
 
 ## Licență
 

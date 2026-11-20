@@ -124,11 +124,13 @@ section, symbol, mitigation or linkage views. The default `complete` detail and
 CLI output are unchanged.
 
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
-and 30-second owned command deadline. `REA_PWNTOOLS_MAX_INPUT_BYTES` raises the
-launch input default alone, up to 1 GiB. Per-call `producer_limits` selects
+and 30-second owned command deadline. `REA_PWNTOOLS_MAX_INPUT_BYTES` is the
+runtime setting `pwntools.max_input_bytes`. Change the active value with
+`update_analysis_settings`. It raises the input default alone, up to 1 GiB.
+Per-call `producer_limits` selects
 `input_bytes`, `output_bytes`, `diagnostic_bytes`, `address_space_bytes`,
-`file_bytes`, and `cpu_seconds`; positive safe integers apply on the next call
-without restart. `input_bytes` overrides the launch default. File admission
+`file_bytes`, and `cpu_seconds`; positive safe integers apply on the next call.
+`input_bytes` overrides the accepted setting. File admission
 follows selected `output_bytes` unless `file_bytes` is explicit. The separate
 `pwntools_timeout_ms` controls each command wall deadline. On CLI pass
 `--producer-limits '{"cpu_seconds":60,"output_bytes":134217728}'`. The

@@ -7,12 +7,13 @@ import {
 import { LC, LC_REQ_DYLD } from "./machoLoadCommandCodes.js";
 import {
   MachoLoadCommandCursor,
+  machoWordReader,
   decodeMachoFixedWordFields,
   machoFixedWordFieldNames,
   readMachoLoadCommandTableHeader,
 } from "./machoLoadCommands.js";
 import {
-  MACHO_VERSION_MIN_PLATFORMS,
+  classifyMachoVersionMinCommand,
   type MachoVersionMinPlatform,
 } from "./machoPlatform.js";
 import {
@@ -379,11 +380,7 @@ export const readMachoCommandNames = async (
           "Mach-O command string offset is truncated",
         );
       const data = await exact(at + 8, 4);
-      const offset = new DataView(
-        data.buffer,
-        data.byteOffset,
-        data.byteLength,
-      ).getUint32(0, table.littleEndian);
+      const offset = machoWordReader(data, table.littleEndian).u32(0);
       const minimum = DYLIB_COMMANDS.has(frame.command)
         ? MACHO_DYLIB_NAME_MIN
         : frame.command === LC.LOADFVMLIB ||
@@ -423,9 +420,9 @@ export const readMachoCommandNames = async (
           "Mach-O prebound dylib command is truncated",
         );
       const data = await exact(at + 12, 8);
-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-      const moduleCount = view.getUint32(0, table.littleEndian);
-      const linkedModulesOffset = view.getUint32(4, table.littleEndian);
+      const view = machoWordReader(data, table.littleEndian);
+      const moduleCount = view.u32(0);
+      const linkedModulesOffset = view.u32(4);
       const length = Math.ceil(moduleCount / 8);
       if (linkedModulesOffset < 20 || linkedModulesOffset > frame.size - length)
         throw malformedInput(
@@ -444,10 +441,10 @@ export const readMachoCommandNames = async (
       if (frame.size < 20)
         throw malformedInput("macho", "Mach-O fvmlib command is truncated");
       const data = await exact(at + 12, 8);
-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      const view = machoWordReader(data, table.littleEndian);
       fvmlib = {
-        minorVersion: view.getUint32(0, table.littleEndian),
-        headerAddress: view.getUint32(4, table.littleEndian),
+        minorVersion: view.u32(0),
+        headerAddress: view.u32(4),
       };
     }
     let fvmfile: MachoCommandNames["commands"][number]["fvmfile"];
@@ -456,11 +453,7 @@ export const readMachoCommandNames = async (
         throw malformedInput("macho", "Mach-O fvmfile command is truncated");
       const data = await exact(at + 12, 4);
       fvmfile = {
-        headerAddress: new DataView(
-          data.buffer,
-          data.byteOffset,
-          data.byteLength,
-        ).getUint32(0, table.littleEndian),
+        headerAddress: machoWordReader(data, table.littleEndian).u32(0),
       };
     }
     let linkerOptions: Uint8Array[] | undefined;
@@ -471,11 +464,7 @@ export const readMachoCommandNames = async (
           "Mach-O linker option count is truncated",
         );
       const countBytes = await exact(at + 8, 4);
-      const count = new DataView(
-        countBytes.buffer,
-        countBytes.byteOffset,
-        countBytes.byteLength,
-      ).getUint32(0, table.littleEndian);
+      const count = machoWordReader(countBytes, table.littleEndian).u32(0);
       if (count > frame.size - 12)
         throw malformedInput(
           "macho",
@@ -519,23 +508,22 @@ export const readMachoCommandNames = async (
         throw malformedInput("macho", "Mach-O linker option is unterminated");
     }
     let legacyBuild: MachoCommandNames["commands"][number]["legacyBuild"];
-    const legacyPlatform = MACHO_VERSION_MIN_PLATFORMS.get(frame.command);
-    if (legacyPlatform !== undefined) {
-      if (frame.size < 16)
-        throw malformedInput(
-          "macho",
-          "Mach-O minimum version command is truncated",
-        );
-      const bytes = await exact(at + 8, 8);
-      const view = new DataView(
-        bytes.buffer,
-        bytes.byteOffset,
-        bytes.byteLength,
+    const versionMin = classifyMachoVersionMinCommand(
+      frame.command,
+      frame.size,
+    );
+    if (versionMin?.kind === "truncated")
+      throw malformedInput(
+        "macho",
+        "Mach-O minimum version command is truncated",
       );
+    if (versionMin?.kind === "exact") {
+      const bytes = await exact(at + 8, 8);
+      const view = machoWordReader(bytes, table.littleEndian);
       legacyBuild = {
-        platform: legacyPlatform,
-        version: view.getUint32(0, table.littleEndian),
-        sdk: view.getUint32(4, table.littleEndian),
+        platform: versionMin.platform,
+        version: view.u32(0),
+        sdk: view.u32(4),
       };
     }
     let note: MachoCommandNames["commands"][number]["note"];
@@ -543,11 +531,11 @@ export const readMachoCommandNames = async (
       if (frame.size < 40)
         throw malformedInput("macho", "Mach-O note command is truncated");
       const data = await exact(at + 8, 32);
-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      const view = machoWordReader(data, table.littleEndian);
       note = {
         owner: retain(data.subarray(0, 16)),
-        offset: view.getBigUint64(16, table.littleEndian),
-        size: view.getBigUint64(24, table.littleEndian),
+        offset: view.word(16, 64),
+        size: view.word(24, 64),
       };
     }
     let fileset: MachoCommandNames["commands"][number]["fileset"];
@@ -557,8 +545,8 @@ export const readMachoCommandNames = async (
       if (frame.size < 32)
         throw malformedInput("macho", "Mach-O fileset command is truncated");
       const data = await exact(at + 8, 24);
-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-      const offset = view.getUint32(16, table.littleEndian);
+      const view = machoWordReader(data, table.littleEndian);
+      const offset = view.u32(16);
       if (offset < 32 || offset >= frame.size)
         throw malformedInput(
           "macho",
@@ -571,10 +559,10 @@ export const readMachoCommandNames = async (
         "Mach-O fileset entry string",
       );
       fileset = {
-        address: view.getBigUint64(0, table.littleEndian),
-        fileOffset: view.getBigUint64(8, table.littleEndian),
+        address: view.word(0, 64),
+        fileOffset: view.word(8, 64),
         entryId,
-        reserved: view.getUint32(20, table.littleEndian),
+        reserved: view.u32(20),
       };
       filesetStringEnd = offset + entryId.byteLength + 1;
     }
@@ -589,14 +577,10 @@ export const readMachoCommandNames = async (
       if (frame.size < 24)
         throw malformedInput("macho", "Mach-O entrypoint command is truncated");
       const bytes = await exact(at + 8, 16);
-      const view = new DataView(
-        bytes.buffer,
-        bytes.byteOffset,
-        bytes.byteLength,
-      );
+      const view = machoWordReader(bytes, table.littleEndian);
       entrypoint = {
-        offset: view.getBigUint64(0, table.littleEndian),
-        stackSize: view.getBigUint64(8, table.littleEndian),
+        offset: view.word(0, 64),
+        stackSize: view.word(8, 64),
       };
     }
     let build: MachoCommandNames["commands"][number]["build"];
@@ -607,12 +591,8 @@ export const readMachoCommandNames = async (
           "Mach-O build version command is truncated",
         );
       const header = await exact(at + 8, 16);
-      const view = new DataView(
-        header.buffer,
-        header.byteOffset,
-        header.byteLength,
-      );
-      const toolCount = view.getUint32(12, table.littleEndian);
+      const view = machoWordReader(header, table.littleEndian);
+      const toolCount = view.u32(12);
       if (toolCount > Math.floor((frame.size - 24) / 8))
         throw malformedInput("macho", "Mach-O build tool table is truncated");
       if (toolCount > maximumRecords - records)
@@ -622,20 +602,16 @@ export const readMachoCommandNames = async (
       const tools: { tool: number; version: number }[] = [];
       for (let i = 0; i < toolCount; i++) {
         const tool = await exact(at + 24 + i * 8, 8);
-        const toolView = new DataView(
-          tool.buffer,
-          tool.byteOffset,
-          tool.byteLength,
-        );
+        const toolView = machoWordReader(tool, table.littleEndian);
         tools.push({
-          tool: toolView.getUint32(0, table.littleEndian),
-          version: toolView.getUint32(4, table.littleEndian),
+          tool: toolView.u32(0),
+          version: toolView.u32(4),
         });
       }
       build = {
-        platform: view.getUint32(0, table.littleEndian),
-        minimumOs: view.getUint32(4, table.littleEndian),
-        sdk: view.getUint32(8, table.littleEndian),
+        platform: view.u32(0),
+        minimumOs: view.u32(4),
+        sdk: view.u32(8),
         tools,
       };
     }
@@ -654,7 +630,7 @@ export const readMachoCommandNames = async (
       (fixedNames !== undefined && frame.size === 8 + fixedNames.length * 4) ||
       (uuid !== undefined && frame.size === 24) ||
       (entrypoint !== undefined && frame.size === 24) ||
-      (legacyBuild !== undefined && frame.size === 16) ||
+      legacyBuild !== undefined ||
       (segmentWide !== null &&
         sections !== undefined &&
         frame.size ===
@@ -709,11 +685,7 @@ export const readMachoCommandNames = async (
       cpuType: table.identity.cpuType,
       cpuSubtype: table.identity.cpuSubtype,
       fileType: table.fileType,
-      flags: new DataView(
-        header.buffer,
-        header.byteOffset,
-        header.byteLength,
-      ).getUint32(24, table.littleEndian),
+      flags: machoWordReader(header, table.littleEndian).u32(24),
     },
     commands,
   };

@@ -265,13 +265,13 @@ const buildIdConsistent = (buildId: ElfDebugLink["build_id"]): boolean => {
       buildId.reason === null
     );
   if (buildId.status === "unknown")
-    // An oversized build-id keeps the bounded ids read beside it.
+    // Unsupported storage and oversized notes can coexist with readable IDs.
     return (
       buildId.hex === null &&
       (buildId.reason === "build_id_exceeds_limit" ||
-        (buildId.ids.length === 0 &&
-          (buildId.reason === "note_tables_malformed" ||
-            buildId.reason === "note_tables_unsupported")))
+        buildId.reason === "note_tables_unsupported" ||
+        (buildId.reason === "note_tables_malformed" &&
+          buildId.ids.length === 0))
     );
   return (
     buildId.hex === null &&

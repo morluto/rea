@@ -1,3 +1,4 @@
+import type { JsonValue } from "./jsonValue.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
 import { childFailureDiagnostics } from "./analysisErrorProjection.js";
@@ -113,7 +114,7 @@ export const analysisErrorWithCloseRejections = (
 export const providerCleanupErrorFromFailures = (
   providerId: string,
   failures: readonly AnalysisError[],
-  reason: string,
+  diagnostics: string | Readonly<Record<string, JsonValue>>,
   options: {
     readonly operation: string;
     readonly causes?: readonly unknown[];
@@ -123,12 +124,68 @@ export const providerCleanupErrorFromFailures = (
   new ProviderCleanupError(
     providerId,
     failures.flatMap((failure) => failure.cleanupResources),
-    { reason },
+    typeof diagnostics === "string" ? { reason: diagnostics } : diagnostics,
     {
       operation: options.operation,
       cause: new AggregateError(options.causes ?? failures, options.message),
     },
   ).bindCleanupDependencies(failures);
+
+/** Compose rejected closes and follow known resource ownership independently of completion. */
+export const providerCleanupErrorFromCloseRejections = (
+  providerId: string,
+  rejections: readonly {
+    readonly cause: unknown;
+    readonly cleanupOwner?: AnalysisError | undefined;
+    readonly unconfirmedResources?: readonly string[];
+  }[],
+  diagnostics: Readonly<Record<string, JsonValue>>,
+  options: {
+    readonly operation: string;
+    readonly message: string;
+    readonly remediationAction?: string;
+  },
+): ProviderCleanupError => {
+  const owners = rejections.flatMap(({ cleanupOwner }) =>
+    cleanupOwner === undefined ? [] : [cleanupOwner],
+  );
+  const resources = () => [
+    ...new Set(
+      rejections.flatMap(({ cleanupOwner, unconfirmedResources }) => {
+        if (cleanupOwner === undefined) return unconfirmedResources ?? [];
+        return cleanupOwner.cleanupIncomplete
+          ? cleanupOwner.cleanupResources
+          : [];
+      }),
+    ),
+  ];
+  const aggregate = new ProviderCleanupError(
+    providerId,
+    resources(),
+    diagnostics,
+    {
+      operation: options.operation,
+      cause: new AggregateError(
+        rejections.map(({ cause }) => cause),
+        options.message,
+      ),
+      ...(options.remediationAction === undefined
+        ? {}
+        : { remediationAction: options.remediationAction }),
+    },
+  );
+  if (owners.length === rejections.length)
+    return aggregate.bindCleanupDependencies(owners);
+  // Unconfirmed closes keep the aggregate pending. Known owners still account
+  // for their own resources as those resources are released.
+  if (owners.length > 0)
+    aggregate.bindCleanupResourceOwner({
+      get cleanupResources() {
+        return resources();
+      },
+    });
+  return aggregate;
+};
 
 /**
  * Follow an existing live owner's cleanup completion from a wrapper error while

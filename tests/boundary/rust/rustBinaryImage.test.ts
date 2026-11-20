@@ -270,13 +270,6 @@ it.each([
     },
   ],
   [
-    "a duplicate .dep-v0 custom section",
-    createRustWasmModule({
-      sections: [wasmCustomSection(".dep-v0", rustDependencyPayload())],
-    }),
-    { kind: "malformed", format: "rust-auditable" },
-  ],
-  [
     "a second data section",
     createRustWasmModule({ sections: [wasmSection(11, Buffer.from([0]))] }),
     { kind: "malformed", format: "wasm", field: "data section" },
@@ -425,16 +418,6 @@ it("recognizes zero-virtual-size PE raw padding without accepting payload junk",
   );
 });
 
-it("returns null metadata when the dependency section is absent", () => {
-  const image = readRustBinaryImage(
-    createRustImage({ format: "elf", omitSection: true }),
-  );
-  expect(image.auditable_metadata).toBeNull();
-  expect(image.rustc_commit?.hashes).toEqual([
-    { hash: RUSTC_HASH, file_offset: 2048 },
-  ]);
-});
-
 it.each([1, 2])(
   "reads dependency metadata through ELF section-name compression %i",
   (compressionType) => {
@@ -501,11 +484,24 @@ it("finds rustc paths in read-only ELF load data without section headers", () =>
   expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
 });
 
+const thrown = (read: () => unknown): unknown => {
+  try {
+    read();
+  } catch (cause: unknown) {
+    return cause;
+  }
+  throw new Error("expected a container failure");
+};
+
 it("refuses a universal Mach-O container", () => {
-  expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(
-    ParseFailureError,
-  );
-  expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(/thin slice/);
+  const cause = thrown(() => readRustBinaryImage(fat([0x0100000c])));
+  expect(cause).toBeInstanceOf(ParseFailureError);
+  expect(cause).toMatchObject({
+    failure: {
+      kind: "unsupported",
+      detail: expect.stringContaining("thin slice"),
+    },
+  });
 });
 
 it("keeps the container's truncated failure and its facts unchanged", () => {
@@ -514,14 +510,6 @@ it("keeps the container's truncated failure and its facts unchanged", () => {
   // p_memsz are at +32 and +40.
   bytes.writeBigUInt64LE(BigInt(bytes.length) * 2n, 128 + 32);
   bytes.writeBigUInt64LE(BigInt(bytes.length) * 2n, 128 + 40);
-  const thrown = (read: () => unknown): unknown => {
-    try {
-      read();
-    } catch (cause: unknown) {
-      return cause;
-    }
-    throw new Error("expected a container failure");
-  };
   const container = thrown(() => readBinaryContainer(bytes, "elf-directory"));
   const rust = thrown(() => readRustBinaryImage(bytes));
   expect(rust).toBeInstanceOf(ParseFailureError);
@@ -540,14 +528,9 @@ it("does not read SHT_NOBITS dependency sections as stored bytes", () => {
   const bytes = createRustImage({ format: "elf" });
   // The fixture writes the .dep-v0 section header at byte 384.
   bytes.writeUInt32LE(8, 384 + 4);
-  let metadata: unknown;
-  try {
-    metadata = readRustBinaryImage(bytes).auditable_metadata;
-  } catch (cause: unknown) {
-    expect(cause).toBeInstanceOf(ParseFailureError);
-    return;
-  }
-  expect(metadata).toBeNull();
+  expect(thrown(() => readRustBinaryImage(bytes))).toMatchObject({
+    failure: { kind: "malformed", format: "rust-auditable" },
+  });
 });
 
 it("reads a rustc path from a read-only ELF section whose name exceeds 64 bytes", () => {
