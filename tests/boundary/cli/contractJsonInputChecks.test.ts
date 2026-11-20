@@ -9,15 +9,10 @@ import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 
 it("admits a checked JSON input through its check only, and the rest through the contract", async () => {
-  let documentParses = 0;
   const contract = {
     name: "compare_checked_fixture",
     inputSchema: z.strictObject({
-      // Registration probes the field with undefined; count document walks.
-      document: z.custom<object>((value) => {
-        if (value !== undefined) documentParses += 1;
-        return true;
-      }),
+      document: z.strictObject({ checked: z.literal(true) }),
       max_age_ms: z.int().nonnegative().optional(),
     }),
   };
@@ -51,8 +46,9 @@ it("admits a checked JSON input through its check only, and the rest through the
       options,
     });
 
+  // The command accepts this document through its own check. The base field
+  // schema would reject the raw document.
   await run(parse("options", { maxAgeMs: 5 }));
-  expect(documentParses).toBe(0);
   expect(received).toEqual([
     {
       checked: { document: { checked: { records: [1, 2, 3] } } },
@@ -65,5 +61,4 @@ it("admits a checked JSON input through its check only, and the rest through the
     code: "invalid_request",
     details: { issues: [{ path: ["maxAgeMs"] }] },
   });
-  expect(documentParses).toBe(0);
 });

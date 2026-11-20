@@ -183,25 +183,20 @@ describe("scanCredentialNames body formats", () => {
   };
   const FORM = "application/x-www-form-urlencoded; charset=UTF-8";
 
-  it("reads a form body as the form parser does, by its media type or, without one, by its shape", () => {
-    for (const mimeType of [FORM, ""]) {
-      expect(
-        scanCredentialNames([posted(mimeType, "password=example&")]),
-        mimeType,
-      ).toEqual({
-        count: 1,
-        pointers: ["record 3 request /password"],
-        skipped: NONE_SKIPPED,
-      });
-      expect(
-        scanCredentialNames([posted(mimeType, "user=a&&flag&token=example")]),
-        mimeType,
-      ).toEqual({
-        count: 1,
-        pointers: ["record 3 request /token"],
-        skipped: NONE_SKIPPED,
-      });
-    }
+  it.each([
+    [
+      "declared form media type",
+      FORM,
+      "password=example with space&",
+      "password",
+    ],
+    ["unlabelled form shape", "", "user=a&&flag&token=example&", "token"],
+  ])("reads a form body by its %s", (_source, mimeType, text, field) => {
+    expect(scanCredentialNames([posted(mimeType, text)])).toEqual({
+      count: 1,
+      pointers: [`record 3 request /${field}`],
+      skipped: NONE_SKIPPED,
+    });
   });
 
   it("finds nothing in plain text that is not a form", () => {

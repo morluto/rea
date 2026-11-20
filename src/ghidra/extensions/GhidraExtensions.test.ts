@@ -3,10 +3,10 @@ import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../../config/parseConfig.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
@@ -19,18 +19,13 @@ import {
   type GhidraExtensionResult,
 } from "./GhidraExtensions.js";
 
-const roots: string[] = [];
 let resources = new ArtifactResourceScope();
 afterEach(async () => {
   await resources.close();
   resources = new ArtifactResourceScope();
-  await Promise.all(
-    roots.splice(0).map((path) => rm(path, { recursive: true, force: true })),
-  );
 });
 const root = async () => {
-  const path = await mkdtemp(join(tmpdir(), "rea-extension-test-"));
-  roots.push(path);
+  const path = await createTestTempDirectory("rea-extension-test-");
   return path;
 };
 const target: BinaryTarget = {

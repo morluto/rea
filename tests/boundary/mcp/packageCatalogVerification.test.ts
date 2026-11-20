@@ -172,7 +172,7 @@ it("refuses a packaged catalog with a pattern outside the portable dialect", asy
           },
         }),
       ).rejects.toThrow(
-        `${kind === "inputSchema" ? "input" : "output"} pattern look-around: 1 > 0`,
+        `${first.name} ${kind === "inputSchema" ? "input" : "output"} $.properties.name: pattern look-around`,
       );
     }
   } finally {

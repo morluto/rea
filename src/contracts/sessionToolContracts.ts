@@ -224,7 +224,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "verify_reconstruction",
     evidenceEffects,
-    "Verify a finite typed behavioral and structural specification against a canonical Evidence bundle. Pass means every declared claim has complete comparable authority—not global source equivalence; changed claims fail and missing, limited, or unresolved evidence stays unknown.",
+    "Verify a finite typed behavioral, structural, and visual specification against a canonical Evidence bundle. Pass means every declared claim has complete comparable authority—not global source equivalence; changed claims fail and missing, limited, or unresolved evidence stays unknown.",
     reconstructionVerificationInputSchema,
   ),
   session(

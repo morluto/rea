@@ -1,4 +1,8 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { err, ok, type Result } from "./result.js";
+
+export const hasDosMzMagic = (bytes: Uint8Array): boolean =>
+  bytes[0] === 0x4d && bytes[1] === 0x5a;
 
 /** Source declarations in the fixed DOS header, independent of load-module validity. */
 export interface DosMzDeclarations {
@@ -12,18 +16,18 @@ export interface DosMzDeclarations {
   readonly entryOffset: number;
 }
 
-const fixedDosMzDeclarations = (bytes: Buffer): DosMzDeclarations => {
-  const relocationCount = bytes.readUInt16LE(6);
-  const relocationTableOffset = bytes.readUInt16LE(24);
+const fixedDosMzDeclarations = (reader: BinaryReader): DosMzDeclarations => {
+  const relocationCount = reader.u16(6);
+  const relocationTableOffset = reader.u16(24);
   return {
-    lastPageBytes: bytes.readUInt16LE(2),
-    pages: bytes.readUInt16LE(4),
-    headerBytes: bytes.readUInt16LE(8) * 16,
+    lastPageBytes: reader.u16(2),
+    pages: reader.u16(4),
+    headerBytes: reader.u16(8) * 16,
     relocationCount,
     relocationTableOffset,
     relocationTableEnd: relocationTableOffset + relocationCount * 4,
-    entrySegment: bytes.readUInt16LE(22),
-    entryOffset: bytes.readUInt16LE(20),
+    entrySegment: reader.u16(22),
+    entryOffset: reader.u16(20),
   };
 };
 
@@ -31,9 +35,9 @@ const fixedDosMzDeclarations = (bytes: Buffer): DosMzDeclarations => {
 export const readDosMzDeclarations = (
   bytes: Buffer,
 ): Result<DosMzDeclarations, string> =>
-  bytes.length < 28 || bytes.toString("latin1", 0, 2) !== "MZ"
+  bytes.length < 28 || !hasDosMzMagic(bytes)
     ? err("invalid or truncated DOS MZ header")
-    : ok(fixedDosMzDeclarations(bytes));
+    : ok(fixedDosMzDeclarations(new BinaryReader(bytes, true, "dos-mz")));
 
 /** Derive the initialized source extent from already admitted fixed declarations. */
 export const dosMzDeclaredImageByteLength = ({
@@ -82,8 +86,14 @@ export type MzWindowsHeaderObservation =
       readonly signature: "PE" | "NE" | "LE" | "LX";
     };
 
-/** Exact signature bytes observed at the DOS header's declared offset. */
+/** Bytes observed at the DOS header's declared Windows-header offset. */
 export interface MzWindowsHeaderSignatureEvidence {
+  readonly offset: number;
+  readonly bytes: Buffer;
+}
+
+/** Structural bytes observed at a PE header's declared offset. */
+export interface MzWindowsHeaderRecordEvidence {
   readonly offset: number;
   readonly bytes: Buffer;
 }
@@ -118,14 +128,16 @@ const observeWindowsHeader = (
   signatureEvidence?: MzWindowsHeaderSignatureEvidence,
   declarations?: DosMzDeclarations,
 ): MzWindowsHeaderObservation => {
+  if (bytes.length >= 2 && !hasDosMzMagic(bytes)) return { state: "absent" };
   if (bytes.length < 64)
     return fileSize >= 64 ? { state: "header-needed" } : { state: "absent" };
+  const reader = new BinaryReader(bytes, true, "dos-mz");
   const {
     headerBytes,
     relocationCount,
     relocationTableOffset: tableStart,
     relocationTableEnd: tableEnd,
-  } = declarations ?? fixedDosMzDeclarations(bytes);
+  } = declarations ?? fixedDosMzDeclarations(reader);
   if (
     headerBytes !== 0 &&
     relocationCount > 0 &&
@@ -133,7 +145,7 @@ const observeWindowsHeader = (
     tableEnd > 60
   )
     return { state: "absent" };
-  const offset = bytes.readUInt32LE(60);
+  const offset = reader.u32(60);
   if (offset === 0) return { state: "absent" };
   const inlineSignature =
     offset < bytes.length
@@ -332,11 +344,12 @@ const readRelocations = (
   headerBytes: number,
   moduleBytes: number,
 ): Result<readonly DosMzRelocation[], string> => {
+  const reader = new BinaryReader(bytes, true, "dos-mz");
   const relocations: DosMzRelocation[] = [];
   for (let index = 0; index < relocationCount; index += 1) {
     const record = relocationTableOffset + index * 4;
-    const offset = bytes.readUInt16LE(record);
-    const segment = bytes.readUInt16LE(record + 2);
+    const offset = reader.u16(record);
+    const segment = reader.u16(record + 2);
     const moduleOffset = segment * 16 + offset;
     if (moduleOffset + 2 > moduleBytes)
       return err(`DOS MZ relocation ${index} points outside its load module`);

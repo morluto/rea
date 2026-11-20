@@ -8,7 +8,8 @@
  * checked on each call belong in `ANALYSIS_SETTINGS` instead of this list.
  *
  * Narrative bounds, owners, and the non-numeric settings live in
- * `docs/design/rea-limit-inventory.md`.
+ * `docs/design/rea-limit-inventory.md`. That same script compares each
+ * documented default, floor, and maximum with the exported value.
  */
 export interface NumericLimitRegistryEntry {
   readonly name: string;

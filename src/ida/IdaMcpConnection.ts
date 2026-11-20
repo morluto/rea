@@ -710,7 +710,18 @@ export const createIdaMcpConnection = (
     async connect() {
       await client
         .connect(transport, { timeout: config.timeoutMs })
-        .catch((cause: unknown) => transportFailure(cause, "ida_mcp_connect"));
+        .catch(async (cause: unknown) => {
+          // A launcher can close stdin before its diagnostic reaches stderr.
+          // Join the SDK's bounded teardown before taking the diagnostic snapshot.
+          if (
+            stdio !== undefined &&
+            cause instanceof Error &&
+            "code" in cause &&
+            cause.code === "EPIPE"
+          )
+            await stdio.close();
+          return transportFailure(cause, "ida_mcp_connect");
+        });
       const catalog = await client
         .listTools(undefined, {
           timeout: config.timeoutMs,

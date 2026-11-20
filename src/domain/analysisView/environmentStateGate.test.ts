@@ -73,7 +73,9 @@ describe("clock spelling facts at the read gate", () => {
   ])(
     "does not learn a spelling from distinct sub-millisecond instants (%s)",
     (stored, shown) => {
-      expect(check([[stored, shown]]).view).not.toHaveProperty("clock_formats");
+      const { view } = check([[stored, shown]]);
+      expect(view).toMatchObject({ shape: "item" });
+      expect(view).not.toHaveProperty("clock_formats");
     },
   );
 
@@ -102,17 +104,21 @@ describe("clock spelling facts at the read gate", () => {
   });
 
   it("keeps only a mixed marker after incompatible other-instant formats", () => {
-    const clocks = (count: number) =>
-      Array.from(
+    const stored = "2026-10-21T17:06:13Z";
+    const clocks = (count: number) => [
+      ...Array.from(
         { length: count },
         (_, index) =>
           [
-            "2026-10-21T17:06:13Z",
+            stored,
             `2026-10-20T17:06:13+${String(Math.floor(index / 60) % 24).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}`,
           ] as const,
-      );
+      ),
+      [stored, "2026-10-21T17:06:13+00:00"] as const,
+    ];
     const small = check(clocks(4));
-    const large = check(clocks(1024));
+    const large = check(clocks(1024), small.bytes);
+    expect(large.view).toMatchObject({ shape: "item" });
     expect(large.view).not.toHaveProperty("clock_formats");
     expect(large.bytes).toBe(small.bytes);
   });

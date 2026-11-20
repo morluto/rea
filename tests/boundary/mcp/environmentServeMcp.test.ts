@@ -141,8 +141,13 @@ processTest(
         arguments: { maxSize: "20", offset: "0" },
       });
       expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toHaveProperty(
+        "body",
+        INITIAL_TRASH_ROWS[0]![2],
+      );
       expect(response.structuredContent).toMatchObject({
-        body: INITIAL_TRASH_ROWS[0]![2],
+        replay: { record_ordinal: 0 },
+        state: { source: "recording", reason: "list-differs" },
       });
     } finally {
       await client.close();
@@ -155,6 +160,8 @@ processTest(
   async ({ processes }) => {
     const fixture = environmentStateServeFixture(
       timedCaptureEvidence([
+        ["GET", "/api/contacts?maxSize=2&withItems=false", [{ id: 2 }]],
+        ["GET", "/api/contacts?maxSize=3&withItems=true", [{ id: 3 }]],
         [
           "GET",
           "/api/contacts?maxSize=2&withItems=true",
@@ -308,17 +315,19 @@ describe("rea environment-serve --replay-only", () => {
         });
         const exact = await client.callTool({
           name: "get_users_by_id",
-          arguments: { id: "2" },
+          arguments: { id: "3" },
         });
         expect(exact.isError).toBeFalsy();
         expect(exact.structuredContent).toMatchObject({
           status: 200,
           content_type: "application/json",
-          body: { login: "probe" },
+          body: { id: 3, login: "viewer" },
           replay: {
             exact_match: true,
             evidence_id: source.evidenceId,
-            recorded_path: "/api/users/2",
+            recorded_path: "/api/users/3",
+            recorded_query: null,
+            body_recorded: true,
             truncated: false,
           },
         });
@@ -331,7 +340,13 @@ describe("rea environment-serve --replay-only", () => {
         });
         expect(inexact.structuredContent).toMatchObject({
           body: { login: "probe" },
-          replay: { exact_match: false },
+          replay: {
+            exact_match: false,
+            recorded_path: "/api/users/2",
+            record_ordinal: source.manifest.tools.find(
+              ({ name }) => name === "get_users_by_id",
+            )!.record_ordinals[0],
+          },
         });
         const folder = await client.callTool({
           name: "get_folders_by_uid",
@@ -356,6 +371,7 @@ describe("rea environment-serve --replay-only", () => {
       const origin = new URL(started.url).origin;
       const card = await fetch(new URL(CARD_PATH, origin));
       expect(card.status).toBe(200);
+      expect(card.headers.get("content-type")).toContain("application/json");
       const text = await card.text();
       const body: unknown = JSON.parse(text);
       // Keep a readable independent golden for every description and input

@@ -5,7 +5,6 @@
   "src/ghidra/GhidraFileArtifacts.ts": 1,
   "src/il2cpp/Il2cppGhidraSeedWriter.ts": 1,
   "src/model/ModelArtifactProvider.ts": 1,
-  "src/native/NativeMacOSProvider.ts": 1,
   "src/native/NativePlistSource.ts": 1,
   "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
 }

@@ -48,6 +48,18 @@ rea_loader_word rea_loader_got_caller(rea_loader_word value) {
   return rea_external((int)value) + rea_external_value;
 }
 
+/* An initial-exec TLS variable from the provider. Its R_X86_64_TPOFF64 slot
+ * sits in the same read-only .got as the applied entries above, and only the
+ * runtime loader fills it, so Ghidra imports it unapplied. Protecting that
+ * slot must not make the applied GOT entries beside it opaque. */
+extern __thread rea_loader_word rea_external_tls
+    __attribute__((tls_model("initial-exec")));
+
+__attribute__((noinline, used, visibility("default")))
+rea_loader_word rea_loader_tls_reader(void) {
+  return rea_external_tls;
+}
+
 __attribute__((used, visibility("default"))) void rea_loader_start(void) {
   volatile rea_loader_word result = rea_loader_reader();
   (void)result;

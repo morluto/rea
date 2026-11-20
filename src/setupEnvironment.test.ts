@@ -5,10 +5,10 @@ import {
 } from "./application/ClientRegistrationIdentity.js";
 import { UpdateCommandRunner } from "./application/UpdateCommandRunner.js";
 import { readFile } from "node:fs/promises";
-import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import { runDoctor } from "./application/Doctor.js";
@@ -271,6 +271,7 @@ it("preserves a validated selected JEB endpoint in setup registrations without c
     );
   } finally {
     await setupHost.close?.();
+    vi.unstubAllEnvs();
   }
 });
 

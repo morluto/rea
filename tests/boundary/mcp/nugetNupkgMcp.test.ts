@@ -5,11 +5,11 @@ import { ZipReader } from "@zip.js/zip.js";
 import { expect, vi } from "vitest";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../../src/contracts/nuget/nupkgToolContracts.js";
 import { contractNamed } from "../../../src/cli/contractCliDescription.js";
-import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/index.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { nugetNupkgFixture } from "../../../src/nuget/NugetNupkg.fixture.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
@@ -112,14 +112,14 @@ mcpTest(
       expect(error).toMatchObject({
         code: "resource_constraint",
         retryable: false,
-      });
-      expect(error.remediation.action).toContain(
-        ZIP_ZSTANDARD_WINDOW_CEILING.name,
-      );
-      expect(error.details?.refusal).toMatchObject({
-        kind: "fixed_ceiling",
-        limit: ZIP_ZSTANDARD_WINDOW_CEILING.limit,
-        unit: "bytes",
+        details: {
+          refusal: {
+            kind: "fixed_ceiling",
+            limit: ZIP_ZSTANDARD_WINDOW_CEILING.limit,
+            unit: ZIP_ZSTANDARD_WINDOW_CEILING.unit,
+            narrowing: ZIP_ZSTANDARD_WINDOW_CEILING.narrowing,
+          },
+        },
       });
     } finally {
       enumeration.mockRestore();

@@ -18,9 +18,48 @@ import {
 } from "../domain/webSourceLocation.js";
 import { WebSourceLocationService } from "./WebSourceLocationService.js";
 import type { WebSourceMapPort } from "../ports/WebSourceLocationPorts.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const service = (data = webSourceLocationFixture(), port = decoder) =>
   new WebSourceLocationService({ load: () => Promise.resolve(ok(data)) }, port);
+
+it.each(["opaque", "already released"] as const)(
+  "tracks the remaining web cleanup owner beside an %s sibling",
+  async (sibling) => {
+    const live = new ProviderCleanupError("artifacts", ["artifact-root"], {});
+    const released = new ProviderCleanupError("codec", ["codec-root"], {});
+    released.bindCleanupResourceOwner({ cleanupResources: ["codec-root"] });
+    releaseOwnedCleanup(released);
+    const other =
+      sibling === "opaque" ? new Error("codec close unconfirmed") : released;
+    const workflow = new WebSourceLocationService(
+      {
+        load: async () => ok(webSourceLocationFixture()),
+        close: async () => {
+          throw live;
+        },
+      },
+      {
+        ...decoder,
+        close: async () => {
+          throw other;
+        },
+      },
+    );
+    const failure: unknown = await workflow
+      .close()
+      .catch((cause: unknown) => cause);
+    if (!(failure instanceof ProviderCleanupError))
+      throw new Error("expected aggregate cleanup failure");
+    expect(failure.cause).toMatchObject({ errors: [live, other] });
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toEqual(["artifact-root"]);
+    releaseOwnedCleanup(live);
+    expect(failure.cleanupResources).toEqual([]);
+    expect(failure.cleanupIncomplete).toBe(sibling === "opaque");
+  },
+);
 const expectCodecDeadline = (
   evidence: {
     readonly limitations: readonly string[];

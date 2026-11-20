@@ -1,9 +1,14 @@
-import { writeFile } from "node:fs/promises";
+import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { scheduler } from "node:timers/promises";
+import { expect, it, vi } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
-import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { BinaryFormatFailure } from "../../../src/domain/binaryContainer.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createGoBinaryFixture,
@@ -12,6 +17,7 @@ import {
 } from "../../fixtures/go/image.js";
 import { createGoRodataStringFixture } from "../../fixtures/go/rodataStringImage.js";
 import { CPU_ARM64, universalMacho } from "../../fixtures/universalMacho.js";
+import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("rejects advertised PE32 data directories outside the optional header", async () => {
@@ -27,6 +33,65 @@ it("rejects advertised PE32 data directories outside the optional header", async
     details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
   });
 });
+
+it.each([false, true])(
+  "reports whether an oversized Mach-O command table is file-backed (%s)",
+  async (stored) => {
+    const tableBytes = 16 * 1024 * 1024 + 8;
+    const bytes = Buffer.alloc(stored ? 40 : 32);
+    bytes.writeUInt32LE(0xfeedfacf, 0);
+    bytes.writeUInt32LE(0x01000007, 4);
+    bytes.writeUInt32LE(3, 8);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(1, 16);
+    bytes.writeUInt32LE(tableBytes, 20);
+    if (stored) {
+      bytes.writeUInt32LE(0x1234, 32);
+      bytes.writeUInt32LE(tableBytes, 36);
+    }
+    const root = await createTestTempDirectory("rea-go-macho-table-");
+    const path = join(root, "image");
+    await writeFile(path, bytes);
+    if (stored) await truncate(path, 32 + tableBytes);
+    const provider = new GoBinaryProvider();
+    try {
+      const result = await provider.inspect({ path });
+      if (result.ok) throw new Error("Expected a command-table refusal");
+      const projected = projectAnalysisError(result.error);
+      if (stored)
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          details: {
+            reported_limits: {
+              boundary: "structure",
+              maximum: 16 * 1024 * 1024,
+            },
+          },
+        });
+      else {
+        expect(result.error).toBeInstanceOf(AnalysisInputError);
+        if (!(result.error instanceof AnalysisInputError)) throw result.error;
+        expect(result.error.cause).toBeInstanceOf(BinaryFormatFailure);
+        if (!(result.error.cause instanceof BinaryFormatFailure))
+          throw result.error.cause;
+        expect(result.error.cause.failure).toMatchObject({
+          kind: "truncated",
+          format: "macho",
+          field: "Mach-O load commands",
+          offset: 32,
+        });
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [{ path: ["path"], reason: "invalid_format" }],
+          },
+        });
+      }
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it("preserves the actual build-info byte guard as a resource failure", async () => {
   const fixture = createGoInlineAggregateFixture(1024 * 1024 + 2);
@@ -293,3 +358,33 @@ it.each([
     }
   },
 );
+
+it("cancels a many-frame compressed ELF section-name table", async () => {
+  const root = await createTestTempDirectory("rea-go-zstd-cancel-");
+  const path = join(root, "app");
+  await writeFile(path, elfFrameAllowanceFixture());
+  const reason = new Error("stop go frames");
+  const controller = new AbortController();
+  const yieldImpl = scheduler.yield.bind(scheduler);
+  let yields = 0;
+  const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+    yields += 1;
+    await yieldImpl();
+    if (yields === 1) controller.abort(reason);
+  });
+  try {
+    const result = await new GoBinaryProvider().inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_go_binary",
+      cause: reason,
+    });
+  } finally {
+    spy.mockRestore();
+  }
+});

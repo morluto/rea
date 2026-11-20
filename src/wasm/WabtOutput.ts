@@ -25,7 +25,7 @@ export const parseWabtOutput = (
   let offset = prefix.length;
   let customIndex = 0;
   const sections = [];
-  const invalidNameEnds: number[] = [];
+  const invalidNameEnds = new Set<number>();
   while (!text.startsWith("\nSection Details:\n", offset)) {
     const match =
       /^[ \t]*(\w+) start=0x([\da-f]+) end=0x([\da-f]+) \(size=0x([\da-f]+)\) /u.exec(
@@ -43,7 +43,7 @@ export const parseWabtOutput = (
       const invalidEnd = invalidCustomNameEnd(artifact, start, end);
       if (invalidEnd === undefined)
         throw new WabtAdmissionError("blank_custom_name");
-      invalidNameEnds.push(invalidEnd);
+      invalidNameEnds.add(invalidEnd);
       description = "";
       // WABT does not terminate a blank-name row when another section follows.
       if (

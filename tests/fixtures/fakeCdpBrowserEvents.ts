@@ -29,17 +29,10 @@ const emitWebMcpEvents = (
   port: number,
   options: FakeOptions,
 ): void => {
-  if (
-    command.method === "WebMCP.enable" &&
-    options.webMcpSameUrlRegistrations !== undefined
-  ) {
-    emitSameUrlWebMcpRegistrations(socket, command, options);
-    return;
-  }
   if (command.method !== "WebMCP.enable" || options.webMcpTools !== true)
     return;
   emitMainWebMcpTools(socket, command, port, options);
-  emitChildWebMcpNavigations(socket, command, port, options);
+  emitChildWebMcpNavigations(socket, command, options);
 };
 
 const emitMainWebMcpTools = (
@@ -48,18 +41,6 @@ const emitMainWebMcpTools = (
   port: number,
   options: FakeOptions,
 ): void => {
-  const inputSchemaProperties =
-    options.webMcpSchemaPropertyCount === undefined
-      ? {
-          orderId: { type: "string", example: "schema-secret" },
-          includeItems: { type: "boolean", default: true },
-        }
-      : Object.fromEntries(
-          Array.from(
-            { length: options.webMcpSchemaPropertyCount },
-            (_value, index) => [`field_${String(index)}`, { type: "string" }],
-          ),
-        );
   event(socket, "WebMCP.toolsAdded", command.sessionId, {
     tools: [
       {
@@ -69,15 +50,13 @@ const emitMainWebMcpTools = (
         backendNodeId: 42,
         inputSchema: {
           type: "object",
-          properties: inputSchemaProperties,
+          properties: {
+            orderId: { type: "string", example: "schema-secret" },
+            includeItems: { type: "boolean", default: true },
+          },
           required: ["orderId"],
         },
-        annotations: {
-          ...webMcpToolAnnotations,
-          consequential: Object.hasOwn(options, "webMcpConsequential")
-            ? options.webMcpConsequential
-            : true,
-        },
+        annotations: webMcpToolAnnotations,
         stackTrace:
           options.webMcpStackTrace !== undefined
             ? options.webMcpStackTrace(`http://127.0.0.1:${String(port)}`)
@@ -102,6 +81,7 @@ const emitMainWebMcpTools = (
               name: "update_order",
               description: "Update an order",
               frameId: "frame-main",
+              annotations: { ...webMcpToolAnnotations, consequential: false },
               inputSchema: {
                 type: "object",
                 properties: { orderId: { type: "string" } },
@@ -118,8 +98,7 @@ const emitMainWebMcpTools = (
             },
           ]
         : []),
-      ...(options.webMcpChildLeavesScope === true ||
-      options.webMcpChildTransientBlank === true
+      ...(options.webMcpChildLeavesScope === true
         ? [
             {
               name: "child_tool",
@@ -135,7 +114,6 @@ const emitMainWebMcpTools = (
 const emitChildWebMcpNavigations = (
   socket: WebSocket,
   command: FakeCdpCommand,
-  port: number,
   options: FakeOptions,
 ): void => {
   if (options.webMcpChildLeavesScope === true) {
@@ -156,81 +134,6 @@ const emitChildWebMcpNavigations = (
       ],
     });
   }
-  if (options.webMcpChildTransientBlank === true)
-    event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: {
-        id: "frame-child",
-        parentId: "frame-main",
-        loaderId: "loader-transient",
-        url: "about:blank",
-      },
-    });
-  if (options.webMcpChildRecoversAfterTransient === true) {
-    event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: {
-        id: "frame-child",
-        parentId: "frame-main",
-        loaderId: "loader-child-recovered",
-        url: `http://127.0.0.1:${String(port)}/child-recovered`,
-      },
-    });
-    event(socket, "WebMCP.toolsAdded", command.sessionId, {
-      tools: [
-        {
-          name: "child_tool",
-          description: "Replayed from the current child document",
-          frameId: "frame-child",
-        },
-      ],
-    });
-  }
-  if (options.webMcpChildNavigatesAllowed === true)
-    event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: {
-        id: "frame-child",
-        parentId: "frame-main",
-        loaderId: "loader-child-replacement",
-        url: `http://127.0.0.1:${String(port)}/child-replacement`,
-      },
-    });
-};
-
-const emitSameUrlWebMcpRegistrations = (
-  socket: WebSocket,
-  command: FakeCdpCommand,
-  options: FakeOptions,
-): void => {
-  event(socket, "WebMCP.toolsAdded", command.sessionId, {
-    tools: [
-      {
-        name: "read_item",
-        description: "First owner",
-        frameId: "webmcp-frame-0",
-      },
-    ],
-  });
-  event(socket, "WebMCP.toolsAdded", command.sessionId, {
-    tools: [
-      {
-        name: "read_item",
-        description: "First owner updated",
-        frameId: "webmcp-frame-0",
-      },
-    ],
-  });
-  event(socket, "WebMCP.toolsAdded", command.sessionId, {
-    tools: [
-      {
-        name: "read_item",
-        description: "Second owner",
-        frameId: "webmcp-frame-1",
-      },
-    ],
-  });
-  if (options.webMcpSameUrlRegistrations === "remove-second")
-    event(socket, "WebMCP.toolsRemoved", command.sessionId, {
-      tools: [{ name: "read_item", frameId: "webmcp-frame-1" }],
-    });
 };
 
 const emitSessionTimeline = (
@@ -271,7 +174,6 @@ const emitSessionTimeline = (
         : `http://127.0.0.1:${String(port)}/redirected?token=redirect-secret`;
     event(socket, "Network.requestWillBeSent", command.sessionId, {
       requestId: "document-request",
-      type: options.sessionRedirectResourceType,
       frameId: "frame-main",
       loaderId: "loader-redirect",
       request: { url: redirectUrl, method: "GET" },
@@ -300,17 +202,6 @@ const emitSessionTimeline = (
       name: "networkIdle",
       timestamp: 15,
     });
-    for (
-      let index = 0;
-      index < (options.sessionTimelineEventCount ?? 0);
-      index += 1
-    )
-      event(socket, "Page.lifecycleEvent", command.sessionId, {
-        frameId: "frame-main",
-        loaderId: "loader-reload",
-        name: `lifecycle-${String(index)}`,
-        timestamp: 16 + index,
-      });
     if (options.sessionTimeline === "target_detached")
       event(socket, "Target.detachedFromTarget", undefined, {
         sessionId: command.sessionId,
@@ -709,17 +600,6 @@ const emitCaptureNavigation = (
   port: number,
   options: FakeOptions,
 ): void => {
-  if (
-    command.method === "Page.captureScreenshot" &&
-    options.screenshotDocumentLoader !== undefined
-  )
-    event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: {
-        id: "frame-main",
-        url: `http://127.0.0.1:${String(port)}/app?token=frame-secret`,
-        loaderId: options.screenshotDocumentLoader,
-      },
-    });
   const navigationUrl =
     command.method === "DOMSnapshot.captureSnapshot"
       ? options.navigateDuringCaptureUrl
