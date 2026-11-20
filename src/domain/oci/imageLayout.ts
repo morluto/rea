@@ -8,6 +8,8 @@ import { coverageStatusSchema } from "../coverage.js";
 export const OCI_IMAGE_LAYOUT_FORMAT = "oci-image-layout";
 
 const uint = z.number().int().min(0).max(0xffffffff);
+/** Declared and observed blob sizes; the hash budget bounds reading, not reporting. */
+const byteSize = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 
 /** Hard ceiling on one JSON document (oci-layout, index, manifest, or config). */
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_JSON_BYTES = 16 * 1024 * 1024;
@@ -204,7 +206,7 @@ const platformSchema = z.strictObject({
 const descriptorSchema = z.strictObject({
   media_type: z.string().min(1),
   digest: z.string().min(1),
-  size: uint.nullable(),
+  size: byteSize.nullable(),
   platform: platformSchema.nullable(),
   annotations: z.array(annotationSchema),
 });
@@ -224,7 +226,7 @@ const historyEntrySchema = z.strictObject({
 const layerSchema = z.strictObject({
   media_type: z.string().min(1),
   digest: z.string().min(1),
-  size: uint.nullable(),
+  size: byteSize.nullable(),
   present: z.boolean(),
 });
 
@@ -263,8 +265,8 @@ const blobSchema = z.strictObject({
   digest: z.string().min(1),
   path: z.string().min(1),
   media_type: z.string().min(1).nullable(),
-  declared_size: uint.nullable(),
-  observed_size: uint.nullable(),
+  declared_size: byteSize.nullable(),
+  observed_size: byteSize.nullable(),
   present: z.boolean(),
   hashed: z.boolean(),
   sha256: digestSchema.nullable(),

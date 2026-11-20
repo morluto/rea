@@ -1,4 +1,11 @@
-import { mkdir, readFile, symlink, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  symlink,
+  truncate,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
@@ -416,6 +423,52 @@ it("checks every declared size of a blob that several manifests share", async ()
       finding.message.includes(String(configSize + 1)),
     ),
   ).toBe(true);
+});
+
+it("reports a blob above 4 GiB as blob_oversize in a valid report", async () => {
+  const root = await createTestTempDirectory("rea-oci-huge-declared-");
+  const written = await writeOciImageLayoutFixture(root);
+  const manifest = JSON.parse(
+    await readFile(
+      join(root, "blobs", "sha256", written.manifestDigest.slice(7)),
+      "utf8",
+    ),
+  ) as { layers: { digest: string; size: number }[] };
+  const layer = manifest.layers[0];
+  if (layer === undefined) throw new Error("fixture has no layer");
+  const declared = 5 * 1024 * 1024 * 1024;
+  layer.size = declared;
+  const text = `${JSON.stringify(manifest)}\n`;
+  const digest = await putOciBlob(root, text);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: { digest: string; size: number }[];
+  };
+  const entry = index.manifests[0];
+  if (entry === undefined) throw new Error("fixture has no manifest");
+  entry.digest = digest;
+  entry.size = Buffer.byteLength(text);
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  // Sparse file: the reader sees the 5 GiB size without the bytes being written.
+  await truncate(
+    join(root, "blobs", "sha256", layer.digest.slice(7)),
+    declared,
+  );
+  const report = await inspectLayout(root);
+  expect(report.findings).toContainEqual(
+    expect.objectContaining({ kind: "blob_oversize", digest: layer.digest }),
+  );
+  expect(report.blobs).toContainEqual(
+    expect.objectContaining({
+      digest: layer.digest,
+      declared_size: declared,
+      observed_size: declared,
+      hashed: false,
+    }),
+  );
+  expect(report.images[0]?.layers).toContainEqual(
+    expect.objectContaining({ digest: layer.digest, size: declared }),
+  );
 });
 
 it("refuses malformed index.json and preserves the oci-layout snapshot", async () => {
