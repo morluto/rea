@@ -17,6 +17,7 @@ import {
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
 import { readPyzArchive } from "./PyzArchive.js";
+import { parseCArchiveToc } from "./CArchiveLayout.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
@@ -65,6 +66,44 @@ describe.each(["2.0", "2.1"] as const)(
     });
   },
 );
+
+describe("CArchive entry admission at the TOC record limit", () => {
+  const entryCount = 100_000;
+  const entry = Buffer.alloc(32);
+  entry.writeUInt32BE(entry.length);
+  entry[17] = 0x78;
+  entry.write("member.txt", 18, "ascii");
+  const boundary = entry.length * entryCount;
+  const toc = Buffer.alloc(boundary + entry.length, entry);
+
+  it("accepts exactly the limit and refuses one more framed record", () => {
+    const admitted = parseCArchiveToc(toc.subarray(0, boundary));
+    if (!admitted.ok) throw new Error(admitted.error.message);
+    expect(admitted.value).toHaveLength(entryCount);
+    expect(parseCArchiveToc(toc)).toMatchObject({
+      ok: false,
+      error: { reason: "limit" },
+    });
+  });
+
+  it.each([
+    [4, "entry is truncated"],
+    [20, "entry extends outside the table"],
+  ] as const)(
+    "preserves framing failure for %i trailing bytes at the entry limit",
+    (tailSize, message) => {
+      expect(parseCArchiveToc(toc.subarray(0, boundary + tailSize))).toEqual({
+        ok: false,
+        error: {
+          reason: "format",
+          message: expect.stringContaining(
+            `table index ${entryCount} at TOC offset ${boundary}: CArchive table of contents ${message}`,
+          ),
+        },
+      });
+    },
+  );
+});
 
 it.each([0, 1, 2])(
   "identifies malformed CArchive compression at table index %i",
