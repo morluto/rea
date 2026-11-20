@@ -791,6 +791,16 @@ recovery or display when those belong to the consumer. For generated
 installers and verifiers, exercise the emitted artifact in its supported
 runtime so the test covers the code that actually receives the input.
 
+When detection and detailed inspection share a reader, compare a valid
+input, a recognizable malformed input, and a valid input whose examined
+prefix ends at the budget when those cases apply. Assert the recognized
+format, which fields are established, and the coverage and diagnostics in
+each consumer. If the source feeds both a digest and a converter, exercise a
+change to the original between the snapshot read and conversion. Assert that
+the digest and converted value describe the same bytes, or that the operation
+returns a typed failure. Check advertised effects and the lifecycle of any
+temporary copy.
+
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Format assumptions                    | Pair valid padding, offsets, or names containing delimiters with malformed input. Identify the producer revision when behavior varies by version; an unrelated runtime API's range is not an on-disk format limit.                                                                                                                                 |
@@ -959,9 +969,9 @@ cancels from inside final cleanup, and `controlledCleanup` gives children
 refused or confirmed outcomes with counted retries.
 `tests/support/providerLifecycleCoverage.ts` maps every registered provider id
 to its launch, handshake, operation, cancellation, cleanup and retry
-regressions, a not-applicable reason, or an explicit gap. Name the test file
-and literal title when a change adds or moves a provider lifecycle regression;
-the shrink-only gap list closes as stages gain coverage. Check server
+regressions or a reason a stage does not apply. Name the test file and the
+title at its registration site when a change adds or moves a lifecycle
+regression. The check rejects uncovered applicable stages. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.

@@ -4,9 +4,9 @@
  * imports pefile 2024.8.26.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readdir, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -100,16 +100,42 @@ try {
 
 const pefile = new Map();
 const scratch = await VerifierFixture.open({ prefix: "rea-pe-rich-header-" });
-await withVerifierFixture(scratch, async ({ path }) => {
-  const list = join(path, "files.json");
+await withVerifierFixture(scratch, async (fixture) => {
+  const commands = await createVerifierCommands();
+  fixture.releaseAfter(() => commands.close());
+  const list = join(fixture.path, "files.json");
   await writeFile(list, JSON.stringify(files));
-  const output = execFileSync(python, ["-I", "-c", PEFILE_SCRIPT, list], {
-    encoding: "utf8",
-    maxBuffer: 1 << 30,
-  });
-  for (const line of output.split("\n").filter(Boolean)) {
+  const { stdout } = await commands.exec(
+    python,
+    ["-I", "-c", PEFILE_SCRIPT, list],
+    {
+      maxBuffer: 1 << 30,
+    },
+  );
+  for (const line of stdout.split("\n").filter(Boolean)) {
     const row = JSON.parse(line);
     pefile.set(row.path, row);
+  }
+  const firstPresent = files.find(
+    (path) => rea.get(path)?.rich_header?.state === "present",
+  );
+  if (firstPresent !== undefined) {
+    const cli = await commands.exec(
+      process.execPath,
+      [
+        resolve("scripts/rea.mjs"),
+        "inspect-pe-rich-header",
+        firstPresent,
+        "--max-file-bytes",
+        String(MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES),
+        "--json",
+      ],
+      { timeout: 60000 },
+    );
+    assert.deepEqual(
+      JSON.parse(cli.stdout).normalized_result,
+      rea.get(firstPresent),
+    );
   }
 });
 
@@ -191,27 +217,6 @@ for (const path of files) {
       rea: record.state,
       pefile: other === null ? "none" : "present",
     });
-}
-
-const firstPresent = files.find(
-  (path) => rea.get(path)?.rich_header?.state === "present",
-);
-if (firstPresent !== undefined) {
-  const cli = JSON.parse(
-    execFileSync(
-      process.execPath,
-      [
-        resolve("scripts/rea.mjs"),
-        "inspect-pe-rich-header",
-        firstPresent,
-        "--max-file-bytes",
-        String(MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES),
-        "--json",
-      ],
-      { encoding: "utf8", timeout: 60000 },
-    ),
-  );
-  assert.deepEqual(cli.normalized_result, rea.get(firstPresent));
 }
 
 console.log(JSON.stringify(summary, null, 2));

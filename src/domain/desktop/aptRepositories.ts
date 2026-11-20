@@ -12,6 +12,8 @@ export interface AptSourceStanza {
   readonly file: string;
   /** apt's number for the entry: a one-line entry's line, a deb822 entry's stanza, counted from 1. */
   readonly position: number;
+  readonly format: "one-line" | "deb822";
+  readonly oneLine?: Omit<OneLineIdentity, "uri">;
   readonly uris: readonly AptSourceUri[];
   readonly suites: readonly string[];
   readonly components: readonly string[];
@@ -20,6 +22,12 @@ export interface AptSourceStanza {
   readonly signedBy: readonly string[];
   /** The armored key block Signed-By holds in place of paths or fingerprints; null when it holds none. */
   readonly inlineKey: string | null;
+}
+
+interface OneLineIdentity {
+  readonly uri: string;
+  readonly suite: string;
+  readonly components: readonly string[];
 }
 
 interface AptSourceUri {
@@ -31,7 +39,7 @@ interface AptSourceUri {
 /** One `deb` entry of an apt sources file for one URI and suite. */
 export interface AptSourceEntry extends Omit<
   AptSourceStanza,
-  "uris" | "suites"
+  "uris" | "suites" | "format" | "oneLine"
 > {
   readonly uri: string | null;
   /** Whether the entry's URI held a user name or password, which `uri` leaves out. */
@@ -39,6 +47,8 @@ export interface AptSourceEntry extends Omit<
   readonly suite: string;
   /** Empty for a flat repository, whose suite is a path ending in `/`. */
   readonly components: readonly string[];
+  /** Effective component words when the one-line grammar changed their spelling. */
+  readonly repoComponents?: readonly string[];
 }
 
 const ARMOR_BEGIN = "-----BEGIN PGP PUBLIC KEY BLOCK-----";
@@ -88,20 +98,168 @@ export const withoutCredentialsIn = (text: string): string =>
 const withTrailingSlash = (uri: string): string =>
   uri.endsWith("/") ? uri : `${uri}/`;
 
-const EMPTY_AUTHORITY = /^([a-z][a-z0-9+.-]*:)\/\/(?=\/)/iu;
-const NUMERIC_PORT =
-  /^([a-z][a-z0-9+.-]*:\/\/(?:\[[^\]]+\]|[^/:]+)):([0-9]+)(?=\/|$)/iu;
+const SCHEME_PREFIX = /^([a-z][a-z0-9+.-]*):/iu;
+const LONG_MAX = (1n << 63n) - 1n;
+const LONG_MIN = -(1n << 63n);
+/** Largest magnitude strtol can return: LONG_MAX, or LONG_MIN's absolute value. */
+const PORT_MAGNITUDE_LIMIT = LONG_MAX + 1n;
+
+const isAsciiSpace = (character: string): boolean =>
+  character === " " ||
+  character === "\t" ||
+  character === "\n" ||
+  character === "\v" ||
+  character === "\f" ||
+  character === "\r";
+
+/**
+ * APT assigns `atoi(suffix)` to an unsigned 32-bit port. The magnitude stops
+ * growing once it passes the signed 64-bit limit; further digits are skipped.
+ * Trailing junk ends the conversion, and a zero result is omitted.
+ */
+const aptPort = (suffix: string): number => {
+  let index = 0;
+  while (index < suffix.length && isAsciiSpace(suffix[index] ?? "")) index += 1;
+  const sign = suffix[index];
+  const negative = sign === "-";
+  if (sign === "+" || sign === "-") index += 1;
+  let magnitude = 0n;
+  let overflow = false;
+  while (index < suffix.length) {
+    const code = suffix.charCodeAt(index);
+    if (code < 48 || code > 57) break;
+    index += 1;
+    if (overflow) continue;
+    const digit = BigInt(code - 48);
+    if (magnitude > (PORT_MAGNITUDE_LIMIT - digit) / 10n) {
+      overflow = true;
+      continue;
+    }
+    magnitude = magnitude * 10n + digit;
+  }
+  const value = overflow
+    ? negative
+      ? LONG_MIN
+      : LONG_MAX
+    : negative
+      ? -magnitude
+      : magnitude > LONG_MAX
+        ? LONG_MAX
+        : magnitude;
+  return Number(BigInt.asUintN(32, BigInt.asIntN(32, value)));
+};
+
+/** The first path slash, ignoring a slash inside an IPv6 bracket. */
+const authorityEnd = (value: string): number => {
+  let inBracket = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "[") inBracket = true;
+    else if (character === "]" && inBracket) inBracket = false;
+    else if (character === "/" && !inBracket) return index;
+  }
+  return value.length;
+};
+
+/**
+ * One pass over a host: copy every non-bracket character once, and remember
+ * the debracketed offset where a port suffix may begin.
+ */
+const debracketHost = (
+  host: string,
+): {
+  readonly text: string;
+  readonly portEnd: number;
+  readonly open: boolean;
+} => {
+  const pieces: string[] = [];
+  let start = 0;
+  let length = 0;
+  let portEnd = 0;
+  let inBracket = false;
+  for (let index = 0; index < host.length; index += 1) {
+    const character = host[index];
+    const opening = character === "[";
+    const closing = inBracket && character === "]";
+    if (!opening && !closing) continue;
+    if (index > start) {
+      pieces.push(host.slice(start, index));
+      length += index - start;
+    }
+    start = index + 1;
+    if (opening) inBracket = true;
+    else {
+      inBracket = false;
+      portEnd = length;
+    }
+  }
+  if (start < host.length) pieces.push(host.slice(start));
+  return { text: pieces.join(""), portEnd, open: inBracket };
+};
+
+/**
+ * APT's deb822 Repo-URI host and port. Path octets stay as authored. An
+ * unclosed IPv6 bracket or a port that consumes the host drops the authority.
+ * `scheme:host/path` gains the slashes APT inserts; `scheme:/path` does not.
+ */
+const renderHostUri = (
+  schemeText: string,
+  authority: string,
+  path: string,
+  sawSlashes: boolean,
+): string => {
+  // `file://` has no path, and APT keeps both slashes. A path after the
+  // empty host, as in `file:///srv`, drops that host.
+  if (authority.length === 0)
+    return sawSlashes && path.length === 0
+      ? `${schemeText}://`
+      : `${schemeText}:${path}`;
+
+  const at = authority.lastIndexOf("@");
+  const userinfo = at === -1 ? "" : authority.slice(0, at + 1);
+  const separated = debracketHost(
+    at === -1 ? authority : authority.slice(at + 1),
+  );
+  if (separated.open) return `${schemeText}:${path}`;
+  let host = separated.text;
+  const colon = host.lastIndexOf(":");
+  let port = 0;
+  if (colon !== -1 && colon >= separated.portEnd) {
+    port = aptPort(host.slice(colon + 1));
+    host = host.slice(0, colon);
+  }
+  if (host.length === 0) return `${schemeText}:${path}`;
+  const rendered =
+    host.includes(":") || host.includes("/") ? `[${host}]` : host;
+  const renderedPort = port === 0 ? "" : `:${String(port)}`;
+  return `${schemeText}://${userinfo}${rendered}${renderedPort}${path}`;
+};
+
+const aptAuthorityUri = (uri: string): string => {
+  const scheme = SCHEME_PREFIX.exec(uri);
+  if (scheme === null) return uri;
+  const schemeText = scheme[1] ?? "";
+  const after = uri.slice(scheme[0].length);
+  if (after.startsWith("//")) {
+    const rest = after.slice(2);
+    const end = authorityEnd(rest);
+    return renderHostUri(schemeText, rest.slice(0, end), rest.slice(end), true);
+  }
+  // `copy:/srv` is a path. `http:127.0.0.1:18743/archive` is a host APT
+  // rewrites with `//`.
+  if (after.startsWith("/")) return `${schemeText}:${after}`;
+  const end = authorityEnd(after);
+  return renderHostUri(
+    schemeText,
+    after.slice(0, end),
+    after.slice(end),
+    false,
+  );
+};
 
 /** APT fixes up deb822 URIs before emitting Repo-URI, leaving path octets intact. */
 const deb822RepoUri = (uri: string): string =>
-  withTrailingSlash(
-    uri
-      .replace(EMPTY_AUTHORITY, "$1")
-      .replace(NUMERIC_PORT, (_match, authority: string, port: string) => {
-        const digits = port.replace(/^0+/u, "");
-        return digits === "" ? authority : `${authority}:${digits}`;
-      }),
-  );
+  withTrailingSlash(aptAuthorityUri(uri));
 
 /**
  * The key block a deb822 Signed-By field holds, as apt writes it to a key
@@ -119,9 +277,26 @@ const inlineKeyBlock = (value: string): string | null => {
   return `${lines.slice(begin, end < begin ? lines.length : end + 1).join("\n")}\n`;
 };
 
-/** Whether a suite as an entry writes it is a target's release, which apt leaves empty for the flat suite `/`. */
-const isRelease = (suite: string, release: string): boolean =>
-  suite === release || (suite === "/" && release === "");
+/** APT expands this variable in repository URIs and suites using APT::Architecture. */
+const expandAptArchitecture = (
+  value: string,
+  architecture: string | undefined,
+): string | undefined => {
+  const variable = "$(ARCH)";
+  if (!value.includes(variable)) return value;
+  return architecture === undefined
+    ? undefined
+    : value.replaceAll(variable, architecture);
+};
+
+/** The source suite as selected by APT, including the flat suite `/`. */
+export const aptIndexSourceSuite = (target: AptIndexTarget): string =>
+  target.release || "/";
+
+/** Match the selected release without changing an authored suite. */
+const isRelease = (suite: string, target: AptIndexTarget): boolean =>
+  expandAptArchitecture(suite, target.configuredArchitecture) ===
+  aptIndexSourceSuite(target);
 
 const stanza = (
   at: { readonly file: string; readonly position: number },
@@ -130,16 +305,34 @@ const stanza = (
     readonly suites: readonly string[];
     readonly components: readonly string[];
     readonly options: ReadonlyMap<string, string>;
-    readonly oneLine?: true;
+    readonly oneLine?: OneLineIdentity;
   },
 ): AptSourceStanza => {
   const signedBy = fields.options.get("signed-by") ?? "";
   const inlineKey = inlineKeyBlock(signedBy);
   return {
     ...at,
+    format: fields.oneLine === undefined ? "deb822" : "one-line",
+    ...(fields.oneLine !== undefined &&
+    (fields.oneLine.suite !== fields.suites[0] ||
+      fields.oneLine.components.some(
+        (value, index) => value !== fields.components[index],
+      ))
+      ? {
+          oneLine: {
+            suite: fields.oneLine.suite,
+            components: fields.oneLine.components,
+          },
+        }
+      : {}),
     uris: fields.uris.map((source) => {
       const uri = withoutCredentials(source);
-      return fields.oneLine === true && ONE_LINE_ESCAPED_USER_INFO.test(uri)
+      const effective = fields.oneLine?.uri;
+      const ambiguous =
+        effective !== undefined &&
+        (ONE_LINE_ESCAPED_USER_INFO.test(uri) ||
+          (withoutCredentials(effective) !== effective && source === uri));
+      return ambiguous
         ? { uri: null, credentials: true }
         : { uri, credentials: source !== uri };
     }),
@@ -169,8 +362,7 @@ function* sourceLines(text: string | Buffer): Generator<string | undefined> {
   }
 }
 
-const ONE_LINE =
-  /^[ \t\r]*deb[ \t\v][ \t\v\f\r]*(?:\[(?<options>[^\]]*)\][ \t\v\f\r]+)?(?<fields>.*)$/su;
+const ONE_LINE_PREFIX = /^[ \t\r]*deb[ \t\v][ \t\v\f\r]*/u;
 
 /** APT cuts a one-line comment only outside unmatched square brackets. */
 const withoutOneLineComment = (line: string): string => {
@@ -185,6 +377,105 @@ const withoutOneLineComment = (line: string): string => {
   return line;
 };
 
+interface AptListWord {
+  readonly authored: string;
+  readonly effective: string;
+}
+
+const hexDigit = (byte: number): number => {
+  if (byte >= 0x30 && byte <= 0x39) return byte - 0x30;
+  if (byte >= 0x41 && byte <= 0x46) return byte - 0x41 + 10;
+  if (byte >= 0x61 && byte <= 0x66) return byte - 0x61 + 10;
+  return -1;
+};
+
+/** APT removes raw quotes and decodes percent escapes once in byte order. */
+const decodeAptListWord = (word: string): string | undefined => {
+  if (!/["%]/u.test(word)) return word;
+  const input = Buffer.from(word);
+  const output = Buffer.allocUnsafe(input.length);
+  let written = 0;
+  for (let offset = 0; offset < input.length; offset += 1) {
+    const byte = input[offset];
+    if (byte === 0x22) continue;
+    if (byte === 0x25) {
+      const high = hexDigit(input[offset + 1] ?? 0);
+      const low = hexDigit(input[offset + 2] ?? 0);
+      if (high !== -1 && low !== -1) {
+        output[written++] = 16 * high + low;
+        offset += 2;
+        continue;
+      }
+    }
+    output[written++] = byte ?? 0;
+  }
+  const bytes = output.subarray(0, written);
+  return isStrictUtf8(bytes) ? bytes.toString("utf8") : undefined;
+};
+
+/** ParseQuoteWord groups quotes and brackets before interpreting escapes. */
+const readAptListWord = (
+  text: string,
+  start: number,
+  inOptions = false,
+): (AptListWord & { readonly end: number }) | undefined => {
+  let end = start;
+  while (end < text.length && !isAsciiSpace(text[end] ?? "")) {
+    const character = text[end];
+    if (
+      inOptions &&
+      character === "]" &&
+      (end + 1 === text.length || isAsciiSpace(text[end + 1] ?? ""))
+    )
+      break;
+    if (character === '"' || character === "[") {
+      const closing = text.indexOf(character === '"' ? '"' : "]", end + 1);
+      if (closing === -1) return undefined;
+      end = closing + 1;
+    } else end += 1;
+  }
+  const authored = text.slice(start, end);
+  const effective = decodeAptListWord(authored);
+  if (effective === undefined || effective.includes("\0")) return undefined;
+  return { authored, effective, end };
+};
+
+const aptListWords = (text: string): readonly AptListWord[] | undefined => {
+  const words: AptListWord[] = [];
+  let offset = 0;
+  while (offset < text.length) {
+    while (isAsciiSpace(text[offset] ?? "")) offset += 1;
+    if (offset === text.length) break;
+    const word = readAptListWord(text, offset);
+    if (word === undefined) return undefined;
+    const { authored, effective, end } = word;
+    words.push({ authored, effective });
+    offset = end;
+  }
+  return words;
+};
+
+const readAptListOptions = (
+  text: string,
+  start: number,
+): { options: Map<string, string>; end: number } | undefined => {
+  const options = new Map<string, string>();
+  if (text[start] !== "[") return { options, end: start };
+  let offset = start + 1;
+  while (offset < text.length) {
+    while (isAsciiSpace(text[offset] ?? "")) offset += 1;
+    if (text[offset] === "]") return { options, end: offset + 1 };
+    const word = readAptListWord(text, offset, true);
+    if (word === undefined) return undefined;
+    const { effective, end } = word;
+    const equals = effective.indexOf("=");
+    if (equals <= 0 || equals === effective.length - 1) return undefined;
+    options.set(effective.slice(0, equals), effective.slice(equals + 1));
+    offset = end;
+  }
+  return undefined;
+};
+
 /** The `deb` lines of a one-line `sources.list` file; `deb-src` lines and comments are skipped. */
 export const parseOneLineSources = (
   text: string | Buffer,
@@ -192,28 +483,35 @@ export const parseOneLineSources = (
 ): readonly AptSourceStanza[] =>
   [...sourceLines(text)].flatMap((line, index) => {
     if (line === undefined) return [];
-    const groups = ONE_LINE.exec(withoutOneLineComment(line))?.groups;
-    if (groups === undefined) return [];
-    const [uri, suite, ...components] = fieldValues(groups.fields);
-    if (uri === undefined || suite === undefined || uri.startsWith("["))
+    const source = withoutOneLineComment(line);
+    const prefix = ONE_LINE_PREFIX.exec(source)?.[0];
+    if (prefix === undefined) return [];
+    const parsed = readAptListOptions(source, prefix.length);
+    if (parsed === undefined) return [];
+    const words = aptListWords(source.slice(parsed.end));
+    if (words === undefined) return [];
+    const [uri, suite, ...components] = words;
+    if (
+      uri === undefined ||
+      uri.authored.startsWith("[") ||
+      uri.effective === "" ||
+      suite === undefined ||
+      suite.effective === ""
+    )
       return [];
-    const options = new Map(
-      fieldValues(groups.options).flatMap((option) => {
-        const equals = option.indexOf("=");
-        return equals > 0
-          ? [[option.slice(0, equals), option.slice(equals + 1)] as const]
-          : [];
-      }),
-    );
     return [
       stanza(
         { file, position: index + 1 },
         {
-          uris: [uri],
-          suites: [suite],
-          components,
-          options,
-          oneLine: true,
+          uris: [uri.authored],
+          suites: [suite.authored],
+          components: components.map(({ authored }) => authored),
+          options: parsed.options,
+          oneLine: {
+            uri: uri.effective,
+            suite: suite.effective,
+            components: components.map(({ effective }) => effective),
+          },
         },
       ),
     ];
@@ -321,8 +619,10 @@ export interface AptIndexTarget {
   /** Without a user name or password, as `baseUri`, whether or not apt printed them. */
   readonly repoUri: string;
   readonly repoUriCredentialsRemoved?: true;
-  /** The suite as the entry writes it; empty for the flat suite `/`. */
+  /** APT's selected suite after variable expansion; empty for the flat suite `/`. */
   readonly release: string;
+  /** Effective APT::Architecture from apt-config, distinct from an index's architecture. */
+  readonly configuredArchitecture?: string;
   /** The entry's component the index belongs to; null for a flat repository. */
   readonly component: string | null;
   /** The URI of the folder holding the release's InRelease, Release and Release.gpg. */
@@ -340,6 +640,7 @@ const SOURCES_ENTRY = /^(?<file>\/.*):(?<position>[1-9]\d*)$/u;
 /** The index targets of `apt-get indextargets` output; a paragraph missing a field REA needs is skipped. */
 export const parseAptIndexTargets = (
   output: string | Buffer,
+  configuredArchitecture?: string,
 ): readonly AptIndexTarget[] =>
   deb822Paragraphs(output).flatMap((fields) => {
     const at = SOURCES_ENTRY.exec(fields.get("sourcesentry") ?? "")?.groups;
@@ -368,6 +669,9 @@ export const parseAptIndexTargets = (
           ? {}
           : { repoUriCredentialsRemoved: true as const }),
         release: fields.get("release") ?? "",
+        ...(configuredArchitecture === undefined
+          ? {}
+          : { configuredArchitecture }),
         component: optional("component"),
         baseUri: withoutCredentials(baseUri),
         filename,
@@ -392,21 +696,28 @@ export const entryForTarget = (
       candidate.position === target.position,
   );
   if (at === undefined) return undefined;
-  const { uris, suites, ...entry } = at;
-  const single = uris.length === 1 && suites.length === 1;
+  const { uris, suites, format, oneLine, ...entry } = at;
+  const single = format === "one-line";
   // A one-line entry has one URI and one suite. Only deb822 needs a URI lookup.
   const matches = single
     ? uris
-    : uris.filter(
-        ({ uri }) => uri !== null && deb822RepoUri(uri) === target.repoUri,
-      );
+    : uris.filter(({ uri }) => {
+        if (uri === null) return false;
+        const selected = expandAptArchitecture(
+          uri,
+          target.configuredArchitecture,
+        );
+        return (
+          selected !== undefined && deb822RepoUri(selected) === target.repoUri
+        );
+      });
   const first = matches[0];
   if (first === undefined) return undefined;
   const uri =
     first.uri === null ? null : withoutOptionalTrailingSlash(first.uri);
   const suite = single
     ? suites[0]
-    : suites.find((listed) => isRelease(listed, target.release));
+    : suites.find((listed) => isRelease(listed, target));
   if (
     suite === undefined ||
     matches.some(({ uri: listed }) =>
@@ -416,52 +727,92 @@ export const entryForTarget = (
     )
   )
     return undefined;
+  const effectiveSuite = oneLine?.suite ?? suite;
+  const effectiveComponents = oneLine?.components ?? entry.components;
+  const componentSpellingChanged = effectiveComponents.some(
+    (value, index) => value !== entry.components[index],
+  );
+  // Keep positional lookup for old source spellings. When newly interpreting
+  // one-line syntax, require the observed suite/component to agree.
+  if (
+    (effectiveSuite !== suite &&
+      effectiveSuite !== aptIndexSourceSuite(target) &&
+      (!effectiveSuite.endsWith("/") || !isRelease(effectiveSuite, target))) ||
+    (componentSpellingChanged &&
+      (target.component === null ||
+        !effectiveComponents.includes(target.component)))
+  )
+    return undefined;
   return {
     ...entry,
     uri,
     credentials: matches.some((listed) => listed.credentials),
     suite,
-    components: suite.endsWith("/") ? [] : entry.components,
+    components: effectiveSuite.endsWith("/") ? [] : entry.components,
+    ...(componentSpellingChanged
+      ? { repoComponents: effectiveComponents }
+      : {}),
   };
 };
 
-type ReplayRepository = Pick<
+type ReplayUriRepository = Pick<
   AptRepository,
   "uri" | "repo_uri" | "uri_credentials_removed"
 > &
   Partial<Pick<AptRepository, "sources_file">>;
 
-type RepositoryDeclaration = ReplayRepository &
-  Pick<AptRepository, "source" | "suite" | "components">;
+type ReplayRepository = ReplayUriRepository &
+  Pick<
+    AptRepository,
+    "suite" | "repo_suite" | "components" | "repo_components"
+  >;
 
-const oneLineSource = (repository: ReplayRepository): boolean =>
+type RepositoryDeclaration = ReplayRepository & Pick<AptRepository, "source">;
+
+const oneLineSource = (repository: ReplayUriRepository): boolean =>
   repository.sources_file?.endsWith(".sources") !== true;
+
+/** Recover a complete stored word without guessing missing separators or quotes. */
+const legacyAptListToken = (value: string): string | undefined => {
+  const words = aptListWords(value);
+  const first = words?.[0];
+  return words?.length === 1 && first?.authored === value
+    ? first.effective
+    : undefined;
+};
 
 /** Detect credentials left in a legacy or externally supplied capture. */
 export const aptRepositoryHoldsCredentials = (
-  repository: ReplayRepository,
+  repository: ReplayUriRepository,
 ): boolean => {
   const { uri, repo_uri } = repository;
+  const effective =
+    uri !== null && oneLineSource(repository)
+      ? decodeAptListWord(uri)
+      : undefined;
   return (
     (uri !== null &&
       (withoutCredentials(uri) !== uri ||
         (oneLineSource(repository) && ONE_LINE_ESCAPED_USER_INFO.test(uri)))) ||
+    (effective !== undefined && withoutCredentials(effective) !== effective) ||
     (repo_uri !== undefined && withoutCredentials(repo_uri) !== repo_uri)
   );
 };
 
 type AptReplayRefusal = {
-  readonly kind: "credentials" | "uri";
+  readonly kind: "credentials" | "uri" | "suite" | "components";
   readonly reason: string;
 };
 
 const httpSourceUri = (uri: string): boolean => /^https?:\/\/[^/]+/u.test(uri);
-const isDeb822UriToken = (uri: string): boolean =>
-  !/[\s\p{Cc}]/u.test(uri) && !uri.includes("$(ARCH)");
+const isDeb822ReplayToken = (value: string): boolean =>
+  value.length !== 0 &&
+  !/[\s\p{Cc}]/u.test(value) &&
+  !value.includes("$(ARCH)");
 
 /** Admit one AgentEnv deb822 URI and the APT Repo-URI it reproduces. */
-export const aptRepositoryReplayUri = (
-  repository: ReplayRepository,
+const replayUri = (
+  repository: ReplayUriRepository,
 ): Result<
   { readonly uri: string; readonly repoUri: string },
   AptReplayRefusal
@@ -478,8 +829,17 @@ export const aptRepositoryReplayUri = (
   const { uri, repo_uri: observed } = repository;
   if (uri === null)
     return err({ kind: "uri", reason: "no apt sources entry configures it" });
+  const oneLine = oneLineSource(repository);
+  const effective = oneLine ? legacyAptListToken(uri) : uri;
+  if (effective === undefined)
+    return err({
+      kind: "uri",
+      reason:
+        "its one-line URI is not a complete APT word. Capture the application again",
+    });
   if (
-    !httpSourceUri(uri) ||
+    !httpSourceUri(oneLine ? uri.replaceAll('"', "") : uri) ||
+    !httpSourceUri(effective) ||
     (observed !== undefined && !httpSourceUri(observed))
   )
     return err({
@@ -487,7 +847,6 @@ export const aptRepositoryReplayUri = (
       reason: "agentenv installs apt repositories over http or https only",
     });
 
-  const oneLine = oneLineSource(repository);
   // A one-line escape can break the indextargets field before REA reads it.
   if (oneLine && /%(?:0[0-9a-f]|1[0-9a-f]|7f)/iu.test(uri))
     return err({
@@ -502,18 +861,80 @@ export const aptRepositoryReplayUri = (
         "its one-line URI has percent escapes and the capture does not record apt's Repo-URI. Capture the application again",
     });
 
-  const repoUri = observed ?? deb822RepoUri(uri);
+  const repoUri = observed ?? deb822RepoUri(effective);
   const declaration =
-    deb822RepoUri(uri) === repoUri && isDeb822UriToken(uri)
-      ? uri
+    deb822RepoUri(effective) === repoUri && isDeb822ReplayToken(effective)
+      ? effective
       : withoutOptionalTrailingSlash(repoUri);
-  if (!isDeb822UriToken(declaration) || deb822RepoUri(declaration) !== repoUri)
+  if (
+    !isDeb822ReplayToken(declaration) ||
+    deb822RepoUri(declaration) !== repoUri
+  )
     return err({
       kind: "uri",
       reason:
         "apt's repository URI cannot be represented as one AgentEnv deb822 URI token",
     });
   return ok({ uri: declaration, repoUri });
+};
+
+/** The concrete deb822 URI and suite that reproduce the captured source index. */
+export const aptRepositoryReplay = (
+  repository: ReplayRepository,
+): Result<
+  {
+    readonly uri: string;
+    readonly repoUri: string;
+    readonly suite: string;
+    readonly components: readonly string[];
+  },
+  AptReplayRefusal
+> => {
+  const uri = replayUri(repository);
+  if (!uri.ok) return uri;
+  const authored = repository.suite;
+  if (authored === null)
+    return err({ kind: "suite", reason: "no apt sources entry configures it" });
+  const oneLine = oneLineSource(repository);
+  const suite =
+    repository.repo_suite ??
+    (oneLine ? legacyAptListToken(authored) : authored);
+  if (suite === undefined)
+    return err({
+      kind: "suite",
+      reason:
+        "its one-line suite is not a complete APT word. Capture the application again",
+    });
+  if (repository.repo_suite === undefined && suite.includes("$(ARCH)"))
+    return err({
+      kind: "suite",
+      reason:
+        "its sources entry templates the suite and the capture does not record apt's selected suite. Capture the application again",
+    });
+  if (!isDeb822ReplayToken(suite))
+    return err({
+      kind: "suite",
+      reason:
+        "apt's selected suite cannot be represented as one AgentEnv deb822 suite token",
+    });
+  const components =
+    repository.repo_components ??
+    (oneLine
+      ? repository.components.map(legacyAptListToken)
+      : repository.components);
+  if (!components.every((component) => component !== undefined))
+    return err({
+      kind: "components",
+      reason:
+        "its one-line components are not complete APT words. Capture the application again",
+    });
+  if (oneLine && !components.every(isDeb822ReplayToken))
+    return err({
+      kind: "components",
+      reason:
+        "apt's selected component cannot be represented as one AgentEnv deb822 component token",
+    });
+  return ok({ ...uri.value, suite, components });
 };
 
 /**
@@ -528,16 +949,18 @@ export const declaredPackageFiles = (
 ): ReadonlySet<string> => {
   const declarations = repositories.flatMap((repository) => {
     const observed = targets.get(repository.source);
-    const replay = aptRepositoryReplayUri(repository);
+    const replay = aptRepositoryReplay(repository);
     return !replay.ok ||
-      observed?.repoUri !== replay.value.repoUri ||
-      repository.suite === null
+      observed === undefined ||
+      observed.repoUri !== replay.value.repoUri ||
+      aptIndexSourceSuite(observed) !== replay.value.suite
       ? []
       : [
           {
             ...repository,
             repoUri: replay.value.repoUri,
-            suite: repository.suite,
+            suite: replay.value.suite,
+            components: replay.value.components,
           },
         ];
   });
@@ -547,7 +970,7 @@ export const declaredPackageFiles = (
       declarations.some(
         ({ repoUri, suite, components }) =>
           repoUri === target.repoUri &&
-          isRelease(suite, target.release) &&
+          suite === aptIndexSourceSuite(target) &&
           (target.component === null
             ? components.length === 0
             : components.includes(target.component)),

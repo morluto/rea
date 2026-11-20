@@ -253,6 +253,8 @@ describe.skipIf(process.platform === "win32")(
     it.each([
       { before: "", extra: "this is not a key\n", invalidLine: 3 },
       { before: "[Other]\nName=Other\n", extra: "", invalidLine: 1 },
+      { header: "\u00a0[Desktop Entry]", invalidLine: 1 },
+      { header: "[Desktop Entry]\u00a0", invalidLine: 1 },
       {
         before: "",
         extra: "",
@@ -267,8 +269,8 @@ describe.skipIf(process.platform === "win32")(
       },
     ])(
       "refuses a hidden override with malformed structure at line $invalidLine",
-      async ({ before, extra, trailing = "", invalidLine }) => {
-        const entry = `${before}[Desktop Entry]\nType=Application\n${extra}Name=User notes\nExec=notes-app\n`;
+      async ({ before, extra, header, trailing = "", invalidLine }) => {
+        const entry = `${before ?? ""}${header ?? "[Desktop Entry]"}\nType=Application\n${extra ?? ""}Name=User notes\nExec=notes-app\n`;
         const { inspect, file } = await userOverride(
           `${entry}Hidden=true\n${trailing}`,
         );
@@ -294,10 +296,10 @@ describe.skipIf(process.platform === "win32")(
       },
     );
 
-    it("masks a minimal Application with a localized key and a valid action group", async () => {
+    it("masks a minimal Application with ASCII group padding and localized keys", async () => {
       const { inspect } = await userOverride(
         [
-          "[Desktop Entry]",
+          "\t[Desktop Entry] \t",
           "Type=Application",
           'Name=Notes "[Bad[Group]"',
           "Name[fr]=Notes locales",

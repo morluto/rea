@@ -4,7 +4,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
-import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
+import {
+  connectGhidraMcp,
+  ghidraFixtureResult,
+  sessionEvidence,
+} from "./ghidraMcpHarness.js";
 import { ghidraProducerIdentity } from "../../../src/ghidra/GhidraProducerIdentity.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
@@ -591,6 +595,41 @@ it("rejects Ghidra naming replies whose outcomes and reasons disagree", async ()
   }
 });
 
+const expectOverviewSourceEvidence = (
+  session: Parameters<typeof sessionEvidence>[0],
+  links: readonly string[],
+) => {
+  expect(links).toHaveLength(1);
+  const [overviewSourceId] = links;
+  if (overviewSourceId === undefined)
+    throw new Error("Expected the provider Evidence link");
+  const overviewSource = session.evidenceById(overviewSourceId);
+  expect(overviewSource).toMatchObject({
+    operation: "read_binary_inventory_summary",
+    provider: { id: "ghidra" },
+  });
+  expect(overviewSource?.raw_result).toEqual(
+    ghidraFixtureResult("read_binary_inventory_summary", {}),
+  );
+  expect(overviewSource?.normalized_result).toEqual({
+    document: "fixture",
+    image_base: "0x400000",
+    segment_count: 1,
+    procedure_count: 1,
+    string_count: 2,
+    segments: [
+      {
+        name: ".text",
+        start: "0x401000",
+        end: "0x401100",
+        length: 256,
+        image_base: "0x400000",
+        address_space: "ram",
+      },
+    ],
+  });
+};
+
 describe("Ghidra MCP evidence parity", () => {
   it("preserves provider evidence, composed parity, and capability routing", async () => {
     const harness = await connectGhidraMcp("ghidra-parity");
@@ -663,6 +702,8 @@ describe("Ghidra MCP evidence parity", () => {
           segments: [{ name: ".text", length: 256 }],
         },
       });
+
+      expectOverviewSourceEvidence(session, mcpOverview.evidence_links);
 
       const pseudocode = sessionEvidence(
         session,

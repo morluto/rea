@@ -317,9 +317,11 @@ export const createGoSplitElfFixture = (
 };
 
 /** Many file-backed ELF loads sharing a small input, without any metadata marker. */
-export const createGoOverlappingElfFixture = (duplicate = false): Buffer => {
-  const count = 257;
-  const size = 1024 * 1024;
+export const createGoOverlappingElfFixture = ({
+  duplicate = false,
+  count = 257,
+  size = 1024 * 1024,
+} = {}): Buffer => {
   const dataStart = 65536;
   const bytes = Buffer.alloc(dataStart + size + count * 16);
   createGoBinaryFixture({ sectionless: true, omitBuildInfo: true }).bytes.copy(

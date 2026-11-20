@@ -239,11 +239,8 @@ it.each([
 // This inert JVM stand-in exercises the real probe process boundary and doctor
 // projection. Its scalar format matches OpenJDK LauncherHelper.printPropertyValue.
 it.skipIf(process.platform === "win32").each([
-  { suffix: "", newline: "\n" },
   { suffix: " ", newline: "\n" },
-  { suffix: "\t", newline: "\n" },
-  { suffix: " \t", newline: "\n" },
-  { suffix: " ", newline: "\r\n" },
+  { suffix: " \t", newline: "\r\n" },
 ])(
   "preserves JDK home and doctor registration with property framing %j",
   async ({ suffix, newline }) => {
@@ -285,6 +282,21 @@ it.skipIf(process.platform === "win32").each([
     });
   },
 );
+
+it.each([
+  { suffix: "\t", newline: "\n" },
+  { suffix: " \t", newline: "\n" },
+  { suffix: " ", newline: "\r\n" },
+])("reads exact JDK home from property framing %j", ({ suffix, newline }) => {
+  const home = `/selected/jdk${suffix}`;
+  expect(
+    probe({
+      stdout: Buffer.from(
+        [`    java.home = ${home}`, "    java.version = 21", ""].join(newline),
+      ),
+    }),
+  ).toMatchObject({ ok: true, value: { home } });
+});
 
 it.each(["java.home=/selected/jdk", "java.home =\t/selected/jdk"])(
   "keeps nonstandard property framing unresolved: %s",

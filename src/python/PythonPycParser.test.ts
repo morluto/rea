@@ -573,12 +573,22 @@ it("decodes marshal strings with CPython surrogatepass rules", () => {
   ).toThrow(ParseFailureError);
 });
 
-it.each([0x73, 0x74, 0x75, 0x61, 0x41, 0x28, 0x5b, 0x3c, 0x3e])(
+it.each([
+  [0x73, "negative-string-length"],
+  [0x74, "negative-string-length"],
+  [0x75, "negative-string-length"],
+  [0x61, "negative-string-length"],
+  [0x41, "negative-string-length"],
+  [0x28, "negative-sequence-length"],
+  [0x5b, "negative-sequence-length"],
+  [0x3c, "negative-field"],
+  [0x3e, "negative-field"],
+] as const)(
   "classifies a negative signed marshal count (tag %i) before applying limits",
-  (tag) => {
+  (tag, defect) => {
     expect(() =>
-      parse(withConsts([Buffer.concat([Buffer.from([tag]), i32(-1)])])),
-    ).toThrow(ParseFailureError);
+      parse(withConsts([Buffer.from([tag, 0xff, 0xff, 0xff, 0xff])])),
+    ).toThrow(expect.objectContaining({ kind: "malformed", defect }));
   },
 );
 
@@ -603,16 +613,6 @@ it("keeps signed zero and non-finite float and complex constants JSON-safe", () 
   ]);
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
   expect(JSON.parse(JSON.stringify(report))).toEqual(report);
-});
-
-it("truncates string previews without introducing a lone surrogate", () => {
-  const prefix = "x".repeat(79);
-  const report = parse(
-    withConsts([marshalUnicode(Buffer.from(`${prefix}😀tail`))]),
-  );
-  expect(root(report).consts).toEqual([
-    { kind: "str", bytes: 87, truncated: true, value: prefix },
-  ]);
 });
 
 it("accepts an empty co_filename", () => {

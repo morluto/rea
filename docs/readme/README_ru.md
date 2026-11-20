@@ -362,7 +362,6 @@ npx rea-agents@latest setup
 - [CLI и Evidence](../getting-started/cli.md): команды, выбор провайдера, снимки, импорт/экспорт и коды завершения.
 - [Контракты MCP](../reference/mcp-contracts.md) и [промпты агентов](../getting-started/mcp-prompts.md): результаты инструментов, сеансы и исследования с подсказками.
 - [Каталог инструментов](../reference/mcp-contracts.md#generated-catalog): создаваемый при сборке перечень инструментов, провайдеров и команд CLI.
-- [План развития](../development/roadmap.md): запланированные работы и отслеживание возможностей.
 
 Сообщайте об уязвимостях согласно [SECURITY.md](../../SECURITY.md).
 
@@ -394,7 +393,7 @@ applicable licenses.
 
 Будем рады вашей помощи с REA! [Откройте issue](https://github.com/morluto/rea/issues), чтобы сообщить об ошибке или предложить функцию, либо [отправьте pull request](https://github.com/morluto/rea/pulls) с улучшениями кода или документации.
 
-Настройка среды разработки и проверки описаны в [CONTRIBUTING.md](../../CONTRIBUTING.md), направления проверки — в [руководстве по тестированию](../development/testing.md), а структура проекта — на [схеме архитектуры](../architecture/architecture.mermaid).
+Настройка среды разработки и проверки описаны в [CONTRIBUTING.md](../../CONTRIBUTING.md), направления проверки — в [руководстве по тестированию](../development/testing.md).
 
 ## Лицензия
 

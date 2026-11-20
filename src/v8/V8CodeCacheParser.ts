@@ -12,12 +12,13 @@ import {
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
 import type { V8CodeCacheInputBudget } from "../domain/v8/v8CodeCacheBudget.js";
-import {
-  V8_CODE_CACHE_FORMAT,
-  v8CodeCacheBudgetFailure,
-} from "../v8/V8CodeCache.errors.js";
+import { V8_CODE_CACHE_FORMAT } from "./V8CodeCache.errors.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const unsupported = (message: string): never => {
@@ -151,10 +152,10 @@ export const parseV8CodeCache = (
       if (observations.length >= input.max_strings)
         // The message states the fact. Recovery advice belongs to the provider, which
         // can see whether either budget still has headroom before recommending a retry.
-        throw v8CodeCacheBudgetFailure(
-          "max_strings",
-          input.max_strings,
+        throw decodeLimit(
+          V8_CODE_CACHE_FORMAT,
           `Payload contains more than ${String(input.max_strings)} printable runs of at least ${String(input.min_string_bytes)} bytes, so the max_strings observation budget was exhausted before the scan finished.`,
+          { name: "max_strings", maximum: input.max_strings },
         );
       const retained = Math.min(
         runBytes,

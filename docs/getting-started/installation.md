@@ -1563,7 +1563,7 @@ invocation instead. In MCP, `ghidra.decompile_timeout_seconds` can override the 
 value for newly accepted operations on the existing Program; explicit `null`
 removes the deadline. A transient timeout remains uncached so the same function
 can be retried after an update. See the
-[settings design](../design/limits-and-recovery.md#runtime-settings-through-mcp).
+[analysis settings and recovery](../reference/limits-and-recovery.md#runtime-settings-through-mcp).
 Codex/Kimi registrations derived by `rea setup` add the selected launch value
 to the tool deadline as a single-decompile estimate; a runtime update does not
 change that registration. A bulk call can need that limit for
@@ -2063,7 +2063,7 @@ terminal, use the package runner at the version the plugin pins:
 <!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@6.9.0 doctor --provider ghidra --json
+npx -y rea-agents@6.10.1 doctor --provider ghidra --json
 ```
 
 <!-- x-release-please-end -->
@@ -2096,7 +2096,7 @@ therefore runs the published package instead of a local build:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.9.0", "mcp"]
+      "args": ["-y", "rea-agents@6.10.1", "mcp"]
     }
   }
 }

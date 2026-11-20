@@ -142,6 +142,7 @@ describe("parseOneLineSources", () => {
       {
         file: TYPORA_LIST,
         position: 1,
+        format: "one-line",
         uris: [
           { uri: "https://downloads.typora.io/linux", credentials: false },
         ],
@@ -205,6 +206,32 @@ describe("parseOneLineSources", () => {
       },
     ]);
   });
+
+  it("decodes quoted or escaped option assignments and keeps option names case-sensitive", () => {
+    expect(
+      parseOneLineSources(
+        'deb [arch%3D"amd64" Arch=arm64 signed-by="/usr/share/keyrings/vendor[1]%2Egpg"] https://vendor.invalid/archive stable main',
+        TYPORA_LIST,
+      ),
+    ).toMatchObject([
+      {
+        architectures: ["amd64"],
+        signedBy: ["/usr/share/keyrings/vendor[1].gpg"],
+      },
+    ]);
+  });
+
+  it.each(['arch="amd64', "arch", "arch="])(
+    "does not attribute a repository to a malformed option (%s)",
+    (option) => {
+      expect(
+        parseOneLineSources(
+          `deb [${option}] https://vendor.invalid/archive stable main`,
+          TYPORA_LIST,
+        ),
+      ).toEqual([]);
+    },
+  );
 });
 
 describe("parseDeb822Sources", () => {
@@ -443,42 +470,360 @@ describe("apt index targets", () => {
   });
 });
 
-describe("APT source URI lookup", () => {
-  const file = "/etc/apt/sources.list.d/vendor.sources";
+const deb822LookupFile = "/etc/apt/sources.list.d/vendor.sources";
 
-  const targetFor = (
-    repoUri: string,
-    description = repoUri,
-    component = "main",
-  ) => ({
-    description,
-    sourcesFile: file,
-    position: 1,
-    repoUri,
-    release: "stable",
-    component,
-    baseUri: `${repoUri}dists/stable/`,
-    filename: "/var/lib/apt/lists/vendor",
-    origin: null,
-    suite: null,
-    codename: null,
+const targetFor = (
+  repoUri: string,
+  description = repoUri,
+  component = "main",
+) => ({
+  description,
+  sourcesFile: deb822LookupFile,
+  position: 1,
+  repoUri,
+  release: "stable",
+  component,
+  baseUri: `${repoUri}dists/stable/`,
+  filename: "/var/lib/apt/lists/vendor",
+  origin: null,
+  suite: null,
+  codename: null,
+});
+
+describe("single-stanza APT source identity", () => {
+  it("requires a single deb822 declaration to match the observed URI and suite", () => {
+    const stanzas = parseDeb822Sources(
+      "Types: deb\nURIs: https://vendor.invalid/archive\nSuites: stable\nComponents: main\n",
+      deb822LookupFile,
+    );
+    expect(
+      entryForTarget(targetFor("https://vendor.invalid/archive/"), stanzas),
+    ).toMatchObject({ suite: "stable" });
+    expect(
+      entryForTarget(targetFor("https://other.invalid/archive/"), stanzas),
+    ).toBeUndefined();
+    expect(
+      entryForTarget(
+        { ...targetFor("https://vendor.invalid/archive/"), release: "testing" },
+        stanzas,
+      ),
+    ).toBeUndefined();
   });
 
+  it.each([
+    ["https://vendor.invalid:/archive", "https://vendor.invalid/archive/"],
+    ["https://[2001:db8::11]:/apt", "https://[2001:db8::11]/apt/"],
+    [
+      "https://vendor.invalid:80abc/archive",
+      "https://vendor.invalid:80/archive/",
+    ],
+    ["https://vendor.invalid:https/archive", "https://vendor.invalid/archive/"],
+    [
+      "https://vendor.invalid:0080abc/archive",
+      "https://vendor.invalid:80/archive/",
+    ],
+    [
+      "https://vendor.invalid:+80abc/archive",
+      "https://vendor.invalid:80/archive/",
+    ],
+    [
+      "https://vendor.invalid:-80/archive",
+      "https://vendor.invalid:4294967216/archive/",
+    ],
+    [
+      "https://vendor.invalid:4294967296/archive",
+      "https://vendor.invalid/archive/",
+    ],
+    [
+      "https://vendor.invalid:2147483648abc/archive",
+      "https://vendor.invalid:2147483648/archive/",
+    ],
+    [
+      "https://vendor.invalid:999999999999999999999/archive",
+      "https://vendor.invalid:4294967295/archive/",
+    ],
+    ["https://[2001:db8::11]:80abc/apt", "https://[2001:db8::11]:80/apt/"],
+    ["https://[2001:db8::11]:https/apt", "https://[2001:db8::11]/apt/"],
+    ["https://[::1]:80:abc/apt", "https://[::1:80]/apt/"],
+    [
+      "https://vendor.invalid:foo:80abc/archive",
+      "https://[vendor.invalid:foo]:80/archive/",
+    ],
+    [
+      "https://vendor.invalid/archive:80abc/x",
+      "https://vendor.invalid/archive:80abc/x/",
+    ],
+    ["file://hostname:80abc/path", "file://hostname:80/path/"],
+    ["file://", "file://"],
+    ["file:///", "file:/"],
+    ["file:///srv/a%20b", "file:/srv/a%20b/"],
+  ])(
+    "matches %s to the Repo-URI APT emits and keeps the authored URI",
+    (authored, repoUri) => {
+      const stanzas = parseDeb822Sources(
+        `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\n`,
+        deb822LookupFile,
+      );
+      expect(entryForTarget(targetFor(repoUri), stanzas)).toEqual({
+        file: deb822LookupFile,
+        position: 1,
+        uri: authored,
+        credentials: false,
+        suite: "stable",
+        components: ["main"],
+        architectures: [],
+        signedBy: [],
+        inlineKey: null,
+      });
+      const untouched = authored.endsWith("/") ? authored : `${authored}/`;
+      if (untouched !== repoUri)
+        expect(entryForTarget(targetFor(untouched), stanzas)).toBeUndefined();
+    },
+  );
+
+  it.each([
+    {
+      field: "suite",
+      uri: "https://vendor.invalid/archive",
+      suite: "unstable/binary-$(ARCH)/",
+    },
+    {
+      field: "URI",
+      uri: "https://vendor.invalid/archive-$(ARCH)",
+      suite: "unstable/binary-amd64/",
+    },
+  ])(
+    "uses APT's configured architecture in a deb822 $field for identity and attribution",
+    ({ field, uri, suite }) => {
+      const observedUri = uri.replace("$(ARCH)", "amd64");
+      const stanzas = parseDeb822Sources(
+        `Types: deb\nURIs: ${uri}\nSuites: ${suite}\n`,
+        deb822LookupFile,
+      );
+      const description = `${observedUri} unstable/binary-amd64/ Packages`;
+      // Offline APT emits the expanded Release and no per-target Architecture
+      // on this flat index. The source file and index still retain different facts.
+      const transcript = [
+        `Description: ${description}`,
+        "Filename: /var/lib/apt/lists/apt-owned-Packages",
+        `Base-URI: ${observedUri}/unstable/binary-amd64/`,
+        `Repo-URI: ${observedUri}/`,
+        "Release: unstable/binary-amd64/",
+        `Sourcesentry: ${deb822LookupFile}:1`,
+      ].join("\n");
+      const repository = {
+        source: description,
+        uri,
+        repo_uri: `${observedUri}/`,
+        sources_file: deb822LookupFile,
+        uri_credentials_removed: false,
+        suite,
+        ...(field === "suite" ? { repo_suite: "unstable/binary-amd64/" } : {}),
+        components: [],
+      };
+      for (const architecture of ["amd64", "arm64", undefined]) {
+        const [target] = parseAptIndexTargets(transcript, architecture);
+        if (target === undefined) throw new Error("Missing APT target");
+        const entry = entryForTarget(target, stanzas);
+        const files = declaredPackageFiles(
+          [repository],
+          new Map([[description, target]]),
+        );
+        if (architecture === "amd64")
+          expect(entry).toMatchObject({ uri, suite, components: [] });
+        else expect(entry).toBeUndefined();
+        // Recorded replay facts need no second expansion against host settings.
+        expect(files).toEqual(new Set([description]));
+      }
+    },
+  );
+});
+
+describe("APT architecture tokens and saturated ports", () => {
+  it("matches an x86_64 $(ARCH) template to APT's expanded URI and release", () => {
+    const uri = "https://vendor.invalid/archive/$(ARCH)";
+    const suite = "stable/binary-$(ARCH)/";
+    const stanzas = parseDeb822Sources(
+      `Types: deb\nURIs: ${uri}\nSuites: ${suite}\nComponents: main\n`,
+      deb822LookupFile,
+    );
+    const repoUri = "https://vendor.invalid/archive/x86_64/";
+    const release = "stable/binary-x86_64/";
+    const transcript = [
+      `Description: ${repoUri.slice(0, -1)} ${release} Packages`,
+      "Filename: /var/lib/apt/lists/vendor",
+      `Base-URI: ${repoUri}${release}`,
+      `Repo-URI: ${repoUri}`,
+      `Release: ${release}`,
+      `Sourcesentry: ${deb822LookupFile}:1`,
+    ].join("\n");
+    const [target] = parseAptIndexTargets(transcript, "x86_64");
+    if (target === undefined) throw new Error("Missing APT target");
+    expect(entryForTarget(target, stanzas)).toEqual({
+      file: deb822LookupFile,
+      position: 1,
+      uri,
+      credentials: false,
+      suite,
+      components: [],
+      architectures: [],
+      signedBy: [],
+      inlineKey: null,
+    });
+    const [unconfigured] = parseAptIndexTargets(transcript);
+    if (unconfigured === undefined) throw new Error("Missing APT target");
+    expect(entryForTarget(unconfigured, stanzas)).toBeUndefined();
+  });
+
+  it.each([
+    ["decimal", "80", "80"],
+    ["trailing junk", "80abc", "80"],
+    ["non-numeric", "https", ""],
+    ["leading zeros", "0080", "80"],
+    ["long leading zeros", `${"0".repeat(5000)}80`, "80"],
+    ["long positive", "9".repeat(5000), "4294967295"],
+    ["long negative", `-${"9".repeat(5000)}`, ""],
+    ["long positive sign and junk", `+${"9".repeat(5000)}abc`, "4294967295"],
+    ["signed maximum", "9223372036854775807", "4294967295"],
+    ["one past signed maximum", "9223372036854775808", "4294967295"],
+    ["signed minimum", "-9223372036854775808", ""],
+    ["one above signed minimum", "-9223372036854775807", "1"],
+    ["negative wrap", "-80", "4294967216"],
+  ] as const)(
+    "maps a %s port suffix to APT's unsigned port",
+    (_kind, suffix, port) => {
+      const authored = `https://vendor.invalid:${suffix}/archive`;
+      const repoUri =
+        port === ""
+          ? "https://vendor.invalid/archive/"
+          : `https://vendor.invalid:${port}/archive/`;
+      const stanzas = parseDeb822Sources(
+        `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\n`,
+        deb822LookupFile,
+      );
+      expect(entryForTarget(targetFor(repoUri), stanzas)).toEqual({
+        file: deb822LookupFile,
+        position: 1,
+        uri: authored,
+        credentials: false,
+        suite: "stable",
+        components: ["main"],
+        architectures: [],
+        signedBy: [],
+        inlineKey: null,
+      });
+    },
+  );
+});
+
+describe("empty-authority file URIs", () => {
+  it("accepts file:// when its Packages index is present and keeps the authored URI and suite", () => {
+    const uri = "file://";
+    const suite = "stable";
+    const stanzas = parseDeb822Sources(
+      `Types: deb\nURIs: ${uri}\nSuites: ${suite}\nComponents: main\n`,
+      deb822LookupFile,
+    );
+    const transcript = [
+      "Description: file:/ stable/main amd64 Packages",
+      "Filename: /var/lib/apt/lists/dists_stable_main_binary-amd64_Packages",
+      "Base-URI: file://dists/stable/",
+      "Repo-URI: file://",
+      "Release: stable",
+      "Component: main",
+      "Created-By: Packages",
+      `Sourcesentry: ${deb822LookupFile}:1`,
+    ].join("\n");
+    const [target] = parseAptIndexTargets(transcript);
+    if (target === undefined) throw new Error("Missing APT target");
+    expect(target).toMatchObject({
+      repoUri: "file://",
+      release: "stable",
+      component: "main",
+    });
+    expect(entryForTarget(target, stanzas)).toEqual({
+      file: deb822LookupFile,
+      position: 1,
+      uri,
+      credentials: false,
+      suite,
+      components: ["main"],
+      architectures: [],
+      signedBy: [],
+      inlineKey: null,
+    });
+  });
+});
+
+describe("APT scheme:host shorthand", () => {
+  it.each([
+    ["http:127.0.0.1:18743/archive", "http://127.0.0.1:18743/archive/"],
+    ["http:[::1]:18743/archive", "http://[::1]:18743/archive/"],
+    ["https:vendor.invalid:/archive", "https://vendor.invalid/archive/"],
+    ["copy:/srv/repo", "copy:/srv/repo/"],
+  ])(
+    "matches shorthand %s to APT's Repo-URI and keeps the authored URI",
+    (authored, repoUri) => {
+      const stanzas = parseDeb822Sources(
+        `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\n`,
+        deb822LookupFile,
+      );
+      expect(entryForTarget(targetFor(repoUri), stanzas)).toEqual({
+        file: deb822LookupFile,
+        position: 1,
+        uri: authored,
+        credentials: false,
+        suite: "stable",
+        components: ["main"],
+        architectures: [],
+        signedBy: [],
+        inlineKey: null,
+      });
+      const untouched = authored.endsWith("/") ? authored : `${authored}/`;
+      if (untouched !== repoUri)
+        expect(entryForTarget(targetFor(untouched), stanzas)).toBeUndefined();
+    },
+  );
+
+  it("reads a long bracketed host in one pass and keeps the authored URI", () => {
+    const repeats = 16_384;
+    const authored = `https://${"[a]".repeat(repeats)}:18743/archive`;
+    const repoUri = `https://${"a".repeat(repeats)}:18743/archive/`;
+    const stanzas = parseDeb822Sources(
+      `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\n`,
+      deb822LookupFile,
+    );
+    expect(entryForTarget(targetFor(repoUri), stanzas)).toEqual({
+      file: deb822LookupFile,
+      position: 1,
+      uri: authored,
+      credentials: false,
+      suite: "stable",
+      components: ["main"],
+      architectures: [],
+      signedBy: [],
+      inlineKey: null,
+    });
+  });
+});
+
+describe("APT source URI lookup", () => {
   it("matches APT's deb822 Repo-URI spellings without changing the source URI", () => {
     const stanzas = parseDeb822Sources(
       [
         "Types: deb",
-        "URIs: file:///srv/a%20b copy:/srv/repo https://vendor.invalid:00080/archive https://[2001:db8::11]:08443/apt file:/srv/double//",
+        "URIs: file:///srv/a%20b copy:/srv/repo https://vendor.invalid:00080/archive https://empty.invalid:/archive https://[2001:db8::11]:08443/apt file:/srv/double//",
         "Suites: stable",
         "Components: main",
       ].join("\n"),
-      file,
+      deb822LookupFile,
     );
 
     // Repo-URI values from apt-get indextargets --no-release-info (APT 3.2.0).
     const spellings = [
       ["file:/srv/a%20b/", "file:///srv/a%20b"],
       ["copy:/srv/repo/", "copy:/srv/repo"],
+      ["https://empty.invalid/archive/", "https://empty.invalid:/archive"],
       [
         "https://vendor.invalid:80/archive/",
         "https://vendor.invalid:00080/archive",
@@ -511,7 +856,7 @@ describe("APT source URI lookup", () => {
         where === "before the stanza"
           ? Buffer.concat([comment, Buffer.from("\n"), types, fields])
           : Buffer.concat([types, comment, fields]);
-      const stanzas = parseDeb822Sources(source, file);
+      const stanzas = parseDeb822Sources(source, deb822LookupFile);
       expect(stanzas).toHaveLength(1);
       expect(
         entryForTarget(targetFor("https://good.invalid/archive/"), stanzas),
@@ -526,7 +871,7 @@ describe("APT source URI lookup", () => {
       Buffer.from(declaration("bad.invalid/ÿ"), "latin1"),
       Buffer.from(`\n${declaration("good.invalid")}`),
     ]);
-    const stanzas = parseDeb822Sources(source, file);
+    const stanzas = parseDeb822Sources(source, deb822LookupFile);
     expect(stanzas).toHaveLength(1);
     expect(
       entryForTarget(
@@ -544,7 +889,7 @@ describe("APT source URI lookup", () => {
         "Suites: stable",
         "Components: main",
       ].join("\n"),
-      file,
+      deb822LookupFile,
     );
 
     expect(
