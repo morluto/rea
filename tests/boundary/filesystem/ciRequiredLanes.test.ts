@@ -52,6 +52,14 @@ it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fa
         "utf8",
       ),
     );
+  const archiveSteps = z
+    .object({
+      runs: z.object({ steps: z.array(z.object({ run: z.string() })) }),
+    })
+    .parse(await action("ubuntu-archive")).runs.steps;
+  expect(archiveSteps.map(({ run }) => run).join("\n")).toContain(
+    "apt-get -o Acquire::Retries=2 -o Acquire::Languages=none --error-on=any update",
+  );
   const layout = (await workflow("real-binary-layout.yml")).jobs[
     "real-binary-layout"
   ];
