@@ -65,6 +65,42 @@ const largeUniversal = (
   return bytes;
 };
 
+/** Runs one simulated import and returns what the launcher was handed. */
+const launchedImport = async (
+  target: Awaited<ReturnType<typeof universalTarget>>["target"],
+) => {
+  const config = parseConfig({ GHIDRA_INSTALL_DIR: "/simulated-ghidra" });
+  if (!config.ok) throw config.error;
+  const launches: { session: GhidraLaunchSession; bytes: Buffer }[] = [];
+  const provider = new GhidraProvider(
+    config.value,
+    silentLogger,
+    {},
+    ghidraProfileInstallationHost,
+    (options) =>
+      new GhidraClient({
+        ...options,
+        launcher: {
+          launch: async (session) => {
+            const bytes = await readFile(session.targetPath);
+            launches.push({ session, bytes });
+            throw new Error("simulated launch stops after the import");
+          },
+        },
+      }),
+  );
+  expect(provider.inspectTargetSupport(target).status).toBe("supported");
+  const resolved = await provider.resolveAnalysisProfile(target);
+  if (!resolved.ok || resolved.value.profile === null)
+    throw new Error("Expected simulated profile admission");
+  const client = provider.createClient(target, resolved.value.profile);
+  expect((await client.execute("health", {})).ok).toBe(false);
+  await client.close();
+
+  expect(launches).toHaveLength(1);
+  return (launches as [(typeof launches)[0]])[0];
+};
+
 describe("Ghidra universal Mach-O import thinning", () => {
   it.each([
     { host: "arm64", cpu: 0x0100000c },
@@ -76,36 +112,7 @@ describe("Ghidra universal Mach-O import thinning", () => {
         fat([0x01000007, 0x0100000c]),
         host,
       );
-      const config = parseConfig({ GHIDRA_INSTALL_DIR: "/simulated-ghidra" });
-      if (!config.ok) throw config.error;
-      const launches: { session: GhidraLaunchSession; bytes: Buffer }[] = [];
-      const provider = new GhidraProvider(
-        config.value,
-        silentLogger,
-        {},
-        ghidraProfileInstallationHost,
-        (options) =>
-          new GhidraClient({
-            ...options,
-            launcher: {
-              launch: async (session) => {
-                const bytes = await readFile(session.targetPath);
-                launches.push({ session, bytes });
-                throw new Error("simulated launch stops after the import");
-              },
-            },
-          }),
-      );
-      expect(provider.inspectTargetSupport(target).status).toBe("supported");
-      const resolved = await provider.resolveAnalysisProfile(target);
-      if (!resolved.ok || resolved.value.profile === null)
-        throw new Error("Expected simulated profile admission");
-      const client = provider.createClient(target, resolved.value.profile);
-      expect((await client.execute("health", {})).ok).toBe(false);
-      await client.close();
-
-      expect(launches).toHaveLength(1);
-      const [{ session, bytes }] = launches as [(typeof launches)[0]];
+      const { session, bytes } = await launchedImport(target);
       expect(bytes.equals(slice), "only the selected slice is imported").toBe(
         true,
       );
@@ -121,6 +128,15 @@ describe("Ghidra universal Mach-O import thinning", () => {
       });
     },
   );
+
+  it("imports a one-architecture container whole under its admitted digest", async () => {
+    const bytes = fat([0x0100000c]);
+    const { target } = await universalTarget(bytes, "arm64");
+    const { session, bytes: imported } = await launchedImport(target);
+    expect(imported.equals(bytes)).toBe(true);
+    expect(session.targetSha256).toBe(target.sha256);
+    expect(session.targetFileOffsetBase).toBeUndefined();
+  });
 
   it.each([
     { name: "a middle slice", selected: 1 },

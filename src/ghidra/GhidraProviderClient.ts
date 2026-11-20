@@ -592,12 +592,19 @@ export const createGhidraProviderClient = (input: {
     target.format === "raw-binary"
       ? ghidraRawBinaryLanguage(target.architecture)
       : undefined;
+  // A container with one declared architecture keeps its whole-file import, so
+  // Programs and checkpoints saved before thinning keep their digest.
+  const thinnedSlice =
+    target.format === "mach-o-universal" &&
+    target.availableArchitectures.length > 1
+      ? target.universalSlice
+      : undefined;
   const targetLimitations = [
-    ...(target.format === "mach-o-universal"
-      ? [
-          `Ghidra imported only the ${target.architecture} slice of this universal Mach-O, copied from container offset ${target.universalSlice.offset} (${target.universalSlice.size} bytes). File offsets in results and file-offset selectors are universal-file offsets; native load-image mappings stay relative to the imported slice source file.`,
-        ]
-      : []),
+    ...(thinnedSlice === undefined
+      ? []
+      : [
+          `Ghidra imported only the ${target.architecture} slice of this universal Mach-O, copied from container offset ${thinnedSlice.offset} (${thinnedSlice.size} bytes). File offsets in results and file-offset selectors are universal-file offsets; native load-image mappings stay relative to the imported slice source file.`,
+        ]),
     ...(target.format === "dos-mz"
       ? [
           "DOS MZ uses 16-bit x86 real mode with the Ghidra load segment 0x1000. Returned addresses are linear byte coordinates; they do not identify a unique segment:offset alias.",
@@ -738,9 +745,7 @@ export const createGhidraProviderClient = (input: {
         ? (target.sourcePath ?? target.path)
         : target.path,
     targetSha256: target.sha256,
-    ...(target.format === "mach-o-universal"
-      ? { universalSlice: target.universalSlice }
-      : {}),
+    ...(thinnedSlice === undefined ? {} : { universalSlice: thinnedSlice }),
     transport:
       installation.platform === "win32"
         ? "authenticated-loopback-tcp"

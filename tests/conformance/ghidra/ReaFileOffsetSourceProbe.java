@@ -73,6 +73,18 @@ public final class ReaFileOffsetSourceProbe extends HeadlessScript {
         var mapped = (JsonObject)reverse.invoke(bridge, reverseInput("0x140001010"));
         require(mapped.get("file_offset").getAsLong() == 0x210, "original target round trip");
 
+        // An imported universal Mach-O slice starts at a nonzero container offset.
+        var base = bridge.getClass().getDeclaredField("targetFileOffsetBase");
+        base.setAccessible(true);
+        base.set(bridge, 0x4000L);
+        var shifted = (Function)resolve.invoke(bridge, "file-offset:0x4210", new JsonObject());
+        require(shifted.getEntryPoint().equals(toAddr(0x140001010L)), "slice base subtracted from the selector");
+        mapped = (JsonObject)reverse.invoke(bridge, reverseInput("0x140001010"));
+        require(mapped.get("file_offset").getAsLong() == 0x4210, "slice base added to the file offset");
+        rejectedCode(resolve, bridge, "file_offset_unmapped", "no loaded source mapping",
+            "file-offset:0x210", new JsonObject());
+        base.set(bridge, 0L);
+
         // Inject backend failures after real source/function resolution. This
         // verifies context propagation, not a naturally failing decompiler.
         var pseudocode = bridge.getClass().getDeclaredMethod("procedurePseudocode", JsonObject.class);
