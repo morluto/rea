@@ -65,7 +65,7 @@ export class ArtifactStreamLifecycle {
   }
 }
 
-/** Verify byte delivery and caller-selected source identity before stream completion. */
+/** Verify the member's byte count and source before stream completion. */
 export const checkedArtifactMemberStream = (
   entry: ArtifactEntry,
   label: string,
