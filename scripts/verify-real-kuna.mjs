@@ -853,7 +853,9 @@ try {
   failures.push(cause);
 }
 let workspaceReleased = false;
-if (cleanupComplete && failures.length === 0)
+// A verification failure with successful provider, command, and lineage
+// cleanup still releases the root. Only an unconfirmed close retains it.
+if (cleanupComplete)
   try {
     await workspaceFixture.release();
     workspaceReleased = true;
@@ -863,9 +865,7 @@ if (cleanupComplete && failures.length === 0)
   }
 if (!workspaceReleased)
   workspaceFixture.retain(
-    cleanupComplete
-      ? `Kuna verification failed; retained workspace: ${workspace}`
-      : `Kuna cleanup was not confirmed; retained diagnostic workspace: ${workspace}`,
+    `Kuna cleanup was not confirmed; retained diagnostic workspace: ${workspace}`,
   );
 const report = {
   lane: "kuna",
