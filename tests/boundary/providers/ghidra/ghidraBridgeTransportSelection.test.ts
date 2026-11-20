@@ -22,7 +22,7 @@ import { GhidraFixtureLauncher } from "./ghidraClient.fixture.js";
 const installationHost: GhidraInstallationHost = {
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+  readText: () => "application.version=12.2\napplication.java.min=21\n",
   executable: () => true,
   probeJava: () =>
     javaProbeOk<GhidraJavaObservation>({
@@ -55,7 +55,7 @@ describe.skipIf(process.platform === "win32")(
         availableArchitectures: ["x86_64"],
       };
       const config = parseConfig({
-        GHIDRA_INSTALL_DIR: "/fixture/ghidra_12.1.4_PUBLIC",
+        GHIDRA_INSTALL_DIR: "/fixture/ghidra_12.2_PUBLIC",
         REA_GHIDRA_BRIDGE_TRANSPORT: "authenticated-loopback-tcp",
       });
       if (!config.ok) throw config.error;
