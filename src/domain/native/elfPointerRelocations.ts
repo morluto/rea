@@ -596,6 +596,7 @@ export function* readElfRelocationWritesSteps(
     input,
   );
   const word = input.bits === 64 ? 8 : 4;
+  const reader = new BinaryReader(bytes, input.little, "elf");
   const index = createFileMappingIndex(input.mappings, input.zeroFills);
   const fileOffset = (address: bigint, width: number): number | null => {
     try {
@@ -606,16 +607,7 @@ export function* readElfRelocationWritesSteps(
       throw cause;
     }
   };
-  const rawWord = (offset: number): bigint =>
-    input.bits === 64
-      ? input.little
-        ? bytes.readBigUInt64LE(offset)
-        : bytes.readBigUInt64BE(offset)
-      : BigInt(
-          input.little
-            ? bytes.readUInt32LE(offset)
-            : bytes.readUInt32BE(offset),
-        );
+  const rawWord = (offset: number): bigint => reader.word(offset, input.bits);
   const target = (address: bigint, width: number): number | null => {
     const at = fileOffset(address, width);
     if (
@@ -679,14 +671,13 @@ export function* readElfRelocationWritesSteps(
     );
     return parsed.ok ? parsed.value : undefined;
   };
-  const hashReader = new BinaryReader(bytes, input.little, "elf");
   const hashWords =
     (address: bigint): ElfHashWordReader =>
     (offset) => {
       try {
         // Hash walks skip bloom/bucket words; their whole prefix must be mapped.
         const at = index.offset(address, offset + 4) + offset;
-        return ok(hashReader.u32(at));
+        return ok(reader.u32(at));
       } catch (cause) {
         if (cause instanceof BinaryMappingFailure) return err(cause.message);
         throw cause;
@@ -1015,14 +1006,7 @@ export function* readElfRelocationWritesSteps(
       return at === null
         ? undefined
         : {
-            value:
-              width === word
-                ? rawWord(at)
-                : BigInt(
-                    input.little
-                      ? bytes.readUInt32LE(at)
-                      : bytes.readUInt32BE(at),
-                  ),
+            value: reader.word(at, width === 4 ? 32 : input.bits),
             file_offset: at,
             relocation: null,
           };

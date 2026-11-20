@@ -2,8 +2,6 @@
   "src/domain/apple/machoLoadCommandReader.ts": 2,
   "src/domain/desktop/openPgpKeys.ts": 2,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
-  "src/domain/native/elfPointerRelocations.ts": 6,
-  "src/domain/native/readBinaryContainer.ts": 1,
   "src/native/AppleDispatchMetadata.ts": 4,
   "src/native/AppleObjcDispatchFacets.ts": 1,
   "src/native/AppleSwiftDispatchFacets.ts": 1,
