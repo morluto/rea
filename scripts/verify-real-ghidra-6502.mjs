@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import {
   requireMcpOperationResult,
   requireMcpOutput,
@@ -43,28 +42,47 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const ca65 = process.env.REA_CA65 ?? "ca65";
 const ld65 = process.env.REA_LD65 ?? "ld65";
 const toolchain = {};
-// Toolchain probes run before a workspace exists, through the owned-command runner.
-for (const [name, command] of Object.entries({ ca65, ld65 })) {
-  const version = await runOwnedCommand(
-    {
-      command,
-      arguments: ["--version"],
-      runId: run.run_id,
-      expectedCommand: null,
-    },
-    { timeoutMs: 10000, diagnosticBytes: 1024 * 1024 },
-  );
-  toolchain[name] = `${version.stdout.text}${version.stderr.text}`.trim();
+let workspaceFixture;
+// The same owner serves the pre-workspace probes. Its Windows launcher resolves
+// bare ca65/ld65 names; the shared owned-command runner requires a drive path.
+const commands = await createVerifierCommands();
+try {
+  for (const [name, command] of Object.entries({ ca65, ld65 })) {
+    const version = await commands.exec(command, ["--version"], {
+      timeout: 10000,
+    });
+    toolchain[name] = (version.stdout + version.stderr).trim();
+  }
+  await mkdir(join(root, "build"), { recursive: true });
+  workspaceFixture = await VerifierFixture.open({
+    prefix: "rea-6502-proof-",
+    parent: join(root, "build"),
+    private: false,
+  });
+  await mkdir(join(workspaceFixture.path, "runtime"));
+} catch (cause) {
+  const failures = [cause];
+  try {
+    await commands.close();
+  } catch (closeCause) {
+    failures.push(closeCause);
+  }
+  if (workspaceFixture !== undefined) {
+    try {
+      await workspaceFixture.release();
+    } catch (releaseCause) {
+      failures.push(releaseCause);
+    }
+  }
+  if (failures.length > 1)
+    throw new AggregateError(
+      failures,
+      "6502 toolchain probe and command cleanup both failed",
+    );
+  throw cause;
 }
-await mkdir(join(root, "build"), { recursive: true });
-const workspaceFixture = await VerifierFixture.open({
-  prefix: "rea-6502-proof-",
-  parent: join(root, "build"),
-  private: false,
-});
 const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
-await mkdir(runtime);
 const path = join(workspace, "image.bin");
 const object = join(workspace, "image.o");
 const entrypoint = join(root, "scripts", "rea.mjs");
@@ -77,8 +95,6 @@ const env = {
   REA_ANALYSIS_PROVIDER: "ghidra",
   REA_PROCESS_RUN_ID: run.run_id,
 };
-// Assembler, linker and CLI share one command owner, created before they start.
-const commands = await createVerifierCommands();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
