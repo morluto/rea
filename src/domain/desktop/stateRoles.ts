@@ -204,6 +204,8 @@ export const roleFacts = (
 };
 
 const FILENAME_CHARACTER = /[\p{L}\p{M}\p{N}._~-]/u;
+const BEFORE_FILENAME = new RegExp(`${FILENAME_CHARACTER.source}$`, "u");
+const AFTER_FILENAME = new RegExp(`^${FILENAME_CHARACTER.source}`, "u");
 
 /** Home folders whose files a title never names as a document: caches, and dconf's databases. */
 const NEVER_NAMED = [".cache", ".config/dconf"];
@@ -220,11 +222,12 @@ const spelledIn = (title: string, spelling: string, bare = false): boolean => {
     at = title.indexOf(spelling, at + 1)
   ) {
     const before = title[at - 1];
-    const after = title[at + spelling.length];
+    const end = at + spelling.length;
+    // A neighboring Unicode code point can occupy two UTF-16 code units.
     if (
-      (before === undefined || !FILENAME_CHARACTER.test(before)) &&
-      (after === undefined || !FILENAME_CHARACTER.test(after)) &&
-      after !== "/" &&
+      !BEFORE_FILENAME.test(title.slice(Math.max(0, at - 2), at)) &&
+      !AFTER_FILENAME.test(title.slice(end, end + 2)) &&
+      title[end] !== "/" &&
       !(bare && before === "/")
     )
       return true;
