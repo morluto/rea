@@ -472,7 +472,8 @@ it.each(["descriptor-first", "workspace-first"])(
     const root = await createTestTempDirectory("rea-firmware-mixed-owner-");
     const path = join(root, "input.bin");
     await writeFile(path, "firmware bytes");
-    fault.selected = "report.json";
+    // Keep the retained descriptor outside the workspace so either owner can release first.
+    fault.selected = path;
     let workspaceBlocked = true;
     let workspacePath = "";
     const close = PrivateRuntimeRoot.prototype.close;
@@ -500,7 +501,16 @@ it.each(["descriptor-first", "workspace-first"])(
     });
     expect(blocked).toMatchObject({
       ok: false,
-      error: { cleanupIncomplete: true },
+      error: {
+        operation: "close_firmware",
+        cleanupIncomplete: true,
+        cause: expect.any(AggregateError),
+        diagnostics: {
+          failures: expect.arrayContaining([
+            expect.objectContaining({ resources: [workspacePath] }),
+          ]),
+        },
+      },
     });
     expect(fault.handles).toHaveLength(1);
     if (order === "descriptor-first") fault.blocked.clear();
