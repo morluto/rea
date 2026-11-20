@@ -11,13 +11,14 @@ import {
   sameRegularFileState,
   type StableRegularFileDescriptor,
 } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../ArtifactResourceScope.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+  readArtifactFileChunks,
+  abortIfNeeded,
+  artifactFileAdmissionFailure,
+} from "../../resources/index.js";
 import {
   pyInstallerMemberStream,
   readPyInstallerMemberPrefix,
@@ -27,7 +28,6 @@ import {
   type CArchiveEntry,
 } from "./CArchiveLayout.js";
 import type { PyInstallerMember } from "./CArchiveMembers.js";
-import { artifactFileAdmissionFailure } from "../ArtifactFileAdmission.js";
 import {
   reconstructedPycHeader,
   isHeaderlessPythonCode,
@@ -243,6 +243,9 @@ export class PyInstallerPyzStore {
       const source = await openRegularFile(path, {
         symlinks: "reject",
         signal,
+        // REA just wrote this private image. Settling would wait out a fresh
+        // Windows ChangeTime once per image; external archives still settle.
+        changeTime: "as-written",
       });
       this.#retain(path, new OwnedFileHandle(source.handle));
       return source;
@@ -309,6 +312,7 @@ export class PyInstallerPyzStore {
       throw new ArtifactReaderFailure(
         "integrity",
         "Private PYZ image changed after parsing",
+        { integrityCheck: "container-identity" },
       );
   }
 }

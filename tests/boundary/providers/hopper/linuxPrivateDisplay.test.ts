@@ -1,23 +1,24 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../../../../src/domain/analysisResourceLimits.js";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { access, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 import * as ownership from "../../../../src/process/ProcessOwnership.js";
 
 import {
   DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
-  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   type HopperStartupDiagnostic,
   type HopperStartupFailureCode,
-} from "../../../../src/domain/hopperStartupFailure.js";
+} from "../../../../src/hopper/HopperStartupFailure.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
-import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
+import { HopperProcessError } from "../../../../src/hopper/HopperErrors.js";
+import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import {
   runLinuxPrivateDisplayProbe,
   selectLinuxPrivateDisplayStrategy,
@@ -29,6 +30,7 @@ import {
   LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX,
   parseLinuxPrivateDisplayDiagnostic,
 } from "../../../../src/hopper/LinuxPrivateDisplayDiagnostic.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const helperPath = fileURLToPath(
   new URL("../../../../scripts/hopper-demo-x11.py", import.meta.url),
@@ -44,7 +46,8 @@ const dialogOutcomeFixturePath = fileURLToPath(
 );
 const pythonCommand = ["python3", "python"].find(
   (candidate) =>
-    spawnSync(candidate, ["--version"], { stdio: "ignore" }).status === 0,
+    spawnSync(candidate, ["--version"], { stdio: "ignore", timeout: 5000 })
+      .status === 0,
 );
 const cleanupTimeoutFixturePath = fileURLToPath(
   new URL("../../../fixtures/hopperCleanupTimeout.py", import.meta.url),
@@ -120,7 +123,7 @@ describe("Hopper demo dialog detection", () => {
       const result = spawnSync(
         "/usr/bin/python3",
         [dialogDetectionFixturePath, helperPath],
-        { encoding: "utf8" },
+        { encoding: "utf8", timeout: 10000 },
       );
       expect(result.status).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({
@@ -139,7 +142,7 @@ describe("Hopper demo dialog timeout outcomes", () => {
       const result = spawnSync(
         pythonCommand ?? "python3",
         [dialogOutcomeFixturePath],
-        { encoding: "utf8" },
+        { encoding: "utf8", timeout: 10000 },
       );
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({
@@ -163,7 +166,7 @@ describe("Hopper demo dialog timeout outcomes", () => {
             value: "-5",
             source: "setting",
             minimum_ms: MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
-            maximum_ms: MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+            maximum_ms: MAX_NODE_TIMER_DELAY_MS,
             default_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
           },
         },
@@ -391,7 +394,7 @@ describe("Linux private display selection", () => {
       const result = spawnSync(
         "/usr/bin/python3",
         [helperPath, "--probe", option, "/rea/missing-executable"],
-        { encoding: "utf8" },
+        { encoding: "utf8", timeout: 10000 },
       );
       expect(result.status).toBe(79);
       const parsed = parseLinuxPrivateDisplayDiagnostic(result.stderr);
@@ -420,6 +423,7 @@ describe("Linux private display selection", () => {
     });
     const processes = spawnSync("/bin/ps", ["-eo", "args="], {
       encoding: "utf8",
+      timeout: 5000,
     }).stdout;
     expect(processes).not.toContain(hangingHelperPath);
   });
@@ -464,7 +468,7 @@ it("passes the private X authority cookie through xauth stdin", () => {
 });
 
 const inertProbe = async (keepLeader = false) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-private-display-lifecycle-"));
+  const root = await createTestTempDirectory("rea-private-display-lifecycle-");
   const marker = join(root, "descendant-survived");
   const ready = join(root, "ready");
   const helper = join(root, "probe.py");
@@ -480,7 +484,6 @@ const inertProbe = async (keepLeader = false) => {
       ...(keepLeader ? ["time.sleep(2)"] : []),
     ].join("\n"),
   );
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
   return { helper, marker, ready };
 };
 
@@ -541,10 +544,12 @@ it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
       signal: controller.signal,
     });
     if (outcome === "cancelled") {
-      await vi.waitFor(async () => expect(await access(ready)).toBeUndefined());
+      await waitFor(async () => expect(await access(ready)).toBeUndefined());
       controller.abort("caller stopped");
     }
     const result = await operation;
+    // Adopt the exact cleanup lease before any outcome assertion can fail.
+    if (result.cleanup.status === "pending") pending = result.cleanup;
     expect(result.outcome).toBe(outcome);
     // The probe has settled despite refused cleanup; no abandoned output wait
     // should keep its original deadline alive until a later cleanup retry.
@@ -557,16 +562,16 @@ it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
     expect(result.cleanup.status).toBe("pending");
     if (result.cleanup.status !== "pending")
       throw new Error("Expected retained probe owner");
-    pending = result.cleanup;
+    const retained = result.cleanup;
     const retainedRunId = cleanup.mock.calls[0]?.[0].runId;
-    await expect(pending.lease.release()).rejects.toThrow(
+    await expect(retained.lease.release()).rejects.toThrow(
       "controlled display probe cleanup refusal",
     );
     expect(
       cleanup.mock.calls.every(([owner]) => owner.runId === retainedRunId),
     ).toBe(true);
     cleanup.mockImplementation(original);
-    await pending.lease.release();
-    expect(pending.lease.released).toBe(true);
+    await retained.lease.release();
+    expect(retained.lease.released).toBe(true);
   },
 );

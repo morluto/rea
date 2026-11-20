@@ -4,7 +4,7 @@ import { basename } from "node:path";
 export const matchesOwnedProcessCommand = (
   actual: string,
   expected: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): boolean => {
   const actualCommand = actual.trim();
   const expectedCommand = expected.trim();

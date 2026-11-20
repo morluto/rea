@@ -33,6 +33,10 @@ const packedFiles = [
   "package/bridge/hopper_bridge.py",
   "package/bridge/cutter/rea_bridge.py",
   "package/bridge/ida/hexrays_queries.py",
+  "package/bridge/agentenv/capture.py",
+  "package/bridge/agentenv/computer.py",
+  "package/bridge/agentenv/solve.py",
+  "package/bridge/agentenv/solve_cleanup.py",
   ...Object.values(GHIDRA_BRIDGE_SOURCES).map(
     (name) => `package/bridge/ghidra/${name}`,
   ),
@@ -168,19 +172,18 @@ try {
   },
 );
 
-it.each(packedFiles)(
-  "rejects an unadvertised required member: %s",
-  async (member) => {
-    const input = await fixture();
+it("rejects each omitted required bridge before parsing the archive", async () => {
+  const input = await fixture();
+  for (const member of packedFiles)
     await expect(
       verifyPackedBridge({
         ...input,
+        tarball: join(input.workspace, "missing.tgz"),
         packedFiles: packedFiles.filter((path) => path !== member),
       }),
     ).rejects.toThrow(`package omitted ${member}`);
-    expect(await readdir(input.workspace)).toEqual([]);
-  },
-);
+  expect(await readdir(input.workspace)).toEqual([]);
+});
 
 it("rejects a missing actual Python member even when the listing advertises it", async () => {
   const input = await fixture(validSource, true);
@@ -201,7 +204,7 @@ it("reports invalid packed Python syntax with the member filename", async () => 
 it.each(["valid", "invalid"] as const)(
   "parses %s source under an owned private root and preserves owner cleanup",
   async (kind) => {
-    expect(privateRuntimeRootCapability().available).toBe(true);
+    expect(privateRuntimeRootCapability(process.platform).available).toBe(true);
     const input = await fixture(
       kind === "valid" ? validSource : "def broken(:\n",
     );

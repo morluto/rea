@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { open, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -16,11 +17,6 @@ import {
 } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-
-export interface AdbInputSnapshotDependencies {
-  readonly openSource?: typeof openRegularFile;
-  readonly openDestination?: typeof open;
-}
 
 export interface AdbInputSnapshot {
   readonly path: string;
@@ -51,7 +47,6 @@ export const snapshotAdbInput = async (
   resources: ArtifactResourceScope,
   operation: string,
   signal?: AbortSignal,
-  dependencies: AdbInputSnapshotDependencies = {},
 ): Promise<AdbInputSnapshot> => {
   let source: OwnedFileHandle | undefined;
   let destination: OwnedFileHandle | undefined;
@@ -61,21 +56,13 @@ export const snapshotAdbInput = async (
   let primaryCause: unknown;
 
   try {
-    const { handle, initial } = await (
-      dependencies.openSource ?? openRegularFile
-    )(sourcePath, {
+    const { handle, initial } = await openRegularFile(sourcePath, {
       symlinks: "follow",
       signal,
     });
     source = new OwnedFileHandle(handle);
     const destinationPath = join(root.path, basename(sourcePath));
-    destination = new OwnedFileHandle(
-      await (dependencies.openDestination ?? open)(
-        destinationPath,
-        "wx",
-        0o600,
-      ),
-    );
+    destination = new OwnedFileHandle(await open(destinationPath, "wx", 0o600));
     if (!Number.isSafeInteger(initial.size) || initial.size < 0)
       throw new RangeError(
         `Regular file size cannot be represented safely: ${sourcePath}`,
@@ -148,7 +135,7 @@ export const snapshotAdbInput = async (
     } else {
       primaryCause =
         signal?.aborted === true
-          ? new AnalysisCancelledError(operation, { cause })
+          ? cancelledBy(operation, carriedReason(cause))
           : cause;
     }
   }

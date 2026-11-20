@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -5,14 +6,22 @@ import { z } from "zod";
 import type {
   JebAnalysisPort,
   JebAnalysisAvailability,
-} from "../../../src/application/jeb/JebAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/jeb/JebAnalysisPort.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
+import { JebMcpCleanupFailure } from "../../../src/jeb/JebMcpConnectionOwner.js";
+import { jebMcpTimeoutGuidance } from "../../../src/jeb/JebMcpDeadline.js";
+import type { JebMcpConnection } from "../../../src/jeb/JebMcpConnection.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   expandToolAvailability,
   toolAvailabilityInventory,
@@ -106,6 +115,73 @@ it("discovers current JEB operation support and recovery through binary_session"
   expect(probes).toBe(2);
 });
 
+it("preserves the JEB discovery timeout when availability cleanup is incomplete", async () => {
+  const resource = "fixture JEB MCP client";
+  const cleanup = new ProviderCleanupError("jeb", [resource], {
+    reason: "connection close failed",
+  });
+  const lease = new AnalysisCleanupLease(() => Promise.resolve(), [resource]);
+  lease.bindCleanupError(cleanup);
+  const timeout = new AnalysisTimeoutError("jeb_mcp_catalog", 250, {
+    ...jebMcpTimeoutGuidance("discovery", 250, "setting"),
+  });
+  const failure = new JebMcpCleanupFailure(timeout, cleanup, "jeb_mcp_catalog");
+  const connection: JebMcpConnection = {
+    sessionGeneration: 0,
+    async connect() {
+      throw failure;
+    },
+    async listTools() {
+      throw failure;
+    },
+    async call() {
+      throw new Error("Availability must not call a JEB tool");
+    },
+    close: () => lease.release(),
+  };
+  const provider = new JebProvider({ connectionFactory: () => connection });
+  onTestFinished(() => provider.close());
+  const { client } = await createApplicationMcpHarness({
+    serverOptions: { environment: {}, jebAnalysis: provider },
+  });
+  const result = await client.callTool({
+    name: "binary_session",
+    arguments: { detail: "complete" },
+  });
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "cleanup_incomplete",
+      details: {
+        resources: [resource],
+        execution_failure: "provider_timeout",
+        diagnostics: {
+          primary_error: {
+            code: "provider_timeout",
+            remediation: {
+              action: expect.stringContaining("REA_JEB_MCP_TIMEOUT_MS"),
+            },
+          },
+        },
+      },
+    },
+  });
+  // The MCP response is a snapshot; retain the provider error to check recovery.
+  const returned = await provider
+    .inspectAvailability()
+    .catch((cause: unknown) => cause);
+  if (!(returned instanceof AnalysisError))
+    throw new Error("Expected availability to throw a retained analysis error");
+  for (const error of [cleanup, failure, returned]) {
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toEqual([resource]);
+  }
+  await provider.close();
+  for (const error of [cleanup, failure, returned])
+    expect(error.cleanupIncomplete).toBe(false);
+  expect(failure.cleanupResources).toEqual([]);
+  expect(returned.cleanupResources).toEqual([]);
+});
+
 it("advertises exact valid JEB schemas and records inline evidence through MCP", async () => {
   const execution = createAnalysisExecution(
     {
@@ -155,7 +231,8 @@ it("advertises exact valid JEB schemas and records inline evidence through MCP",
     throw new Error("JEB tools must publish both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
-  const outputSchema: Record<string, unknown> = advertised.outputSchema ?? {};
+  const outputSchema: Record<string, unknown> =
+    canonicalOutputSchema(advertised.name) ?? {};
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(advertised.inputSchema, {})).toBe(true);
   expect(ajv.validate(advertised.inputSchema, { unexpected: 1 })).toBe(false);

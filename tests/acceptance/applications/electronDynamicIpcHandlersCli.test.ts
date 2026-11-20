@@ -99,3 +99,46 @@ for (const surface of ["CLI", "stdio MCP"] as const)
       });
     },
   );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps a proven IPC match ambiguous when a candidate Electron handler competes through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-electron-candidate-ipc-");
+    await writeFixtureFiles(root, {
+      "package.json": JSON.stringify({
+        name: "candidate-ipc",
+        main: "main.js",
+      }),
+      "main.js": `${window}\nipcMain.handle("app:get", () => 1);`,
+      "preload.js":
+        'const { ipcRenderer } = require("electron"); ipcRenderer.invoke("app:get");',
+    });
+    const known = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(known.summary.ipc).toMatchObject({
+      paired_renderer_transmissions: 1,
+      ambiguous_renderer_transmissions: 0,
+    });
+    await writeFixtureFiles(root, {
+      "candidate.MJS":
+        'const { ipcMain } = require("electron"); ipcMain.handle("app:get", () => 2);',
+    });
+    const conditional = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(conditional.summary.ipc).toMatchObject({
+      paired_renderer_transmissions: 0,
+      ambiguous_renderer_transmissions: 1,
+    });
+    expect(conditional.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: "ipc-handler",
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              loader_authority: "candidate",
+            }),
+            evidence: expect.objectContaining({ confidence: "low" }),
+          }),
+        ]),
+      }),
+    );
+  },
+);

@@ -1,10 +1,13 @@
-import { currentClientRegistrationCommand } from "./application/ClientRegistrationIdentity.js";
+import {
+  currentClientRegistrationCommand,
+  invokingPackageRunner,
+  withoutPackageRunnerIdentity,
+} from "./application/ClientRegistrationIdentity.js";
 import { UpdateCommandRunner } from "./application/UpdateCommandRunner.js";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import * as macHopperInstaller from "./application/MacHopper.js";
@@ -15,10 +18,6 @@ import { systemSetupHost } from "./application/SetupHost.js";
 import { systemUninstallHost } from "./application/Uninstall.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
-import {
-  invokingPackageRunner,
-  withoutPackageRunnerIdentity,
-} from "./application/ClientRegistrationIdentity.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -47,7 +46,7 @@ it.each([undefined, "/caller/tools with spaces/ilspycmd"])(
 );
 
 it("plans setup and uninstall against selected home and client overrides", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-selected-setup-"));
+  const root = await createTestTempDirectory("rea-selected-setup-");
   const environment = {
     HOME: join(root, "selected-home"),
     USERPROFILE: join(root, "selected-home"),
@@ -57,50 +56,47 @@ it("plans setup and uninstall against selected home and client overrides", async
   vi.stubEnv("HOME", join(root, "ambient-home"));
   vi.stubEnv("CODEX_HOME", join(root, "ambient-codex"));
   vi.stubEnv("npm_command", "other");
-  try {
-    const doctor = createDoctorHostFixture({ homeDirectory: environment.HOME });
-    const host = systemSetupHost(doctor, environment);
-    const result = await runSetup(
-      {
-        ...options(false),
-        dryRun: true,
-        clientIds: ["codex"],
-        installSkill: true,
-      },
-      host,
-    );
-    expect(result.status).toBe("planned");
-    expect(result.plannedActions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "configure_client:codex",
-          target: join(environment.CODEX_HOME, "config.toml"),
-        }),
-        expect.objectContaining({
-          id: "install_skill",
-          target: join(
-            environment.HOME,
-            ".agents/skills",
-            PRODUCT_IDENTITY.skillName,
-          ),
-        }),
-      ]),
-    );
-    expect(host.registrationCommand).toEqual(
-      currentClientRegistrationCommand({ platform: "win32", environment }),
-    );
-    const clients = await systemUninstallHost(
-      environment.HOME,
-      undefined,
-      environment,
-    ).clients();
-    expect(clients.find(({ name }) => name === "codex")?.configPath).toBe(
-      join(environment.CODEX_HOME, "config.toml"),
-    );
-    expect(JSON.stringify(result)).not.toContain("ambient-");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  const doctor = createDoctorHostFixture({ homeDirectory: environment.HOME });
+  const host = systemSetupHost(doctor, environment);
+  const result = await runSetup(
+    {
+      ...options(false),
+      dryRun: true,
+      clientIds: ["codex"],
+      installSkill: true,
+    },
+    host,
+  );
+  expect(result.status).toBe("planned");
+  expect(result.plannedActions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "configure_client:codex",
+        target: join(environment.CODEX_HOME, "config.toml"),
+      }),
+      expect.objectContaining({
+        id: "install_skill",
+        target: join(
+          environment.HOME,
+          ".agents/skills",
+          PRODUCT_IDENTITY.skillName,
+        ),
+      }),
+    ]),
+  );
+  expect(host.registrationCommand).toEqual(
+    currentClientRegistrationCommand({ platform: "win32", environment }),
+  );
+  const clients = await systemUninstallHost(
+    environment.HOME,
+    undefined,
+    environment,
+    doctor.platform,
+  ).clients();
+  expect(clients.find(({ name }) => name === "codex")?.configPath).toBe(
+    join(environment.CODEX_HOME, "config.toml"),
+  );
+  expect(JSON.stringify(result)).not.toContain("ambient-");
 });
 
 it("composes provider diagnostics from selected configuration rather than ambient configuration", async () => {
@@ -110,7 +106,7 @@ it("composes provider diagnostics from selected configuration rather than ambien
     GHIDRA_INSTALL_DIR: "/selected/ghidra",
     REA_IDA_MCP_CONFIG: "/selected/ida.json",
   });
-  const inspections = await host.providerInspections?.();
+  const inspections = await host.providerInspections?.([]);
   expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(true);
   expect(JSON.stringify(inspections)).toContain("/selected/ghidra");
   expect(JSON.stringify(inspections)).toContain("/selected/ida.json");
@@ -141,13 +137,16 @@ it("includes the macOS Hopper installer diagnostic in setup remediation", async 
     if (result.status !== "failed") throw new Error("expected setup failure");
     expect(result.remediation).not.toContain("\u001b");
   } finally {
-    await host.close?.();
-    install.mockRestore();
+    try {
+      await host.close?.();
+    } finally {
+      install.mockRestore();
+    }
   }
 });
 
 it("preserves a validated selected JEB endpoint in setup registrations without claiming live readiness", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-jeb-setup-"));
+  const root = await createTestTempDirectory("rea-jeb-setup-");
   const endpoint = "http://127.0.0.1:8425/mcp/";
   const ambientEndpoint = "http://127.0.0.1:8426/mcp";
   vi.stubEnv("REA_JEB_MCP_URL", ambientEndpoint);
@@ -182,7 +181,6 @@ it("preserves a validated selected JEB endpoint in setup registrations without c
     );
   } finally {
     vi.unstubAllEnvs();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -194,7 +192,8 @@ it.each([
       REA_BRIDGE_MAX_REQUEST_BYTES: "33554432",
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700000",
       REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
       REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
       REA_REGEX_MATCHING_DEADLINE_MS: "10000",
       REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -202,6 +201,9 @@ it.each([
       REA_MCP_TOOLS_LIST_BUDGET_MS: "6000",
       REA_MCP_FIRST_CATALOG_BUDGET_MS: "21000",
       REA_MCP_DOCTOR_DEADLINE_MS: "31000",
+      REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "4000",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "50",
+      REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "80",
     },
     providerConfigured: false,
     installHopper: true,
@@ -234,7 +236,8 @@ it.each([
           REA_BRIDGE_MAX_REQUEST_BYTES: "33554432",
           REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700000",
           REA_HOPPER_STARTUP_TIMEOUT_MS: "120000",
-          REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+          REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+          REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
           REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
           REA_REGEX_MATCHING_DEADLINE_MS: "10000",
           REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -242,6 +245,9 @@ it.each([
           REA_MCP_TOOLS_LIST_BUDGET_MS: "6000",
           REA_MCP_FIRST_CATALOG_BUDGET_MS: "21000",
           REA_MCP_DOCTOR_DEADLINE_MS: "31000",
+          REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "4000",
+          REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "50",
+          REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "80",
         });
       } else {
         expect(initial.providerEnvironment).not.toHaveProperty(

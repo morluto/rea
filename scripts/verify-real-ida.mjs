@@ -5,10 +5,13 @@ import {
 } from "./lib/ida-feature-trace.mjs";
 import { privateIdaInput } from "./lib/ida-private-input.mjs";
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
+import {
+  verifierFailureReasons,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, readdir, writeFile } from "node:fs/promises";
@@ -21,9 +24,10 @@ import {
   resolve,
 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -39,7 +43,7 @@ const { values } = parseArgs({
 });
 if (values.target === undefined || process.env.REA_IDA_MCP_CONFIG === undefined)
   throw new Error(
-    "IDA verification requires --target and REA_IDA_MCP_CONFIG; see docs/ida-provider.md. No toolchain is installed by this lane.",
+    "IDA verification requires --target and REA_IDA_MCP_CONFIG; see docs/providers/ida-provider.md. No toolchain is installed by this lane.",
   );
 if (
   (values["second-procedure"] === undefined) !==
@@ -89,7 +93,7 @@ if (
     values["second-marker"] === undefined)
 )
   throw new Error(
-    "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/ida-provider.md.",
+    "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/providers/ida-provider.md.",
   );
 const environment = Object.fromEntries(
   Object.entries({
@@ -158,24 +162,33 @@ const observe = (input) => {
 };
 const cli = async () => {
   phase = "production CLI function analysis";
-  const { stdout } = await promisify(execFile)(
-    process.execPath,
-    [
-      entry,
-      "function",
-      target,
-      values.procedure,
-      "--provider",
-      "ida",
-      "--json",
-    ],
-    {
-      env: environment,
-      timeout: config.timeoutMs * 3,
-      maxBuffer: 16 * 1024 * 1024,
-    },
+  const commands = await createVerifierCommands();
+  const { stdout } = await withVerifierCleanup(
+    () =>
+      commands.exec(
+        process.execPath,
+        [
+          entry,
+          "function",
+          target,
+          values.procedure,
+          "--provider",
+          "ida",
+          "--json",
+        ],
+        {
+          env: environment,
+          timeout: config.timeoutMs * 3,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+      ),
+    [() => commands.close()],
   ).catch((cause) => {
-    report.failed_cli = { stdout: cause.stdout, stderr: cause.stderr };
+    const primary = cause instanceof AggregateError ? cause.cause : cause;
+    report.failed_cli = {
+      stdout: primary?.stdout ?? primary?.snapshot?.stdout?.text,
+      stderr: primary?.stderr ?? primary?.snapshot?.stderr?.text,
+    };
     throw cause;
   });
   const dossier = functionDossierSchema.parse(observe(JSON.parse(stdout)));
@@ -187,13 +200,14 @@ const cli = async () => {
 };
 const mcp = async (cliDossier) => {
   const client = new Client({ name: "rea-real-ida-verifier", version: "1" });
-  const transport = new StdioClientTransport({
+  const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
-    args: [entry, "mcp"],
-    env: environment,
-    stderr: "pipe",
+    arguments: [entry, "mcp"],
+    hostEnvironment: environment,
+    cwd: process.cwd(),
+    expectedCommand: null,
+    sweepTokenOwnedProcesses: true,
   });
-  transport.stderr?.on("data", () => undefined);
   const call = async (name, args) => {
     phase = `production MCP ${name}`;
     const result = await client.callTool(
@@ -205,7 +219,7 @@ const mcp = async (cliDossier) => {
     return toolContract(name).outputSchema.parse(result.structuredContent);
   };
   let opened = false;
-  try {
+  await withVerifierCleanup(async () => {
     await client.connect(transport, { timeout: config.timeoutMs });
     await call("open_binary", { path: target, provider_id: "ida" });
     opened = true;
@@ -224,9 +238,6 @@ const mcp = async (cliDossier) => {
       ["procedure_address", { procedure: dossier.procedure.name }],
       ["procedure_assembly", { procedure: dossier.procedure.address }],
       ["procedure_callees", { procedure: dossier.procedure.address }],
-      ...(config.mode === "attached" && config.protocol !== "native"
-        ? [["procedure_callers", { procedure: dossier.procedure.address }]]
-        : []),
       ["search_procedures", { pattern: dossier.procedure.name }],
       ["procedure_pseudo_code", { procedure: dossier.procedure.address }],
       ["read_function_instructions", { procedure: dossier.procedure.address }],
@@ -263,16 +274,12 @@ const mcp = async (cliDossier) => {
         case "procedure_pseudo_code":
           assert.equal(value, dossier.pseudocode);
           break;
-        case "procedure_callers":
-        case "procedure_callees": {
-          const expected =
-            name === "procedure_callers" ? dossier.callers : dossier.callees;
+        case "procedure_callees":
           assert.deepEqual(
             [...value].sort(),
-            expected.map((item) => item.address).sort(),
+            dossier.callees.map((item) => item.address).sort(),
           );
           break;
-        }
         case "read_function_instructions":
           assert.deepEqual(value.procedure.address, dossier.procedure.address);
           assert.deepEqual(value.instructions, dossier.assembly);
@@ -410,23 +417,28 @@ const mcp = async (cliDossier) => {
     report.checks.push(
       "CLI/MCP function identity, pseudocode, assembly, instructions, and relationship parity",
     );
-  } finally {
-    const completedPhase = phase;
-    if (opened) await call("close_binary", {});
-    await client.close();
-    phase = completedPhase;
-  }
+  }, [
+    async () => {
+      const completedPhase = phase;
+      try {
+        if (opened) await call("close_binary", {});
+      } finally {
+        phase = completedPhase;
+      }
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
 };
 const cleanup = async () => {
   phase = "upstream lifecycle verification";
-  const upstream = createIdaMcpConnection(config, process.env);
+  const upstream = createIdaMcpConnection(config, process.env, {
+    platform: process.platform,
+  });
   try {
     await upstream.connect();
     if (config.mode === "attached") {
-      const metadata =
-        config.protocol === "native"
-          ? await upstream.readResource("ida://idb/metadata")
-          : await upstream.call("get_metadata", {});
+      const metadata = await upstream.readResource("ida://idb/metadata");
       assert.equal(metadata.sha256.toLowerCase(), await digest());
       report.checks.push(
         "existing GUI target remains open with the original input identity",
@@ -481,6 +493,9 @@ try {
   report.failure = {
     phase,
     message: cause instanceof Error ? cause.message : String(cause),
+    ...(cause instanceof AggregateError
+      ? { causes: verifierFailureReasons(cause) }
+      : {}),
   };
   process.exitCode = 1;
 } finally {

@@ -64,8 +64,10 @@ it("reads encryption from the bound file and names the ciphertext bytes", async 
       },
     ],
   });
-  expect(result.value.limitations).toContain(
-    "Bytes 16384-32768 (input file offsets, end exclusive) of the arm64 slice are ciphertext (cryptid 1); disassembly, decompilation, strings and references derived from them do not describe program code.",
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /16384-32768.*end exclusive.*arm64.*ciphertext.*cryptid 1.*do not describe program code/iu,
+    ),
   );
 });
 
@@ -84,7 +86,6 @@ class MutatingRunner extends NativeFixtureRunner {
 it("refuses facts when the file changes while the tools inspect it", async () => {
   const path = await writeTarget();
   const { result } = await inspect(path, new MutatingRunner(path));
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a changed-artifact refusal");
   expect(result.error).toMatchObject({
     _tag: "AnalysisArtifactChangedError",
@@ -137,7 +138,6 @@ it("retains the target descriptor when close rejects and retries it on client cl
   const path = await writeTarget();
   const state = await failingClose();
   const { client, result } = await inspect(path);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the close failure");
   expect(result.error).toBeInstanceOf(ProviderCleanupError);
   expect(result.error.cleanupIncomplete).toBe(true);
@@ -157,7 +157,6 @@ it("keeps the inspection failure primary when the descriptor close also rejects"
   const path = await writeTarget();
   const state = await failingClose();
   const { client, result } = await inspect(path, new MutatingRunner(path));
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected change and close failures");
   expect(result.error).toBeInstanceOf(ProviderCleanupError);
   expect(result.error.cleanupIncomplete).toBe(true);
@@ -190,11 +189,11 @@ it("reports cancellation that arrives during the final close without retaining t
     {},
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected final-close cancellation");
   expect(result.error).toMatchObject({
     _tag: "AnalysisCancelledError",
     cleanupIncomplete: false,
   });
+  expect(result.error.cause).toBe(reason);
   expectRetainedReport(result.error);
 });

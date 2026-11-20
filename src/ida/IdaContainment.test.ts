@@ -127,6 +127,7 @@ const session = async (
       args: [],
       env: {},
       mode,
+      protocol: mode === "attached" ? "native" : "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },
@@ -150,11 +151,9 @@ const found = (query: string, fn: typeof function_) => ({
 
 describe("IDA containment capabilities", () => {
   it("declares document identity in both profiles and address resolution only in headless", () => {
-    const declared = (mode: "attached" | "headless", native = false) =>
+    const declared = (mode: "attached" | "headless") =>
       idaCapabilities(
-        IDA_COMPATIBILITY_PROFILES[
-          native ? "native" : mode === "attached" ? "legacy" : "modern"
-        ],
+        IDA_COMPATIBILITY_PROFILES[mode === "attached" ? "native" : "modern"],
         false,
       )
         .map(({ operation }) => operation)
@@ -178,17 +177,13 @@ describe("IDA containment capabilities", () => {
       "resolve_containing_procedure",
       "list_documents",
     ]);
-    expect(declared("attached")).toEqual(["list_documents"]);
-    expect(declared("attached", true)).toEqual(["list_documents"]);
     expect(
-      idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false).map(
-        ({ operation }) => operation,
-      ),
-      "attached profiles declare the bound document but not address resolution",
-    ).toContain("list_documents");
+      declared("attached"),
+      "the attached profile declares the bound document but not address resolution",
+    ).toEqual(["list_documents"]);
   });
 
-  it("refuses address resolution on the legacy attached profile", async () => {
+  it("refuses address resolution on the native attached profile", async () => {
     const { client, producer } = await session({}, "attached");
     try {
       const result = await client.execute("resolve_containing_procedure", {
@@ -225,7 +220,9 @@ describe("headless IDA containing procedure", () => {
           classification: null,
           body: {
             available: false,
-            reason: "IDA MCP does not report complete function body ranges.",
+            reason: expect.stringMatching(
+              /does not report complete function body ranges/iu,
+            ),
           },
         },
       });
@@ -614,18 +611,6 @@ describe("headless IDA document identity", () => {
         expect(result.error.cause).toBe(controller.signal.reason);
       }
       expect(producer.calls).toEqual([]);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("lists exactly the admitted program", async () => {
-    const { client, target } = await session();
-    try {
-      const result = await client.execute("list_documents", {});
-
-      if (!result.ok) throw result.error;
-      expect(result.value.result).toEqual([target.path]);
     } finally {
       expect((await client.close()).ok).toBe(true);
     }

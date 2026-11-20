@@ -1,26 +1,16 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { unknownTarget } from "./domain/targetIdentity.js";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 
 import { createCli } from "./cli.js";
 import { parseEvidence } from "./domain/evidence.js";
 
-const temporaryDirectories: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
-
 it("inspects a keyless app bundle through the public CLI and preserves resource provenance", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "rea-bundle-resource-cli-"));
-  temporaryDirectories.push(parent);
+  const parent = await createTestTempDirectory("rea-bundle-resource-cli-");
   const bundle = join(parent, "Fixture.app");
   const resources = join(bundle, "Resources");
   await mkdir(resources, { recursive: true });
@@ -52,7 +42,11 @@ it("inspects a keyless app bundle through the public CLI and preserves resource 
   );
   expect(exitCode, stdout).toBe(0);
   expect(parseEvidence(JSON.parse(stdout))).toMatchObject({
-    subject: null,
+    subject: {
+      identity: unknownTarget("not-observed"),
+      name: null,
+      local_path: null,
+    },
     normalized_result: {
       archive_path: "Resources/Archive.plist",
       target_sha256: null,

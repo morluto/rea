@@ -7,7 +7,11 @@ export const BUILTIN_RESOURCE_METHODS = {
 } as const;
 
 /**
- * Release methods the value Node returns from each acquisition actually has.
+ * Release methods the resource handle from each acquisition actually has.
+ *
+ * `fs/promises.open` returns a Promise; the resource owner admits FileHandle
+ * methods when receiver writes can supply its fulfilled value, retaining
+ * ambiguity and the existing qualifier for conditional built-in identity.
  *
  * `fs.openSync` returns a numeric descriptor and `fs.open` in its callback form
  * returns `undefined`, so neither has a release method at all; the descriptor is
@@ -16,18 +20,43 @@ export const BUILTIN_RESOURCE_METHODS = {
  * `FileHandle` and a `net.Socket`/`TLSSocket` each expose only their own subset,
  * so a family-blind release list claims a teardown that throws instead.
  */
-export const BUILTIN_RESOURCE_RELEASE_METHODS = {
-  "fs:open": [],
-  "fs:openSync": [],
-  "fs:createReadStream": ["close", "destroy"],
-  "fs:createWriteStream": ["close", "destroy", "end"],
-  "fs/promises:open": ["close"],
-  "net:connect": ["destroy", "end"],
-  "net:createConnection": ["destroy", "end"],
-  "tls:connect": ["destroy", "end"],
-} as const satisfies Readonly<
-  Record<string, readonly ("close" | "destroy" | "end")[]>
->;
+type ReleaseMethod = "close" | "destroy" | "end";
+export interface BuiltinResourceReleaseMember {
+  readonly owner: "instance" | "prototype";
+  readonly definingPrototypeDepth?: number;
+  readonly delegates?: readonly ReleaseMethod[];
+}
+const inherited = { owner: "prototype" } as const;
+
+// Each entry lists the release methods looked up inside the native call.
+const releases: Readonly<
+  Record<string, Partial<Record<ReleaseMethod, BuiltinResourceReleaseMember>>>
+> = {
+  "fs:createReadStream": {
+    close: {
+      owner: "prototype",
+      definingPrototypeDepth: 1,
+      delegates: ["destroy"],
+    },
+    destroy: { owner: "prototype", definingPrototypeDepth: 2 },
+  },
+  "fs:createWriteStream": {
+    close: {
+      owner: "prototype",
+      definingPrototypeDepth: 1,
+      delegates: ["end", "destroy"],
+    },
+    destroy: { owner: "prototype", definingPrototypeDepth: 2 },
+    end: { owner: "prototype", definingPrototypeDepth: 2 },
+  },
+  "fs/promises:open": { close: { owner: "instance" } },
+  "net:connect": { destroy: inherited, end: inherited },
+  "net:createConnection": { destroy: inherited, end: inherited },
+  "tls:connect": { destroy: inherited, end: inherited },
+};
+
+export const builtinResourceReleases = (specifier: string, method: string) =>
+  releases[`${specifier}:${method}`];
 
 export const BUILTIN_RESOURCE_SPECIFIERS = Object.keys(
   BUILTIN_RESOURCE_METHODS,

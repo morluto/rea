@@ -6,7 +6,7 @@ import {
   devicetreeFixture,
   dtString,
   type FixtureNode,
-} from "../../firmware/devicetree/Devicetree.fixture.js";
+} from "../../domain/firmware/devicetree.fixture.js";
 
 /** One /images node; `hashes` names algorithms whose values the fixture computes. */
 export interface FitFixtureImage {

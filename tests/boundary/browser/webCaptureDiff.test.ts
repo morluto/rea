@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
-import type { WebPageInspection } from "../../../src/domain/browserObservationSchemas.js";
+import {
+  type WebPageInspection,
+  webPageInspectionSchema,
+} from "../../../src/domain/browserObservationSchemas.js";
 import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
 import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import {
@@ -1412,49 +1415,27 @@ describe("web capture diff semantics and fingerprints", () => {
   });
 });
 
-it("keeps historical IndexedDB schema projections uncertain while retaining proven changes", async () => {
+it("refuses an IndexedDB schema fingerprint without its projection version", async () => {
   const browser = await startFakeCdpBrowser();
   browsers.push(browser);
   const current = await inspectStorage(browser, true);
-  const legacy = structuredClone(current);
-  const oldSchema = legacy.storage.content_fingerprints.find(
+  const index = current.storage.content_fingerprints.findIndex(
     ({ scope }) => scope === "indexed_db_schema",
   );
-  if (oldSchema === undefined)
+  const schema = current.storage.content_fingerprints[index];
+  if (schema?.scope !== "indexed_db_schema")
     throw new Error("Expected an IndexedDB schema fingerprint");
-  delete oldSchema.projection_version;
-  oldSchema.value_sha256 = "0".repeat(64);
-  for (const [before, after] of [
-    [legacy, current],
-    [current, legacy],
-  ] as const)
-    expect(compareStorage(before, after)).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-  expect(compareStorage(legacy, structuredClone(legacy))).toMatchObject({
-    status: "unknown",
-    total_changes: 0,
-  });
-  const changedLegacy = structuredClone(legacy);
-  const changedSchema = changedLegacy.storage.content_fingerprints.find(
-    ({ scope }) => scope === "indexed_db_schema",
-  );
-  if (changedSchema === undefined)
-    throw new Error("Expected an IndexedDB schema fingerprint");
-  changedSchema.value_sha256 = "1".repeat(64);
-  expect(compareStorage(legacy, changedLegacy)).toMatchObject({
-    status: "changed",
-    total_changes: 1,
-    changes: [expect.objectContaining({ change: "modified" })],
-  });
-  const changedKey = structuredClone(current);
-  changedKey.storage.local_storage_keys.push("new-key");
-  expect(compareStorage(legacy, changedKey)).toMatchObject({
-    status: "changed",
-    total_changes: 1,
-    changes: [expect.objectContaining({ change: "added" })],
-  });
+  expect(schema.projection_version).toBe(2);
+  const { projection_version: _version, ...withoutVersion } = schema;
+  const unmarked = structuredClone(current);
+  (unmarked.storage.content_fingerprints as unknown[])[index] = withoutVersion;
+  expect(
+    webPageInspectionSchema.safeParse(unmarked).error?.issues,
+  ).toMatchObject([
+    {
+      path: ["storage", "content_fingerprints", index, "projection_version"],
+    },
+  ]);
 });
 
 describe("web capture diff completeness", () => {

@@ -32,11 +32,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["a", "b"],
       [],
     ]) {
-      const control = await processes.run(
-        process.execPath,
-        [join(root, "child.cjs"), ...values],
-        { timeoutMs: 5_000 },
-      );
+      const control = await processes.run(process.execPath, [
+        join(root, "child.cjs"),
+        ...values,
+      ]);
       expect(control.exitCode, control.stderr).toBe(0);
       counts.push(Number(control.stdout));
     }

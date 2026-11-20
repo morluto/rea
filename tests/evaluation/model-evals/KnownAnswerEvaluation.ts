@@ -408,7 +408,7 @@ const matchesSubject = (
 ): boolean =>
   evidence.subject?.local_path === expected.path &&
   (expected.sha256 === undefined ||
-    evidence.subject.digest.sha256 === expected.sha256);
+    evidence.subject.identity.sha256 === expected.sha256);
 
 const matchesParameters = (
   evidence: Evidence,

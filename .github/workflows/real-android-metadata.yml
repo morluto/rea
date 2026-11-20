@@ -1,27 +1,11 @@
 name: Real Android metadata bridge
 
 on:
-  push:
-    branches: ["**"]
-    paths:
-      - .github/workflows/real-android-metadata.yml
-      - bridge/android/**
-      - src/android/JadxRelease.ts
-      - scripts/fixtures/android/**
-      - tests/conformance/android/**
-      - tests/fixtures/android/static-initializers/**
-      - tests/fixtures/android/direct-invokes/**
-      - tests/fixtures/android/external-invokes/**
-      - .nvmrc
   workflow_dispatch:
   workflow_call:
 
 permissions:
   contents: read
-
-concurrency:
-  group: android-metadata-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   android-metadata:

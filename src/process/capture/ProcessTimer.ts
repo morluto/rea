@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
 /** A timer owned by one process capture or replay endpoint. */
 export interface ProcessTimer {
   cancel(): void;
@@ -22,14 +23,13 @@ export const scheduleProcessDelay = (
 ): ProcessTimer => {
   if (!Number.isSafeInteger(delayMs) || delayMs < 0)
     throw new RangeError("Process delay must be a nonnegative safe integer");
-  const maximumTimerDelay = 2_147_483_647;
   let remaining = delayMs;
   let timer: ProcessTimer | undefined;
   let cancelled = false;
 
   const scheduleNext = (): void => {
     if (cancelled) return;
-    const interval = Math.min(remaining, maximumTimerDelay);
+    const interval = Math.min(remaining, MAX_NODE_TIMER_DELAY_MS);
     timer = schedule(() => {
       if (cancelled) return;
       remaining -= interval;

@@ -188,7 +188,7 @@ function* collectExpressionFlowsSteps(
         const expression = unwrapJavaScriptExpression(returnValue).node;
         const exact = readExactJavaScriptLiteral(expression);
         if (exact.found) {
-          const value = semanticPrimitiveSet([exact.value]);
+          const value = semanticPrimitiveSet([exact.value], state.precision);
           if (value.status === "literal" && literalReturns.length < budget)
             literalReturns.push({
               location: range(expression),
@@ -270,7 +270,9 @@ function* collectExpressionFlowsSteps(
         (t.isSequenceExpression(node) && index !== values.length - 1);
       const operand = unwrapJavaScriptExpression(value).node;
       const exact = readExactJavaScriptLiteral(operand);
-      const literal = exact.found ? semanticPrimitiveSet([exact.value]) : null;
+      const literal = exact.found
+        ? semanticPrimitiveSet([exact.value], state.precision)
+        : null;
       if (
         literal?.status === "unknown" &&
         literal.resourceLimit === "primitive-bytes"

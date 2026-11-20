@@ -116,3 +116,55 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for([32, 64] as const)(
+  "requires a PE%s export-name terminator inside the declared section extent",
+  async (bits, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-export-extent-");
+    const path = join(root, "exports.dll");
+    const bytes = peExportImage({
+      bits,
+      functions: [{ rva: 0x2000 }, { rva: 0x2010 }],
+      names: [
+        { name: "Kept", index: 0 },
+        { name: "TailNote", index: 1 },
+      ],
+    });
+    const tailName = Buffer.from("TailNote\0");
+    const lastNameOffset = bytes.indexOf(tailName) - 0x400;
+    const nameEnd = lastNameOffset + tailName.length;
+    const virtualSizeField = 152 + (bits === 32 ? 224 : 240) + 8;
+    const mcp = await connectLocalToolsMcp();
+    const contract = toolContract("inspect_native_exports");
+
+    for (const [size, expectedNames] of [
+      [0, ["Kept", "TailNote"]],
+      [nameEnd, ["Kept", "TailNote"]],
+      [nameEnd - 1, ["Kept"]],
+    ] as const) {
+      bytes.writeUInt32LE(size, virtualSizeField);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-native-exports", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const response = await mcp.call("inspect_native_exports", { path });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      for (const value of [result.json, response.structuredContent]) {
+        const report = nativeExportsSchema.parse(
+          contract.outputSchema.parse(value).normalized_result,
+        );
+        expect(report.exports.map(({ name }) => name)).toEqual(expectedNames);
+        expect(report.coverage).toMatchObject({
+          status: expectedNames.length === 2 ? "complete" : "partial",
+          examined_entries: 2,
+        });
+        expect(report.issues).toMatchObject(
+          expectedNames.length === 2
+            ? []
+            : [{ code: "name_unreadable", location: "0x1211" }],
+        );
+      }
+    }
+  },
+);

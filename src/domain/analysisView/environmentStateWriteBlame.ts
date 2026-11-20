@@ -152,7 +152,7 @@ export class FailedReadBlame {
       const response =
         call === undefined
           ? undefined
-          : this.#responseObject(records[call]!, item.entity.id);
+          : this.#responseObject(records[call]!, item.entity);
       if (response !== undefined) responses.set(name, response);
     }
     return fieldBlame(
@@ -169,10 +169,13 @@ export class FailedReadBlame {
   /** The entity a write's response shows, located by its id. */
   #responseObject(
     record: StateRecordFacts,
-    id: string,
+    entity: StateEntity,
   ): JsonObject | undefined {
     return this.#facts.io.withBody(record.ordinal, (body) => {
-      const located = body === undefined ? undefined : locateItem(body, id);
+      const located =
+        body === undefined
+          ? undefined
+          : locateItem(body, entity.id, this.#facts.idField(entity.type));
       const object =
         located === undefined ? undefined : at(body!, located.pointer);
       return isObject(object) ? object : undefined;

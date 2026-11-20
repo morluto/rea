@@ -1,21 +1,40 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../domain/runtimeControlUnavailableError.js";
 
 const nativeCall = vi.hoisted(() => vi.fn());
+const nativeInspection = vi.hoisted(() => ({
+  runtimeWriteTransient: true as boolean | undefined,
+}));
 
 vi.mock("./WindowsNativeLoader.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("./WindowsNativeLoader.js")>();
   return {
     ...actual,
-    requireWindowsNativeAuthority: () => ({ call: nativeCall }),
+    requireWindowsNativeAuthority: () => ({
+      call: nativeCall,
+      inspection: nativeInspection,
+    }),
   };
 });
 
 import {
   WindowsPrivateRuntime,
+  WindowsRuntimeWriteTransientUnavailableError,
   WindowsSnapshotCancelledError,
   windowsPrivateRuntime,
 } from "./WindowsPrivateRuntime.js";
+
+beforeEach(() => {
+  nativeCall.mockReset();
+  nativeInspection.runtimeWriteTransient = true;
+});
 
 const observation = {
   requestedPath: "C:\\rea-private",
@@ -122,8 +141,10 @@ describe("Windows private runtime cleanup retry", () => {
     const first = runtime.close();
     const second = runtime.close();
 
-    expect(second).toBe(first);
-    await Promise.all([first, second]);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
     expect(closes).toBe(2);
   });
 
@@ -163,6 +184,64 @@ const admittedFile = {
 };
 
 describe("Windows private runtime transient write", () => {
+  it.each([undefined, false])(
+    "refuses missing/nonaffirmative transient-write support before native dispatch: %j",
+    async (runtimeWriteTransient) => {
+      nativeInspection.runtimeWriteTransient = runtimeWriteTransient;
+      const operations: string[] = [];
+      nativeCall.mockImplementation((operation: string) => {
+        operations.push(operation);
+        if (operation === "runtime_create") return observation;
+        return null;
+      });
+      const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+      try {
+        let cause: unknown;
+        try {
+          runtime.writeTransientFile("job.source", "source-bytes");
+        } catch (error: unknown) {
+          cause = error;
+        }
+        expect(cause).toBeInstanceOf(
+          WindowsRuntimeWriteTransientUnavailableError,
+        );
+        expect(cause).toBeInstanceOf(RuntimeControlUnavailableError);
+        expect(cause).toMatchObject({
+          code: "windows-native-control-unavailable",
+          control: "runtime-write-transient",
+          retryable: false,
+          remediationAction: expect.stringContaining(
+            "Matching package version alone is insufficient",
+          ),
+        });
+        if (!(cause instanceof RuntimeControlUnavailableError)) throw cause;
+        expect(
+          runtimeControlCapabilityError(
+            "javascript-static",
+            "analyze_javascript_application",
+            cause,
+          ),
+        ).toMatchObject({
+          _tag: "AnalysisCapabilityUnavailableError",
+          retryable: false,
+          remediationAction: expect.stringContaining(
+            "Build the Windows native artifact from this exact source checkout",
+          ),
+        });
+        expect(operations).toEqual(["runtime_create"]);
+        // Earlier artifacts retain their durable descriptor/cleanup controls.
+        runtime.writeFile("descriptor.json", "fixture");
+        expect(operations).toEqual(["runtime_create", "runtime_write"]);
+      } finally {
+        await runtime.close();
+      }
+      expect(operations).toEqual([
+        "runtime_create",
+        "runtime_write",
+        "runtime_close",
+      ]);
+    },
+  );
   it("writes through runtime_write_transient and never retains via runtime_write", async () => {
     const operations: string[] = [];
     nativeCall.mockImplementation((operation: string) => {
@@ -221,14 +300,29 @@ describe("Windows private runtime admitted file close", () => {
     const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
     const readFailure: unknown = (() => {
       try {
-        runtime.readFile("endpoint");
+        runtime.readFile("endpoint", 64);
         return undefined;
       } catch (cause: unknown) {
         return cause;
       }
     })();
-    expect(readFailure).toBe(failure);
+    expect(readFailure).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(readFailure instanceof ArtifactReaderFailure))
+      throw new Error("expected cleanup");
+    expect(readFailure.cleanup?.resources).toEqual([
+      admittedFile.requestedPath,
+    ]);
+    expect(readFailure.partialObservation).toBeUndefined();
+    const cleanup = new ProviderCleanupError(
+      "ghidra",
+      readFailure.cleanup?.resources ?? [],
+      {},
+      { cause: readFailure },
+    );
+    bindArtifactFileCleanup(readFailure, cleanup);
+    expect(cleanup.cleanupIncomplete).toBe(true);
     await runtime.close();
+    expect(cleanup.cleanupIncomplete).toBe(false);
 
     expect(fileCloses).toBe(2);
     expect(operations).toEqual([
@@ -255,13 +349,18 @@ describe("Windows private runtime admitted file close", () => {
     const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
     const readFailure: unknown = (() => {
       try {
-        runtime.readFile("endpoint");
+        runtime.readFile("endpoint", 64);
         return undefined;
       } catch (cause: unknown) {
         return cause;
       }
     })();
-    expect(readFailure).toBe(denied);
+    expect(readFailure).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(readFailure instanceof ArtifactReaderFailure))
+      throw new Error("expected cleanup");
+    expect(readFailure.cleanup?.resources).toEqual([
+      admittedFile.requestedPath,
+    ]);
 
     await expect(runtime.close()).rejects.toBe(denied);
 
@@ -313,3 +412,183 @@ it.each([995, 5])(
     await runtime.close();
   },
 );
+
+it("refuses an oversized admitted runtime file before reading and still closes its handle", async () => {
+  const operations: string[] = [];
+  nativeCall.mockImplementation((operation: string) => {
+    operations.push(operation);
+    if (operation === "runtime_create") return observation;
+    if (operation === "runtime_open") return { ...admittedFile, size: 1024 };
+    if (operation === "read") return Buffer.from("x".repeat(1024));
+    return null;
+  });
+  const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+  try {
+    expect(() => runtime.readFile("endpoint", 64)).toThrow();
+    expect(operations).toEqual(["runtime_create", "runtime_open", "close"]);
+  } finally {
+    await runtime.close();
+  }
+});
+
+it("retains bound refusal and failed file close until the same owner recovers", async () => {
+  const failure = nativeFailure(5);
+  const operations: string[] = [];
+  let closes = 0;
+  nativeCall.mockImplementation((operation: string) => {
+    operations.push(operation);
+    if (operation === "runtime_create") return observation;
+    if (operation === "runtime_open") return { ...admittedFile, size: 65 };
+    if (operation === "close" && closes++ === 0) throw failure;
+    return null;
+  });
+  const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+  let reported: unknown;
+  try {
+    runtime.readFile("endpoint", 64);
+  } catch (cause: unknown) {
+    reported = cause;
+  }
+  expect(reported).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(reported instanceof ArtifactReaderFailure))
+    throw new Error("expected retained cleanup");
+  expect(reported.reason).toBe("limit");
+  expect(reported.cleanup?.resources).toEqual([admittedFile.requestedPath]);
+  const cleanup = new ProviderCleanupError(
+    "ghidra",
+    reported.cleanup?.resources ?? [],
+    {},
+    { cause: reported },
+  );
+  bindArtifactFileCleanup(reported, cleanup);
+  expect(cleanup.cleanupIncomplete).toBe(true);
+  expect(operations).toEqual(["runtime_create", "runtime_open", "close"]);
+  await runtime.close();
+  expect(cleanup.cleanupIncomplete).toBe(false);
+  expect(closes).toBe(2);
+});
+
+it.each(["valid", "oversized", "oversized-close-failed"] as const)(
+  "observes a %s Windows Ghidra endpoint through its owning runtime",
+  async (kind) => {
+    const { observeGhidraEndpoint } =
+      await import("../ghidra/GhidraTransport.js");
+    const valid = Buffer.from('{"host":"127.0.0.1","port":65535}\n');
+    const operations: string[] = [];
+    let fileCloses = 0;
+    nativeCall.mockImplementation((operation: string) => {
+      operations.push(operation);
+      if (operation === "runtime_create") return observation;
+      if (operation === "runtime_open")
+        return {
+          ...admittedFile,
+          size: kind === "valid" ? valid.length : valid.length + 1,
+        };
+      if (operation === "read") return valid;
+      if (
+        operation === "close" &&
+        kind === "oversized-close-failed" &&
+        fileCloses++ === 0
+      )
+        throw nativeFailure(5);
+      return null;
+    });
+    const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+    try {
+      const result = await observeGhidraEndpoint(
+        {
+          transport: "authenticated-loopback-tcp",
+          path: admittedFile.requestedPath,
+        },
+        { platform: "win32" },
+      );
+      if (kind === "valid")
+        expect(result).toEqual({
+          ok: true,
+          value: { host: "127.0.0.1", port: 65535 },
+        });
+      else {
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            kind: "start",
+            message: "Ghidra TCP endpoint is invalid",
+            cause: { reason: "limit" },
+          },
+        });
+        expect(operations).not.toContain("read");
+        if (kind === "oversized-close-failed") {
+          if (result.ok) throw new Error("Expected endpoint admission failure");
+          const cleanup = result.error.cleanupFailure;
+          expect(cleanup?.cleanupIncomplete).toBe(true);
+          expect(cleanup?.cleanupResources).toEqual([
+            admittedFile.requestedPath,
+          ]);
+          expect(windowsPrivateRuntime(observation.path)).toBe(runtime);
+          await runtime.close();
+          expect(cleanup?.cleanupIncomplete).toBe(false);
+        }
+      }
+      expect(operations).toContain("close");
+    } finally {
+      await runtime.close();
+    }
+  },
+);
+
+it("seals runtime admission as cleanup begins", async () => {
+  const operations: string[] = [];
+  nativeCall.mockImplementation((operation: string) => {
+    operations.push(operation);
+    if (operation === "runtime_create") return observation;
+    if (operation === "runtime_open") return admittedFile;
+    return null;
+  });
+  const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+  const closing = runtime.close();
+  expect(() => runtime.readFile("endpoint", 64)).toThrow();
+  await expect(runtime.snapshot("C:\\input", "snapshot")).rejects.toThrow();
+  expect(operations).not.toContain("runtime_open");
+  expect(operations).not.toContain("runtime_snapshot");
+  await closing;
+});
+
+it("keeps runtime cleanup retryable and admission sealed after a file owner releases", async () => {
+  const fileFailure = nativeFailure(5);
+  const runtimeFailure = nativeFailure(5);
+  let fileCloses = 0;
+  let rootCloses = 0;
+  nativeCall.mockImplementation((operation: string) => {
+    if (operation === "runtime_create") return observation;
+    if (operation === "runtime_open") return admittedFile;
+    if (operation === "read") return Buffer.from("ok");
+    if (operation === "close" && fileCloses++ === 0) throw fileFailure;
+    if (operation === "runtime_close" && rootCloses++ === 0)
+      throw runtimeFailure;
+    return null;
+  });
+  const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+  let reported: unknown;
+  try {
+    runtime.readFile("endpoint", 64);
+  } catch (cause: unknown) {
+    reported = cause;
+  }
+  if (!(reported instanceof ArtifactReaderFailure))
+    throw new Error("expected cleanup");
+  const cleanup = new ProviderCleanupError(
+    "ghidra",
+    reported.cleanup?.resources ?? [],
+    {},
+    { cause: reported },
+  );
+  bindArtifactFileCleanup(reported, cleanup);
+  await expect(runtime.close()).rejects.toBe(runtimeFailure);
+  expect(cleanup.cleanupIncomplete).toBe(false);
+  expect(windowsPrivateRuntime(observation.path)).toBe(runtime);
+  expect(() => runtime.readFile("endpoint", 64)).toThrow();
+  await runtime.close();
+  expect(fileCloses).toBe(2);
+  expect(rootCloses).toBe(2);
+  expect(() => windowsPrivateRuntime(observation.path)).toThrow();
+});

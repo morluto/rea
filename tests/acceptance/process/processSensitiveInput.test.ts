@@ -68,7 +68,6 @@ cliTest.skipIf(CAPTURE_SKIP_REASON)(
     expect(result.stderr).not.toContain(literal);
     verify(result.json);
   },
-  30_000,
 );
 
 itWithCaptureCapability(

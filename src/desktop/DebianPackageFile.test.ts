@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -34,9 +34,11 @@ const inspect = async (
   const facts = await inspectPackageFile(
     path,
     installed,
-    async (command, argv) => {
+    async (command, argv, _signal, options) => {
       calls.push([command, ...argv]);
-      return reply;
+      return typeof reply === "object" && !options?.preserveStdoutBytes
+        ? { stdout: reply.stdout, exitCode: reply.exitCode }
+        : reply;
     },
     undefined,
   );
@@ -73,6 +75,32 @@ describe("inspectPackageFile", () => {
         depends: expect.arrayContaining(["libgl1 | libgl1-mesa-glx"]),
         pre_depends: ["dpkg (>= 1.15.6)"],
       },
+    });
+  });
+
+  it("withholds package-file evidence for undecodable control fields", async () => {
+    const stdoutBuffer = Buffer.concat([
+      Buffer.from(DPKG_DEB_OUTPUT.trimEnd()),
+      Buffer.from([0xff, 0x0a]),
+    ]);
+    const invalid = await inspect({
+      stdout: stdoutBuffer.toString("utf8"),
+      stdoutBuffer,
+      exitCode: 0,
+    });
+    expect(invalid.facts).toEqual({
+      package_file_reason: `dpkg-deb returned invalid UTF-8 in the control fields of ${invalid.path}`,
+    });
+
+    const valid = await inspect({
+      stdout: "",
+      stdoutBuffer: Buffer.from(DPKG_DEB_OUTPUT),
+      exitCode: 0,
+    });
+    expect(valid.facts.package_file).toMatchObject({
+      package: INSTALLED.name,
+      version: INSTALLED.version,
+      architecture: INSTALLED.architecture,
     });
   });
 
@@ -114,14 +142,42 @@ describe("inspectPackageFile", () => {
     );
 
     expect(snap.calls).toEqual([]);
-    expect(snap.facts.package_file_reason).toContain(
-      "dpkg reports no installed version of the application (snap varicad2026-en)",
+    expect(snap.facts.package_file_reason).toMatch(
+      /dpkg.*no installed version.*snap varicad2026-en/iu,
     );
     expect(directory).toEqual({
       package_file_reason: `${join(folder, "a.deb")} is not a regular file`,
     });
   });
 });
+
+describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "inspectPackageFile when a parent folder denies the check",
+  () => {
+    it("says the file could not be checked rather than that it is not a regular file", async () => {
+      const folder = await createTestTempDirectory("desktop-deb-denied-");
+      const blocked = join(folder, "blocked");
+      const path = join(blocked, "notes.deb");
+      await mkdir(blocked);
+      await writeFile(path, BYTES);
+      await chmod(blocked, 0o000);
+      try {
+        const facts = await inspectPackageFile(
+          path,
+          INSTALLED,
+          runHostQuery,
+          undefined,
+        );
+
+        expect(facts).toEqual({
+          package_file_reason: `${path} could not be checked, so it was not read as a file`,
+        });
+      } finally {
+        await chmod(blocked, 0o755);
+      }
+    });
+  },
+);
 
 const hasDpkgDeb =
   (await runHostQuery("dpkg-deb", ["--version"], undefined)) !== "missing";

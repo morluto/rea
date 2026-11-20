@@ -1,6 +1,5 @@
 import {
   access,
-  mkdtemp,
   readFile,
   rm,
   writeFile,
@@ -10,27 +9,29 @@ import {
 } from "node:fs/promises";
 import { ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { z } from "zod";
 
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { EvidenceIntegrityError } from "../../../../src/domain/evidenceErrors.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { nativeCallObservationInputSchema } from "../../../../src/domain/native/nativeCallObservation.js";
 import { nativeCallPartialObservationSchema } from "../../../../src/domain/native/nativeCallPartialObservation.js";
 import type { NativeCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
-import { err, ok } from "../../../../src/domain/result.js";
-import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
+import { LldbReadbackFiles } from "../../../../src/native/LldbReadbackFiles.js";
+import { err, ok, type Result } from "../../../../src/domain/result.js";
+import { NativeCommandFailure } from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { createDeferred } from "../../../fixtures/binarySession.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
@@ -105,6 +106,7 @@ const successfulTracerOutput = {
   breakpoints: [{ index: 0, location_count: 1, locations: [] }],
   events: [EVENT],
   other_stops: [],
+  unattributed_breakpoint_stops: 0,
 };
 const configSchema = z.object({
   result_path: z.string(),
@@ -183,6 +185,134 @@ const fixtureTracer = (
     },
   };
 };
+
+describe("LLDB capture admission and readback", () => {
+  it("refuses an unrepresentable combined result before reading while retaining journal facts", async () => {
+    const original = LldbReadbackFiles.prototype.read;
+    const unexpectedRead = vi.fn(() => {
+      throw new Error(
+        "oversized result must be refused before allocation/read",
+      );
+    });
+    const read = vi
+      .spyOn(LldbReadbackFiles.prototype, "read")
+      .mockImplementation(async function <Value>(
+        this: LldbReadbackFiles,
+        path: string,
+        consume: (handle: FileHandle) => Promise<Value>,
+      ): Promise<Result<Value, unknown>> {
+        if (!path.endsWith("result.json"))
+          return original.call(this, path, consume) as Promise<
+            Result<Value, unknown>
+          >;
+        return ok(
+          await consume({
+            stat: async () => ({ size: Number.MAX_SAFE_INTEGER }),
+            readFile: unexpectedRead,
+            read: unexpectedRead,
+          } as unknown as FileHandle),
+        );
+      });
+    const tracer = new LldbCallTracer(
+      {},
+      async (_executable, arguments_) => {
+        const { config } = await configFromArguments(arguments_);
+        await writeFile(
+          config.observation_path,
+          `${JSON.stringify({ kind: "event", event: EVENT })}\n`,
+        );
+        await writeFile(config.stdout_capture_path, "kept");
+        await writeFile(config.stderr_capture_path, "");
+        return {
+          kind: "exited",
+          targetLaunched: false,
+          exitCode: 0,
+          output: "",
+          targetIdentity: undefined,
+          cleanupFailure: undefined,
+        };
+      },
+      async () => ok(fakeTool),
+    );
+    try {
+      const result = await tracer.trace(request);
+      if (result.ok) throw new Error("Expected runtime representation refusal");
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        remediation: {
+          action: expect.stringContaining("capture_limits.trace_bytes"),
+        },
+      });
+      expect(result.error.partialObservation).toMatchObject({
+        events: [EVENT],
+        process: { stdout: { text: "kept" } },
+      });
+      expect(unexpectedRead).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+      await tracer.close();
+    }
+  });
+
+  it("applies selected output retention to bridge configuration and completed readback", async () => {
+    const text = "selected output";
+    const tracer = new LldbCallTracer(
+      {},
+      async (_executable, arguments_) => {
+        const { configPath, config } = await configFromArguments(arguments_);
+        const configuration: unknown = JSON.parse(
+          await readFile(configPath, "utf8"),
+        );
+        expect(configuration).toMatchObject({
+          capture_limits: { output_bytes: 8, trace_bytes: 8388608 },
+        });
+        await writeFile(config.stdout_capture_path, text);
+        await writeFile(config.stderr_capture_path, "");
+        await writeFile(
+          config.result_path,
+          JSON.stringify({
+            ...successfulTracerOutput,
+            target_output: {
+              ...successfulTracerOutput.target_output,
+              stdout_bytes: Buffer.byteLength(text),
+            },
+          }),
+        );
+        return {
+          kind: "exited",
+          targetLaunched: false,
+          exitCode: 0,
+          output: "",
+          targetIdentity: undefined,
+          cleanupFailure: undefined,
+        };
+      },
+      async () => ok(fakeTool),
+    );
+    try {
+      const selected = {
+        ...request,
+        input: nativeCallObservationInputSchema.parse({
+          ...request.input,
+          capture_limits: { output_bytes: 8 },
+        }),
+      };
+      expect(selected.input.capture_limits).toEqual({ output_bytes: 8 });
+      const result = await tracer.trace(selected);
+      if (!result.ok) throw result.error;
+      expect(result.value.stdout).toEqual({
+        text: "selected",
+        bytes: 15,
+        truncated: true,
+        complete: true,
+      });
+    } finally {
+      await tracer.close();
+    }
+  });
+});
 
 describe("LLDB completed trace retention through finalization", () => {
   it.each([
@@ -393,7 +523,6 @@ describe("LLDB completed trace retention after process cleanup", () => {
         complete: true,
       };
       if (phase === "clean") {
-        expect(result.ok).toBe(true);
         if (!result.ok) throw result.error;
         expect(result.value.run).toEqual(completed);
         expect(result.value.stdout).toEqual(stdout);
@@ -403,7 +532,6 @@ describe("LLDB completed trace retention after process cleanup", () => {
         });
         return;
       }
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected cleanup failure");
       expect(result.error).toBeInstanceOf(ProviderCleanupError);
       expect(result.error.cleanupIncomplete).toBe(true);
@@ -568,7 +696,6 @@ describe("LLDB failure retention through the production tracer", () => {
 
     const result = await tracer.trace(request);
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected unavailable tracer result");
     expect(result.error).toMatchObject({
       _tag: "ProviderAdapterError",
@@ -695,8 +822,8 @@ describe("LLDB primary outcome during owned process cleanup", () => {
     .each(["caller cancellation", "deadline timeout"] as const)(
     "preserves a physical bridge failure and no-target proof when %s arrives during successful process cleanup",
     async (interruption) => {
-      const fixtureRoot = await mkdtemp(
-        join(tmpdir(), "rea-lldb-primary-outcome-"),
+      const fixtureRoot = await createTestTempDirectory(
+        "rea-lldb-primary-outcome-",
       );
       const fakeLldb = join(fixtureRoot, "fake-lldb");
       await writeFile(
@@ -754,7 +881,6 @@ describe("LLDB primary outcome during owned process cleanup", () => {
         expect(observedStop?.status).toMatch(
           /^(already-exited|verified-cleanup|terminated|killed)$/u,
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected the bridge target error");
         expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
         if (!(result.error instanceof AnalysisCapabilityUnavailableError))
@@ -774,7 +900,6 @@ describe("LLDB primary outcome during owned process cleanup", () => {
         stopSpy.mockRestore();
         deadlineSpy?.mockRestore();
         await tracer.close();
-        await rm(fixtureRoot, { recursive: true, force: true });
       }
     },
   );
@@ -784,8 +909,8 @@ describe("LLDB process exit while output is still open", () => {
   it.skipIf(process.platform === "win32")(
     "keeps a nonzero leader exit observed before cancellation while inherited output is still open",
     async () => {
-      const fixtureRoot = await mkdtemp(
-        join(tmpdir(), "rea-lldb-exit-before-cancel-"),
+      const fixtureRoot = await createTestTempDirectory(
+        "rea-lldb-exit-before-cancel-",
       );
       const fakeLldb = join(fixtureRoot, "fake-lldb");
       await writeFile(
@@ -840,7 +965,6 @@ describe("LLDB process exit while output is still open", () => {
         expect(stopReceipt?.status).toMatch(
           /^(already-exited|verified-cleanup|terminated|killed)$/u,
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected the bridge target error");
         expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
         if (!(result.error instanceof AnalysisCapabilityUnavailableError))
@@ -855,7 +979,6 @@ describe("LLDB process exit while output is still open", () => {
         drainSpy.mockRestore();
         stopSpy.mockRestore();
         await tracer.close();
-        await rm(fixtureRoot, { recursive: true, force: true });
       }
     },
   );
@@ -866,7 +989,7 @@ describe("LLDB process exit while output is still open", () => {
  * does after rea_trace, while an inherited child keeps its output open.
  */
 const publishedResultLldb = async (result: string) => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-lldb-published-"));
+  const fixtureRoot = await createTestTempDirectory("rea-lldb-published-");
   const fakeLldb = join(fixtureRoot, "fake-lldb");
   await writeFile(
     fakeLldb,
@@ -963,7 +1086,6 @@ describe("LLDB target proof published before interruption", () => {
             const result = await tracer.trace(request, controller.signal);
 
             expect(leader.interrupted).toBe(true);
-            expect(result.ok).toBe(false);
             if (result.ok) throw new Error("Expected an interrupted trace");
             expect(result.error).toBeInstanceOf(
               interruption === "caller cancellation"
@@ -1006,7 +1128,6 @@ describe("LLDB target proof published before interruption", () => {
             deadlineSpy?.mockRestore();
             if (retainedRoot !== undefined)
               await rm(retainedRoot, { recursive: true, force: true });
-            await rm(fixtureRoot, { recursive: true, force: true });
           }
         },
       );
@@ -1044,7 +1165,6 @@ describe("LLDB target proof read by cleanup retry", () => {
         try {
           const result = await tracer.trace(request, controller.signal);
 
-          expect(result.ok).toBe(false);
           if (result.ok) throw new Error("Expected a cancelled trace");
           expect(result.error).toBeInstanceOf(AnalysisCancelledError);
           expect(result.error.cleanupIncomplete).toBe(true);
@@ -1081,15 +1201,14 @@ describe("LLDB target proof read by cleanup retry", () => {
           stopSpy.mockRestore();
           if (retainedRoot !== undefined)
             await rm(retainedRoot, { recursive: true, force: true });
-          await rm(fixtureRoot, { recursive: true, force: true });
         }
       },
     );
 });
 
 const completedOutputCloseFixture = async () => {
-  const fixtureRoot = await mkdtemp(
-    join(tmpdir(), "rea-lldb-complete-output-"),
+  const fixtureRoot = await createTestTempDirectory(
+    "rea-lldb-complete-output-",
   );
   const fakeLldb = join(fixtureRoot, "fake-lldb");
   const completedPidPath = join(fixtureRoot, "completed-target.pid");
@@ -1208,7 +1327,6 @@ describe("LLDB process exit at output-close loop completion", () => {
         } finally {
           waitSpy.mockRestore();
           expect((await tracer.close()).ok).toBe(true);
-          await rm(fixture.fixtureRoot, { recursive: true, force: true });
         }
       },
     );
@@ -1216,8 +1334,8 @@ describe("LLDB process exit at output-close loop completion", () => {
   it.skipIf(process.platform === "win32")(
     "keeps a nonzero exit when output closure and cancellation meet at loop exit",
     async () => {
-      const fixtureRoot = await mkdtemp(
-        join(tmpdir(), "rea-lldb-closed-output-cancel-"),
+      const fixtureRoot = await createTestTempDirectory(
+        "rea-lldb-closed-output-cancel-",
       );
       const fakeLldb = join(fixtureRoot, "fake-lldb");
       await writeFile(
@@ -1270,7 +1388,6 @@ describe("LLDB process exit at output-close loop completion", () => {
         expect(stopReceipt?.status).toMatch(
           /^(already-exited|verified-cleanup|terminated|killed)$/u,
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected the bridge target error");
         expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
         if (!(result.error instanceof AnalysisCapabilityUnavailableError))
@@ -1284,14 +1401,13 @@ describe("LLDB process exit at output-close loop completion", () => {
         waitSpy.mockRestore();
         stopSpy.mockRestore();
         await tracer.close();
-        await rm(fixtureRoot, { recursive: true, force: true });
       }
     },
   );
 });
 
-describe("LLDB late timeout publication", () => {
-  it("converts a late deadline to timeout at successful-result publication", async () => {
+describe("LLDB work budget at exit selection", () => {
+  it("converts an exit selected after the work budget to a timeout", async () => {
     let runtime: string | undefined;
     const tracer = new LldbCallTracer(
       {},
@@ -1315,7 +1431,7 @@ describe("LLDB late timeout publication", () => {
           output: "",
           targetIdentity: undefined,
           cleanupFailure: undefined,
-          lateTimeout: true,
+          overran: true,
         };
       },
       async () => ok(fakeTool),
@@ -1323,8 +1439,7 @@ describe("LLDB late timeout publication", () => {
 
     const result = await tracer.trace(request);
     if (runtime === undefined) throw new Error("LLDB fixture did not run");
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected the late deadline to be retained");
+    if (result.ok) throw new Error("Expected the overrun to be a timeout");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     if (!(result.error instanceof AnalysisTimeoutError)) return;
     expect(result.error.timeoutMs).toBeGreaterThan(request.input.duration_ms);
@@ -1341,6 +1456,87 @@ describe("LLDB late timeout publication", () => {
     });
     await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
   });
+});
+
+describe("LLDB work budget elapsing during process cleanup", () => {
+  it
+    .skipIf(process.platform === "win32")
+    .each(["confirmed", "unconfirmed"] as const)(
+    "keeps the completed trace when the budget elapses during %s process cleanup",
+    async (cleanup) => {
+      const fixtureRoot = await createTestTempDirectory(
+        "rea-lldb-cleanup-deadline-",
+      );
+      const fakeLldb = join(fixtureRoot, "fake-lldb");
+      const observation = `${JSON.stringify({ kind: "event", event: EVENT })}\n`;
+      await writeFile(
+        fakeLldb,
+        [
+          `#!${process.execPath}`,
+          `const fs = require("node:fs");`,
+          `const command = process.argv.at(-1);`,
+          `if (!command?.startsWith("rea_trace ")) process.exit(91);`,
+          `const config = JSON.parse(fs.readFileSync(command.slice("rea_trace ".length), "utf8"));`,
+          // This process stands in for the target; it has exited by the
+          // time the tracer proves target termination.
+          `fs.writeFileSync(config.pid_path, String(process.pid));`,
+          `fs.writeFileSync(config.observation_path, ${JSON.stringify(observation)});`,
+          `fs.writeFileSync(config.stdout_capture_path, "");`,
+          `fs.writeFileSync(config.stderr_capture_path, "");`,
+          `fs.writeFileSync(config.result_path, ${JSON.stringify(JSON.stringify(successfulTracerOutput))});`,
+          `process.exit(0);`,
+          "",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      // The work budget is live until process cleanup starts, then elapsed.
+      let stopping = false;
+      const deadlineSpy = vi
+        .spyOn(ProviderStartupDeadline.prototype, "interruption", "get")
+        .mockImplementation(() => (stopping ? "timeout" : undefined));
+      const originalStop = ProviderProcessSupervisor.prototype.stop;
+      const stopSpy = vi
+        .spyOn(ProviderProcessSupervisor.prototype, "stop")
+        .mockImplementation(async function (
+          this: ProviderProcessSupervisor,
+          options?: ProviderProcessStopOptions,
+        ): Promise<ProviderProcessStopResult> {
+          stopping = true;
+          const stopped = await originalStop.call(this, options);
+          return cleanup === "confirmed"
+            ? stopped
+            : { status: "incomplete", reason: "fixture cleanup unconfirmed" };
+        });
+      const tracer = new LldbCallTracer({}, undefined, async () =>
+        ok(nativeResolvedToolFixture(fakeLldb, "c".repeat(64))),
+      );
+      try {
+        const result = await tracer.trace(request);
+
+        expect(stopping).toBe(true);
+        if (cleanup === "confirmed") {
+          if (!result.ok) throw result.error;
+          expect(result.value.run).toMatchObject({ status: "traced" });
+          return;
+        }
+        if (result.ok) throw new Error("Expected unconfirmed cleanup");
+        expect(result.error).not.toBeInstanceOf(AnalysisTimeoutError);
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.cleanupResources).toContain("lldb-process-group");
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "cleanup_incomplete",
+        });
+        expect(result.error.partialObservation).toMatchObject({
+          coverage: { status: "partial", reason: "cleanup-failure" },
+          events: [EVENT],
+        });
+      } finally {
+        stopSpy.mockRestore();
+        deadlineSpy.mockRestore();
+        await tracer.close();
+      }
+    },
+  );
 });
 
 describe("LLDB pre-target phase proof", () => {
@@ -1381,7 +1577,6 @@ describe("LLDB pre-target phase proof", () => {
     );
     try {
       const rejected = await tracer.trace(request);
-      expect(rejected.ok).toBe(false);
       if (rejected.ok) throw new Error("Expected launch refusal");
       expect(projectAnalysisError(rejected.error)).toMatchObject({
         code: "capability_unavailable",
@@ -1395,7 +1590,6 @@ describe("LLDB pre-target phase proof", () => {
         code: "ENOENT",
       });
       const completed = await tracer.trace(request);
-      expect(completed.ok).toBe(true);
       if (!completed.ok) throw completed.error;
       expect(completed.value.run).toMatchObject(successfulTracerOutput);
       expect(launches).toBe(2);
@@ -1664,7 +1858,6 @@ it("retains journal descriptor cleanup after a cancelled run instead of removing
     await release?.();
   });
   const result = await tracer.trace(request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancelled controlled run");
   const partial = nativeCallPartialObservationSchema.parse(
     result.error.partialObservation,
@@ -1939,7 +2132,6 @@ for (const {
       await descriptorControl?.closeCaptured();
     });
     const result = await tracer.trace(request, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained readback cleanup");
     expect(result.error.cleanupIncomplete).toBe(true);
     const partial = nativeCallPartialObservationSchema.parse(
@@ -1959,6 +2151,9 @@ for (const {
         kind: "failed",
         cause: physicalFailure,
       });
+      if (frame.fileCleanupFailure.outcome.kind !== "failed")
+        throw new Error("Expected failed physical read");
+      expect(frame.fileCleanupFailure.outcome.cause).toBe(physicalFailure);
     } else if (readFailsAfterPrefix && selected === "stdout") {
       expect(partial.process.stdout).toMatchObject({
         text: "stdo",

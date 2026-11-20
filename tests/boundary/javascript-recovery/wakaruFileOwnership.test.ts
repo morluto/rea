@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { access, readFile, type FileHandle } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
-import { ArtifactFileCleanupFailure } from "../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../src/resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -35,9 +35,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (typeof args[0] === "string" && fileClose.selected(args[0])) {
         const close = handle.close.bind(handle);
         fileClose.handles.push(handle);
-        onTestFinished(async () => {
-          if (handle.fd >= 0) await close();
-        });
         handle.close = async () => {
           fileClose.cancel?.abort();
           if (fileClose.denied)
@@ -175,7 +172,11 @@ linuxX64.each([
       denied ? ProviderCleanupError : AnalysisCancelledError,
     );
     if (denied) {
-      const failure = result.error.cause;
+      const primary = result.error.cleanupPrimary;
+      expect(primary?.secondaryFailures).toContainEqual(
+        expect.objectContaining({ cause: controller.signal.reason }),
+      );
+      const failure = primary?.cause;
       expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
       if (!(failure instanceof ArtifactFileCleanupFailure))
         throw new Error("Expected exact file cleanup owner");

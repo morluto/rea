@@ -1,8 +1,16 @@
+import { relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { AGENTENV_BRIDGE_SOURCES } from "../src/desktop/AgentEnvBridgeSources.ts";
 import { GHIDRA_BRIDGE_SOURCES } from "../src/ghidra/GhidraBridgeSources.ts";
 
 const packedHopperBridge = "package/bridge/hopper_bridge.py";
 const packedCutterBridge = "package/bridge/cutter/rea_bridge.py";
 const packedHexRaysBridge = "package/bridge/ida/hexrays_queries.py";
+const root = fileURLToPath(new URL("../", import.meta.url));
+const packedAgentEnvSources = Object.values(AGENTENV_BRIDGE_SOURCES).map(
+  (url) => `package/${relative(root, fileURLToPath(url)).split(sep).join("/")}`,
+);
 
 /** Check shipped bridge files; real-provider lanes verify runtime behavior. */
 export async function verifyPackedBridge({ tarball, packedFiles, commands }) {
@@ -17,6 +25,7 @@ export async function verifyPackedBridge({ tarball, packedFiles, commands }) {
     packedHopperBridge,
     packedCutterBridge,
     packedHexRaysBridge,
+    ...packedAgentEnvSources,
     ...Object.values(GHIDRA_BRIDGE_SOURCES).map(
       (name) => `package/bridge/ghidra/${name}`,
     ),

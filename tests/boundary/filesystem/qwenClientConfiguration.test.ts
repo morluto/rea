@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -31,7 +32,7 @@ const qwenPath = (
 
 describe("Qwen Code configuration paths", () => {
   it("resolves the user settings file and marker directory", () => {
-    expect(qwenPath("/home/a", "linux")).toEqual({
+    expect(qwenPath("/home/a", "linux")).toMatchObject({
       name: "qwen_code",
       displayName: "Qwen Code",
       configPath: join("/home/a", ".qwen", "settings.json"),
@@ -57,7 +58,9 @@ describe("Qwen Code configuration paths", () => {
       QWEN_HOME: override,
     });
     expect(
-      supportedClients("/home/a").find(({ name }) => name === "qwen_code"),
+      supportedClients("/home/a", HOST_PLATFORM.platform).find(
+        ({ name }) => name === "qwen_code",
+      ),
     ).toEqual(client);
     expect(client).toMatchObject({
       configPath: join(directory, "settings.json"),
@@ -114,6 +117,36 @@ describe("Qwen Code client lifecycle", () => {
     expect(removedText).toContain("// Keep this note.");
   });
 
+  it("preserves Qwen environment expressions when refreshing a registration", async () => {
+    const { client } = await qwenClient();
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: command[0],
+            args: command.slice(1),
+            env: { PATH: "/opt/bin:${PATH}" },
+          },
+        },
+      }),
+    );
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          { REA_KUNA_JOBS: "4" },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    const config = JSON.parse(await readFile(client.configPath, "utf8"));
+    expect(config.mcpServers.rea.env).toMatchObject({
+      PATH: "/opt/bin:${PATH}",
+      REA_KUNA_JOBS: "4",
+    });
+  });
+
   it("reports the selected installation as aligned", async () => {
     const { home, client } = await qwenClient();
     expect(
@@ -121,7 +154,10 @@ describe("Qwen Code client lifecycle", () => {
     ).toBe("configured");
     const entry = command[1];
     const status = (
-      await readClientRegistrationStatuses(home, entry, { environment: {} })
+      await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
+        environment: {},
+      })
     ).find(({ client: name }) => name === "qwen_code");
     expect(status).toMatchObject({ state: "aligned" });
   });
@@ -166,6 +202,7 @@ describe("Qwen Code profile setup", () => {
       expect(
         (
           await readClientRegistrationStatuses(home, command[1], {
+            platform: HOST_PLATFORM.platform,
             environment,
           })
         ).find(({ client: name }) => name === "qwen_code"),

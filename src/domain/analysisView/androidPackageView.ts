@@ -31,13 +31,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-
-export {
-  androidViewRequestSchema,
-  androidManifestViewRequestSchema,
-  androidComponentsViewRequestSchema,
-  androidComponentSummaryViewRequestSchema,
-} from "../android/androidPackageQuery.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 const packageSchema = androidResultSchemas.inspect_android_package;
 const readReport = createAnalysisViewResultReader(packageSchema);
@@ -90,7 +84,6 @@ export const androidComponentSummarySchema = z.strictObject({
   declaration_coverage: z.strictObject({
     complete: z.int().nonnegative(),
     partial: z.int().nonnegative(),
-    unknown: z.int().nonnegative(),
   }),
 });
 
@@ -138,7 +131,8 @@ export const projectAndroidPackageView = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   // The engine digest identifies the JAR, never the authenticated APK subject.
-  if (parent.subject == null)
+  const subject = evidenceSubjectTarget(parent.subject);
+  if (subject === undefined)
     return err(
       analysisViewInputError([
         {
@@ -154,10 +148,7 @@ export const projectAndroidPackageView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_android_package" as const,
     parent_digest: parent.evidenceId.slice(3),
-    artifact: {
-      path: parent.subject.local_path,
-      sha256: parent.subject.digest.sha256,
-    },
+    artifact: { path: subject.path, sha256: subject.sha256 },
     limitations: [...parent.limitations],
     unknowns: [
       "APK signatures were not verified; package declarations do not establish authenticity or runtime behavior.",
@@ -182,7 +173,7 @@ export const projectAndroidPackageView = (
           text_included: false as const,
         },
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   }
   if (view.facet === "manifest") {
@@ -195,6 +186,7 @@ export const projectAndroidPackageView = (
     if (!page.ok) return page;
     return ok({
       kind: "android" as const,
+      facet: "manifest" as const,
       view,
       ...shared,
       item: {
@@ -219,7 +211,7 @@ export const projectAndroidPackageView = (
     unknowns: boundedViewMessages(
       [
         ...shared.unknowns,
-        "Components are static declarations. Omitted historical declaration fields remain unknown; exported declarations and SDK defaults are distinct.",
+        "Components are static declarations; exported declarations and SDK defaults are distinct.",
         ...(report.components.status === "complete"
           ? []
           : [
@@ -282,7 +274,7 @@ export const projectAndroidPackageView = (
       },
       exported_declarations: { true: 0, false: 0, unknown: 0 },
       exported_defaults: { true: 0, false: 0, unknown: 0 },
-      declaration_coverage: { complete: 0, partial: 0, unknown: 0 },
+      declaration_coverage: { complete: 0, partial: 0 },
     };
     for (const row of rows) {
       if (!matches(row)) continue;
@@ -306,7 +298,7 @@ export const projectAndroidPackageView = (
       facet: "component-summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(rows.length, rows.length),
+      coverage: completeWithinViewCoverage(rows.length),
     };
     return jsonValueByteLength(
       result as unknown as JsonValue,

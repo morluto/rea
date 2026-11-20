@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { traceCallPath } from "./CallPathTracing.js";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -28,7 +28,6 @@ describe("call-path traversal cancellation ownership", () => {
           input,
           controller.signal,
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected cancellation");
         expect(result.error).toBeInstanceOf(AnalysisCancelledError);
         expect(result.error.cause).toBe(reason);

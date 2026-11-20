@@ -81,7 +81,7 @@ class PcapGraderWorkflowTests(unittest.TestCase):
                    'retained_counts': {'http_request_uris': 3}}
         prefix = ['http://example.test/one', 'http://example.test/two']
         coverage = {'status': 'page', 'examined': 2, 'total': 3, 'next_offset': 2, 'exhausted': False}
-        subject = {'digest': {'sha256': capture['target']['sha256']}, 'local_path': capture['target']['path']}
+        subject = {'identity': {'sha256': capture['target']['sha256']}, 'local_path': capture['target']['path']}
         summary = {'evidence_id': summary_id, 'operation': 'inspect_analysis_view',
                    'subject': copy.deepcopy(subject), 'evidence_links': [parent],
                    'limitations': ['source', 'view'],
@@ -226,7 +226,7 @@ class PcapGraderWorkflowTests(unittest.TestCase):
         self.assertFalse(self.grade(answer, [receipt], reference, ['inspect_analysis_view'])['all_factual_checks_pass'])
         wrong_operation = copy.deepcopy(receipt);wrong_operation['operation'] = 'inspect_analysis_view'
         self.assertFalse(self.grade(answer, [wrong_operation], reference)['all_factual_checks_pass'])
-        for subject in [None, {'digest': {'sha256': 'e' * 64}, 'local_path': source['target']['path']}]:
+        for subject in [None, {'identity': {'sha256': 'e' * 64}, 'local_path': source['target']['path']}]:
             changed = copy.deepcopy(receipt);changed['subject'] = subject
             report = self.grade(answer, [changed], reference)
             self.assertTrue(report['factual_checks']['pcap_cited_capture'])
@@ -252,8 +252,8 @@ class PcapGraderWorkflowTests(unittest.TestCase):
     def test_cited_receipt_subjects_must_identify_the_reference_capture(self):
         for index in [0, 1]:
             for subject in [None, [], 'artifact', {}, {'digest': None},
-                            {'digest': {'sha256': 'e' * 64}, 'local_path': '/fixture/http.pcapng'},
-                            {'digest': {'sha256': 'd' * 64}, 'local_path': '/fixture/other.pcapng'}]:
+                            {'identity': {'sha256': 'e' * 64}, 'local_path': '/fixture/http.pcapng'},
+                            {'identity': {'sha256': 'd' * 64}, 'local_path': '/fixture/other.pcapng'}]:
                 with self.subTest(index=index, subject=subject):
                     answer, records, reference = self.fixture()
                     records[index]['subject'] = subject
@@ -681,9 +681,12 @@ class ContextCaptureTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('agent_trial', Path(__file__).with_name('agent-trial.py'))
         agent = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(agent)
-        for control, drift, mode in [(False, False, 'direct'), (True, False, 'direct'),
-                                     (False, True, 'direct'), (False, False, 'client-code')]:
-            with self.subTest(control=control, drift=drift, mode=mode), tempfile.TemporaryDirectory() as directory:
+        for control, drift, mode, account_tools in [
+            (False, False, 'direct', False), (True, False, 'direct', False),
+            (False, True, 'direct', False), (False, False, 'client-code', False),
+            (False, False, 'client-code', True), (True, False, 'client-code', True),
+        ]:
+            with self.subTest(control=control, drift=drift, mode=mode, account_tools=account_tools), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 runtime = root / 'runtime'
                 (runtime / 'scripts').mkdir(parents=True)
@@ -696,7 +699,8 @@ class ContextCaptureTests(unittest.TestCase):
                 output = runtime / '.cache/trial'
                 arguments = ['agent-trial.py', '--runtime-root', str(runtime), '--revision', 'fixture',
                              '--prompt', str(question), '--output', str(output), '--catalog-load', '--mode', mode,
-                             *(['--no-mcp'] if control else [])]
+                             *(['--no-mcp'] if control else []),
+                             *(['--include-account-tools'] if account_tools else [])]
                 observed = {}
 
                 def launch(_invocation, **options):
@@ -723,6 +727,12 @@ class ContextCaptureTests(unittest.TestCase):
                 self.assertEqual('required = true' in observed['config'], not control)
                 self.assertNotIn('Use the registered REA MCP server', observed['config'])
                 self.assertIn('code_mode_host = ' + ('true' if mode == 'client-code' else 'false'), observed['config'])
+                settings = json.loads((output / 'trial-settings.json').read_text())
+                for feature in ['apps', 'plugins']:
+                    self.assertIn(feature + ' = ' + str(account_tools).lower(), observed['config'])
+                    self.assertIs(settings['features'][feature], account_tools)
+                for feature, enabled in settings['features'].items():
+                    self.assertIn(feature + ' = ' + str(enabled).lower(), observed['config'])
                 self.assertNotIn('code_mode =', observed['config'])
                 self.assertNotIn('code_mode_only =', observed['config'])
                 self.assertTrue(json.loads((output / 'trial-settings.json').read_text())['workspace_isolated_from_runtime'])

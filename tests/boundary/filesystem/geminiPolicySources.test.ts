@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 import { readConfigurationFile } from "../../../src/application/ClientConfigurationFiles.js";
 import { readClientPolicyBlock } from "../../../src/application/GeminiClientSettings.js";
 import type { SetupClient } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const fixture = async () => {
@@ -13,6 +14,7 @@ const fixture = async () => {
   await mkdir(dirname(configPath), { recursive: true });
   const client: SetupClient = {
     name: "gemini_cli",
+    registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
     configPath,
     format: "json",
     geminiSettings: {
@@ -74,4 +76,30 @@ it("still reads independent system policy when the user file was absent", async 
     ok: false,
     error: { kind: "malformed", path: systemPath },
   });
+});
+
+it("accepts a system registration whose Windows environment names differ only in case", async () => {
+  const { client, systemPath } = await fixture();
+  const settings = client.geminiSettings;
+  if (settings === undefined) throw new Error("Gemini settings are missing");
+  const windows: SetupClient = {
+    ...client,
+    geminiSettings: { ...settings, platform: "win32" },
+  };
+  const entry = (env: Record<string, string>) => ({
+    command: "node",
+    args: ["cli.js", "mcp"],
+    env,
+  });
+  await writeFile(
+    systemPath,
+    JSON.stringify({ mcpServers: { rea: entry({ Path: "C:\\bin" }) } }),
+  );
+  expect(
+    await readClientPolicyBlock(windows, undefined, entry({ PATH: "C:\\bin" })),
+  ).toEqual({ ok: true, value: undefined });
+  // POSIX names are case-sensitive, so the system entry still differs.
+  expect(
+    await readClientPolicyBlock(client, undefined, entry({ PATH: "C:\\bin" })),
+  ).toMatchObject({ ok: true, value: expect.stringContaining("overrides") });
 });

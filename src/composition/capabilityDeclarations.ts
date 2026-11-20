@@ -1,7 +1,10 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
-import type { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
-import type { ToolContractGroupId } from "../contracts/toolFamilies.js";
+import { UEFI_PROVIDER_IDENTITY } from "../uefi/UefiProviderIdentity.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
+import type {
+  TOOL_CONTRACTS,
+  ToolContractGroupId,
+} from "../contracts/toolContracts.js";
 import { ADB_PROVIDER_IDENTITY } from "../adb/AdbProviderIdentity.js";
 import { JADX_PROVIDER_IDENTITY } from "../android/JadxRelease.js";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
@@ -29,20 +32,28 @@ import {
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
+  DWARF_UNITS_PROVIDER,
+  ELF_DEBUG_LINK_PROVIDER,
+  ELF_DEPENDENCIES_PROVIDER,
   ELF_NOTES_PROVIDER,
+  ELF_UNWIND_RANGES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
+  KERNEL_BUILD_CONFIG_PROVIDER,
   KERNEL_MODULE_PROVIDER,
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
   NATIVE_EXPORTS_PROVIDER,
+  NATIVE_INITIALIZERS_PROVIDER,
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
   PE_RESOURCES_PROVIDER,
+  RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
+  WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import {
@@ -51,6 +62,8 @@ import {
 } from "../domain/webTraceProviders.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../erlang/ErlangBeamProviderIdentity.js";
+import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "../v8/V8CodeCacheProviderIdentity.js";
+import { MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY } from "../java/MavenGradleMetadataProviderIdentity.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "../evm/EvmoleProviderIdentity.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
@@ -86,6 +99,7 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../native/NativeMacosProviderIde
 import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderIdentity.js";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
+import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
@@ -227,8 +241,12 @@ export const CAPABILITY_DECLARATIONS = {
       }),
     ],
   },
+  desktopBuildComputers: { providers: [] },
   devicetree: {
     providers: [providerBinding(DEVICETREE_PROVIDER, ["inspect_devicetree"])],
+  },
+  dwarfUnits: {
+    providers: [providerBinding(DWARF_UNITS_PROVIDER, ["inspect_dwarf_units"])],
   },
   electronActiveObservation: {
     providers: [
@@ -252,8 +270,32 @@ export const CAPABILITY_DECLARATIONS = {
       ]),
     ],
   },
+  elfDependencies: {
+    providers: [
+      providerBinding(ELF_DEPENDENCIES_PROVIDER, ["inspect_elf_dependencies"]),
+    ],
+  },
   elfNotes: {
     providers: [providerBinding(ELF_NOTES_PROVIDER, ["inspect_elf_notes"])],
+  },
+  elfDebugLink: {
+    providers: [
+      providerBinding(ELF_DEBUG_LINK_PROVIDER, ["inspect_elf_debug_link"]),
+    ],
+  },
+  nativeInitializers: {
+    providers: [
+      providerBinding(NATIVE_INITIALIZERS_PROVIDER, [
+        "inspect_native_initializers",
+      ]),
+    ],
+  },
+  elfUnwindRanges: {
+    providers: [
+      providerBinding(ELF_UNWIND_RANGES_PROVIDER, [
+        "inspect_elf_unwind_ranges",
+      ]),
+    ],
   },
   erlangBeam: {
     providers: [
@@ -273,6 +315,11 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(BINWALK_PROVIDER_IDENTITY, ["inspect_firmware_regions"]),
       providerBinding(UNBLOB_PROVIDER_IDENTITY, ["extract_firmware"]),
+    ],
+  },
+  uefiAnalysis: {
+    providers: [
+      providerBinding(UEFI_PROVIDER_IDENTITY, { group: "UEFI_TOOL_CONTRACTS" }),
     ],
   },
   flutter: {
@@ -364,6 +411,13 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(JEB_PROVIDER_IDENTITY, { group: "JEB_TOOL_CONTRACTS" }),
     ],
   },
+  kernelBuildConfig: {
+    providers: [
+      providerBinding(KERNEL_BUILD_CONFIG_PROVIDER, [
+        "inspect_kernel_build_config",
+      ]),
+    ],
+  },
   kernelModule: {
     providers: [
       providerBinding(KERNEL_MODULE_PROVIDER, ["inspect_kernel_module"]),
@@ -440,10 +494,43 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(PE_RESOURCES_PROVIDER, ["inspect_pe_resources"]),
     ],
   },
+  windowsShortcut: {
+    providers: [
+      providerBinding(WINDOWS_SHORTCUT_PROVIDER, ["inspect_windows_shortcut"]),
+    ],
+  },
   pythonPyc: {
     providers: [
       providerBinding(PYTHON_PYC_PROVIDER_IDENTITY, {
         group: "PYTHON_PYC_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  nugetNupkg: {
+    providers: [
+      providerBinding(NUGET_NUPKG_PROVIDER_IDENTITY, {
+        group: "NUGET_NUPKG_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  releaseExposure: {
+    providers: [
+      providerBinding(RELEASE_EXPOSURE_PROVIDER, {
+        group: "RELEASE_EXPOSURE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  v8CodeCache: {
+    providers: [
+      providerBinding(V8_CODE_CACHE_PROVIDER_IDENTITY, {
+        group: "V8_CODE_CACHE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  mavenGradleMetadata: {
+    providers: [
+      providerBinding(MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY, {
+        group: "MAVEN_GRADLE_METADATA_TOOL_CONTRACTS",
       }),
     ],
   },

@@ -1,8 +1,23 @@
 import { err, ok, type Result } from "../result.js";
-import { withoutCredentials, withoutCredentialsIn } from "./aptRepositories.js";
-import { dependencyPackages } from "./debianPackageFile.js";
+import type { DownloadInstall } from "./appDownloadInstall.js";
+import {
+  aptRepositoryHoldsCredentials,
+  aptRepositoryReplay,
+  withoutCredentials,
+  withoutCredentialsIn,
+} from "./aptRepositories.js";
+import {
+  DEBIAN_PACKAGE_NAME,
+  dependencyPackages,
+} from "./debianPackageFile.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
-import { unwrapDesktopCommand } from "./desktopEntry.js";
+import {
+  formatDesktopExec,
+  parseDesktopEntry,
+  replaceDesktopExec,
+  tokenizeDesktopExec,
+  unwrapDesktopCommand,
+} from "./desktopEntry.js";
 
 const NOBLE_SUITE =
   / noble(?:-updates|-security|-backports)?\/(?:main|restricted|universe|multiverse) /u;
@@ -14,6 +29,11 @@ const COMPUTER_ARCHITECTURES: ReadonlyMap<string, string> = new Map([
   ["x64", "amd64"],
   ["arm64", "arm64"],
 ]);
+
+/** The Debian architecture of a capture host's Node.js architecture, when an agentenv computer runs it. */
+export const computerArchitecture = (
+  hostArchitecture: string,
+): string | undefined => COMPUTER_ARCHITECTURES.get(hostArchitecture);
 
 /**
  * Whether apt installed the package from the Ubuntu 24.04 archive, which the
@@ -69,11 +89,23 @@ export interface ExportInstall {
   readonly architectures: readonly string[];
   /** The package file installed in place of an apt package; null when apt installs the package. */
   readonly packageFile: ExportPackageFile | null;
+  /** The package of the program the desktop entry runs, installed by name beside the app's; absent when the app's package owns it. */
+  readonly executablePackage?: string;
+  /** Packages the capture found only in repositories the export leaves out, which the computer cannot install. */
+  readonly strandedPackages?: readonly string[];
+  /** Packages installed beside the app because the export was asked for them, other than the app's and its package file's dependencies; absent when none. */
+  readonly extraPackages?: readonly string[];
+  /** The AppImage or tarball the computer downloads and unpacks in place of a package; absent for a package. */
+  readonly download?: DownloadInstall;
 }
 
 /** Why the computer cannot install the captured package: the input to change, and how. */
 export interface InstallRefusal {
-  readonly field: "capture" | "package_url";
+  readonly field:
+    | "capture"
+    | "package_url"
+    | "extra_package"
+    | "download_install";
   readonly reason: string;
   readonly remediation: string;
 }
@@ -95,40 +127,40 @@ const describe = (repository: AptRepository): string =>
     ? withoutCredentialsIn(repository.source)
     : `${withoutCredentials(repository.uri)} ${[repository.suite, ...repository.components].join(" ")}`;
 
-/** A repository from a capture written before credentials were removed whose URI still holds them. */
-const heldCredentials = (repository: AptRepository): boolean =>
-  repository.uri !== null &&
-  withoutCredentials(repository.uri) !== repository.uri;
+/** Check the source, key, and replay spelling at the export boundary. */
+const repositoryReplay = (repository: AptRepository) => {
+  const replay = aptRepositoryReplay(repository);
+  if (!replay.ok && replay.error.kind === "credentials")
+    return err(replay.error.reason);
+  if (repository.signing_key === null)
+    return err(
+      repository.signing_key_reason ?? "its signing key was not verified",
+    );
+  return replay.ok ? replay : err(replay.error.reason);
+};
 
 /** Why the computer cannot install from a vendor repository, or undefined when the export can declare it. */
 export const repositoryRefusal = (
   repository: AptRepository,
 ): string | undefined => {
-  if (
-    repository.uri_credentials_removed === true ||
-    heldCredentials(repository)
-  )
-    return "its sources entry's URI held a user name or password, which REA neither records nor exports";
-  if (repository.signing_key === null)
-    return repository.signing_key_reason ?? "its signing key was not verified";
-  if (repository.uri === null || repository.suite === null)
-    return "no apt sources entry configures it";
-  return /^https?:\/\//u.test(repository.uri)
-    ? undefined
-    : "agentenv installs apt repositories over http or https only";
+  const replay = repositoryReplay(repository);
+  return replay.ok ? undefined : replay.error;
 };
 
 /**
- * Why a repository's architecture restriction leaves out the host's. A
- * capture written before restrictions were recorded counts as unrestricted:
- * apt listed the installed version from it on that host.
+ * Why the source cannot replay the package captured on this host. An absent
+ * restriction leaves the decision to APT, which listed the installed version
+ * from this source on the capture host.
  */
 const architectureRefusal = (
   repository: AptRepository,
   architecture: string,
+  packageArchitecture: string | null,
 ): string | undefined => {
   const served = repository.architectures ?? [];
-  return served.length === 0 || served.includes(architecture)
+  return served.length === 0 ||
+    served.includes(architecture) ||
+    (packageArchitecture === "all" && served.includes("all"))
     ? undefined
     : `it serves only ${served.join(", ")}, not the capture host's ${architecture}`;
 };
@@ -142,26 +174,24 @@ const declaredSources = (
   repositories: readonly AptRepository[],
   environment: string,
   architecture: string,
+  packageArchitecture: string | null,
 ) => {
   const declared = new Map<string, ExportAptSource>();
   const keyFiles = new Map<string, string>();
   const refused: string[] = [];
-  let first: AptRepository | undefined;
+  const kept: AptRepository[] = [];
   for (const repository of repositories) {
-    const { uri, suite, components, signing_key: key } = repository;
-    const reason =
-      repositoryRefusal(repository) ??
-      architectureRefusal(repository, architecture);
-    if (
-      reason !== undefined ||
-      key === null ||
-      uri === null ||
-      suite === null
-    ) {
+    const { signing_key: key } = repository;
+    const replay = repositoryReplay(repository);
+    const reason = replay.ok
+      ? architectureRefusal(repository, architecture, packageArchitecture)
+      : replay.error;
+    if (!replay.ok || reason !== undefined || key === null) {
       refused.push(`${describe(repository)}: ${reason ?? "it is unusable"}`);
       continue;
     }
-    const id = `${uri}\n${suite}`;
+    const { uri, repoUri, suite, components } = replay.value;
+    const id = `${repoUri}\n${suite}`;
     const existing = declared.get(id);
     if (existing !== undefined && existing.keySha256 !== key.sha256) {
       refused.push(
@@ -174,7 +204,7 @@ const declaredSources = (
       `apt-keys/${environment}${keyFiles.size === 0 ? "" : `-${String(keyFiles.size + 1)}`}.${key.format === "armored" ? "asc" : "gpg"}`;
     keyFiles.set(key.sha256, keyFile);
     declared.set(id, {
-      uri,
+      uri: existing?.uri ?? uri,
       suite,
       components: [
         ...new Set([...(existing?.components ?? []), ...components]),
@@ -182,12 +212,43 @@ const declaredSources = (
       keyFile,
       keySha256: key.sha256,
     });
-    first ??= repository;
+    kept.push(repository);
   }
   return {
     sources: [...declared.values()],
     refused,
-    release: first?.release ?? null,
+    release: kept[0]?.release ?? null,
+    kept,
+  };
+};
+
+/**
+ * The library packages the computer installs given the repositories the
+ * export declares, and the packages it cannot: those only repositories it
+ * leaves out supply, such as one whose key the capture could not retain.
+ */
+const suppliedLibraries = (
+  installed: DesktopPackage,
+  kept: readonly AptRepository[],
+): Pick<ExportInstall, "libraryPackages" | "strandedPackages"> => {
+  const repositories = installed.apt_repositories ?? [];
+  const supplied = new Set(
+    kept.flatMap((repository) => repository.supplies ?? []),
+  );
+  const stranded = [
+    ...new Set(
+      repositories
+        .filter((repository) => !kept.includes(repository))
+        .flatMap((repository) => repository.supplies ?? []),
+    ),
+  ]
+    .filter((name) => !supplied.has(name))
+    .sort();
+  return {
+    libraryPackages: (installed.library_packages ?? []).filter(
+      (name) => !stranded.includes(name),
+    ),
+    ...(stranded.length === 0 ? {} : { strandedPackages: stranded }),
   };
 };
 
@@ -225,7 +286,7 @@ const vendorInstall = (
   if (repositories.length === 0)
     return err({ refusal: localInstallRefusal(installed), skipped: [] });
   // Such a capture counted that repository's libraries as installable.
-  if (repositories.some(heldCredentials))
+  if (repositories.some(aptRepositoryHoldsCredentials))
     return err({
       refusal: refusal(
         "The capture recorded a user name or password in an apt repository's URI, from before REA removed them, so it cannot tell which library packages only that repository offers.",
@@ -242,10 +303,11 @@ const vendorInstall = (
       ),
       skipped: [],
     });
-  const { sources, refused, release } = declaredSources(
+  const { sources, refused, release, kept } = declaredSources(
     repositories,
     environment,
     architecture,
+    installed.architecture,
   );
   if (sources.length === 0)
     return err({
@@ -257,7 +319,7 @@ const vendorInstall = (
   return ok({
     aptPackage,
     release,
-    libraryPackages: installed.library_packages ?? [],
+    ...suppliedLibraries(installed, kept),
     sources,
     skipped: refused,
     architectures: [architecture],
@@ -328,7 +390,7 @@ const packageFileInstall = (
   return ok({
     ...named,
     release: null,
-    libraryPackages: installed.library_packages ?? [],
+    ...suppliedLibraries(installed, []),
     sources: [],
     architectures: [architecture],
     packageFile: {
@@ -343,14 +405,55 @@ const packageFileInstall = (
 };
 
 /**
- * Install from the Ubuntu 24.04 archive by name, or from each vendor
- * repository listing the installed version whose signing key the capture
- * verified and retained, taking the package from the first one's release
- * for the capture host's architecture. A package neither installs, given
- * `--package-url`, is downloaded from it and installed from its captured
- * package file; anything else is refused with the reason.
+ * Install a Debian package by name from the Ubuntu 24.04 archive, or from
+ * each vendor repository listing the installed version whose signing key the
+ * capture verified and retained, taking the package from the first one's
+ * release for the capture host's architecture; or why apt cannot.
  */
-export const exportInstall = (
+const aptInstall = (
+  installed: DesktopPackage,
+  aptPackage: string,
+  environment: string,
+  hostArchitecture: string,
+): ReturnType<typeof vendorInstall> =>
+  // An archive package's declared dependencies are complete; a vendor package's may not be.
+  fromUbuntuNobleArchive(installed.sources, installed.source_origins)
+    ? ok({
+        aptPackage,
+        release: null,
+        ...suppliedLibraries(installed, []),
+        libraryPackages: [],
+        sources: [],
+        skipped: [],
+        architectures: [...COMPUTER_ARCHITECTURES.values()],
+        packageFile: null,
+      })
+    : vendorInstall(installed, aptPackage, environment, hostArchitecture);
+
+/**
+ * Whether the export installs the captured package from its package file,
+ * and so takes `--package-url`: a Debian package apt does not install by
+ * name. The environment name only names key files, so any name answers.
+ */
+export const installsFromPackageFile = (
+  installed: DesktopPackage,
+  hostArchitecture: string,
+): boolean =>
+  installed.kind === "deb" &&
+  installed.name !== null &&
+  !aptInstall(
+    installed,
+    installed.name.split(":")[0] ?? installed.name,
+    "app",
+    hostArchitecture,
+  ).ok;
+
+/**
+ * Install by name from apt where it can; a package apt does not install,
+ * given `--package-url`, is downloaded from it and installed from its
+ * captured package file; anything else is refused with the reason.
+ */
+const packageInstall = (
   installed: DesktopPackage,
   environment: string,
   hostArchitecture: string,
@@ -363,21 +466,12 @@ export const exportInstall = (
       ),
     );
   const aptPackage = installed.name.split(":")[0] ?? installed.name;
-  // An archive package's declared dependencies are complete; a vendor package's may not be.
-  const named = fromUbuntuNobleArchive(
-    installed.sources,
-    installed.source_origins,
-  )
-    ? ok({
-        aptPackage,
-        release: null,
-        libraryPackages: [],
-        sources: [],
-        skipped: [],
-        architectures: [...COMPUTER_ARCHITECTURES.values()],
-        packageFile: null,
-      })
-    : vendorInstall(installed, aptPackage, environment, hostArchitecture);
+  const named = aptInstall(
+    installed,
+    aptPackage,
+    environment,
+    hostArchitecture,
+  );
   if (named.ok)
     return packageUrl === undefined
       ? named
@@ -397,6 +491,70 @@ export const exportInstall = (
   );
 };
 
+/** How the computer installs the captured package and, when another package owns the program its desktop entry runs, that package too. */
+export const exportInstall = (
+  ...request: Parameters<typeof packageInstall>
+): Result<ExportInstall, InstallRefusal> => {
+  const install = packageInstall(...request);
+  const [{ executable_package: program, executable_package_reason: found }] =
+    request;
+  if (!install.ok) return install;
+  if (program === undefined)
+    return found === undefined
+      ? install
+      : err(
+          refusal(
+            `The desktop entry belongs to ${install.value.aptPackage}, but the computer cannot install the program it runs: ${found}.`,
+            "capture",
+            "Capture again with the packaged program first on PATH, or with --executable naming it.",
+          ),
+        );
+  const reason =
+    found ??
+    (install.value.strandedPackages?.includes(program) === true
+      ? "only apt repositories the export leaves out offer it"
+      : undefined);
+  return reason === undefined
+    ? ok({ ...install.value, executablePackage: program })
+    : err(
+        refusal(
+          `The desktop entry belongs to ${install.value.aptPackage}, but the program it runs belongs to ${program}, which the computer cannot install: ${reason}.`,
+        ),
+      );
+};
+
+/**
+ * The install with the extra packages the export was asked for beside the
+ * app, once each, without those the bundle installs anyway: the app's own
+ * package and the packages its package file is installed after; or why one
+ * is not a package name.
+ */
+export const withExtraPackages = (
+  install: ExportInstall,
+  extraPackages: readonly string[],
+): Result<ExportInstall, InstallRefusal> => {
+  const unnamed = extraPackages.find((name) => !DEBIAN_PACKAGE_NAME.test(name));
+  if (unnamed !== undefined)
+    return err(
+      refusal(
+        `--extra-package ${JSON.stringify(unnamed)} is not a Debian package name.`,
+        "extra_package",
+        "Pass --extra-package with a package name of the Ubuntu 24.04 archive: lowercase letters, digits, +, - and ., at least two long.",
+      ),
+    );
+  // Only what the bundle names: apt may satisfy an alternative the captured .deb lists with another package.
+  const declared = new Set([
+    install.aptPackage,
+    ...(install.packageFile?.dependencies ?? []),
+  ]);
+  const extra = [...new Set(extraPackages)].filter(
+    (name) => !declared.has(name),
+  );
+  return ok(
+    extra.length === 0 ? install : { ...install, extraPackages: extra },
+  );
+};
+
 /** Chromium's sandbox needs user namespaces a container does not grant, so an Electron launch runs with `--no-sandbox` right after the program. */
 export const electronLaunchArguments = (
   argv: readonly string[],
@@ -408,73 +566,30 @@ export const electronLaunchArguments = (
   return [...argv.slice(0, at), "--no-sandbox", ...argv.slice(at)];
 };
 
-const unmappedLibraries = (installed: DesktopPackage): readonly string[] => [
-  ...(installed.library_packages_reason === undefined
-    ? []
-    : [installed.library_packages_reason]),
-  ...(installed.missing_libraries?.length
-    ? [
-        `not found on the capture host: ${installed.missing_libraries.join(", ")}`,
-      ]
-    : []),
-  ...(installed.unpackaged_libraries?.length
-    ? [`owned by no package: ${installed.unpackaged_libraries.join(", ")}`]
-    : []),
-  ...(installed.uninstallable_library_packages?.length
-    ? [
-        `in packages neither the Ubuntu 24.04 archive nor a declared repository offers: ${installed.uninstallable_library_packages.join(", ")}`,
-      ]
-    : []),
-];
-
-/** What the export says about a package file the computer downloads and installs. */
-const packageFileLimitations = (
-  file: ExportPackageFile,
-  installed: DesktopPackage,
-): readonly string[] => [
-  `The computer downloads the package from ${file.url} once, when the bundle is put, and refuses the download unless its SHA-256 is ${file.sha256}, the captured file's; the bundle does not contain the package. It installs exactly that file's version, ${installed.version ?? "unknown"}, with dpkg after the apt packages it depends on, and the bundle supports only its architecture, ${file.architecture}.`,
-  "Vendor sites may refuse automated downloads, so the URL must point at a copy of the file the operator may use, and the package's licence, such as a trial's terms, is the operator's to check.",
-  ...(file.unreadDependencies.length === 0
-    ? []
-    : [
-        `REA could not read a package name from these dependencies, so the computer does not install them: ${file.unreadDependencies.join(", ")}.`,
-      ]),
-];
-
-/** What the export says about how the computer installs and starts the application. */
-export const installLimitations = (
-  install: ExportInstall,
-  installed: DesktopPackage,
+/**
+ * The desktop entry after its main `Exec` command has been prepared with
+ * `electronLaunchArguments`. A non-Electron entry, and an Electron command
+ * that already passes `--no-sandbox`, keep their original text.
+ */
+export const adjustInstalledDesktopText = (
+  text: string,
   electron: boolean,
-): readonly string[] => {
-  const unmapped = unmappedLibraries(installed);
-  // Library packages matter for any package the archive does not install by name.
-  const vendor = install.sources.length > 0 || install.packageFile !== null;
-  return [
-    ...(install.packageFile !== null
-      ? packageFileLimitations(install.packageFile, installed)
-      : [
-          install.sources.length > 0
-            ? `The application is installed as ${install.aptPackage}${install.release === null ? "" : `/${install.release}`} from ${install.sources.map((source) => source.uri).join(", ")}, trusting the key that verified it on the capture host, so the computer installs the version that repository offers then, which may differ from the one captured; the bundle supports only the capture host's architecture, ${install.architectures.join(", ")}.`
-            : "The application is installed from the distribution archive by name, so the computer may install a different version than the one captured.",
-        ]),
-    ...install.skipped.map(
-      (repository) => `The apt repository ${repository} was left out.`,
-    ),
-    ...(vendor && installed.library_packages === undefined
-      ? [
-          "The capture did not record the executable's library packages, so the computer installs only what the package depends on.",
-        ]
-      : []),
-    ...(!vendor || unmapped.length === 0
-      ? []
-      : [
-          `Not every library the executable loads is installed with it (${unmapped.join("; ")}), so the computer may lack some.`,
-        ]),
-    ...(electron
-      ? [
-          "Chromium's sandbox is off inside the computer (--no-sandbox): it needs user namespaces the computer's container does not grant, and Electron exits without them.",
-        ]
-      : []),
-  ];
+): Result<
+  string,
+  | "missing_desktop_entry_group"
+  | "missing_exec"
+  | "missing_exec_line"
+  | "unterminated_quote"
+  | "empty_command"
+> => {
+  if (!electron) return ok(text);
+  const parsed = parseDesktopEntry(text);
+  if (!parsed.ok) return parsed;
+  const exec = parsed.value.exec;
+  if (exec === null) return err("missing_exec");
+  const tokens = tokenizeDesktopExec(exec);
+  if (!tokens.ok) return tokens;
+  const adjusted = electronLaunchArguments(tokens.value, true);
+  if (adjusted === tokens.value) return ok(text);
+  return replaceDesktopExec(text, formatDesktopExec(adjusted));
 };
