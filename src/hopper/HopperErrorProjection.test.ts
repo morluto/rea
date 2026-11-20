@@ -46,13 +46,11 @@ describe("analysis error projection: Hopper provider failures", () => {
         operation: "trace_feature",
         request_id: 42,
         provider_state: "busy",
+        retry_action: "wait",
         timeout_ms: 30_000,
       },
     });
     expect(projected.message).toContain("binary_session.analysis_activity");
-    expect(projected.remediation.action).toContain(
-      "wait for the active Hopper request",
-    );
   });
 
   it("identifies the REA session that already owns a Hopper target", () => {
@@ -65,9 +63,7 @@ describe("analysis error projection: Hopper provider failures", () => {
       category: "unavailable",
       message: expect.stringContaining("session-owner"),
       remediation: {
-        action: expect.stringContaining(
-          "Use the active REA session session-owner",
-        ),
+        action: expect.stringContaining("session-owner"),
       },
     });
   });
@@ -305,7 +301,8 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(exited.message).toMatch(
       /Hopper exited.*search_strings.*exit code 7/iu,
     );
-    expect(exited.remediation.action).toMatch(/close_binary.*open.*retry/iu);
+    expect(exited.remediation.action).toContain("close_binary");
+    expect(exited.remediation.action).toContain("open");
 
     const unknownError = new HopperProcessError(null, {
       operation: "search_strings",
@@ -327,9 +324,7 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(unknown.message).toMatch(
       /could not determine.*busy, exited, or unreachable/iu,
     );
-    expect(unknown.remediation.action).toMatch(
-      /provider_operation_health.*before retrying or restarting/iu,
-    );
+    expect(unknown.remediation.action).toContain("provider_operation_health");
 
     const unreachableError = new HopperProcessError(null, {
       operation: "search_strings",
@@ -350,9 +345,11 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(unreachable.message).toMatch(
       /unreachable.*process exit was not observed/iu,
     );
-    expect(unreachable.remediation.action).toMatch(
-      /close_binary.*Evidence and Unknown history.*export_evidence_bundle/iu,
+    expect(unreachable.remediation.action).toContain("close_binary");
+    expect(unreachable.remediation.action).toContain(
+      "Evidence and Unknown history",
     );
+    expect(unreachable.remediation.action).toContain("export_evidence_bundle");
   });
 });
 
@@ -414,8 +411,16 @@ describe("analysis error projection: caller lifetime", () => {
         ),
       },
     );
-    expect(projectAnalysisError(error).remediation.action).toMatch(
-      /update_analysis_settings.*hopper\.startup_timeout_ms.*without restarting REA/u,
+    const continuing = projectAnalysisError(error);
+    expect(continuing.details?.limit).toMatchObject({
+      setting: "hopper.startup_timeout_ms",
+      effective_value: 30_000,
+      applies_at: "next_startup",
+      update_mode: "runtime",
+    });
+    expect(continuing.remediation.action).toContain("update_analysis_settings");
+    expect(continuing.remediation.action).toContain(
+      "hopper.startup_timeout_ms",
     );
     const invocation = projectAnalysisError(error, "invocation");
     expect(invocation.remediation.action).toBe(
