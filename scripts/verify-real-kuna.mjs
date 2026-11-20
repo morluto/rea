@@ -855,6 +855,9 @@ try {
 let workspaceReleased = false;
 // A verification failure with successful provider, command, and lineage
 // cleanup still releases the root. Only an unconfirmed close retains it.
+// release() closes cleanup registration before it removes the root, so a
+// failed release already keeps the workspace and retain() would throw
+// before this report is written.
 if (cleanupComplete)
   try {
     await workspaceFixture.release();
@@ -863,7 +866,7 @@ if (cleanupComplete)
     cleanupComplete = false;
     failures.push(cause);
   }
-if (!workspaceReleased)
+else
   workspaceFixture.retain(
     `Kuna cleanup was not confirmed; retained diagnostic workspace: ${workspace}`,
   );
