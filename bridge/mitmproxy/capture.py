@@ -356,25 +356,33 @@ def failure_reply(error):
     return {"ok": False, "reason": "decoder", "message": "Offline native decoder failed unexpectedly: " + type(error).__name__ + ".", "pointer": ""}
 
 
+def _clamp_resource_limit(kind, requested):
+    """Lower one soft limit. Keep the inherited hard limit, including infinity."""
+    soft, hard = resource.getrlimit(kind)
+    finite = [requested] + [value for value in (soft, hard) if value != resource.RLIM_INFINITY]
+    resource.setrlimit(kind, (min(finite), hard))
+
+
 class OfflineCapture:
     def load(self, loader):
         loader.add_option("rea_request_path", str, "", "REA private offline capture request")
 
     def running(self):
-        resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024, 768 * 1024 * 1024))
-        resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        request = json.loads(Path(ctx.options.rea_request_path).read_text(encoding="utf-8"))
-        budgets = request["budgets"]
-        if any(type(budgets[key]) is not int or budgets[key] < 1 for key in ("inputBytes", "outputBytes", "depth")):
-            raise ValueError("Invalid admitted capture budgets")
-        output_bytes = budgets["outputBytes"]
-        resource.setrlimit(resource.RLIMIT_FSIZE, (output_bytes, output_bytes))
         try:
-            response = {"ok": True, "value": decode(request)}
-        except Exception as error:
-            response = failure_reply(error)
-        try:
+            _clamp_resource_limit(resource.RLIMIT_AS, 768 * 1024 * 1024)
+            _clamp_resource_limit(resource.RLIMIT_CPU, 30)
+            # Zero never raises the inherited hard core limit, and it stops descendants from raising it.
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            request = json.loads(Path(ctx.options.rea_request_path).read_text(encoding="utf-8"))
+            budgets = request["budgets"]
+            if any(type(budgets[key]) is not int or budgets[key] < 1 for key in ("inputBytes", "outputBytes", "depth")):
+                raise ValueError("Invalid admitted capture budgets")
+            output_bytes = budgets["outputBytes"]
+            _clamp_resource_limit(resource.RLIMIT_FSIZE, output_bytes)
+            try:
+                response = {"ok": True, "value": decode(request)}
+            except Exception as error:
+                response = failure_reply(error)
             try:
                 output = json.dumps(response, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
             except Exception as error:
