@@ -88,7 +88,7 @@ export const UEFI_TOOL_CONTRACTS = [
     ...toolContractMetadata(
       "decompile_uefi_firmware",
       toolEffects({
-        mutatesSession: false,
+        mutatesSession: true,
         launchesProcess: true,
         writesFilesystem: true,
         idempotent: false,
