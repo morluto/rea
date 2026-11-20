@@ -34,6 +34,10 @@ import {
 } from "./OciImageLayoutParser.js";
 import type { FileSnapshotPartialObservation } from "../domain/fileSnapshotObservation.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 
 const OPERATION = "inspect_oci_image_layout";
 
@@ -50,90 +54,116 @@ const layoutPartial = (
 ): FileSnapshotPartialObservation | undefined =>
   cause instanceof OciImageLayoutRefusal ? cause.layoutObservation : undefined;
 
-const layoutFailure = (cause: unknown, input: InspectOciImageLayoutInput) => {
-  const observation = layoutPartial(cause);
-  const options =
-    observation === undefined ? {} : { partialObservation: observation };
-  if (cause instanceof DirectoryArtifactRootFailure && cause.reason === "path")
-    return new AnalysisUnsupportedTargetError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-        ...options,
-        remediationAction:
-          "Select an OCI image-layout directory containing oci-layout, index.json, and blobs/.",
-      },
-    );
-  if (
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "path" &&
-    cause.message.includes("symlink")
-  )
-    return new AnalysisUnsupportedTargetError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-        ...options,
-        remediationAction:
-          "Select the OCI image-layout directory itself; symbolic links are not followed.",
-      },
-    );
-  if (isParseLimit(cause, OCI_IMAGE_LAYOUT_FORMAT)) {
-    const parameter = (
-      Object.keys(
-        OCI_IMAGE_LAYOUT_LIMIT_MAXIMA,
-      ) as (keyof typeof OCI_IMAGE_LAYOUT_LIMIT_MAXIMA)[]
-    ).find((name) => name === cause.failure.limit.name);
-    return parseLimitConstraint(
-      OPERATION,
-      cause.failure.limit.name === "max_entries" ||
-        cause.failure.limit.name === "max_descriptors"
-        ? "capacity"
-        : "memory",
-      cause,
-      {
-        path: input.path,
-        retryable: false,
-        ...options,
-        ...(parameter === undefined
-          ? {}
-          : {
-              remediationAction: budgetRecovery(
-                parameter,
-                cause.failure.limit.maximum,
-              ),
-            }),
-      },
-    );
-  }
-  if (cause instanceof ParseFailureError && cause.failure.kind !== "limit") {
-    const formatFailure = parseFailureAnalysisError(
-      OPERATION,
-      input.path,
-      cause,
-    );
-    if (formatFailure instanceof AnalysisInputError)
-      return new AnalysisInputError(
+/** OCI layout decisions supplied to the shared provider failure owner. */
+const layoutFailureDialect = (
+  input: InspectOciImageLayoutInput,
+): ProviderFailureDialect => ({
+  providerId: OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY.id,
+  operation: OPERATION,
+  recognise: (cause, details) => {
+    const observation = layoutPartial(cause);
+    const options = {
+      ...details,
+      ...(observation === undefined ? {} : { partialObservation: observation }),
+    };
+    if (
+      cause instanceof DirectoryArtifactRootFailure &&
+      cause.reason === "path"
+    )
+      return new AnalysisUnsupportedTargetError(
         OPERATION,
-        { cause, ...options },
-        formatFailure.issues,
+        input.path,
+        cause.message,
+        {
+          cause,
+          ...options,
+          remediationAction:
+            "Select an OCI image-layout directory containing oci-layout, index.json, and blobs/.",
+        },
       );
-    if (formatFailure !== undefined) return formatFailure;
-  }
-  if (cause instanceof ArtifactReaderFailure)
-    return translateArtifactFailure(OPERATION, cause);
-  return new ArtifactOperationError(
-    OPERATION,
-    "io",
-    undefined,
-    errorMessage(cause),
-    { cause, ...options },
-  );
-};
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.reason === "path" &&
+      cause.message.includes("symlink")
+    )
+      return new AnalysisUnsupportedTargetError(
+        OPERATION,
+        input.path,
+        cause.message,
+        {
+          cause,
+          ...options,
+          remediationAction:
+            "Select the OCI image-layout directory itself; symbolic links are not followed.",
+        },
+      );
+    if (isParseLimit(cause, OCI_IMAGE_LAYOUT_FORMAT)) {
+      const parameter = (
+        Object.keys(
+          OCI_IMAGE_LAYOUT_LIMIT_MAXIMA,
+        ) as (keyof typeof OCI_IMAGE_LAYOUT_LIMIT_MAXIMA)[]
+      ).find((name) => name === cause.failure.limit.name);
+      return parseLimitConstraint(
+        OPERATION,
+        cause.failure.limit.name === "max_entries" ||
+          cause.failure.limit.name === "max_descriptors"
+          ? "capacity"
+          : "memory",
+        cause,
+        {
+          path: input.path,
+          retryable: false,
+          ...options,
+          ...(parameter === undefined
+            ? {}
+            : {
+                remediationAction: budgetRecovery(
+                  parameter,
+                  cause.failure.limit.maximum,
+                ),
+              }),
+        },
+      );
+    }
+    if (cause instanceof ParseFailureError && cause.failure.kind !== "limit") {
+      const formatFailure = parseFailureAnalysisError(
+        OPERATION,
+        input.path,
+        cause,
+      );
+      if (formatFailure instanceof AnalysisInputError)
+        return new AnalysisInputError(
+          OPERATION,
+          { cause, ...options },
+          formatFailure.issues,
+        );
+      if (formatFailure !== undefined) return formatFailure;
+    }
+    // A cancelled read goes to the shared cancellation path.
+    if (cause instanceof ArtifactReaderFailure && cause.reason !== "cancelled")
+      return translateArtifactFailure(OPERATION, cause);
+    return undefined;
+  },
+  unclassified: (cause, details) => {
+    const observation = layoutPartial(cause);
+    return new ArtifactOperationError(
+      OPERATION,
+      "io",
+      undefined,
+      errorMessage(cause),
+      {
+        cause,
+        ...details,
+        ...(observation === undefined
+          ? {}
+          : { partialObservation: observation }),
+      },
+    );
+  },
+});
+
+const layoutFailure = (cause: unknown, input: InspectOciImageLayoutInput) =>
+  classifyProviderFailure(cause, layoutFailureDialect(input));
 
 const ociImageLayoutEvidence = (
   input: InspectOciImageLayoutInput,
