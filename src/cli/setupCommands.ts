@@ -35,11 +35,7 @@ import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
 import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
-import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
-
-const supportedClientIds = SUPPORTED_CLIENT_DEFINITIONS.map(({ name }) => name);
-const supportedClientSchema = z.enum(supportedClientIds);
-const skillClientSchema = z.union([z.literal("shared"), supportedClientSchema]);
+import { skillClientSchema, supportedClientSchema } from "./clientNameInput.js";
 
 /** Register setup, doctor, uninstall, and update CLI commands. */
 export const registerSetupCommands = (
