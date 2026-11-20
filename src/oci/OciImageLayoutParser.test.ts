@@ -860,11 +860,10 @@ it("refuses malformed index.json and preserves the oci-layout snapshot", async (
   }
 });
 
-it("records unreferenced blobs, unknown media types and unsupported digests", async () => {
+it("records unknown media types and unsupported digests", async () => {
   const root = await createTestTempDirectory("rea-oci-findings-");
   await writeOciImageLayoutFixture(root);
   const orphan = await putOciBlob(root, "orphan-blob");
-  await putOciBlob(root, "unreferenced-blob");
   const indexPath = join(root, "index.json");
   const index = JSON.parse(await readFile(indexPath, "utf8")) as {
     manifests: Record<string, unknown>[];
@@ -887,9 +886,41 @@ it("records unreferenced blobs, unknown media types and unsupported digests", as
     expect.arrayContaining([
       "unknown_media_type",
       "unsupported_digest_algorithm",
-      "unreferenced_blob",
     ]),
   );
+});
+
+it("keeps reference status unknown when an index entry is opaque", async () => {
+  const root = await createTestTempDirectory("rea-oci-opaque-entry-");
+  await writeOciImageLayoutFixture(root);
+  const opaque = await putOciBlob(root, "opaque-document");
+  const child = await putOciBlob(root, "child-of-opaque");
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  index.manifests.push({
+    mediaType: "application/vnd.example.unknown",
+    digest: opaque,
+    size: 15,
+  });
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "unknown_media_type", digest: opaque }),
+    ]),
+  );
+  expect(
+    report.findings.some((finding) => finding.kind === "unreferenced_blob"),
+  ).toBe(false);
+  expect(
+    report.blobs.find((entry) => entry.digest === child)?.referenced,
+  ).toBeNull();
+  expect(
+    report.blobs.find((entry) => entry.digest === opaque)?.referenced,
+  ).toBe(true);
+  expect(report.coverage.status).toBe("partial");
 });
 
 const OCI_EMPTY_CONFIG = {

@@ -1043,13 +1043,17 @@ const inventoryOciImageLayout = async (
         digest,
       );
       remember(descriptor.digest, descriptor.media_type, descriptor.size);
-      if (!isOciKnownMediaType(descriptor.media_type))
+      if (!isOciKnownMediaType(descriptor.media_type)) {
+        // An opaque entry is not walked, so whatever it references is
+        // unknown and no blob can be called unreferenced.
+        referenceGraphTruncated = true;
         recordFinding(
           findings,
           "unknown_media_type",
           `Descriptor media type ${JSON.stringify(descriptor.media_type)} is unknown.`,
           descriptor.digest,
         );
+      }
       if (parseOciDigest(descriptor.digest) === undefined)
         recordFinding(
           findings,
@@ -1549,6 +1553,7 @@ const inventoryOciImageLayout = async (
   );
   const findingsStatus =
     referencedJsonSkipped ||
+    referenceGraphTruncated ||
     findings.some(
       (finding) =>
         finding.kind === "missing_blob" ||
