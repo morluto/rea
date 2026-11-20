@@ -250,39 +250,43 @@ it("reports an empty contributes key as a limitation and keeps the report", asyn
   expect(report.limitations).toContain(VSIX_LIMITATIONS.emptyContributesKey);
 });
 
-it("stops decoding members once the package-wide decode budget is spent", async () => {
-  // Seventeen highly compressible 16 MiB members expand past the 256 MiB
-  // package floor while each stays within its own member budget.
-  const member = new Uint8Array(MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES);
-  const extraBinaryMembers = Object.fromEntries(
-    Array.from({ length: 17 }, (_, index) => [
-      `extension/dist/module-${String(index).padStart(2, "0")}.wasm`,
-      member,
-    ]),
-  );
-  const bytes = await vsixPackageFixture({
-    extraBinaryMembers,
-    compressBinaryMembers: true,
-  });
-  const report = vsixPackageSchema.parse(
-    await parseVsixPackage(bytes, artifactOf(bytes), {
-      ...defaults,
-      max_member_bytes: MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES,
-    }),
-  );
-  const wasm = report.interesting_members.filter((entry) =>
-    entry.path.endsWith(".wasm"),
-  );
-  expect(wasm).toHaveLength(17);
-  expect(wasm.filter((entry) => entry.sha256 === null).length).toBeGreaterThan(
-    0,
-  );
-  expect(
-    report.limitations.some((limitation) =>
-      limitation.includes("total decode budget was spent"),
-    ),
-  ).toBe(true);
-}, 60_000);
+it(
+  "stops decoding members once the package-wide decode budget is spent",
+  { tags: ["long-running"] },
+  async () => {
+    // Seventeen highly compressible 16 MiB members expand past the 256 MiB
+    // package floor while each stays within its own member budget.
+    const member = new Uint8Array(MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES);
+    const extraBinaryMembers = Object.fromEntries(
+      Array.from({ length: 17 }, (_, index) => [
+        `extension/dist/module-${String(index).padStart(2, "0")}.wasm`,
+        member,
+      ]),
+    );
+    const bytes = await vsixPackageFixture({
+      extraBinaryMembers,
+      compressBinaryMembers: true,
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), {
+        ...defaults,
+        max_member_bytes: MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES,
+      }),
+    );
+    const wasm = report.interesting_members.filter((entry) =>
+      entry.path.endsWith(".wasm"),
+    );
+    expect(wasm).toHaveLength(17);
+    expect(
+      wasm.filter((entry) => entry.sha256 === null).length,
+    ).toBeGreaterThan(0);
+    expect(
+      report.limitations.some((limitation) =>
+        limitation.includes("total decode budget was spent"),
+      ),
+    ).toBe(true);
+  },
+);
 
 it("inventories a package with no vsixmanifest and leaves vsix identity unknown", async () => {
   const bytes = await vsixPackageMissingManifestFixture();
