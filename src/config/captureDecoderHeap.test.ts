@@ -17,6 +17,7 @@ import { createCli } from "../cli.js";
 import { historicalHar } from "../../tests/fixtures/historicalHar.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
+import { windowsSystemRootEnvironment } from "../../tests/support/process/windowsSystemRoot.js";
 import {
   CAPTURE_DECODER_OLD_GENERATION_SETTING,
   DEFAULT_CAPTURE_DECODER_HEAP,
@@ -172,7 +173,10 @@ it("reports the heap the selected adapter launches when decoder environment diff
     capture_path: capturePath,
     format: "har",
   });
-  const decoder = new HistoricalCaptureDecoder([launched, other], {});
+  const decoder = new HistoricalCaptureDecoder(
+    [launched, other],
+    windowsSystemRootEnvironment(),
+  );
   try {
     vi.spyOn(launched, "command").mockImplementation(async (requestPath) => {
       const runtimePath = join(requestPath, "..");

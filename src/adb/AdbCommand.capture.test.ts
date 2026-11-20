@@ -3,6 +3,7 @@ import { afterAll, expect, it } from "vitest";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import { runAdbCapture } from "./AdbCommand.js";
+import { windowsSystemRootEnvironment } from "../../tests/support/process/windowsSystemRoot.js";
 
 const resources = new ArtifactResourceScope();
 afterAll(() => resources.close());
@@ -57,7 +58,10 @@ it.each([
     {
       binary: process.execPath,
       pathSource: "environment",
-      environment: { REA_TEST_PRIVATE: "ambient-value-must-not-be-persisted" },
+      environment: {
+        ...windowsSystemRootEnvironment(),
+        REA_TEST_PRIVATE: "ambient-value-must-not-be-persisted",
+      },
       resources,
     },
     ["-e", testCase.source],
@@ -102,7 +106,7 @@ it.each([true, false])(
       {
         binary: process.execPath,
         pathSource: "environment",
-        environment: {},
+        environment: windowsSystemRootEnvironment(),
         resources,
       },
       ["-e", 'process.stdout.write("X".repeat(4096))'],

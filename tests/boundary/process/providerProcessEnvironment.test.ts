@@ -4,8 +4,10 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../../../src/process/ProviderProcess.js";
+import { windowsSystemRootEnvironment } from "../../support/process/windowsSystemRoot.js";
 
 const hostEnvironment = {
+  ...windowsSystemRootEnvironment(),
   PATH: "host-search-path",
   REA_CASE_TEST: "host-case",
   REA_EMPTY_TEST: "host-empty",

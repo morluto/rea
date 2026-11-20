@@ -36,16 +36,15 @@ it("admits 1.0.x releases but not the 1.1.0 upper boundary", () => {
 });
 import { wabtFailureDialect } from "./WabtFailures.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { windowsSystemRootEnvironment } from "../../tests/support/process/windowsSystemRoot.js";
 
 const nodeHostEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
 ): NodeJS.ProcessEnv => ({
   ...environment,
-  // Node's Windows CSPRNG initialization requires SystemRoot; the captured
-  // provider environment intentionally omits unrelated host variables.
-  ...(process.env.SystemRoot === undefined
-    ? {}
-    : { SystemRoot: process.env.SystemRoot }),
+  // The captured provider environment intentionally omits unrelated host
+  // variables.
+  ...windowsSystemRootEnvironment(),
 });
 
 function samePath(left: string, right: string): boolean {
