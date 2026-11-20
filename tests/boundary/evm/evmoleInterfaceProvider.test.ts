@@ -7,6 +7,10 @@ import { z } from "zod";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { evmInterfaceSchema } from "../../../src/domain/evm/evmInterface.js";
 import { EvmoleInterfaceProvider } from "../../../src/evm/EvmoleInterfaceProvider.js";
+import {
+  MAX_EVM_WORKER_REQUEST_BYTES,
+  evmWorkerRequestSchema,
+} from "../../../src/evm/EvmInterfaceWorkerContract.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
@@ -19,20 +23,6 @@ import {
 } from "../../support/workspace/workspaceFixture.js";
 
 const unsupportedHost = process.platform !== "linux" || process.arch !== "x64";
-const requestSchema = z.strictObject({
-  snapshot_path: z.string(),
-  reply_path: z.string(),
-  failure_marker_path: z.string(),
-  encoding: z.enum(["raw", "hex"]),
-  producer_limits: z.object({
-    input_bytes: z.number(),
-    output_bytes: z.number(),
-    diagnostic_bytes: z.number(),
-    address_space_bytes: z.number(),
-    file_bytes: z.number(),
-    cpu_seconds: z.number(),
-  }),
-});
 const fixture = async () => {
   const workspace = await createTestWorkspace("rea-evm-interface-boundary-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
@@ -226,7 +216,7 @@ it.runIf(!unsupportedHost).each(["completed", "malformed-reply"] as const)(
         ownedRoot = spawn.cwd ?? "";
         const requestPath = spawn.arguments.at(-1);
         if (requestPath === undefined) throw new Error("Request missing");
-        const request = requestSchema.parse(
+        const request = evmWorkerRequestSchema.parse(
           JSON.parse(await readFile(requestPath, "utf8")),
         );
         if (scenario === "malformed-reply")
@@ -340,7 +330,7 @@ it.runIf(!unsupportedHost).each([1048576, 1048577])(
       ownedPath = spawn.cwd ?? "";
       const requestPath = spawn.arguments.at(-1);
       if (requestPath === undefined) throw new Error("Request missing");
-      const request = requestSchema.parse(
+      const request = evmWorkerRequestSchema.parse(
         JSON.parse(await readFile(requestPath, "utf8")),
       );
       const bytes = Buffer.from("60006000f3", "hex");
@@ -414,7 +404,7 @@ it
         expect(spawn.arguments).toContain("--disable-wasm-trap-handler");
         const requestPath = spawn.arguments.at(-1);
         if (requestPath === undefined) throw new Error("request missing");
-        const request = requestSchema.parse(
+        const request = evmWorkerRequestSchema.parse(
           JSON.parse(await readFile(requestPath, "utf8")),
         );
         expect(request.encoding).toBe("hex");
@@ -562,7 +552,7 @@ it.runIf(!unsupportedHost)(
       ownedRoot = spawn.cwd ?? "";
       const requestPath = spawn.arguments.at(-1);
       if (requestPath === undefined) throw new Error("request missing");
-      const request = requestSchema.parse(
+      const request = evmWorkerRequestSchema.parse(
         JSON.parse(await readFile(requestPath, "utf8")),
       );
       const bytes = Buffer.from("60006000f3", "hex");
@@ -788,7 +778,7 @@ it.runIf(!unsupportedHost)(
       async (spawn) => {
         const requestPath = spawn.arguments.at(-1);
         if (requestPath === undefined) throw new Error("request missing");
-        const request = requestSchema.parse(
+        const request = evmWorkerRequestSchema.parse(
           JSON.parse(await readFile(requestPath, "utf8")),
         );
         await writeFile(
@@ -848,7 +838,7 @@ it
       async (spawn) => {
         const requestPath = spawn.arguments.at(-1);
         if (requestPath === undefined) throw new Error("request missing");
-        const request = requestSchema.parse(
+        const request = evmWorkerRequestSchema.parse(
           JSON.parse(await readFile(requestPath, "utf8")),
         );
         const bytes = Buffer.from("60006000f3", "hex");
@@ -994,5 +984,173 @@ it.runIf(!unsupportedHost).each(["directory", "missing-interpreter"])(
     if (ownedRoot !== undefined)
       await expect(access(ownedRoot)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path, "utf8")).toBe("0x60006000f3\n");
+  },
+);
+
+it
+  .runIf(!unsupportedHost)
+  .each([
+    "valid",
+    "valid-diagnostic",
+    "outside-diagnostic",
+    "mismatched-diagnostic",
+    "missing",
+    "wrong",
+    "invalid-omission",
+    "rows-and-omission",
+  ])(
+  "binds compiler failures and omission evidence to their carrier: %s",
+  async (scenario) => {
+    const { path } = await fixture();
+    await writeFile(path, '{"errors":[{}]}');
+    const provider = new EvmoleInterfaceProvider({}, async (spawn) => {
+      const request = evmWorkerRequestSchema.parse(
+        JSON.parse(await readFile(spawn.arguments.at(-1)!, "utf8")),
+      );
+      const snapshot = await readFile(request.snapshot_path);
+      const start =
+        scenario === "outside-diagnostic"
+          ? snapshot.length + 1
+          : scenario === "mismatched-diagnostic"
+            ? snapshot.toString().indexOf('":[') + 1
+            : snapshot.toString().indexOf("{}");
+      const digest = createHash("sha256").update(snapshot).digest("hex");
+      await writeFile(
+        request.reply_path,
+        JSON.stringify({
+          ok: false,
+          reason:
+            scenario === "rows-and-omission" ? "output-limit" : "selection",
+          message: "Selected contract is absent",
+          ...(scenario === "missing"
+            ? {}
+            : {
+                carrier_sha256: scenario === "wrong" ? "a".repeat(64) : digest,
+              }),
+          ...(["invalid-omission", "rows-and-omission"].includes(scenario)
+            ? { compiler_diagnostics_omitted: "reply-budget" }
+            : {}),
+          ...([
+            "valid-diagnostic",
+            "outside-diagnostic",
+            "mismatched-diagnostic",
+          ].includes(scenario)
+            ? {
+                compiler_diagnostics: [
+                  {
+                    raw_json: "{}",
+                    json_pointer: "/errors/0",
+                    severity: null,
+                    source_range: {
+                      start,
+                      end: start + 2,
+                      unit: "utf16-code-unit",
+                    },
+                  },
+                ],
+              }
+            : {}),
+          ...(scenario === "rows-and-omission"
+            ? { compiler_diagnostics: [] }
+            : {}),
+        }),
+      );
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        command: process.execPath,
+        arguments: ["-e", ""],
+      });
+    });
+    const result = await provider.inspect({
+      path,
+      encoding: "solc-json",
+      compiler_selection: {
+        source_unit: "a.sol",
+        contract_name: "C",
+        bytecode_kind: "creation",
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected compiler failure");
+    expect(result.error._tag).toBe(
+      scenario.startsWith("valid")
+        ? "AnalysisInputError"
+        : "AnalysisOutputError",
+    );
+    if (scenario.startsWith("valid")) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.recovery).toBeUndefined();
+      expect(projected.remediation.action).toContain(
+        "exact source-unit and contract keys",
+      );
+    }
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "refuses compiler identities above the selected input budget before worker effects",
+  async () => {
+    const { path } = await fixture();
+    let spawned = false;
+    const provider = new EvmoleInterfaceProvider({}, async () => {
+      spawned = true;
+      throw new Error("Worker must not start for an oversized selection");
+    });
+    const result = await provider.inspect({
+      path,
+      encoding: "solc-json",
+      compiler_selection: {
+        source_unit: "a".repeat(64),
+        contract_name: "C",
+        bytecode_kind: "creation",
+      },
+      producer_limits: { input_bytes: 32 },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected identity budget refusal");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(result.error).toMatchObject({
+      issues: [
+        {
+          path: ["encoding"],
+          reason: "out_of_range",
+          maximum: 32,
+          observed: 65,
+        },
+      ],
+    });
+    expect(projectAnalysisError(result.error).remediation.action).toContain(
+      "producer_limits.input_bytes",
+    );
+    expect(spawned).toBe(false);
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "writes an admitted large compiler selection within the worker request ceiling",
+  async () => {
+    const { path } = await fixture();
+    const sourceUnit = "\u0001".repeat(70 * 1024);
+    let requestBytes = 0;
+    const provider = new EvmoleInterfaceProvider({}, async (spawn) => {
+      const requestPath = spawn.arguments.at(-1) ?? "";
+      requestBytes = (await readFile(requestPath)).byteLength;
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        command: process.execPath,
+        arguments: ["-e", ""],
+      });
+    });
+    await provider.inspect({
+      path,
+      encoding: "solc-json",
+      compiler_selection: {
+        source_unit: sourceUnit,
+        contract_name: "C",
+        bytecode_kind: "creation",
+      },
+    });
+    expect(requestBytes).toBeGreaterThan(64 * 1024);
+    expect(requestBytes).toBeLessThanOrEqual(MAX_EVM_WORKER_REQUEST_BYTES);
   },
 );

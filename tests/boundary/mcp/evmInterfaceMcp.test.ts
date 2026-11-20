@@ -105,7 +105,10 @@ mcpTest(
     });
     const server = createServer(
       { kind: "session", session },
-      { evmInterface: service },
+      {
+        evmInterface: service,
+        environment: process.env,
+      },
     );
     ownArtifactSession(session, onTestFinished);
     const client = await mcp.connect(server, {
@@ -116,9 +119,57 @@ mcpTest(
       client,
       "inspect_evm_interface",
     );
-    const { ajv, inputSchema } = schemas;
+    const { ajv, canonicalInputSchema: inputSchema } = schemas;
     expect(
       ajv.validate(inputSchema, { path: value.artifact.path, encoding: "hex" }),
+    ).toBe(true);
+    expect(
+      ajv.validate(inputSchema, { path: value.artifact.path, encoding: "raw" }),
+    ).toBe(true);
+    const compilerSelection = {
+      source_unit: "contracts/Example.sol",
+      contract_name: "Example",
+      bytecode_kind: "deployed",
+    };
+    const compilerInput = {
+      path: value.artifact.path,
+      encoding: "solc-json",
+      compiler_selection: compilerSelection,
+    };
+    expect(
+      ajv.validate(inputSchema, compilerInput),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    for (const missing of [
+      "source_unit",
+      "contract_name",
+      "bytecode_kind",
+    ] as const) {
+      const incomplete: Record<string, string> = { ...compilerSelection };
+      delete incomplete[missing];
+      expect(
+        ajv.validate(inputSchema, {
+          ...compilerInput,
+          compiler_selection: incomplete,
+        }),
+      ).toBe(false);
+    }
+    for (const selection of [
+      { ...compilerSelection, bytecode_kind: "runtime" },
+      { ...compilerSelection, extra: true },
+    ])
+      expect(
+        ajv.validate(inputSchema, {
+          ...compilerInput,
+          compiler_selection: selection,
+        }),
+      ).toBe(false);
+    // The two-field agreement is checked by the service, not the schema.
+    expect(
+      ajv.validate(inputSchema, {
+        path: value.artifact.path,
+        encoding: "solc-json",
+      }),
     ).toBe(true);
     expect(
       ajv.validate(inputSchema, {
@@ -162,6 +213,48 @@ mcpTest(
         })
       ).isError,
     ).toBe(true);
+  },
+);
+
+mcpTest(
+  "rejects incomplete compiler selections before provider access with compact advertisement",
+  async ({ mcp }) => {
+    const inspect = vi.fn(async () => {
+      throw new Error("Invalid input must not invoke the provider");
+    });
+    const service = new EvmInterfaceService({ inspect });
+    const server = new EvidenceMcpServer(
+      { name: "evm-compact", version: "1" },
+      {},
+      undefined,
+      createToolResultDelivery(undefined),
+      { budgetBytes: 1024 },
+    );
+    registerServiceTools(
+      server,
+      { evmInterface: service },
+      { logger: silentLogger },
+    );
+    const client = await mcp.connect(server, {
+      name: "evm-compact",
+      version: "1",
+    });
+    const { inputSchema } = await advertisedMcpToolSchemas(
+      client,
+      "inspect_evm_interface",
+    );
+    expect(inputSchema.properties).toEqual({});
+    const arguments_ = {
+      path: "/selected.json",
+      encoding: "solc-json",
+      compiler_selection: { contract_name: "C", bytecode_kind: "creation" },
+    };
+    const response = await client.callTool({
+      name: "inspect_evm_interface",
+      arguments: arguments_,
+    });
+    expect(parseMcpToolError(response).error.code).toBe("invalid_request");
+    expect(inspect).not.toHaveBeenCalled();
   },
 );
 
@@ -494,7 +587,10 @@ it.each(["valid", "wrong-subject", "no-subject"])(
       {
         operation: "inspect_evm_interface",
         parameters: { path: value.artifact.path, encoding: "hex" },
-        result: { ...value, bytecode: historicalBytecode },
+        result: {
+          ...value,
+          bytecode: historicalBytecode,
+        },
         confidence: "inferred",
         rawResult: { original: true },
       },

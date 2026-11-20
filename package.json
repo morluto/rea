@@ -348,6 +348,7 @@
     "verify:apk-signature": "npm run build:cached && node scripts/verify-apk-signature.mjs",
     "verify:evm:interface": "npm run build:cached && node scripts/verify-evm-interface.mjs",
     "verify:solidity:metadata": "npm run build:cached && node scripts/verify-solidity-metadata.mjs",
+    "verify:solc:artifacts": "npm run build:cached && node scripts/verify-solc-artifacts.mjs",
     "verify:recorded:crash": "npm run build:cached && node scripts/verify-recorded-crash.mjs",
     "compile": "node scripts/clean-build-output.mjs && node scripts/run-typescript.mjs -p tsconfig.build.json && node scripts/record-catalog-digests.mjs && node scripts/record-mcp-catalog.mjs && node scripts/record-cli-commands.mjs && node scripts/bundle-runtime.mjs",
     "compile:termux": "node scripts/clean-build-output.mjs && node --max-old-space-size=3072 node_modules/typescript-termux/lib/tsc.js -p tsconfig.build.json && node scripts/record-catalog-digests.mjs && node scripts/record-mcp-catalog.mjs && node scripts/record-cli-commands.mjs && node scripts/bundle-runtime.mjs",

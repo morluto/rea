@@ -3,9 +3,17 @@ import {
   timerDurationMsSchema,
 } from "../analysisResourceLimits.js";
 import { z } from "zod";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { solidityMetadataSchema } from "./solidityMetadata.js";
+import { inspectSolcBytecodeObject } from "./solcBytecodeObject.js";
+import {
+  compilerSelectionSchema,
+  compilerDiagnosticsFitCarrier,
+  solcArtifactSchema,
+  type CompilerSelection,
+} from "./solcArtifact.js";
 import {
   producerResourceLimitsSchema,
   resolveProducerLimits,
@@ -48,15 +56,41 @@ const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 /** Owned EVMole worker deadline. Omission keeps this value. */
 export const DEFAULT_EVM_TIMEOUT_MS = 30_000;
 
-/** Select the carrier representation explicitly; no RPC or deployed-contract lookup is implied. */
+/** One scalar encoding keeps the advertised input within the portable schema dialect. */
+export const evmEncodingSchema = z.enum(["raw", "hex", "solc-json"]);
+export type EvmEncoding = z.infer<typeof evmEncodingSchema>;
+interface EvmEncodingSelection {
+  readonly encoding: EvmEncoding;
+  readonly compiler_selection?: CompilerSelection | undefined;
+}
+/** Exact compiler identity belongs to solc-json only; the other encodings carry none. */
+export const evmCompilerSelectionIssue = ({
+  encoding,
+  compiler_selection: selection,
+}: EvmEncodingSelection): string | undefined => {
+  if (encoding === "solc-json" && selection === undefined)
+    return "solc-json encoding requires compiler_selection.";
+  if (encoding !== "solc-json" && selection !== undefined)
+    return "compiler_selection is valid only with solc-json encoding.";
+  return undefined;
+};
+/** One owner projects exact compiler identity from the selected representation. */
+export const evmCompilerSelection = (
+  input: EvmEncodingSelection,
+): CompilerSelection | undefined =>
+  input.encoding === "solc-json" ? input.compiler_selection : undefined;
+/** Explicit local carrier; compiler identities are opaque keys rather than paths. */
 export const inspectEvmInterfaceInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
-    "Absolute path to caller-selected local bytecode carrier",
+    "Absolute caller-selected bytecode or solc Standard JSON carrier",
   ),
-  encoding: z
-    .enum(["raw", "hex"])
+  encoding: evmEncodingSchema.describe(
+    "raw or hex bytecode, or solc-json to select an exact compiler object with compiler_selection",
+  ),
+  compiler_selection: compilerSelectionSchema
+    .optional()
     .describe(
-      "Raw bytes or UTF-8 hex with optional 0x prefix and outer ASCII whitespace",
+      "Required with solc-json and refused otherwise: exact source_unit and contract_name keys plus bytecode_kind creation|deployed",
     ),
   producer_limits: evmProducerLimitsSchema
     .optional()
@@ -77,18 +111,23 @@ export const evmInterfaceSchema = z
       path: z.string().min(1),
       sha256,
       bytes: byteOffset,
-      encoding: z.enum(["raw", "hex"]),
+      encoding: z.enum(["raw", "hex", "solc-json"]),
     }),
     bytecode: z.strictObject({
-      sha256,
-      bytes: byteOffset,
-      hex: z.string().regex(/^(?:[0-9a-f]{2})*$/),
+      sha256: sha256.nullable(),
+      bytes: byteOffset.nullable(),
+      hex: z
+        .string()
+        .regex(/^(?:[0-9a-f]{2})*$/)
+        .nullable(),
       digest_algorithm: z.literal("sha256"),
-      kind: z.literal("unknown"),
+      kind: z.enum(["unknown", "creation", "deployed"]),
       deployment_authenticity: z.literal("unknown"),
       hardfork: z.literal("unknown"),
       metadata: solidityMetadataSchema.nullable().default(null),
     }),
+    compiler_artifact: solcArtifactSchema.optional(),
+    inference_status: z.enum(["examined", "unavailable"]).optional(),
     evidence_kind: z.literal("inferred"),
     functions: z.array(
       z.strictObject({
@@ -109,7 +148,11 @@ export const evmInterfaceSchema = z
     limitations: z.array(z.string()),
   })
   .superRefine((value, context) => {
-    if (value.bytecode.hex.length !== value.bytecode.bytes * 2)
+    if (
+      value.bytecode.hex !== null &&
+      (value.bytecode.bytes === null ||
+        value.bytecode.hex.length !== value.bytecode.bytes * 2)
+    )
       context.addIssue({
         code: "custom",
         path: ["bytecode"],
@@ -120,7 +163,9 @@ export const evmInterfaceSchema = z
     if (
       metadata !== null &&
       metadata.status !== "unavailable" &&
-      (metadata.bytecode_offset === null ||
+      (value.bytecode.hex === null ||
+        value.bytecode.bytes === null ||
+        metadata.bytecode_offset === null ||
         metadata.cbor_bytes === null ||
         metadata.bytecode_offset + metadata.cbor_bytes + 2 !==
           value.bytecode.bytes ||
@@ -133,8 +178,74 @@ export const evmInterfaceSchema = z
         message:
           "Metadata range must match the terminal length suffix in selected bytecode.",
       });
+    const compiler = value.compiler_artifact;
+    if (
+      compiler !== undefined &&
+      (compiler.contract_range.end > value.artifact.bytes ||
+        !compilerDiagnosticsFitCarrier(
+          compiler.diagnostics,
+          value.artifact.bytes,
+        ))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["compiler_artifact"],
+        message: "Compiler source coordinates exceed the retained carrier size",
+      });
+    const compilerObject =
+      compiler?.object == null
+        ? null
+        : inspectSolcBytecodeObject(compiler.object);
+    const concrete =
+      value.bytecode.hex !== null &&
+      value.bytecode.sha256 !== null &&
+      value.bytecode.bytes !== null;
+    if (value.artifact.encoding === "solc-json") {
+      if (
+        compiler === undefined ||
+        value.inference_status === undefined ||
+        compiler.selection.bytecode_kind !== value.bytecode.kind ||
+        (compiler.status === "concrete") !== concrete ||
+        (compiler.status === "concrete" ? "examined" : "unavailable") !==
+          value.inference_status ||
+        (compilerObject === null
+          ? null
+          : compilerObject.ok
+            ? compilerObject.value.byteLength
+            : undefined) !== value.bytecode.bytes ||
+        (compiler.status === "concrete" &&
+          (compiler.object?.toLowerCase() !== value.bytecode.hex ||
+            sha256Hex(Buffer.from(value.bytecode.hex ?? "", "hex")) !==
+              value.bytecode.sha256)) ||
+        (compiler.status !== "concrete" &&
+          (value.bytecode.hex !== null ||
+            value.bytecode.sha256 !== null ||
+            value.bytecode.metadata !== null ||
+            value.functions.length !== 0))
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["compiler_artifact"],
+          message:
+            "Compiler selection, byte identity and inference availability are inconsistent.",
+        });
+    } else if (
+      compiler !== undefined ||
+      !concrete ||
+      value.bytecode.kind !== "unknown" ||
+      value.inference_status !== undefined
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["bytecode"],
+        message:
+          "Raw/hex Evidence requires concrete bytes and unknown compiler kind without compiler selection.",
+      });
     for (const [index, fn] of value.functions.entries())
-      if (fn.bytecode_offset >= value.bytecode.bytes)
+      if (
+        value.bytecode.bytes === null ||
+        fn.bytecode_offset >= value.bytecode.bytes
+      )
         context.addIssue({
           code: "custom",
           path: ["functions", index, "bytecode_offset"],
@@ -146,3 +257,23 @@ export type InspectEvmInterfaceInput = z.infer<
   typeof inspectEvmInterfaceInputSchema
 >;
 export type EvmInterface = z.infer<typeof evmInterfaceSchema>;
+
+/** Bind parsed report facts to the exact caller-selected carrier and compiler object. */
+export const matchesEvmInterfaceInput = (
+  report: EvmInterface,
+  input: InspectEvmInterfaceInput,
+): boolean => {
+  const selection = evmCompilerSelection(input);
+  return (
+    evmCompilerSelectionIssue(input) === undefined &&
+    report.artifact.path === input.path &&
+    report.artifact.encoding === input.encoding &&
+    (selection === undefined ||
+      (report.compiler_artifact?.selection.source_unit ===
+        selection.source_unit &&
+        report.compiler_artifact.selection.contract_name ===
+          selection.contract_name &&
+        report.compiler_artifact.selection.bytecode_kind ===
+          selection.bytecode_kind))
+  );
+};

@@ -1,3 +1,4 @@
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { createCommandCli } from "../support/cli/commandCli.js";
 import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
@@ -29,22 +30,14 @@ import {
   jsonValueSchema,
 } from "../../src/domain/jsonValue.js";
 import { ok } from "../../src/domain/result.js";
-import { waitFor } from "../support/testWait.js";
 
 const state = vi.hoisted(() => ({
   provider: undefined as BrowserScenarioCapturePort | undefined,
   launchPersistentContext: vi.fn(),
 }));
-vi.mock("playwright-core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("playwright-core")>();
-  return {
-    ...actual,
-    chromium: {
-      ...actual.chromium,
-      launchPersistentContext: state.launchPersistentContext,
-    },
-  };
-});
+vi.mock("playwright-core", () => ({
+  chromium: { launchPersistentContext: state.launchPersistentContext },
+}));
 vi.mock("../../src/composition/browserScenario.js", () => ({
   createBrowserScenarioProvider: () => state.provider,
 }));
@@ -276,6 +269,10 @@ it("retries a late Playwright open after cancellation before accepting another c
   const closeStarted = new Promise<void>((resolve) => {
     firstCloseStarted = resolve;
   });
+  let markLaunchStarted!: () => void;
+  const launchStarted = new Promise<void>((resolve) => {
+    markLaunchStarted = resolve;
+  });
   let launchCount = 0;
   let firstCloseAttempts = 0;
   const makeContext = () => {
@@ -310,6 +307,7 @@ it("retries a late Playwright open after cancellation before accepting another c
   };
   state.launchPersistentContext.mockImplementation(() => {
     launchCount += 1;
+    markLaunchStarted();
     return launchCount === 1 ? lateOpen : Promise.resolve(makeContext());
   });
   const provider = new PlaywrightBrowserScenarioProvider((input, options) =>
@@ -319,8 +317,14 @@ it("retries a late Playwright open after cancellation before accepting another c
   const firstCapture = provider.captureScenario(scenario, {
     signal: cancellation.signal,
   });
+  const failures: unknown[] = [];
   try {
-    await waitFor(() => expect(launchCount).toBe(1));
+    await awaitAcknowledgement(
+      launchStarted,
+      firstCapture,
+      "Playwright launch",
+    );
+    expect(launchCount).toBe(1);
     cancellation.abort();
     const cancelled = await firstCapture;
     if (cancelled.ok) throw new Error("Expected the first capture to cancel.");
@@ -346,16 +350,33 @@ it("retries a late Playwright open after cancellation before accepting another c
     expect(launchCount).toBe(2);
     await provider.close();
     expect(launchCount).toBe(2);
+  } catch (cause) {
+    failures.push(cause);
   } finally {
     cancellation.abort();
     finishLateOpen(makeContext());
     finishFirstClose();
     try {
       await provider.close();
+    } catch (cause) {
+      failures.push(cause);
+      if (firstCloseAttempts === 1) {
+        try {
+          await provider.close();
+        } catch (retryCause) {
+          failures.push(retryCause);
+        }
+      }
     } finally {
       state.launchPersistentContext.mockReset();
     }
   }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(
+      failures,
+      "Browser fixture body and cleanup failed",
+    );
 });
 
 it("preserves the initial partial observation when the provider cleanup retry also fails", async () => {
