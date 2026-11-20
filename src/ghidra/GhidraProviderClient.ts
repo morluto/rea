@@ -1951,7 +1951,7 @@ const ghidraSessionRestart = (source: GhidraSessionSource): string =>
  * can raise the deadline only for a new invocation; a continuing caller can
  * update it for the next operation on the same Program.
  */
-export const ghidraDecompileTimeoutRecovery = (
+const ghidraDecompileTimeoutRecovery = (
   seconds: number,
   source: GhidraSessionSource,
 ): {
