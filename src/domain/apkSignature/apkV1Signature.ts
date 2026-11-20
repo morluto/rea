@@ -25,6 +25,10 @@ import {
   readZipCentralExtent,
 } from "../zip/zipCentralHeader.js";
 import {
+  ZIP_LOCAL_HEADER_BYTES,
+  ZIP_LOCAL_HEADER_SIGNATURE,
+} from "../zip/zipLocalHeader.js";
+import {
   canonicalNameHash,
   compareCanonicalNames,
   decodeZipName,
@@ -398,8 +402,6 @@ export const detectV1Signature = (
   };
 };
 
-const LOCAL_SIGNATURE = 0x04034b50;
-const LOCAL_FIXED_SIZE = 30;
 const ZIP64_SENTINEL = 0xffffffff;
 const FLAG_ENCRYPTED = 0x1;
 const FLAG_DATA_DESCRIPTOR = 0x8;
@@ -444,7 +446,7 @@ export const localEntryData = (
     return err({ detail: "Zip64 entry sizes are not read" });
   const at = entry.localHeaderOffset;
   const limit = Math.min(entriesEnd, bytes.length);
-  if (at + LOCAL_FIXED_SIZE > limit)
+  if (at + ZIP_LOCAL_HEADER_BYTES > limit)
     return err({
       detail: `local header at byte ${String(at)} is out of range`,
     });
@@ -453,7 +455,7 @@ export const localEntryData = (
     true,
     "zip",
   );
-  if (reader.u32(at) !== LOCAL_SIGNATURE)
+  if (reader.u32(at) !== ZIP_LOCAL_HEADER_SIGNATURE)
     return err({
       detail: `local header signature mismatch at byte ${String(at)}`,
     });
@@ -477,7 +479,7 @@ export const localEntryData = (
         });
     }
   const nameLength = reader.u16(at + 26);
-  const nameStart = at + LOCAL_FIXED_SIZE;
+  const nameStart = at + ZIP_LOCAL_HEADER_BYTES;
   if (
     nameStart + nameLength > limit ||
     // apksig refuses a local name longer in bytes before decoding either.
