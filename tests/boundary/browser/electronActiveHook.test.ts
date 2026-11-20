@@ -112,8 +112,14 @@ window.webContents.emit(longEventName);
 const utility = electron.utilityProcess.fork("utility.js");
 utility.emit("message", { data: { value: true } });
 utility.postMessage({ value: true });
-electron.session.defaultSession.emit("will-download", {}, { cancel() {} }, window.webContents);
-electron.session.fromPartition("persist:custom").emit("will-download", {}, { cancel() {} }, window.webContents);
+const cancelledDownloads = [];
+for (const [name, session] of [
+  ["default", electron.session.defaultSession],
+  ["partition", electron.session.fromPartition("persist:custom")],
+]) {
+  const item = { cancel() { cancelledDownloads.push(this === item ? name : "foreign"); } };
+  session.emit("will-download", {}, item, window.webContents);
+}
 const defaultPopupDecision = window.webContents.windowOpenHandler({ url: "https://default-popup.invalid" });
 window.webContents.setWindowOpenHandler(() => ({ action: "allow" }));
 const popupDecision = window.webContents.windowOpenHandler({ url: "https://popup.invalid" });
@@ -137,7 +143,7 @@ const firstIpc = firstSnapshot.events.find((event) => event.kind === "main-handl
 if (firstIpc) { firstIpc.channel = "mutated"; firstIpc.argument_shapes.push("mutated"); }
 firstSnapshot.events.length = 0;
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-process.stdout.write(JSON.stringify({ snapshot, default_popup_decision: defaultPopupDecision, popup_decision: popupDecision, move_result: moveResult }) + "\\n");
+process.stdout.write(JSON.stringify({ snapshot, default_popup_decision: defaultPopupDecision, popup_decision: popupDecision, move_result: moveResult, cancelled_downloads: cancelledDownloads }) + "\\n");
 })();
 `;
 
@@ -154,6 +160,7 @@ it("retains active hook evidence within its event-retention budget", async () =>
     readonly default_popup_decision: { readonly action: string };
     readonly popup_decision: { readonly action: string };
     readonly move_result: boolean;
+    readonly cancelled_downloads: readonly string[];
     readonly snapshot: {
       readonly hook_error: boolean;
       readonly events: readonly Record<string, unknown>[];
@@ -171,7 +178,6 @@ it("retains active hook evidence within its event-retention budget", async () =>
   ).toHaveLength(snapshot.retained);
 
   expect(snapshot.hook_error).toBe(false);
-  expect(snapshot.events).toHaveLength(snapshot.retained);
   expect(snapshot.observed).toBe(snapshot.retained + snapshot.dropped);
   expect(snapshot.observed).toBeGreaterThan(5_000);
   expect(snapshot.dropped_ipc).toBeGreaterThanOrEqual(2);
@@ -216,6 +222,7 @@ it("retains active hook evidence within its event-retention budget", async () =>
   expect(result.default_popup_decision).toEqual({ action: "deny" });
   expect(result.popup_decision).toEqual({ action: "deny" });
   expect(result.move_result).toBe(false);
+  expect(result.cancelled_downloads).toEqual(["default", "partition"]);
   expect(
     snapshot.events.filter(
       (event) => event.kind === "download" && event.phase === "blocked",
