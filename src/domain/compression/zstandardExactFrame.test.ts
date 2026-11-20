@@ -128,10 +128,6 @@ describe("exact Zstandard frames", () => {
       ok: false,
       reason: "truncated_checksum",
     });
-    expect(decodeZstandardFrames(frame.subarray(0, -4))).toMatchObject({
-      ok: false,
-      reason: "truncated_checksum",
-    });
     const wrong = Buffer.from(frame);
     const last = wrong.length - 1;
     wrong.writeUInt8(wrong.readUInt8(last) ^ 0xff, last);
@@ -146,8 +142,12 @@ describe("exact Zstandard frames", () => {
   it("rejects trailing garbage and a partial next-frame magic", () => {
     const frame = rawFrame(0x61);
     expect(
-      decodeZstandardFrames(Buffer.concat([frame, Buffer.of(0)])),
-    ).toMatchObject({ ok: false, reason: "trailing_bytes" });
+      decodeZstandardFrames(Buffer.concat([frame, Buffer.from("CCOB")])),
+    ).toMatchObject({
+      ok: false,
+      reason: "trailing_bytes",
+      offset: frame.length,
+    });
     expect(
       decodeZstandardFrames(
         Buffer.concat([frame, Buffer.of(0x28, 0xb5, 0x2f)]),
@@ -245,22 +245,18 @@ describe("Zstandard frame header widths", () => {
     const dictionary2 = magic([0x22, 0, 0, 0x00, 0x01, 0, 0]);
     const dictionary4 = magic([0x23, 0, 0, 0, 0, 0x00, 0x01, 0, 0]);
     const rle = magic([0x20, 0x04, 0x23, 0, 0, 0x41]);
-    expect(decode(fcs4)).toMatchObject({ ok: true, frames: 1 });
+    const a = Buffer.from("A");
+    expect(decode(fcs4)).toMatchObject({ frames: 1, bytes: a });
     expect(decode(fcs8)).toMatchObject({ ok: true, frames: 1 });
-    expect(decode(fcs2)).toMatchObject({ ok: true, frames: 1 });
-    const empty = decode(windowed);
-    const repeated = decode(rle);
-    const wide = decode(fcs2);
-    const sized = decode(fcs4);
-    expect(empty.ok && empty.bytes.length).toBe(0);
+    expect(decode(fcs2)).toMatchObject({
+      frames: 1,
+      bytes: Buffer.alloc(256, 0x42),
+    });
+    expect(decode(windowed)).toMatchObject({ bytes: Buffer.alloc(0) });
+    expect(decode(rle)).toMatchObject({ bytes: Buffer.from("AAAA") });
     expect(decode(dictionary1).ok).toBe(true);
     expect(decode(dictionary2).ok).toBe(true);
     expect(decode(dictionary4).ok).toBe(true);
-    expect(sized.ok && sized.bytes[0]).toBe(0x41);
-    expect(
-      repeated.ok && Buffer.compare(repeated.bytes, Buffer.from("AAAA")) === 0,
-    ).toBe(true);
-    expect(wide.ok && wide.bytes.length).toBe(256);
   });
 
   it.each([

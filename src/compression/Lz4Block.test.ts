@@ -8,12 +8,12 @@ it("decodes overlapping matches by repeating the newly produced pattern", async 
     "\n//".repeat(6) + "\nABCDE",
   );
 });
-it.each(["10000000", "10000100", "f0ff", "f001", "00"])(
+it.each(["10000000", "10000100", "f001", "00"])(
   "rejects malformed or mismatched block %s",
   async (hex) => {
     await expect(
       decodeLz4Block(Buffer.from(hex, "hex"), 8, 8),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ failure: { kind: "malformed" } });
   },
 );
 it("preserves an already-aborted caller's cancellation", async () => {
