@@ -659,6 +659,26 @@ it("resolves dot segments in entry points under extension/", async () => {
   });
 });
 
+it("resolves an extension-less CommonJS main the way Node does", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/extension",
+      browser: "./out/web/extension",
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points).toEqual({
+    main: { path: "extension/out/extension.js", present: true },
+    browser: { path: "extension/out/web/extension.js", present: true },
+  });
+});
+
 it("marks a missing main entry as absent without treating it as a format error", async () => {
   const bytes = await vsixPackageFixture({ includeMain: false });
   const report = vsixPackageSchema.parse(

@@ -304,6 +304,35 @@ const packageJsonEntryPath = (value: unknown): string | null => {
   return `extension/${segments.join("/")}`;
 };
 
+/**
+ * Suffixes tried after the declared path, in order. VS Code loads `main`
+ * through Node's CommonJS file and directory lookup, and the web extension
+ * host adds `.js` to a `browser` entry that lacks it.
+ */
+const NODE_ENTRY_CANDIDATES = [
+  "",
+  ".js",
+  ".json",
+  ".node",
+  "/index.js",
+  "/index.json",
+  "/index.node",
+] as const;
+const BROWSER_ENTRY_CANDIDATES = ["", ".js"] as const;
+
+/** The member an entry point resolves to, or the declared path when none. */
+const resolveEntryPoint = (
+  declared: string,
+  suffixes: readonly string[],
+  memberPaths: ReadonlyMap<string, string>,
+): { path: string; present: boolean } => {
+  for (const suffix of suffixes) {
+    const member = memberPaths.get(`${declared}${suffix}`.toLowerCase());
+    if (member !== undefined) return { path: member, present: true };
+  }
+  return { path: declared, present: false };
+};
+
 const sameIdSet = (
   left: readonly string[],
   right: readonly string[],
@@ -909,6 +938,9 @@ export const parseVsixPackage = async (
     const packageEngine = packageParsed?.engine ?? null;
     const mainPath = packageParsed?.main ?? null;
     const browserPath = packageParsed?.browser ?? null;
+    const memberPaths = new Map(
+      files.map((file) => [file.path.toLowerCase(), file.path]),
+    );
     const extensionDependencies = {
       vsixmanifest: vsixParsed?.extensionDependencies ?? [],
       package_json: packageParsed?.extensionDependencies ?? [],
@@ -956,17 +988,15 @@ export const parseVsixPackage = async (
         main:
           mainPath === null
             ? null
-            : {
-                path: mainPath,
-                present: presentPaths.has(mainPath.toLowerCase()),
-              },
+            : resolveEntryPoint(mainPath, NODE_ENTRY_CANDIDATES, memberPaths),
         browser:
           browserPath === null
             ? null
-            : {
-                path: browserPath,
-                present: presentPaths.has(browserPath.toLowerCase()),
-              },
+            : resolveEntryPoint(
+                browserPath,
+                BROWSER_ENTRY_CANDIDATES,
+                memberPaths,
+              ),
       },
       activation_events: (packageParsed?.activationEvents ?? []).map(
         (event) => ({
