@@ -1,4 +1,3 @@
-import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
@@ -9,6 +8,7 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
+  type ArtifactResourceScope,
   ArtifactReaderFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
@@ -16,12 +16,16 @@ import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
+  readStableArtifact,
 } from "../../resources/index.js";
 import {
   analysisErrorWithCleanupFailure,
   analysisErrorWithCleanupDependencies,
 } from "../../domain/analysisErrorCleanup.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "../../domain/analysisErrorBase.js";
 import {
   isParseLimit,
   parseLimitConstraint,
@@ -34,6 +38,7 @@ import {
   AnalysisTimeoutError,
   cancelledBy,
   carriedReason,
+  type ResourceConstraintRecovery,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -136,6 +141,7 @@ export const parseRecordedCpuSeconds = (bytes: Buffer): number | undefined => {
 export const recordedDecoderCpuSeconds = async (
   runtimePath: string | undefined,
   cause: unknown,
+  resources?: ArtifactResourceScope,
 ): Promise<number | undefined> => {
   if (
     runtimePath === undefined ||
@@ -143,24 +149,42 @@ export const recordedDecoderCpuSeconds = async (
     cause.snapshot?.signal !== "SIGXCPU"
   )
     return undefined;
-  let descriptor: Awaited<ReturnType<typeof open>> | undefined;
+  // Absence and a bad record stay unknown. A failed close remains on
+  // `resources` when the caller supplied a scope.
   try {
-    descriptor = await open(
+    const snapshot = await readStableArtifact(
       join(runtimePath, EFFECTIVE_DECODER_CPU_RECORD),
-      "r",
+      MAX_EFFECTIVE_CPU_RECORD_BYTES,
+      undefined,
+      undefined,
+      resources,
     );
-    const info = await descriptor.stat();
-    if (info.size > MAX_EFFECTIVE_CPU_RECORD_BYTES) return undefined;
-    const bytes = Buffer.alloc(info.size);
-    const read = await descriptor.read(bytes, 0, info.size, 0);
-    if (read.bytesRead !== info.size) return undefined;
-    return parseRecordedCpuSeconds(bytes);
+    return parseRecordedCpuSeconds(snapshot.bytes);
   } catch {
     return undefined;
-  } finally {
-    await descriptor?.close();
   }
 };
+
+/**
+ * The file's one resource-constraint construction. A fixed work allowance
+ * says additional CPU time does not raise it, which is the wrong recovery
+ * for an inherited RLIMIT_CPU the caller can raise.
+ */
+const historicalCaptureResourceConstraint = (
+  resource: "cpu" | "memory",
+  reason: string,
+  reportedLimits: NonNullable<
+    ConstructorParameters<typeof AnalysisResourceConstraintError>[3]
+  >,
+  options: AnalysisErrorOptions & ResourceConstraintRecovery,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    OPERATION,
+    resource,
+    reason,
+    reportedLimits,
+    options,
+  );
 
 /** A SIGXCPU death names the installed ceiling when the decoder recorded it. */
 const captureCpuSignalFailure = (
@@ -172,8 +196,7 @@ const captureCpuSignalFailure = (
   const reason = recorded
     ? `The effective RLIMIT_CPU of ${String(effectiveCpuSeconds)} seconds stopped the decoder. The requested decoder budget does not raise an inherited limit.`
     : "The decoder terminated with SIGXCPU. The effective CPU limit was not recorded. A requested decoder budget does not raise an inherited RLIMIT_CPU.";
-  return new AnalysisResourceConstraintError(
-    OPERATION,
+  return historicalCaptureResourceConstraint(
     "cpu",
     `${reason}: ${input.capture_path}. No complete capture result is available.`,
     {
@@ -460,8 +483,7 @@ export const captureMemoryFailure = (
   );
   const recovery = captureDecoderHeapRecovery(heap);
   const continuingRecovery = captureDecoderHeapContinuingRecovery(heap);
-  return new AnalysisResourceConstraintError(
-    OPERATION,
+  return historicalCaptureResourceConstraint(
     "memory",
     `${reason}: ${input.capture_path}. No complete capture result is available.`,
     {
