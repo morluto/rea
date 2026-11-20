@@ -746,16 +746,22 @@ export const readElfDependenciesSteps = function* (
   const table = reader.range(dynamic.offset, dynamic.bytes, "PT_DYNAMIC");
   const unique = new Map<bigint, number>();
   const addresses = new Map<bigint, bigint>();
-  const neededOffsets: number[] = [];
+  const neededEntries: {
+    readonly nameOffset: number;
+    readonly sourceOffset: number;
+  }[] = [];
   const walked = walkElfDynamicTable<never>(
     table,
     { bits, littleEndian: reader.little },
     UNIQUE_DYNAMIC_TAGS,
-    ({ tag, value, singleton }) => {
+    ({ tag, value, offset, singleton }) => {
       if (tag === DT_NEEDED) {
-        neededOffsets.push(asNumber(value, "DT_NEEDED"));
+        neededEntries.push({
+          nameOffset: asNumber(value, "DT_NEEDED"),
+          sourceOffset: dynamic.offset + offset,
+        });
         charge(
-          neededOffsets.length,
+          neededEntries.length,
           input.max_needed,
           MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
           "DT_NEEDED entries",
@@ -886,7 +892,7 @@ export const readElfDependenciesSteps = function* (
         : null));
   if (
     dynstrTable === null &&
-    (ambiguousStrings || neededOffsets.length > 0 || unique.has(DT_SONAME))
+    (ambiguousStrings || neededEntries.length > 0 || unique.has(DT_SONAME))
   )
     issues.push({
       code: "table_unavailable",
@@ -901,24 +907,35 @@ export const readElfDependenciesSteps = function* (
       : reader.range(dynstrTable.offset, dynstrTable.size, "DT_STRTAB"),
     bytes.length,
   );
-  const needed: ElfDependencyNeeded[] = neededOffsets.map(
-    (name_offset, index) => {
-      const observed = dynstr.read(name_offset);
+  const needed: ElfDependencyNeeded[] = neededEntries.map(
+    ({ nameOffset, sourceOffset }, index) => {
+      const observed = dynstr.read(nameOffset);
       const name =
         observed.name === null || observed.name.length === 0
           ? null
           : observed.name;
-      if (name === null)
+      if (name === null) {
+        // An unresolved index identifies only its referring dynamic entry.
+        const location =
+          dynstrTable === null || observed.outside
+            ? sourceOffset
+            : dynstrTable.offset + nameOffset;
+        const offset = String(nameOffset);
+        const unresolvedReason =
+          dynstrTable === null
+            ? "could not be read because the dynamic string table is unavailable"
+            : "is outside the dynamic string table";
         issues.push({
           code: "name_unreadable",
-          location: hex((dynstrTable?.offset ?? 0) + name_offset),
+          location: hex(location),
           message: observed.outside
-            ? `DT_NEEDED string offset ${String(name_offset)} is outside the dynamic string table`
+            ? `DT_NEEDED string offset ${offset} ${unresolvedReason}`
             : observed.truncated || observed.name === null
-              ? `DT_NEEDED string at offset ${String(name_offset)} ${unreadString(observed)}`
-              : `DT_NEEDED string at offset ${String(name_offset)} is empty`,
+              ? `DT_NEEDED string at offset ${offset} ${unreadString(observed)}`
+              : `DT_NEEDED string at offset ${offset} is empty`,
         });
-      return { index, name, name_offset };
+      }
+      return { index, name, name_offset: nameOffset };
     },
   );
   const sonameOffset = unique.get(DT_SONAME);

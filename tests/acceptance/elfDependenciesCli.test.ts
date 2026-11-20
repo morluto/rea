@@ -116,3 +116,64 @@ cliTest(
     expect(JSON.stringify(result.json)).toContain("inspect_kernel_module");
   },
 );
+
+for (const tableAvailable of [true, false]) {
+  cliTest(
+    `keeps DT_NEEDED diagnostics at known file bytes (string table available: ${tableAvailable})`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-elf-dependencies-name-location-",
+      );
+      const path = join(root, "program");
+      const badOffset = 0x10000;
+      const image = elfDependencyFixture({
+        bits: 64,
+        little: true,
+        stripped: true,
+        wideNameOffset: badOffset,
+        needed: ["outside", "", "libc.so.6"],
+      });
+      // This fixture writes PT_DYNAMIC as the last header and the needed
+      // records first. Read their file positions independently of the report.
+      const lastHeader =
+        Number(image.readBigUInt64LE(32)) +
+        (image.readUInt16LE(56) - 1) * image.readUInt16LE(54);
+      const dynamicOffset = Number(image.readBigUInt64LE(lastHeader + 8));
+      let tableEntry = dynamicOffset;
+      while (image.readBigInt64LE(tableEntry) !== 5n) tableEntry += 16;
+      const tableOffset = Number(image.readBigUInt64LE(tableEntry + 8));
+      if (!tableAvailable)
+        image.writeBigUInt64LE(BigInt(image.length + 16), tableEntry + 8);
+      await writeFile(path, image);
+
+      const result = await cli.run({
+        arguments: ["inspect-elf-dependencies", path, "--json"],
+      });
+      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+      const report = dependenciesContract.outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      if (!("needed" in report))
+        throw new Error("Expected an inline ELF dependency inventory");
+      expect(report.coverage.status).toBe("partial");
+      expect(report.needed).toMatchObject([
+        { name: null, name_offset: badOffset },
+        { name: null, name_offset: 0 },
+        { name: tableAvailable ? "libc.so.6" : null },
+      ]);
+      const diagnostics = report.issues.filter(
+        ({ code, message }) =>
+          code === "name_unreadable" && message.startsWith("DT_NEEDED "),
+      );
+      expect(diagnostics[0]).toMatchObject({
+        location: `0x${dynamicOffset.toString(16)}`,
+        message: tableAvailable
+          ? "DT_NEEDED string offset 65536 is outside the dynamic string table"
+          : "DT_NEEDED string offset 65536 could not be read because the dynamic string table is unavailable",
+      });
+      expect(diagnostics[1]?.location).toBe(
+        `0x${(tableAvailable ? tableOffset : dynamicOffset + 16).toString(16)}`,
+      );
+    },
+  );
+}
