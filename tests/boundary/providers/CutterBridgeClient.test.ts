@@ -21,7 +21,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
-import { cutterBridgeSourceRecovery } from "../../../src/cutter/CutterBridgeSource.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
@@ -352,8 +351,7 @@ describe("CutterBridgeClient: plugin source identity", () => {
       const recovery = result.sessions[0]?.bridge_source_recovery;
       if (source === "packaged") expect(recovery).toBeUndefined();
       else expect(recovery).toContain(`${packagedPlugin} into Cutter`);
-      if (source === "unknown")
-        expect(recovery).toBe(cutterBridgeSourceRecovery("unknown"));
+      if (source === "unknown") expect(recovery).toContain("source is unknown");
     },
   );
 
