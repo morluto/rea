@@ -48,6 +48,11 @@ const nullishReceiverSource = `
   const { value: reachedBeforeNullish, stop: {}, value: unreachedAfterNullish } = record;
 `;
 
+const nullishDefaultSource = `
+  const record = { stop: undefined, value: "present" };
+  const { value: reachedBeforeDefault, stop: {} = null, value: unreachedAfterDefault } = record;
+`;
+
 const firstDefaultSource = `
   const defined = [0, ["one"]];
   const [used = (defined[1][0] = "dormant"), [inactiveDefaultElement]] = defined;
@@ -106,6 +111,7 @@ const additionalFixtures = [
   ["array-prototype-alias.js", arrayPrototypeAliasSource],
   ["abrupt-object-pattern.js", abruptObjectPatternSource],
   ["nullish-receiver.js", nullishReceiverSource],
+  ["nullish-default.js", nullishDefaultSource],
   ["first-default.js", firstDefaultSource],
   ["immutable-target.js", immutableTargetSource],
   ["class-name-target.js", classNameTargetSource],
@@ -143,6 +149,8 @@ const expectedDependencies = [
   ["unreachedSibling", ["sibling", "0"], "candidate"],
   ["reachedBeforeNullish", ["value"]],
   ["unreachedAfterNullish", ["value"], "candidate"],
+  ["reachedBeforeDefault", ["value"]],
+  ["unreachedAfterDefault", ["value"], "candidate"],
   ["innerElement", ["0", "0"]],
   ["siblingInnerElement", ["1", "0"]],
   ["inactiveDefaultElement", ["1", "0"]],
@@ -185,6 +193,8 @@ const tracedBindings = [
   "unreachedSibling",
   "reachedBeforeNullish",
   "unreachedAfterNullish",
+  "reachedBeforeDefault",
+  "unreachedAfterDefault",
   "innerElement",
   "siblingInnerElement",
   "inactiveDefaultElement",

@@ -29,6 +29,8 @@ it.each([
   ["void 0", "{}"],
   ["null", "[]"],
   ["null", "{} = {}"],
+  ["undefined", "{} = null"],
+  ["void 0", "[] = undefined"],
 ] as const)(
   "leaves bindings after %s matched against %s unproven",
   (value, pattern) => {
@@ -53,6 +55,7 @@ it.each([
   ["const model = { bad: {}, mode: 'one' };", "{}"],
   ["const model = { bad: [], mode: 'one' };", "[]"],
   ["const model = { bad: undefined, mode: 'one' };", "{} = {}"],
+  ["const model = { bad: 0, mode: 'one' };", "{} = null"],
   ["const undefined = 0; const model = { bad: undefined, mode: 'one' };", "{}"],
 ] as const)(
   "preserves the reachable sibling for %s against %s",
