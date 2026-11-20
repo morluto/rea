@@ -1100,25 +1100,37 @@ const inventoryOciImageLayout = async (
   // Reference membership is by resolved blob path: a descriptor spelling
   // such as uppercase hex resolves to the same file as its canonical form.
   const referencedPaths = new Set<string>();
+  // Per-blob findings may already have been emitted while walking the
+  // reference graph; index them once so each check is constant time.
+  const findingKey = (kind: OciImageLayoutFinding["kind"], digest: string) =>
+    `${kind}\u0000${digest}`;
+  const emittedFindings = new Set(
+    findings.flatMap((finding) =>
+      finding.digest === null ? [] : [findingKey(finding.kind, finding.digest)],
+    ),
+  );
+  const recordFindingOnce = (
+    kind: OciImageLayoutFinding["kind"],
+    message: string,
+    digest: string,
+    path: string | null = null,
+  ): void => {
+    const key = findingKey(kind, digest);
+    if (emittedFindings.has(key)) return;
+    emittedFindings.add(key);
+    recordFinding(findings, kind, message, digest, path);
+  };
 
   for (const [digest, reference] of referenced) {
     const parsed = parseOciDigest(digest);
     if (parsed === undefined) {
       // The blob cannot be verified, but its presence is still observable
       // at the path the layout gives every digest.
-      if (
-        !findings.some(
-          (finding) =>
-            finding.kind === "unsupported_digest_algorithm" &&
-            finding.digest === digest,
-        )
-      )
-        recordFinding(
-          findings,
-          "unsupported_digest_algorithm",
-          `Digest ${digest} uses an unsupported algorithm.`,
-          digest,
-        );
+      recordFindingOnce(
+        "unsupported_digest_algorithm",
+        `Digest ${digest} uses an unsupported algorithm.`,
+        digest,
+      );
       const path = unverifiedBlobPath(digest);
       if (path !== undefined) referencedPaths.add(path);
       const entry = path === undefined ? undefined : byPath.get(path);
@@ -1145,19 +1157,12 @@ const inventoryOciImageLayout = async (
     referencedPaths.add(path);
     const entry = byPath.get(path);
     if (entry === undefined) {
-      if (
-        !findings.some(
-          (finding) =>
-            finding.kind === "missing_blob" && finding.digest === digest,
-        )
-      )
-        recordFinding(
-          findings,
-          "missing_blob",
-          `Referenced blob ${digest} is missing.`,
-          digest,
-          path,
-        );
+      recordFindingOnce(
+        "missing_blob",
+        `Referenced blob ${digest} is missing.`,
+        digest,
+        path,
+      );
       blobs.push(
         blobRecord(
           digest,
@@ -1172,19 +1177,12 @@ const inventoryOciImageLayout = async (
       continue;
     }
     if (entry.kind === "symlink") {
-      if (
-        !findings.some(
-          (finding) =>
-            finding.kind === "symlink_blob" && finding.digest === digest,
-        )
-      )
-        recordFinding(
-          findings,
-          "symlink_blob",
-          `Blob ${digest} is a symlink and was not followed.`,
-          digest,
-          path,
-        );
+      recordFindingOnce(
+        "symlink_blob",
+        `Blob ${digest} is a symlink and was not followed.`,
+        digest,
+        path,
+      );
       blobs.push(
         blobRecord(
           digest,
@@ -1199,19 +1197,12 @@ const inventoryOciImageLayout = async (
       continue;
     }
     if (entry.kind !== "file") {
-      if (
-        !findings.some(
-          (finding) =>
-            finding.kind === "missing_blob" && finding.digest === digest,
-        )
-      )
-        recordFinding(
-          findings,
-          "missing_blob",
-          `Referenced blob ${digest} is not a regular file.`,
-          digest,
-          path,
-        );
+      recordFindingOnce(
+        "missing_blob",
+        `Referenced blob ${digest} is not a regular file.`,
+        digest,
+        path,
+      );
       blobs.push(
         blobRecord(
           digest,
