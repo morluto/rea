@@ -987,8 +987,16 @@ const inventoryOciImageLayout = async (
           `Config media type ${JSON.stringify(configDescriptor.media_type)} is unknown.`,
           configDescriptor.digest,
         );
-      let config = configs.get(configDescriptor.digest);
-      if (!configs.has(configDescriptor.digest)) {
+      // Only image config media types are decoded as JSON. Any other config,
+      // such as an artifact's application/octet-stream blob, stays an opaque
+      // reference that the blob pass still hashes.
+      const decodeConfig =
+        configDescriptor.media_type !== null &&
+        isOciConfigMediaType(configDescriptor.media_type);
+      let config = decodeConfig
+        ? configs.get(configDescriptor.digest)
+        : undefined;
+      if (decodeConfig && !configs.has(configDescriptor.digest)) {
         const configDocument = await readReferencedJson(
           configDescriptor.digest,
           `config ${configDescriptor.digest}`,

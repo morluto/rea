@@ -392,6 +392,69 @@ it("refuses an oversize config and preserves the oci-layout snapshot", async () 
   }
 });
 
+it("keeps a non-image config as an opaque hashed reference", async () => {
+  const root = await createTestTempDirectory("rea-oci-opaque-config-");
+  await writeOciImageLayoutFixture(root);
+  const configBytes = Buffer.alloc(4096, 0xff);
+  const configDigest = await putOciBlob(root, configBytes);
+  const layerDigest = await putOciBlob(root, "artifact-layer");
+  const manifestJson = `${JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    artifactType: "application/vnd.example.artifact",
+    config: {
+      mediaType: "application/octet-stream",
+      digest: configDigest,
+      size: configBytes.length,
+    },
+    layers: [
+      {
+        mediaType: "application/vnd.oci.image.layer.v1.tar",
+        digest: layerDigest,
+        size: 14,
+      },
+    ],
+  })}\n`;
+  const manifestDigest = await putOciBlob(root, manifestJson);
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests: [
+        {
+          mediaType: "application/vnd.oci.image.manifest.v1+json",
+          digest: manifestDigest,
+          size: Buffer.byteLength(manifestJson),
+        },
+      ],
+    })}\n`,
+  );
+  const report = await inspectLayout(root, { max_json_bytes: 2048 });
+  expect(report.images).toHaveLength(1);
+  expect(report.images[0]).toMatchObject({
+    digest: manifestDigest,
+    config_digest: configDigest,
+    architecture: null,
+    os: null,
+  });
+  expect(
+    report.findings.filter((finding) => finding.digest === configDigest),
+  ).toEqual([
+    expect.objectContaining({
+      kind: "unknown_media_type",
+      digest: configDigest,
+    }),
+  ]);
+  const parsed = parseOciDigest(configDigest);
+  if (parsed === undefined) throw new Error("expected sha256 config digest");
+  const row = report.blobs.find(
+    (entry) => entry.path === `blobs/sha256/${parsed.hex}`,
+  );
+  expect(row).toMatchObject({ referenced: true, hashed: true });
+  expect(report.coverage.status).toBe("complete");
+});
+
 it("refuses an index.json whose manifests is not an array and keeps the oci-layout snapshot", async () => {
   const root = await createTestTempDirectory("rea-oci-index-manifests-type-");
   await writeOciImageLayoutFixture(root);
