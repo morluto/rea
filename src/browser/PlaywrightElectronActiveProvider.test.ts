@@ -1235,111 +1235,53 @@ const stubCompletedCapture = () => {
   );
 };
 
-it("cancels a completed capture when cancellation arrives during application close", async () => {
-  stubVerifiedElectronCleanup();
-  stubCompletedCapture();
-  const controller = new AbortController();
-  const reason = new Error("SIGTERM during close");
-  const application = {
-    process: () => ({ pid: 424242 }),
-    close: vi.fn(async () => {
-      controller.abort(reason);
-    }),
-    windows: () => [],
-  };
-
-  const result = await captureWithController(controller, application, []);
-
-  expect(application.close).toHaveBeenCalledOnce();
-  if (result.ok) throw new Error("Expected the capture to be cancelled");
-  expect(result.error).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cancelled",
-    partialObservation: {
-      kind: "electron-active-observation",
-      capture: { application: { electron_version: "44.0.0" } },
-    },
-  });
-  expect(result.error.cause).toBe(reason);
-});
-
-it("cancels a completed capture when cancellation arrives during process cleanup", async () => {
-  stubVerifiedElectronCleanup();
-  stubCompletedCapture();
-  const controller = new AbortController();
-  const reason = new Error("SIGTERM during process cleanup");
-  // POSIX cleanup owns the final sweep; Windows uses tree termination.
-  vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
-    async () => {
-      controller.abort(reason);
-      return {
-        cleaned: true,
-        signaled: false,
-        unverified: [{ pid: 777, diagnostic: "command line unavailable" }],
+it.each(["transport", "process"] as const)(
+  "retains completed capture evidence when cancellation arrives during %s cleanup",
+  async (phase) => {
+    stubVerifiedElectronCleanup();
+    stubCompletedCapture();
+    const controller = new AbortController();
+    const reason = new Error(`cancel during ${phase} cleanup`);
+    if (phase === "process") {
+      const finishProcesses = async () => {
+        controller.abort(reason);
+        return {
+          cleaned: true as const,
+          signaled: false,
+          unverified: [{ pid: 777, diagnostic: "command line unavailable" }],
+        };
       };
-    },
-  );
-  vi.spyOn(processOwnership, "cleanupWindowsProcessTree").mockImplementation(
-    async () => {
-      controller.abort(reason);
-      return { cleaned: true, signaled: true };
-    },
-  );
-  const application = {
-    process: () => ({ pid: 424242 }),
-    close: vi.fn(async () => undefined),
-    windows: () => [],
-  };
+      vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
+        finishProcesses,
+      );
+      vi.spyOn(
+        processOwnership,
+        "cleanupWindowsProcessTree",
+      ).mockImplementation(finishProcesses);
+    }
+    const application = {
+      process: () => ({ pid: 424242 }),
+      close: vi.fn(async () => {
+        if (phase === "transport") controller.abort(reason);
+      }),
+      windows: () => [],
+    };
 
-  const result = await captureWithController(controller, application, []);
+    const result = await captureWithController(controller, application, []);
 
-  if (result.ok) throw new Error("Expected the capture to be cancelled");
-  expect(result.error).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cancelled",
-    partialObservation: {
-      kind: "electron-active-observation",
-      capture: { application: { electron_version: "44.0.0" } },
-    },
-  });
-  expect(result.error.cause).toBe(reason);
-});
-
-it("keeps cleanup failure precedence over cancellation observed during cleanup", async () => {
-  stubVerifiedElectronCleanup();
-  stubCompletedCapture();
-  const controller = new AbortController();
-  const failed = async () => {
-    controller.abort(new Error("SIGTERM during process cleanup"));
-    return { cleaned: false as const, reason: "process group still alive" };
-  };
-  vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
-    failed,
-  );
-  vi.spyOn(processOwnership, "cleanupWindowsProcessTree").mockImplementation(
-    failed,
-  );
-  const application = {
-    process: () => ({ pid: 424242 }),
-    close: vi.fn(async () => undefined),
-    windows: () => [],
-  };
-
-  const result = await captureWithController(controller, application, []);
-
-  if (result.ok) throw new Error("Expected cleanup to fail");
-  expect(result.error).toMatchObject({
-    cleanupIncomplete: true,
-    partialObservation: {
-      kind: "electron-active-observation",
-      capture: { application: { cleanup: "unverified" } },
-    },
-  });
-  expect(result.error.cleanupPrimary).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cancelled",
-  });
-});
+    expect(application.close).toHaveBeenCalledOnce();
+    if (result.ok) throw new Error("Expected the capture to be cancelled");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "cancelled",
+      partialObservation: {
+        kind: "electron-active-observation",
+        capture: { application: { electron_version: "44.0.0" } },
+      },
+    });
+    expect(result.error.cause).toBe(reason);
+  },
+);
 
 it.each(["process", "transport"] as const)(
   "preserves cancellation that preceded a %s cleanup failure",
@@ -1528,6 +1470,12 @@ it.each(["process", "transport"] as const)(
       expect(result.error.cleanupPrimary?.cause).toBe(reason);
       expect(result.error.partialObservation).toMatchObject({
         kind: "electron-active-observation",
+        capture: {
+          application: {
+            cleanup:
+              phase === "process" ? "unverified" : "terminated-owned-process",
+          },
+        },
       });
       denied = false;
       await provider.close();
