@@ -1,5 +1,9 @@
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { metadataRowCursor, metadataToken } from "./ManagedMetadataHeaps.js";
+import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import {
+  metadataRowCursor,
+  metadataToken,
+  readRequiredMetadataName,
+} from "../domain/managed/managedMetadataHeaps.js";
 
 /** Meaning of the MethodDef implementation bits, independent of RVA or ImplMap evidence. */
 export interface ManagedMethodImplementationFlags {
@@ -24,20 +28,22 @@ export const readMethodDefinitionRow = (
   readonly implFlags: number;
   readonly flags: number;
   readonly nameIndex: number;
+  readonly nameOffset: number;
   readonly signatureIndex: number;
   readonly implementation: ManagedMethodImplementationFlags;
 } => {
   // Layout admission bounds the whole fixed-width row before a cursor is created.
   const cursor = metadataRowCursor(bytes, layout, 6, row);
-  const rva = cursor.readUInt32();
-  const implFlags = cursor.readUInt16();
-  const flags = cursor.readUInt16();
+  const rva = cursor.u32();
+  const implFlags = cursor.u16();
+  const flags = cursor.u16();
   return {
     token: metadataToken(6, row),
     rowOffset: cursor.start,
     rva,
     implFlags,
     flags,
+    nameOffset: cursor.offset,
     nameIndex: cursor.readIndex(layout.stringIndexSize),
     signatureIndex: cursor.readIndex(layout.blobIndexSize),
     implementation: {
@@ -48,3 +54,19 @@ export const readMethodDefinitionRow = (
     },
   };
 };
+
+export const readMethodDefinitionName = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  definition: Pick<
+    ReturnType<typeof readMethodDefinitionRow>,
+    "token" | "nameIndex" | "nameOffset"
+  >,
+): string =>
+  readRequiredMetadataName(
+    bytes,
+    layout,
+    "MethodDef",
+    definition.token,
+    definition,
+  );

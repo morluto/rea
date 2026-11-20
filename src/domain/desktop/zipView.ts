@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -14,6 +12,8 @@ import {
   desktopViewByteDisplay,
   type DesktopViewPolicy,
 } from "./desktopViewPolicy.js";
+import { isRecord } from "../../kernel/isRecord.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Why an archive has no view; the exported reader words it the same. */
 export const UNREADABLE_ZIP = "not a readable zip archive";
@@ -94,7 +94,7 @@ export const zipEntry = (
   return {
     name: header.name,
     size: header.size,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sha256: sha256Hex(bytes),
     format,
     view: read.ok ? read.value : null,
     view_error: read.ok ? null : read.error,
@@ -110,11 +110,6 @@ export const zipView = (
   entry_count: count,
   truncated: count > entries.length,
 });
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Whether an entry's view is missing or holds only part of it. */
 const entryLeavesOut = (entry: JsonValue): boolean =>

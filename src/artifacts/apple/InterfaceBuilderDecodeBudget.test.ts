@@ -6,8 +6,7 @@ import { buildBinary } from "plist";
 import { describe, expect, it } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
-import { interfaceBuilderDecodeBudgetFailure } from "./InterfaceBuilderDecodeBudget.js";
-import { preflightPropertyListDecode } from "./PropertyListDecodeBudget.js";
+import { preflightPropertyListDecode } from "../../domain/apple/propertyListDecodeBudget.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -128,12 +127,58 @@ describe("inert XML declaration examples in Interface Builder archives", () => {
         undefined,
         {
           budget: "the aggregate Interface Builder decode budget",
-          fail: interfaceBuilderDecodeBudgetFailure,
         },
       ),
     ).toThrow(
       "XML plist internal entity expansion exceeds the aggregate Interface Builder decode budget",
     );
+  });
+
+  it.each([" []", " [ ]", " [\n\t]"])(
+    "admits an empty DOCTYPE internal subset%j, which declares nothing to expand",
+    async (subset) => {
+      const xml = archive("Build").replace(
+        "<plist",
+        `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"${subset}><plist`,
+      );
+      expect(() => parseXmlPropertyList(xml)).not.toThrow();
+      expect(() =>
+        preflightPropertyListDecode(
+          Buffer.from(xml),
+          16 * 1024 * 1024,
+          undefined,
+          {
+            budget: "the aggregate Interface Builder decode budget",
+          },
+        ),
+      ).not.toThrow();
+
+      const root = await createTestTempDirectory("rea-ib-empty-subset-");
+      const bundle = join(root, "Example.app");
+      await mkdir(bundle);
+      await writeFile(join(bundle, "Panel.nib"), Buffer.from(xml));
+      const result = await analyzeInterfaceBuilderBundle({
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+      });
+      expect(result.graph.nodes.map(({ name }) => name)).toContain("Build");
+      expect(result.graph.coverage).toContainEqual(
+        expect.objectContaining({
+          facet: "archive_decode",
+          status: "complete",
+        }),
+      );
+    },
+  );
+
+  it("still refuses a non-empty subset that follows whitespace", () => {
+    const xml = archive("&harmless;").replace(
+      "<plist",
+      '<!DOCTYPE plist [ <!ENTITY harmless "value"> ]><plist',
+    );
+    expect(() =>
+      preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024),
+    ).toThrow(/internal entity expansion/u);
   });
 
   it("does not mistake a bracket in a quoted external identifier for an internal subset", () => {
@@ -301,6 +346,28 @@ describe("binary Interface Builder plist dates", () => {
     expect(JSON.stringify(result)).not.toContain("2001-01-01T00:00:00.100Z");
     expect(result.limitations.join("\n")).toContain(
       "binary plist date marker 0x30 is invalid",
+    );
+  });
+
+  it("reports a reference cycle as an invalid archive, not a budget omission", async () => {
+    // One array (offset 8) whose only reference is itself; 1-byte offsets
+    // and references, offset table at 10.
+    const trailer = Buffer.alloc(32);
+    trailer[6] = 1;
+    trailer[7] = 1;
+    trailer.writeBigUInt64BE(1n, 8);
+    trailer.writeBigUInt64BE(10n, 24);
+    const cycle = Buffer.concat([
+      Buffer.from("bplist00"),
+      Buffer.from([0xa1, 0x00, 0x08]),
+      trailer,
+    ]);
+    const result = await nib(cycle, "cycle");
+    expect(result.limitations.join("\n")).toContain(
+      "Panel.nib: binary plist object references form a cycle",
+    );
+    expect(JSON.stringify(result)).not.toContain(
+      "aggregate_decode_budget_exhausted",
     );
   });
 

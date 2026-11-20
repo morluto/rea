@@ -1,6 +1,7 @@
+import type { HostPlatform } from "../../platform/HostPlatform.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -10,7 +11,7 @@ import {
   type RecordedCrash,
   type RecordedCrashPartialObservation,
 } from "../../domain/native/recordedCrash.js";
-import type { RecordedCrashPort } from "../../application/binaryDiagnostics/RecordedCrashPort.js";
+import type { RecordedCrashPort } from "../../ports/binaryDiagnostics/RecordedCrashPort.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
@@ -39,6 +40,7 @@ export class PwntoolsRecordedCrashProvider
     createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-recorded-crash-" }),
+    host?: HostPlatform,
   ) {
     super(
       {
@@ -101,18 +103,6 @@ export class PwntoolsRecordedCrashProvider
           for (const padding of value.note_padding)
             checkBytes(padding.bytes_base64, padding.location);
           validateRecordedCrashSources(value, snapshot.bytes, diagnostics);
-          for (const thread of value.threads)
-            for (const register of thread.registers) {
-              const start = Number(BigInt(register.location.offset));
-              if (
-                snapshot.bytes.readBigUInt64LE(start) !== BigInt(register.value)
-              )
-                throw new AnalysisOutputError(
-                  "inspect_recorded_crash",
-                  "Reported register value differs from its recorded source bytes.",
-                  { capturedOutput: diagnostics },
-                );
-            }
           return value;
         },
         partialObservation: (input, value) =>
@@ -145,8 +135,7 @@ export class PwntoolsRecordedCrashProvider
             });
           try {
             if (options?.signal?.aborted)
-              throw new AnalysisCancelledError("inspect_recorded_crash", {
-                cause: options.signal.reason,
+              throw cancelledBy("inspect_recorded_crash", options.signal, {
                 capturedOutput: diagnostics,
               });
             const authority = validateCoreFileMappingAuthority(
@@ -196,6 +185,7 @@ export class PwntoolsRecordedCrashProvider
       environment,
       launcher,
       createRuntime,
+      host,
     );
   }
 }

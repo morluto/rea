@@ -7,9 +7,9 @@ import {
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
 import { goBuildInfoSearch } from "../../../src/go/GoBuildInfoSearch.js";
-import { BinaryResourceFailure } from "../../../src/native/metadata/BinaryContainer.js";
-import { readMachoImage } from "../../../src/native/metadata/MachoImage.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { BinaryResourceFailure } from "../../../src/domain/binaryContainer.js";
+import { readMachoImage } from "../../../src/domain/apple/machoImage.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   createGoBinaryByteStringFixture,
@@ -50,7 +50,7 @@ it("preserves exact Mach-O protection masks for Go fallback selection", () => {
   bytes.writeUInt32LE(3, secondSegment + 56);
   bytes.writeUInt32LE(3, secondSegment + 60);
 
-  const container = readBinaryContainer(bytes);
+  const container = readBinaryContainer(bytes, "elf-directory");
   expect(
     container.load_regions?.map((region) => region.protection_masks),
   ).toEqual([
@@ -764,7 +764,8 @@ it("rejects oversized Mach-O file contents when initial protection is set", () =
   );
 });
 
-it("rejects build-info declared inside an unmapped Mach-O segment", () => {
+/** A Mach-O fixture with a second `__go_buildinfo` in an unmapped segment. */
+const unmappedBuildInfoFixture = (keepMapped: boolean) => {
   const fixture = createGoBinaryFixture({ format: "macho" });
   const command = 32 + 72 + 80;
   const size = 72;
@@ -780,13 +781,29 @@ it("rejects build-info declared inside an unmapped Mach-O segment", () => {
   fixture.bytes.writeUInt32LE(3, command + 56);
   fixture.bytes.writeUInt32LE(0, command + 60);
   fixture.bytes.writeUInt32LE(1, command + 64);
+  // Without the mapped declaration, the unmapped one is the only one.
+  if (!keepMapped) fixture.bytes.write("__go_buildinfx", 32 + 72);
   const section = command + size;
   fixture.bytes.write("__go_buildinfo", section);
   fixture.bytes.write("__DWARF", section + 16);
   fixture.bytes.writeBigUInt64LE(0x10000n, section + 32);
   fixture.bytes.writeBigUInt64LE(0n, section + 40);
   fixture.bytes.writeUInt32LE(3072, section + 48);
-  expect(() => readGoBinaryImage(fixture.bytes)).toThrowError(/unmapped/i);
+  return fixture.bytes;
+};
+
+it("rejects build-info declared inside an unmapped Mach-O segment", () => {
+  expect(() => readGoBinaryImage(unmappedBuildInfoFixture(false))).toThrowError(
+    /unmapped/i,
+  );
+});
+
+it("rejects a repeated Mach-O build-info section before reading either", () => {
+  // Previously the first declaration was read before the repeat was noticed,
+  // so the unmapped second one decided the failure.
+  expect(() => readGoBinaryImage(unmappedBuildInfoFixture(true))).toThrowError(
+    "Mach-O has ambiguous build-info sections",
+  );
 });
 
 it("does not mark Mach-O section bytes outside their owning segment as read-only", () => {

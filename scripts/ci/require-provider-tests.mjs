@@ -59,6 +59,8 @@ for (const [path, cases] of Object.entries(requirements[lane])) {
   });
   if (matches.length !== 1 || !Array.isArray(matches[0].assertionResults))
     throw new Error(`Expected exactly one provider test result for ${path}`);
+  if (matches[0].status !== "passed")
+    throw new Error(`Required provider test file did not pass: ${path}`);
   for (const name of cases) {
     const results = matches[0].assertionResults.filter(
       (test) => test?.fullName === name,

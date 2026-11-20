@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -38,7 +38,6 @@ it("retains provider coverage caveats in a composed MCP overview without repeate
   expect(response.isError).not.toBe(true);
   const evidence = parseEvidence(response.structuredContent);
   expect(evidence.limitations).toEqual([
-    expect.stringMatching(/artifact identity.*unavailable/iu),
     "Derived by an REA composed workflow.",
     `Fixture (fixture 1) current_document, list_procedures, list_segments, list_strings: ${limitation}`,
   ]);

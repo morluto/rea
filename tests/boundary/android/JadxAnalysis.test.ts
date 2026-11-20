@@ -393,12 +393,19 @@ it("accepts an examined empty inventory without requiring cursor progress", asyn
 it("requires explicit direct invoke coverage state in result evidence", () => {
   const result = {
     engine,
+    target_definition: "defined",
     class_name: "fixture.Target",
     method_name: null,
     overload_index: null,
     reported_signature: null,
     dex_descriptor: null,
     total: 1,
+    direct_invokes_coverage: {
+      complete_using_nodes: 0,
+      partial_using_nodes: 0,
+      unknown_using_nodes: 1,
+      recorded_sites: 0,
+    },
     references: [
       {
         kind: "method",
@@ -917,6 +924,17 @@ it.each([
     traceWithReference({ direct_invokes: [site] }),
   ).rejects.toThrow();
 });
+
+it.each([true, false])(
+  "rejects invoke coverage %s without the direct invoke site list",
+  async (exhaustive) => {
+    // The bridge always emits the list with its coverage; one without the
+    // other must not become a reference that claims coverage over no sites.
+    await expect(
+      traceWithReference({ direct_invokes_exhaustive: exhaustive }),
+    ).rejects.toThrow("Invoke coverage requires a direct invoke site list");
+  },
+);
 
 it("preserves bounded instruction coverage separately from using-node coverage", async () => {
   const result = await traceWithReference({

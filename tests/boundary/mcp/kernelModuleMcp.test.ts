@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -64,6 +66,28 @@ mcpTest(
           expect.stringContaining("max_modinfo_value_bytes at least 4097"),
         ]),
       );
+      // The result records each control by contract field; MCP text names no
+      // CLI option.
+      expect(initial.normalized_result.modinfo?.omission_limits).toEqual([
+        {
+          control_kind: "parameter",
+          parameter: "max_modinfo_key_bytes",
+          effective_value: 256,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 536870912,
+          default_value: 256,
+          applies_at: "next_call",
+        },
+        expect.objectContaining({
+          parameter: "max_modinfo_value_bytes",
+          effective_value: 4096,
+          default_value: 4096,
+        }),
+      ]);
+      expect(initial.normalized_result.limitations.join(" ")).not.toContain(
+        "--max-modinfo",
+      );
       const recovered = await inspect({
         max_modinfo_key_bytes: 257,
         max_modinfo_value_bytes: 4097,
@@ -76,6 +100,9 @@ mcpTest(
         omitted_fields: [],
       });
       expect(recovered.normalized_result.coverage.status).toBe("complete");
+      expect(recovered.normalized_result.modinfo).not.toHaveProperty(
+        "omission_limits",
+      );
     } finally {
       await session.close();
     }
@@ -111,7 +138,7 @@ mcpTest(
         machine: 20,
         applicability: "applicable",
       });
-      expect(evidence.subject?.architecture).toBe("powerpc");
+      expect(fileIdentity(evidence.subject).architecture).toBe("powerpc");
       expect(evidence.normalized_result.modinfo?.entries[0]).toMatchObject({
         key: "license",
         value: "GPL",
@@ -149,10 +176,7 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const outputSchema = (await client.listTools()).tools.find(
-        (tool) => tool.name === "inspect_kernel_module",
-      )?.outputSchema;
-      if (outputSchema === undefined) throw new Error("Missing output schema");
+      const outputSchema = canonicalOutputSchema("inspect_kernel_module");
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
       expect(ajv.validateSchema(outputSchema as AnySchema)).toBe(true);
       expect(

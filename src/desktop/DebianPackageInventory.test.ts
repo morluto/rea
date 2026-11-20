@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   access,
   chmod,
@@ -15,7 +16,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   A_ARMORED,
   B_ARMORED,
@@ -27,7 +28,12 @@ import {
 import { exportInstall } from "../domain/desktop/appExportInstall.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { QueryOutcome, QueryRunner } from "./HostQuery.js";
+import { mixedDpkgOwnershipStdout } from "./DpkgOwnershipQuery.fixture.js";
+import {
+  runHostQuery,
+  type QueryOutcome,
+  type QueryRunner,
+} from "./HostQuery.js";
 import { inspectLinuxApplication } from "./LinuxApplicationInventory.js";
 
 const NOBLE = "http://ports.ubuntu.com/ubuntu-ports noble/main arm64 Packages";
@@ -377,6 +383,58 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "does not join a lossy installed source to a different index with a literal replacement character",
+  async () => {
+    const uri = "https://vendor.invalid/a\ufffdb";
+    const source = `${uri} ./ Packages`;
+    const repository = {
+      ...TYPORA,
+      source,
+      line: () => "deb https://vendor.invalid/a%EF%BF%BDb ./\n",
+      indexTarget: TYPORA.indexTarget.replaceAll(
+        "https://downloads.typora.io/linux",
+        uri,
+      ),
+    };
+    const { inspect, runQuery } = await vendorFixture({ repository });
+    const result = await inspect(async (command, argv, signal, options) => {
+      if (
+        command !== "apt-cache" ||
+        argv.length !== 2 ||
+        argv[1] !== "typora:arm64"
+      )
+        return runQuery(command, argv, signal, options);
+      const outcome = await runQuery(command, argv, signal, options);
+      if (typeof outcome !== "object")
+        throw new Error("Fixture did not return APT policy");
+      const malformed = Buffer.from(
+        outcome.stdout.replace("\ufffd", "ÿ"),
+        "latin1",
+      );
+      return runHostQuery(
+        process.execPath,
+        [
+          "-e",
+          'process.stdout.write(Buffer.from(process.argv[1], "base64"))',
+          malformed.toString("base64"),
+        ],
+        signal,
+        options,
+      );
+    });
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.package).toMatchObject({
+      name: "typora",
+      sources: [],
+    });
+    expect(result.value.inventory.package.apt_repositories).toEqual([]);
+    expect(result.value.limitations).toContain(
+      "apt-cache policy contained unreadable UTF-8, so the installed version's repository sources are unknown.",
+    );
+  },
+);
+
 describe.skipIf(process.platform === "win32")("vendor repositories", () => {
   it("records the repository apt names with the key gpgv verified, though another signature fails gpgv", async () => {
     const {
@@ -613,6 +671,29 @@ describe.skipIf(process.platform === "win32")(
         ok: false,
         error: { field: "capture", reason: expect.stringContaining(reason) },
       });
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an apt release the check cannot reach",
+  () => {
+    it("says the release files could not be checked rather than that apt holds none", async () => {
+      const { root, inspect } = await vendorFixture();
+      const lists = join(root, "lists");
+      await chmod(lists, 0o000);
+      try {
+        const result = await inspect();
+        if (!result.ok) throw new Error(result.error.reason);
+        const repository = result.value.inventory.package.apt_repositories?.[0];
+
+        expect(repository).toMatchObject({
+          signing_key: null,
+          signing_key_reason: `apt's release files for it in ${lists} could not be checked`,
+        });
+      } finally {
+        await chmod(lists, 0o755);
+      }
     });
   },
 );
@@ -857,6 +938,61 @@ const writerFixture = async () => {
   return { root, runQuery, inspect };
 };
 
+it
+  .skipIf(
+    process.platform !== "linux" ||
+      !existsSync("/usr/bin/apt-cache") ||
+      !existsSync("/usr/bin/apt-config"),
+  )
+  .each(["installed status", "installed status ", "installed\nstatus"])(
+  "does not turn APT's configured database %j into a vendor repository",
+  async (name) => {
+    const { root, runQuery, inspect } = await writerFixture();
+    const status = join(root, name);
+    const lists = join(root, "private-lists");
+    await mkdir(lists);
+    await writeFile(
+      status,
+      `Package: libreoffice-writer\nStatus: install ok installed\nArchitecture: arm64\nVersion: ${WRITER_VERSION}\nDescription: Owned installed-package fixture\n`,
+    );
+    let repositoryQueries = 0;
+    const query: QueryRunner = async (command, argv, signal) => {
+      if (command === "apt-cache" || command === "apt-config")
+        return runHostQuery(
+          `/usr/bin/${command}`,
+          [
+            "-o",
+            `Dir::State::status=${status}`,
+            "-o",
+            `Dir::State::lists=${lists}`,
+            "-o",
+            "Dir::Etc::sourcelist=-",
+            "-o",
+            "Dir::Etc::sourceparts=-",
+            "-o",
+            "APT::Architecture=arm64",
+            ...argv,
+          ],
+          signal,
+        );
+      if (command === "apt-get") repositoryQueries++;
+      return runQuery(command, argv, signal);
+    };
+    const { installed } = await inspect(
+      { desktopEntry: "libreoffice-writer" },
+      { run: query },
+    );
+    expect(installed).toMatchObject({
+      name: "libreoffice-writer",
+      version: WRITER_VERSION,
+      sources: [],
+      source_origins: [],
+      apt_repositories: [],
+    });
+    expect(repositoryQueries).toBe(0);
+  },
+);
+
 describe.skipIf(process.platform === "win32")("desktop entry package", () => {
   it("records the package that owns the launched entry, and the program's when it differs", async () => {
     const { inspect } = await writerFixture();
@@ -1011,6 +1147,43 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     });
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "keeps exact executable ownership and stops on an undecodable first spelling",
+  async () => {
+    const { root, runQuery, inspect } = await writerFixture();
+    const selected = join(root, "bin/libreoffice");
+    const aliasName = "damaged-�";
+    const alias = join(root, "bin", aliasName);
+    await symlink(selected, alias);
+    const raw = mixedDpkgOwnershipStdout(selected, alias);
+    const queried: string[] = [];
+    const run: QueryRunner = async (command, argv, signal, options) => {
+      if (command !== "dpkg-query" || argv[0] !== "-S")
+        return runQuery(command, argv, signal, options);
+      queried.push(...argv.slice(1));
+      return {
+        stdout: raw.toString("utf8"),
+        ...(options?.preserveStdoutBytes ? { stdoutBuffer: raw } : {}),
+        exitCode: 1,
+      };
+    };
+
+    const owned = await inspect({ executable: "libreoffice" }, { run });
+    expect(owned.installed).toMatchObject({
+      kind: "deb",
+      name: "actual-owner",
+    });
+    expect(queried.splice(0)).toEqual([selected]);
+
+    const unknown = await inspect({ executable: aliasName }, { run });
+    expect(unknown.installed).toMatchObject({ kind: "unknown", name: null });
+    expect(unknown.limitations).toContain(
+      `dpkg-query returned unreadable ownership records for ${alias}, so the package that owns the executable is unknown.`,
+    );
+    expect(queried).toEqual([alias]);
+  },
+);
 
 describe.skipIf(process.platform === "win32")(
   "desktop entry program ownership",

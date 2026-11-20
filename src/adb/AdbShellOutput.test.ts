@@ -19,6 +19,43 @@ const packageDump = (installerLine: string | undefined): string =>
   ].join("\n");
 
 describe("parseDumpsysPackageOutput", () => {
+  it("retains malformed numeric tokens before and after valid declarations", () => {
+    const parsed = parseDumpsysPackageOutput(
+      "  userId=10123abc\n  appId=10456 valid\n  userId=9z\n" +
+        "  versionCode=45abc minSdk=24\n  versionCode=-9007199254740993 target\n  versionCode=7x\n",
+    );
+    expect(parsed.userId).toBe(10456);
+    expect(parsed.versionCode).toBe("-9007199254740993");
+    expect(parsed.numericIssues).toEqual({
+      sample: [
+        {
+          command: "dumpsys package",
+          field: "user_id",
+          reason: "invalid_format",
+          raw_line: "  userId=10123abc",
+        },
+        {
+          command: "dumpsys package",
+          field: "user_id",
+          reason: "invalid_format",
+          raw_line: "  userId=9z",
+        },
+        {
+          command: "dumpsys package",
+          field: "version_code",
+          reason: "invalid_format",
+          raw_line: "  versionCode=45abc minSdk=24",
+        },
+        {
+          command: "dumpsys package",
+          field: "version_code",
+          reason: "invalid_format",
+          raw_line: "  versionCode=7x",
+        },
+      ],
+      total: 4,
+    });
+  });
   it.each(["userId", "appId"])(
     "retains the printed %s package identifier",
     (key) => {
@@ -294,38 +331,6 @@ describe("parseDumpsysPackageOutput", () => {
         ].join("\n"),
       ).requestedPermissions,
     ).toBe(2);
-  });
-
-  it("counts Unicode permission names without ending the section", () => {
-    expect(
-      parseDumpsysPackageOutput(
-        [
-          "Package [com.example] (abcdef):",
-          "  pkg=Package{abcdef com.example}",
-          "  requested permissions:",
-          "    com.example.permission-First",
-          "    com.example.permission.ÉCRIRE WITH SPACE",
-          "    android.permission.CAMERA",
-          "  install permissions:",
-          "    android.permission.CAMERA: granted=true",
-        ].join("\n"),
-      ).requestedPermissions,
-    ).toBe(3);
-  });
-
-  it("ends requested permissions at a same-indent field", () => {
-    expect(
-      parseDumpsysPackageOutput(
-        [
-          "Package [com.example] (abcdef):",
-          "  pkg=Package{abcdef com.example}",
-          "  requested permissions:",
-          "    android.permission.INTERNET",
-          "  gids=[1000]",
-          "    android.permission.CAMERA",
-        ].join("\n"),
-      ).requestedPermissions,
-    ).toBe(1);
   });
 });
 

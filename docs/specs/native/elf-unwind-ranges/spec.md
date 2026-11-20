@@ -29,14 +29,14 @@ these files.
    is read no further than the last FDE a decoded search table names. Without
    a usable table it stops at the first undecodable record, including a CIE
    with an unrecognized augmentation and its FDEs, or at the end of
-   its `PT_LOAD` without a terminator, and coverage is `incomplete`.
+   its `PT_LOAD` without a terminator, and coverage is `partial`.
 2. CIEs report version, augmentation, alignment factors, return-address
    register, pointer and LSDA encodings, personality, and signal-frame and
    B-key flags. A page returns only the CIEs its ranges name, so CIE output is
    bounded by `limit`, and `coverage.total_cies` counts every decoded CIE.
    CFA programs are counted, not evaluated. A CIE with an
    unrecognized augmentation letter is not decoded, its FDEs are skipped
-   with a counted limitation, and coverage is `incomplete`.
+   with a counted limitation, and coverage is `partial`.
 3. FDEs become ranges with start, end, size, containing `SHF_ALLOC` section, an exact
    symbol name when one starts at that address (a function, then an
    `STT_GNU_IFUNC` resolver, then an untyped symbol), CIE index, LSDA and
@@ -45,11 +45,11 @@ these files.
    Resolved addresses and FDE ends wrap at the ELF32 or ELF64 address width.
    `datarel` in `.eh_frame` resolves against `DT_PLTGOT`, then `.got.plt` or
    `.got`, and an unresolved base leaves the record out with coverage
-   `incomplete`. Indirect pointers are not dereferenced: an FDE with an
+   `partial`. Indirect pointers are not dereferenced: an FDE with an
    indirect initial location is skipped with a counted limitation, and an
    indirect `eh_frame_ptr` does not locate `.eh_frame`, and a search table
    with an indirect encoding is neither compared nor used as a scan bound.
-   Each leaves coverage `incomplete`.
+   Each leaves coverage `partial`.
 5. A 64-bit extended length keeps the `.eh_frame` CIE ID and pointer at 4
    bytes.
 6. An FDE with a zero initial location is a discarded function. It is counted
@@ -66,7 +66,7 @@ these files.
    lookup across `.symtab` and `.dynsym`. Only symbols at decoded FDE starts
    are kept, names are decoded only for the returned page, and that text has a
    fixed 16 MiB allowance whose recovery is a smaller `limit`. Only the first `PT_GNU_EH_FRAME` is read; a
-   duplicate one that supplies the header makes coverage `incomplete`. Section and symbol lookups use
+   duplicate one that supplies the header makes coverage `partial`. Section and symbol lookups use
    indexes built once per image, so cost does not grow as sections times
    entries. Address translation uses `SHF_ALLOC` sections, then
    `PT_LOAD`; a non-ALLOC section's `sh_addr` is never used.

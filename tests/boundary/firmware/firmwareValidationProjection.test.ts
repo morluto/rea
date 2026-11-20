@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 describe("firmware request validation projection", () => {
@@ -49,8 +49,9 @@ describe("firmware request validation projection", () => {
             },
           ],
         },
-        remediation: {
-          action: expect.stringContaining("Correct the listed fields"),
+        recovery: {
+          kind: "inspect_input_contract",
+          operation: "extract_firmware",
         },
       });
       expect(execute).not.toHaveBeenCalled();

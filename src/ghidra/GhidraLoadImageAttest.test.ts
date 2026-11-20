@@ -20,6 +20,7 @@ import {
   fixtureDosComLoadImage,
 } from "./GhidraLoadImage.fixture.js";
 import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js";
+import { selectGhidraComImport } from "./GhidraComImport.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import { limitationsFor } from "./GhidraProviderCapabilities.js";
 import {
@@ -56,6 +57,10 @@ it.each(["dos-mz", "dos-com", "raw-binary"] as const)(
       operation: "inspect_native_load_image",
       target: fixture.target,
       measured: fixture.observation,
+      comSelection:
+        format === "dos-com" && "bytes" in fixture
+          ? selectGhidraComImport("fixture.com", fixture.bytes)
+          : undefined,
       client:
         format === "dos-mz" && "bytes" in fixture
           ? {

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 const state = vi.hoisted(() => ({
   readbackFailed: false,
@@ -119,10 +120,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-vi.mock("../../src/application/RegularFileRead.js", async (importOriginal) => {
+vi.mock("../../src/process/RegularFileRead.js", async (importOriginal) => {
   const original =
     await importOriginal<
-      typeof import("../../src/application/RegularFileRead.js")
+      typeof import("../../src/process/RegularFileRead.js")
     >();
   return {
     ...original,
@@ -144,9 +145,9 @@ import {
   configureClientConfiguration,
   ClientConfigurationCleanupRollbackFailure,
 } from "../../src/application/SetupClientConfiguration.js";
-import { RegularFileReadFailure } from "../../src/application/RegularFileRead.js";
+import { RegularFileReadFailure } from "../../src/process/RegularFileRead.js";
 import { retryClientConfigurationCleanup } from "../../src/application/ClientConfigurationCleanup.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import type { DoctorHost } from "../../src/application/Doctor.js";
@@ -155,8 +156,7 @@ import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { systemUninstallHost } from "../../src/application/Uninstall.js";
 import { ConfigurationError } from "../../src/domain/configurationErrors.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { createDeferred } from "../fixtures/binarySession.js";
-import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 
 const ownReadHandle = async (path: string) => {
   const owner = new OwnedFileHandle(await open(path, "r"));
@@ -841,11 +841,9 @@ it("uninstall close joins a publication already admitted by its host", async () 
     path,
     '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}\n',
   );
-  const arrived = createDeferred<void>();
-  const release = createDeferred<void>();
+  const publication = phaseGate();
   state.afterPublication = async () => {
-    arrived.resolve();
-    await release.promise;
+    await publication.hold();
   };
   const host = systemUninstallHost(root);
   const removal = host.removeClient({
@@ -854,18 +852,21 @@ it("uninstall close joins a publication already admitted by its host", async () 
     configPath: path,
     format: "json",
   });
-  await arrived.promise;
   let closed = false;
-  const closing = host.close?.().then((result) => {
-    closed = true;
-    return result;
-  });
+  let closing: ReturnType<NonNullable<typeof host.close>> | undefined;
   try {
+    await publication.reached(removal, "configuration publication");
+    closing = host.close?.().then((result) => {
+      closed = true;
+      return result;
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
     expect(state.publicationHandles[0]!.fd).toBeGreaterThanOrEqual(0);
   } finally {
-    release.resolve();
+    publication.release();
+    await Promise.allSettled([removal, ...(closing ? [closing] : [])]);
+    await host.close?.();
   }
   expect((await removal).status).toBe("failed");
   expect(await closing).toBeUndefined();
@@ -976,9 +977,9 @@ it("cleanup retry never adopts an opaque cancellation reason as another owner", 
   const { RegularFileOperationCancelled } =
     await import("../../src/filesystem/RegularFile.js");
   const { ArtifactResourceScope } =
-    await import("../../src/artifacts/ArtifactResourceScope.js");
+    await import("../../src/resources/ArtifactResourceScope.js");
   const { retryRegularFileCleanupFailures } =
-    await import("../../src/application/RegularFileRead.js");
+    await import("../../src/process/RegularFileRead.js");
   const resources = new ArtifactResourceScope();
   const outcome = await retryRegularFileCleanupFailures(
     new RegularFileCleanupFailure({
@@ -1019,12 +1020,10 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
     if (rejectClose) throw new Error("peer close denied");
     await close();
   };
-  const arrived = createDeferred<void>();
-  const release = createDeferred<void>();
+  const publication = phaseGate();
   state.failReadback = false;
   state.afterPublication = async () => {
-    arrived.resolve();
-    await release.promise;
+    await publication.hold();
   };
   const host = systemUninstallHost(root);
   const removal = host.removeClient({
@@ -1035,7 +1034,7 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
   });
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    await arrived.promise;
+    await publication.reached(removal, "configuration publication");
     state.initialCleanupFailure = new RegularFileCleanupFailure({
       path: other,
       owner,
@@ -1052,7 +1051,7 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
       }),
     ).toMatchObject({ status: "failed" });
     state.initialCleanupFailure = undefined;
-    release.resolve();
+    publication.release();
     const result = await Promise.race([
       removal,
       new Promise<never>((_resolve, reject) => {
@@ -1075,7 +1074,7 @@ it("uninstall progresses when a peer leaves a denied-close descriptor pending", 
     if (timeout !== undefined) clearTimeout(timeout);
     state.initialCleanupFailure = undefined;
     rejectClose = false;
-    release.resolve();
+    publication.release();
     await owner.close();
     for (const handle of state.publicationHandles)
       if (handle.fd >= 0) await handle.close();

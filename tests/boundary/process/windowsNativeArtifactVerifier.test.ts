@@ -97,7 +97,7 @@ for (const mode of ["preinstall source", "packed source-free"]) {
         processes.run(
           process.execPath,
           [join(root, "scripts/verify-windows-native-artifact.mjs")],
-          { cwd: root, timeoutMs: 10_000 },
+          { cwd: root },
         );
       const valid = await run();
       expect(valid.exitCode, valid.stderr).toBe(0);

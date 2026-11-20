@@ -9,7 +9,7 @@ owns the bounded scan of the selected artifact and its members.
 `src/application/releaseExposure/ReleaseExposureService.ts` composes the existing
 owners through `ReleaseExposurePort` and decides each check from their results.
 `src/contracts/releaseExposureToolContracts.ts`, `src/cli/releaseExposureCommands.ts`
-and `src/server/registerReleaseExposureTool.ts` are thin adapters over the same
+and its `audit_release_exposure` binding in `src/server/createServer.ts` are thin adapters over the same
 service.
 
 ## Changes to existing owners

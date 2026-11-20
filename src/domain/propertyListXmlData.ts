@@ -1,7 +1,14 @@
+import { ParseFailureError } from "./parseFailure.js";
 import { err, ok, type Result } from "./result.js";
 
-export class XmlPlistDataError extends TypeError {
-  readonly _tag = "XmlPlistDataError";
+/**
+ * An XML plist `<data>` literal that cannot be decoded. A missing source
+ * location means this decoder cannot read the literal; the other reasons are
+ * malformed content.
+ */
+export class XmlPlistDataError extends ParseFailureError<
+  "malformed" | "unsupported"
+> {
   constructor(
     readonly reason:
       | "non-ascii"
@@ -11,7 +18,18 @@ export class XmlPlistDataError extends TypeError {
     /** UTF-16 offset within the raw data literal, when known. */
     readonly characterOffset: number | null = null,
   ) {
-    super(`Cannot decode XML plist <data>: ${reason}`);
+    const detail = `Cannot decode XML plist <data>: ${reason}`;
+    super(
+      reason === "source-location"
+        ? {
+            kind: "unsupported",
+            format: "xml-plist",
+            detail,
+            field: "data",
+            undecodedContent: true,
+          }
+        : { kind: "malformed", format: "xml-plist", detail, field: "data" },
+    );
     this.name = "XmlPlistDataError";
   }
 }

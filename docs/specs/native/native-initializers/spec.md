@@ -26,6 +26,12 @@ slot's location, resolved target and how that target was obtained. The
   `LC_DYLD_INFO` rebases (reported separately), `MH_OBJECT` section
   relocations and `__init_offsets` image-base offsets. Anything else is
   `unresolved`, never a stored zero.
+- Resolve `SHN_XINDEX` through a uniquely linked, complete `SHT_SYMTAB_SHNDX`
+  table. Keep actual section indices separate from raw absolute/common/reserved
+  markers. Unreadable extensions preserve unknowns and independent ordinary symbols.
+- Select ELF relocation rules by machine and word size, including RV32/RV64
+  RELATIVE, RELR and word-sized absolute records. RISC-V TLS and resolver
+  relocations retain unknown values and their known write extents.
 - Relocation coverage is per slot. A slot that a dynamic or section relocation
   only partly overwrites or writes more than once is `unresolved`, and so is an
   absolute relocation against an `STT_GNU_IFUNC` resolver. On 32-bit ARM the
@@ -69,6 +75,11 @@ slot's location, resolved target and how that target was obtained. The
 - Paging uses `offset` / `limit` (default 64, maximum 4096) over a stable
   ordered index. `coverage.examined_entries` counts every slot read, including
   omitted sentinels; `total_entries` is set only when the inventory is complete.
+  `coverage.status` is `partial` when declared slots or names were examined but
+  not reported (budgets, unreadable arrays, withheld names) and `unknown` when
+  completeness cannot be determined (relocation, fixup, symbol or mapping
+  coverage, duplicate or unterminated dynamic tags); unknown wins when both
+  occur.
 - Malformed headers, multiple `PT_DYNAMIC` segments and truncated dynamic
   sections fail without partial success. Cancellation is honored during slot
   collection, the section relocation walk and the dynamic relocation walk,
@@ -94,6 +105,6 @@ and MCP boundary tests exercise the public workflows and Evidence output.
 Executing the image or proving that a listed address runs; runtime ordering
 (file order is reported); disassembling initializer bodies; PE/COFF TLS
 callbacks; Android packed relocations and machines other than x86-64, i386,
-AArch64 and 32-bit ARM for relocation decoding; Mach-O fixup decoding for
+AArch64, 32-bit ARM and RV32/RV64 for relocation decoding; Mach-O fixup decoding for
 images other than little-endian 64-bit arm64 and x86-64, and legacy
 `LC_DYSYMTAB` external relocations.

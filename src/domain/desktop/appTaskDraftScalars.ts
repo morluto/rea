@@ -1,6 +1,6 @@
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues, type JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { numberOf, sameJson } from "./appTaskChecks.js";
+import { numberOf } from "./appTaskChecks.js";
 
 /** How far a decimal the app writes as text may drift, such as `437.80000000000001` for 437.8, and still match. */
 export const DECIMAL_TOLERANCE = 0.001;
@@ -28,7 +28,7 @@ export const passesOn = (
   const number = numberOf(value);
   return check.tolerance !== undefined && typeof check.value === "number"
     ? number !== undefined && Math.abs(number - check.value) <= check.tolerance
-    : sameJson(value, check.value);
+    : equalJsonValues(value, check.value);
 };
 
 /**

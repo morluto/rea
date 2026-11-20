@@ -97,7 +97,10 @@ Run the repository's applicable checks and inspect complete current-head CI
 results before an authorized merge. Preserve required coverage and discovery
 gates. Do not suppress a failure, add blanket retries, raise timeouts, or delete
 distinct assertions solely to make CI green. Changes to these controls need
-their own demonstrated reason and retained failure detection.
+their own demonstrated reason and retained failure detection. A slow-host
+failure at a literal test, child, or wait deadline belongs to the
+[test deadline policy](../../../docs/development/testing.md#developer-commands):
+remove the literal rather than raise it, and keep promptness oracles explicit.
 
 Report each confirmed issue with exact revision, reproduction, consequence,
 proposed correction, and validation limits. Report performance with workload

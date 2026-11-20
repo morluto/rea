@@ -558,3 +558,48 @@ it("accepts genuinely empty inventories as complete", async () => {
   expect(before.storage.fingerprints_complete).toBe(true);
   expect(compareStorage(before, after).status).toBe("unchanged");
 });
+
+it.each([
+  ["Network.getCookies", { cookies: null }],
+  ["IndexedDB.requestDatabase", { databaseWithObjectStores: null }],
+  ["IndexedDB.requestData", { objectStoreDataEntries: [], hasMore: "no" }],
+  ["CacheStorage.requestEntries", { cacheDataEntries: [], returnCount: -1 }],
+  ["CacheStorage.requestCachedResponse", { response: { body: 7 } }],
+] as const)(
+  "records a malformed %s reply as a fingerprint gap and keeps other storage evidence",
+  async (method, reply) => {
+    const { capture } = await inspect({
+      commandResult: (command) =>
+        command.method === method ? reply : undefined,
+    });
+    const captured = await capture();
+    expect(captured.storage.fingerprints_complete).toBe(false);
+    expect(captured.storage.local_storage_keys).toEqual(["public-key"]);
+    expect(captured.storage.indexed_db_names).toEqual(["app-db"]);
+    expect(captured.storage.cache_names).toEqual(["assets-v1"]);
+    expect(captured.storage.content_fingerprints).toContainEqual(
+      expect.objectContaining({ scope: "local_storage", complete: true }),
+    );
+    expect(captured.limitations).toContain(
+      `${method} returned a malformed result; the section that reads it is incomplete.`,
+    );
+  },
+);
+
+it("keeps an unreadable storage quota unknown beside the storage inventory", async () => {
+  const { capture } = await inspect({
+    commandResult: (command) =>
+      command.method === "Storage.getUsageAndQuota"
+        ? { usage: "42", quota: 1_024 }
+        : undefined,
+  });
+  const captured = await capture();
+  expect(captured.storage).toMatchObject({
+    usage_bytes: null,
+    quota_bytes: null,
+    local_storage_keys: ["public-key"],
+  });
+  expect(captured.limitations).toContain(
+    "Storage.getUsageAndQuota returned a malformed result; the section that reads it is incomplete.",
+  );
+});

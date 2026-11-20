@@ -6,9 +6,9 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
-} from "./SetupDesktopBuild.js";
+} from "../ports/DesktopBuildHost.js";
 import type { SetupOptions, SetupProviderEnvironment } from "./SetupTypes.js";
-import { supportedClientRegistrationProfile } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 const ARCHIVE = "/home/ada/.cache/rea/build-computer/rea-6.8.0.tar.xz";
 const SETTINGS = {
