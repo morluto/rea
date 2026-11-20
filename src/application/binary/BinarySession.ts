@@ -1223,12 +1223,14 @@ export class BinarySession
       run,
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
-    if (!closed.ok)
+    if (!closed.ok) {
+      this.#clearUnrestoredSnapshot();
       return analysisErrorWithCloseRejection(
         primary,
         closed.error,
         "open_binary",
       );
+    }
     return this.#restoreAfterFailedOpen(previous, primary);
   }
 
@@ -1238,6 +1240,7 @@ export class BinarySession
   ): Promise<AnalysisError> {
     const restored = await this.#restore(previous);
     if (restored.ok) return primary;
+    this.#clearUnrestoredSnapshot();
     primary.retainSecondaryFailure(restored.error, {
       restoration_error: projectAnalysisError(
         primaryAnalysisError(restored.error),
@@ -1721,6 +1724,13 @@ export class BinarySession
     } catch {
       return false;
     }
+  }
+
+  /** No active target remains, so the snapshot cache must not keep the retired binding. */
+  #clearUnrestoredSnapshot(): void {
+    if (this.#active !== undefined) return;
+    this.clearSnapshot();
+    this.#clearRuntimeAvailability();
   }
 
   async #restore(
