@@ -2,7 +2,12 @@ import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
-import { machoImage, readerOf } from "../artifacts/apple/MachoImage.fixture.js";
+import {
+  dylibUseCommand,
+  machoImage,
+  readerOf,
+} from "../artifacts/apple/MachoImage.fixture.js";
+import { LC } from "../domain/apple/machoLoadCommandCodes.js";
 
 it("owns retained command bytes independently of Buffer-backed read windows", async () => {
   const paddedSize = 256 * 1024;
@@ -191,6 +196,28 @@ it("retains alternate dylib flags and legacy platform versions", async () => {
     sdk: 0x000f0000,
   });
 });
+
+it.each([LC.REEXPORT_DYLIB, LC.LOAD_UPWARD_DYLIB])(
+  "preserves marker-bearing encoding for dependency command %i",
+  async (command) => {
+    const image = machoImage({
+      commands: [dylibUseCommand(command, "@rpath/libMarked.dylib", 0x0a)],
+    });
+    const result = await readMachoCommandNames(
+      readerOf(image),
+      image.length,
+      128,
+      1,
+    );
+    expect(result.commands[0]?.dylib).toMatchObject({
+      nameOffset: 28,
+      encoding: { kind: "use", flags: 0x0a },
+    });
+    expect(projectMachoBinary(result).commands[0]?.fields).toMatchObject({
+      options: 0x0a,
+    });
+  },
+);
 
 it("retains bounded linker options and dylinker strings with embedded framing", async () => {
   const strings = Buffer.from("-lone\0\nLoad command 1\0");
@@ -670,4 +697,29 @@ it("retains legacy on-disk dylib and fixed-library identities", async () => {
       4,
     ),
   ).rejects.toThrow("bitmap exceeds");
+});
+
+it("reads both LC_MAIN words from a big-endian command subview", async () => {
+  const backing = Buffer.alloc(61, 0xee);
+  const image = backing.subarray(3, 59);
+  image.fill(0);
+  image.writeUInt32BE(0xfeedfacf, 0);
+  image.writeUInt32BE(0x01000012, 4);
+  image.writeUInt32BE(2, 12);
+  image.writeUInt32BE(1, 16);
+  image.writeUInt32BE(24, 20);
+  image.writeUInt32BE(0x80000028, 32);
+  image.writeUInt32BE(24, 36);
+  image.writeBigUInt64BE(0x0123456789abcdefn, 40);
+  image.writeBigUInt64BE(0xfedcba9876543210n, 48);
+  const read = async (offset: number, size: number) =>
+    new Uint8Array(image.buffer, image.byteOffset + offset, size);
+  const result = await readMachoCommandNames(read, image.length, 0, 1);
+  expect(result.commands[0]?.entrypoint).toEqual({
+    offset: 0x0123456789abcdefn,
+    stackSize: 0xfedcba9876543210n,
+  });
+  await expect(
+    readMachoCommandNames(read, image.length - 1, 0, 1),
+  ).rejects.toMatchObject({ kind: "malformed" });
 });

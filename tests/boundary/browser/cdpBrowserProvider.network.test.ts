@@ -1123,7 +1123,7 @@ describe("redirect origin policy", () => {
   });
 });
 
-it("keeps response facts with an unknown optional status without changing request identity", async () => {
+it("keeps response facts when the reported status is malformed", async () => {
   const browser = await startFakeCdpBrowser({
     commandEvents(command, origin) {
       if (command.method !== "Network.enable") return undefined;
@@ -1144,7 +1144,7 @@ it("keeps response facts with an unknown optional status without changing reques
             requestId: "partial-response",
             response: {
               url: `${origin}/reported-response`,
-              status: "malformed",
+              status: 200.5,
               mimeType: "application/json",
               headers: {
                 "Content-Type": "application/json",

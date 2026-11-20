@@ -48,7 +48,7 @@ it.each([
   "retains read-only ELF section bytes with a %s name",
   (name, expectedName) => {
     const bytes = rustElfSectionNameFixture(name);
-    const container = readBinaryContainer(bytes);
+    const container = readBinaryContainer(bytes, "elf-directory");
     expect(container.load_regions?.every(({ write }) => write)).toBe(true);
     expect(container.sections).toContainEqual(
       expect.objectContaining({
@@ -77,7 +77,9 @@ it.each([
     const bytes = rustElfSectionNameFixture("empty");
     bytes.writeUInt32LE(type, 384 + 4);
     bytes.writeBigUInt64LE(flags, 384 + 8);
-    expect(readBinaryContainer(bytes).sections).not.toContainEqual(
+    expect(
+      readBinaryContainer(bytes, "elf-directory").sections,
+    ).not.toContainEqual(
       expect.objectContaining({ offset: 2048, read_only: true }),
     );
     expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
@@ -88,9 +90,9 @@ it("does not scan an unnamed ELF section whose declared range leaves the file", 
   const bytes = rustElfSectionNameFixture("empty");
   // The compiler path still exists at 2048, but its declared section no longer fits.
   bytes.writeBigUInt64LE(BigInt(bytes.length), 384 + 32);
-  expect(readBinaryContainer(bytes).sections).not.toContainEqual(
-    expect.objectContaining({ read_only: true }),
-  );
+  expect(
+    readBinaryContainer(bytes, "elf-directory").sections,
+  ).not.toContainEqual(expect.objectContaining({ read_only: true }));
   expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
 });
 
@@ -319,6 +321,27 @@ it("bounds the synchronous WebAssembly section walk", () => {
   );
 });
 
+it.each([
+  ["a truncated size", Buffer.from([0x00, 0x80]), "truncated", "section size"],
+  [
+    "an overflowing size",
+    Buffer.from([0x00, 0xff, 0xff, 0xff, 0xff, 0x1f]),
+    "malformed",
+    "section size",
+  ],
+  ["missing contents", Buffer.from([0x00, 0x01]), "truncated", "section"],
+] as const)(
+  "reports %s at the WebAssembly section limit",
+  (_name, tail, kind, field) => {
+    const bytes = Buffer.concat([createWasmSectionFlood(65_536), tail]);
+    expect(() => readRustBinaryImage(bytes)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind, format: "wasm", field }),
+      }),
+    );
+  },
+);
+
 it("preserves the arm64_32 Mach-O CPU family when dependency metadata is absent", () => {
   const bytes = createRustImage({
     format: "macho",
@@ -499,7 +522,7 @@ it("keeps the container's truncated failure and its facts unchanged", () => {
     }
     throw new Error("expected a container failure");
   };
-  const container = thrown(() => readBinaryContainer(bytes));
+  const container = thrown(() => readBinaryContainer(bytes, "elf-directory"));
   const rust = thrown(() => readRustBinaryImage(bytes));
   expect(rust).toBeInstanceOf(ParseFailureError);
   expect((rust as ParseFailureError).failure).toEqual(
@@ -602,8 +625,8 @@ it.each([
     } else {
       sectionName.copy(control, sectionOffset);
     }
-    expect(readBinaryContainer(bytes).load_regions).toEqual(
-      readBinaryContainer(control).load_regions,
+    expect(readBinaryContainer(bytes, "elf-directory").load_regions).toEqual(
+      readBinaryContainer(control, "elf-directory").load_regions,
     );
     expect(() => readGoBinaryImage(bytes)).toThrow(/build-info|mapped/i);
     expect(readRustBinaryImage(bytes)).toMatchObject({

@@ -14,7 +14,11 @@ it.each(formats)(
     const wide = bits === 64;
     const length = wide ? 64 : 40;
     const backing = Buffer.alloc(length + 19, 0xa5);
-    const bytes = backing.subarray(7, 7 + length);
+    const bytes = new Uint8Array(
+      backing.buffer,
+      backing.byteOffset + 7,
+      length,
+    );
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const values = wide
       ? [
@@ -44,7 +48,7 @@ it.each(formats)(
     });
     const before = Buffer.from(backing);
     const parsed = readElfSectionHeader(
-      backing.subarray(7),
+      new Uint8Array(backing.buffer, bytes.byteOffset, length + 5),
       bits,
       littleEndian,
     );

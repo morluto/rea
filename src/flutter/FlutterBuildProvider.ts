@@ -9,7 +9,10 @@ import {
   type ArtifactEntry,
   ZipArtifactReader,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
@@ -66,12 +69,8 @@ import {
   LabeledStringScanner,
   SnapshotHashScanner,
 } from "./FlutterPayloadScan.js";
-import {
-  ELF_HEADER_MAX_BYTES,
-  readElfHeader,
-  readElfSymbols,
-  readSnapshotHeader,
-} from "./DartElf.js";
+import { ELF_HEADER_MAX_BYTES, readElfHeader } from "./DartElf.js";
+import { observeDartSnapshot } from "./DartSnapshotProfile.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -86,8 +85,6 @@ const APK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 // engine labels this keeps expanded result metadata below 512 KiB for ordinary
 // ABI names, independently of the archive's compressed-byte budget.
 const MAX_FLUTTER_ABIS = 32;
-/** A complete AOT image carries exactly one VM and one isolate section. */
-const SYMBOL_PAIR_COUNT = 2;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 
 /** Each release-fixed Flutter ceiling with the value that refused the input. */
@@ -581,7 +578,7 @@ export class FlutterBuildProvider {
       const primary = mapOwnedIoFailure(operation, cause, root);
       const released = await this.discardRoot(root);
       if (!released)
-        throw this.withCleanup(
+        throw analysisErrorWithCleanupDependencies(
           primary,
           this.cleanupError(root, operation),
           operation,
@@ -697,14 +694,6 @@ export class FlutterBuildProvider {
     return error;
   }
 
-  private withCleanup(
-    primary: AnalysisError,
-    cleanup: AnalysisError,
-    operation: string,
-  ): AnalysisError {
-    return analysisErrorWithCleanupDependencies(primary, cleanup, operation);
-  }
-
   /** Stop admission and drain active snapshots before attempting retained cleanup. */
   async close(): Promise<void> {
     await this.operations.close();
@@ -721,9 +710,9 @@ export class FlutterBuildProvider {
     }
     if (failures.length === 1) throw failures[0];
     if (failures.length > 1)
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         FLUTTER_PROVIDER_IDENTITY.id,
-        failures.flatMap((failure) => failure.cleanupResources),
+        failures,
         {
           reason: failures
             .map((failure) => failure.diagnostics?.reason ?? failure.message)
@@ -733,11 +722,8 @@ export class FlutterBuildProvider {
             return Array.isArray(roots) ? roots : [];
           }),
         },
-        {
-          cause: new AggregateError(failures),
-          operation,
-        },
-      ).bindCleanupDependencies(failures);
+        { operation },
+      );
   }
 
   async execute(
@@ -855,7 +841,13 @@ export class FlutterBuildProvider {
       );
     if (cleanup !== undefined) {
       if (!result.ok)
-        return err(this.withCleanup(result.error, cleanup, request.operation));
+        return err(
+          analysisErrorWithCleanupDependencies(
+            result.error,
+            cleanup,
+            request.operation,
+          ),
+        );
       cleanup.retainPartialObservation(
         createAnalysisExecutionEvidence(
           request.operation,
@@ -1258,124 +1250,21 @@ export class FlutterBuildProvider {
     }
     assertArtifactReadActive(signal);
     const bounded = image.subarray(0, imageLength);
-    const symbolNames = [
-      "_kDartVmSnapshotData",
-      "_kDartVmSnapshotInstructions",
-      "_kDartIsolateSnapshotData",
-      "_kDartIsolateSnapshotInstructions",
-    ];
-    const sections: {
-      name: string;
-      offset: number;
-      size: number;
-      magic_valid: boolean;
-      kind: number | null;
-      header_length: number | null;
-    }[] = [];
-    const dataHeaders: {
-      name: string;
-      offset: number;
-      size: number;
-      header: ReturnType<typeof readSnapshotHeader>;
-    }[] = [];
-    let isolateData: Buffer | null = null;
-    const inventory = await readElfSymbols(bounded, symbolNames, signal);
-    for (const symbol of inventory.symbols) {
-      const name = symbol.name;
-      const header = name.endsWith("Data")
-        ? readSnapshotHeader(
-            bounded.subarray(symbol.offset, symbol.offset + symbol.size),
-            0,
-          )
-        : null;
-      sections.push({
-        name,
-        offset: symbol.offset,
-        size: symbol.size,
-        magic_valid: header?.magicValid ?? false,
-        kind: header?.kind ?? null,
-        header_length: header?.headerLength ?? null,
-      });
-      if (header !== null) dataHeaders.push({ ...symbol, header });
-      if (name === "_kDartIsolateSnapshotData")
-        isolateData = image.subarray(
-          symbol.offset,
-          symbol.offset + symbol.size,
-        );
-    }
-    // Each exported data symbol owns one header at its start. Matching
-    // records elsewhere in a symbol are not evidence for the other
-    // symbol's hash. Count a physical header only once for aliased exports.
-    const observedOffsets = new Set<number>();
-    let aliasedDataSymbols = false;
-    const hashes: string[] = [];
-    for (const section of dataHeaders) {
-      if (observedOffsets.has(section.offset)) {
-        aliasedDataSymbols = true;
-        continue;
-      }
-      observedOffsets.add(section.offset);
-      if (section.header.hash !== null) hashes.push(section.header.hash);
-    }
-    const hashScan = {
-      sources: hashes.length,
-      candidates: [...new Set(hashes)],
-    };
-    const overlappingDataSymbols = dataHeaders.some((section, index) =>
-      dataHeaders
-        .slice(0, index)
-        .some(
-          (previous) =>
-            previous.offset < section.offset + section.size &&
-            section.offset < previous.offset + previous.size,
-        ),
-    );
-    if (sections.length === 0) {
-      // This is a profile diagnostic, not aliases for the split data sources.
-      // Probe only after the legacy selection fails, leaving its normal path
-      // and two-source completeness rule unchanged.
-      const unified = await readElfSymbols(
-        bounded,
-        ["_kDartSnapshotData", "_kDartSnapshotText"],
-        signal,
-      );
-      if (unified.symbols.length > 0)
-        return err(
-          new AnalysisUnsupportedTargetError(
-            "inspect_dart_aot",
-            path,
-            "Observed unified Dart snapshot exports; this reader supports the legacy split VM/isolate profile (Dart 2.14 FullAOT kind 3). The unified profile is unsupported, not missing legacy data",
-            {
-              diagnostics: {
-                supported_profile: "dart-2.14-split-full-aot",
-                observed_exports: unified.symbols.map(
-                  ({ name, offset, size }) => ({ name, offset, size }),
-                ),
-                abi: selected.abi,
-                libapp_sha256: imageSha256,
-                libapp_bytes: imageLength,
-              },
-            },
-          ),
-        );
+    const snapshotFacts = await observeDartSnapshot(bounded, signal);
+    if (!snapshotFacts.observed)
       return err(
         new AnalysisUnsupportedTargetError(
           "inspect_dart_aot",
           path,
-          `No recognizable legacy split Dart snapshot symbols were found: ${inventory.failures.map((failure) => failure.reason).join("; ")}`,
+          `No recognizable Dart snapshot symbols were found: ${snapshotFacts.reasons.join("; ")}`,
         ),
       );
-    }
-    const pool = await projectStringPool(isolateData, signal, poolPolicy);
-    const snapshotPartial =
-      inventory.failures.length > 0 ||
-      aliasedDataSymbols ||
-      overlappingDataSymbols ||
-      sections.length < symbolNames.length ||
-      dataHeaders.length !== SYMBOL_PAIR_COUNT ||
-      dataHeaders.some((section) => !section.header.complete) ||
-      hashScan.candidates.length !== 1 ||
-      hashScan.sources !== SYMBOL_PAIR_COUNT;
+    const pool = await projectStringPool(
+      snapshotFacts.pool,
+      signal,
+      poolPolicy,
+    );
+    const snapshotPartial = !snapshotFacts.complete;
     const poolBudgetsReached = new Set<DartPoolBudget>(pool.limitsReached);
     if (
       pool.packageUriCount > poolPolicy.uri_limit ||
@@ -1385,7 +1274,7 @@ export class FlutterBuildProvider {
     if (pool.classLikeTokenCount > poolPolicy.token_limit)
       poolBudgetsReached.add("token_limit");
     const poolPartial =
-      isolateData === null ||
+      snapshotFacts.pool === null ||
       pool.collectionCapped ||
       pool.packageUriCount > poolPolicy.uri_limit ||
       pool.dartUriCount > poolPolicy.uri_limit ||
@@ -1400,10 +1289,13 @@ export class FlutterBuildProvider {
             bytes: imageLength,
             sha256: imageSha256,
             snapshot_hash:
-              hashScan.candidates.length === 1 ? hashScan.candidates[0]! : null,
-            snapshot_hash_candidates: [...hashScan.candidates],
-            snapshot_hash_sources: hashScan.sources,
-            sections,
+              snapshotFacts.hashes.candidates.length === 1
+                ? snapshotFacts.hashes.candidates[0]!
+                : null,
+            snapshot_hash_candidates: snapshotFacts.hashes.candidates,
+            snapshot_hash_sources: snapshotFacts.hashes.sources,
+            snapshot_profile: snapshotFacts.profile,
+            sections: snapshotFacts.sections,
           },
           string_pool: {
             policy: { ...poolPolicy },
@@ -1435,32 +1327,11 @@ export class FlutterBuildProvider {
           limitations: [
             "The APK is read through an owned read-only snapshot; concurrent changes to the original cannot mix into this observation",
             "Snapshot sections are located through the ELF dynamic symbol table; a payload without exported snapshot symbols is refused rather than guessed",
-            "Snapshot hash sources are the headers at the start of the VM and isolate data symbols; complete decoding supports kind 3 (the Dart 2.14 FullAOT layout), a valid hash and a declared length that fits its symbol, including the four magic bytes; other kind values remain observed with partial coverage",
-            "String-pool entries are byte-pattern observations from the isolate data section, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser",
+            "Snapshot hash sources count distinct physical headers. FullAOT kind 3 supports the legacy split profile and kind 2 supports the unified profile when the corresponding exports and header extents agree",
+            "String-pool entries are byte-pattern observations from the selected snapshot data symbol",
             "class_like_tokens are identifier-shaped runs and include incidental matches",
             "URI/token counts are lower bounds for runs matching pool_policy.contains: distinct collection stops at twice each selected projection bound. printable_run_count counts complete printable runs before filtering; overflowed runs are omitted, never fabricated as prefixes",
-            ...inventory.failures.map((failure) => failure.reason),
-            ...(sections.length < symbolNames.length
-              ? [
-                  `Only ${String(sections.length)} of 4 snapshot symbols were present`,
-                ]
-              : []),
-            ...(aliasedDataSymbols
-              ? [
-                  "Two or more snapshot data symbols share one header offset; its hash counts as one source instead of two agreeing ones",
-                ]
-              : []),
-            ...(overlappingDataSymbols && !aliasedDataSymbols
-              ? [
-                  "Snapshot data symbol ranges overlap; independent VM/isolate coverage is not established",
-                ]
-              : []),
-            ...dataHeaders
-              .filter((section) => !section.header.complete)
-              .map(
-                (section) =>
-                  `${section.name} has an incomplete or invalid snapshot header: kind ${String(section.header.kind)} (AOT app requires 3), declared length ${String(section.header.headerLength)} excludes the four magic bytes, symbol size ${String(section.size)}, valid hash ${String(section.header.hash !== null)}`,
-              ),
+            ...snapshotFacts.limitations,
             ...pool.limitsReached.map(
               (limit) =>
                 `String-pool admission reached pool_policy.${limit}=${String(poolPolicy[limit])}. Retry with a narrower pool_policy.contains or increase ${limit}; string_pool.limits records the control and no REA restart is required. Counts remain lower bounds and overflowed runs are omitted. APK, library and response limits are unchanged`,

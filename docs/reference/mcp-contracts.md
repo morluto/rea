@@ -1844,10 +1844,11 @@ deadline still applies. Choose the total budget for the expected workload;
 neither server configuration nor progress can override a remote caller's
 deadline.
 
-The 240-second setting is a measured example, not a universal timeout: a
-controlled Linux x64/WSL2 fixture took about 64 seconds for its first overview
-with Ghidra 12.1.4 on a mounted NTFS installation, native JDK 21, two CPUs, and a
-512 MiB Java heap. Target size, storage, and analysis work can change that time.
+The 240-second setting is a measured example, not a universal timeout. Recorded
+on Ghidra 12.1.4 with native JDK 21 (no longer accepted); not yet re-run on
+12.2. A controlled Linux x64/WSL2 fixture took about 64 seconds for its first
+overview on a mounted NTFS installation, with two CPUs and a 512 MiB Java heap.
+Target size, storage, and analysis work can change that time.
 Configure the deadline in the caller's existing request settings; it is not a
 tool argument, setup grant, or server-side automatic extension. CLI analysis has
 no MCP client request deadline, but keeps the provider startup deadline and
@@ -1878,8 +1879,9 @@ connection cannot apply a changed launch environment. See the
 
 This close/reopen flow was exercised on one real Linux stdio connection after a
 controlled startup timeout, followed by a successful overview and function
-analysis. A separate Windows x64 stdio run with Ghidra 12.1.4, JDK 21 and Node
-22.19.0 exercised the same connection and caller-selected native PE: the default
+analysis. Recorded on Ghidra 12.1.4 with JDK 21 (no longer accepted); not yet
+re-run on 12.2. A separate Windows x64 stdio run with Node 22.19.0 exercised the
+same connection and caller-selected native PE: the default
 60-second client request timed out, close succeeded, and reopening before a
 240-second request completed the cold overview in about 163 seconds. The next
 overview took about 19 ms. The cold and warm overviews reported two procedures
@@ -2498,12 +2500,13 @@ Custom clients upgrading from 6.1 should follow the
 [6.2 migration guide](../migrations/migration-6.2.md#mcp-results-and-evidence).
 
 Run `npm run docs:generate` in a source checkout to generate the machine-readable
-catalog at `docs/public/product-catalog.json`. Documentation deployments serve
-the same file at [/rea/product-catalog.json](../public/product-catalog.json). PR CI retains it with the packaged
-skill and portable conformance projections in the `generated-docs` artifact.
-These outputs describe the exact source revision being built; they are not
-checked-in snapshots. For a running server, `binary_session` remains the
-authoritative source of catalog identity and tool availability.
+catalog at `docs/public/product-catalog.json`. Run `npm run docs:build` and
+`npm run docs:preview` to serve it locally at `/rea/product-catalog.json`. A
+successful [CI documentation job](https://github.com/morluto/rea/blob/main/.github/workflows/ci.yml)
+uploads the catalog, packaged skill, and portable conformance projections in
+the `generated-docs` artifact. These copies describe the source revision that
+generated them. For a running server, use `binary_session` for catalog identity
+and tool availability.
 
 ## Offline Playwright traces
 

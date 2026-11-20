@@ -5,17 +5,18 @@ import {
   isBinaryFormatOrStringLimitFailure,
   type BinaryStringReadLimit,
   mappedFileOffset,
-  imageFileMappings,
   readMappedCString,
 } from "../binaryContainer.js";
 import { architectureForElfMachine } from "./elfImage.js";
 import { readElfStringBytes } from "./elfStringBytes.js";
-import { readElfSymbol } from "../elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
 import {
   readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
   type NativeSection,
 } from "./nativeSectionDirectory.js";
-import { readPeImage } from "./peImage.js";
+import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
+import { peDeclaredFileMappings, readPeImage } from "./peImage.js";
 import {
   allKeyed,
   keyedBy,
@@ -33,6 +34,10 @@ import {
 
 type Artifact = NativeExports["artifact"];
 
+const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+const hasElfMagic = (bytes: Buffer): boolean =>
+  bytes.subarray(0, ELF_MAGIC.length).equals(ELF_MAGIC);
+const OPERATION = "inspect_native_exports";
 const SHT_STRTAB = 3;
 const SHT_DYNSYM = 11;
 const SHT_GNU_VERDEF = 0x6ffffffd;
@@ -189,7 +194,7 @@ function* parsePeExports(
       ],
     };
   const reader = new BinaryReader(bytes, true, "pe");
-  const mappings = imageFileMappings(image);
+  const mappings = peDeclaredFileMappings(image);
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
   const cStringBytes = (
@@ -198,9 +203,10 @@ function* parsePeExports(
   ): Buffer => {
     const value = readMappedCString(
       bytes,
-      image,
+      mappings,
       base + BigInt(rva),
       maximumBytes,
+      image.zero_fills,
     );
     if (value.length === 0)
       throw new BinaryFormatFailure(
@@ -674,12 +680,12 @@ function* readVersionNames(
   return namesByIndex;
 }
 
-/** Read defined exported entries of `.dynsym` with their symbol versions. */
-function* parseElfExports(
+/** Read ELF exports and versions from an already-admitted directory for these bytes. */
+export function* parseElfExportsFromDirectorySteps(
   bytes: Buffer,
   artifact: Artifact,
-): Generator<void, NativeExports> {
-  const directory = readElfDirectoryFromBuffer(bytes);
+  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+): Generator<void, Extract<NativeExports, { format: "elf" }>> {
   const reader = new BinaryReader(bytes, directory.little, "elf");
   const result = {
     artifact,
@@ -727,7 +733,7 @@ function* parseElfExports(
         ...ELF_LIMITATIONS,
       ],
     };
-  const width = directory.bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(directory.bits);
   const strings = sections[dynsym.link];
   const compressed = dynsym.compressed
     ? dynsym
@@ -766,14 +772,14 @@ function* parseElfExports(
       "malformed",
       "ELF dynamic symbol table entry size, length, null entry or string-table link is invalid",
     );
-  const count = Number(dynsym.size / BigInt(width));
-  rowBudget(count, "ELF dynamic symbol table");
-  const table = reader.table(
+  const { offset: table, size } = reader.fileRange(
     dynsym.offset,
-    count,
-    width,
+    dynsym.size,
     "ELF dynamic symbols",
   );
+  const count = size / width;
+  // With a fixed 16- or 24-byte row, the inventory ceiling also bounds table bytes.
+  rowBudget(count, "ELF dynamic symbol table");
   // Entry zero is skipped only after it is observed to be the undefined
   // symbol. A stray st_name is recorded; any other nonzero field is refused.
   const nullSymbolNote = reservedElfDynamicSymbolNote(
@@ -936,8 +942,12 @@ export function* parseNativeExportsSteps(
   artifact: Artifact,
 ): Generator<void, NativeExports> {
   yield;
-  if (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-    return yield* parseElfExports(bytes, artifact);
+  if (hasElfMagic(bytes))
+    return yield* parseElfExportsFromDirectorySteps(
+      bytes,
+      artifact,
+      readElfDirectoryFromBuffer(bytes, OPERATION),
+    );
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ")))
     return yield* parsePeExports(bytes, artifact);
   throw new BinaryFormatFailure(
@@ -950,8 +960,32 @@ export function* parseNativeExportsSteps(
 export const parseNativeExports = (
   bytes: Buffer,
   artifact: Artifact,
+): NativeExports => finishExports(parseNativeExportsSteps(bytes, artifact));
+
+/** Yield during ELF section-name decoding and bounded export inventory work. */
+export const parseNativeExportsCooperative = async (
+  bytes: Buffer,
+  artifact: Artifact,
+  pause: ZstandardFramePause,
+): Promise<NativeExports> => {
+  const steps = hasElfMagic(bytes)
+    ? parseElfExportsFromDirectorySteps(
+        bytes,
+        artifact,
+        await readElfDirectoryFromBufferCooperative(bytes, pause, OPERATION),
+      )
+    : parseNativeExportsSteps(bytes, artifact);
+  let step = steps.next();
+  while (!step.done) {
+    await pause();
+    step = steps.next();
+  }
+  return step.value;
+};
+
+const finishExports = (
+  steps: Generator<void, NativeExports>,
 ): NativeExports => {
-  const steps = parseNativeExportsSteps(bytes, artifact);
   let step = steps.next();
   while (!step.done) step = steps.next();
   return step.value;

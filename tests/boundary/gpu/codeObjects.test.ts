@@ -1,11 +1,19 @@
 import { expect, it, onTestFinished } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { deflateSync } from "node:zlib";
+import { deflateSync, zstdCompressSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../../src/domain/analysisResourceLimits.js";
+import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
+import { GpuInventory } from "../../../src/gpu/GpuInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cudaFixture,
@@ -35,6 +43,45 @@ const inspect = async (
   onTestFinished(() => provider.close());
   return provider.inspect({ path, analysis: "kernels", ...options });
 };
+it("reports a Zstandard frame-count refusal as an adjustable GPU limit", async () => {
+  const frame = (byte: number) =>
+    Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
+  const compressed = Buffer.concat([frame(0x61), frame(0x62)]);
+  const entry = Buffer.alloc(64 + Math.ceil(compressed.length / 8) * 8);
+  entry.writeUInt16LE(1, 0);
+  entry.writeUInt16LE(0x101, 2);
+  entry.writeUInt32LE(64, 4);
+  entry.writeBigUInt64LE(BigInt(entry.length - 64), 8);
+  entry.writeUInt32LE(compressed.length, 16);
+  entry.writeUInt32LE(80, 28);
+  entry.writeBigUInt64LE(0x11n | 0x8000n, 40);
+  entry.writeBigUInt64LE(2n, 56);
+  compressed.copy(entry, 64);
+  const header = Buffer.alloc(16);
+  header.writeUInt32LE(0xba55ed50);
+  header.writeUInt16LE(1, 4);
+  header.writeUInt16LE(16, 6);
+  header.writeBigUInt64LE(BigInt(entry.length), 8);
+  const result = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "zstd.max_frames": 1 } },
+    () => inspect(Buffer.concat([header, entry])),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "cpu",
+    limit: {
+      setting: "zstd.max_frames",
+      effective_value: 1,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+      unit: "count",
+    },
+  });
+});
+
 it.each(["none", "zstd", "lz4"] as const)(
   "reads selected CUDA metadata and PTX with %s compression",
   async (compression) => {
@@ -69,6 +116,52 @@ it.each(["none", "zstd", "lz4"] as const)(
     ]);
   },
 );
+
+it("observes cancellation during a cubin kernel directory read", async () => {
+  const cubin = cubinFixture();
+  const section = Number(cubin.readBigUInt64LE(40)) + 64;
+  const offset = Number(cubin.readBigUInt64LE(section + 24));
+  const size = Number(cubin.readBigUInt64LE(section + 32));
+  const names = cubin.subarray(offset, offset + size);
+  const compressionHeader = Buffer.alloc(24);
+  compressionHeader.writeUInt32LE(2);
+  compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
+  compressionHeader.writeBigUInt64LE(1n, 16);
+  const encodedNames = Buffer.concat([
+    compressionHeader,
+    zstdCompressSync(names),
+  ]);
+  const bytes = Buffer.concat([cubin, encodedNames]);
+  bytes.writeBigUInt64LE(0x800n, section + 8);
+  bytes.writeBigUInt64LE(BigInt(cubin.length), section + 24);
+  bytes.writeBigUInt64LE(BigInt(encodedNames.length), section + 32);
+
+  const controller = new AbortController();
+  const inventory = new GpuInventory(
+    { path: "/artifacts/cubin", analysis: "kernels" },
+    controller.signal,
+  );
+  const cancelled = new Error("kernel directory read cancelled");
+  let payloadReads = 0;
+  let pendingAbort: NodeJS.Immediate | undefined;
+  try {
+    await expect(
+      inventory.inspect({
+        size: bytes.length,
+        containerId: null,
+        read: async (at, count) => {
+          // The selected payload is re-read into the kernel parser's buffer.
+          if (at === 0 && count === bytes.length && ++payloadReads === 1)
+            pendingAbort = setImmediate(() => controller.abort(cancelled));
+          return bytes.subarray(at, at + count);
+        },
+      }),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: cancelled });
+    expect(payloadReads).toBe(1);
+  } finally {
+    if (pendingAbort !== undefined) clearImmediate(pendingAbort);
+  }
+});
 it("decodes a CUDA 0x2000 LZ4 entry to the exact declared payload", async () => {
   const ptx = Buffer.from(ptxFixture),
     bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]),
@@ -111,6 +204,53 @@ it("rejects a CUDA LZ4 entry whose declared decoded length disagrees", async () 
   });
   expect(result.value.coverage.payloads).toBe("partial");
   expect(result.value.ptx_artifacts).toEqual([]);
+});
+it("preserves CUDA inventory and selection across an oversized declared decoded length", async () => {
+  const bytes = cudaFixture("zstd", [
+    { kind: 2, target: 90, bytes: cubinFixture({ architecture: 90 }) },
+    { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
+  ]);
+  const firstEntry = 16;
+  const declared = 1n << 53n;
+  const encoded = bytes.readUInt32LE(firstEntry + 16);
+  bytes.writeBigUInt64LE(declared, firstEntry + 56);
+  const inventory = await inspect(bytes, { analysis: "inventory" });
+  if (!inventory.ok) throw inventory.error;
+  expect(inventory.value.artifact).toMatchObject({
+    path: expect.stringContaining("no-format-extension"),
+    file_size: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  expect(inventory.value.objects).toMatchObject([
+    {
+      target: "sm_90",
+      inspection: "inventory",
+      encoded_size: encoded,
+      decoded_size: null,
+      location: { offset: firstEntry + 64, size: encoded },
+      limitations: [expect.stringContaining(String(declared))],
+    },
+    { target: "sm_80", inspection: "inventory" },
+  ]);
+  for (const [targets, inspection] of [
+    [undefined, "capacity"],
+    [["sm_80"], "not-selected"],
+  ] as const) {
+    const result = await inspect(
+      bytes,
+      targets ? { targets: [...targets] } : {},
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.objects).toMatchObject([
+      { id: inventory.value.objects[0]!.id, target: "sm_90", inspection },
+      {
+        id: inventory.value.objects[1]!.id,
+        target: "sm_80",
+        inspection: "complete",
+      },
+    ]);
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  }
 });
 it("retains the unsupported legacy CUDA compression declaration and extents", async () => {
   const result = await inspect(
@@ -847,7 +987,43 @@ it.each([".align 8 .b8", ".b8 .align 8"])(
     });
   },
 );
-it.each([".b8 .align 3", ".align 8 .b8 .align 8"])(
+it.each(["9007199254740991", "0x1fffffffffffff"])(
+  "retains PTX parameter facts when aligning an extent of %s exceeds the exact range",
+  async (extent) => {
+    const result = await inspect(
+      Buffer.from(
+        `.version 8.0
+.target sm_80
+.entry wide(.param .b8 payload[${extent}], .param .u32 count, .param .u8 tail) { ret; }
+.entry later(.param .u32 value) { ret; }`,
+      ),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.kernels).toMatchObject([
+      {
+        name: "wide",
+        parameter_bytes: null,
+        parameters: [
+          { name: "payload", offset: 0, size: 9007199254740991 },
+          { name: "count", offset: null, size: 4 },
+          { name: "tail", offset: null, size: 1 },
+        ],
+      },
+      {
+        name: "later",
+        parameter_bytes: 4,
+        parameters: [{ name: "value", offset: 0, size: 4 }],
+      },
+    ]);
+  },
+);
+
+it.each([
+  ".b8 .align 3",
+  ".b8 .align 4503599627370495",
+  ".align 8 .b8 .align 8",
+])(
   "retains PTX names and partial layout for unsupported alignment %s",
   async (type) => {
     const bytes = Buffer.from(
@@ -1177,6 +1353,16 @@ it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", asyn
     error: { _tag: "AnalysisUnsupportedTargetError" },
   });
 });
+it("preserves the PE layout refusal at the GPU provider boundary", async () => {
+  const result = await inspect(pe(0x014c, 4));
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisUnsupportedTargetError",
+      message: expect.stringContaining("overlapping PE header"),
+    },
+  });
+});
 it.each(["zlib", "zstd"] as const)(
   "uses each legacy CCOB v1 %s stream boundary across alignment padding",
   async (codec) => {
@@ -1265,6 +1451,43 @@ it("continues at the declared CCOB boundary after an unsupported codec", async (
   expect(result.value.coverage.discovery).toBe("partial");
 });
 
+it.each([
+  { label: "exact JSON integer", decoded: 1n << 28n, projected: 1 << 28 },
+  {
+    label: "outside exact JSON integer range",
+    decoded: 1n << 53n,
+    projected: null,
+  },
+])(
+  "keeps later CCOB v3 bundles after a decoded size $label exceeds capacity",
+  async ({ decoded, projected }) => {
+    const first = ccobFixture(3, "zlib");
+    first.writeBigUInt64LE(decoded, 16);
+    const result = await inspect(
+      Buffer.concat([first, ccobFixture(3, "zlib")]),
+    );
+    if (!result.ok) throw result.error;
+    const wrappers = result.value.objects.filter(
+      ({ kind }) => kind === "hip-bundle",
+    );
+    expect(wrappers).toMatchObject([
+      {
+        inspection: "capacity",
+        encoded_size: first.length - 32,
+        decoded_size: projected,
+        location: { offset: 32, size: first.length - 32 },
+      },
+      { inspection: "complete", metadata_location: { offset: first.length } },
+    ]);
+    if (projected === null)
+      expect(wrappers[0]?.limitations).toContain(
+        `Declared decoded size is ${String(decoded)} bytes, outside the exact integer range of decoded_size`,
+      );
+    expect(result.value.coverage.discovery).toBe("partial");
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  },
+);
+
 it("refuses escaped PTX report expansion while preserving bounded interrupted facts", async () => {
   const text = ptxFixture + "\n//" + "\u0001".repeat(3 * 1024 * 1024);
   const result = await inspect(Buffer.from(text));
@@ -1273,6 +1496,14 @@ it("refuses escaped PTX report expansion while preserving bounded interrupted fa
     error: { _tag: "AnalysisResourceConstraintError" },
   });
   if (result.ok) throw new Error("expected representation capacity refusal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      reported_limits: {
+        boundary: "gpu-retained-report-bytes",
+        maximum: 16_777_216,
+      },
+    },
+  });
   const partial = gpuCodeObjectsPartialSchema.parse(
     parseEvidence(result.error.partialObservation).normalized_result,
   );
@@ -1309,5 +1540,78 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
   }
   const result = await inspect(framed, { analysis: "inventory" });
   if (result.ok) throw new Error("Expected directory capacity failure");
-  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: { boundary: "hip-bundle-entries", maximum: 65_536 },
+    },
+  });
+});
+
+it("checks Clang bundle ID bounds before the retained directory allowance", async () => {
+  const name = "host-" + "x".repeat(65_537 - 5);
+  const header = Buffer.alloc(56);
+  header.write("__CLANG_OFFLOAD_BUNDLE__");
+  header.writeBigUInt64LE(1n, 24);
+  header.writeBigUInt64LE(BigInt(header.length + name.length), 32);
+  header.writeBigUInt64LE(1n, 40);
+  header.writeBigUInt64LE(BigInt(name.length), 48);
+  const framed = Buffer.concat([header, Buffer.from(name), Buffer.alloc(1)]);
+  const limited = await inspect(framed, { analysis: "inventory" });
+  if (limited.ok) throw new Error("Expected a directory capacity failure");
+  expect(projectAnalysisError(limited.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: {
+        boundary: "hip-bundle-id-bytes",
+        maximum: 65_536,
+        maximum_object_bytes: 134_217_728,
+        maximum_report_bytes: 16_777_216,
+      },
+    },
+  });
+
+  const short = Buffer.from(header);
+  short.writeBigUInt64LE(BigInt(short.length), 32);
+  short.writeBigUInt64LE(0n, 40);
+  const overlaps = Buffer.from(framed);
+  overlaps.writeBigUInt64LE(BigInt(header.length + 1), 32);
+  for (const bytes of [short, overlaps]) {
+    const result = await inspect(bytes, { analysis: "inventory" });
+    if (result.ok) throw new Error("Expected a malformed bundle directory");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    });
+  }
+});
+
+it("reports aggregate Clang directory capacity when every ID fits", async () => {
+  const count = 256;
+  const idBytes = 65_536;
+  const entryBytes = 24 + idBytes;
+  const directoryEnd = 32 + count * entryBytes;
+  const framed = Buffer.alloc(directoryEnd + 1, 0x78);
+  framed.write("__CLANG_OFFLOAD_BUNDLE__");
+  framed.writeBigUInt64LE(BigInt(count), 24);
+  for (let index = 0; index < count; index++) {
+    const row = 32 + index * entryBytes;
+    framed.writeBigUInt64LE(BigInt(directoryEnd), row);
+    framed.writeBigUInt64LE(1n, row + 8);
+    framed.writeBigUInt64LE(BigInt(idBytes), row + 16);
+  }
+  const result = await inspect(framed, { analysis: "inventory" });
+  if (result.ok) throw new Error("Expected directory capacity failure");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      reported_limits: {
+        boundary: "hip-bundle-directory-bytes",
+        maximum: 16_777_216,
+      },
+    },
+  });
 });

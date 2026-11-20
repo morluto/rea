@@ -1,5 +1,3 @@
-import { setImmediate } from "node:timers/promises";
-
 import {
   parseFailureAnalysisError,
   parseLimitConstraint,
@@ -17,6 +15,7 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
+  yieldArtifactRead,
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { NativeExportsPort } from "../../ports/binaryDiagnostics/NativeExportsPort.js";
@@ -40,7 +39,8 @@ import {
 import {
   NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
-  parseNativeExportsSteps,
+  parseNativeExports,
+  parseNativeExportsCooperative,
 } from "../../domain/native/nativeExportParser.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
@@ -64,31 +64,33 @@ export class NativeExportsProvider implements NativeExportsPort {
   }
 
   async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {
+    const signal = options?.signal;
     let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
         snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
-          options?.signal,
+          signal,
           undefined,
           this.#resources,
         );
-        assertArtifactReadActive(options?.signal);
-        const steps = parseNativeExportsSteps(snapshot.bytes, {
+        assertArtifactReadActive(signal);
+        const artifact = {
           path: input.path,
           sha256: snapshot.sha256,
           bytes: snapshot.bytes.length,
-        });
-        let step = steps.next();
-        while (!step.done) {
-          // Dispatch queued CLI/MCP cancellation between bounded parser batches.
-          await setImmediate();
-          assertArtifactReadActive(options?.signal);
-          step = steps.next();
-        }
-        assertArtifactReadActive(options?.signal);
-        return ok(step.value);
+        };
+        const report =
+          signal === undefined
+            ? parseNativeExports(snapshot.bytes, artifact)
+            : await parseNativeExportsCooperative(
+                snapshot.bytes,
+                artifact,
+                () => yieldArtifactRead(signal),
+              );
+        assertArtifactReadActive(signal);
+        return ok(report);
       });
     } catch (cause) {
       return err(nativeExportsFailure(cause, input, snapshot));

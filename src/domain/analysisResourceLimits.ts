@@ -276,3 +276,14 @@ export const DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = 25;
 export const MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = 1_000;
 export const DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = 40;
 export const MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = 1_000;
+
+/**
+ * Zstandard frames one buffer may contain before decoding is refused.
+ * Legitimate streams are one frame, sometimes with a few skippable frames.
+ * 65,536 one-byte frames is the measured Node 22 ceiling: a few hundred
+ * milliseconds of synchronous decoder work, and far below the millions of
+ * frames the existing byte allowances would still admit.
+ */
+export const DEFAULT_ZSTD_MAX_FRAMES = 4_096;
+export const MINIMUM_ZSTD_MAX_FRAMES = 1;
+export const MAXIMUM_ZSTD_MAX_FRAMES = 65_536;

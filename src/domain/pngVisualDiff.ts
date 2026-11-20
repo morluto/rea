@@ -1,4 +1,4 @@
-import { constants as zlibConstants, crc32, inflateSync } from "node:zlib";
+import { constants as zlibConstants, inflateSync } from "node:zlib";
 
 import type {
   CompareWebScreenshotsInput,
@@ -10,7 +10,12 @@ import {
   AnalysisUnsupportedTargetError,
 } from "./analysisErrorCore.js";
 import { decodeCanonicalBase64 } from "./webScreenshot.js";
-import { hasPngSignature, readPngIhdrFacts } from "./pngHeader.js";
+import {
+  createPngChunkReader,
+  hasPngSignature,
+  readPngIhdrFacts,
+} from "./pngHeader.js";
+import { BinaryReader } from "./binaryContainer.js";
 
 interface DecodedPng {
   readonly width: number;
@@ -112,10 +117,8 @@ export const isOneColourPng = (dataBase64: string): boolean | undefined => {
   } catch {
     return undefined;
   }
-  const first = rgba.readUInt32BE(0);
-  for (let offset = 4; offset < rgba.length; offset += 4)
-    if (rgba.readUInt32BE(offset) !== first) return false;
-  return true;
+  // A uniform frame matches itself shifted by one RGBA pixel.
+  return rgba.subarray(4).equals(rgba.subarray(0, -4));
 };
 
 const parsePng = (
@@ -125,6 +128,7 @@ const parsePng = (
   const bytes = decodeCanonicalBase64(artifact.data_base64);
   if (bytes === undefined || !hasPngSignature(bytes))
     throw new TypeError("Invalid PNG signature");
+  const readChunk = createPngChunkReader(bytes);
   let offset = 8;
   let header: ReturnType<typeof parseHeader> | undefined;
   const compressed: Buffer[] = [];
@@ -136,20 +140,10 @@ const parsePng = (
   let sawTransparency = false;
   let unsupportedReason: string | undefined;
   while (offset < bytes.length) {
-    if (offset + 12 > bytes.length) throw new TypeError("Truncated PNG chunk");
-    const length = bytes.readUInt32BE(offset);
-    if (length > 0x7fffffff) throw new TypeError("Invalid PNG chunk length");
-    const type = bytes.subarray(offset + 4, offset + 8).toString("latin1");
-    const dataStart = offset + 8;
-    const dataEnd = dataStart + length;
-    if (dataEnd + 4 > bytes.length) throw new TypeError("Truncated PNG data");
-    const data = bytes.subarray(dataStart, dataEnd);
-    if (
-      crc32(bytes.subarray(offset + 4, dataEnd)) !== bytes.readUInt32BE(dataEnd)
-    )
-      throw new TypeError("Invalid PNG chunk checksum");
-    if (!/^[A-Za-z]{4}$/u.test(type) || type[2] !== type[2]?.toUpperCase())
-      throw new TypeError("Invalid PNG chunk type");
+    const chunk = readChunk(offset);
+    if (!chunk.ok) throw new TypeError(chunk.error);
+    const { type, data, nextOffset } = chunk.value;
+    const length = data.length;
     if (type !== "IDAT" && compressed.length > 0) imageDataEnded = true;
     if (type === "IHDR") {
       if (offset !== 8 || header !== undefined)
@@ -163,10 +157,11 @@ const parsePng = (
       sawTransparency = true;
       if (header.colorType === 2 && data.length === 6) {
         const sampleMask = (1 << header.bitDepth) - 1;
+        const transparency = new BinaryReader(data, false, "png");
         transparentColor = [
-          data.readUInt16BE(0),
-          data.readUInt16BE(2),
-          data.readUInt16BE(4),
+          transparency.u16(0),
+          transparency.u16(2),
+          transparency.u16(4),
         ].map((value) => value & sampleMask);
       } else if (
         (header.colorType === 0 && data.length === 2) ||
@@ -200,14 +195,14 @@ const parsePng = (
       if (imageDataEnded) throw new TypeError("Nonconsecutive PNG image data");
       compressed.push(data);
     } else if (type === "IEND") {
-      if (length !== 0 || dataEnd + 4 !== bytes.length)
+      if (length !== 0 || nextOffset !== bytes.length)
         throw new TypeError("Invalid PNG end chunk");
       sawEnd = true;
       break;
     } else if (/^[A-Z]/u.test(type)) {
       unsupportedReason ??= `Unsupported critical PNG chunk ${type}.`;
     }
-    offset = dataEnd + 4;
+    offset = nextOffset;
   }
   if (header === undefined || !sawEnd || compressed.length === 0)
     throw new TypeError("Incomplete PNG");
@@ -361,6 +356,7 @@ const inflatePng = (compressed: Buffer, maxOutputLength: number): Buffer => {
       "code" in cause &&
       (cause.code === "Z_DATA_ERROR" ||
         cause.code === "Z_BUF_ERROR" ||
+        cause.code === "Z_NEED_DICT" ||
         cause.code === "ERR_BUFFER_TOO_LARGE")
     )
       throw new TypeError("Invalid PNG image data", { cause });
@@ -371,28 +367,7 @@ const inflatePng = (compressed: Buffer, maxOutputLength: number): Buffer => {
 const parseHeader = (data: Buffer) => {
   const parsed = readPngIhdrFacts(data);
   if (!parsed.ok) throw new TypeError(parsed.error);
-  const {
-    width,
-    height,
-    bitDepth,
-    colorType,
-    compressionMethod,
-    filterMethod,
-    interlaceMethod,
-  } = parsed.value;
-  const validDepth =
-    (colorType === 0 && [1, 2, 4, 8, 16].includes(bitDepth)) ||
-    (colorType === 2 && [8, 16].includes(bitDepth)) ||
-    (colorType === 3 && [1, 2, 4, 8].includes(bitDepth)) ||
-    (colorType === 4 && [8, 16].includes(bitDepth)) ||
-    (colorType === 6 && [8, 16].includes(bitDepth));
-  if (
-    !validDepth ||
-    compressionMethod !== 0 ||
-    filterMethod !== 0 ||
-    (interlaceMethod !== 0 && interlaceMethod !== 1)
-  )
-    throw new TypeError("Invalid PNG header");
+  const { width, height, bitDepth, colorType, interlaceMethod } = parsed.value;
   return {
     width,
     height,

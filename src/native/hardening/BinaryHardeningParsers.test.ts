@@ -9,6 +9,7 @@ import {
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
 import { readMachoImage } from "../../domain/apple/machoImage.js";
+import { elfNote, elfNoteFixture } from "../elf/ElfNotes.fixture.js";
 import {
   elfHardeningFixture,
   fatMachoHardeningFixture,
@@ -192,6 +193,12 @@ it("rejects truncated, duplicate and over-budget ELF tables", () => {
   if (dynamic === undefined) throw new Error("Fixture has no PT_DYNAMIC");
   wide.writeBigUInt64LE(BigInt(fixture.length), dynamic + 8);
   wide.writeBigUInt64LE(65_537n * 16n, dynamic + 32);
+  expect(() => readElfHardening(wide.subarray(0, fixture.length))).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringContaining("truncated ELF program"),
+    }),
+  );
   expect(() => readElfHardening(wide)).toThrow(
     expect.objectContaining({ maximum_bytes: 65_536, unit: "entries" }),
   );
@@ -448,26 +455,34 @@ it("keeps Mach-O siblings when one slice is big-endian, mismatched or malformed"
   );
   expect(oneSlice[0]?.slice?.architecture).toBe("arm64");
 
-  const hugeSymbols = (
-    await readMachoHardening(machoHardeningFixture({ nsyms: 65537 }))
-  )[0];
+  const hugeSlice = machoHardeningFixture({ nsyms: 65537 });
+  const hugeSymbols = (await readMachoHardening(hugeSlice))[0];
   expect(hugeSymbols?.status).toBe("parsed");
   expect(findRow(hugeSymbols?.rows ?? [], "pie").state).toBe("enabled");
   expect(findRow(hugeSymbols?.rows ?? [], "stack_protector")).toMatchObject({
     state: "unknown",
     note: expect.stringContaining("structural budget"),
   });
-  const hugeSlice = machoHardeningFixture({ nsyms: 65537 });
+  // The fixture ends with one string-table NUL after its symbol array.
+  const truncatedSymbols = hugeSlice.subarray(0, -2);
+  const truncatedStrings = hugeSlice.subarray(0, -1);
+  for (const truncated of [truncatedSymbols, truncatedStrings])
+    await expect(readMachoHardening(truncated)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringContaining("table extends outside the slice"),
+    });
   const kept = await readMachoHardening(
     fatMachoHardeningFixture([
       { bytes: arm, cpuType: 0x0100000c, cpuSubtype: 0 },
       { bytes: hugeSlice, cpuType: 0x0100000c, cpuSubtype: 0 },
+      { bytes: truncatedSymbols, cpuType: 0x0100000c, cpuSubtype: 0 },
     ]),
   );
   expect(kept[0]?.status).toBe("parsed");
   expect(findRow(kept[0]?.rows ?? [], "pie").state).toBe("enabled");
   expect(kept[1]?.status).toBe("parsed");
   expect(findRow(kept[1]?.rows ?? [], "stack_protector").state).toBe("unknown");
+  expect(kept[2]).toMatchObject({ status: "malformed", rows: [] });
   await expect(
     readMachoHardening(machoHardeningFixture({ brokenStrx: true })),
   ).rejects.toMatchObject({ kind: "malformed" });
@@ -741,6 +756,22 @@ it.each([true, false])(
     }
   },
 );
+
+it("uses the ELF byte order when counting sectionless imports through DT_HASH", () => {
+  const image = readElfHardening(
+    elfHardeningFixture({
+      little: false,
+      sections: false,
+      stackChk: true,
+      fortify: true,
+    }),
+  );
+  expect(image.byte_order).toBe("big");
+  expect(states(image.rows)).toMatchObject({
+    stack_protector: "enabled",
+    fortify: "enabled",
+  });
+});
 
 it("reads sectionless GNU hash buckets with many non-owning load declarations", () => {
   const original = elfHardeningFixture({ sections: false, stackChk: true });
@@ -1068,6 +1099,22 @@ it("reports the note budget it hit and keeps the header rows", () => {
   expect(findRow(text.rows, "aarch64_bti_pac").state).toBe("not_applicable");
 });
 
+it("rejects an incomplete note at the hardening entry limit", () => {
+  const note = elfNote("REA", 9, Buffer.from([1]));
+  const image = elfNoteFixture({
+    ownership: "program",
+    notes: Buffer.concat([
+      ...Array<Buffer>(256).fill(note),
+      note.subarray(0, note.length - 1),
+    ]),
+  });
+  expect(() => readElfHardening(image)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+    }),
+  );
+});
+
 it("skips an empty SHT_NOTE section instead of rejecting the image", () => {
   const bytes = elfHardeningFixture({
     propertyCarrier: "pt-note",
@@ -1081,7 +1128,7 @@ it("skips an empty SHT_NOTE section instead of rejecting the image", () => {
   }
   expect(sectionAt).toBeGreaterThan(0);
   bytes.writeBigUInt64LE(0n, sectionAt + 32);
-  expect(() => readElfImage(bytes)).not.toThrow();
+  expect(() => readElfImage(bytes, "elf-directory")).not.toThrow();
   const image = readElfHardening(bytes);
   expect(image.status).toBe("parsed");
   expect(findRow(image.rows, "nx").state).toBe("enabled");
@@ -1684,7 +1731,7 @@ it("rejects p_filesz one above p_memsz like the ELF image reader", () => {
   const load = elfProgramAt(bytes, PT_LOAD);
   bytes.writeBigUInt64LE(bytes.readBigUInt64LE(load + 32) - 1n, load + 40);
   const message = "ELF load segment sizes or addresses are invalid";
-  expect(() => readElfImage(bytes)).toThrow(message);
+  expect(() => readElfImage(bytes, "elf-directory")).toThrow(message);
   expect(() => readElfHardening(bytes)).toThrow(
     expect.objectContaining({ kind: "malformed", message }),
   );

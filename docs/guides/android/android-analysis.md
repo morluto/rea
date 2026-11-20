@@ -351,7 +351,9 @@ fails explicitly instead of silently truncating facts. MCP refusal includes
 the retained parent ID. Select complete detail, or inspect one method rather
 than a whole class, when the requested summary does not fit.
 
-The mapping path must be absolute. Selectors still take the observed names, such as
+The mapping path must be absolute. Mapping records accept optional spacing
+around `->` and spaces or tabs between a member type and its name.
+Selectors still take the observed names, such as
 `a.b`, and observed rows are unchanged. The result adds one `mapping` block with
 the file's path, SHA-256 and size, the header values the file reports
 (`compiler`, `compiler_version`, `min_api`, `map_version`, `pg_map_id`,

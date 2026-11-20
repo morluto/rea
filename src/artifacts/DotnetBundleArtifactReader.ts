@@ -108,7 +108,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
         declaredSize: file.size,
         compressedSize: file.compressedSize || null,
         byteOffset: file.offset,
-        byteLength: file.compressedSize || file.size,
+        byteLength: file.storedSize,
         executable: false,
         encrypted: false,
         declaredIntegrity: null,
@@ -252,7 +252,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
     },
     signal?: AbortSignal,
   ): AsyncGenerator<Buffer> {
-    const storedBytes = file.compressedSize || file.size;
+    const storedBytes = file.storedSize;
     const input =
       storedBytes === 0
         ? Readable.from([])

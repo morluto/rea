@@ -150,6 +150,46 @@ it("projects bounded alias selection as a resource-limit unknown", () => {
 });
 
 it.each([
+  ["a bounded inline spread", "[...[1]]", 1, true],
+  ["a backed inline spread", "[...[1]]", 2, false],
+  [
+    "an unsupported spread after a backed spread",
+    "[...[1], ...opaque]",
+    2,
+    false,
+  ],
+  ["a second inline spread", "[...[1], ...[2]]", 2, true],
+] as const)(
+  "reports the alias selection limit only when it blocks %s",
+  (_name, array, aliasSelections, bounded) => {
+    const source = `export const answer = ${array};`;
+    const ir = analyzeJavaScriptSemantics(source, {
+      alias_selections: aliasSelections,
+    });
+    const graph = graphFor(source, ir);
+    const unknown = graph.unknowns.find(
+      ({ reason, detail }) =>
+        reason === "resource-limit" &&
+        /Alias selection expansion/u.test(detail),
+    );
+    if (bounded) {
+      expect(ir.coverage).toMatchObject({
+        status: "partial",
+        resourceLimits: ["alias-selections"],
+      });
+      expect(unknown?.detail).toContain(
+        `semantic_precision.alias_selections=${aliasSelections}`,
+      );
+    } else {
+      expect(ir.coverage.resourceLimits ?? []).not.toContain(
+        "alias-selections",
+      );
+      expect(unknown).toBeUndefined();
+    }
+  },
+);
+
+it.each([
   ["plain export", "const answer = 42; export { answer };", 0],
   ["aliased export", "const answer = 42; export { answer as result };", 0],
   ["declaration only", "const answer = 42;", 0],
