@@ -828,13 +828,25 @@ it("does not adopt another active verifier's reader lease", async () => {
     concurrent: true,
   });
   expect(
-    output.execs
-      .slice(0, 2)
-      .every(
-        ({ request_id }) =>
-          !String(request_id).startsWith("rea-reader-cleanup-"),
-      ),
-  ).toBe(true);
+    output.execs.map(({ request_id }) =>
+      String(request_id).startsWith("rea-reader-cleanup-"),
+    ),
+  ).toEqual([false, false, true, true]);
+  const payload = (entry: Record<string, unknown>) =>
+    JSON.parse((entry.argv as string[]).slice(4).join(""));
+  const activeLeases = output.execs
+    .slice(0, 2)
+    .map((entry) => payload(entry).lease);
+  for (const lease of activeLeases)
+    expect(lease).toMatchObject({
+      path: expect.any(String),
+      token: expect.any(String),
+    });
+  expect(activeLeases[0]).not.toEqual(activeLeases[1]);
+  expect(output.execs.slice(2).map(payload)).toEqual(
+    expect.arrayContaining(activeLeases),
+  );
+  expect(output.pending_readers).toBe(0);
 });
 
 it("joins concurrent retries of one abandoned reader cleanup", async () => {

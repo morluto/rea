@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.10.0",
   "base": "d74549e495c58eb4a560279fd9f05508401ea0a0",
-  "target": "9d3bf82c6ab37f4faaa8353950b2797c747cb4ef",
+  "target": "847c2d5253c216a87fb09d170371e11b9504722b",
   "commits": [
     {
       "sha": "5eef239dfd774331d622aaa4762f42fa632121ab",
@@ -31158,6 +31158,23 @@
       "subject": "test(desktop): require a verdict for every regenerated check",
       "body": "test(desktop): require a verdict for every regenerated check\n",
       "parents": ["e1e24543e4a9f21cbb3c2abe85f71cca71ea1bb1"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": []
+    },
+    {
+      "sha": "847c2d5253c216a87fb09d170371e11b9504722b",
+      "subject": "test(desktop): check cleanup of both concurrent reader leases",
+      "body": "test(desktop): check cleanup of both concurrent reader leases\n",
+      "parents": ["9d3bf82c6ab37f4faaa8353950b2797c747cb4ef"],
       "authors": [
         {
           "name": "morluto",

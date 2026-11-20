@@ -64,7 +64,7 @@
 - Recreate native Evidence for Mach-O encryption, malformed slice causes, import facts and symbol `runtime_name`; ELF import/export encoding and export visibility; value-flow `limits`; load-image permissions and relocation symbols; Swift `type_reference_kind`; and GPU `amd_target_metadata`. Update strict readers for removed legacy values such as unknown ELF export visibility and `modinfo_field_exceeds_limit`. [PR 10946](https://github.com/morluto/rea/pull/10946/files).
 - Recreate inventory Evidence missing ESP `format_metadata.flash_dump`, PE signer observations missing `unsigned_attribute_oids`, and firmware inspection or extraction results missing `analysis_timeout_ms`. [#11595](https://github.com/morluto/rea/pull/11595).
 
-Full contribution record: [1575 commits and 1370 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.10.0/docs/releases/6.10.0.contributions.json).
+Full contribution record: [1576 commits and 1370 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.10.0/docs/releases/6.10.0.contributions.json).
 
 ## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-11)
 
