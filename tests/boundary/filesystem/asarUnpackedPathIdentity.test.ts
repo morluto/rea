@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { buffer } from "node:stream/consumers";
 import { expect, it } from "vitest";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import {
@@ -11,86 +12,84 @@ import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it.each([
-  "\ud800.js",
-  "\udc00.js",
-  "dir\ud800/member.js",
-  "dir\udc00/member.js",
-])("does not read a replacement-character companion for %j", async (name) => {
+it("keeps exact archive names without reading replacement-character companions", async () => {
   const root = await createTestTempDirectory("rea-asar-unpacked-identity-");
   const archive = join(root, "app.asar");
   const packed = Buffer.from("exact packed member");
   const companion = Buffer.from("different filesystem identity");
-  const replacement = name.replace(/[\ud800-\udfff]/gu, "\ufffd");
-  let member: object = { size: companion.length, unpacked: true };
-  for (const part of name.split("/").reverse())
-    member = { files: { [part]: member } };
-  const files = (member as { files: Record<string, object> }).files;
-  let replacementMember: object = { size: companion.length, unpacked: true };
-  for (const part of replacement.split("/").reverse())
-    replacementMember = { files: { [part]: replacementMember } };
-  Object.assign(files, (replacementMember as { files: object }).files);
-  files.packed = {
-    files: { [name.split("/").at(-1)!]: { size: packed.length, offset: "0" } },
+  const leafNames = ["\ud800.js", "\udc00.js"];
+  const parentNames = ["dir\ud800", "dir\udc00"];
+  const invalidNames = [
+    ...leafNames,
+    ...parentNames.map((name) => `${name}/member.js`),
+  ];
+  const validNames = ["\ufffd.js", "dir\ufffd/member.js", "🐍.js"];
+  const fileTable = (leaves: string[], parents: string[], entry: object) =>
+    Object.fromEntries([
+      ...leaves.map((name) => [name, entry]),
+      ...parents.map((name) => [name, { files: { "member.js": entry } }]),
+    ]);
+  const files = {
+    ...fileTable(
+      [...leafNames, "\ufffd.js", "🐍.js"],
+      [...parentNames, "dir\ufffd"],
+      { size: companion.length, unpacked: true },
+    ),
+    packed: {
+      files: fileTable(leafNames, parentNames, {
+        size: packed.length,
+        offset: "0",
+      }),
+    },
   };
-  files["🐍.js"] = { size: companion.length, unpacked: true };
   await writeFile(
     archive,
     Buffer.concat([asarHeaderBytes(JSON.stringify({ files })), packed]),
   );
-  await mkdir(
-    join(`${archive}.unpacked`, ...replacement.split("/").slice(0, -1)),
-    { recursive: true },
-  );
-  await writeFile(join(`${archive}.unpacked`, replacement), companion);
-  await writeFile(join(`${archive}.unpacked`, "🐍.js"), companion);
+  const companionRoot = `${archive}.unpacked`;
+  await mkdir(join(companionRoot, "dir\ufffd"), { recursive: true });
+  for (const name of validNames)
+    await writeFile(join(companionRoot, name), companion);
+
   const reader = new AsarArtifactReader(archive);
   try {
-    const entries: ArtifactEntry[] = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    const malformed = entries.find((entry) => entry.path === name)!;
-    expect(malformed.unpacked).toBe(true);
-    await expect(reader.open(malformed)).rejects.toBeInstanceOf(
-      ArtifactEntryContentUnavailable,
-    );
-    const packedEntry = entries.find(
-      (entry) => entry.path.startsWith("packed/") && entry.kind === "file",
-    )!;
-    const read = async (entry: typeof packedEntry) => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of await reader.open(entry))
-        chunks.push(Buffer.from(chunk as Uint8Array));
-      return Buffer.concat(chunks);
-    };
-    expect((await read(packedEntry)).equals(packed)).toBe(true);
-    expect(
-      (await read(entries.find((entry) => entry.path === replacement)!)).equals(
-        companion,
-      ),
-    ).toBe(true);
-    expect(
-      (await read(entries.find((entry) => entry.path === "🐍.js")!)).equals(
-        companion,
-      ),
-    ).toBe(true);
+    const entries = new Map<string, ArtifactEntry>();
+    for await (const entry of reader.entries()) entries.set(entry.path, entry);
+    const read = async (name: string) =>
+      buffer(await reader.open(entries.get(name)!));
+    for (const name of invalidNames) {
+      const entry = entries.get(name);
+      expect(entry?.unpacked, name).toBe(true);
+      await expect(reader.open(entry!), name).rejects.toBeInstanceOf(
+        ArtifactEntryContentUnavailable,
+      );
+      expect((await read(`packed/${name}`)).equals(packed), name).toBe(true);
+    }
+    for (const name of validNames)
+      expect((await read(name)).equals(companion), name).toBe(true);
   } finally {
     await reader.close();
   }
+
   const inventory = await inventoryArtifact(archive);
-  const occurrence = inventory.occurrences.find(
-    (entry) => entry.logical_path === name,
-  )!;
-  expect(occurrence).toMatchObject({ hash_status: "unavailable" });
-  expect(occurrence.artifact_id).toBeNull();
-  expect(occurrence.limitations.length).toBeGreaterThan(0);
-  const packedOccurrence = inventory.occurrences.find(
-    (entry) =>
-      entry.logical_path.startsWith("packed/") &&
-      entry.hash_status === "verified",
-  )!;
-  expect(
-    inventory.nodes.find(
-      (node) => node.artifact_id === packedOccurrence.artifact_id,
-    )?.sha256,
-  ).toBe(createHash("sha256").update(packed).digest("hex"));
+  const occurrence = (name: string) =>
+    inventory.occurrences.find((entry) => entry.logical_path === name);
+  const digest = createHash("sha256").update(packed).digest("hex");
+  for (const name of invalidNames) {
+    expect(occurrence(name), name).toMatchObject({
+      artifact_id: null,
+      hash_status: "unavailable",
+      limitations: [
+        expect.stringContaining("cannot be represented without replacement"),
+      ],
+    });
+    const packedEntry = occurrence(`packed/${name}`);
+    expect(packedEntry, name).toMatchObject({ hash_status: "verified" });
+    expect(
+      inventory.nodes.find(
+        ({ artifact_id }) => artifact_id === packedEntry?.artifact_id,
+      )?.sha256,
+      name,
+    ).toBe(digest);
+  }
 });
