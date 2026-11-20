@@ -335,16 +335,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     };
     return this.#resources.run(async () => {
       checkpoint();
+      let isDirectory = false;
       try {
         const pathStat = await stat(request.input.path);
-        if (
-          pathStat.isDirectory() &&
-          request.operation === "decompile_uefi_firmware"
-        ) {
-          return await this.#decompileDirectory(request, signal, checkpoint);
-        }
+        isDirectory = pathStat.isDirectory();
       } catch {
         // Continue to regular file artifact read
+      }
+      if (isDirectory && request.operation === "decompile_uefi_firmware") {
+        return await this.#decompileDirectory(request, signal, checkpoint);
       }
       const snapshot = await readStableArtifact(
         request.input.path,
@@ -766,9 +765,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const input = request.input;
     const modulesToProcess = discoveredModules.slice(0, input.max_modules);
 
+    const effectiveLimitations = [...limitations];
+    if (discoveredModules.length > input.max_modules) {
+      effectiveLimitations.push(
+        `Decompilation capped at ${input.max_modules} of ${discoveredModules.length} discovered modules.`,
+      );
+    }
+
     const tempRoot = await PrivateRuntimeRoot.create({
       prefix: "rea-uefi-decompile-",
     });
+
+    const MAX_DISASSEMBLY_MODULE_BYTES = 2 * 1024 * 1024;
+    const MAX_DISASSEMBLY_TOTAL_BYTES = 64 * 1024 * 1024;
+    let totalStagedAsmBytes = 0;
 
     try {
       const occurrences = new Map<string, number>();
@@ -781,7 +791,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         misc: 0,
       };
 
-      const processedModules: UefiDecompileResult["modules"] = [];
+      const stagedModules: Array<{
+        occurrence: number;
+        guid: string | null;
+        name: string;
+        phase: string;
+        disassembly_status: "ok" | "failed" | "omitted";
+        relative_c_file: string;
+        relative_asm_file: string | null;
+        relative_header_file: string;
+        code_bytes: number;
+      }> = [];
       const publicationEntries: UefiPublicationEntry[] = [];
 
       for (const mod of modulesToProcess) {
@@ -859,45 +879,67 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         let asmRelPath: string | null = null;
         let disassemblyStatus: "ok" | "failed" | "omitted" = "omitted";
         if (input.include_disassembly) {
-          const tempEfiPath = join(
-            tempRoot.path,
-            `${cIdentifier}_${occurrence}.efi`,
-          );
-          await writeFile(tempEfiPath, mod.bytes);
-          let asmOutput: string | null = null;
-          try {
-            const { stdout } = await execFileOutput(
-              "llvm-objdump",
-              ["-d", "--no-show-raw-insn", tempEfiPath],
-              { signal, timeout: 15_000, maxBuffer: 10 * 1024 * 1024 },
+          if (totalStagedAsmBytes >= MAX_DISASSEMBLY_TOTAL_BYTES) {
+            disassemblyStatus = "omitted";
+            if (
+              !effectiveLimitations.includes(
+                "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+              )
+            ) {
+              effectiveLimitations.push(
+                "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+              );
+            }
+          } else {
+            const tempEfiPath = join(
+              tempRoot.path,
+              `${cIdentifier}_${occurrence}.efi`,
             );
-            asmOutput = stdout;
-          } catch (llvmError: unknown) {
-            if (signal.aborted) signal.throwIfAborted();
-            if (isAbortOf(llvmError, signal)) throw llvmError;
+            await writeFile(tempEfiPath, mod.bytes);
+            let asmOutput: string | null = null;
             try {
               const { stdout } = await execFileOutput(
-                "objdump",
-                ["-d", tempEfiPath],
-                { signal, timeout: 15_000, maxBuffer: 10 * 1024 * 1024 },
+                "llvm-objdump",
+                ["-d", "--no-show-raw-insn", tempEfiPath],
+                {
+                  signal,
+                  timeout: 15_000,
+                  maxBuffer: MAX_DISASSEMBLY_MODULE_BYTES,
+                },
               );
               asmOutput = stdout;
-            } catch (objdumpError: unknown) {
+            } catch (llvmError: unknown) {
               if (signal.aborted) signal.throwIfAborted();
-              if (isAbortOf(objdumpError, signal)) throw objdumpError;
-              asmOutput = null;
+              if (isAbortOf(llvmError, signal)) throw llvmError;
+              try {
+                const { stdout } = await execFileOutput(
+                  "objdump",
+                  ["-d", tempEfiPath],
+                  {
+                    signal,
+                    timeout: 15_000,
+                    maxBuffer: MAX_DISASSEMBLY_MODULE_BYTES,
+                  },
+                );
+                asmOutput = stdout;
+              } catch (objdumpError: unknown) {
+                if (signal.aborted) signal.throwIfAborted();
+                if (isAbortOf(objdumpError, signal)) throw objdumpError;
+                asmOutput = null;
+              }
             }
-          }
-          if (asmOutput !== null) {
-            const asmName = `${mod.cleanName}.asm`;
-            asmRelPath = `${moduleRelDir}/${asmName}`;
-            publicationEntries.push({
-              relativePath: asmRelPath,
-              bytes: Buffer.from(asmOutput, "utf8"),
-            });
-            disassemblyStatus = "ok";
-          } else {
-            disassemblyStatus = "failed";
+            if (asmOutput !== null) {
+              const asmName = `${mod.cleanName}.asm`;
+              asmRelPath = `${moduleRelDir}/${asmName}`;
+              publicationEntries.push({
+                relativePath: asmRelPath,
+                bytes: Buffer.from(asmOutput, "utf8"),
+              });
+              totalStagedAsmBytes += Buffer.byteLength(asmOutput, "utf8");
+              disassemblyStatus = "ok";
+            } else {
+              disassemblyStatus = "failed";
+            }
           }
         }
 
@@ -933,18 +975,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           bytes: Buffer.from(cContent, "utf8"),
         });
 
-        processedModules.push({
+        stagedModules.push({
           occurrence,
           guid: mod.guid,
           name: mod.rawName,
           phase: mod.phase,
           disassembly_status: disassemblyStatus,
-          c_file: join(input.output_directory, cRelPath),
-          asm_file:
-            asmRelPath !== null
-              ? join(input.output_directory, asmRelPath)
-              : null,
-          header_file: join(input.output_directory, headerRelPath),
           relative_c_file: cRelPath,
           relative_asm_file: asmRelPath,
           relative_header_file: headerRelPath,
@@ -955,9 +991,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const manifestData = {
         image_sha256: imageSha256,
         total_modules_found: discoveredModules.length,
-        total_modules_decompiled: processedModules.length,
+        total_modules_decompiled: stagedModules.length,
         phases: phaseCounts,
-        modules: processedModules,
+        modules: stagedModules.map((m) => ({
+          ...m,
+          c_file: m.relative_c_file,
+          asm_file: m.relative_asm_file,
+          header_file: m.relative_header_file,
+        })),
       };
       publicationEntries.push({
         relativePath: "firmware_manifest.json",
@@ -969,7 +1010,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         "",
         `- **Image / Corpus SHA-256**: \`${imageSha256}\``,
         `- **Total Modules Found**: ${discoveredModules.length}`,
-        `- **Total Modules Decompiled**: ${processedModules.length}`,
+        `- **Total Modules Decompiled**: ${stagedModules.length}`,
         "",
         "## Phases",
         `- **SEC** (Security Core): ${phaseCounts.sec}`,
@@ -982,7 +1023,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         "## Modules Index",
         "| Phase | Name | GUID | Size (Bytes) | Disassembly Status | C Scaffold | Disassembly |",
         "|---|---|---|---|---|---|---|",
-        ...processedModules.map(
+        ...stagedModules.map(
           (m) =>
             `| ${m.phase} | \`${m.name}\` | \`${m.guid ?? "N/A"}\` | ${m.code_bytes} | ${m.disassembly_status} | [${m.name}.c](${m.relative_c_file}) | ${m.relative_asm_file ? `[${m.name}.asm](${m.relative_asm_file})` : "N/A"} |`,
         ),
@@ -999,8 +1040,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         signal,
         checkpoint,
         resources: this.#resources,
-        buildResult: (outputRoot) =>
-          uefiResultSchemas.decompile_uefi_firmware.parse({
+        buildResult: (outputRoot) => {
+          const finalModules = stagedModules.map((m) => ({
+            ...m,
+            c_file: join(outputRoot, m.relative_c_file),
+            asm_file:
+              m.relative_asm_file !== null
+                ? join(outputRoot, m.relative_asm_file)
+                : null,
+            header_file: join(outputRoot, m.relative_header_file),
+          }));
+          return uefiResultSchemas.decompile_uefi_firmware.parse({
             parser: {
               name: "rea-uefi",
               version: UEFI_PROVIDER_IDENTITY.version,
@@ -1008,12 +1058,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             image_sha256: imageSha256,
             output_directory: outputRoot,
             total_modules_found: discoveredModules.length,
-            total_modules_decompiled: processedModules.length,
+            total_modules_decompiled: stagedModules.length,
             phases: phaseCounts,
-            modules: processedModules,
-            diagnostics: `Successfully published ${processedModules.length} decompiled UEFI module(s) across phases into ${outputRoot}.`,
-            limitations: [...limitations],
-          }),
+            modules: finalModules,
+            diagnostics: `Successfully published ${stagedModules.length} decompiled UEFI module(s) across phases into ${outputRoot}.`,
+            limitations: effectiveLimitations,
+          });
+        },
       });
 
       const { result } = publication;
@@ -1031,10 +1082,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
         subject: { path: input.path, sha256: imageSha256, format: "file" },
         locations: [{ kind: "artifact-path", path: input.path }],
-        limitations: [...limitations],
+        limitations: effectiveLimitations,
       });
     } finally {
-      await tempRoot.close();
+      try {
+        await tempRoot.close();
+      } catch {
+        this.#resources.retain({
+          kind: "private-runtime-root",
+          resource: tempRoot.path,
+          root: tempRoot,
+        });
+      }
     }
   }
 
@@ -1148,7 +1207,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       } catch {
         continue;
       } finally {
-        await owner?.close();
+        if (owner !== undefined) {
+          try {
+            await owner.close();
+          } catch {
+            this.#resources.retain({
+              kind: "file-handle",
+              resource: fullPath,
+              handle: owner,
+            });
+          }
+        }
       }
       if (!isPeOrTe) continue;
 
@@ -1191,10 +1260,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         phase,
         bytes: fileBuffer,
       });
-
-      if (discoveredModules.length >= input.max_modules) {
-        break;
-      }
     }
 
     const dirSha256 = hash.digest("hex");

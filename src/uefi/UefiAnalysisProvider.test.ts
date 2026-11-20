@@ -1761,3 +1761,40 @@ it("rejects an already existing output directory under SafeOutputTree", async ()
     await provider.close();
   }
 });
+
+it("caps decompilation to max_modules while discovering all candidate modules", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-cap-decompile-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const mzHeader = Buffer.alloc(128, 0);
+  mzHeader[0] = 0x4d;
+  mzHeader[1] = 0x5a;
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "mod1.efi"), mzHeader);
+  await writeFile(join(inDir, "mod2.efi"), mzHeader);
+  await writeFile(join(inDir, "mod3.efi"), mzHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          max_modules: 2,
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(3);
+    expect(result.total_modules_decompiled).toBe(2);
+    expect(result.limitations).toContain(
+      "Decompilation capped at 2 of 3 discovered modules.",
+    );
+  } finally {
+    await provider.close();
+  }
+});
