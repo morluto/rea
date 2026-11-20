@@ -505,16 +505,18 @@ describe.skipIf(process.platform === "win32")(
       const directory = await createTestTempDirectory("rea-exec-inherited-");
       const scratch = join(directory, "scratch");
       const finished = join(directory, "finished.json");
+      const pidPath = join(directory, "descendant.pid");
       const reaped = join(directory, "launcher-reaped");
       const release = join(directory, "release");
       await mkdir(scratch);
       const childSource = [
         'const fs = require("node:fs");',
         "const launcher = Number(process.argv[1]);",
+        `process.once("exit", () => fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ scratchExists: fs.existsSync(${JSON.stringify(scratch)}) })));`,
+        `fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
         "let reported = false;",
         "const poll = setInterval(() => {",
         `  if (fs.existsSync(${JSON.stringify(release)})) {`,
-        `    fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ scratchExists: fs.existsSync(${JSON.stringify(scratch)}) }));`,
         "    clearInterval(poll);",
         "    return;",
         "  }",
@@ -560,7 +562,17 @@ describe.skipIf(process.platform === "win32")(
         await writeFile(release, "");
         await vi.runAllTimersAsync();
         vi.useRealTimers();
-        await execution;
+        // Settlement is the behavior under test. Join the real descendant independently.
+        try {
+          if (!(await waitForFile(finished))) {
+            const pid = Number(await readFile(pidPath, "utf8").catch(() => ""));
+            const killFailure = await stopOwnedDescendant(pid, finished);
+            if (killFailure !== undefined) throw killFailure;
+            throw new Error("The released descendant did not acknowledge exit");
+          }
+        } finally {
+          await execution;
+        }
       }
     });
   },
