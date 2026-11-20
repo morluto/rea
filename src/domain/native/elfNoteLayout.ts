@@ -69,3 +69,48 @@ export const readElfNoteFrame = (
 /** A short remainder after the last aligned note may be zero padding. */
 export const isElfNotePadding = (bytes: Uint8Array): boolean =>
   bytes.every((byte) => byte === 0);
+
+export type ElfNoteSpan = { readonly offset: number; readonly size: number };
+
+export const sortElfNoteSpans = <T extends ElfNoteSpan>(
+  spans: readonly T[],
+): T[] =>
+  spans.filter(({ size }) => size > 0).toSorted((a, b) => a.offset - b.offset);
+
+/**
+ * Overlap queries over spans sorted once. A section table can hold hundreds of
+ * thousands of headers, so a query must not rescan the spans.
+ */
+export const elfNoteSpanOverlapIndex = (spans: readonly ElfNoteSpan[]) => {
+  const sorted: ElfNoteSpan[] = [];
+  for (const span of sortElfNoteSpans(spans)) {
+    const previous = sorted.at(-1);
+    if (
+      previous !== undefined &&
+      span.offset <= previous.offset + previous.size
+    )
+      sorted[sorted.length - 1] = {
+        offset: previous.offset,
+        size: Math.max(
+          previous.size,
+          span.offset + span.size - previous.offset,
+        ),
+      };
+    else sorted.push(span);
+  }
+  return ({ offset, size }: ElfNoteSpan): "none" | "covered" | "partial" => {
+    if (size <= 0) return "none";
+    let low = 0;
+    let high = sorted.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if ((sorted[middle]?.offset ?? 0) < offset + size) low = middle + 1;
+      else high = middle;
+    }
+    const span = sorted[low - 1];
+    if (span === undefined || span.offset + span.size <= offset) return "none";
+    return span.offset <= offset && span.offset + span.size >= offset + size
+      ? "covered"
+      : "partial";
+  };
+};

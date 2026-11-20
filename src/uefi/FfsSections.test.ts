@@ -9,25 +9,39 @@ import {
 import { imageRegion } from "./UefiBytes.js";
 import {
   AMD_ZLIB_HEADER_LENGTH,
-  peelAmiZlibPayload,
+  peelAmdZlibPayload,
   walkSections,
 } from "./FfsSections.js";
 
-it("walks a two-section chain with clean payload windows", () => {
+it("retains aligned payload windows when the final section is truncated", () => {
   const ui = buildSection(0x15, Buffer.from("Module"));
   const pe = buildSection(0x10, Buffer.from([0x4d, 0x5a, 0x90]));
   const chain = Buffer.concat([ui, pe]);
-  const region = imageRegion(chain, 0, chain.length);
-  const walked = walkSections(region);
-  expect(walked.remainder).toBeNull();
-  expect(walked.sections).toHaveLength(2);
-  const [uiDraft, peDraft] = walked.sections;
-  expect(uiDraft?.typeCode).toBe(0x15);
-  expect(uiDraft?.headerLength).toBe(4);
-  expect(uiDraft?.payload).toEqual({ start: 4, end: 4 + 6 });
-  // The PE section starts after the first section's 4-byte chain alignment.
-  expect(peDraft?.payload).toEqual({ start: 16, end: 19 });
-  expect(peDraft?.typeCode).toBe(0x10);
+  const uiDraft = {
+    typeCode: 0x15,
+    headerLength: 4,
+    payload: { start: 4, end: 10 },
+  };
+  const peDraft = { typeCode: 0x10, declaredLength: 7 };
+  expect(walkSections(imageRegion(chain, 0, chain.length))).toMatchObject({
+    remainder: null,
+    sections: [
+      uiDraft,
+      { ...peDraft, truncated: false, payload: { start: 16, end: 19 } },
+    ],
+  });
+  expect(walkSections(imageRegion(chain, 0, 18))).toMatchObject({
+    remainder: null,
+    sections: [
+      uiDraft,
+      {
+        ...peDraft,
+        truncated: true,
+        observedLength: 6,
+        payload: { start: 16, end: 18 },
+      },
+    ],
+  });
 });
 
 it("classifies a guided LZMA section through its definition GUID", () => {
@@ -47,7 +61,7 @@ it("classifies a guided LZMA section through its definition GUID", () => {
   expect(draft?.payload).toEqual({ start: 24, end: 24 + compressed.length });
 });
 
-it("classifies the AMI-zlib guided section and peels its AMD header", () => {
+it("classifies the AMD-zlib guided section and peels its AMD header", () => {
   const stream = Buffer.from([0x78, 0xda, 0x01, 0x02, 0x03]);
   const amdHeader = Buffer.alloc(AMD_ZLIB_HEADER_LENGTH, 0);
   amdHeader.writeUInt32LE(stream.length, 0x14);
@@ -60,7 +74,7 @@ it("classifies the AMI-zlib guided section and peels its AMD header", () => {
   expect(walked.sections).toHaveLength(1);
   const draft = walked.sections[0];
   expect(draft?.compression).toMatchObject({
-    kind: "ami-zlib",
+    kind: "amd-zlib",
     guid: "ce3233f5-2cd6-4d87-9152-4a238bb6d1c4",
     dataOffset: 24,
     attributes: 0,
@@ -69,9 +83,9 @@ it("classifies the AMI-zlib guided section and peels its AMD header", () => {
     start: 24,
     end: 24 + AMD_ZLIB_HEADER_LENGTH + stream.length,
   });
-  const peeled = peelAmiZlibPayload(Buffer.concat([amdHeader, stream]));
+  const peeled = peelAmdZlibPayload(Buffer.concat([amdHeader, stream]));
   expect(peeled).toEqual({ stream, declaredCompressedSize: stream.length });
-  expect(peelAmiZlibPayload(Buffer.alloc(0x40, 0))).toBeNull();
+  expect(peelAmdZlibPayload(Buffer.alloc(0x40, 0))).toBeNull();
 });
 
 it("marks unknown definition GUIDs instead of guessing", () => {
@@ -89,23 +103,6 @@ it("marks unknown definition GUIDs instead of guessing", () => {
   }
   expect(draft.compression.attributes).toBe(0);
   expect(draft?.payload).toEqual({ start: 24, end: 24 + 12 });
-});
-
-it("records a truncated final section instead of inventing one", () => {
-  const ui = buildSection(0x15, Buffer.from("Module"));
-  const truncatedBody = Buffer.alloc(10, 0x77);
-  truncatedBody.writeUInt32LE(0xfff, 0); // declared far beyond the region
-  const truncated = Buffer.concat([
-    Buffer.from([0xff, 0x0f, 0x00, 0x10]), // declared length 0xfff at size field
-    truncatedBody,
-  ]);
-  const chain = Buffer.concat([ui, truncated]);
-  const region = imageRegion(chain, 0, chain.length);
-  const walked = walkSections(region);
-  expect(walked.sections).toHaveLength(2);
-  const last = walked.sections[1];
-  expect(last?.typeCode).toBe(0x10);
-  expect(last?.truncated).toBe(true);
 });
 
 it("returns no sections when the area is shorter than one header", () => {

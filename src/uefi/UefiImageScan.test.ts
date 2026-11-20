@@ -332,7 +332,7 @@ it("preserves a decoded sibling after an on-disk retrieval wildcard", async () =
   );
 });
 
-it("decodes AMI-zlib guided sections after peeling the AMD header", async () => {
+it("decodes AMD-zlib guided sections after peeling the AMD header", async () => {
   const nestedInner = buildFfsFile({
     guid: "2b111111-2222-3333-4444-555555555555",
     typeCode: 0x07,
@@ -364,7 +364,7 @@ it("decodes AMI-zlib guided sections after peeling the AMD header", async () => 
   expect(nested?.logical_path).toContain("/zlib/FV@");
   const zlibSection = summary.volumes[0]?.ffs_files[0]?.sections[0];
   expect(zlibSection?.compression).toMatchObject({
-    kind: "ami-zlib",
+    kind: "amd-zlib",
     data_offset: 24,
   });
   expect(zlibSection?.sub_volumes).toEqual([summary.volumes[1]?.logical_path]);

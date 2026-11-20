@@ -460,9 +460,16 @@ it("reports truncated StringData as partial coverage with a failing offset", asy
   expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
 });
 
-it.each([12, 16, 20, 24, 28, 32])(
+it.each([
+  [12, "truncated"],
+  [16, "malformed_structure"],
+  [20, "truncated"],
+  [24, "malformed_structure"],
+  [28, "malformed_structure"],
+  [32, "malformed_structure"],
+] as const)(
   "points an out-of-range LinkInfo offset at its field at byte %i",
-  async (field) => {
+  async (field, code) => {
     const bytes = windowsShortcutBytes({
       idList: null,
       linkInfo: {
@@ -474,6 +481,9 @@ it.each([12, 16, 20, 24, 28, 32])(
     const report = await parse(bytes);
     expect(report.coverage.status).toBe("partial");
     expect(report.coverage.failing_offset).toBe(76 + field);
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({ code, offset: 76 + field }),
+    );
     expect(report.issues.every((issue) => issue.offset < bytes.length)).toBe(
       true,
     );
@@ -526,6 +536,40 @@ it("reports an ExtraData size that overruns the file", async () => {
     report.issues.some((issue) => issue.code === "block_size_overrun"),
   ).toBe(true);
 });
+
+it.each([
+  [0xa0000001, null, null],
+  [0xa0000007, true, ".dll"],
+] as const)(
+  "uses an admitted ExtraData signature to retain target uncertainty (%s)",
+  async (signature, difference, extension) => {
+    const prefix = windowsShortcutBytes({
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Tools\\ordinary.dll" },
+      iconLocation: "C:\\Tools\\intended.exe",
+      extraData: [],
+      terminalBlock: false,
+    });
+    const header = Buffer.alloc(8);
+    header.writeUInt32LE(0x314);
+    header.writeUInt32LE(signature, 4);
+    const report = await parse(Buffer.concat([prefix, header]));
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: prefix.length,
+    });
+    expect(report.extra_data.blocks).toEqual([]);
+    expect(report.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "icon_location_differs_from_target",
+          value: difference,
+        }),
+        expect.objectContaining({ kind: "target_extension", extension }),
+      ]),
+    );
+  },
+);
 
 const HAS_EXP_STRING = 0x00000200;
 const HAS_EXP_ICON = 0x00004000;

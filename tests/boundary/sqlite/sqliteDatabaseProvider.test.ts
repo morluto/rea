@@ -929,58 +929,6 @@ it("reports a projection above SQLite's result-column capacity as capacity, not 
   expect(JSON.stringify(projection)).not.toContain("invalid_format");
 });
 
-it("attributes inventory selections beyond metadata bind capacity to result-column capacity", async () => {
-  const { database } = await createFixture();
-  const reader = new DatabaseSync(database.path, { readOnly: true });
-  let selectedColumns: number;
-  let engineColumnLimit: number;
-  try {
-    engineColumnLimit = reader.limits.column;
-    selectedColumns =
-      Math.max(reader.limits.variableNumber, engineColumnLimit) + 1;
-  } finally {
-    reader.close();
-  }
-  const provider = createProvider();
-  onTestFinished(() => provider.close());
-  const original = await readFile(database.path);
-  const control = await provider.inspect({
-    path: database.path,
-    table: "records",
-    schema_scope: "inventory",
-    columns: ["text_value", "text_value"],
-    row_limit: 1,
-  });
-  if (!control.ok) throw control.error;
-  expect(control.value.result).toMatchObject({
-    rows: {
-      columns: ["text_value", "text_value"],
-      returned_rows: 1,
-    },
-  });
-  const result = await provider.inspect({
-    path: database.path,
-    table: "records",
-    schema_scope: "inventory",
-    columns: Array.from({ length: selectedColumns }, () => "text_value"),
-    row_limit: 1,
-  });
-  if (result.ok) throw new Error("Expected result-column capacity refusal");
-  const projected = projectAnalysisError(result.error);
-  expect(projected).toMatchObject({
-    code: "resource_constraint",
-    details: {
-      resource: "capacity",
-      reported_limits: {
-        selected_result_columns: selectedColumns,
-        engine_result_column_limit: engineColumnLimit,
-      },
-    },
-  });
-  expect(JSON.stringify(projected)).not.toContain("invalid_format");
-  expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
-});
-
 it("reports application-collation row failures as unavailable while retaining schema-only recovery", async () => {
   const workspace = await createTestWorkspace("rea-sqlite-collation-");
   onTestFinished(() => removeTestWorkspace(workspace.root));

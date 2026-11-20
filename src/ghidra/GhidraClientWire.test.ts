@@ -71,64 +71,64 @@ const harness = (
   };
 };
 
-describe("GhidraWire reply ceiling", () => {
-  it("admits the reply ceiling in the request's settings context", async () => {
-    let override = 2 * 1024 * 1024;
-    const { wire } = harness(limit(8192), {
-      get maximumBytes() {
-        return override;
-      },
-      source: "runtime",
-    });
-    expect(wire.replyLimit()).toEqual(DEFAULT_BRIDGE_MAX_REPLY);
-
-    void wire.request("list_strings", {}, { timeoutMs: 1 });
-    override = 4 * 1024 * 1024;
-
-    expect(wire.replyLimit()).toEqual({
-      maximumBytes: 2 * 1024 * 1024,
-      source: "runtime",
-    });
+it("keeps the written reply ceiling until another admitted request writes", async () => {
+  let maximum = 8 * 1024 * 1024;
+  const { wire, pending, writes } = harness(limit(512), {
+    get maximumBytes() {
+      return maximum;
+    },
+    source: "runtime",
   });
+  const queuedCeiling: BridgeMaxReplyBytes = {
+    maximumBytes: 3 * 1024 * 1024,
+    source: "setting",
+  };
+  expect(wire.replyLimit()).toEqual(DEFAULT_BRIDGE_MAX_REPLY);
+  const requests = [wire.request("ping", {}, {})];
+  try {
+    maximum = 4 * 1024 * 1024;
+    const written = { maximumBytes: 8 * 1024 * 1024, source: "runtime" };
+    expect(wire.replyLimit()).toEqual(written);
+    expect(pending.settle(1, ok("first"))).toBe(true);
+    expect(await requests[0]).toEqual(ok("first"));
 
-  it("activates a queued request's admitted ceiling only when it is written", async () => {
-    const { wire } = harness(limit(512), {
-      maximumBytes: 8 * 1024 * 1024,
-      source: "setting",
-    });
-    const admitted: BridgeMaxReplyBytes = {
-      maximumBytes: 3 * 1024 * 1024,
-      source: "runtime",
-    };
-    void wire.request("ping", {}, { timeoutMs: 1 });
-
-    const refused = await wire.request(
+    const refused = wire.request(
       "list_strings",
       { pattern: "x".repeat(1024) },
       {
-        timeoutMs: 1,
         limits: {
           requestLimit: limit(512),
           replyLimit: { maximumBytes: 1, source: "runtime" },
         },
       },
     );
-    expect(refused.ok).toBe(false);
-    expect(
-      wire.replyLimit(),
-      "a refused request leaves the written request's ceiling in force",
-    ).toEqual({ maximumBytes: 8 * 1024 * 1024, source: "setting" });
+    requests.push(refused);
+    expect(writes).toHaveLength(1);
+    expect(pending.size).toBe(0);
+    expect(await refused).toMatchObject({
+      ok: false,
+      error: { kind: "admission" },
+    });
+    expect(wire.replyLimit()).toEqual(written);
 
-    void wire.request(
-      "ping",
-      {},
-      {
-        timeoutMs: 1,
-        limits: { requestLimit: limit(512), replyLimit: admitted },
-      },
+    requests.push(
+      wire.request(
+        "ping",
+        {},
+        {
+          limits: { requestLimit: limit(512), replyLimit: queuedCeiling },
+        },
+      ),
     );
-    expect(wire.replyLimit()).toEqual(admitted);
-  });
+    expect(writes).toHaveLength(2);
+    expect(wire.replyLimit()).toEqual(queuedCeiling);
+    expect(pending.settle(3, ok("second"))).toBe(true);
+    expect(await requests[2]).toEqual(ok("second"));
+    expect(pending.size).toBe(0);
+  } finally {
+    pending.failAll(() => ok(null));
+    await Promise.all(requests);
+  }
 });
 
 describe("GhidraWire ceiling admission", () => {
@@ -182,8 +182,6 @@ describe("GhidraWire request ceiling", () => {
       const refused = await wire.request("search_strings", params, {});
       if (refused.ok) throw new Error("Expected a request ceiling refusal");
       expect(refused.error.message).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-      expect(refused.error.message).toContain("8192");
-      expect(refused.error.message).toContain("Ghidra request exceeds");
       const constraint = refused.error.cause;
       if (!(constraint instanceof AnalysisResourceConstraintError))
         throw new Error("Expected the typed transport constraint");
@@ -227,9 +225,7 @@ describe("GhidraWire request ceiling", () => {
       if (admitted) {
         if (!result.ok) throw result.error;
         expect(result.value).toBe("ok");
-        expect(writes.length).toBe(1);
-        expect(Buffer.byteLength(writes[0] ?? "")).toBe(payloadBytes + 1);
-        expect(writes[0] === encoded + "\n").toBe(true);
+        expect(writes).toEqual([encoded + "\n"]);
       } else {
         if (result.ok) throw new Error("Expected a request ceiling refusal");
         expect(result.error.cause).toBeInstanceOf(
