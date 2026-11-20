@@ -277,7 +277,7 @@ export const libraryClosure = async (
       if (unsupported) {
         closure.unreadable.push({
           path: object.path,
-          reason: `DT_NEEDED ${JSON.stringify(soname)} contains an unsupported dynamic loader token or dollar expression`,
+          reason: `DT_NEEDED ${JSON.stringify(soname)} contains an unsupported dynamic token or dollar expression`,
         });
         continue;
       }
