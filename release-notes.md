@@ -1183,6 +1183,7 @@
 * **native:** reuse Mach-O signature recognition for initializers ([#12478](https://github.com/morluto/rea/issues/12478)) ([f759193](https://github.com/morluto/rea/commit/f759193fa41887eac97710fe11d65ce460d3a3f2))
 * **native:** select ELF sections through the keyed owner ([#10780](https://github.com/morluto/rea/issues/10780)) ([5d5ab53](https://github.com/morluto/rea/commit/5d5ab53536d711526c63a1f7b8bb2c54782d67a0))
 * **native:** share file-backed ELF and Mach-O initializer word reads ([#12559](https://github.com/morluto/rea/issues/12559)) ([3e40979](https://github.com/morluto/rea/commit/3e40979b427562e87def815ad58981041550cc87))
+* **native:** share mapped ELF and FAT scalar readers ([#12631](https://github.com/morluto/rea/issues/12631)) ([2c7c858](https://github.com/morluto/rea/commit/2c7c858c5a45a8174a46673ce1bed5ed780aaa3a))
 * **native:** share recorded crash source reads ([6c7d692](https://github.com/morluto/rea/commit/6c7d69245e1d365b524f5d2bd919a384e9f577e5))
 * **ntfs:** bound USN record fields with BinaryReader ([1aab66f](https://github.com/morluto/rea/commit/1aab66f12cdc53ef95b8778925933807cccd1353))
 * **ntfs:** decode attributes within their declared values ([#12211](https://github.com/morluto/rea/issues/12211)) ([1aab66f](https://github.com/morluto/rea/commit/1aab66f12cdc53ef95b8778925933807cccd1353))
