@@ -6,8 +6,6 @@ import {
   requiredRuntimeLimitFailure,
 } from "../../scripts/verify/rea-numeric-limits.mjs";
 
-const ENDPOINT_CANDIDATES = "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES";
-
 it("reads only actual settings environment properties", () => {
   expect([
     ...parseRuntimeSettingEnvironments(`
@@ -102,18 +100,6 @@ it("directs per-call registry declarations to ANALYSIS_SETTINGS", () => {
       }];
     `),
   ).toThrow(/REA_NEW_TIMEOUT_MS.*ANALYSIS_SETTINGS/u);
-});
-
-it("recognizes the documented endpoint-candidate limit as numeric", () => {
-  const discovered = discoverNumericLimitUses([
-    {
-      path: "src/domain/webBundleAnalysis.ts",
-      source: `const candidates = process.env.${ENDPOINT_CANDIDATES};`,
-    },
-  ]);
-  expect(discovered.get(ENDPOINT_CANDIDATES)?.path).toBe(
-    "src/domain/webBundleAnalysis.ts",
-  );
 });
 
 it("does not treat a registry declaration as a producer", () => {
@@ -507,29 +493,48 @@ it("keeps ordinary and optional bracket-access reads", () => {
     ]);
 });
 
-it("requires the tracked endpoint-candidate limit to be an analysis setting", () => {
+it("reports a required limit absent from src as a typed missing result", () => {
+  const name = "REA_ABSENT_MAX_BYTES";
   expect(
-    requiredRuntimeLimitFailure(ENDPOINT_CANDIDATES, {
+    requiredRuntimeLimitFailure(name, {
+      inSource: false,
+      inRuntime: false,
+      inRegistry: false,
+    }),
+  ).toEqual({ code: "required_runtime_limit_missing", name });
+  expect(
+    requiredRuntimeLimitFailure(name, {
+      inSource: true,
       inRuntime: false,
       inRegistry: true,
     }),
-  ).toMatch(/ANALYSIS_SETTINGS/);
+  ).toEqual({ code: "required_runtime_limit_not_analysis_setting", name });
   expect(
-    requiredRuntimeLimitFailure(ENDPOINT_CANDIDATES, {
+    requiredRuntimeLimitFailure(name, {
+      inSource: true,
+      inRuntime: false,
+      inRegistry: false,
+    }),
+  ).toEqual({ code: "required_runtime_limit_not_analysis_setting", name });
+  expect(
+    requiredRuntimeLimitFailure(name, {
+      inSource: false,
+      inRuntime: true,
+      inRegistry: true,
+    }),
+  ).toEqual({ code: "required_runtime_limit_not_analysis_setting", name });
+  expect(
+    requiredRuntimeLimitFailure(name, {
+      inSource: false,
       inRuntime: true,
       inRegistry: false,
     }),
   ).toBeUndefined();
   expect(
-    requiredRuntimeLimitFailure("REA_NTFS_MFT_MAX_FILE_BYTES", {
-      inRuntime: false,
+    requiredRuntimeLimitFailure(name, {
+      inSource: true,
+      inRuntime: true,
       inRegistry: false,
     }),
-  ).toMatch(/ANALYSIS_SETTINGS/);
-  expect(
-    requiredRuntimeLimitFailure("REA_REGF_HIVE_MAX_FILE_BYTES", {
-      inRuntime: true,
-      inRegistry: true,
-    }),
-  ).toMatch(/numericLimitRegistry/);
+  ).toBeUndefined();
 });
