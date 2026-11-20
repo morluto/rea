@@ -191,6 +191,31 @@ describe.skipIf(process.platform === "win32")(
       return { inspect, file };
     };
 
+    it("skips an unavailable TryExec by ID and refuses the explicit file", async () => {
+      const { inspect, file } = await userOverride(
+        "[Desktop Entry]\nType=Application\nName=User notes\nExec=notes-app\nTryExec=rea-missing-tryexec\n",
+      );
+      expect(await inspect()).toMatchObject({
+        ok: true,
+        value: { inventory: { desktop_entry: { name: "Notes" } } },
+      });
+      expect(await inspect(file)).toMatchObject({
+        ok: false,
+        error: {
+          reason: "executable_not_found",
+          program: "rea-missing-tryexec",
+        },
+      });
+      await writeFile(
+        file,
+        "[Desktop Entry]\nType=Application\nName=User notes\nExec=notes-app\nTryExec=notes-app\n",
+      );
+      expect(await inspect()).toMatchObject({
+        ok: true,
+        value: { inventory: { desktop_entry: { name: "User notes" } } },
+      });
+    });
+
     it.each([
       { setting: "Hidden=true", exec: true, found: false },
       { setting: "Hidden=true", exec: false, found: false },
