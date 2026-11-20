@@ -15,6 +15,7 @@ import {
 import type { Element, Node } from "@xmldom/xmldom";
 
 import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   decodeZipEntryText,
   zipEntryNameLimitations,
@@ -544,14 +545,16 @@ export const parseNugetNupkg = async (
   if (signal?.aborted) onAbort();
   else signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    assertArtifactReadActive(signal);
     // Count while enumerating so an oversized directory stops at the budget
     // instead of materializing and decoding every member first.
     const entries: Entry[] = [];
     try {
       for await (const entry of reader.getEntriesGenerator({
         decodeText: decodeZipEntryText,
-        ...(zipSignal === undefined ? {} : { signal: zipSignal }),
       })) {
+        // zip.js observes cancellation for member reads, but not for directory enumeration.
+        assertArtifactReadActive(signal);
         if (entries.length >= input.max_entries)
           throw decodeLimit(
             NUGET_NUPKG_FORMAT,
@@ -567,6 +570,7 @@ export const parseNugetNupkg = async (
     } catch (cause: unknown) {
       return wrapZipFailure(cause);
     }
+    assertArtifactReadActive(signal);
     // The inventory comes from the central directory; local entries it omits
     // are only visible as bytes no listed record accounts for.
     const directoryOffset = reader.directoryOffset;
