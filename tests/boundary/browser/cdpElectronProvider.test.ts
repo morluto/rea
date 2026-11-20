@@ -937,53 +937,49 @@ describe("CdpElectronProvider frame capture", () => {
   );
 });
 
-describe("CdpElectronProvider malformed source replies", () => {
-  it.each([{}, { scriptSource: null }, { scriptSource: 123 }])(
-    "rejects malformed Electron source replies instead of inventing source: %j",
-    async (reply) => {
-      const root = await electronFixture();
-      const browser = await startFakeCdpBrowser({
-        electronFileUrl: pathToFileURL(join(root, "index.html")).href,
-        commandResult: ({ method }) =>
-          method === "Debugger.getScriptSource" ? reply : undefined,
-      });
-      browsers.push(browser);
-      const result = await new CdpElectronProvider().inspectPage(
-        inspectElectronPageInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          target_id: "electron-page",
-          observation_ms: 0,
-          include_script_sources: true,
-        }),
-      );
+it("rejects malformed Electron source replies and detaches the selected page", async () => {
+  const root = await electronFixture();
+  const browser = await startFakeCdpBrowser({
+    electronFileUrl: pathToFileURL(join(root, "index.html")).href,
+    commandResult: ({ method }) =>
+      method === "Debugger.getScriptSource" ? { scriptSource: 123 } : undefined,
+  });
+  browsers.push(browser);
+  const provider = new CdpElectronProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.inspectPage(
+    inspectElectronPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "electron-page",
+      observation_ms: 0,
+      include_script_sources: true,
+    }),
+  );
 
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          operation: "inspect_electron_page",
-          reason: "protocol_error",
-          userMessage: expect.stringContaining(
-            "Debugger.getScriptSource returned a malformed result at /scriptSource",
-          ),
-        },
-      });
-      expect(browser.commands.map(({ method }) => method)).toContain(
-        "Target.detachFromTarget",
-      );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      operation: "inspect_electron_page",
+      reason: "protocol_error",
+      command: "Debugger.getScriptSource",
+      pointer: "/scriptSource",
     },
+  });
+  expect(browser.commands.map(({ method }) => method)).toContain(
+    "Target.detachFromTarget",
   );
 });
 
-const inspectInventoryReply = async (
-  method: string,
-  reply: (fileUrl: string) => Readonly<Record<string, unknown>>,
+const inspectInventoryReplies = async (
+  replies: Readonly<
+    Record<string, (fileUrl: string) => Readonly<Record<string, unknown>>>
+  >,
 ) => {
   const root = await electronFixture();
   const fileUrl = pathToFileURL(join(root, "index.html")).href;
   const browser = await startFakeCdpBrowser({
     electronFileUrl: fileUrl,
-    commandResult: (command) =>
-      command.method === method ? reply(fileUrl) : undefined,
+    commandResult: ({ method }) => replies[method]?.(fileUrl),
   });
   browsers.push(browser);
   const result = await new CdpElectronProvider().inspectPage(
@@ -999,12 +995,11 @@ const inspectInventoryReply = async (
 
 describe("CdpElectronProvider malformed inventory replies", () => {
   it("keeps documents unknown when the DOM string table is missing", async () => {
-    const inspected = await inspectInventoryReply(
-      "DOMSnapshot.captureSnapshot",
-      () => ({
+    const inspected = await inspectInventoryReplies({
+      "DOMSnapshot.captureSnapshot": () => ({
         documents: [{ documentURL: 0, nodes: { nodeType: [] } }],
       }),
-    );
+    });
 
     expect(inspected.dom).toEqual({
       total_nodes: 0,
@@ -1039,9 +1034,8 @@ describe("CdpElectronProvider malformed inventory replies", () => {
       { parentFrameId: 7 },
       { parentFrameId: "" },
     ];
-    const inspected = await inspectInventoryReply(
-      "Target.getTargets",
-      (fileUrl) => ({
+    const inspected = await inspectInventoryReplies({
+      "Target.getTargets": (fileUrl) => ({
         targetInfos: [
           {
             targetId: "selected-worker",
@@ -1075,7 +1069,7 @@ describe("CdpElectronProvider malformed inventory replies", () => {
           { type: "page", targetId: 7, openerId: null },
         ],
       }),
-    );
+    });
     expect(inspected.workers).toEqual([
       expect.objectContaining({
         target_id: "selected-worker",
@@ -1102,40 +1096,43 @@ describe("CdpElectronProvider malformed inventory replies", () => {
     );
   });
 
-  it.each([
-    ["dom", "DOMSnapshot.captureSnapshot", () => ({ strings: [] })],
-    [
-      "dom",
-      "DOMSnapshot.captureSnapshot",
-      (fileUrl: string) => ({
-        strings: [fileUrl],
-        documents: [{ documentURL: 0, nodes: { nodeType: null } }],
-      }),
-    ],
-    [
-      "resources",
-      "Page.getResourceTree",
-      (fileUrl: string) => ({
+  it("reports each malformed optional inventory without failing the observation", async () => {
+    const inspected = await inspectInventoryReplies({
+      "DOMSnapshot.captureSnapshot": () => ({ strings: [] }),
+      "Page.getResourceTree": (fileUrl) => ({
         frameTree: {
           frame: { id: "main", loaderId: "loader-main", url: fileUrl },
           resources: null,
         },
       }),
-    ],
-    ["workers", "Target.getTargets", () => ({ targetInfos: null })],
-  ] as const)(
-    "keeps a malformed %s inventory incomplete (%s)",
-    async (section, method, reply) => {
-      const inspected = await inspectInventoryReply(method, reply);
-      expect(inspected.completeness.status).not.toBe("complete_within_window");
-      expect(inspected.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section,
-          reason: "invalid_protocol_value",
-        }),
-      );
-    },
-  );
+      "Target.getTargets": () => ({ targetInfos: null }),
+    });
+    expect(inspected.completeness.status).not.toBe("complete_within_window");
+    for (const section of ["dom", "resources", "workers"]) {
+      expect(inspected.completeness.unavailable_sections).toContain(section);
+      expect(inspected.completeness.excluded).toContainEqual({
+        section,
+        reason: "invalid_protocol_value",
+        count: null,
+      });
+    }
+  });
+
+  it("counts malformed node columns as one unavailable DOM document", async () => {
+    const inspected = await inspectInventoryReplies({
+      "DOMSnapshot.captureSnapshot": (fileUrl) => ({
+        strings: [fileUrl],
+        documents: [{ documentURL: 0, nodes: { nodeType: null } }],
+      }),
+    });
+    expect(inspected.dom.total_nodes).toBe(0);
+    expect(inspected.completeness.unavailable_sections).toContain("dom");
+    expect(inspected.completeness.excluded).toContainEqual({
+      section: "dom",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+  });
 });
 
 describe("CdpElectronProvider script source capture", () => {
