@@ -75,7 +75,9 @@ not carry that uncertainty warning.
 `nuspec` names the selected manifest path, decoded byte length, and whether it
 came from an OPC `_rels/.rels` manifest relationship or a unique root `.nuspec`.
 When selection is missing or ambiguous, `nuspec` is `null` and the inventory
-still succeeds with a limitation.
+still succeeds with a limitation. OPC part names match without regard to ASCII
+case. Multiple equivalent ZIP member names leave the manifest ambiguous, even
+when the target exactly spells one member name.
 
 The `.nuspec` is chosen from a unique OPC relationship with Type
 `http://schemas.microsoft.com/packaging/2010/07/manifest` when that target

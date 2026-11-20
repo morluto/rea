@@ -484,6 +484,10 @@ export const distinctTargetMatches = <T>(
   return [...found];
 };
 
+/** OPC part-name equivalence folds ASCII case only. */
+const opcPartNameKey = (name: string): string =>
+  name.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
+
 const findNuspec = (
   files: readonly { readonly entry: FileEntry; readonly name: string }[],
   relsXml: string | undefined,
@@ -494,28 +498,22 @@ const findNuspec = (
     | undefined;
   readonly source: "opc-relationship" | "root-nuspec" | undefined;
 } => {
-  // Every ZIP occurrence stays distinct: duplicate or case-variant names must
-  // surface as ambiguity rather than collapse to an archive-order winner.
+  // Keep every ZIP occurrence in its OPC equivalence bucket. An exact
+  // spelling cannot resolve two occurrences with equivalent part names.
   // Index once: every target is then a constant-time lookup, however many
   // relationships the package declares.
-  const exactNames = new Map<string, (typeof files)[number][]>();
-  const foldedNames = new Map<string, (typeof files)[number][]>();
+  const partNames = new Map<string, (typeof files)[number][]>();
   for (const file of files) {
-    const exact = exactNames.get(file.name);
-    if (exact === undefined) exactNames.set(file.name, [file]);
-    else exact.push(file);
-    const lower = file.name.toLowerCase();
-    const folded = foldedNames.get(lower);
-    if (folded === undefined) foldedNames.set(lower, [file]);
-    else folded.push(file);
+    const key = opcPartNameKey(file.name);
+    const members = partNames.get(key);
+    if (members === undefined) partNames.set(key, [file]);
+    else members.push(file);
   }
-  const matchTarget = (target: string) =>
-    exactNames.get(target) ?? foldedNames.get(target.toLowerCase()) ?? [];
   if (relsXml !== undefined) {
     const targets = opcManifestTargets(relsXml, limitations);
     const resolved = distinctTargetMatches(
       targets.map((target) => target.lookup),
-      matchTarget,
+      (target) => partNames.get(opcPartNameKey(target)) ?? [],
     );
     if (resolved.length > 1) {
       limitations.push(
@@ -651,7 +649,7 @@ export const parseNugetNupkg = async (
       });
     }
     const relsMembers = files.filter(
-      (file) => file.name.toLowerCase() === "_rels/.rels",
+      (file) => opcPartNameKey(file.name) === "_rels/.rels",
     );
     // Spellings such as "./_rels/.rels" normalize to the same logical path; with
     // more than one, ZIP order would choose the manifest, so follow none.

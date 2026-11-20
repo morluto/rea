@@ -762,24 +762,57 @@ it.for(["constructor/file.txt", "__proto__/file.txt", "toString/file.txt"])(
   },
 );
 
-it("leaves identity unknown when the manifest relationship matches case-variant members", async () => {
-  const bytes = await nugetNupkgFixture({
-    includeRels: false,
-    nuspecName: "First.nuspec",
-    extraMembers: {
-      "_rels/.rels": manifestRels("/FIRST.nuspec"),
-      "first.nuspec": ungroupedNuspec,
-    },
-  });
-  const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
-  );
-  expect(report.identity).toBeNull();
-  expect(report.nuspec).toBeNull();
-  expect(report.limitations).toContain(
-    "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
-  );
-});
+it.each(["/FIRST.nuspec", "/First.nuspec", "/first.nuspec"])(
+  "leaves identity unknown when OPC target %s matches case-variant members",
+  async (target) => {
+    const bytes = await nugetNupkgFixture({
+      includeRels: false,
+      nuspecName: "First.nuspec",
+      extraMembers: {
+        "_rels/.rels": manifestRels(target),
+        "first.nuspec": ungroupedNuspec,
+      },
+    });
+    const report = nugetNupkgSchema.parse(
+      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.identity).toBeNull();
+    expect(report.nuspec).toBeNull();
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      examined_nuspec_bytes: 0,
+    });
+    expect(report.contents.map((entry) => entry.name)).toEqual(
+      expect.arrayContaining(["First.nuspec", "first.nuspec"]),
+    );
+    expect(report.limitations).toContain(
+      "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
+    );
+  },
+);
+
+it.each([
+  {
+    target: "/CONTENT/É.nuspec",
+    source: "opc-relationship",
+    id: "Ungrouped.Package",
+  },
+  { target: "/CONTENT/é.nuspec", source: "root-nuspec", id: "Demo.Package" },
+])(
+  "matches only ASCII case variants in an OPC target $target",
+  async ({ target, source, id }) => {
+    const bytes = await nugetNupkgFixture({
+      includeRels: false,
+      extraMembers: {
+        "_rels/.rels": manifestRels(target),
+        "content/É.nuspec": ungroupedNuspec,
+      },
+    });
+    const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+    expect(report.nuspec?.source).toBe(source);
+    expect(report.identity?.id).toBe(id);
+  },
+);
 
 it("reports an encrypted manifest above the metadata budget without decoding it", async () => {
   const writer = new ZipWriter(new Uint8ArrayWriter());
