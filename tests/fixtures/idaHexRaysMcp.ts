@@ -39,7 +39,7 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
   ];
   openBackend = "idalib";
   inventoryBackend: string | undefined;
-  rejectOpen = false;
+  openToolError: string | undefined;
   /** Lose the open reply in transport, optionally after the lease exists. */
   loseOpenReply: { leased: boolean } | undefined;
   /** Reject close_database; `keepLease` leaves the worker registered. */
@@ -79,8 +79,8 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
     this.calls.push({ name, args: structuredClone(args) });
     switch (name) {
       case "open_database": {
-        if (this.rejectOpen)
-          throw new IdaToolRejection("IDA MCP tool failed: cannot load file");
+        if (this.openToolError !== undefined)
+          throw new IdaToolRejection(this.openToolError);
         const path = z.string().parse(args.path);
         const instance_id = `lease${(this.#nextId += 1)}`;
         if (this.loseOpenReply?.leased !== false)

@@ -313,10 +313,10 @@ export class IdaSessionClient implements AnalysisClient {
   #hexRaysCloseReceipt: HexRaysCloseReceipt | undefined;
   #databaseCloseCompleted = false;
   #openAttempted = false;
-  #openCompleted = false;
+  // Only a protocol-defined no-worker reply establishes a rejected open.
+  #openOutcome: "unverified" | "reply_received" | "no_worker" = "unverified";
   #ready = false;
   #blockingSessions: readonly UpstreamSession[] | undefined;
-  #openRejected = false;
   #callGraphAdvertised = false;
   #surveyAdvertised = false;
   #initialIdentity: string | undefined;
@@ -812,10 +812,9 @@ export class IdaSessionClient implements AnalysisClient {
       init_hexrays: true,
       preferred_session_id: workspace.sessionId,
     });
-    this.#openCompleted = true;
-    // A completed but malformed/positive open may still own a live Worker.
-    // Only an explicit producer rejection keeps the old no-worker branch.
-    this.#openRejected = rejectedOpenDatabaseSchema.safeParse(raw).success;
+    this.#openOutcome = rejectedOpenDatabaseSchema.safeParse(raw).success
+      ? "no_worker"
+      : "reply_received";
     this.#lifecycle.push(raw);
     const opened = openDatabaseSchema.parse(raw);
     if (!sameIdaHostPath(opened.session.input_path, workspace.inputPath))
@@ -838,22 +837,13 @@ export class IdaSessionClient implements AnalysisClient {
    * instance id, so the binding is the returned id plus its inventory row.
    */
   async #openHexRays(workspace: IdaWorkspace): Promise<string> {
-    let raw: JsonValue;
-    try {
-      raw = await this.connection.call("open_database", {
-        path: workspace.inputPath,
-        set_current: false,
-      });
-    } catch (cause: unknown) {
-      // A tool error is a completed, explicit rejection; anything else leaves
-      // the open's outcome unknown and the workspace retained.
-      if (cause instanceof IdaToolRejection) {
-        this.#openCompleted = true;
-        this.#openRejected = true;
-      }
-      throw cause;
-    }
-    this.#openCompleted = true;
+    // The MCP tool error only reports that the request failed. Nexus can
+    // return a startup error while a worker is still starting.
+    const raw = await this.connection.call("open_database", {
+      path: workspace.inputPath,
+      set_current: false,
+    });
+    this.#openOutcome = "reply_received";
     this.#lifecycle.push(raw);
     const opened = hexRaysOpenSchema.parse(raw);
     this.#expectedSession = opened.instance_id;
@@ -1058,7 +1048,7 @@ export class IdaSessionClient implements AnalysisClient {
     if (
       !this.#openAttempted ||
       this.#workspace === undefined ||
-      this.#openRejected
+      this.#openOutcome === "no_worker"
     )
       return undefined;
     return this.#databaseCloseCompleted
@@ -1169,8 +1159,7 @@ export class IdaSessionClient implements AnalysisClient {
             );
           if (
             this.#database === undefined &&
-            this.#openCompleted &&
-            !this.#openRejected
+            this.#openOutcome === "reply_received"
           )
             throw new AnalysisProtocolError(
               "IDA open returned without a verified private worker binding. An empty session inventory does not prove that its Worker exited; the private workspace was retained.",
@@ -1199,9 +1188,15 @@ export class IdaSessionClient implements AnalysisClient {
           this.#databaseCloseCompleted = true;
           this.#database = undefined;
         }
-        if (!this.#openCompleted)
+        if (this.#openOutcome === "unverified")
           throw new AnalysisProtocolError(
-            "IDA database open did not return a completed response. Worker inventory cannot prove that the request has stopped; the private workspace was retained.",
+            "IDA worker startup remains unverified. A worker may still be starting even when inventory is empty. The private workspace was retained.",
+            {
+              diagnostics: {
+                recovery:
+                  "Check the upstream IDA worker and confirm it has stopped before manually removing the retained workspace. See docs/providers/ida-provider.md.",
+              },
+            },
           );
         this.#openAttempted = false;
       }

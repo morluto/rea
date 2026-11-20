@@ -165,6 +165,47 @@ describe("Hex-Rays query line", () => {
 });
 
 describe("Hex-Rays IDA MCP startup profile", () => {
+  it("retains the private input after an open tool error and observes a late unleased worker", async () => {
+    const { producer, client } = await fixture();
+    producer.openToolError =
+      "IDA MCP tool failed: timed out waiting for idat worker";
+    const opened = await client.execute("list_procedures", {});
+    if (opened.ok) throw new Error("expected startup timeout");
+    expect(opened.error.message).toContain("timed out waiting for idat worker");
+
+    const open = producer.calls.find(({ name }) => name === "open_database");
+    const path = open?.args.path;
+    if (typeof path !== "string") throw new Error("missing private input path");
+    const closing = await client.close();
+    if (closing.ok)
+      throw new Error("cleanup accepted an empty startup inventory");
+    expect(closing.error.cleanupIncomplete).toBe(true);
+    await access(path);
+
+    // Nexus can publish the worker after open_database has returned the error.
+    const idbPath = path + ".i64";
+    producer.peers = [
+      { path: idbPath, backend: "idat", status: "unavailable" },
+    ];
+    const retry = await client.close();
+    if (retry.ok)
+      throw new Error("expected retained cleanup for the late worker");
+    expect(projectAnalysisError(retry.error).details).toMatchObject({
+      diagnostics: {
+        upstream_sessions: {
+          state: "unverified",
+          sessions: [
+            { owned: false, input_path: idbPath, hexrays_backend: "idat" },
+          ],
+        },
+      },
+    });
+    expect(producer.calls.some(({ name }) => name === "close_database")).toBe(
+      false,
+    );
+    await access(path);
+  });
+
   it("refuses an inconsistent open and inventory backend without querying or closing the worker", async () => {
     const { root, producer, client } = await fixture();
     producer.openBackend = "idat";
@@ -441,14 +482,6 @@ describe("Hex-Rays IDA MCP session", () => {
       "close_database",
     );
     expect(await workspaces(root)).toHaveLength(1);
-  });
-
-  it("cleans up after an explicit open rejection that left no lease", async () => {
-    const { root, producer, client } = await fixture();
-    producer.rejectOpen = true;
-    expect((await client.execute("list_procedures", {})).ok).toBe(false);
-    expect((await client.close()).ok).toBe(true);
-    expect(await workspaces(root)).toEqual([]);
   });
 
   it("settles a rejected close by the following inventory", async () => {
