@@ -66,13 +66,14 @@ const extendedFirstAtomLength = (): Buffer => {
 };
 
 cliTest(
-  "reports BEAM tables and code through the public CLI",
+  "reports BEAM tables and code for a path relative to the CLI working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-cli-");
     const path = join(root, "app.beam");
     await writeFile(path, erlangBeamFixture("cli_mod"));
     const result = await cli.run({
-      arguments: ["inspect-erlang-beam", path, "--json"],
+      arguments: ["inspect-erlang-beam", "app.beam", "--json"],
+      cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completeBeamEvidenceSchema.parse(result.json);
@@ -494,21 +495,6 @@ cliTest(
     await writeFile(path, bytes);
     const refused = await inspect();
     expect(refused.json).toMatchObject({ code: "invalid_request" });
-  },
-);
-
-cliTest(
-  "resolves a relative BEAM path against the working directory",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-beam-cli-rel-");
-    await writeFile(join(root, "app.beam"), erlangBeamFixture());
-    const result = await cli.run({
-      arguments: ["inspect-erlang-beam", "app.beam", "--json"],
-      cwd: root,
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = completeBeamEvidenceSchema.parse(result.json);
-    expect(evidence.subject?.local_path).toBe(join(root, "app.beam"));
   },
 );
 
