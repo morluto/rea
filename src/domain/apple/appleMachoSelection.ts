@@ -20,7 +20,7 @@ import {
 } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
-  decodeMachoFixedWordFields,
+  readMachoDyldInfoCommand,
   readMachoLinkeditDataCommand,
   machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
@@ -328,12 +328,11 @@ const collectFixupCommand = (
       );
     state.chained = range(data.dataOffset, data.dataSize);
   } else if (kind === LC.DYLD_INFO || kind === LC.DYLD_INFO_ONLY) {
-    const fields = decodeMachoFixedWordFields(
-      kind,
-      bytes.subarray(cursor + 8, cursor + size),
+    const fields = readMachoDyldInfoCommand(
+      bytes.subarray(cursor, cursor + size),
       true,
     );
-    if (fields === null || fields === undefined)
+    if (fields === null)
       throw truncatedInput("macho", "Truncated dyld-info command");
     if (state.dyldInfo)
       throw malformedInput(
@@ -341,10 +340,14 @@ const collectFixupCommand = (
         "Mach-O slice declares more than one LC_DYLD_INFO or LC_DYLD_INFO_ONLY command",
       );
     state.dyldInfo = true;
-    const rebase = range(fields.rebase_off!, fields.rebase_size!);
+    const rebase = range(fields.rebase_off, fields.rebase_size);
     if (rebase.size > 0) state.rebases.push(rebase);
-    for (const stream of ["bind", "weak", "lazy"] as const) {
-      const bound = range(fields[`${stream}_off`]!, fields[`${stream}_size`]!);
+    for (const [stream, offset, length] of [
+      ["bind", fields.bind_off, fields.bind_size],
+      ["weak", fields.weak_bind_off, fields.weak_bind_size],
+      ["lazy", fields.lazy_bind_off, fields.lazy_bind_size],
+    ] as const) {
+      const bound = range(offset, length);
       if (bound.size > 0) state.binds.push({ ...bound, stream });
     }
   } else if (machoDependencyCommand(kind) !== null) {
