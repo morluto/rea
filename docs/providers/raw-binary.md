@@ -38,8 +38,10 @@ mapped starting at that address. For `x86`, `x86_64`, `arm`, `arm64`, `6502`, an
 Ghidra seeds an `entry` function there before auto-analysis. For `cortex-m`,
 that address is the vector-table base: the first word is the initial stack
 pointer and the second is the reset vector. REA clears the reset vector's
-Thumb bit, decodes that address as Thumb, and names the function
-`reset_handler`. ARM, AArch64, and Cortex-M bases must be 4-byte aligned; m68k
+Thumb bit, decodes that address as Thumb, names the function
+`reset_handler`, and seeds valid in-image system exceptions plus external
+peripheral interrupt vectors (`irq_<n>_handler` up to slot 255, stopping before
+the earliest observed handler address). ARM, AArch64, and Cortex-M bases must be 4-byte aligned; m68k
 entries must be 2-byte aligned; x86 and 6502 entries may be byte-aligned. A
 Cortex-M image must contain at least eight bytes.
 For 6502, the entry and complete mapped file must fit within `0x0000..0xffff`;
@@ -114,8 +116,16 @@ Only a settled basis may be stated as fact. A claim keeps the subject, source,
 rule, and reason of the fact it came from. An open color note stays a board
 record. It is not rewritten as an installed-part question. A driver claim keeps
 that driver's id and the evidence that names the captured image.
-`decideHardwareClaim` applies these rules. A selected board also decodes the
-image observations recorded with that board: loaded addresses, pin indexes,
+`decideHardwareClaim` applies these rules across the built-in SoC catalogs
+(`stm32f1`, `stm32f4`, `stm32l4`, `stm32h7`, `gd32f1`, `gd32f4`, `gd32vf103`,
+`ch32v30x`, `rp2040`, `nrf52`, `samd21`, Xtensa `esp32`/`esp32s2`/`esp32s3`, and
+RISC-V `esp32c2`/`esp32c3`/`esp32c6`/`esp32h2`), container hints (`esp_chip_id`
+and `uf2_family_id`), Cortex-M3/M4 peripheral bit-band and RP2040 atomic
+`XOR`/`SET`/`CLR` register aliases, and caller-supplied CMSIS-SVD (`svd_xml`) or
+Flattened Devicetree (`devicetree`) profiles. A selected board applies its
+memory map and peripheral attachments when its SoC agrees with the active
+platform, and decodes captured-image drivers and boot observations only when the
+subject digest matches `imageSha256`: loaded addresses, pin indexes,
 SFUD rows, a PLL immediate, and vector slots. A bus-name string such as `spi2`
 stays a driver-linkage claim and does not become a controller. Pin role and the
 installed flash part stay unsettled. A PLL field split does not state a clock

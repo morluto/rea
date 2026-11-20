@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   detectSocPlatform,
   lookupSocPeripheral,
+  resolveSocRegisterAlias,
   socPeripheralDefinitionSchema,
+  socPlatformForEspChipId,
+  socPlatformForUf2FamilyId,
 } from "./socPeripheralDatabase.js";
 
 describe("STM32 and GD32 peripheral lookup", () => {
@@ -99,21 +102,22 @@ describe("STM32 and GD32 peripheral lookup", () => {
     expect(lookupSocPeripheral("0x40006c00", "stm32f4")).toBeNull();
   });
 
-  it("lets the GD32F4 clock-trim window select only that family", () => {
-    expect(detectSocPlatform(["0x40006c00"], "arm")).toEqual([
-      {
-        platform: "gd32f4",
-        matchedCount: 1,
-        totalAddresses: 1,
-        confidence: 1,
-        matchedPeripherals: ["CTC"],
-      },
-    ]);
+  it("lets the GD32F4 clock-trim window combined with AHB1 RCU select only that family", () => {
+    expect(detectSocPlatform(["0x40023800", "0x40006c00"], "arm")[0]).toEqual({
+      platform: "gd32f4",
+      matchedCount: 2,
+      totalAddresses: 2,
+      confidence: 1,
+      matchedPeripherals: ["CTC", "RCU"],
+    });
+    expect(
+      detectSocPlatform(["0x40006c00"], "arm").map((item) => item.platform),
+    ).toEqual(["stm32h7", "gd32f4"]);
   });
 });
 
 describe("ESP32 peripheral lookup and automated platform detection", () => {
-  it("resolves ESP32 DPort and RTC peripheral blocks", () => {
+  it("resolves ESP32 Xtensa DPort and RTC peripheral blocks separately from RISC-V ESP32-C", () => {
     const uart0 = lookupSocPeripheral("0x3ff40004", "esp32");
     expect(uart0?.name).toBe("UART0");
     expect(uart0?.bus).toBe("DPort");
@@ -130,13 +134,13 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
     const timg0 = lookupSocPeripheral("0x3ff5f000", "esp32");
     expect(timg0?.name).toBe("TIMG0");
 
-    // ESP32-C series (RISC-V) peripheral blocks
-    const esp32cUart0 = lookupSocPeripheral("0x60000000", "esp32");
-    expect(esp32cUart0?.name).toBe("UART0");
-    expect(esp32cUart0?.bus).toBe("System");
-
-    const esp32cGpio = lookupSocPeripheral("0x60004004", "esp32");
-    expect(esp32cGpio?.name).toBe("GPIO");
+    // Classic Xtensa ESP32 does not map RISC-V 0x60000000 blocks
+    expect(lookupSocPeripheral("0x60000000", "esp32")).toBeNull();
+    expect(lookupSocPeripheral("0x60000000", "esp32c3")).toMatchObject({
+      name: "UART0",
+      bus: "System",
+    });
+    expect(lookupSocPeripheral("0x60004004", "esp32c3")?.name).toBe("GPIO");
   });
 
   it("detects candidate SoC platform from observed MMIO address set", () => {
@@ -207,7 +211,10 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
     expect(lookupSocPeripheral("0x40007000", "gd32f1")?.name).toBe("PMU");
     expect(lookupSocPeripheral("0x40011400", "gd32f1")?.name).toBe("GPIOD");
     expect(lookupSocPeripheral("0x40023000", "gd32f1")?.name).toBe("CRC");
-    const tied = detectSocPlatform(["0x40020000", "0x40012800"], "arm");
+    const tied = detectSocPlatform(
+      ["0x40020000", "0x40012800", "0x40010800"],
+      "arm",
+    );
     const leaders = tied.filter(
       (candidate) => candidate.matchedCount === tied[0]?.matchedCount,
     );
@@ -215,7 +222,7 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
       "stm32f1",
       "gd32f1",
     ]);
-    expect(leaders.every((candidate) => candidate.matchedCount === 2)).toBe(
+    expect(leaders.every((candidate) => candidate.matchedCount === 3)).toBe(
       true,
     );
   });
@@ -235,13 +242,6 @@ describe("CPU-compatible catalog scoring", () => {
       "riscv",
     );
     expect(diluted).toEqual([
-      {
-        platform: "esp32",
-        matchedCount: 1,
-        totalAddresses: 1,
-        confidence: 1,
-        matchedPeripherals: ["UART0"],
-      },
       {
         platform: "esp32c2",
         matchedCount: 1,
@@ -272,6 +272,16 @@ describe("CPU-compatible catalog scoring", () => {
       },
     ]);
 
+    expect(detectSocPlatform(["0x3ff40000"], "xtensa")).toEqual([
+      {
+        platform: "esp32",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
+    ]);
+    expect(detectSocPlatform(["0x3ff40000"], "riscv")).toEqual([]);
     expect(detectSocPlatform(["0x3ff40000"], "x86")).toEqual([]);
     expect(detectSocPlatform(["0x40011000"], "arm64")).toEqual([]);
     const sharedClock = detectSocPlatform(["0x40023800"], "arm");
@@ -304,6 +314,7 @@ describe("RP2040 peripheral windows", () => {
       bus: "APB",
     });
     expect(lookupSocPeripheral("0x40035000", "rp2040")?.name).toBe("UART0");
+    expect(lookupSocPeripheral("0x40040000", "rp2040")?.name).toBe("SPI1");
     expect(lookupSocPeripheral("0x50200010", "rp2040")).toMatchObject({
       name: "PIO0",
       bus: "AHBL",
@@ -312,8 +323,8 @@ describe("RP2040 peripheral windows", () => {
     expect(lookupSocPeripheral("0x50110000", "rp2040")?.name).toBe(
       "USBCTRL_REGS",
     );
-    expect(lookupSocPeripheral("0x40040000", "rp2040")).toBeNull();
-    expect(lookupSocPeripheral("0x40024000", "rp2040")).toBeNull();
+    expect(lookupSocPeripheral("0x40020400", "rp2040")).toBeNull();
+    expect(lookupSocPeripheral("0x40070000", "rp2040")).toBeNull();
     expect(detectSocPlatform(["0x40034000"], "arm")).toEqual([
       {
         platform: "rp2040",
@@ -339,7 +350,6 @@ describe("ESP32-C3 peripheral windows", () => {
     expect(lookupSocPeripheral("0x6002e000", "esp32")).toBeNull();
     const leaders = detectSocPlatform(["0x60000000"], "riscv");
     expect(leaders.map((candidate) => candidate.platform)).toEqual([
-      "esp32",
       "esp32c2",
       "esp32c3",
       "esp32c6",
@@ -360,7 +370,8 @@ describe("ESP32-C3 peripheral windows", () => {
 
 describe("ESP32-C6 peripheral windows", () => {
   it("keeps a shared page from selecting only one family", () => {
-    expect(lookupSocPeripheral("0x60002000", "esp32")?.name).toBe("SPI1");
+    expect(lookupSocPeripheral("0x60002000", "esp32")).toBeNull();
+    expect(lookupSocPeripheral("0x60002000", "esp32s3")?.name).toBe("SPI1");
     expect(lookupSocPeripheral("0x60002000", "esp32c2")?.name).toBe("SPI1");
     expect(lookupSocPeripheral("0x60002000", "esp32c3")?.name).toBe("SPI1");
     expect(lookupSocPeripheral("0x60002000", "esp32c6")?.name).toBe("SPI0");
@@ -377,7 +388,7 @@ describe("ESP32-C6 peripheral windows", () => {
       detectSocPlatform(["0x60002000"], "riscv").map(
         (candidate) => candidate.platform,
       ),
-    ).toEqual(["esp32", "esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
+    ).toEqual(["esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
     expect(
       detectSocPlatform(["0x60010000"], "riscv").map(
         (candidate) => candidate.platform,
@@ -441,7 +452,7 @@ describe("ESP32-C2 peripheral windows", () => {
       detectSocPlatform(["0x60008800"], "riscv").map(
         (candidate) => candidate.platform,
       ),
-    ).toEqual(["esp32", "esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
+    ).toEqual(["esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
     expect(
       detectSocPlatform(["0x600c1000"], "riscv").map(
         (candidate) => candidate.platform,
@@ -485,5 +496,129 @@ describe("ESP32-H2 peripheral windows", () => {
       },
     ]);
     expect(detectSocPlatform(["0x6008e000"], "arm")).toEqual([]);
+  });
+});
+
+describe("STM32L4, STM32H7, nRF52, SAMD21, ESP32-S2/S3, and RISC-V MCU catalogs", () => {
+  it("resolves STM32L4 AHB2 GPIO and STM32H7 multi-domain peripherals", () => {
+    expect(lookupSocPeripheral("0x48000014", "stm32l4")).toMatchObject({
+      name: "GPIOA",
+      bus: "AHB2",
+    });
+    expect(lookupSocPeripheral("0x40021000", "stm32l4")?.name).toBe("RCC");
+    expect(lookupSocPeripheral("0x58024400", "stm32h7")).toMatchObject({
+      name: "RCC",
+      bus: "AHB4",
+    });
+    expect(lookupSocPeripheral("0x58020014", "stm32h7")?.name).toBe("GPIOA");
+    expect(lookupSocPeripheral("0x52002000", "stm32h7")?.name).toBe("Flash_IF");
+  });
+
+  it("resolves nRF52840 non-overlapping P0/P1 GPIO ports and SAMD21 APB peripherals", () => {
+    expect(lookupSocPeripheral("0x50000504", "nrf52")?.name).toBe("P0");
+    expect(lookupSocPeripheral("0x50000804", "nrf52")?.name).toBe("P1");
+    expect(lookupSocPeripheral("0x40002000", "nrf52")?.name).toBe("UARTE0");
+    expect(lookupSocPeripheral("0x40027000", "nrf52")?.name).toBe("USBD");
+    expect(lookupSocPeripheral("0x4002d000", "nrf52")?.name).toBe("PWM3");
+
+    expect(lookupSocPeripheral("0x41004400", "samd21")).toMatchObject({
+      name: "PORT",
+      bus: "APB",
+    });
+    expect(lookupSocPeripheral("0x60000000", "samd21")).toMatchObject({
+      name: "PORT_IOBUS",
+      bus: "System",
+    });
+    expect(lookupSocPeripheral("0x42000800", "samd21")?.name).toBe("SERCOM0");
+    expect(detectSocPlatform(["0x42000800"], "cortex-m")).toEqual([
+      {
+        platform: "samd21",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["SERCOM0"],
+      },
+    ]);
+  });
+
+  it("resolves Xtensa ESP32-S2/S3 and RISC-V GD32VF103/CH32V30x families", () => {
+    expect(lookupSocPeripheral("0x3f400000", "esp32s2")?.name).toBe("UART0");
+    expect(lookupSocPeripheral("0x60038000", "esp32s3")?.name).toBe(
+      "USB_SERIAL_JTAG",
+    );
+    expect(lookupSocPeripheral("0x6002e000", "esp32s3")?.name).toBe("UART2");
+    expect(detectSocPlatform(["0x6002e000"], "xtensa")).toEqual([
+      {
+        platform: "esp32s3",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART2"],
+      },
+    ]);
+
+    expect(lookupSocPeripheral("0xd1000000", "gd32vf103")?.name).toBe("MTIMER");
+    expect(lookupSocPeripheral("0xd2000000", "gd32vf103")?.name).toBe("ECLIC");
+    expect(lookupSocPeripheral("0xe000e000", "ch32v30x")?.name).toBe("PFIC");
+    expect(lookupSocPeripheral("0x40023400", "ch32v30x")?.name).toBe("USBHS");
+    expect(detectSocPlatform(["0xd2000000"], "riscv")[0]?.platform).toBe(
+      "gd32vf103",
+    );
+  });
+});
+
+describe("hardware register aliases and firmware container bridges", () => {
+  it("unwraps Cortex-M3/M4 peripheral bit-band aliases and RP2040 atomic alias pages", () => {
+    // STM32F4 GPIOA (0x40020000) + ODR (0x14), bit 9 => 0x42000000 + 0x20015*32 + 1*4 = 0x424002a4
+    const bitband = resolveSocRegisterAlias("0x424002a4", "stm32f4");
+    expect(bitband).toMatchObject({
+      kind: "bitband",
+      canonicalAddress: "0x40020014",
+      registerOffset: "0x14",
+      bit: 9,
+    });
+    expect(bitband?.peripheral.name).toBe("GPIOA");
+    // Unaligned bit-band address and Cortex-M7 STM32H7 (no peripheral bit-banding) must return null
+    expect(resolveSocRegisterAlias("0x424002a6", "stm32f4")).toBeNull();
+    expect(resolveSocRegisterAlias("0x424002a4", "stm32h7")).toBeNull();
+
+    // RP2040 RESETS (0x4000c000): XOR=0x4000d000, SET=0x4000e000, CLR=0x4000f000
+    expect(resolveSocRegisterAlias("0x4000d000", "rp2040")?.kind).toBe(
+      "atomic_xor",
+    );
+    expect(resolveSocRegisterAlias("0x4000e000", "rp2040")).toMatchObject({
+      kind: "atomic_set",
+      canonicalAddress: "0x4000c000",
+      registerOffset: "0x0",
+      bit: null,
+    });
+    expect(resolveSocRegisterAlias("0x4000f008", "rp2040")).toMatchObject({
+      kind: "atomic_clr",
+      canonicalAddress: "0x4000c008",
+      registerOffset: "0x8",
+    });
+    // Direct page and offsets past PADS_QSPI's 0x18 aliasPageRegisterBytes return null
+    expect(resolveSocRegisterAlias("0x4000c000", "rp2040")).toBeNull();
+    expect(resolveSocRegisterAlias("0x40022400", "rp2040")).toBeNull();
+  });
+
+  it("maps ESP chip IDs and UF2 family IDs to built-in SoC catalogs", () => {
+    expect(socPlatformForEspChipId(0x0000)).toBe("esp32");
+    expect(socPlatformForEspChipId(0x0002)).toBe("esp32s2");
+    expect(socPlatformForEspChipId(0x0005)).toBe("esp32c3");
+    expect(socPlatformForEspChipId(0x0009)).toBe("esp32s3");
+    expect(socPlatformForEspChipId(0x000c)).toBe("esp32c2");
+    expect(socPlatformForEspChipId(0x000d)).toBe("esp32c6");
+    expect(socPlatformForEspChipId(0x0010)).toBe("esp32h2");
+    expect(socPlatformForEspChipId(0x0012)).toBeNull();
+
+    expect(socPlatformForUf2FamilyId(0xe48bff56)).toBe("rp2040");
+    expect(socPlatformForUf2FamilyId(0xada52840)).toBe("nrf52");
+    expect(socPlatformForUf2FamilyId(0x68ed2b88)).toBe("samd21");
+    expect(socPlatformForUf2FamilyId(0x57755a57)).toBe("stm32f4");
+    expect(socPlatformForUf2FamilyId(0x00ff6919)).toBe("stm32l4");
+    expect(socPlatformForUf2FamilyId(0x6db66082)).toBe("stm32h7");
+    expect(socPlatformForUf2FamilyId(0x699b62ec)).toBe("ch32v30x");
+    expect(socPlatformForUf2FamilyId(0xdeadbeef)).toBeNull();
   });
 });

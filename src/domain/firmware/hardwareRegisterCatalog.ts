@@ -417,6 +417,7 @@ const ARCH_REGISTERS: Record<HardwareArchitecture, readonly RegisterEntry[]> = {
   arm: ARM_SCS_REGISTERS,
   "cortex-m": ARM_SCS_REGISTERS,
   riscv: [],
+  xtensa: [], // Xtensa uses Special Registers (RSR/WSR/XSR) rather than fixed MMIO windows
   x86: X86_APIC_REGISTERS,
   arm64: [],
   mips: [], // MIPS uses CP0 coprocessor registers (mtc0/mfc0) rather than standard MMIO

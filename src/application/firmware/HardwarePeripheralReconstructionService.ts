@@ -17,6 +17,13 @@ import {
   hardwareArchitectureSchema,
   hardwareMemoryRegionKindSchema,
 } from "../../domain/firmware/hardwareMemoryMap.js";
+import { devicetreeSchema } from "../../domain/firmware/devicetree.js";
+import {
+  hardwareProfileFromDevicetree,
+  lookupCustomPeripheral,
+  parseCmsisSvd,
+  type CustomHardwareProfile,
+} from "../../domain/firmware/hardwareCustomProfile.js";
 import {
   controllerNameBasis,
   CONTROLLER_NAME_BASES,
@@ -34,21 +41,28 @@ import {
   boardDriverSchema,
   type BoardDriver,
 } from "../../domain/firmware/boardDriverLayer.js";
+import {
+  driverPeripheralRecoverySchema,
+  type DriverPeripheralRecovery,
+} from "../../domain/firmware/driverPeripheralReverse.js";
 import { hardwareClaimsFromImage } from "../../domain/firmware/imageHardwareDecode.js";
 import {
   boardDeviceAttachmentSchema,
-  boardDevicesForPeripheral,
   boardIdSchema,
   lookupBoardMemoryWindow,
   lookupBoardProfile,
   unboundBoardDevices,
   type BoardDeviceAttachment,
   type BoardId,
-  type BoardPeripheralProfile,
+  type BoardMemoryWindow,
 } from "../../domain/firmware/boardPeripheralProfile.js";
 import {
   detectSocPlatform,
   lookupSocPeripheral,
+  resolveSocRegisterAlias,
+  SOC_REGISTER_ALIAS_KINDS,
+  socPlatformForEspChipId,
+  socPlatformForUf2FamilyId,
   type SocPlatform,
   socPlatformSchema,
   type SocPlatformMatchCandidate,
@@ -58,6 +72,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   cancelledBy,
+  isAborted,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -75,17 +90,54 @@ export const reconstructProcedureHardwareInputSchema = z.strictObject({
   platform: socPlatformSchema
     .optional()
     .describe(
-      "Optional explicit target SoC family (stm32f1, stm32f4, gd32f1, gd32f4, rp2040, esp32, esp32c2, esp32c3, esp32c6, esp32h2) for device-specific register mapping",
+      "Optional explicit target SoC family for device-specific peripheral and register mapping",
     ),
   board: boardIdSchema
     .optional()
     .describe(
-      "Optional known board. stm32f407-rt-spark selects the STM32F407 map and annotates on-board devices. It must agree with platform when both are set.",
+      "Optional known development board profile. It must agree with platform when both are set.",
+    ),
+  svd_xml: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional CMSIS-SVD XML peripheral and register map for custom or uncatalogued MCUs",
+    ),
+  devicetree: devicetreeSchema
+    .optional()
+    .describe(
+      "Optional parsed Flattened Devicetree report supplying custom peripheral, memory, and device windows",
+    ),
+  esp_chip_id: z
+    .number()
+    .int()
+    .min(0)
+    .max(0xffff)
+    .optional()
+    .describe(
+      "Optional ESP image header chip_id from inspect_firmware_image to select the matching Espressif SoC catalog",
+    ),
+  uf2_family_id: z
+    .number()
+    .int()
+    .min(0)
+    .max(0xffffffff)
+    .optional()
+    .describe(
+      "Optional UF2 container family_id from inspect_firmware_image to select the matching MCU catalog",
     ),
 });
 export type ReconstructProcedureHardwareInput = z.infer<
   typeof reconstructProcedureHardwareInputSchema
 >;
+
+export interface ReconstructHardwareOptions {
+  readonly subjectSha256?: string | null;
+  readonly customProfile?: CustomHardwareProfile | null;
+  readonly espChipId?: number;
+  readonly uf2FamilyId?: number;
+}
 
 /** Enriched peripheral block with optional SoC-specific controller identification. */
 export interface ReconstructedPeripheralBlock extends HardwarePeripheralBlockSummary {
@@ -122,11 +174,13 @@ export interface HardwarePeripheralReconstruction {
   readonly architecture: HardwareArchitecture;
   readonly platform: SocPlatform | null;
   readonly board: BoardId | null;
+  readonly customProfileId?: string | null;
   readonly producingSource: HardwareProducingSource | null;
   readonly boardMcu: string | null;
   readonly boardMemory: readonly BoardMemoryAccess[];
   readonly boardUnboundDevices: readonly BoardDeviceAttachment[];
   readonly boardDrivers: readonly BoardDriver[];
+  readonly driverRecoveries?: readonly DriverPeripheralRecovery[];
   readonly totalReferencesExamined: number;
   readonly mmioAccessCount: number;
   readonly nonMmioAccessCount: number;
@@ -143,6 +197,7 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
   architecture: hardwareArchitectureSchema,
   platform: socPlatformSchema.nullable().optional(),
   board: boardIdSchema.nullable(),
+  customProfileId: z.string().nullable().optional(),
   producingSource: z
     .strictObject({
       subjectSha256: z.string().nullable(),
@@ -166,6 +221,7 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
   ),
   boardUnboundDevices: z.array(boardDeviceAttachmentSchema),
   boardDrivers: z.array(boardDriverSchema),
+  driverRecoveries: z.array(driverPeripheralRecoverySchema).optional(),
   totalReferencesExamined: z.number().int().min(0),
   mmioAccessCount: z.number().int().min(0),
   nonMmioAccessCount: z.number().int().min(0),
@@ -203,6 +259,15 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
       registerName: z.string().nullable().optional(),
       registerMnemonic: z.string().nullable().optional(),
       registerBasis: z.enum(REGISTER_NAME_BASES),
+      registerAlias: z
+        .strictObject({
+          kind: z.enum(SOC_REGISTER_ALIAS_KINDS),
+          canonicalAddress: z.string(),
+          registerOffset: z.string(),
+          bit: z.number().int().min(0).max(31).nullable(),
+        })
+        .nullable()
+        .optional(),
       sourceAddress: z.string().nullable().optional(),
       operandIndex: z.number().nullable().optional(),
       provenance: z.string().nullable().optional(),
@@ -266,35 +331,22 @@ const unresolvedSocPlatformLimitation = (
   return `SoC platform is unresolved because ${names} share the highest peripheral match count`;
 };
 
-const normalizeDigest = (digest: string | null | undefined): string | null => {
-  const normalized = digest?.trim().toLowerCase();
-  return normalized ? normalized : null;
+const findMemoryWindow = (
+  windows: readonly BoardMemoryWindow[],
+  address: bigint,
+): BoardMemoryWindow | null => {
+  for (const item of windows) {
+    const end = item.baseAddressValue + BigInt(item.sizeBytes);
+    if (address >= item.baseAddressValue && address < end) return item;
+  }
+  return null;
 };
 
-/** Preserve shared MMIO region semantics when tied leading SoC catalogs all map the address. */
-const applySharedSocPeripheralMmio = (
+const applyMemoryWindows = (
   attribution: HardwareAccessAttribution,
-  leaders: readonly SocPlatformMatchCandidate[],
+  windows: readonly BoardMemoryWindow[],
 ): HardwareAccessAttribution => {
-  if (attribution.isMmio || leaders.length < 2) return attribution;
-  const allMatch = leaders.every(
-    (leader) =>
-      lookupSocPeripheral(attribution.addressValue, leader.platform) !== null,
-  );
-  if (!allMatch) return attribution;
-  return {
-    ...attribution,
-    regionKind: "peripheral_mmio",
-    regionName: "Peripheral MMIO",
-    isMmio: true,
-  };
-};
-
-const applyBoardMemoryWindow = (
-  attribution: HardwareAccessAttribution,
-  profile: BoardPeripheralProfile,
-): HardwareAccessAttribution => {
-  const matched = lookupBoardMemoryWindow(profile, attribution.addressValue);
+  const matched = findMemoryWindow(windows, attribution.addressValue);
   if (matched === null) return attribution;
   return {
     ...attribution,
@@ -304,26 +356,155 @@ const applyBoardMemoryWindow = (
   };
 };
 
-const devicesForBlock = (
-  profile: BoardPeripheralProfile,
-  peripheralNames: ReadonlySet<string>,
-): BoardDeviceAttachment[] => {
-  const attached = Array.from(peripheralNames).flatMap((name) =>
-    boardDevicesForPeripheral(profile, name),
-  );
-  return attached.sort((left, right) => {
+const promoteTiedCatalogMmio = (
+  attribution: HardwareAccessAttribution,
+  tiedLeaders: readonly SocPlatformMatchCandidate[],
+): HardwareAccessAttribution => {
+  if (attribution.isMmio || tiedLeaders.length < 2) return attribution;
+  const hits = tiedLeaders.flatMap((leader) => {
+    const hit = lookupSocPeripheral(attribution.addressValue, leader.platform);
+    return hit === null ? [] : [hit];
+  });
+  if (hits.length !== tiedLeaders.length) return attribution;
+  const uniqueBases = new Set(hits.map((hit) => hit.baseAddressValue));
+  const firstBase = hits[0]?.baseAddressValue;
+  const blockBaseValue =
+    uniqueBases.size === 1 && firstBase !== undefined
+      ? firstBase
+      : attribution.addressValue & ~0xfffn;
+  return {
+    ...attribution,
+    regionKind: "peripheral_mmio",
+    regionName: "Peripheral MMIO",
+    isMmio: true,
+    peripheralBlockBase: `0x${blockBaseValue.toString(16)}`,
+    peripheralBlockOffset: `0x${(attribution.addressValue - blockBaseValue).toString(16)}`,
+    controllerName: null,
+    controllerBasis: "observed_address",
+  };
+};
+
+const sortAttachments = (
+  items: readonly BoardDeviceAttachment[],
+): BoardDeviceAttachment[] =>
+  [...items].sort((left, right) => {
     if (left.id < right.id) return -1;
     if (left.id > right.id) return 1;
     return 0;
   });
+
+const enrichBlock = (
+  block: HardwarePeripheralBlockSummary,
+  activePlatform: SocPlatform | null,
+  customProfile: CustomHardwareProfile | null,
+  activeDevices: readonly BoardDeviceAttachment[],
+  activeDrivers: readonly BoardDriver[],
+): ReconstructedPeripheralBlock => {
+  const matchedNames = new Set<string>();
+  let primaryBus: string | null = null;
+  let blockBasis: ControllerNameBasis = controllerNameBasis(false);
+
+  for (const addr of block.uniqueAddresses) {
+    const customHit =
+      customProfile !== null
+        ? lookupCustomPeripheral(BigInt(addr), customProfile)
+        : null;
+    if (customHit !== null) {
+      matchedNames.add(customHit.peripheral.name);
+      primaryBus = customHit.peripheral.bus;
+      blockBasis = "explicit_profile";
+      continue;
+    }
+    if (activePlatform !== null) {
+      const def =
+        lookupSocPeripheral(addr, activePlatform) ??
+        resolveSocRegisterAlias(addr, activePlatform)?.peripheral ??
+        null;
+      if (def !== null) {
+        matchedNames.add(def.name);
+        primaryBus = def.bus;
+        if (blockBasis === "observed_address") blockBasis = "chip_manual";
+      }
+    }
+  }
+
+  return {
+    ...block,
+    socPeripheralName:
+      matchedNames.size > 0 ? Array.from(matchedNames).sort().join(", ") : null,
+    socPeripheralNameBasis: blockBasis,
+    socPeripheralBus: primaryBus,
+    boardDevices: sortAttachments(
+      activeDevices.filter(
+        (device) =>
+          device.peripheralName !== null &&
+          matchedNames.has(device.peripheralName),
+      ),
+    ),
+    boardDrivers: boardDriversForControllers(activeDrivers, matchedNames),
+  };
+};
+
+const resolveSelectedSocPlatform = (
+  explicitPlatform: SocPlatform | null,
+  options: ReconstructHardwareOptions | undefined,
+  limitations: string[],
+): SocPlatform | null => {
+  const espResolved =
+    options?.espChipId === undefined
+      ? undefined
+      : socPlatformForEspChipId(options.espChipId);
+  if (options?.espChipId !== undefined && espResolved === null) {
+    limitations.push(
+      `ESP chip_id 0x${options.espChipId.toString(16).padStart(4, "0")} has no built-in SoC peripheral catalog.`,
+    );
+  }
+
+  const uf2Resolved =
+    options?.uf2FamilyId === undefined
+      ? undefined
+      : socPlatformForUf2FamilyId(options.uf2FamilyId);
+  if (options?.uf2FamilyId !== undefined && uf2Resolved === null) {
+    limitations.push(
+      `UF2 family_id 0x${options.uf2FamilyId.toString(16).padStart(8, "0")} has no built-in SoC peripheral catalog.`,
+    );
+  }
+
+  if (
+    espResolved !== undefined &&
+    espResolved !== null &&
+    uf2Resolved !== undefined &&
+    uf2Resolved !== null &&
+    espResolved !== uf2Resolved
+  ) {
+    limitations.push(
+      `Container hints disagree (${espResolved} vs ${uf2Resolved}); keeping caller platform selection only.`,
+    );
+    return explicitPlatform;
+  }
+
+  const containerPlatform = espResolved ?? uf2Resolved ?? null;
+  if (
+    explicitPlatform !== null &&
+    containerPlatform !== null &&
+    explicitPlatform !== containerPlatform
+  ) {
+    limitations.push(
+      `Container metadata selects ${containerPlatform}, which disagrees with caller platform ${explicitPlatform}; preserving caller platform ${explicitPlatform}.`,
+    );
+    return explicitPlatform;
+  }
+  return explicitPlatform ?? containerPlatform;
+};
+
+const normalizeDigest = (digest: string | null | undefined): string | null => {
+  const normalized = digest?.trim().toLowerCase();
+  return normalized ? normalized : null;
 };
 
 /**
  * Reconstruct hardware peripheral interactions from a set of analyzed instruction references.
  * Pure deterministic domain workflow for offline and provider-decoupled analysis.
- * A known board refines memory windows and annotates controllers with that board's devices;
- * captured sample drivers and image observations apply only when `subjectSha256` matches the
- * board profile's recorded image digest.
  */
 export const reconstructHardwareFromReferences = (
   references: readonly AnalyzedInstructionReference[],
@@ -331,53 +512,60 @@ export const reconstructHardwareFromReferences = (
   procedure = "detached",
   platform: SocPlatform | null = null,
   board: BoardId | null = null,
-  subjectSha256: string | null = null,
+  subjectSha256OrOptions?: string | ReconstructHardwareOptions | null,
 ): HardwarePeripheralReconstruction => {
+  const options: ReconstructHardwareOptions | undefined =
+    typeof subjectSha256OrOptions === "string" ||
+    subjectSha256OrOptions === null
+      ? { subjectSha256: subjectSha256OrOptions }
+      : subjectSha256OrOptions;
   const limitations: string[] = [];
+  const selectedPlatform = resolveSelectedSocPlatform(
+    platform,
+    options,
+    limitations,
+  );
+  const customProfile = options?.customProfile ?? null;
+  const subjectSha256 = normalizeDigest(options?.subjectSha256);
   const boardProfile = board === null ? null : lookupBoardProfile(board);
+  const expectedImageSha256 = normalizeDigest(boardProfile?.imageSha256);
   const boardApplies =
     boardProfile !== null &&
-    (platform === null || platform === boardProfile.soc);
+    (selectedPlatform === null || selectedPlatform === boardProfile.soc);
 
   if (
     boardProfile !== null &&
-    platform !== null &&
-    platform !== boardProfile.soc
+    selectedPlatform !== null &&
+    selectedPlatform !== boardProfile.soc
   ) {
     limitations.push(
-      `Board ${boardProfile.id} targets ${boardProfile.soc}; platform ${platform} does not match, so board devices were not applied.`,
+      `Board ${boardProfile.id} targets ${boardProfile.soc}; platform ${selectedPlatform} does not match, so board devices were not applied.`,
     );
   }
 
-  const normalizedSubjectSha256 = normalizeDigest(subjectSha256);
-  const expectedImageSha256 = normalizeDigest(boardProfile?.imageSha256);
-  const hasBoardImageData =
-    boardProfile !== null &&
-    (boardProfile.drivers.length > 0 ||
-      boardProfile.imageObservations !== null);
-  const boardImageApplies =
+  const capturedImageApplies =
     boardApplies &&
     boardProfile !== null &&
     expectedImageSha256 !== null &&
-    normalizedSubjectSha256 !== null &&
-    normalizedSubjectSha256 === expectedImageSha256;
+    subjectSha256 !== null &&
+    subjectSha256 === expectedImageSha256;
 
   if (
     boardApplies &&
     boardProfile !== null &&
-    hasBoardImageData &&
-    !boardImageApplies
+    expectedImageSha256 !== null &&
+    subjectSha256 !== expectedImageSha256
   ) {
     limitations.push(
-      normalizedSubjectSha256 === null
-        ? `Captured reference image drivers and observations for board ${boardProfile.id} (${expectedImageSha256 ?? "unknown"}) were not applied because the analyzed firmware image digest is unknown.`
-        : `Captured reference image drivers and observations for board ${boardProfile.id} apply only to image ${expectedImageSha256 ?? "unknown"}, not analyzed image ${normalizedSubjectSha256}.`,
+      subjectSha256 === null
+        ? `Captured reference image drivers and observations for board ${boardProfile.id} (${expectedImageSha256}) were not applied because the analyzed firmware image digest is unknown.`
+        : `Captured reference image drivers and observations for board ${boardProfile.id} apply only to image ${expectedImageSha256}, not analyzed image ${subjectSha256}.`,
     );
   }
 
   const candidateAddresses = references.map((r) => r.target_address);
   const detectedPlatforms =
-    platform === null
+    selectedPlatform === null && customProfile === null
       ? detectSocPlatform(candidateAddresses, architecture)
       : [];
   const tie = unresolvedSocPlatformLimitation(detectedPlatforms);
@@ -403,12 +591,21 @@ export const reconstructHardwareFromReferences = (
   }
 
   const activePlatform =
-    platform ??
+    selectedPlatform ??
     (boardApplies && boardProfile !== null
       ? boardProfile.soc
-      : chooseDetectedSocPlatform(detectedPlatforms));
+      : customProfile === null
+        ? chooseDetectedSocPlatform(detectedPlatforms)
+        : null);
+
+  const memoryWindows: readonly BoardMemoryWindow[] = [
+    ...(customProfile?.memory ?? []),
+    ...(boardApplies && boardProfile !== null ? boardProfile.memory : []),
+  ];
   const tiedLeaders =
-    activePlatform === null ? leadingSocPlatforms(detectedPlatforms) : [];
+    activePlatform === null && customProfile === null
+      ? leadingSocPlatforms(detectedPlatforms)
+      : [];
 
   const attributions: HardwareAccessAttribution[] = [];
   for (const ref of references) {
@@ -416,6 +613,7 @@ export const reconstructHardwareFromReferences = (
       ref,
       architecture,
       activePlatform,
+      customProfile,
     );
     if (!attributed.ok) {
       limitations.push(
@@ -423,87 +621,76 @@ export const reconstructHardwareFromReferences = (
       );
       continue;
     }
-    const resolved =
-      boardApplies && boardProfile !== null
-        ? applyBoardMemoryWindow(attributed.value, boardProfile)
-        : applySharedSocPeripheralMmio(attributed.value, tiedLeaders);
-    attributions.push(resolved);
+    const windowed =
+      memoryWindows.length > 0
+        ? applyMemoryWindows(attributed.value, memoryWindows)
+        : null;
+    if (
+      windowed !== null &&
+      findMemoryWindow(memoryWindows, attributed.value.addressValue) !== null
+    ) {
+      attributions.push(windowed);
+      continue;
+    }
+    attributions.push(promoteTiedCatalogMmio(attributed.value, tiedLeaders));
   }
 
+  if (customProfile !== null) limitations.push(...customProfile.limitations);
   if (boardApplies && boardProfile !== null) {
     limitations.push(...boardProfile.limitations);
-    if (boardImageApplies) {
-      limitations.push(
-        `Drivers record strings in captured flash image ${expectedImageSha256}. A linked driver is code present in that image, not proof the device is opened during boot.`,
-      );
-    }
   }
+
+  const activeDevices: readonly BoardDeviceAttachment[] = [
+    ...(customProfile?.devices ?? []),
+    ...(boardApplies && boardProfile !== null ? boardProfile.devices : []),
+  ];
+  const activeDrivers: readonly BoardDriver[] =
+    capturedImageApplies && boardProfile !== null ? boardProfile.drivers : [];
+  const activeRecoveries: readonly DriverPeripheralRecovery[] =
+    capturedImageApplies && boardProfile !== null
+      ? boardProfile.driverRecoveries
+      : [];
 
   const summary = summarizeHardwarePeripheralInteractions(
     attributions,
     architecture,
   );
+  const peripheralBlocks = summary.peripheralBlocks.map((block) =>
+    enrichBlock(
+      block,
+      activePlatform,
+      customProfile,
+      activeDevices,
+      activeDrivers,
+    ),
+  );
 
-  const peripheralBlocks: ReconstructedPeripheralBlock[] =
-    summary.peripheralBlocks.map((block) => {
-      const matchedNames = new Set<string>();
-      let primaryBus: string | null = null;
+  const boardMemory: BoardMemoryAccess[] = memoryWindows.map((item) => ({
+    id: item.id,
+    name: item.name,
+    kind: item.kind,
+    baseAddress: item.baseAddress,
+    sizeBytes: item.sizeBytes,
+    accessCount: attributions.filter((attr) =>
+      boardProfile !== null &&
+      lookupBoardMemoryWindow(boardProfile, attr.addressValue)?.id === item.id
+        ? true
+        : findMemoryWindow(memoryWindows, attr.addressValue)?.id === item.id,
+    ).length,
+    evidence: item.evidence,
+  }));
 
-      if (activePlatform) {
-        for (const addr of block.uniqueAddresses) {
-          const def = lookupSocPeripheral(addr, activePlatform);
-          if (def) {
-            matchedNames.add(def.name);
-            primaryBus = def.bus;
-          }
-        }
-      }
-
-      return {
-        ...block,
-        socPeripheralName:
-          matchedNames.size > 0
-            ? Array.from(matchedNames).sort().join(", ")
-            : null,
-        socPeripheralNameBasis: controllerNameBasis(matchedNames.size > 0),
-        socPeripheralBus: primaryBus,
-        boardDevices:
-          boardApplies && boardProfile !== null
-            ? devicesForBlock(boardProfile, matchedNames)
-            : [],
-        boardDrivers:
-          boardImageApplies && boardProfile !== null
-            ? boardDriversForControllers(boardProfile.drivers, matchedNames)
-            : [],
-      };
-    });
-
-  const boardMemory: BoardMemoryAccess[] =
-    boardApplies && boardProfile !== null
-      ? boardProfile.memory.map((item) => ({
-          id: item.id,
-          name: item.name,
-          kind: item.kind,
-          baseAddress: item.baseAddress,
-          sizeBytes: item.sizeBytes,
-          accessCount: attributions.filter(
-            (itemAttribution) =>
-              lookupBoardMemoryWindow(
-                boardProfile,
-                itemAttribution.addressValue,
-              )?.id === item.id,
-          ).length,
-          evidence: item.evidence,
-        }))
-      : [];
-
-  const unsettledFacts =
-    boardApplies && boardProfile !== null
-      ? unsettledBoardFacts(boardProfile.devices)
-      : [];
+  const unbound = [
+    ...(customProfile !== null
+      ? customProfile.devices.filter((d) => d.peripheralName === null)
+      : []),
+    ...(boardApplies && boardProfile !== null
+      ? unboundBoardDevices(boardProfile)
+      : []),
+  ];
 
   const imageClaims =
-    boardImageApplies && boardProfile?.imageObservations != null
+    capturedImageApplies && boardProfile?.imageObservations != null
       ? hardwareClaimsFromImage(boardProfile.imageObservations)
       : [];
 
@@ -511,42 +698,41 @@ export const reconstructHardwareFromReferences = (
     procedure,
     architecture,
     platform,
+    ...(customProfile === null ? {} : { customProfileId: customProfile.id }),
     producingSource: null,
     board: boardProfile?.id ?? null,
-    boardMcu: boardApplies && boardProfile !== null ? boardProfile.mcu : null,
-    boardMemory,
-    boardUnboundDevices:
+    boardMcu:
       boardApplies && boardProfile !== null
-        ? [...unboundBoardDevices(boardProfile)]
-        : [],
-    boardDrivers:
-      boardImageApplies && boardProfile !== null
-        ? [...boardProfile.drivers]
-        : [],
+        ? boardProfile.mcu
+        : (customProfile?.model ?? null),
+    boardMemory,
+    boardUnboundDevices: unbound,
+    boardDrivers: [...activeDrivers],
+    ...(activeRecoveries.length === 0
+      ? {}
+      : { driverRecoveries: [...activeRecoveries] }),
     totalReferencesExamined: summary.totalReferencesExamined,
     mmioAccessCount: summary.mmioAccessCount,
     nonMmioAccessCount: summary.nonMmioAccessCount,
     peripheralBlocks,
     attributions,
     detectedPlatforms,
-    unsettledFacts,
+    unsettledFacts:
+      activeDevices.length > 0 ? unsettledBoardFacts(activeDevices) : [],
     hardwareClaims: [
       ...hardwareClaimsForBlocks({
         blocks: peripheralBlocks.map((block) => ({
           blockBase: block.blockBase,
           matched: block.socPeripheralNameBasis === "chip_manual",
+          basis: block.socPeripheralNameBasis,
           addresses: block.uniqueAddresses,
         })),
-        devices:
-          boardApplies && boardProfile !== null ? boardProfile.devices : [],
-        drivers:
-          boardImageApplies && boardProfile !== null
-            ? boardProfile.drivers.map((driver) => ({
-                id: driver.id,
-                evidence: driver.evidence,
-                linked: driver.linkage === "linked_in_image",
-              }))
-            : [],
+        devices: activeDevices,
+        drivers: activeDrivers.map((driver) => ({
+          id: driver.id,
+          evidence: driver.evidence,
+          linked: driver.linkage === "linked_in_image",
+        })),
       }),
       ...imageClaims,
     ],
@@ -584,20 +770,53 @@ const retainedReconstruction = (
   })),
 });
 
-const boardPlatformMismatch = (
-  board: ReconstructProcedureHardwareInput["board"],
-  platform: ReconstructProcedureHardwareInput["platform"],
-): AnalysisInputError | null => {
-  if (board === undefined || platform === undefined) return null;
-  const selectedBoard = lookupBoardProfile(board);
-  if (selectedBoard === null || selectedBoard.soc === platform) return null;
-  return new AnalysisInputError(HARDWARE_RECONSTRUCTION, undefined, [
-    {
-      path: ["board"],
-      reason: "invalid_value",
-      message: `Board ${board} targets ${selectedBoard.soc}, which does not match platform ${platform}.`,
-    },
-  ]);
+const validateHardwareProfileInputs = (
+  input: ReconstructProcedureHardwareInput,
+): Result<CustomHardwareProfile | null, AnalysisInputError> => {
+  if (input.board !== undefined && input.platform !== undefined) {
+    const selectedBoard = lookupBoardProfile(input.board);
+    if (selectedBoard !== null && selectedBoard.soc !== input.platform) {
+      return err(
+        new AnalysisInputError(HARDWARE_RECONSTRUCTION, undefined, [
+          {
+            path: ["board"],
+            reason: "invalid_value",
+            message: `Board ${input.board} targets ${selectedBoard.soc}, which does not match platform ${input.platform}.`,
+          },
+        ]),
+      );
+    }
+  }
+  if (input.svd_xml !== undefined && input.devicetree !== undefined) {
+    return err(
+      new AnalysisInputError(HARDWARE_RECONSTRUCTION, undefined, [
+        {
+          path: ["svd_xml"],
+          reason: "invalid_value",
+          message: "Pass either svd_xml or devicetree, not both.",
+        },
+      ]),
+    );
+  }
+  if (input.svd_xml !== undefined) {
+    const parsedSvd = parseCmsisSvd(input.svd_xml);
+    if (!parsedSvd.ok) {
+      return err(
+        new AnalysisInputError(HARDWARE_RECONSTRUCTION, undefined, [
+          {
+            path: ["svd_xml"],
+            reason: "invalid_value",
+            message: parsedSvd.error,
+          },
+        ]),
+      );
+    }
+    return ok(parsedSvd.value);
+  }
+  if (input.devicetree !== undefined) {
+    return ok(hardwareProfileFromDevicetree(input.devicetree));
+  }
+  return ok(null);
 };
 
 const analyzedReferences = (
@@ -627,7 +846,7 @@ const keepFailure = (
   failure: AnalysisError,
   signal: AbortSignal | undefined,
 ): Result<HardwarePeripheralReconstruction, AnalysisError> => {
-  if (signal?.aborted) {
+  if (isAborted(signal)) {
     failure.retainSecondaryFailure(
       cancelledBy(HARDWARE_RECONSTRUCTION, signal),
     );
@@ -637,8 +856,6 @@ const keepFailure = (
 
 /**
  * High-level application workflow: Reconstruct hardware peripheral interactions for a given procedure.
- * Queries provider procedure references, classifies physical memory regions, resolves standard architectural
- * registers, and aggregates interactions into cohesive 4 KiB hardware peripheral blocks.
  */
 export const reconstructProcedureHardwareInteractions = async (
   analysis: AnalysisOperationPort,
@@ -654,9 +871,17 @@ export const reconstructProcedureHardwareInteractions = async (
   );
   if (!parsed.ok) return parsed;
 
-  const { procedure, architecture, platform, board } = parsed.value;
-  const mismatch = boardPlatformMismatch(board, platform);
-  if (mismatch !== null) return err(mismatch);
+  const customProfile = validateHardwareProfileInputs(parsed.value);
+  if (!customProfile.ok) return customProfile;
+
+  const {
+    procedure,
+    architecture,
+    platform,
+    board,
+    esp_chip_id,
+    uf2_family_id,
+  } = parsed.value;
 
   const execution = await analysis.execute(
     "procedure_references",
@@ -685,14 +910,19 @@ export const reconstructProcedureHardwareInteractions = async (
     procedure,
     platform ?? null,
     board ?? null,
-    source.subjectSha256,
+    {
+      subjectSha256: source.subjectSha256,
+      customProfile: customProfile.value,
+      ...(esp_chip_id === undefined ? {} : { espChipId: esp_chip_id }),
+      ...(uf2_family_id === undefined ? {} : { uf2FamilyId: uf2_family_id }),
+    },
   );
   const result = {
     ...reconstructed,
     producingSource: source,
     limitations: [...execution.value.limitations, ...reconstructed.limitations],
   };
-  if (signal?.aborted) {
+  if (isAborted(signal)) {
     return err(
       cancelledBy(HARDWARE_RECONSTRUCTION, signal, {
         partialObservation: retainedReconstruction(result, source),

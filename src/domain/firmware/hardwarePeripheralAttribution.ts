@@ -4,6 +4,10 @@ import {
   type HardwareMemoryRegionKind,
 } from "./hardwareMemoryMap.js";
 import {
+  lookupCustomPeripheral,
+  type CustomHardwareProfile,
+} from "./hardwareCustomProfile.js";
+import {
   controllerNameBasis,
   registerNameBasis,
   type ControllerNameBasis,
@@ -12,9 +16,12 @@ import {
 import { lookupHardwareRegister } from "./hardwareRegisterCatalog.js";
 import {
   lookupSocPeripheral,
+  resolveSocRegisterAlias,
   type SocPlatform,
+  type SocRegisterAliasKind,
 } from "./socPeripheralDatabase.js";
-import { err, ok, type Result } from "../result.js";
+import { lookupSocPeripheralRegister } from "./socPeripheralRegisters.js";
+import { ok, type Result } from "../result.js";
 
 /** Minimal input reference contract representing an analyzed instruction reference. */
 export interface AnalyzedInstructionReference {
@@ -33,6 +40,14 @@ export interface AnalyzedInstructionReference {
 /** Access direction observed from the instruction reference. */
 export type HardwareAccessKind = "read" | "write" | "read_write" | "unknown";
 
+/** Resolved hardware alias details when an access uses bit-banding or atomic alias pages. */
+export interface HardwareRegisterAlias {
+  readonly kind: SocRegisterAliasKind;
+  readonly canonicalAddress: string;
+  readonly registerOffset: string;
+  readonly bit: number | null;
+}
+
 /** Structured hardware peripheral attribution for an analyzed instruction reference. */
 export interface HardwareAccessAttribution {
   readonly targetAddress: string;
@@ -49,6 +64,7 @@ export interface HardwareAccessAttribution {
   readonly registerName?: string | null;
   readonly registerMnemonic?: string | null;
   readonly registerBasis: RegisterNameBasis;
+  readonly registerAlias?: HardwareRegisterAlias | null;
   readonly sourceAddress?: string | null;
   readonly operandIndex?: number | null;
   readonly provenance?: string | null;
@@ -88,14 +104,14 @@ const deriveAccessKind = (
 
 /**
  * Attribute an analyzed instruction reference to its underlying hardware memory
- * region, calculating peripheral block coordinates and access direction.
- * Optionally accepts an explicit SoC platform family (stm32f1, stm32f4, gd32f1, gd32f4, rp2040, esp32, esp32c2, esp32c3, esp32c6, esp32h2).
- * for exact peripheral controller identification and base address resolution.
+ * region, calculating peripheral block coordinates, SoC/custom register mnemonics,
+ * and hardware register aliases (bit-banding / RP2040 atomic pages).
  */
 export const attributeHardwareAccess = (
   reference: AnalyzedInstructionReference,
   architecture: HardwareArchitecture,
   platform?: SocPlatform | null,
+  customProfile?: CustomHardwareProfile | null,
 ): Result<HardwareAccessAttribution, string> => {
   const classification = classifyHardwareMemoryAddress(
     reference.target_address,
@@ -106,29 +122,92 @@ export const attributeHardwareAccess = (
   const { canonicalAddress, addressValue } = classification.value;
   let { regionKind, regionName, isMmio } = classification.value;
 
-  const socPeripheral =
-    platform != null ? lookupSocPeripheral(canonicalAddress, platform) : null;
+  const customMatch =
+    customProfile != null
+      ? lookupCustomPeripheral(addressValue, customProfile)
+      : null;
+  const aliasMatch =
+    customMatch === null && platform != null
+      ? resolveSocRegisterAlias(addressValue, platform)
+      : null;
+  const directSocPeripheral =
+    customMatch === null && platform != null
+      ? lookupSocPeripheral(canonicalAddress, platform)
+      : null;
+  const socPeripheral = directSocPeripheral ?? aliasMatch?.peripheral ?? null;
 
   let blockBaseValue: bigint;
   let blockOffsetValue: bigint;
+  let controllerName: string | null = null;
+  let cBasis: ControllerNameBasis = "observed_address";
 
-  if (socPeripheral != null) {
+  if (customMatch !== null) {
+    regionKind = "peripheral_mmio";
+    const busSuffix =
+      customMatch.peripheral.bus !== null
+        ? ` (${customMatch.peripheral.bus})`
+        : "";
+    regionName = `${customMatch.peripheral.name}${busSuffix}`;
+    isMmio = true;
+    blockBaseValue = customMatch.peripheral.baseAddressValue;
+    blockOffsetValue = addressValue - blockBaseValue;
+    controllerName = customMatch.peripheral.name;
+    cBasis = "explicit_profile";
+  } else if (socPeripheral != null) {
     regionKind = "peripheral_mmio";
     regionName = `${socPeripheral.name} (${socPeripheral.bus})`;
     isMmio = true;
     blockBaseValue = socPeripheral.baseAddressValue;
-    blockOffsetValue = addressValue - socPeripheral.baseAddressValue;
+    blockOffsetValue =
+      aliasMatch !== null
+        ? aliasMatch.registerOffsetValue
+        : addressValue - socPeripheral.baseAddressValue;
+    controllerName = socPeripheral.name;
+    cBasis = controllerNameBasis(true);
   } else {
     const page = addressValue & ~0xfffn;
     const pageNamesAnotherController =
-      platform != null && lookupSocPeripheral(page, platform) != null;
+      (platform != null && lookupSocPeripheral(page, platform) != null) ||
+      (customProfile != null &&
+        lookupCustomPeripheral(page, customProfile) != null);
     // A rounded page can land on a catalogued controller the access never touched.
     blockBaseValue = pageNamesAnotherController ? addressValue : page;
     blockOffsetValue = pageNamesAnotherController ? 0n : addressValue & 0xfffn;
   }
 
   const accessKind = deriveAccessKind(reference.read, reference.write);
-  const knownRegister = lookupHardwareRegister(canonicalAddress, architecture);
+  const archRegister = lookupHardwareRegister(canonicalAddress, architecture);
+  const socRegister =
+    archRegister === null && customMatch === null && platform != null
+      ? lookupSocPeripheralRegister(addressValue, platform)
+      : null;
+  const customRegister = customMatch?.register ?? null;
+
+  const registerName =
+    archRegister?.name ?? customRegister?.name ?? socRegister?.name ?? null;
+  const registerMnemonic =
+    archRegister?.mnemonic ??
+    customRegister?.mnemonic ??
+    socRegister?.mnemonic ??
+    null;
+  const rBasis: RegisterNameBasis =
+    archRegister !== null
+      ? registerNameBasis(true)
+      : customRegister !== null
+        ? "explicit_profile"
+        : socRegister !== null
+          ? "chip_manual"
+          : registerNameBasis(false);
+
+  const registerAlias: HardwareRegisterAlias | null =
+    aliasMatch === null
+      ? null
+      : {
+          kind: aliasMatch.kind,
+          canonicalAddress: aliasMatch.canonicalAddress,
+          registerOffset: aliasMatch.registerOffset,
+          bit: aliasMatch.bit,
+        };
 
   return ok({
     targetAddress: canonicalAddress,
@@ -140,11 +219,12 @@ export const attributeHardwareAccess = (
     accessKind,
     peripheralBlockBase: `0x${blockBaseValue.toString(16)}`,
     peripheralBlockOffset: `0x${blockOffsetValue.toString(16)}`,
-    controllerName: socPeripheral?.name ?? null,
-    controllerBasis: controllerNameBasis(socPeripheral != null),
-    registerName: knownRegister?.name ?? null,
-    registerMnemonic: knownRegister?.mnemonic ?? null,
-    registerBasis: registerNameBasis(knownRegister != null),
+    controllerName,
+    controllerBasis: cBasis,
+    registerName,
+    registerMnemonic,
+    registerBasis: rBasis,
+    ...(registerAlias === null ? {} : { registerAlias }),
     sourceAddress: reference.source_address ?? null,
     operandIndex: reference.operand_index ?? null,
     provenance: reference.provenance ?? null,
@@ -163,7 +243,7 @@ export const summarizeHardwarePeripheralInteractions = (
   let mmioAccessCount = 0;
   let nonMmioAccessCount = 0;
 
-  type BlockAccumulator = {
+  interface BlockAccumulator {
     readonly blockBase: string;
     readonly regionName: string;
     readonly regionKind: HardwareMemoryRegionKind;
@@ -173,7 +253,7 @@ export const summarizeHardwarePeripheralInteractions = (
     readonly uniqueAddresses: Set<string>;
     readonly observedOffsets: Set<string>;
     readonly knownRegisters: Set<string>;
-  };
+  }
 
   const blocks = new Map<string, BlockAccumulator>();
 

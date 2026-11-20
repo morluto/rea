@@ -10,6 +10,18 @@ import {
   RT_SPARK_FLASH_IMAGE_SHA256,
 } from "./boardDriverLayer.js";
 import {
+  ESP32C3_DEVKITM_1_PROFILE,
+  ESP32S3_DEVKITC_1_PROFILE,
+  NRF52840_DK_PROFILE,
+  RP2040_PICO_PROFILE,
+  STM32F103C8_BLUEPILL_PROFILE,
+} from "./boardCatalogs.js";
+import {
+  driverPeripheralRecoverySchema,
+  RT_SPARK_DRIVER_RECOVERIES,
+  type DriverPeripheralRecovery,
+} from "./driverPeripheralReverse.js";
+import {
   imageHardwareDecodeInputSchema,
   type ImageHardwareDecodeInput,
 } from "./imageHardwareDecode.js";
@@ -21,9 +33,15 @@ import {
 
 /**
  * Boards whose on-chip controllers and populated devices are recorded here.
- * `stm32f407-rt-spark` is the RT-Thread BSP for the 星火一号 board.
  */
-export const BOARD_IDS = ["stm32f407-rt-spark"] as const;
+export const BOARD_IDS = [
+  "stm32f407-rt-spark",
+  "stm32f103c8-bluepill",
+  "rp2040-pico",
+  "nrf52840-dk",
+  "esp32c3-devkitm-1",
+  "esp32s3-devkitc-1",
+] as const;
 export type BoardId = (typeof BOARD_IDS)[number];
 export const boardIdSchema = z.enum(BOARD_IDS);
 
@@ -59,18 +77,19 @@ export interface BoardDeviceAttachment {
   readonly partNames?: readonly string[];
 }
 
-/** Facts for one known board. Optional devices stay optional. */
+/** Facts for one known board. Captured-image evidence is gated by `imageSha256`. */
 export interface BoardPeripheralProfile {
   readonly id: BoardId;
   readonly soc: SocPlatform;
   readonly mcu: string;
+  /** Verified flash image SHA-256 for captured `drivers` and `imageObservations`, or null when board-only. */
+  readonly imageSha256: string | null;
   readonly evidence: string;
   readonly memory: readonly BoardMemoryWindow[];
   readonly devices: readonly BoardDeviceAttachment[];
   readonly drivers: readonly BoardDriver[];
+  readonly driverRecoveries: readonly DriverPeripheralRecovery[];
   readonly limitations: readonly string[];
-  /** Verified flash image SHA-256 for captured `drivers` and `imageObservations`, or null when board-only. */
-  readonly imageSha256: string | null;
   /** Image observations decoded onto the report only when the analyzed image matches `imageSha256`. */
   readonly imageObservations: ImageHardwareDecodeInput | null;
 }
@@ -102,12 +121,13 @@ export const boardPeripheralProfileSchema = z.strictObject({
   id: boardIdSchema,
   soc: socPlatformSchema,
   mcu: z.string(),
+  imageSha256: z.string().nullable(),
   evidence: z.string(),
   memory: z.array(boardMemoryWindowSchema),
   devices: z.array(boardDeviceAttachmentSchema),
   drivers: z.array(boardDriverSchema),
+  driverRecoveries: z.array(driverPeripheralRecoverySchema),
   limitations: z.array(z.string()),
-  imageSha256: z.string().nullable(),
   imageObservations: imageHardwareDecodeInputSchema.nullable(),
 });
 
@@ -132,6 +152,7 @@ const RT_SPARK_PROFILE: BoardPeripheralProfile = {
   id: "stm32f407-rt-spark",
   soc: "stm32f4",
   mcu: "STM32F407ZGT6",
+  imageSha256: RT_SPARK_FLASH_IMAGE_SHA256,
   evidence:
     "RT-Thread bsp/stm32/stm32f407-rt-spark README, board/board.h, board/Kconfig, and board/ports/spi_flash_init.c",
   memory: [
@@ -461,10 +482,10 @@ const RT_SPARK_PROFILE: BoardPeripheralProfile = {
     },
   ],
   drivers: RT_SPARK_DRIVERS,
-  imageSha256: RT_SPARK_FLASH_IMAGE_SHA256,
+  driverRecoveries: RT_SPARK_DRIVER_RECOVERIES,
   imageObservations: rtSparkImageObservations,
   limitations: [
-    "Board devices describe the RT-Thread stm32f407-rt-spark BSP.",
+    "Board devices describe the RT-Thread stm32f407-rt-spark BSP. Drivers above them record strings in one captured flash image. A linked driver is code present in that image, not proof the device is opened during boot.",
     "A GPIO port match means that port hosts the listed pins. It does not identify which pin a given access uses.",
     "EEPROM, AHT21, AP3216C, ICM20608, and the audio control path use software I2C. Accesses to the I2C1, I2C2, or I2C3 register blocks are not those devices.",
     "UART2 shares its pins with Ethernet and PWM. Ethernet pinout and PHY are not in this profile.",
@@ -476,6 +497,11 @@ const RT_SPARK_PROFILE: BoardPeripheralProfile = {
 
 const BOARD_PROFILES: Readonly<Record<BoardId, BoardPeripheralProfile>> = {
   "stm32f407-rt-spark": RT_SPARK_PROFILE,
+  "stm32f103c8-bluepill": STM32F103C8_BLUEPILL_PROFILE,
+  "rp2040-pico": RP2040_PICO_PROFILE,
+  "nrf52840-dk": NRF52840_DK_PROFILE,
+  "esp32c3-devkitm-1": ESP32C3_DEVKITM_1_PROFILE,
+  "esp32s3-devkitc-1": ESP32S3_DEVKITC_1_PROFILE,
 };
 
 /** Return the recorded profile for a known board, or null when the id is unknown. */

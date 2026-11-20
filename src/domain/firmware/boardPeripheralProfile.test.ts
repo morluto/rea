@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  BOARD_IDS,
+  boardDevicesForPeripheral,
   boardPeripheralProfileSchema,
   lookupBoardMemoryWindow,
   lookupBoardProfile,
@@ -14,7 +16,6 @@ describe("RT-Spark board profile", () => {
     if (profile === null) return;
     expect(profile.soc).toBe("stm32f4");
     expect(profile.mcu).toBe("STM32F407ZGT6");
-    expect(profile.imageSha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(boardPeripheralProfileSchema.safeParse(profile).success).toBe(true);
     expect(lookupBoardProfile("unknown-board")).toBeNull();
   });
@@ -79,5 +80,63 @@ describe("RT-Spark board profile", () => {
     expect(lookupBoardMemoryWindow(profile, 0x2001ffffn)?.id).toBe("main-sram");
     expect(lookupBoardMemoryWindow(profile, 0x20020000n)).toBeNull();
     expect(lookupBoardMemoryWindow(profile, 0x40011000n)).toBeNull();
+  });
+});
+
+describe("multi-vendor board peripheral profiles", () => {
+  it("validates every built-in board profile schema and non-overlapping memory windows", () => {
+    for (const boardId of BOARD_IDS) {
+      const profile = lookupBoardProfile(boardId);
+      expect(profile).not.toBeNull();
+      if (profile === null) continue;
+      expect(boardPeripheralProfileSchema.safeParse(profile).success).toBe(
+        true,
+      );
+      const sorted = [...profile.memory].sort((left, right) =>
+        left.baseAddressValue < right.baseAddressValue ? -1 : 1,
+      );
+      for (let idx = 1; idx < sorted.length; idx += 1) {
+        const prev = sorted[idx - 1];
+        const curr = sorted[idx];
+        if (prev === undefined || curr === undefined) continue;
+        expect(
+          prev.baseAddressValue + BigInt(prev.sizeBytes),
+        ).toBeLessThanOrEqual(curr.baseAddressValue);
+      }
+    }
+  });
+
+  it("isolates captured-image drivers and boot observations to stm32f407-rt-spark", () => {
+    const rtSpark = lookupBoardProfile("stm32f407-rt-spark");
+    expect(rtSpark?.imageSha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(rtSpark?.driverRecoveries.length).toBeGreaterThan(0);
+
+    for (const boardId of [
+      "stm32f103c8-bluepill",
+      "rp2040-pico",
+      "nrf52840-dk",
+      "esp32c3-devkitm-1",
+      "esp32s3-devkitc-1",
+    ] as const) {
+      const board = lookupBoardProfile(boardId);
+      expect(board?.imageSha256).toBeNull();
+      expect(board?.drivers).toEqual([]);
+      expect(board?.driverRecoveries).toEqual([]);
+      expect(board?.imageObservations).toBeNull();
+    }
+
+    const pico = lookupBoardProfile("rp2040-pico");
+    expect(pico).not.toBeNull();
+    if (pico === null) return;
+    expect(
+      boardDevicesForPeripheral(pico, "SIO").map((item) => item.id),
+    ).toContain("onboard-led");
+
+    const s3 = lookupBoardProfile("esp32s3-devkitc-1");
+    expect(s3).not.toBeNull();
+    if (s3 === null) return;
+    expect(boardDevicesForPeripheral(s3, "USB_SERIAL_JTAG")[0]?.id).toBe(
+      "native-usb-port",
+    );
   });
 });

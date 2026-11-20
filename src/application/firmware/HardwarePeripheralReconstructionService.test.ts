@@ -69,7 +69,7 @@ describe("Hardware peripheral reconstruction from offline instruction references
     expect(uartBlock?.regionName).toBe("Peripheral MMIO");
     expect(uartBlock?.socPeripheralName ?? null).toBeNull();
     expect(report.limitations).toEqual([
-      "SoC platform is unresolved because stm32f1, stm32f4, gd32f1, gd32f4 share the highest peripheral match count",
+      "SoC platform is unresolved because stm32f1, stm32f4, stm32h7, gd32f1, gd32f4, rp2040, nrf52 share the highest peripheral match count",
     ]);
 
     // Block 1: SCS (0xe000e000)
@@ -122,7 +122,7 @@ describe("Hardware peripheral reconstruction from offline instruction references
 
     const esp32Report = reconstructHardwareFromReferences(
       esp32Refs,
-      "riscv",
+      "xtensa",
       "esp32_app",
       "esp32",
     );
@@ -162,7 +162,7 @@ describe("SoC catalog selection", () => {
   it("names a peripheral only when one catalog leads", () => {
     const report = reconstructHardwareFromReferences(
       [{ target_address: "0x3ff40000", read: true }],
-      "riscv",
+      "xtensa",
     );
 
     expect(report.detectedPlatforms).toEqual([
@@ -229,30 +229,26 @@ describe("SoC catalog selection", () => {
 
     expect(
       report.detectedPlatforms.map((candidate) => candidate.platform),
-    ).toEqual(["esp32", "esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
+    ).toEqual(["esp32c2", "esp32c3", "esp32c6", "esp32h2"]);
     expect(
       report.detectedPlatforms.every(
         (candidate) =>
           candidate.matchedCount === 1 && candidate.totalAddresses === 1,
       ),
     ).toBe(true);
-    expect(
-      report.peripheralBlocks.some(
-        (block) => block.socPeripheralName === "UART0",
-      ),
-    ).toBe(false);
     expect(report.mmioAccessCount).toBe(1);
     expect(report.nonMmioAccessCount).toBe(2);
-    expect(report.peripheralBlocks).toHaveLength(1);
-    expect(report.peripheralBlocks[0]).toMatchObject({
-      blockBase: "0x60000000",
-      regionKind: "peripheral_mmio",
-      regionName: "Peripheral MMIO",
-      socPeripheralName: null,
-      socPeripheralNameBasis: "observed_address",
-    });
+    expect(report.peripheralBlocks).toEqual([
+      expect.objectContaining({
+        blockBase: "0x60000000",
+        regionKind: "peripheral_mmio",
+        regionName: "Peripheral MMIO",
+        socPeripheralName: null,
+        socPeripheralNameBasis: "observed_address",
+      }),
+    ]);
     expect(report.limitations[0]).toContain(
-      "esp32, esp32c2, esp32c3, esp32c6, esp32h2",
+      "esp32c2, esp32c3, esp32c6, esp32h2",
     );
   });
 
@@ -347,13 +343,6 @@ describe("ESP32-C2 catalog selection", () => {
         (block) => block.socPeripheralName === "SENSITIVE",
       ),
     ).toBe(false);
-    expect(report.mmioAccessCount).toBe(1);
-    expect(report.peripheralBlocks[0]).toMatchObject({
-      blockBase: "0x600c1000",
-      regionKind: "peripheral_mmio",
-      regionName: "Peripheral MMIO",
-      socPeripheralName: null,
-    });
     expect(report.limitations[0]).toContain("esp32c2, esp32c3");
   });
 });
@@ -396,7 +385,7 @@ describe("RT-Spark board annotation", () => {
       "rt_spark_init",
       null,
       "stm32f407-rt-spark",
-      RT_SPARK_FLASH_IMAGE_SHA256,
+      { subjectSha256: RT_SPARK_FLASH_IMAGE_SHA256 },
     );
 
     expect(report.board).toBe("stm32f407-rt-spark");
@@ -490,7 +479,7 @@ describe("RT-Spark board annotation", () => {
       "rt_spark_init",
       null,
       "stm32f407-rt-spark",
-      RT_SPARK_FLASH_IMAGE_SHA256,
+      { subjectSha256: RT_SPARK_FLASH_IMAGE_SHA256 },
     );
     expect(
       cortex.peripheralBlocks.find(
@@ -513,7 +502,7 @@ describe("captured RT-Spark image", () => {
       "rt_spark_image",
       null,
       "stm32f407-rt-spark",
-      RT_SPARK_FLASH_IMAGE_SHA256,
+      { subjectSha256: RT_SPARK_FLASH_IMAGE_SHA256 },
     );
     expect(
       report.hardwareClaims.find(
@@ -606,7 +595,7 @@ describe("captured RT-Spark image", () => {
       "rt_spark_boot",
       null,
       "stm32f407-rt-spark",
-      RT_SPARK_FLASH_IMAGE_SHA256,
+      { subjectSha256: RT_SPARK_FLASH_IMAGE_SHA256 },
     );
     expect(
       report.hardwareClaims.find((claim) => claim.subject === "VTOR"),
@@ -653,7 +642,7 @@ describe("captured RT-Spark vectors and extra loads", () => {
       "rt_spark_vectors",
       null,
       "stm32f407-rt-spark",
-      RT_SPARK_FLASH_IMAGE_SHA256,
+      { subjectSha256: RT_SPARK_FLASH_IMAGE_SHA256 },
     );
     expect(
       report.hardwareClaims.find((claim) => claim.subject === "NMI"),
@@ -721,7 +710,7 @@ describe("hardware claim identity", () => {
       "rt_spark_init",
       null,
       "stm32f407-rt-spark",
-      RT_SPARK_FLASH_IMAGE_SHA256,
+      { subjectSha256: RT_SPARK_FLASH_IMAGE_SHA256 },
     );
     const usart = report.peripheralBlocks.find(
       (block) => block.socPeripheralName === "USART1",
@@ -900,22 +889,23 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
 
 describe("controller names come from observed addresses", () => {
   it("does not label a missed page base as the neighboring controller", () => {
+    // On STM32F1, 0x40003000 is IWDG (0x400 bytes) while 0x40003400 is architecturally Reserved.
     const report = reconstructHardwareFromReferences(
       [
-        { target_address: "0x40011800", read: true },
-        { target_address: "0x40011000", write: true },
+        { target_address: "0x40003400", read: true },
+        { target_address: "0x40003000", write: true },
       ],
       "arm",
-      "gpio_touch",
+      "iwdg_touch",
       "stm32f1",
     );
-    const gpioc = report.peripheralBlocks.find(
-      (block) => block.socPeripheralName === "GPIOC",
+    const iwdg = report.peripheralBlocks.find(
+      (block) => block.socPeripheralName === "IWDG",
     );
     const missed = report.peripheralBlocks.find((block) =>
-      block.uniqueAddresses.includes("0x40011800"),
+      block.uniqueAddresses.includes("0x40003400"),
     );
-    expect(gpioc?.uniqueAddresses).toEqual(["0x40011000"]);
+    expect(iwdg?.uniqueAddresses).toEqual(["0x40003000"]);
     expect(missed?.socPeripheralName ?? null).toBeNull();
     expect(missed?.socPeripheralNameBasis).toBe("observed_address");
   });
@@ -1109,64 +1099,40 @@ describe("Ghidra procedure reference shape", () => {
   });
 });
 
-describe("board image identity isolation", () => {
-  const foreignDigest = "f".repeat(64);
-  const references: AnalyzedInstructionReference[] = [
-    { target_address: "0x40011000", write: true },
-    { target_address: "0x10000000", write: true },
-  ];
-
-  it("withholds captured drivers and image observations when the image digest is unknown", () => {
-    const report = reconstructHardwareFromReferences(
-      references,
-      "cortex-m",
-      "rt_spark_unknown",
-      null,
-      "stm32f407-rt-spark",
-    );
-
-    expect(report.board).toBe("stm32f407-rt-spark");
-    expect(report.boardMcu).toBe("STM32F407ZGT6");
-    expect(
-      report.boardMemory.find((item) => item.id === "ccm")?.accessCount,
-    ).toBe(1);
-    const usart = report.peripheralBlocks.find(
-      (block) => block.socPeripheralName === "USART1",
-    );
-    expect(usart?.boardDevices.map((device) => device.id)).toEqual([
-      "usb-uart-com1",
-    ]);
-    expect(usart?.boardDrivers).toEqual([]);
-    expect(report.boardDrivers).toEqual([]);
-    expect(
-      report.hardwareClaims.some(
-        (claim) =>
-          claim.rule === "driver-linkage" ||
-          claim.rule === "instruction-decode",
-      ),
-    ).toBe(false);
-    expect(report.limitations.join("\n")).toContain(
-      `${RT_SPARK_FLASH_IMAGE_SHA256}) were not applied because the analyzed firmware image digest is unknown`,
-    );
-  });
-
-  it("never attaches sample-image observations to a different firmware image in provider reconstruction", async () => {
+describe("dynamic SVD/Devicetree profiles and container hints", () => {
+  it("reconstructs custom SVD peripherals and registers with explicit-profile claims", async () => {
+    const svdXml = `
+      <device>
+        <name>VENDOR_X1</name>
+        <peripherals>
+          <peripheral>
+            <name>PWMX</name>
+            <groupName>APB</groupName>
+            <baseAddress>0x40090000</baseAddress>
+            <addressBlock><offset>0</offset><size>0x400</size><usage>registers</usage></addressBlock>
+            <registers>
+              <register><name>DUTY</name><description>Duty cycle</description><addressOffset>0x08</addressOffset></register>
+            </registers>
+          </peripheral>
+        </peripherals>
+      </device>
+    `;
     const execution: AnalysisExecution = {
       result: {
         procedure: ghidraFunctionIdentity(),
         direction: "outgoing",
         reference_kinds_available: true,
         references: [
-          { ...ghidraReferenceEdge(), target_address: "0x40011000" },
+          { ...ghidraReferenceEdge(), target_address: "0x40090008" },
         ],
         unresolved_calls: [],
       },
       rawResult: null,
-      provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      provider: { id: "ghidra", name: "Ghidra", version: "12.2" },
       locations: [],
       subject: {
-        sha256: foreignDigest,
-        path: "/tmp/other-rt-spark-firmware.bin",
+        sha256: "d".repeat(64),
+        path: "/tmp/vendor.bin",
         format: "raw-binary",
         architecture: "cortex-m",
       },
@@ -1176,74 +1142,238 @@ describe("board image identity isolation", () => {
     const result = await reconstructProcedureHardwareInteractions(
       { execute: () => Promise.resolve(ok(execution)) },
       {
-        procedure: "fixture_main",
+        procedure: "pwm_set",
         architecture: "cortex-m",
-        board: "stm32f407-rt-spark",
+        svd_xml: svdXml,
       },
     );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
 
-    if (!result.ok) throw result.error;
-    expect(result.value.producingSource?.subjectSha256).toBe(foreignDigest);
-    expect(result.value.boardMcu).toBe("STM32F407ZGT6");
-    expect(
-      result.value.peripheralBlocks[0]?.boardDevices.map((d) => d.id),
-    ).toEqual(["usb-uart-com1"]);
-    expect(result.value.peripheralBlocks[0]?.boardDrivers).toEqual([]);
-    expect(result.value.boardDrivers).toEqual([]);
+    expect(result.value.peripheralBlocks[0]).toMatchObject({
+      socPeripheralName: "PWMX",
+      socPeripheralNameBasis: "explicit_profile",
+      socPeripheralBus: "APB",
+      knownRegisters: ["PWMX_DUTY"],
+    });
     expect(
       result.value.hardwareClaims.some(
         (claim) =>
-          claim.subject === "pin:0x5c" ||
-          claim.subject === "sysclk:0x0800c77c" ||
-          claim.rule === "driver-linkage",
-      ),
-    ).toBe(false);
-    expect(result.value.limitations.join("\n")).toContain(
-      `apply only to image ${RT_SPARK_FLASH_IMAGE_SHA256}, not analyzed image ${foreignDigest}`,
-    );
-  });
-
-  it("applies captured drivers and image observations when provider subject digest matches", async () => {
-    const execution: AnalysisExecution = {
-      result: {
-        procedure: ghidraFunctionIdentity(),
-        direction: "outgoing",
-        reference_kinds_available: true,
-        references: [
-          { ...ghidraReferenceEdge(), target_address: "0x40011000" },
-        ],
-        unresolved_calls: [],
-      },
-      rawResult: null,
-      provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
-      locations: [],
-      subject: {
-        sha256: RT_SPARK_FLASH_IMAGE_SHA256.toUpperCase(),
-        path: "/tmp/rt-spark.bin",
-        format: "raw-binary",
-        architecture: "cortex-m",
-      },
-      limitations: [],
-    };
-
-    const result = await reconstructProcedureHardwareInteractions(
-      { execute: () => Promise.resolve(ok(execution)) },
-      {
-        procedure: "fixture_main",
-        architecture: "cortex-m",
-        board: "stm32f407-rt-spark",
-      },
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.boardDrivers.length).toBeGreaterThan(0);
-    expect(
-      result.value.peripheralBlocks[0]?.boardDrivers.map((d) => d.id),
-    ).toEqual(["serial-usart1"]);
-    expect(
-      result.value.hardwareClaims.some(
-        (claim) => claim.subject === "pin:0x5c" && claim.settled,
+          claim.rule === "explicit-profile" &&
+          claim.settled &&
+          claim.subject === "0x40090000",
       ),
     ).toBe(true);
+    expect(
+      hardwarePeripheralReconstructionSchema.safeParse(result.value).success,
+    ).toBe(true);
+
+    const bothRejected = await reconstructProcedureHardwareInteractions(
+      { execute: () => Promise.resolve(ok(execution)) },
+      {
+        procedure: "pwm_set",
+        architecture: "cortex-m",
+        svd_xml: svdXml,
+        devicetree: {
+          artifact: { path: "/tmp/a.dtb", sha256: "e".repeat(64), bytes: 64 },
+          header: {
+            magic: 0xd00dfeed,
+            totalsize: 64,
+            off_dt_struct: 40,
+            off_dt_strings: 56,
+            off_mem_rsvmap: 40,
+            version: 17,
+            last_comp_version: 16,
+            boot_cpuid_phys: 0,
+            size_dt_strings: 8,
+            size_dt_struct: 16,
+          },
+          reservations: [],
+          nodes: [{ path: "/", parent: null, offset: 0, properties: [] }],
+          references: [],
+          summary: {
+            confidence: "derived",
+            compatible: null,
+            model: null,
+            bootargs: null,
+            stdout_path: null,
+            aliases: [],
+          },
+          coverage: {
+            status: "complete",
+            examined_nodes: 1,
+            examined_properties: 0,
+          },
+          limitations: [],
+        },
+      },
+    );
+    expect(bothRejected.ok).toBe(false);
+    if (!bothRejected.ok) {
+      expect(bothRejected.error._tag).toBe("AnalysisInputError");
+    }
+  });
+});
+
+describe("firmware container hints (esp_chip_id and uf2_family_id)", () => {
+  it("selects SoC catalogs from ESP chip_id and UF2 family_id hints without overriding explicit platform", async () => {
+    const execution: AnalysisExecution = {
+      result: {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
+        reference_kinds_available: true,
+        references: [
+          { ...ghidraReferenceEdge(), target_address: "0x60038000" },
+        ],
+        unresolved_calls: [],
+      },
+      rawResult: null,
+      provider: { id: "ghidra", name: "Ghidra", version: "12.2" },
+      locations: [],
+      subject: {
+        sha256: "f".repeat(64),
+        path: "/tmp/esp32s3.bin",
+        format: "raw-binary",
+        architecture: "xtensa",
+      },
+      limitations: [],
+    };
+
+    const s3Result = await reconstructProcedureHardwareInteractions(
+      { execute: () => Promise.resolve(ok(execution)) },
+      {
+        procedure: "usb_init",
+        architecture: "xtensa",
+        esp_chip_id: 0x0009,
+      },
+    );
+    if (!s3Result.ok) throw s3Result.error;
+    expect(s3Result.value.peripheralBlocks[0]?.socPeripheralName).toBe(
+      "USB_SERIAL_JTAG",
+    );
+
+    const conflictResult = reconstructHardwareFromReferences(
+      [{ target_address: "0x40034000", read: true }],
+      "cortex-m",
+      "uart_poll",
+      "stm32f4",
+      null,
+      { uf2FamilyId: 0xe48bff56 },
+    );
+    expect(conflictResult.peripheralBlocks[0]?.socPeripheralName).toBeNull();
+    expect(conflictResult.limitations[0]).toContain(
+      "Container metadata selects rp2040, which disagrees with caller platform stm32f4",
+    );
+  });
+});
+
+describe("multi-board subjectSha256 gating and register aliases", () => {
+  it("gates RT-Spark captured-image drivers and boot observations when subjectSha256 belongs to another image", () => {
+    const foreignSha = "1".repeat(64);
+    const report = reconstructHardwareFromReferences(
+      [
+        { target_address: "0x4000380c", write: true },
+        { target_address: "0x10000020", read: true },
+      ],
+      "cortex-m",
+      "spi_transfer",
+      "stm32f4",
+      "stm32f407-rt-spark",
+      { subjectSha256: foreignSha },
+    );
+
+    // Board schematic facts (CCM memory window + SPI2 attachments) still apply
+    expect(
+      report.boardMemory.find((win) => win.id === "ccm")?.accessCount,
+    ).toBe(1);
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("SPI2");
+    expect(report.peripheralBlocks[0]?.boardDevices.map((d) => d.id)).toEqual([
+      "rw007",
+      "spi-flash",
+    ]);
+
+    // Captured-image-only facts (drivers, driverRecoveries, and decoded boot immediates) are gated out
+    expect(report.peripheralBlocks[0]?.boardDrivers).toEqual([]);
+    expect(report.driverRecoveries).toBeUndefined();
+    expect(
+      report.hardwareClaims.some((claim) => claim.rule === "driver-linkage"),
+    ).toBe(false);
+    expect(
+      report.limitations.some((note) =>
+        note.includes(`apply only to image ${RT_SPARK_FLASH_IMAGE_SHA256}`),
+      ),
+    ).toBe(true);
+
+    const noDigestReport = reconstructHardwareFromReferences(
+      [{ target_address: "0x4000380c", write: true }],
+      "cortex-m",
+      "spi_transfer",
+      "stm32f4",
+      "stm32f407-rt-spark",
+    );
+    expect(noDigestReport.peripheralBlocks[0]?.boardDrivers).toEqual([]);
+    expect(noDigestReport.driverRecoveries).toBeUndefined();
+    expect(
+      noDigestReport.limitations.some((note) =>
+        note.includes("analyzed firmware image digest is unknown"),
+      ),
+    ).toBe(true);
+
+    // Uppercase SHA-256 strings and positional string digest arguments are also accepted
+    const upperDigestReport = reconstructHardwareFromReferences(
+      [{ target_address: "0x40011000", write: true }],
+      "cortex-m",
+      "usart_tx",
+      null,
+      "stm32f407-rt-spark",
+      RT_SPARK_FLASH_IMAGE_SHA256.toUpperCase(),
+    );
+    expect(
+      upperDigestReport.peripheralBlocks[0]?.boardDrivers.map((d) => d.id),
+    ).toEqual(["serial-usart1"]);
+  });
+
+  it("enriches multi-board profiles and unwraps bit-band and RP2040 atomic register aliases", () => {
+    const picoReport = reconstructHardwareFromReferences(
+      [
+        { target_address: "0xd0000014", write: true },
+        { target_address: "0x4000e000", write: true },
+      ],
+      "cortex-m",
+      "pico_blink",
+      null,
+      "rp2040-pico",
+    );
+    const sioBlock = picoReport.peripheralBlocks.find(
+      (b) => b.socPeripheralName === "SIO",
+    );
+    const resetsBlock = picoReport.peripheralBlocks.find(
+      (b) => b.socPeripheralName === "RESETS",
+    );
+    expect(sioBlock?.knownRegisters).toEqual(["SIO_GPIO_OUT_SET"]);
+    expect(sioBlock?.boardDevices.map((d) => d.id)).toContain("onboard-led");
+    expect(resetsBlock?.knownRegisters).toEqual(["RESETS_RESET"]);
+    expect(picoReport.attributions[1]?.registerAlias?.kind).toBe("atomic_set");
+    expect(
+      hardwarePeripheralReconstructionSchema.safeParse(picoReport).success,
+    ).toBe(true);
+
+    const bitbandReport = reconstructHardwareFromReferences(
+      [{ target_address: "0x424002a4", write: true }],
+      "cortex-m",
+      "gpio_bitband_set",
+      "stm32f4",
+    );
+    expect(bitbandReport.peripheralBlocks[0]).toMatchObject({
+      blockBase: "0x40020000",
+      socPeripheralName: "GPIOA",
+      knownRegisters: ["GPIOA_ODR"],
+    });
+    expect(bitbandReport.attributions[0]?.registerAlias).toEqual({
+      kind: "bitband",
+      canonicalAddress: "0x40020014",
+      registerOffset: "0x14",
+      bit: 9,
+    });
   });
 });

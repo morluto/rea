@@ -330,4 +330,17 @@ describe("hardware memory map address parsing and overflow boundaries", () => {
     expect(result.value.canonicalAddress).toBe("0x40001000");
     expect(result.value.isMmio).toBe(true);
   });
+
+  it("leaves Xtensa addresses unmapped until an explicit SoC or board profile is selected", () => {
+    const dport = classifyHardwareMemoryAddress("0x3ff40000", "xtensa");
+    expect(dport.ok).toBe(true);
+    if (!dport.ok) return;
+    expect(dport.value.regionKind).toBe("reserved");
+    expect(dport.value.regionName).toBe("Unknown / Unmapped Region");
+    expect(dport.value.isMmio).toBe(false);
+
+    expect(classifyHardwareMemoryAddress("0x100000000", "xtensa").ok).toBe(
+      false,
+    );
+  });
 });

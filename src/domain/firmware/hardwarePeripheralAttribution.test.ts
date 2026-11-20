@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseCmsisSvd } from "./hardwareCustomProfile.js";
 import {
   attributeHardwareAccess,
   summarizeHardwarePeripheralInteractions,
@@ -209,7 +210,7 @@ describe("Hardware peripheral interaction summarization", () => {
 });
 
 describe("SoC platform-specific peripheral attribution", () => {
-  it("attributes exact peripheral coordinates when an explicit SoC platform is provided", () => {
+  it("attributes exact peripheral and chip-manual register coordinates when an explicit SoC platform is provided", () => {
     const stm32Ref: AnalyzedInstructionReference = {
       target_address: "0x40010804",
       write: true,
@@ -222,19 +223,112 @@ describe("SoC platform-specific peripheral attribution", () => {
     expect(stm32Result.value.regionName).toBe("GPIOA (APB2)");
     expect(stm32Result.value.controllerName).toBe("GPIOA");
     expect(stm32Result.value.controllerBasis).toBe("chip_manual");
-    expect(stm32Result.value.registerBasis).toBe("observed_address");
+    expect(stm32Result.value.registerMnemonic).toBe("GPIOA_CRH");
+    expect(stm32Result.value.registerBasis).toBe("chip_manual");
     expect(stm32Result.value.isMmio).toBe(true);
+
+    // Offset inside GPIOA without a documented register entry stays observed_address
+    const uncataloguedOffset = attributeHardwareAccess(
+      { target_address: "0x400108fc", read: true },
+      "arm",
+      "stm32f1",
+    );
+    expect(uncataloguedOffset.ok).toBe(true);
+    if (!uncataloguedOffset.ok) return;
+    expect(uncataloguedOffset.value.controllerName).toBe("GPIOA");
+    expect(uncataloguedOffset.value.registerMnemonic).toBeNull();
+    expect(uncataloguedOffset.value.registerBasis).toBe("observed_address");
 
     const esp32Ref: AnalyzedInstructionReference = {
       target_address: "0x3ff40000",
       read: true,
     };
-    const esp32Result = attributeHardwareAccess(esp32Ref, "riscv", "esp32");
+    const esp32Result = attributeHardwareAccess(esp32Ref, "xtensa", "esp32");
     expect(esp32Result.ok).toBe(true);
     if (!esp32Result.ok) return;
     expect(esp32Result.value.peripheralBlockBase).toBe("0x3ff40000");
     expect(esp32Result.value.peripheralBlockOffset).toBe("0x0");
     expect(esp32Result.value.regionName).toBe("UART0 (DPort)");
+    expect(esp32Result.value.registerMnemonic).toBe("UART0_FIFO");
+    expect(esp32Result.value.registerBasis).toBe("chip_manual");
     expect(esp32Result.value.isMmio).toBe(true);
+  });
+
+  it("attributes Cortex-M bit-band, RP2040 atomic aliases, and explicit SVD profiles", () => {
+    const bitband = attributeHardwareAccess(
+      { target_address: "0x424002a4", write: true },
+      "cortex-m",
+      "stm32f4",
+    );
+    expect(bitband.ok).toBe(true);
+    if (!bitband.ok) return;
+    expect(bitband.value.controllerName).toBe("GPIOA");
+    expect(bitband.value.peripheralBlockBase).toBe("0x40020000");
+    expect(bitband.value.peripheralBlockOffset).toBe("0x14");
+    expect(bitband.value.registerMnemonic).toBe("GPIOA_ODR");
+    expect(bitband.value.registerBasis).toBe("chip_manual");
+    expect(bitband.value.registerAlias).toEqual({
+      kind: "bitband",
+      canonicalAddress: "0x40020014",
+      registerOffset: "0x14",
+      bit: 9,
+    });
+
+    const rp2040Set = attributeHardwareAccess(
+      { target_address: "0x4000e000", write: true },
+      "cortex-m",
+      "rp2040",
+    );
+    expect(rp2040Set.ok).toBe(true);
+    if (!rp2040Set.ok) return;
+    expect(rp2040Set.value.controllerName).toBe("RESETS");
+    expect(rp2040Set.value.peripheralBlockBase).toBe("0x4000c000");
+    expect(rp2040Set.value.registerMnemonic).toBe("RESETS_RESET");
+    expect(rp2040Set.value.registerAlias).toEqual({
+      kind: "atomic_set",
+      canonicalAddress: "0x4000c000",
+      registerOffset: "0x0",
+      bit: null,
+    });
+
+    const svd = parseCmsisSvd(`
+      <device>
+        <name>CustomMcu</name>
+        <peripherals>
+          <peripheral>
+            <name>VENDOR_CRYPTO</name>
+            <baseAddress>0x50060000</baseAddress>
+            <addressBlock><offset>0</offset><size>0x400</size><usage>registers</usage></addressBlock>
+            <registers>
+              <register><name>CR</name><description>Control register</description><addressOffset>0x00</addressOffset></register>
+            </registers>
+          </peripheral>
+        </peripherals>
+      </device>
+    `);
+    expect(svd.ok).toBe(true);
+    if (!svd.ok) return;
+
+    const customHit = attributeHardwareAccess(
+      { target_address: "0x50060000", write: true },
+      "cortex-m",
+      null,
+      svd.value,
+    );
+    expect(customHit.ok).toBe(true);
+    if (!customHit.ok) return;
+    expect(customHit.value.controllerName).toBe("VENDOR_CRYPTO");
+    expect(customHit.value.controllerBasis).toBe("explicit_profile");
+    expect(customHit.value.registerMnemonic).toBe("VENDOR_CRYPTO_CR");
+    expect(customHit.value.registerBasis).toBe("explicit_profile");
+
+    const summary = summarizeHardwarePeripheralInteractions(
+      [bitband.value, rp2040Set.value],
+      "cortex-m",
+    );
+    expect(summary.peripheralBlocks.map((b) => b.knownRegisters)).toEqual([
+      ["RESETS_RESET"],
+      ["GPIOA_ODR"],
+    ]);
   });
 });

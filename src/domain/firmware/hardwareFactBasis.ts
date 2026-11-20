@@ -6,12 +6,15 @@
  */
 export const CONTROLLER_NAME_BASES = [
   "chip_manual",
+  "explicit_profile",
   "observed_address",
 ] as const;
 export type ControllerNameBasis = (typeof CONTROLLER_NAME_BASES)[number];
 
 export const REGISTER_NAME_BASES = [
   "architecture_manual",
+  "chip_manual",
+  "explicit_profile",
   "observed_address",
 ] as const;
 export type RegisterNameBasis = (typeof REGISTER_NAME_BASES)[number];
@@ -306,6 +309,7 @@ export const hardwareClaimsForBlocks = (input: {
   readonly blocks: readonly {
     readonly blockBase: string;
     readonly matched: boolean;
+    readonly basis?: ControllerNameBasis;
     readonly addresses: readonly string[];
   }[];
   readonly devices: readonly ClaimDevice[];
@@ -317,10 +321,15 @@ export const hardwareClaimsForBlocks = (input: {
 }): readonly HardwareClaim[] => [
   ...input.blocks.map((block) =>
     claimWithSource(
-      decideHardwareClaim({
-        rule: "chip-manual-name",
-        addressHit: block.matched,
-      }),
+      block.basis === "explicit_profile"
+        ? decideHardwareClaim({
+            rule: "explicit-profile",
+            profileSelected: true,
+          })
+        : decideHardwareClaim({
+            rule: "chip-manual-name",
+            addressHit: block.matched,
+          }),
       block.blockBase,
       block.addresses.join(", "),
     ),

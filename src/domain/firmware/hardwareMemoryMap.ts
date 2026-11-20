@@ -7,6 +7,7 @@ export const HARDWARE_ARCHITECTURES = [
   "arm64",
   "cortex-m",
   "riscv",
+  "xtensa",
   "mips",
   "x86",
 ] as const;
@@ -318,6 +319,7 @@ const getArchitectureRegions = (
     case "x86":
       return X86_REGIONS;
     case "arm64":
+    case "xtensa":
       return [];
   }
 };

@@ -13,6 +13,8 @@ import java.math.BigInteger;
 /** Seed the caller-supplied raw-binary entry before default auto-analysis. */
 public final class ReaGhidraPrepareRaw extends GhidraScript {
     private static final String CORTEX_LANGUAGE = "ARM:LE:32:Cortex";
+    /** ARMv7-M / ARMv8-M supports 16 system exceptions plus up to 240 external IRQs. */
+    private static final int MAX_CORTEX_VECTOR_SLOTS = 256;
 
     @Override
     public void run() throws Exception {
@@ -60,8 +62,9 @@ public final class ReaGhidraPrepareRaw extends GhidraScript {
 
     /**
      * Cortex-M images start with a little-endian vector table. The image base
-     * is data. The reset vector's low bit marks Thumb and is not part of the
-     * code address.
+     * is data. Handler words have bit 0 set for Thumb execution. External IRQ
+     * slots (indices >= 16) are scanned up to the earliest observed handler
+     * address or the first non-zero non-Thumb-pointer word.
      */
     private void prepareCortexVectorTable(Address base) throws Exception {
         Memory memory = currentProgram.getMemory();
@@ -76,40 +79,71 @@ public final class ReaGhidraPrepareRaw extends GhidraScript {
         if (thumb != null) {
             currentProgram.getProgramContext().setValue(thumb, base, end, BigInteger.ONE);
         }
-        int slots = (int) Math.min(16L, size / 4L);
-        Address reset = null;
-        for (int index = 0; index < slots; index++) {
+        Address minCodeAddress = base.add(8L);
+        int maxSlots = (int) Math.min((long) MAX_CORTEX_VECTOR_SLOTS, size / 4L);
+        int resetRaw = readLittleEndianInt(memory, base.add(4L));
+        if ((resetRaw & 1) == 0) {
+            throw new IllegalStateException(
+                "Cortex-M reset vector does not have the Thumb bit set"
+            );
+        }
+        Address reset = base.getAddressSpace().getAddress((resetRaw & 0xffffffffL) & ~1L);
+        if (reset == null || reset.compareTo(minCodeAddress) < 0 || reset.compareTo(end) > 0) {
+            throw new IllegalStateException(
+                "Cortex-M reset vector falls outside the mapped image"
+            );
+        }
+
+        Address tableLimit = reset;
+        int lastTableSlot = 1;
+        for (int index = 2; index < maxSlots; index++) {
             Address slot = base.add(index * 4L);
+            if (slot.compareTo(tableLimit) >= 0) break;
+            int raw = readLittleEndianInt(memory, slot);
+            if (raw == 0) {
+                if (index < 16) lastTableSlot = index;
+                continue;
+            }
+            if ((raw & 1) == 0) {
+                if (index >= 16) break;
+                continue;
+            }
+            Address handler = slot.getAddressSpace().getAddress((raw & 0xffffffffL) & ~1L);
+            if (handler == null || handler.compareTo(minCodeAddress) < 0 || handler.compareTo(end) > 0) {
+                if (index >= 16) break;
+                continue;
+            }
+            if (handler.compareTo(tableLimit) < 0 && handler.compareTo(slot) > 0) {
+                tableLimit = handler;
+            }
+            lastTableSlot = index;
+        }
+
+        for (int index = 0; index <= lastTableSlot; index++) {
+            Address slot = base.add(index * 4L);
+            if (index > 1 && slot.compareTo(tableLimit) >= 0) break;
             int raw = readLittleEndianInt(memory, slot);
             createData(slot, new DWordDataType());
             if (index == 0 || (raw & 1) == 0) continue;
             Address handler = slot.getAddressSpace().getAddress((raw & 0xffffffffL) & ~1L);
-            if (handler == null || handler.compareTo(base) < 0 || handler.compareTo(end) > 0) {
-                if (index == 1) {
-                    throw new IllegalStateException(
-                        "Cortex-M reset vector falls outside the mapped image"
-                    );
-                }
+            if (handler == null || handler.compareTo(minCodeAddress) < 0 || handler.compareTo(end) > 0) {
                 continue;
             }
             addEntryPoint(handler);
             boolean decoded = disassemble(handler);
             Function existing = getFunctionAt(handler);
             if (existing == null && decoded) {
-                createFunction(handler, index == 1 ? "reset_handler" : "vector_" + index);
-            }
-            if (index == 1) {
-                reset = handler;
-                if (getFunctionAt(handler) == null) {
-                    throw new IllegalStateException(
-                        "Cortex-M reset handler cannot be decoded as a Thumb function"
-                    );
-                }
+                String fnName = index == 1
+                    ? "reset_handler"
+                    : index < 16
+                        ? "vector_" + index
+                        : "irq_" + (index - 16) + "_handler";
+                createFunction(handler, fnName);
             }
         }
-        if (reset == null) {
+        if (getFunctionAt(reset) == null) {
             throw new IllegalStateException(
-                "Cortex-M reset vector does not have the Thumb bit set"
+                "Cortex-M reset handler cannot be decoded as a Thumb function"
             );
         }
         addEntryPoint(base);
