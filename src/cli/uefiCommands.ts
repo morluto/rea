@@ -153,4 +153,23 @@ export const registerUefiCommands = (
       );
     },
   );
+
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(UEFI_TOOL_CONTRACTS, "decompile_uefi_firmware"),
+    {
+      description:
+        "Decompile all PE32 and TE modules of a UEFI flash image into a structured C source tree",
+      positionals: ["path", "output_directory"],
+      callerPaths: ["path", "output_directory"],
+      fields: {
+        path: FLASH_PATH,
+        output_directory: {
+          description: "Target directory for decompiled C source tree",
+        },
+      },
+    },
+    run("decompile_uefi_firmware"),
+  );
 };

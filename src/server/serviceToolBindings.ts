@@ -707,6 +707,7 @@ const SERVICE_TOOL_BINDINGS = {
       "inspect_uefi_firmware",
       "extract_uefi_firmware",
       "inspect_uefi_nvram",
+      "decompile_uefi_firmware",
     ])) satisfies Bind<UefiAnalysisService>,
   pcapAnalysis: ((service) => ({
     ...contractServiceBindings(service, ["inspect_pcap_client"]),

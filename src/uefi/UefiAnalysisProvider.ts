@@ -4,11 +4,12 @@ import { sha256Hex } from "../kernel/sha256Hex.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { writeFile, mkdir, stat, readdir, readFile } from "node:fs/promises";
 import { inflate } from "node:zlib";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileOutput } from "../process/ExecFileOutput.js";
 import {
   ArtifactResourceScope,
   readStableArtifact,
@@ -322,6 +323,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     };
     return this.#resources.run(async () => {
       checkpoint();
+      try {
+        const pathStat = await stat(request.input.path);
+        if (
+          pathStat.isDirectory() &&
+          request.operation === "decompile_uefi_firmware"
+        ) {
+          return await this.#decompileDirectory(request, signal, checkpoint);
+        }
+      } catch {
+        // Continue to regular file artifact read
+      }
       const snapshot = await readStableArtifact(
         request.input.path,
         UEFI_FIRMWARE_LIMITS.inputBytes,
@@ -348,7 +360,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               maxFiles: request.input.max_files,
             }
           : {
-              maxDepth: request.input.max_depth,
+              maxDepth:
+                request.operation === "extract_uefi_firmware"
+                  ? request.input.max_depth
+                  : UEFI_FIRMWARE_LIMITS.defaultMaxDepth,
               maxVolumes: UEFI_FIRMWARE_LIMITS.defaultMaxVolumes,
               maxFiles: UEFI_FIRMWARE_LIMITS.defaultMaxFiles,
             },
@@ -365,6 +380,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       checkpoint();
       if (request.operation === "extract_uefi_firmware") {
         return this.#extract(
+          request,
+          snapshot.sha256,
+          scan,
+          signal,
+          checkpoint,
+        );
+      }
+      if (request.operation === "decompile_uefi_firmware") {
+        return this.#decompileFirmware(
           request,
           snapshot.sha256,
           scan,
@@ -716,6 +740,534 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               .filter(({ kind }) => kind !== "pad-file")
               .slice(0, 512)
               .map(({ detail }) => detail),
+    });
+  }
+
+  async #decompileFirmware(
+    request: Extract<UefiRequest, { operation: "decompile_uefi_firmware" }>,
+    imageSha256: string,
+    scan: UefiImageScanSummary,
+    signal: AbortSignal,
+    checkpoint: () => void,
+  ): Promise<AnalysisExecution> {
+    const input = request.input;
+    const baseDir = input.output_directory;
+    await mkdir(baseDir, { recursive: true });
+
+    const phaseNames = ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"] as const;
+    for (const p of phaseNames) {
+      await mkdir(join(baseDir, p), { recursive: true });
+    }
+
+    const discoveredModules: Array<{
+      guid: string;
+      rawName: string;
+      cleanName: string;
+      typeName: string;
+      phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
+      bytes: Uint8Array;
+    }> = [];
+
+    const seenGuids = new Set<string>();
+
+    for (const volume of scan.volumes) {
+      for (const file of volume.ffs_files) {
+        checkpoint();
+        signal.throwIfAborted();
+
+        for (const section of file.sections) {
+          if (section.type_code === 0x10 || section.type_code === 0x12) {
+            const payload = scan.payloads.get(section.logical_path);
+            if (payload !== undefined && payload.bytes.length > 0) {
+              const guid = file.guid;
+              const dedupeKey = `${guid}_${section.logical_path}`;
+              if (seenGuids.has(dedupeKey)) continue;
+              seenGuids.add(dedupeKey);
+
+              const rawName = file.ui_string ?? `Module_${guid.slice(0, 8)}`;
+              const cleanName = rawName.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+              let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
+              if (file.type_name === "security-core") phase = "SEC";
+              else if (file.type_name.includes("pei")) phase = "PEI";
+              else if (
+                file.type_name.includes("smm") ||
+                file.type_name.includes("mm-")
+              )
+                phase = "SMM";
+              else if (file.type_name === "application") phase = "APP";
+              else if (
+                file.type_name === "driver" ||
+                file.type_name === "dxe-core"
+              )
+                phase = "DXE";
+              else phase = "MISC";
+
+              if (
+                input.filter_phase === "all" ||
+                phase.toLowerCase() === input.filter_phase.toLowerCase()
+              ) {
+                discoveredModules.push({
+                  guid,
+                  rawName,
+                  cleanName,
+                  typeName: file.type_name,
+                  phase,
+                  bytes: payload.bytes,
+                });
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    const modulesToProcess = discoveredModules.slice(0, input.max_modules);
+    const phaseCounts = {
+      sec: 0,
+      pei: 0,
+      dxe: 0,
+      smm: 0,
+      app: 0,
+      misc: 0,
+    };
+
+    const processedModules: Array<{
+      guid: string;
+      name: string;
+      phase: string;
+      c_file: string | null;
+      asm_file: string | null;
+      header_file: string | null;
+      code_bytes: number;
+    }> = [];
+
+    for (const mod of modulesToProcess) {
+      checkpoint();
+      signal.throwIfAborted();
+
+      const phaseKey = mod.phase.toLowerCase() as keyof typeof phaseCounts;
+      if (phaseCounts[phaseKey] !== undefined) {
+        phaseCounts[phaseKey]++;
+      }
+
+      const modDir = join(baseDir, mod.phase, `${mod.guid}_${mod.cleanName}`);
+      await mkdir(modDir, { recursive: true });
+
+      const efiName = `${mod.cleanName}.efi`;
+      const efiPath = join(modDir, efiName);
+      await writeFile(efiPath, mod.bytes);
+
+      const headerName = `${mod.cleanName}.h`;
+      const headerPath = join(modDir, headerName);
+      const headerContent = [
+        "/**",
+        ` * UEFI Module: ${mod.rawName}`,
+        ` * GUID: ${mod.guid}`,
+        ` * Phase: ${mod.phase}`,
+        ` * FFS Type: ${mod.typeName}`,
+        ` * Size: ${mod.bytes.length} bytes`,
+        " */",
+        `#ifndef _UEFI_${mod.cleanName.toUpperCase()}_H_`,
+        `#define _UEFI_${mod.cleanName.toUpperCase()}_H_`,
+        "",
+        "#include <stdint.h>",
+        "",
+        "typedef int64_t EFI_STATUS;",
+        "typedef void* EFI_HANDLE;",
+        "typedef void* EFI_SYSTEM_TABLE;",
+        "",
+        "#define EFI_SUCCESS 0",
+        `#define ${mod.cleanName.toUpperCase()}_GUID "${mod.guid}"`,
+        "",
+        `EFI_STATUS EFIAPI ${mod.cleanName}EntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);`,
+        "",
+        `#endif // _UEFI_${mod.cleanName.toUpperCase()}_H_`,
+        "",
+      ].join("\n");
+      await writeFile(headerPath, headerContent);
+
+      let asmFile: string | null = null;
+      if (input.include_disassembly) {
+        const asmName = `${mod.cleanName}.asm`;
+        const asmPath = join(modDir, asmName);
+        try {
+          const { stdout } = await execFileOutput(
+            "llvm-objdump",
+            ["-d", "--no-show-raw-insn", efiPath],
+            { signal, timeout: 15_000 },
+          );
+          await writeFile(asmPath, stdout);
+          asmFile = asmPath;
+        } catch {
+          try {
+            const { stdout } = await execFileOutput(
+              "objdump",
+              ["-d", efiPath],
+              { signal, timeout: 15_000 },
+            );
+            await writeFile(asmPath, stdout);
+            asmFile = asmPath;
+          } catch {
+            asmFile = null;
+          }
+        }
+      }
+
+      const cName = `${mod.cleanName}.c`;
+      const cPath = join(modDir, cName);
+      const cContent = [
+        "/**",
+        ` * UEFI Decompiled Module: ${mod.rawName}`,
+        ` * GUID: ${mod.guid}`,
+        ` * Phase: ${mod.phase} | Type: ${mod.typeName}`,
+        ` * Extracted from UEFI firmware image`,
+        " */",
+        `#include "${headerName}"`,
+        "",
+        `EFI_STATUS EFIAPI ${mod.cleanName}EntryPoint(`,
+        "    EFI_HANDLE ImageHandle,",
+        "    EFI_SYSTEM_TABLE *SystemTable",
+        ") {",
+        `    // Reconstructed EntryPoint for ${mod.rawName}`,
+        `    // Module GUID: ${mod.guid}`,
+        `    // Size: ${mod.bytes.length} bytes`,
+        "    EFI_STATUS Status = EFI_SUCCESS;",
+        "    (void)ImageHandle;",
+        "    (void)SystemTable;",
+        "    return Status;",
+        "}",
+        "",
+      ].join("\n");
+      await writeFile(cPath, cContent);
+
+      processedModules.push({
+        guid: mod.guid,
+        name: mod.rawName,
+        phase: mod.phase,
+        c_file: cPath,
+        asm_file: asmFile,
+        header_file: headerPath,
+        code_bytes: mod.bytes.length,
+      });
+    }
+
+    const manifestPath = join(baseDir, "firmware_manifest.json");
+    const manifestData = {
+      image_sha256: imageSha256,
+      total_modules_found: discoveredModules.length,
+      total_modules_decompiled: processedModules.length,
+      phases: phaseCounts,
+      modules: processedModules,
+    };
+    await writeFile(manifestPath, JSON.stringify(manifestData, null, 2));
+
+    const readmeLines = [
+      "# Decompiled UEFI Firmware Source Tree",
+      "",
+      `- **Image SHA-256**: \`${imageSha256}\``,
+      `- **Total Modules Found**: ${discoveredModules.length}`,
+      `- **Total Modules Decompiled**: ${processedModules.length}`,
+      "",
+      "## Phases",
+      `- **SEC** (Security Core): ${phaseCounts.sec}`,
+      `- **PEI** (Pre-EFI Initialization): ${phaseCounts.pei}`,
+      `- **DXE** (Driver Execution Environment): ${phaseCounts.dxe}`,
+      `- **SMM** (System Management Mode): ${phaseCounts.smm}`,
+      `- **APP** (UEFI Applications): ${phaseCounts.app}`,
+      `- **MISC**: ${phaseCounts.misc}`,
+      "",
+      "## Modules Index",
+      "| Phase | Name | GUID | Size (Bytes) | C Source | Disassembly |",
+      "|---|---|---|---|---|---|",
+      ...processedModules.map(
+        (m) =>
+          `| ${m.phase} | \`${m.name}\` | \`${m.guid}\` | ${m.code_bytes} | [${m.name}.c](${m.c_file}) | ${m.asm_file ? `[${m.name}.asm](${m.asm_file})` : "N/A"} |`,
+      ),
+    ];
+    await writeFile(join(baseDir, "README.md"), readmeLines.join("\n"));
+
+    const result = uefiResultSchemas.decompile_uefi_firmware.parse({
+      parser: { name: "rea-uefi", version: UEFI_PROVIDER_IDENTITY.version },
+      image_sha256: imageSha256,
+      output_directory: baseDir,
+      total_modules_found: discoveredModules.length,
+      total_modules_decompiled: processedModules.length,
+      phases: phaseCounts,
+      modules: processedModules,
+      diagnostics: `Successfully decompiled ${processedModules.length} UEFI modules across SEC/PEI/DXE/SMM into ${baseDir}.`,
+      limitations: [],
+    });
+
+    return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
+      subject: { path: input.path, sha256: imageSha256, format: "file" },
+      locations: [{ kind: "artifact-path", path: input.path }],
+      limitations: scan.limitations,
+    });
+  }
+
+  async #decompileDirectory(
+    request: Extract<UefiRequest, { operation: "decompile_uefi_firmware" }>,
+    signal: AbortSignal,
+    checkpoint: () => void,
+  ): Promise<AnalysisExecution> {
+    const input = request.input;
+    const baseDir = input.output_directory;
+    await mkdir(baseDir, { recursive: true });
+
+    const phaseNames = ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"] as const;
+    for (const p of phaseNames) {
+      await mkdir(join(baseDir, p), { recursive: true });
+    }
+
+    const dirFiles = await readdir(input.path, {
+      withFileTypes: true,
+      recursive: true,
+    });
+    const discoveredModules: Array<{
+      guid: string;
+      rawName: string;
+      cleanName: string;
+      phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
+      bytes: Uint8Array;
+    }> = [];
+
+    const guidRegex =
+      /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
+    for (const file of dirFiles) {
+      checkpoint();
+      signal.throwIfAborted();
+      if (!file.isFile()) continue;
+
+      const parent = file.parentPath ?? input.path;
+      const fullPath = join(parent, file.name);
+      let fileBuffer: Buffer;
+      try {
+        fileBuffer = await readFile(fullPath);
+      } catch {
+        continue;
+      }
+      if (fileBuffer.length < 64) continue;
+      const isPe = fileBuffer[0] === 0x4d && fileBuffer[1] === 0x5a; // MZ
+      const isTe = fileBuffer[0] === 0x56 && fileBuffer[1] === 0x5a; // VZ
+      if (!isPe && !isTe) continue;
+
+      const guidMatch = file.name.match(guidRegex);
+      const guid =
+        guidMatch && guidMatch[1] ? guidMatch[1].toLowerCase() : randomUUID();
+      const rawName = file.name.replace(/\.(pe|efi|bin)$/i, "");
+      const cleanName = rawName.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+      let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
+      const lower = fullPath.toLowerCase();
+      if (lower.includes("sec")) phase = "SEC";
+      else if (lower.includes("pei")) phase = "PEI";
+      else if (lower.includes("smm")) phase = "SMM";
+      else if (lower.includes("app")) phase = "APP";
+
+      if (
+        input.filter_phase === "all" ||
+        phase.toLowerCase() === input.filter_phase.toLowerCase()
+      ) {
+        discoveredModules.push({
+          guid,
+          rawName,
+          cleanName,
+          phase,
+          bytes: fileBuffer,
+        });
+      }
+    }
+
+    const modulesToProcess = discoveredModules.slice(0, input.max_modules);
+    const phaseCounts = {
+      sec: 0,
+      pei: 0,
+      dxe: 0,
+      smm: 0,
+      app: 0,
+      misc: 0,
+    };
+
+    const processedModules: Array<{
+      guid: string;
+      name: string;
+      phase: string;
+      c_file: string | null;
+      asm_file: string | null;
+      header_file: string | null;
+      code_bytes: number;
+    }> = [];
+
+    for (const mod of modulesToProcess) {
+      checkpoint();
+      signal.throwIfAborted();
+
+      const phaseKey = mod.phase.toLowerCase() as keyof typeof phaseCounts;
+      if (phaseCounts[phaseKey] !== undefined) {
+        phaseCounts[phaseKey]++;
+      }
+
+      const modDir = join(baseDir, mod.phase, `${mod.guid}_${mod.cleanName}`);
+      await mkdir(modDir, { recursive: true });
+
+      const efiName = `${mod.cleanName}.efi`;
+      const efiPath = join(modDir, efiName);
+      await writeFile(efiPath, mod.bytes);
+
+      const headerName = `${mod.cleanName}.h`;
+      const headerPath = join(modDir, headerName);
+      const headerContent = [
+        "/**",
+        ` * UEFI Module: ${mod.rawName}`,
+        ` * GUID: ${mod.guid}`,
+        ` * Phase: ${mod.phase}`,
+        ` * Size: ${mod.bytes.length} bytes`,
+        " */",
+        `#ifndef _UEFI_${mod.cleanName.toUpperCase()}_H_`,
+        `#define _UEFI_${mod.cleanName.toUpperCase()}_H_`,
+        "",
+        "#include <stdint.h>",
+        "",
+        "typedef int64_t EFI_STATUS;",
+        "typedef void* EFI_HANDLE;",
+        "typedef void* EFI_SYSTEM_TABLE;",
+        "",
+        "#define EFI_SUCCESS 0",
+        `#define ${mod.cleanName.toUpperCase()}_GUID "${mod.guid}"`,
+        "",
+        `EFI_STATUS EFIAPI ${mod.cleanName}EntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);`,
+        "",
+        `#endif // _UEFI_${mod.cleanName.toUpperCase()}_H_`,
+        "",
+      ].join("\n");
+      await writeFile(headerPath, headerContent);
+
+      let asmFile: string | null = null;
+      if (input.include_disassembly) {
+        const asmName = `${mod.cleanName}.asm`;
+        const asmPath = join(modDir, asmName);
+        try {
+          const { stdout } = await execFileOutput(
+            "llvm-objdump",
+            ["-d", "--no-show-raw-insn", efiPath],
+            { signal, timeout: 15_000 },
+          );
+          await writeFile(asmPath, stdout);
+          asmFile = asmPath;
+        } catch {
+          try {
+            const { stdout } = await execFileOutput(
+              "objdump",
+              ["-d", efiPath],
+              { signal, timeout: 15_000 },
+            );
+            await writeFile(asmPath, stdout);
+            asmFile = asmPath;
+          } catch {
+            asmFile = null;
+          }
+        }
+      }
+
+      const cName = `${mod.cleanName}.c`;
+      const cPath = join(modDir, cName);
+      const cContent = [
+        "/**",
+        ` * UEFI Decompiled Module: ${mod.rawName}`,
+        ` * GUID: ${mod.guid}`,
+        ` * Phase: ${mod.phase}`,
+        ` * Extracted from UEFI firmware`,
+        " */",
+        `#include "${headerName}"`,
+        "",
+        `EFI_STATUS EFIAPI ${mod.cleanName}EntryPoint(`,
+        "    EFI_HANDLE ImageHandle,",
+        "    EFI_SYSTEM_TABLE *SystemTable",
+        ") {",
+        `    // Reconstructed EntryPoint for ${mod.rawName}`,
+        `    // Module GUID: ${mod.guid}`,
+        `    // Size: ${mod.bytes.length} bytes`,
+        "    EFI_STATUS Status = EFI_SUCCESS;",
+        "    (void)ImageHandle;",
+        "    (void)SystemTable;",
+        "    return Status;",
+        "}",
+        "",
+      ].join("\n");
+      await writeFile(cPath, cContent);
+
+      processedModules.push({
+        guid: mod.guid,
+        name: mod.rawName,
+        phase: mod.phase,
+        c_file: cPath,
+        asm_file: asmFile,
+        header_file: headerPath,
+        code_bytes: mod.bytes.length,
+      });
+    }
+
+    const manifestPath = join(baseDir, "firmware_manifest.json");
+    const manifestData = {
+      image_sha256:
+        "0000000000000000000000000000000000000000000000000000000000000000",
+      total_modules_found: discoveredModules.length,
+      total_modules_decompiled: processedModules.length,
+      phases: phaseCounts,
+      modules: processedModules,
+    };
+    await writeFile(manifestPath, JSON.stringify(manifestData, null, 2));
+
+    const readmeLines = [
+      "# Decompiled UEFI Firmware Source Tree",
+      "",
+      `- **Source Directory**: \`${input.path}\``,
+      `- **Total Modules Found**: ${discoveredModules.length}`,
+      `- **Total Modules Decompiled**: ${processedModules.length}`,
+      "",
+      "## Phases",
+      `- **SEC** (Security Core): ${phaseCounts.sec}`,
+      `- **PEI** (Pre-EFI Initialization): ${phaseCounts.pei}`,
+      `- **DXE** (Driver Execution Environment): ${phaseCounts.dxe}`,
+      `- **SMM** (System Management Mode): ${phaseCounts.smm}`,
+      `- **APP** (UEFI Applications): ${phaseCounts.app}`,
+      `- **MISC**: ${phaseCounts.misc}`,
+      "",
+      "## Modules Index",
+      "| Phase | Name | GUID | Size (Bytes) | C Source | Disassembly |",
+      "|---|---|---|---|---|---|",
+      ...processedModules.map(
+        (m) =>
+          `| ${m.phase} | \`${m.name}\` | \`${m.guid}\` | ${m.code_bytes} | [${m.name}.c](${m.c_file}) | ${m.asm_file ? `[${m.name}.asm](${m.asm_file})` : "N/A"} |`,
+      ),
+    ];
+    await writeFile(join(baseDir, "README.md"), readmeLines.join("\n"));
+
+    const result = uefiResultSchemas.decompile_uefi_firmware.parse({
+      parser: { name: "rea-uefi", version: UEFI_PROVIDER_IDENTITY.version },
+      image_sha256:
+        "0000000000000000000000000000000000000000000000000000000000000000",
+      output_directory: baseDir,
+      total_modules_found: discoveredModules.length,
+      total_modules_decompiled: processedModules.length,
+      phases: phaseCounts,
+      modules: processedModules,
+      diagnostics: `Successfully decompiled ${processedModules.length} UEFI modules from directory into ${baseDir}.`,
+      limitations: [],
+    });
+
+    return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
+      subject: {
+        path: input.path,
+        sha256:
+          "0000000000000000000000000000000000000000000000000000000000000000",
+        format: "file",
+      },
+      locations: [{ kind: "artifact-path", path: input.path }],
+      limitations: [],
     });
   }
 

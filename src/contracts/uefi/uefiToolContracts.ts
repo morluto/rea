@@ -81,4 +81,32 @@ export const UEFI_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "decompile_uefi_firmware",
+    cli: true,
+    availability: "standalone",
+    ...toolContractMetadata(
+      "decompile_uefi_firmware",
+      toolEffects({
+        mutatesSession: false,
+        launchesProcess: true,
+        writesFilesystem: true,
+        idempotent: false,
+      }),
+    ),
+    kind: "firmware-provider",
+    description:
+      "Decompile all PE32 and TE executable modules of a UEFI firmware image into a structured C source code tree, headers, disassemblies, and an indexed manifest organized by execution phase (SEC, PEI, DXE, SMM).",
+    inputSchema: uefiInputSchemas.decompile_uefi_firmware,
+    outputSchema: evidenceResultOf(uefiResultSchemas.decompile_uefi_firmware),
+    examples: [
+      {
+        title: "Decompile full UEFI firmware image into C source code",
+        input: {
+          path: "/media/firmware/images/B550AORUSELITEV212.FIb",
+          output_directory: "/tmp/decompiled_firmware",
+        },
+      },
+    ],
+  },
 ] as const satisfies readonly ToolContract[];

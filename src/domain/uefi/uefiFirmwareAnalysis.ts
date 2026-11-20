@@ -274,6 +274,31 @@ export const uefiInputSchemas = {
         "Nesting depth for NVAR chains embedded in variable data (StdDefaults holds one nested chain)",
       ),
   }),
+  decompile_uefi_firmware: z.strictObject({
+    ...target,
+    output_directory: localPathStringSchema
+      .refine(isAbsolute, {
+        message: "output_directory must be an absolute local filesystem path",
+      })
+      .describe(
+        "Absolute output directory for decompiled firmware source tree",
+      ),
+    max_modules: z
+      .number()
+      .int()
+      .min(1)
+      .max(2000)
+      .default(500)
+      .describe("Maximum number of executable modules to decompile"),
+    include_disassembly: z
+      .boolean()
+      .default(true)
+      .describe("Generate .asm disassembly files alongside .c source files"),
+    filter_phase: z
+      .enum(["all", "pei", "dxe", "smm", "sec", "app"])
+      .default("all")
+      .describe("Filter by UEFI initialization phase"),
+  }),
 } as const;
 
 /** Supported UEFI firmware operations. */
@@ -298,6 +323,10 @@ export const uefiRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({
     operation: z.literal("inspect_uefi_nvram"),
     input: uefiInputSchemas.inspect_uefi_nvram,
+  }),
+  z.strictObject({
+    operation: z.literal("decompile_uefi_firmware"),
+    input: uefiInputSchemas.decompile_uefi_firmware,
   }),
 ]);
 
@@ -519,6 +548,34 @@ export const uefiResultSchemas = {
     coverage: knownCoverageStatusSchema,
     limitations: z.array(z.string()),
   }),
+  decompile_uefi_firmware: z.strictObject({
+    parser: parserSchema,
+    image_sha256: digestSchema,
+    output_directory: z.string(),
+    total_modules_found: bytes,
+    total_modules_decompiled: bytes,
+    phases: z.strictObject({
+      sec: bytes,
+      pei: bytes,
+      dxe: bytes,
+      smm: bytes,
+      app: bytes,
+      misc: bytes,
+    }),
+    modules: z.array(
+      z.strictObject({
+        guid: guidSchema,
+        name: z.string(),
+        phase: z.string(),
+        c_file: z.string().nullable(),
+        asm_file: z.string().nullable(),
+        header_file: z.string().nullable(),
+        code_bytes: bytes,
+      }),
+    ),
+    diagnostics: z.string(),
+    limitations: z.array(z.string()),
+  }),
 } as const;
 
 /** Inferred record and result types shared by the engine, provider and contracts. */
@@ -532,6 +589,9 @@ export type UefiInspectResult = z.infer<
 >;
 export type UefiExtractResult = z.infer<
   (typeof uefiResultSchemas)["extract_uefi_firmware"]
+>;
+export type UefiDecompileResult = z.infer<
+  (typeof uefiResultSchemas)["decompile_uefi_firmware"]
 >;
 export type UefiNvramVariableRecord = z.infer<
   typeof uefiNvramVariableRecordSchema
