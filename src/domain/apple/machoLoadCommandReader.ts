@@ -29,7 +29,7 @@ import type {
 } from "./dylibResolution.js";
 import { machoArchitectureName } from "./machoCpuIdentity.js";
 import {
-  MACHO_VERSION_MIN_PLATFORMS,
+  classifyMachoVersionMinCommand,
   legacyMachoPlatform,
 } from "./machoPlatform.js";
 import {
@@ -765,14 +765,18 @@ const decodeCommand = (
     slice.platforms.push(platform);
     return;
   }
-  const legacyPlatform = MACHO_VERSION_MIN_PLATFORMS.get(command);
-  if (legacyPlatform !== undefined) {
-    if (body.byteLength < 16)
+  const versionMin = classifyMachoVersionMinCommand(command, body.byteLength);
+  if (versionMin !== null) {
+    if (versionMin.kind !== "exact")
       throw machoIssue(
         "malformed",
-        `load command ${index} is too short for a version-min command`,
+        versionMin.kind === "truncated"
+          ? `load command ${index} is too short for a version-min command`
+          : `load command ${index} is too long for a version-min command`,
       );
-    slice.platforms.push(legacyMachoPlatform(legacyPlatform, slice.cpu_type));
+    slice.platforms.push(
+      legacyMachoPlatform(versionMin.platform, slice.cpu_type),
+    );
     return;
   }
   if (command === LC.LAZY_LOAD_DYLIB_INFO)
