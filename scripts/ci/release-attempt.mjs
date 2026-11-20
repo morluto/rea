@@ -159,12 +159,22 @@ export async function verifyFrozenReleaseBranch(api, branch, source) {
     );
 }
 
-async function requireCurrentMainCheckpoint(api, source) {
+export async function requireCurrentMainCheckpoint(run, api, source) {
   const branch = await api("git/ref/heads/main");
   if (!branch.ok)
     throw new Error(`Cannot read current main: HTTP ${branch.status}`);
-  const mainTip = commit((await branch.json())?.object?.sha);
-  const boundary = await command("git", [
+  const value = await branch.json();
+  if (value?.ref !== "refs/heads/main" || value.object?.type !== "commit")
+    throw new Error("Unexpected current main ref");
+  const mainTip = commit(value.object.sha);
+  await run("git", [
+    "fetch",
+    "--no-tags",
+    "--no-write-fetch-head",
+    "origin",
+    mainTip,
+  ]);
+  const boundary = await run("git", [
     "log",
     "-1",
     "--first-parent",
@@ -209,7 +219,7 @@ async function main() {
       if (!published) {
         if (RELEASE_BRANCH)
           await verifyFrozenReleaseBranch(api, RELEASE_BRANCH, source);
-        else await requireCurrentMainCheckpoint(api, source);
+        else await requireCurrentMainCheckpoint(command, api, source);
       }
       await appendFile(process.env.GITHUB_OUTPUT, `published=${published}\n`);
     } else if (!published) {
@@ -221,7 +231,7 @@ async function main() {
   if (decision === "publish") {
     if (RELEASE_BRANCH)
       await verifyFrozenReleaseBranch(api, RELEASE_BRANCH, source);
-    else await requireCurrentMainCheckpoint(api, source);
+    else await requireCurrentMainCheckpoint(command, api, source);
     await recordReleaseAttempt(api, source, parent, decision);
     return;
   }
@@ -233,7 +243,7 @@ async function main() {
     "-e",
     `${source}:scripts/ci/release-attempt.mjs`,
   ]);
-  await requireCurrentMainCheckpoint(api, source);
+  await requireCurrentMainCheckpoint(command, api, source);
   const pr = await readMergedReleasePullRequest(command, {
     repository: GITHUB_REPOSITORY,
     source,

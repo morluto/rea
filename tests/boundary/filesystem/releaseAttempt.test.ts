@@ -1,13 +1,60 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it } from "vitest";
 import {
   inspectGithubRelease,
   recordReleaseAttempt,
+  requireCurrentMainCheckpoint,
   verifyFrozenReleaseBranch,
 } from "../../../scripts/ci/release-attempt.mjs";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { workflowGit } from "../../support/workflowGit.js";
 
 const source = "a".repeat(40);
 const parent = "b".repeat(40);
 const ref = `refs/tags/rea-release-attempt/${source}`;
+
+it("proves the live main checkpoint while keeping the qualified checkout pinned", async () => {
+  const remote = await createTestTempDirectory("rea-release-main-");
+  const checkout = await createTestTempDirectory("rea-release-checkout-");
+  const manifest = ".release-please-manifest.json";
+  const git = (args: string[]) => workflowGit(remote, args);
+  const localGit = (args: string[]) => workflowGit(checkout, args);
+  await git(["init", "--initial-branch=main"]);
+  await writeFile(join(remote, manifest), '{".":"6.10.2"}\n');
+  await git(["add", manifest]);
+  await git(["commit", "-m", "Release candidate"]);
+  const candidate = await git(["rev-parse", "HEAD"]);
+  await localGit(["clone", "--no-local", remote, "."]);
+  await localGit(["checkout", "--detach", candidate]);
+
+  await git(["commit", "--allow-empty", "-m", "Later main commit"]);
+  const advance = await git(["rev-parse", "HEAD"]);
+  await expect(localGit(["cat-file", "-e", advance])).rejects.toThrow();
+  const prove = (tip: string) =>
+    requireCurrentMainCheckpoint(
+      (program, args) => {
+        expect(program).toBe("git");
+        return localGit(args);
+      },
+      async (path) => {
+        expect(path).toBe("git/ref/heads/main");
+        return Response.json({
+          ref: "refs/heads/main",
+          object: { type: "commit", sha: tip },
+        });
+      },
+      candidate,
+    );
+  await expect(prove(advance)).resolves.toBeUndefined();
+
+  await writeFile(join(remote, manifest), '{".":"6.10.3"}\n');
+  await git(["commit", "-am", "Change the release checkpoint"]);
+  await expect(prove(await git(["rev-parse", "HEAD"]))).rejects.toThrow(
+    "not the current main release metadata checkpoint",
+  );
+  expect(await localGit(["rev-parse", "HEAD"])).toBe(candidate);
+});
 
 function repository(initial?: string) {
   let target = initial;

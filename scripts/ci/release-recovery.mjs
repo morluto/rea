@@ -9,7 +9,7 @@ import { z } from "zod";
 import { validateVerifiedPackage } from "./verified-package.mjs";
 import { verifyPublishedPackageIntegrity } from "./qualified-package-envelope.mjs";
 import { readMergedReleasePullRequest } from "../lib/release-pull-request.mjs";
-import { githubApi } from "./release-attempt.mjs";
+import { githubApi, requireCurrentMainCheckpoint } from "./release-attempt.mjs";
 
 const execute = promisify(execFile);
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
@@ -225,10 +225,8 @@ async function main() {
       if (error.code !== 1) throw error;
       return undefined;
     });
-    const releaseResponse = await githubApi(
-      repository,
-      process.env.GH_TOKEN,
-    )(`releases/tags/rea-agents-${version}`);
+    const github = githubApi(repository, process.env.GH_TOKEN);
+    const releaseResponse = await github(`releases/tags/rea-agents-${version}`);
     if (releaseResponse.status !== 404 && !releaseResponse.ok)
       throw new Error(
         `GitHub release lookup failed: HTTP ${releaseResponse.status}`,
@@ -258,19 +256,7 @@ async function main() {
         throw new Error(
           "The recovered candidate is not a merged main release PR",
         );
-      const checkpoint = await command("git", [
-        "log",
-        "-1",
-        "--first-parent",
-        "--format=%H",
-        "HEAD",
-        "--",
-        ".release-please-manifest.json",
-      ]);
-      if (checkpoint !== source)
-        throw new Error(
-          "The recovered candidate does not own the current release manifest",
-        );
+      await requireCurrentMainCheckpoint(command, github, source);
     }
     await appendFile(
       z.string().min(1).parse(process.env.GITHUB_OUTPUT),

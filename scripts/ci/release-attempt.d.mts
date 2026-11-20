@@ -14,6 +14,11 @@ export function verifyFrozenReleaseBranch(
   branch: string,
   source: string,
 ): Promise<void>;
+export function requireCurrentMainCheckpoint(
+  run: (program: string, args: string[]) => Promise<string>,
+  api: (path: string) => Promise<Response>,
+  source: string,
+): Promise<void>;
 export function githubApi(
   repository: string,
   token: string,
