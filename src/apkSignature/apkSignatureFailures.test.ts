@@ -50,8 +50,7 @@ it.each([
       details: { reported_limits: { [key]: limit } },
     });
     expect(projected.remediation.action).toContain(String(limit));
-    expect(projected.remediation.action).toContain("no runtime override");
-    expect(projected.remediation.action).toMatch(/unchanged request.*fails/iu);
+    expect(projected.details?.refusal).toMatchObject({ kind: "fixed_ceiling" });
     expect(projected.remediation.action).not.toContain(
       "Wait for an active analysis to complete",
     );

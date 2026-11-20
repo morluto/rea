@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.10.0",
   "base": "d74549e495c58eb4a560279fd9f05508401ea0a0",
-  "target": "847c2d5253c216a87fb09d170371e11b9504722b",
+  "target": "2474e6ec6c9793684101b90d38beded4e8178bc9",
   "commits": [
     {
       "sha": "5eef239dfd774331d622aaa4762f42fa632121ab",
@@ -31186,6 +31186,387 @@
         }
       ],
       "pullRequests": []
+    },
+    {
+      "sha": "bb8e6833eb8cdfbeed9124b642ca5bfbe8afe4bd",
+      "subject": "test: assert structured recovery facts instead of recovery wording in tests/ (#12723)",
+      "body": "test: assert structured recovery facts instead of recovery wording in tests/ (#12723)\n\nDrop recovery-sentence locks when a structured field or the owning\nformatter already carries the fact, and own this batch's per-test\ntemporary directories through createTestTempDirectory. Keep setting\nnames, caller data, and prose that has no structured carrier.\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "parents": ["847c2d5253c216a87fb09d170371e11b9504722b"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12723]
+    },
+    {
+      "sha": "e1218b0388d963a1a5a4f9aee36846b399186516",
+      "subject": "fix(java): preserve Maven POM version spelling (#12714)",
+      "body": "fix(java): preserve Maven POM version spelling (#12714)\n\nCo-authored-by: hhang <169027046+xu91102@users.noreply.github.com>",
+      "parents": ["bb8e6833eb8cdfbeed9124b642ca5bfbe8afe4bd"],
+      "authors": [
+        {
+          "name": "hhang",
+          "email": "17309584214@163.com",
+          "user": {
+            "login": "xu91102",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "hhang",
+          "email": "169027046+xu91102@users.noreply.github.com",
+          "user": {
+            "login": "xu91102",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12714]
+    },
+    {
+      "sha": "fa918a35f57273a12043d50c18c02e44ff67624e",
+      "subject": "test(setup): run the shared JSON registration contract for CodeBuddy, Droid, FreeBuff and Trae (#12716)",
+      "body": "test(setup): run the shared JSON registration contract for CodeBuddy, Droid, FreeBuff and Trae (#12716)\n\nShare the mcpServers upsert, create-table, empty-file, and uninstall cases\nthrough jsonClientRegistrationContract. Trae and FreeBuff pass a location\nresolver because their paths are not join(home, directory, filename).\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "parents": ["e1218b0388d963a1a5a4f9aee36846b399186516"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12716]
+    },
+    {
+      "sha": "d5818ad0da497cd913619bcda3fe7b9a3566ae8e",
+      "subject": "refactor(verify): run Ghidra verifier commands through the supervised owner (1 of 2) (#12719)",
+      "body": "refactor(verify): run Ghidra verifier commands through the supervised owner (1 of 2) (#12719)\n\n* refactor(verify): run Ghidra verifier commands through the supervised owner\n\nRoute the first Ghidra verifier batch's compilers, linkers, and CLI through\ncreateVerifierCommands, and close that owner before the lineage check.\nReplace MCP isError prose checks with the structured refusal each tool builds.\n\n* fix(verify): resolve Windows 6502 toolchain names through the command owner\n\nrunOwnedCommand passes a bare ca65 or ld65 name to the Windows process\nowner, which accepts only a drive-absolute path. The verifier command\nowner resolves those PATH names before launch.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): release the Ghidra fixture when a toolchain probe fails\n\nretain() only registered a cleanup that nothing ran, so a failed compiler\nprobe left the empty fixture directory behind. Release it after the command\nowner closes, and name the retained path when that close does not confirm.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): close the m68k command owner when session shutdown fails\n\nClient, transport, and command cleanup are independent. A failed client or\ntransport close, or a failed runtime read, no longer skips the command owner.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: morluto <morluto@users.noreply.github.com>",
+      "parents": ["fa918a35f57273a12043d50c18c02e44ff67624e"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12719]
+    },
+    {
+      "sha": "dc2c31e76d4ecc6fffad07d9a632e0c463c24670",
+      "subject": "test(limits): check documented limit defaults against code instead of per-file pins (#12720)",
+      "body": "test(limits): check documented limit defaults against code instead of per-file pins (#12720)\n\n* test(limits): check documented limit defaults against code instead of per-file pins\n\nThe numeric-limit script now reads every default, floor, and maximum in\ndocs/design/rea-limit-inventory.md and compares it with ANALYSIS_SETTINGS\nor the owner constant the parser enforces. A mismatch names the limit and\nboth values. Pins that only restated a covered value are removed.\n\nPwntools input bytes and the Kuna timeouts now use the shared exports, so\nthe registry value is the one the parser applies.\n\n* fix(limits): reject a fractional documented limit cell\n\nThe cell parser treated a dot as the end of the integer, so 5000.5\ncompared equal to 5000. A documented number is now one complete integer,\nwith prose only after whitespace.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: morluto <morluto@users.noreply.github.com>",
+      "parents": ["d5818ad0da497cd913619bcda3fe7b9a3566ae8e"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12720]
+    },
+    {
+      "sha": "74bdfd2ec23b5071c0617d31810558a5fd6650dc",
+      "subject": "test: assert structured recovery facts instead of recovery wording in src tests (#12721)",
+      "body": "test: assert structured recovery facts instead of recovery wording in src tests (#12721)\n\n* test: assert structured recovery facts instead of recovery wording in src tests\n\nReplace recovery-sentence locks with the structured fields that already\ncarry those facts, and own Batch 4 temporary directories through\ncreateTestTempDirectory.\n\n* test(hopper): keep recovery order that retry_action does not carry\n\nretry_action names restart or unknown. It does not say to read\nprovider_operation_health before retrying, or to close_binary before\nopening and retrying. Those order checks stay.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: morluto <morluto@users.noreply.github.com>",
+      "parents": ["dc2c31e76d4ecc6fffad07d9a632e0c463c24670"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12721]
+    },
+    {
+      "sha": "94c3077355d3d904dcd200cce532a82bdea6d3db",
+      "subject": "test(providers): own temporary directories through createTestTempDirectory (#12722)",
+      "body": "test(providers): own temporary directories through createTestTempDirectory (#12722)\n\n* test(providers): own temporary directories through createTestTempDirectory\n\nRoute provider-boundary fixtures through createTestTempDirectory so each\ncase removes its canonical directory after the test. Process shutdown stays\nin afterEach, which still runs before that removal. Skip the two Windows\nCutter checks with it.skipIf, and compare unknown plugin recovery with\ncutterBridgeSourceRecovery.\n\n* test(providers): keep gated fixture cleanup with its owner\n\ncreateTestTempDirectory always deletes after the test, including when\nGDB or inferior cleanup fails and when the Rizin MCP harness already\nowns the directory. Restore mkdtemp removal behind confirmed process\ncleanup, and leave decoder inputs owned by the harness.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* test(cutter): keep an independent unknown-source recovery check\n\nComparing discovery recovery with cutterBridgeSourceRecovery follows the\nformatter, so dropping the unknown-source explanation still passes. Assert\nthat explanation directly, beside bridge_source and the plugin path.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: morluto <morluto@users.noreply.github.com>",
+      "parents": ["74bdfd2ec23b5071c0617d31810558a5fd6650dc"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12722]
+    },
+    {
+      "sha": "79171a4d021600d39088d63d6e603bd150ff43d1",
+      "subject": "fix(browser): keep failed trace response statuses unknown (#12724)",
+      "body": "fix(browser): keep failed trace response statuses unknown (#12724)\n\nUse the recorded HTTP response owner for Playwright trace headlines.\nPreserve producer status sentinels and failure facts in the raw record,\nwithout presenting unavailable responses as observed HTTP status codes.",
+      "parents": ["94c3077355d3d904dcd200cce532a82bdea6d3db"],
+      "authors": [
+        {
+          "name": "Taksh Kothari",
+          "email": "takshkothari09@gmail.com",
+          "user": {
+            "login": "chessing234",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12724]
+    },
+    {
+      "sha": "be14c9d47588e7aa784adede539af8df90d2526f",
+      "subject": "test: own temporary directories through createTestTempDirectory in src/ tests (#12725)",
+      "body": "test: own temporary directories through createTestTempDirectory in src/ tests (#12725)\n\nGive per-test temporary directories to the shared helper so Vitest removes\nthem after the case. Keep directories whose lifetime is the assertion, or\nthat are shared from beforeAll, on their existing cleanup.\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "parents": ["79171a4d021600d39088d63d6e603bd150ff43d1"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12725]
+    },
+    {
+      "sha": "e58c60b36e8f6ccb0386b1c5a0ea31830b9608bc",
+      "subject": "test(limits): reference limit constants instead of repeating their values (#12715)",
+      "body": "test(limits): reference limit constants instead of repeating their values (#12715)\n\n* test(limits): reference limit constants instead of repeating their values\n\nPoint duplicated default literals at their owner constants and replace\nrecovery-wording locks with the setting name, units, and those constants.\nKeep the single default pins that guard shipped values.\n\n* test(limits): pin the shipped Ghidra value-flow defaults\n\nConsumer checks follow the owner constants, so they no longer catch a\nchange to 3000, 64, or 12000. One owner pin keeps those shipped values.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: morluto <morluto@users.noreply.github.com>",
+      "parents": ["be14c9d47588e7aa784adede539af8df90d2526f"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12715]
+    },
+    {
+      "sha": "385e5d228f75894e616548371ceb3fccdb6e499b",
+      "subject": "test: own temporary directories through createTestTempDirectory in remaining tests/ (#12727)",
+      "body": "test: own temporary directories through createTestTempDirectory in remaining tests/ (#12727)\n\n* test: own temporary directories through createTestTempDirectory in remaining tests/\n\nGive per-test directories in the remaining tests/ suites to\ncreateTestTempDirectory so onTestFinished removes them through\nremoveTestWorkspace. Keep suite-scoped roots and child-process directories\nwhose removal is the assertion.\n\n* test: drop empty cleanup callbacks and keep the capture skip reason visible\n\nRemove the no-op withVerifierCleanup steps left after directory removal\nmoved to createTestTempDirectory. Put the native capture skip explanation\nin the Linux sample test name, because it.skipIf only tests truthiness.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: morluto <morluto@users.noreply.github.com>",
+      "parents": ["e58c60b36e8f6ccb0386b1c5a0ea31830b9608bc"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12727]
+    },
+    {
+      "sha": "f25a0a0599da03ff0fbc24cfe431f01eba9b7d7a",
+      "subject": "refactor(verify): run Ghidra verifier commands through the supervised owner (2 of 2) (#12717)",
+      "body": "refactor(verify): run Ghidra verifier commands through the supervised owner (2 of 2) (#12717)\n\n* refactor(verify): run Ghidra verifier commands through the supervised owner (2 of 2)\n\nRoute the remaining Ghidra verifier compiler and CLI launches through\ncreateVerifierCommands, close that owner before lineage observation, and\nassert the raw arm64 alignment refusal from its structured error.\n\n* fix(verify): stop detached Ghidra verifier commands on interrupt\n\nSIGINT and SIGTERM abort the command owner and the scripts wait for its\ncleanup, so a compiler started in its own process group cannot outlive\nthe verifier.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): stop Ghidra verifier analysis when interrupted\n\nPass the verifier interruption signal into MCP and Ghidra waits, and stop\nwaiting for calls that cannot observe it, so SIGINT does not continue the\nanalysis before cleanup.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): stop the switch evidence probe when the verifier is interrupted\n\nPass the verifier interruption signal into the detached Ghidra control\nprobe and end its wait so supervisor.stop() runs before a later SIGKILL.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): observe work already started when a verifier interrupt wins\n\nuntilInterrupted now settles the caller's promise after the signal has\nalready aborted, so a connection started just before the check cannot\nreject with nobody listening.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* refactor(verify): share verifier interrupt handling and keep it through release\n\nMove the SIGINT/SIGTERM abort wiring into bindVerifierCommandInterruption.\nHandlers stay installed until after fixture release, and untilInterrupted\nstill observes a promise that was already started.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): keep diagnostic workspaces and stop fixture builds on interrupt\n\nCheck the interruption signal after finalization and before the fixture\nroot is removed. MIPS and RISC-V fixture compilers and readers now run\nthrough the verifier command owner, so SIGTERM aborts them instead of\nwaiting out their execFile deadline.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: morluto <morluto@users.noreply.github.com>",
+      "parents": ["385e5d228f75894e616548371ceb3fccdb6e499b"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12717]
+    },
+    {
+      "sha": "2474e6ec6c9793684101b90d38beded4e8178bc9",
+      "subject": "refactor(verify): run Hopper and Kuna verifier commands through the supervised owner (#12718)",
+      "body": "refactor(verify): run Hopper and Kuna verifier commands through the supervised owner (#12718)\n\n* refactor(verify): run Hopper and Kuna verifier commands through the supervised owner\n\nReplace bare execFile in the Hopper and Kuna real-provider verifiers with\ncreateVerifierCommands, and run pre-workspace toolchain probes through\nrunOwnedCommand. Close the owner before lineage verification and keep the\ndiagnostic workspace when cleanup, lineage, or the run fails.\n\nReplace isError-only and FAT64 prose refusals with the projected error code\nand structured issue or target details.\n\n* fix(verify): release a clean Kuna workspace after a verification failure\n\nA failed check whose provider, command, and lineage cleanup all completed\nstill removes the root. The workspace stays only when that cleanup is\nunconfirmed, which is the contract the Kuna verifier failure-path tests\nalready require.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): keep the Kuna report when workspace release fails\n\nrelease() closes cleanup registration before it removes the root, so\nretain() after a failed release throws and skips the JSON report. Register\nretention only when release has not started; a failed release already\nkeeps the workspace.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): keep both Hopper verification and lineage failures\n\nWhen verification has already failed and lineage observation then fails,\nthe retained-workspace error carried only the earlier cause. Aggregate\nboth failures in the Hopper, FAT, and caller verifiers so the cleanup\nreason stays with the workspace.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): keep Hopper manifests inside the repository\n\nrealpath() accepted REA_HOPPER_CONFORMANCE_MANIFEST_PATH as any filesystem\npath. Resolve the manifest against the repository and reject a lexical or\nsymlink escape before it is read.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): acquire command owners before verifier workspaces\n\n* fix(verify): create the command owner before the verifier workspace\n\nIf command-owner setup fails after a workspace is allocated, the temporary\nroot is never released. Create the owner first and close it when workspace\nallocation fails.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n* fix(verify): supervise Hopper helper CLI processes\n\n* fix(verify): run Hopper helper CLIs through the command owner\n\nBoundary and Linux owner-exit checks still launched the REA CLI with\nexecFile, so a timeout could not stop those processes. Both helpers now\nrequire the verifier command owner and run those CLIs through it.\n\nCo-authored-by: morluto <morluto@users.noreply.github.com>\n\n---------\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\nCo-authored-by: morluto <morluto@users.noreply.github.com>",
+      "parents": ["f25a0a0599da03ff0fbc24cfe431f01eba9b7d7a"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Cursor Agent",
+          "email": "cursoragent@cursor.com",
+          "user": {
+            "login": "cursoragent",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12718]
     }
   ],
   "pullRequests": [
@@ -52317,6 +52698,175 @@
       },
       "mergeCommit": {
         "oid": "88f885a2f347916c2bd369a69139a2bcae05c61c"
+      },
+      "issues": []
+    },
+    {
+      "number": 12714,
+      "title": "fix(java): preserve Maven POM version spelling",
+      "url": "https://github.com/morluto/rea/pull/12714",
+      "author": {
+        "login": "xu91102",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "e1218b0388d963a1a5a4f9aee36846b399186516"
+      },
+      "issues": []
+    },
+    {
+      "number": 12715,
+      "title": "test(limits): reference limit constants instead of repeating their values",
+      "url": "https://github.com/morluto/rea/pull/12715",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "e58c60b36e8f6ccb0386b1c5a0ea31830b9608bc"
+      },
+      "issues": []
+    },
+    {
+      "number": 12716,
+      "title": "test(setup): run the shared JSON registration contract for CodeBuddy, Droid, FreeBuff and Trae",
+      "url": "https://github.com/morluto/rea/pull/12716",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "fa918a35f57273a12043d50c18c02e44ff67624e"
+      },
+      "issues": []
+    },
+    {
+      "number": 12717,
+      "title": "refactor(verify): run Ghidra verifier commands through the supervised owner (2 of 2)",
+      "url": "https://github.com/morluto/rea/pull/12717",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "f25a0a0599da03ff0fbc24cfe431f01eba9b7d7a"
+      },
+      "issues": []
+    },
+    {
+      "number": 12718,
+      "title": "refactor(verify): run Hopper and Kuna verifier commands through the supervised owner",
+      "url": "https://github.com/morluto/rea/pull/12718",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "2474e6ec6c9793684101b90d38beded4e8178bc9"
+      },
+      "issues": []
+    },
+    {
+      "number": 12719,
+      "title": "refactor(verify): run Ghidra verifier commands through the supervised owner (1 of 2)",
+      "url": "https://github.com/morluto/rea/pull/12719",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "d5818ad0da497cd913619bcda3fe7b9a3566ae8e"
+      },
+      "issues": []
+    },
+    {
+      "number": 12720,
+      "title": "test(limits): check documented limit defaults against code instead of per-file pins",
+      "url": "https://github.com/morluto/rea/pull/12720",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "dc2c31e76d4ecc6fffad07d9a632e0c463c24670"
+      },
+      "issues": []
+    },
+    {
+      "number": 12721,
+      "title": "test: assert structured recovery facts instead of recovery wording in src tests",
+      "url": "https://github.com/morluto/rea/pull/12721",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "74bdfd2ec23b5071c0617d31810558a5fd6650dc"
+      },
+      "issues": []
+    },
+    {
+      "number": 12722,
+      "title": "test(providers): own temporary directories through createTestTempDirectory",
+      "url": "https://github.com/morluto/rea/pull/12722",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "94c3077355d3d904dcd200cce532a82bdea6d3db"
+      },
+      "issues": []
+    },
+    {
+      "number": 12723,
+      "title": "test: assert structured recovery facts instead of recovery wording in tests/",
+      "url": "https://github.com/morluto/rea/pull/12723",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "bb8e6833eb8cdfbeed9124b642ca5bfbe8afe4bd"
+      },
+      "issues": []
+    },
+    {
+      "number": 12724,
+      "title": "fix(browser): keep failed trace response statuses unknown",
+      "url": "https://github.com/morluto/rea/pull/12724",
+      "author": {
+        "login": "chessing234",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "79171a4d021600d39088d63d6e603bd150ff43d1"
+      },
+      "issues": []
+    },
+    {
+      "number": 12725,
+      "title": "test: own temporary directories through createTestTempDirectory in src/ tests",
+      "url": "https://github.com/morluto/rea/pull/12725",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "be14c9d47588e7aa784adede539af8df90d2526f"
+      },
+      "issues": []
+    },
+    {
+      "number": 12727,
+      "title": "test: own temporary directories through createTestTempDirectory in remaining tests/",
+      "url": "https://github.com/morluto/rea/pull/12727",
+      "author": {
+        "login": "morluto",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "385e5d228f75894e616548371ceb3fccdb6e499b"
       },
       "issues": []
     }

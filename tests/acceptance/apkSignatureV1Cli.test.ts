@@ -807,9 +807,11 @@ cliTest(
             resource: "capacity",
             reason: parserReason,
             reported_limits: { max_v1_signature_entries: 4096 },
-          },
-          remediation: {
-            action: expect.stringContaining("no runtime override"),
+            refusal: {
+              kind: "fixed_ceiling",
+              operation: "inspect_apk_signature",
+              allowance_kind: "count",
+            },
           },
         },
       ],

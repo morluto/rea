@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createHash } from "node:crypto";
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
@@ -578,58 +579,54 @@ it("retains UUID, entrypoint and bounded build tool records", async () => {
 it.skipIf(process.platform !== "darwin")(
   "reads an Apple linker generated multiline section from bounded ranges",
   async () => {
-    const { mkdtemp, writeFile, rm, open } = await import("node:fs/promises");
+    const { writeFile, open } = await import("node:fs/promises");
     const { join } = await import("node:path");
-    const { tmpdir } = await import("node:os");
+
     const { execFileSync } = await import("node:child_process");
-    const root = await mkdtemp(join(tmpdir(), "rea-macho-names-"));
+    const root = await createTestTempDirectory("rea-macho-names-");
+    const code = join(root, "main.c");
+    const payload = join(root, "payload");
+    const image = join(root, "target");
+    await writeFile(code, "int main(void) { return 0; }\n");
+    await writeFile(payload, "data");
+    execFileSync("/usr/bin/clang", [
+      "-arch",
+      "arm64",
+      "-o",
+      image,
+      code,
+      `-Wl,-sectcreate,__DATA,x\naddr 0x1,${payload}`,
+    ]);
+    const handle = await open(image, "r");
     try {
-      const code = join(root, "main.c");
-      const payload = join(root, "payload");
-      const image = join(root, "target");
-      await writeFile(code, "int main(void) { return 0; }\n");
-      await writeFile(payload, "data");
-      execFileSync("/usr/bin/clang", [
-        "-arch",
-        "arm64",
-        "-o",
-        image,
-        code,
-        `-Wl,-sectcreate,__DATA,x\naddr 0x1,${payload}`,
-      ]);
-      const handle = await open(image, "r");
-      try {
-        const stat = await handle.stat();
-        const result = await readMachoCommandNames(
-          async (offset, size) => {
-            const bytes = Buffer.alloc(size);
-            const read = await handle.read(bytes, 0, size, offset);
-            return bytes.subarray(0, read.bytesRead);
-          },
-          stat.size,
-          1024,
-          10000,
-        );
-        expect(
-          result.commands
-            .flatMap((command) => command.sections ?? [])
-            .some(
-              (section) =>
-                Buffer.from(section.name).subarray(0, 10).toString() ===
-                "x\naddr 0x1",
-            ),
-        ).toBe(true);
-        const parsed = projectMachoBinary(result);
-        expect(
-          parsed.segments
-            .flatMap((segment) => segment.sections)
-            .some((section) => section.name === "x\naddr 0x1"),
-        ).toBe(true);
-      } finally {
-        await handle.close();
-      }
+      const stat = await handle.stat();
+      const result = await readMachoCommandNames(
+        async (offset, size) => {
+          const bytes = Buffer.alloc(size);
+          const read = await handle.read(bytes, 0, size, offset);
+          return bytes.subarray(0, read.bytesRead);
+        },
+        stat.size,
+        1024,
+        10000,
+      );
+      expect(
+        result.commands
+          .flatMap((command) => command.sections ?? [])
+          .some(
+            (section) =>
+              Buffer.from(section.name).subarray(0, 10).toString() ===
+              "x\naddr 0x1",
+          ),
+      ).toBe(true);
+      const parsed = projectMachoBinary(result);
+      expect(
+        parsed.segments
+          .flatMap((segment) => segment.sections)
+          .some((section) => section.name === "x\naddr 0x1"),
+      ).toBe(true);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await handle.close();
     }
   },
 );

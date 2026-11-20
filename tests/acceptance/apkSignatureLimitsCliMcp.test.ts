@@ -72,6 +72,11 @@ cliTest(
         resource: "capacity",
         reason: parsed.error.failure.detail,
         reported_limits: { max_signing_block_pairs: 4096 },
+        refusal: {
+          kind: "fixed_ceiling",
+          operation: "inspect_apk_signature",
+          allowance_kind: "count",
+        },
       },
     };
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -82,10 +87,6 @@ cliTest(
       const error = analysisErrorProjectionSchema.parse(reply.json);
       expect(error).toMatchObject(expected);
       expect(error.remediation.action).toContain("4096");
-      expect(error.remediation.action).toContain("no runtime override");
-      expect(error.remediation.action).toContain(
-        "Waiting for an active analysis to finish does not raise it",
-      );
     }
     const malformedExpected = {
       code: "invalid_request",
