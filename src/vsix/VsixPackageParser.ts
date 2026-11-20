@@ -1011,9 +1011,8 @@ export const parseVsixPackage = async (
     for (const [index, file] of files.entries()) {
       let kind = file.kind;
       let classification: "observed" | "inferred" = "inferred";
-      const shouldHash =
-        isVsixInterestingMemberKind(kind) ||
-        (kind === "unknown" && unixExecutable(file.entry));
+      const modeExecutable = kind === "unknown" && unixExecutable(file.entry);
+      const shouldHash = isVsixInterestingMemberKind(kind) || modeExecutable;
       let hashed: Uint8Array | undefined;
       if (shouldHash && !file.traverses && !file.encrypted) {
         const declared = zipSize(file.entry.uncompressedSize);
@@ -1075,14 +1074,21 @@ export const parseVsixPackage = async (
             sha256: sha256Hex(hashed),
             classification,
           });
-      } else if (isVsixInterestingMemberKind(kind)) {
-        interestingMembers.push({
-          path: file.path,
-          kind,
-          bytes: zipSize(file.entry.uncompressedSize),
-          sha256: null,
-          classification: "inferred",
-        });
+      } else {
+        // Unread members keep the executable kind their Unix mode implies,
+        // so oversize, encrypted, or traversing helpers stay inventoried.
+        if (modeExecutable) {
+          kind = "executable";
+          contents[index] = { ...contents[index]!, kind };
+        }
+        if (isVsixInterestingMemberKind(kind))
+          interestingMembers.push({
+            path: file.path,
+            kind,
+            bytes: zipSize(file.entry.uncompressedSize),
+            sha256: null,
+            classification: "inferred",
+          });
       }
       kindCounts[kind] += 1;
     }
@@ -1138,13 +1144,11 @@ export const parseVsixPackage = async (
           "max_manifest_bytes",
         );
       } catch (cause: unknown) {
-        if (
-          !(
-            cause instanceof ParseFailureError &&
-            cause.failure.kind === "limit" &&
-            cause.failure.limit?.name === "max_manifest_bytes"
-          )
-        )
+        if (!(
+          cause instanceof ParseFailureError &&
+          cause.failure.kind === "limit" &&
+          cause.failure.limit?.name === "max_manifest_bytes"
+        ))
           throw cause;
         mainDirectoryMain = { kind: "unread" };
         limitations.push(

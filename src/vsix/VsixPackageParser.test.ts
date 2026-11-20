@@ -558,6 +558,35 @@ it("lists an oversize interesting member without a digest", async () => {
   );
 });
 
+it("keeps an oversize mode-executable member in the executable inventory", async () => {
+  const helper = new Uint8Array(2048);
+  const bytes = await vsixPackageFixture({
+    extraBinaryMembers: { "extension/bin/server": helper },
+    binaryMemberModes: { "extension/bin/server": 0o100755 },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), {
+      ...defaults,
+      max_member_bytes: 16,
+    }),
+  );
+  expect(report.interesting_members).toContainEqual({
+    path: "extension/bin/server",
+    kind: "executable",
+    bytes: helper.length,
+    sha256: null,
+    classification: "inferred",
+  });
+  expect(
+    report.contents.find((member) => member.path === "extension/bin/server")
+      ?.kind,
+  ).toBe("executable");
+  expect(report.member_kind_counts.executable).toBe(1);
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.memberOversize("extension/bin/server", 16),
+  );
+});
+
 it("reports cancellation during a member read with the caller's reason", async () => {
   const bytes = await vsixPackageFixture();
   const controller = new AbortController();
