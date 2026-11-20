@@ -1,11 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { access, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
 import { RecordingHexRaysIdaMcp } from "../../tests/fixtures/idaHexRaysMcp.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { readCallGraphCallees } from "./IdaCallGraph.js";
 import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { runHexRaysQuery } from "./IdaHexRaysProtocol.js";
@@ -208,6 +210,59 @@ describe("Hex-Rays IDA MCP startup profile", () => {
     expect(producer.calls).toEqual([]);
   });
 });
+
+it.skipIf(!hasPython)(
+  "reports complete root scan coverage from the Hex-Rays query bridge",
+  async () => {
+    const fixturePath = fileURLToPath(
+      new URL("../../bridge/ida/test_hexrays_queries.py", import.meta.url),
+    );
+    const connection = {
+      connect: async () => [],
+      serverInfo: () => null,
+      close: async () => undefined,
+      detach: () => undefined,
+      call: async (
+        _tool: string,
+        args: Readonly<Record<string, JsonValue>>,
+      ) => {
+        const result = spawnSync(
+          "python3",
+          [
+            "-I",
+            "-c",
+            [
+              "import json, runpy, sys",
+              "fixture = runpy.run_path(sys.argv[1])",
+              "sys.modules.update(fixture['stand_ins']())",
+              "source, query = sys.stdin.read().rsplit('\\n', 1)",
+              "namespace = {}",
+              "exec(source, namespace)",
+              "print(json.dumps(eval(query, namespace)))",
+            ].join("\n"),
+            fixturePath,
+          ],
+          { input: String(args.code), encoding: "utf8", timeout: 5000 },
+        );
+        if (result.status !== 0)
+          throw new Error("Hex-Rays fixture query failed", {
+            cause: result.error ?? result.stderr,
+          });
+        return { result: JSON.parse(result.stdout), stdout: "", stderr: "" };
+      },
+    };
+    const graph = await readCallGraphCallees(
+      async (tool, args) =>
+        (await runHexRaysQuery(connection, "lease", tool, args, 1000)).result,
+      "0x1000",
+    );
+    expect(graph.callees).toEqual([{ address: "0x2000", name: "helper" }]);
+    expect(graph.coverage).toMatchObject({
+      status: "complete",
+      discovery: { callees: { status: "unknown" } },
+    });
+  },
+);
 
 describe("Hex-Rays IDA MCP evidence", () => {
   it("keeps the bridge digest and engine output of identity and operation reads", async () => {

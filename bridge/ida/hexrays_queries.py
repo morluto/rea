@@ -268,6 +268,7 @@ def callgraph(roots, max_depth):
                 + [{"addr": _hex(to), "name": ida_funcs.get_func_name(to) or None} for to in targets],
                 "edges": [{"from": _hex(f.start_ea), "to": _hex(to), "type": "call"} for to in targets],
                 "truncated": False,
+                "per_func_capped": False,
                 "limit_reason": None,
             }
         )
