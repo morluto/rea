@@ -41,7 +41,7 @@ it("retries all retained owners, preserves exact causes, and skips only the sele
       .mockRejectedValue(secondCause),
   };
   const skipped = { retryRetainedCleanup: vi.fn(async () => {}) };
-  for (const owner of [first, second, skipped]) registry.add(owner);
+  for (const owner of [first, skipped, second]) registry.add(owner);
 
   const failure: unknown = await registry
     .retry(skipped)
