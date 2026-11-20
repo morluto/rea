@@ -527,7 +527,10 @@ it.each(["before", "during"] as const)(
     const { application, release } = gatedStateApplication();
 
     if (phase === "before") controller.abort();
-    const state = readFinalApplicationState(application, controller.signal).then(
+    const state = readFinalApplicationState(
+      application,
+      controller.signal,
+    ).then(
       (value) => ({ value }),
       (error: unknown) => ({ error }),
     );
