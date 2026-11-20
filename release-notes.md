@@ -1094,6 +1094,8 @@
 * **il2cpp:** decode metadata tables through one shared binary reader ([#12554](https://github.com/morluto/rea/issues/12554)) ([5c3fe9c](https://github.com/morluto/rea/commit/5c3fe9caeb399e54ea3c8ffe1b267804876744d7))
 * **il2cpp:** report format failures through ParseFailure ([#10701](https://github.com/morluto/rea/issues/10701)) ([3a29b6b](https://github.com/morluto/rea/commit/3a29b6b8eac4d958ade8cffce3f7d53fcf7052b1))
 * **il2cpp:** share metadata section table framing ([#12364](https://github.com/morluto/rea/issues/12364)) ([7e7516f](https://github.com/morluto/rea/commit/7e7516fbe942b8eb2899ae910a29ca8c7dc11cc1))
+* **il2cpp:** share native registration scalar reads ([21dfefc](https://github.com/morluto/rea/commit/21dfefcfb24254dad6358285ae7e65421e6488d4))
+* **il2cpp:** share stored native image scalar reads ([#12638](https://github.com/morluto/rea/issues/12638)) ([21dfefc](https://github.com/morluto/rea/commit/21dfefcfb24254dad6358285ae7e65421e6488d4))
 * **inspector:** declare the V8 inspector's use of the browser Electron file scope ([#11529](https://github.com/morluto/rea/issues/11529)) ([1e66337](https://github.com/morluto/rea/commit/1e663371a0ffa7fb3f282e4fe2e8d1f8b85fd63e))
 * **jadx:** read the bridge identity from the bridge source it launches ([#10720](https://github.com/morluto/rea/issues/10720)) ([da3541b](https://github.com/morluto/rea/commit/da3541bae3c21441339df62c215db45eb2345d23))
 * **javascript:** ask the effect log about require and process rebinding and effect generations ([9efaaff](https://github.com/morluto/rea/commit/9efaaffd75e61617a0c439fdf55e594841ec4edc))
