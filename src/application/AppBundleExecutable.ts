@@ -1,5 +1,5 @@
 import { lstat, opendir, realpath, stat } from "node:fs/promises";
-import { extname, join, sep } from "node:path";
+import { basename, extname, join, sep } from "node:path";
 
 import { z } from "zod";
 
@@ -18,6 +18,7 @@ import type {
   BundleResourceRoot,
   ResolvedAppBundleResourceRoot,
 } from "../domain/apple/bundleResourceRoot.js";
+import type { BundleExecutableSelection } from "../domain/apple/bundleExecutableProvenance.js";
 import {
   INFO_PLIST_DECODE_MIB,
   openableAppleBundleExtension,
@@ -27,6 +28,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 import {
   bindRegularFileCleanup,
@@ -120,6 +122,7 @@ const FLATTENED_FRAMEWORK_LAYOUTS: readonly BundleLayout[] = [
 export interface ResolvedAppBundle {
   readonly executable: string;
   readonly infoPlist?: string;
+  readonly bundleExecutableSelection?: BundleExecutableSelection;
 }
 
 /** Filesystem operations used by the resolver, injectable for boundary tests. */
@@ -653,7 +656,32 @@ const resolveLayoutExecutable = async (
           { constraint: "bundle_path_escapes", probedPaths: [executable] },
         ),
       );
-    return ok({ executable: canonicalExecutable, infoPlist: plistPath });
+    const extension = extname(canonicalBundle);
+    const frameworkName =
+      extension.toLowerCase() === ".framework"
+        ? basename(canonicalBundle, extension)
+        : undefined;
+    return ok({
+      executable: canonicalExecutable,
+      infoPlist: plistPath,
+      bundleExecutableSelection: {
+        canonical_path: canonicalBundle,
+        layout: layout.name,
+        info_plist_sha256: sha256Hex(plist.value),
+        declared_executable: name,
+        ...(layout.name === "versioned-framework"
+          ? { version_directory: canonicalPrograms }
+          : {}),
+        ...(frameworkName === undefined
+          ? {}
+          : {
+              framework: {
+                directory_name: frameworkName,
+                matches_declared_executable: frameworkName === name,
+              },
+            }),
+      },
+    });
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(

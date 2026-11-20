@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   open,
   type FileHandle,
@@ -567,6 +568,14 @@ describe("binary target I/O: OpenStep app plist escapes", () => {
         value: {
           executable: join(programs, "Main"),
           infoPlist: join(app, "Contents", "Info.plist"),
+          bundleExecutableSelection: {
+            canonical_path: app,
+            layout: "contents",
+            declared_executable: "Main",
+            info_plist_sha256: createHash("sha256")
+              .update(plistContent)
+              .digest("hex"),
+          },
         },
       });
     },

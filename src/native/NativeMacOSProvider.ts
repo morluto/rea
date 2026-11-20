@@ -108,6 +108,7 @@ import type { NativeUiObservationResult } from "../domain/native/nativeUiObserva
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
 import { plistDuplicateKeyLimitations } from "../domain/apple/plistDuplicateKeys.js";
 import { machoKnownCodeSignSelector } from "../domain/apple/machoArchitectureSelection.js";
+import { bundleExecutableProvenanceFields } from "../domain/apple/bundleExecutableProvenance.js";
 import {
   demangleSwiftSchema,
   inspectPlistSchema,
@@ -983,6 +984,7 @@ class NativeMacOSClient implements AnalysisClient {
     const observation = () =>
       inspectSignatureSchema.parse({
         ...parsed,
+        ...bundleExecutableProvenanceFields(this.target),
         designated_requirement: requirementText,
         entitlements: entitlementValue.value,
         slices: {
