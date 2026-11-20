@@ -1101,6 +1101,8 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         "records",
         "--column",
         "value",
+        "--column",
+        "value",
         "--row-limit",
         "1",
         "--json",
@@ -1112,9 +1114,14 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       normalized_result: {
         schema: { scope: "inventory" },
         rows: {
-          columns: ["value"],
+          columns: ["value", "value"],
           returned_rows: 1,
-          values: [[{ type: "text", value: "retained" }]],
+          values: [
+            [
+              { type: "text", value: "retained" },
+              { type: "text", value: "retained" },
+            ],
+          ],
         },
       },
     });
