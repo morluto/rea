@@ -1,7 +1,6 @@
 {
   "src/domain/apple/appleMachoSelection.ts": 2,
   "src/domain/apple/machoLoadCommandReader.ts": 3,
-  "src/domain/binaryTarget.ts": 10,
   "src/domain/desktop/openPgpKeys.ts": 2,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/domain/native/elfPointerRelocations.ts": 6,

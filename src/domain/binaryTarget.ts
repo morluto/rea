@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import {
   resolveMappedFileOffset,
   type FileMapping,
@@ -720,17 +721,18 @@ export const parseCodeViewData = (
     .indexOf(0, pathOffset);
   if (end <= pathOffset) return undefined;
   const path = decodeCodeViewPath(buffer.subarray(pathOffset, end), magic);
+  const reader = new BinaryReader(buffer, true, "PE CodeView");
   if (magic === "RSDS") {
-    const part1 = buffer.readUInt32LE(4).toString(16).padStart(8, "0");
-    const part2 = buffer.readUInt16LE(8).toString(16).padStart(4, "0");
-    const part3 = buffer.readUInt16LE(10).toString(16).padStart(4, "0");
+    const part1 = reader.u32(4).toString(16).padStart(8, "0");
+    const part2 = reader.u16(8).toString(16).padStart(4, "0");
+    const part3 = reader.u16(10).toString(16).padStart(4, "0");
     const part4 = buffer.subarray(12, 14).toString("hex");
     const part5 = buffer.subarray(14, 20).toString("hex");
     const guid = `${part1}-${part2}-${part3}-${part4}-${part5}`;
-    const age = buffer.readUInt32LE(20);
+    const age = reader.u32(20);
     return { ...path, guid, age };
   }
-  return { ...path, guid: null, age: buffer.readUInt32LE(12) };
+  return { ...path, guid: null, age: reader.u32(12) };
 };
 
 const decodeCodeViewPath = (bytes: Buffer, magic: string): PeCodeViewPath => {
@@ -812,30 +814,55 @@ export const peRvaToFileOffset = (
   return mapped.ok ? mapped.value : undefined;
 };
 
+interface PeCodeViewDataRange {
+  readonly fileOffset: number;
+  readonly declaredSize: number;
+}
+
+/** A CodeView entry whose prefix cannot be read is observed as null. */
+function* observePeCodeViewEntries(
+  directory: Buffer,
+  sectionTable: Buffer,
+  numberOfSections: number,
+  sizeOfHeaders: number,
+): Generator<PeCodeViewDataRange | null> {
+  const reader = new BinaryReader(directory, true, "PE debug directory");
+  for (let offset = 0; offset + 28 <= directory.length; offset += 28) {
+    if (reader.u32(offset + 12) !== 2) continue;
+    const declaredSize = reader.u32(offset + 16);
+    if (declaredSize < 16) {
+      yield null;
+      continue;
+    }
+    const rawPointer = reader.u32(offset + 24);
+    const fileOffset =
+      rawPointer !== 0
+        ? rawPointer
+        : peRvaToFileOffset(
+            reader.u32(offset + 20),
+            sectionTable,
+            numberOfSections,
+            sizeOfHeaders,
+            Math.min(declaredSize, PE_CODEVIEW_PREFIX_BYTES),
+          );
+    yield fileOffset === undefined ? null : { fileOffset, declaredSize };
+  }
+}
+
 /** Interpret complete debug entries once; callers own directory reads. */
 export function* peCodeViewDataRanges(
   directory: Buffer,
   sectionTable: Buffer,
   numberOfSections: number,
   sizeOfHeaders: number,
-): Generator<{ readonly fileOffset: number; readonly declaredSize: number }> {
-  for (let offset = 0; offset + 28 <= directory.length; offset += 28) {
-    if (directory.readUInt32LE(offset + 12) !== 2) continue;
-    const declaredSize = directory.readUInt32LE(offset + 16);
-    if (declaredSize < 16) continue;
-    const rawPointer = directory.readUInt32LE(offset + 24);
-    const fileOffset =
-      rawPointer !== 0
-        ? rawPointer
-        : peRvaToFileOffset(
-            directory.readUInt32LE(offset + 20),
-            sectionTable,
-            numberOfSections,
-            sizeOfHeaders,
-            Math.min(declaredSize, PE_CODEVIEW_PREFIX_BYTES),
-          );
-    if (fileOffset !== undefined) yield { fileOffset, declaredSize };
-  }
+): Generator<PeCodeViewDataRange> {
+  for (const entry of observePeCodeViewEntries(
+    directory,
+    sectionTable,
+    numberOfSections,
+    sizeOfHeaders,
+  ))
+    if (entry !== null) yield entry;
 }
 
 /** Parse CodeView metadata from a bounded in-memory PE image buffer. */
@@ -922,18 +949,16 @@ export const inspectPeCodeViewFromBuffer = (
     debugFileOffset,
     debugFileOffset + maxDebugBytes,
   );
-  let codeViewEntries = 0;
-  for (let offset = 0; offset < directory.length; offset += 28)
-    if (directory.readUInt32LE(offset + 12) === 2) codeViewEntries += 1;
-  for (const {
-    fileOffset: pointerToRawData,
-    declaredSize: sizeOfData,
-  } of peCodeViewDataRanges(
+  let codeViewDeclared = false;
+  for (const entry of observePeCodeViewEntries(
     directory,
     sectionTable,
     numberOfSections,
     debugDir.sizeOfHeaders,
   )) {
+    codeViewDeclared = true;
+    if (entry === null) continue;
+    const { fileOffset: pointerToRawData, declaredSize: sizeOfData } = entry;
     if (fileBytes.length < pointerToRawData + Math.min(sizeOfData, 24))
       continue;
     const codeViewData = fileBytes.subarray(
@@ -943,7 +968,7 @@ export const inspectPeCodeViewFromBuffer = (
     const parsed = parseCodeViewData(codeViewData, sizeOfData);
     if (parsed !== undefined) return ok(parsed);
   }
-  return codeViewEntries > 0
+  return codeViewDeclared
     ? incomplete("PE CodeView records could not be decoded completely.")
     : ok(undefined);
 };
