@@ -113,6 +113,19 @@ Human ownership and review remain required when CI or an automated reviewer
 reports success. Readiness requests maintainer review; it does not grant scope
 approval or permission to merge.
 
+Pull request titles must match the Conventional Commits check in
+[`.github/workflows/pr-title.yml`](.github/workflows/pr-title.yml):
+
+```text
+/^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u
+```
+
+The type is `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`,
+`chore`, or `revert`. An optional scope, in parentheses, uses only lowercase
+`[a-z0-9._/-]`. An optional `!` may precede the colon. The title then has `: `
+and a non-empty outcome, for example `feat: add historical source import`.
+The type `style` fails, and an uppercase scope fails.
+
 Draft status is optional. Draft PRs may request early feedback with open questions
 and incomplete checks. Agents preserve the current draft status unless asked to
 change it; missing readiness declarations or later updates do not require a PR
