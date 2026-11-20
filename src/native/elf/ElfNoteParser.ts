@@ -18,6 +18,7 @@ import {
   ELF_NOTE_HEADER_BYTES,
   elfNoteAlignment as noteAlignment,
   elfNoteSectionStorage,
+  elfNoteSpanOverlapIndex,
   isElfNotePadding,
   readElfNoteFrame,
   type ElfNoteAlignment,
@@ -648,6 +649,19 @@ const decodeCore = (
 export interface ElfNoteParseOptions {
   /** Leave larger GNU build-ids undecoded; `descsz` still reports their size. */
   readonly maxGnuBuildIdBytes?: number;
+  /** Retain readable notes on the unsupported result for debug-link evidence. */
+  readonly retainReadableNotes?: boolean;
+}
+
+type ElfNoteEntry = Omit<ElfNotes["entries"][number], "index">;
+
+const COMPRESSED_NOTE_MESSAGE =
+  "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.";
+
+export class ElfNoteStorageFailure extends BinaryFormatFailure {
+  constructor(readonly readableEntries: readonly ElfNoteEntry[]) {
+    super("unsupported", COMPRESSED_NOTE_MESSAGE);
+  }
 }
 
 const ANDROID_IDENT_SLOT_BYTES = 64;
@@ -842,7 +856,8 @@ const parseElfNoteSteps = function* (
     );
   }
   const tables: ElfNotes["tables"] = [];
-  const parsed: ReturnType<typeof toEntry>[] = [];
+  const parsed: ElfNoteEntry[] = [];
+  let unreadCompressedNotes = false;
   const examined = { count: 0 };
   const noteSections = [];
   const compressedNoteRanges = new Set<string>();
@@ -872,6 +887,19 @@ const parseElfNoteSteps = function* (
         compressedNoteRanges.add(`${offset}:${size}`);
     }
   }
+  const fileEnd = BigInt(bytes.length);
+  const compressedOverlap =
+    options.retainReadableNotes === true && compressedNoteRanges.size > 0
+      ? elfNoteSpanOverlapIndex(
+          noteSections.flatMap(({ offset, size, storage }) =>
+            storage === "compressed" &&
+            offset <= fileEnd &&
+            size <= fileEnd - offset
+              ? [{ offset: Number(offset), size: Number(size) }]
+              : [],
+          ),
+        )
+      : undefined;
   if (phnum !== 0) {
     if (phoff < header.headerSize)
       return fail("ELF program header table overlaps the native header.");
@@ -893,11 +921,13 @@ const parseElfNoteSteps = function* (
         return fail("ELF offset or size exceeds a safe integer.");
       const fileOffset = Number(program.offset);
       const fileSize = Number(program.fileSize);
-      // An exact program alias does not turn compressed storage into a note
-      // stream. The section still owns the unsupported-storage outcome.
+      // Compressed storage owns the unsupported outcome. A partial scan
+      // keeps facts only from independently framed ranges.
       if (
-        compressedNoteRanges.size > 0 &&
-        compressedNoteRanges.has(`${program.offset}:${program.fileSize}`)
+        (compressedNoteRanges.size > 0 &&
+          compressedNoteRanges.has(`${program.offset}:${program.fileSize}`)) ||
+        (compressedOverlap !== undefined &&
+          compressedOverlap({ offset: fileOffset, size: fileSize }) !== "none")
       ) {
         reader.require(fileOffset, fileSize);
         continue;
@@ -940,11 +970,17 @@ const parseElfNoteSteps = function* (
     const fileOffset = Number(offset);
     const fileSize = Number(size);
     reader.require(fileOffset, fileSize);
-    if (storage === "compressed")
-      throw new BinaryFormatFailure(
-        "unsupported",
-        "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.",
-      );
+    if (storage === "compressed") {
+      if (options.retainReadableNotes !== true)
+        throw new BinaryFormatFailure("unsupported", COMPRESSED_NOTE_MESSAGE);
+      unreadCompressedNotes = true;
+      continue;
+    }
+    if (
+      compressedOverlap !== undefined &&
+      compressedOverlap({ offset: fileOffset, size: fileSize }) !== "none"
+    )
+      continue;
     if (declaredAlignment > BigInt(Number.MAX_SAFE_INTEGER))
       return fail("ELF offset or size exceeds a safe integer.");
     const alignment = noteAlignment(Number(declaredAlignment));
@@ -972,6 +1008,7 @@ const parseElfNoteSteps = function* (
     ))
       parsed.push(toEntry(note, "section", index, header, text, fdo));
   }
+  if (unreadCompressedNotes) throw new ElfNoteStorageFailure(parsed);
   const absent = tables.length === 0;
   return {
     artifact,
@@ -1061,7 +1098,7 @@ const toEntry = (
   header: ElfFixedHeader,
   text: TextBudget,
   fdo: FdoDecodeBudget,
-): Omit<ElfNotes["entries"][number], "index"> => {
+): ElfNoteEntry => {
   const little = header.byteOrder === "little";
   const linuxCore = isLinuxCoreProfile(header);
   const typeName = elfNoteTypeName(note.owner, note.type, linuxCore);

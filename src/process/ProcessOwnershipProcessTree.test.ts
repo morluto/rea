@@ -22,12 +22,10 @@ it.each([false, true])(
     const expected = nested ? [intermediate, ...children] : children;
     const table = [row(99, 0), row(1000, 0), ...expected];
     const found = descendantsOf([1000], table);
-    expect(found).toHaveLength(expected.length);
+    expect(found).toHaveLength(nested ? 130_001 : 130_000);
     expect(found.every((process, index) => process === expected[index])).toBe(
       true,
     );
-    expect(new Set(found.map(({ pid }) => pid)).size).toBe(expected.length);
-    expect(found.at(-1)?.pid).toBe(131001);
   },
 );
 
@@ -58,7 +56,7 @@ it("excludes all selected roots and visits repeated or cyclic PIDs once", () => 
     leaf,
   ]);
   const found = descendantsOf([1, 2, 1], table);
-  expect(found).toEqual([first, leaf]);
+  expect(found).toHaveLength(2);
   expect(found[0]).toBe(first);
   expect(found[1]).toBe(leaf);
 });

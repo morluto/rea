@@ -2,8 +2,10 @@ import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createKernelBuildConfigService } from "../../../src/composition/binaryDiagnostics.js";
 import {
+  bzImageGzipFixture,
   kernelBuildConfigFixture,
   plainIkcfgStringFixture,
 } from "../../../src/native/elf/KernelBuildConfig.fixture.js";
@@ -46,20 +48,32 @@ describe("kernel build config stable filesystem boundary", () => {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
-      const tooMany = await service.inspect({ path, max_entries: 1 });
-      if (tooMany.ok) throw new Error("Expected entry budget failure");
-      expect(tooMany.error).toMatchObject({
-        _tag: "AnalysisResourceConstraintError",
-        remediationAction: expect.stringContaining("max_entries"),
-      });
-      const inflated = await service.inspect({ path, max_config_bytes: 64 });
-      if (inflated.ok) throw new Error("Expected config budget failure");
-      expect(inflated.error).toMatchObject({
-        _tag: "AnalysisResourceConstraintError",
-        remediationAction: expect.stringContaining(
-          "Raise max_config_bytes above 64",
-        ),
-      });
+      const bootImage = join(root, "bzImage");
+      await writeFile(bootImage, bzImageGzipFixture());
+      for (const [target, boundary, maximum] of [
+        [path, "max_entries", 1],
+        [path, "max_config_bytes", 64],
+        [bootImage, "max_payload_bytes", 64],
+      ] as const) {
+        const result = await service.inspect({
+          path: target,
+          [boundary]: maximum,
+        });
+        if (result.ok) throw new Error(`Expected ${boundary} failure`);
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "resource_constraint",
+          retryable: false,
+          details: {
+            resource: "capacity",
+            reported_limits: { boundary, maximum, [boundary]: maximum },
+          },
+          remediation: {
+            action: expect.stringContaining(
+              `Raise ${boundary} above ${String(maximum)}`,
+            ),
+          },
+        });
+      }
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

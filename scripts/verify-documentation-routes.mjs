@@ -15,7 +15,7 @@ javascript-application-graph javascript-application-workflows javascript-artifac
 javascript-recovery javascript-runtime-observation javascript-runtime-reconciliation
 jeb-analysis managed-code-analysis mcp-contracts mcp-prompts migration-6.2
 native-investigation packet-captures pcap-analysis process-capture raw-binary reconstruction-obligation-ledgers
-reconstruction-readiness recorded-crashes releasing roadmap signal-recordings sqlite-databases
+reconstruction-readiness recorded-crashes releasing signal-recordings sqlite-databases
 testing tool-design wasm-artifacts web-network-captures web-runtime web-source-location
 website-module-trace website-script-export windows-ghidra-p0
 binary-hardening desktop-application-capture desktop-application-export desktop-application-state
@@ -24,7 +24,7 @@ design/limits-and-recovery
 `
   .trim()
   .split(/\s+/u);
-assert.equal(routes.length, 67);
+assert.equal(routes.length, 66);
 assert.equal(new Set(routes).size, routes.length);
 
 const documentation = resolve(
@@ -36,7 +36,7 @@ const checked = new Set();
 let internalTargets = 0;
 let sourceLinks = 0;
 // Legacy public routes remain an independent baseline; all generated pages also
-// participate so newly authored directories/specifications cannot escape checks.
+// participate so newly authored guides cannot escape checks.
 for (const route of routes) {
   const html = await readFile(resolve(output, route + ".html"), "utf8");
   const edit = physicalEditSource(html, route);

@@ -2,10 +2,8 @@ import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
 
-import {
-  ArtifactReaderFailure,
-  assertArtifactReadActive,
-} from "../../resources/index.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,
   KERNEL_BUILD_CONFIG_NUMBER,
@@ -89,14 +87,18 @@ const sha256 = async (
   return hash.digest("hex");
 };
 
-/** A caller-selected budget refused the image; `knob` names it as a typed fact. */
-export class KernelBuildConfigBudgetFailure extends ArtifactReaderFailure {
-  constructor(
-    readonly knob: KernelBuildConfigBudgetKnob,
-    limit: number,
-  ) {
-    super("limit", `Kernel build config exceeds ${knob} (${String(limit)}).`, {
-      boundary: "capacity",
+/** A caller-selected parser budget refused the image. */
+export class KernelBuildConfigBudgetFailure extends ParseFailureError<"limit"> {
+  declare readonly failure: ParseFailureError<"limit">["failure"] & {
+    readonly limit: { readonly name: KernelBuildConfigBudgetKnob };
+  };
+
+  constructor(knob: KernelBuildConfigBudgetKnob, maximum: number) {
+    super({
+      kind: "limit",
+      format: "kernel-build-config",
+      detail: `Kernel build config exceeds ${knob} (${String(maximum)}).`,
+      limit: { name: knob, maximum },
     });
   }
 }

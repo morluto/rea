@@ -15,7 +15,6 @@ const projectedResult = (candidate: JsonValue) => ({
 
 describe("MCP result encoding budget", () => {
   it.each([
-    { result: { value: 1 } },
     { result: ["中文", "😀", "\ud800", '"\\\n'] },
     { result: "x".repeat(8191) + "😀" + '中文\n"'.repeat(20000) },
   ])("counts actual UTF-8 structured and escaped text bytes", (candidate) => {
@@ -104,13 +103,15 @@ describe("MCP result encoding budget", () => {
     });
     // Only an already-known first property is visited before exhausting the
     // budget. The serializer's property discovery must not eagerly read values.
-    expect(() => encodeToolResult(candidate, 1000)).not.toThrow();
-    expect(encodeToolResult(candidate, 1000).ok).toBe(false);
+    expect(encodeToolResult(candidate, 1000)).toMatchObject({
+      ok: false,
+      constraint: "receive-buffer",
+    });
   });
 });
 
 describe("error text wire size", () => {
-  it("measures complete escaped error wire bytes", () => {
+  it("measures complete escaped error wire bytes and ranks values that cannot fit", () => {
     const value = { text: '中文"\n'.repeat(10_000) };
     const expected = Buffer.byteLength(
       JSON.stringify({
@@ -119,14 +120,8 @@ describe("error text wire size", () => {
       }),
     );
     expect(errorTextWireBytes(value, expected)).toBe(expected);
-  });
-
-  it("keeps a value over the budget ranked above any value that fits", () => {
-    const budget = 4096;
-    const over = errorTextWireBytes({ text: "x".repeat(8192) }, budget);
-    expect(over).toBeGreaterThan(budget);
-    expect(over).toBeGreaterThan(
-      errorTextWireBytes({ text: "x".repeat(2048) }, budget),
+    expect(errorTextWireBytes(value, expected - 1)).toBeGreaterThan(
+      expected - 1,
     );
   });
 });

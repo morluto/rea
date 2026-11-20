@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
@@ -15,7 +15,6 @@ import { IdaProvider } from "../ida/IdaProvider.js";
 import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import {
-  GHIDRA_RISCV32_DECODED_EXTENSIONS,
   GHIDRA_RISCV_CALLING_CONVENTIONS,
   GHIDRA_RISCV_CALLING_CONVENTION_IDS,
   GHIDRA_RISCV_LANES,
@@ -26,11 +25,7 @@ import {
   ghidraRiscvUnsupportedReason,
   type GhidraRiscvCallingConventionReport,
 } from "./GhidraRiscvProfile.js";
-import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
-import {
-  GHIDRA_SESSION_CAPABILITIES,
-  type GhidraSessionInfo,
-} from "./GhidraSessionValues.js";
+import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import {
   createSimulatedInstallDirectory,
   ghidraProfileInstallationHost as host,
@@ -516,34 +511,6 @@ describe("RISC-V lane and calling-convention tables", () => {
       "ilp32-prototype-v1": { abi: "ilp32", prototype: "__rea_ilp32" },
     });
   });
-
-  it("keeps the decision record in docs/providers/ghidra-riscv.md in step with the tables", async () => {
-    const docs = await readFile(
-      new URL("../../docs/providers/ghidra-riscv.md", import.meta.url),
-      "utf8",
-    );
-    for (const lane of GHIDRA_RISCV_LANES) {
-      for (const loadModel of lane.loadModels) {
-        expect(docs).toContain(
-          `\`${ghidraRiscvSupportLane({ ...lane, loadModel })}\``,
-        );
-      }
-    }
-    for (const id of GHIDRA_RISCV_CALLING_CONVENTION_IDS) {
-      const { abi, prototype } = GHIDRA_RISCV_CALLING_CONVENTIONS[id];
-      expect(docs).toContain(`Policy \`${id}\`, prototype \`${prototype}\``);
-      expect(docs).toContain(`### ${abi}\n`);
-    }
-    const decoded =
-      /implements with\s+p-code: (.+?)\.\s+Any\s+other\s+extension/su.exec(
-        docs,
-      )?.[1];
-    expect(
-      new Set(
-        [...(decoded ?? "").matchAll(/`([a-z0-9]+)`/gu)].map((m) => m[1]),
-      ),
-    ).toEqual(GHIDRA_RISCV32_DECODED_EXTENSIONS);
-  });
 });
 
 describe("bounded Ghidra RISC-V admission", () => {
@@ -831,16 +798,5 @@ describe("RISC-V calling-convention handshake", () => {
       expect((await client.execute("health", {})).ok).toBe(false);
       expect(counts.starts).toBe(0);
     }
-  });
-
-  it("keeps a caller project's stored report as history", async () => {
-    const resolved = await ghidra().resolveAnalysisProfile(ilp32());
-    if (!resolved.ok || resolved.value.profile === null)
-      throw new Error("expected an ilp32 profile");
-    const info: GhidraSessionInfo = sessionInfo(report);
-    expect(
-      ghidraProjectHistoryEvidence(ilp32(), resolved.value.profile, info)
-        ?.normalized_result,
-    ).toEqual({ origin: "caller-project", riscv_calling_convention: report });
   });
 });

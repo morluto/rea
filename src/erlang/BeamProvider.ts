@@ -19,6 +19,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_ERLANG_BEAM_ATOMS,
@@ -27,6 +28,7 @@ import {
   type InspectErlangBeamInput,
 } from "../domain/erlang/beam.js";
 import { err, ok } from "../domain/result.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { LimitRef } from "../domain/parseFailure.js";
 import {
   isParseLimit,
@@ -93,8 +95,6 @@ const parserBudgetRemediation = ({ name, maximum }: LimitRef) => {
       return maximum >= MAX_INSPECT_ERLANG_BEAM_ATOMS
         ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_ATOMS)}-atom ceiling this operation accepts; select a smaller artifact.`
         : `Raise max_atoms above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected atom budget.`;
-    case "max_table_rows":
-      return `The file exceeds the ${String(maximum)}-row ceiling this operation accepts; select a smaller artifact.`;
     case "max_chunks":
       return maximum >= MAX_INSPECT_ERLANG_BEAM_CHUNKS
         ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_CHUNKS)}-chunk ceiling this operation accepts; select a smaller artifact.`
@@ -122,11 +122,20 @@ const beamFailurePrimary = (
   if (origin === "owned-or-classified" && isParseLimit(cause, "beam")) {
     const { limit } = cause.failure;
     const remediationAction = parserBudgetRemediation(limit);
+    const recovery: ResourceConstraintRecovery =
+      limit.name === "max_table_rows"
+        ? fixedAllowanceOptions("BEAM table row ceiling", "parser", {
+            limit: limit.maximum,
+            unit: "rows",
+          })
+        : remediationAction === undefined
+          ? {}
+          : { remediationAction };
     return parseLimitConstraint(OPERATION, "capacity", cause, {
       reportedLimitContext: reportedLimits,
       legacyMaximumKey: limit.name,
-      ...(remediationAction === undefined ? {} : { remediationAction }),
       retryable: false,
+      ...recovery,
     });
   }
   if (

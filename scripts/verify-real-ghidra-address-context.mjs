@@ -1,25 +1,28 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import {
   requireMcpOperationResult,
   requireMcpOutput,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 if (process.argv.length !== 2 || process.platform !== "linux")
   throw new Error("Run this ELF verifier on Linux without arguments.");
 if (!process.env.GHIDRA_INSTALL_DIR)
   throw new Error("Set GHIDRA_INSTALL_DIR to a caller-installed Ghidra.");
-const exec = promisify(execFile);
 const run = createVerifierRun();
 const root = fileURLToPath(new URL("..", import.meta.url));
 // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
@@ -38,6 +41,8 @@ const env = {
   REA_ANALYSIS_PROVIDER: "ghidra",
   REA_LOG_LEVEL: "silent",
 };
+// Compiler and CLI share one command owner, created before either starts.
+const commands = await createVerifierCommands();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -55,8 +60,10 @@ let primaryFailure;
 let verifierRun;
 try {
   const compiler = process.env.CC ?? "gcc";
-  const version = await exec(compiler, ["--version"], { timeout: 10000 });
-  await exec(
+  const version = await commands.exec(compiler, ["--version"], {
+    timeout: 10000,
+  });
+  await commands.exec(
     compiler,
     [
       "-O0",
@@ -203,14 +210,24 @@ try {
     { name: "procedure_pseudo_code", arguments: { procedure: missingAddress } },
     { timeout: 240000 },
   );
-  assert.equal(rejected.isError, true);
-  assert.ok(
-    JSON.stringify(rejected.content).includes(`Ghidra image base: ${base}`),
-  );
-  assert.ok(JSON.stringify(rejected.content).includes("list_procedures"));
-  assert.ok(
-    JSON.stringify(rejected.content).includes("inspect_native_load_image"),
-  );
+  // procedure_not_found keeps the caller-selected procedure and the inventory tools.
+  const rejectedError = requireMcpToolError(rejected);
+  assert.partialDeepStrictEqual(rejectedError, {
+    code: "invalid_request",
+    details: {
+      operation: "procedure_pseudo_code",
+      related_operations: ["list_procedures", "search_procedures"],
+      issues: [
+        {
+          path: ["procedure"],
+          reason: "invalid_value",
+          observed: { procedure: missingAddress },
+        },
+      ],
+      diagnostics: { remote_code: "procedure_not_found" },
+    },
+  });
+  assert.equal(rejectedError.recovery, undefined);
   const pseudo = parseEvidence(
     await call("procedure_pseudo_code", { procedure: addition.address }),
   );
@@ -219,7 +236,7 @@ try {
   assert.equal(retained.analysis_run.run_id, active.analysis_run.run_id);
   await call("close_binary");
   const cli = async (args) =>
-    exec(
+    commands.exec(
       process.execPath,
       [entrypoint, ...args, "--provider", "ghidra", "--json"],
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
@@ -234,8 +251,9 @@ try {
   } catch (cause) {
     cliFailure = cause;
   }
-  assert.ok(cliFailure && typeof cliFailure.stdout === "string");
-  const error = JSON.parse(cliFailure.stdout);
+  const cliStdout = cliFailure?.snapshot?.stdout?.text;
+  assert.equal(typeof cliStdout, "string");
+  const error = JSON.parse(cliStdout);
   assert.equal(error.code, "invalid_request");
   assert.ok(JSON.stringify(error).includes(`Ghidra image base: ${base}`));
   for (const command of [
@@ -314,9 +332,17 @@ workspaceFixture.releaseAfter(() => transport.close());
 workspaceFixture.releaseAfter(async () => {
   assert.deepEqual(await readdir(runtime), []);
   verifierRun = await completeVerifierRun(run);
-  assert.equal(verifierRun.process_lineage.status, "verified");
-  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
+if (primaryFailure !== undefined)
+  workspaceFixture.retain(
+    `Address-context verification failed; retained workspace: ${workspace}`,
+  );
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailures.push(cause);
+}
 try {
   await workspaceFixture.release();
 } catch (cause) {

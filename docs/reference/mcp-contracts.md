@@ -1336,6 +1336,13 @@ resource readers remain read-only within the selected bundle.
 `inspect_plist` requires an open binary or bundle-resource session. An explicit
 `path` selects a plist in that context and does not create a session;
 `binary_session` reports `target_required` while neither session is open.
+`source_sha256` records the SHA-256 of the plist bytes read. While an
+executable is open, the Evidence subject remains that program.
+REA writes a private temporary copy for the native commands and leaves the
+selected plist untouched. The tool advertises the temporary filesystem write.
+An app-bundle or resource-only session accepts only plists that resolve inside
+its root. To inspect an outside plist, open the plist itself with `open_binary`
+or pass its path directly to the CLI.
 Use `open_bundle_resources` for a bundle whose executable cannot be resolved.
 When `path` is omitted and the open target is itself a plist, a plist that
 cannot be read or decoded is reported against that target
@@ -1750,11 +1757,8 @@ failing owner supports runtime recovery; `inspect_analysis_settings` is optional
 when those facts are supplied. Updates are atomic, apply to new work, survive
 target close/open, and vanish when REA exits. Explicit per-call arguments take
 precedence. Neither tool changes host deadlines or resolves retained cleanup.
-See [runtime settings and recovery](../design/limits-and-recovery.md#runtime-settings-through-mcp)
-for the full setting list, reset/revision semantics and ASAR retry example.
-For implementation ownership, accepted-operation snapshots, provider wiring,
-and extension guidance, see the
-[maintainer design](../design/limits-and-recovery.md#ownership-and-data-flow).
+See [runtime settings and recovery](limits-and-recovery.md#runtime-settings-through-mcp)
+for inspection, reset and revision semantics and an ASAR retry example.
 
 Ghidra and Hopper startup updates apply to the next startup attempt without
 restarting REA. Ghidra decompile timeout updates apply on the existing Program.

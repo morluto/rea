@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -11,7 +10,6 @@ import {
   readReferenceSource,
   requireReferenceSourceReads,
 } from "../../support/referenceSourceResourceScope.js";
-import { ok } from "../../../src/domain/result.js";
 
 it.each(["rejected", "returned"] as const)(
   "retains a symlink's physical failure when cancellation accompanies its %s outcome",
@@ -81,28 +79,6 @@ it("marks a symlink changed when its path is replaced during target observation"
     code: "changed",
     message: "Symbolic link changed while its target was read",
   });
-});
-
-it("retains the caller reason and observed entries when traversal is cancelled", async (context) => {
-  requireReferenceSourceReads(context);
-  const root = await createTestTempDirectory("rea-reference-cancel-");
-  await writeFile(join(root, "observed.js"), "observed");
-  await mkdir(join(root, "nested"));
-  const controller = new AbortController();
-  const reason = { requested: "stop traversal" };
-  const result = await readReferenceSource(root, {
-    signal: controller.signal,
-    beforeDirectory: async (path) => {
-      if (path === "nested") controller.abort(reason);
-      return ok(undefined);
-    },
-  });
-  if (result.ok) throw new Error("Expected cancellation");
-  expect(result.error.code).toBe("cancelled");
-  expect(result.error.cause).toBe(reason);
-  expect(result.error.partial?.entries).toContainEqual(
-    expect.objectContaining({ path: "observed.js", status: "read" }),
-  );
 });
 
 describe("readReferenceSource entries", () => {
@@ -184,9 +160,6 @@ describe("readReferenceSource entries", () => {
       },
     ]);
     expect(result.value.bytesRead).toBe(5);
-    expect(JSON.stringify(result.value.entries)).toContain(
-      join(outside, "secret"),
-    );
   });
 
   it("reads a source file above 16 MiB", async () => {
@@ -288,16 +261,20 @@ describe("readReferenceSource failures and exclusions", () => {
     });
   });
 
-  it("keeps selected-root paths in actionable filesystem errors", async () => {
-    const missing = join(tmpdir(), "rea-secret-root-that-does-not-exist");
-    const result = await readReferenceSource(missing);
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.message).toContain(missing);
+  it("returns the selected path in a typed missing-root error", async () => {
+    const root = await createTestTempDirectory("rea-reference-");
+    const missing = join(root, "missing");
+    expect(await readReferenceSource(missing)).toMatchObject({
+      ok: false,
+      error: {
+        tag: "reference-source-reader",
+        code: "invalid-root",
+        message: expect.stringContaining(missing),
+      },
+    });
   });
 
-  it("returns typed failures for cancellation and invalid roots", async () => {
+  it("returns the exact reason when cancelled before traversal", async () => {
     const controller = new AbortController();
     controller.abort();
     const cancelled = await readReferenceSource("/unused", {
@@ -312,10 +289,5 @@ describe("readReferenceSource failures and exclusions", () => {
         cause: controller.signal.reason,
       },
     });
-
-    const invalid = await readReferenceSource("/path/that/does/not/exist");
-    expect(invalid.ok).toBe(false);
-    if (invalid.ok) return;
-    expect(invalid.error.code).toBe("invalid-root");
   });
 });

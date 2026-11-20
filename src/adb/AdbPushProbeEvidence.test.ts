@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { AdbProvider } from "./AdbProvider.js";
 
 const startup =
@@ -43,8 +43,7 @@ else out("", "Unexpected adb fixture command", 2);
 it.each([false, true])(
   "retains startup probe evidence alongside digest observations (recognized=%s)",
   async (recognized) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-adb-probe-evidence-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-adb-probe-evidence-");
     const source = join(root, "input.bin");
     const bytes = Buffer.from("caller-owned bytes");
     await writeFile(source, bytes);

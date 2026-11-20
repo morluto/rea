@@ -6,8 +6,8 @@ import {
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { basename, dirname, join } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import type { Dirent } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
@@ -17,9 +17,11 @@ import { importReferenceSource } from "../../../src/application/ReferenceSourceI
 import { referenceSourceImportAnalysisError } from "../../../src/application/ReferenceSourceImportTypes.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { readReferenceSource } from "../../../src/reference/ReferenceSourceReader.js";
+import * as directoryValidation from "../../../src/reference/ReferenceSourceReaderValidate.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { requireReferenceSourceReads } from "../../support/referenceSourceResourceScope.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -596,26 +598,47 @@ it("preserves null cancellation and retained directory cleanup across retry", as
   expect(closeCalls).toBe(1);
 });
 
-// Directory admissions run ahead of their turn (#11365). Each later lookup
-// below finishes sooner than the one before it, so completion order reverses
-// start order; policy must still run, and refuse first, in traversal order.
+const observeDirectoryValidation = (
+  started: (path: string) => Promise<void> | undefined,
+  finished?: (path: string) => void,
+) => {
+  const validate = directoryValidation.validateDirectory;
+  const spy = vi
+    .spyOn(directoryValidation, "validateDirectory")
+    .mockImplementation(async (...args) => {
+      const path = args[2];
+      const validation = validate(...args);
+      const hold = started(path);
+      const result = await validation;
+      await hold;
+      finished?.(path);
+      return result;
+    });
+  onTestFinished(() => {
+    spy.mockRestore();
+  });
+};
+
 it("runs directory policy in traversal order when prefetched admissions finish out of order", async () => {
   const root = await createTestTempDirectory("rea-reference-ordered-");
-  for (const name of ["a", "b", "c", "d", "e", "f"])
-    await mkdir(join(root, name));
+  for (const name of ["a", "b"]) await mkdir(join(root, name));
   const resources = new ArtifactResourceScope();
   onTestFinished(() => resources.close());
-  let started = 0;
-  lstatMock.mockImplementation(async (...args) => {
-    if (dirname(String(args[0])) === root) {
-      started += 1;
-      await delay(Math.max(0, 80 - started * 10));
-    }
-    return actual.lstat(...args);
-  });
   const listed: string[] = [];
   const policy: string[] = [];
-  const result = await readReferenceSource(root, resources, {
+  const firstAdmission = phaseGate();
+  const laterValidated = phaseArrival();
+  observeDirectoryValidation(
+    (path) =>
+      dirname(path) === root && basename(path) === listed[0]
+        ? firstAdmission.hold()
+        : undefined,
+    (path) => {
+      if (dirname(path) === root && basename(path) === listed[1])
+        laterValidated.arrive();
+    },
+  );
+  const read = readReferenceSource(root, resources, {
     shouldExclude: (path, kind) => {
       if (kind === "directory") listed.push(path);
       return false;
@@ -631,9 +654,15 @@ it("runs directory policy in traversal order when prefetched admissions finish o
           });
     },
   });
-  expect(listed).toHaveLength(6);
+  try {
+    await firstAdmission.reached(read, "first directory admission blocked");
+    await laterValidated.reached(read, "later directory admission completed");
+  } finally {
+    firstAdmission.release();
+    await read;
+  }
   expect(policy).toEqual([".", listed[0]]);
-  expect(result).toMatchObject({
+  expect(await read).toMatchObject({
     ok: false,
     error: { code: "io", message: `refused ${listed[0]}` },
   });
@@ -641,93 +670,134 @@ it("runs directory policy in traversal order when prefetched admissions finish o
 
 it("settles every lookup started ahead of its turn before a cancelled read returns", async () => {
   const root = await createTestTempDirectory("rea-reference-settled-");
-  for (const name of ["a", "b", "c", "d", "e", "f"]) {
-    await mkdir(join(root, name));
-    await writeFile(join(root, name, "source.ts"), "observed");
-  }
+  for (const name of ["a", "b"]) await mkdir(join(root, name));
+  await writeFile(join(root, "source.ts"), "observed");
   const resources = new ArtifactResourceScope();
   onTestFinished(() => resources.close());
-  // Each later lookup takes longer, so lookups started ahead of the cancelled
-  // directory are still running when it stops.
-  let started = 0;
-  let inFlight = 0;
-  lstatMock.mockImplementation(async (...args) => {
-    started += 1;
-    inFlight += 1;
-    try {
-      await delay(started * 3);
-      return await actual.lstat(...args);
-    } finally {
-      inFlight -= 1;
+  const listed: string[] = [];
+  const siblingAdmission = phaseGate();
+  const childPolicy = phaseGate();
+  const childClosed = phaseArrival();
+  const rootRevalidated = phaseArrival();
+  let rootValidations = 0;
+  observeDirectoryValidation(
+    (path) =>
+      dirname(path) === root && basename(path) === listed[1]
+        ? siblingAdmission.hold()
+        : undefined,
+    (path) => {
+      if (path === root && ++rootValidations === 2) rootRevalidated.arrive();
+    },
+  );
+  opendirMock.mockImplementation(async (...args) => {
+    const directory = await actual.opendir(...args);
+    if (dirname(String(args[0])) === root) {
+      const operations: DirectoryOperations = directory;
+      const close = operations.close.bind(directory);
+      vi.spyOn(operations, "close").mockImplementation(async () => {
+        await close();
+        childClosed.arrive();
+      });
     }
+    return directory;
   });
   const controller = new AbortController();
-  const result = await readReferenceSource(root, resources, {
+  const reason = { requested: "stop at the first child" };
+  let settled = false;
+  const read = readReferenceSource(root, resources, {
     signal: controller.signal,
+    shouldExclude: (path, kind) => {
+      if (kind === "directory") listed.push(path);
+      return false;
+    },
     beforeDirectory: async (path) => {
-      if (path !== ".") controller.abort("stop at the first child");
+      if (path !== ".") await childPolicy.hold();
+      return ok(undefined);
+    },
+  }).then((result) => {
+    settled = true;
+    return result;
+  });
+  try {
+    await siblingAdmission.reached(read, "prefetched sibling lookup blocked");
+    await childPolicy.reached(read, "first child opened");
+    await rootRevalidated.reached(read, "root closing admission completed");
+    controller.abort(reason);
+    childPolicy.release();
+    await childClosed.reached(read, "cancelled child handle closed");
+    await nextTurn();
+    expect(settled).toBe(false);
+  } finally {
+    siblingAdmission.release();
+    childPolicy.release();
+    await read;
+  }
+  const result = await read;
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error.code).toBe("cancelled");
+  expect(result.error.cause).toBe(reason);
+  expect(result.error.partial?.entries).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "source.ts", status: "read" }),
+    ]),
+  );
+});
+
+// Descent buries older siblings whose admissions are still running.
+it("bounds running directory admissions while slow siblings are buried by deeper levels", async () => {
+  const root = await createTestTempDirectory("rea-reference-bounded-");
+  // Every top-level child can be listed first. Give each enough descendants to
+  // bury the held siblings without choosing or mocking native listing order.
+  const names = ["a", "b", "c", "d"];
+  await Promise.all(
+    names.flatMap((parent) =>
+      names.flatMap((child) =>
+        names.map((leaf) =>
+          mkdir(join(root, parent, child, leaf), { recursive: true }),
+        ),
+      ),
+    ),
+  );
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const siblings = phaseGate();
+  const descended = phaseArrival();
+  let started = 0;
+  const seenParents = new Set<string>();
+  const heldSiblings = new Set<string>();
+  observeDirectoryValidation((path) => {
+    if (!heldSiblings.has(path)) return;
+    started += 1;
+    return siblings.hold();
+  });
+  const read = readReferenceSource(root, resources, {
+    shouldExclude: (path, kind) => {
+      if (kind === "directory") {
+        const child = join(root, path);
+        const parent = dirname(child);
+        if (seenParents.has(parent)) heldSiblings.add(child);
+        seenParents.add(parent);
+      }
+      return false;
+    },
+    beforeDirectory: async (path) => {
+      if (path.split("/").length === 3) descended.arrive();
       return ok(undefined);
     },
   });
-  expect(inFlight).toBe(0);
-  expect(result).toMatchObject({ ok: false, error: { code: "cancelled" } });
-});
-
-// Children pushed during descent bury older siblings whose admissions are
-// still running; the number running at once stays bounded at every depth.
-it("bounds running directory admissions while slow siblings are buried by deeper levels", async () => {
-  const root = await createTestTempDirectory("rea-reference-bounded-");
-  const levels = 6;
-  let parent = root;
-  for (let level = 0; level < levels; level += 1) {
-    for (const sibling of [1, 2, 3])
-      await mkdir(join(parent, `s${String(level)}-${String(sibling)}`));
-    parent = join(parent, `d${String(level)}`);
-    await mkdir(parent);
+  try {
+    await descended.reached(read, "third level admitted with siblings held");
+    // All counted admissions remain held, so started is also their peak.
+    // Each held path is a pending sibling, outside the active descent.
+    expect(started).toBeGreaterThan(1);
+    expect(started).toBeLessThanOrEqual(4);
+  } finally {
+    siblings.release();
+    await read;
   }
-  const resources = new ArtifactResourceScope();
-  onTestFinished(() => resources.close());
-  // List names in byte order, so each level descends ("d") before its
-  // siblings ("s") are popped.
-  opendirMock.mockImplementation(async (...args) => {
-    const directory = await actual.opendir(...args);
-    const children: Dirent[] = [];
-    for await (const child of directory) children.push(child);
-    children.sort((left, right) =>
-      Buffer.compare(
-        Buffer.from(left.name as unknown as Uint8Array),
-        Buffer.from(right.name as unknown as Uint8Array),
-      ),
-    );
-    const operations: DirectoryOperations = directory;
-    vi.spyOn(operations, "read").mockImplementation(async () =>
-      Promise.resolve(children.shift() ?? null),
-    );
-    vi.spyOn(operations, "close").mockImplementation(async () => undefined);
-    return directory;
-  });
-  // A directory's second lookup is its opening admission (the first is its
-  // parent's metadata lookup); hold the siblings' admissions open.
-  const lookups = new Map<string, number>();
-  let running = 0;
-  let peak = 0;
-  lstatMock.mockImplementation(async (...args) => {
-    const path = String(args[0]);
-    const count = (lookups.get(path) ?? 0) + 1;
-    lookups.set(path, count);
-    if (count !== 2 || !/\/s\d+-\d+$/u.test(path)) return actual.lstat(...args);
-    running += 1;
-    peak = Math.max(peak, running);
-    try {
-      await delay(100);
-      return await actual.lstat(...args);
-    } finally {
-      running -= 1;
-    }
-  });
-  const result = await readReferenceSource(root, resources);
+  const result = await read;
   if (!result.ok) throw result.error;
-  expect(result.value.entries).toHaveLength(levels * 4);
-  // Four started ahead plus the popped directory's own admission.
-  expect(peak).toBeLessThanOrEqual(5);
+  expect(result.value.entries).toHaveLength(
+    names.length + names.length ** 2 + names.length ** 3,
+  );
 });
