@@ -25,7 +25,7 @@ constraints. Agents compose experiments using ordinary commands, scripts, and
 fixture servers; custom orchestration needs a demonstrated requirement.
 
 Provider and platform claims require their corresponding
-[real verification lanes](testing.md#real-toolchain-verification-lanes).
+[real verification lanes](../testing-lanes.md#real-toolchain-verification-lanes).
 See [tool design](tool-design.md) for choosing a tool boundary and
 [Ghidra semantics](../providers/ghidra-provider.md) for the existing deep-provider contract.
 

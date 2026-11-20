@@ -101,13 +101,21 @@ it.each([
 
 it("recognizes erased header windows per polarity", () => {
   const eraseRegion = imageRegion(Buffer.alloc(64, 0xff), 0, 64);
-  expect(readFfsHeader(eraseRegion, 0, true)).toEqual({ kind: "end" });
-  expect(readFfsHeader(eraseRegion, 0, false)).toMatchObject({
+  expect(
+    readFfsHeader(eraseRegion, 0, { erasePolarity: true, fileSystem: "ffs3" }),
+  ).toEqual({ kind: "end" });
+  expect(
+    readFfsHeader(eraseRegion, 0, { erasePolarity: false, fileSystem: "ffs3" }),
+  ).toMatchObject({
     kind: "unparsed",
   });
   const zeroRegion = imageRegion(Buffer.alloc(64, 0x00), 0, 64);
-  expect(readFfsHeader(zeroRegion, 0, false)).toEqual({ kind: "end" });
-  expect(readFfsHeader(zeroRegion, 0, true)).toMatchObject({
+  expect(
+    readFfsHeader(zeroRegion, 0, { erasePolarity: false, fileSystem: "ffs3" }),
+  ).toEqual({ kind: "end" });
+  expect(
+    readFfsHeader(zeroRegion, 0, { erasePolarity: true, fileSystem: "ffs3" }),
+  ).toMatchObject({
     kind: "unparsed",
   });
 });
@@ -125,7 +133,10 @@ it.each([0x01, 0x20])(
     });
     const bytes = Buffer.concat([Buffer.alloc(8, 0xff), unusable, sibling]);
     const region = imageRegion(bytes, 8, bytes.length);
-    const result = readFfsHeader(region, 8, true);
+    const result = readFfsHeader(region, 8, {
+      erasePolarity: true,
+      fileSystem: "ffs3",
+    });
     expect(result).toMatchObject({
       kind: "unusable-header",
       offset: 8,
@@ -135,7 +146,12 @@ it.each([0x01, 0x20])(
     });
     if (result.kind !== "unusable-header")
       throw new Error("Expected a bounded unusable header");
-    expect(readFfsHeader(region, result.nextLocal, true)).toMatchObject({
+    expect(
+      readFfsHeader(region, result.nextLocal, {
+        erasePolarity: true,
+        fileSystem: "ffs3",
+      }),
+    ).toMatchObject({
       kind: "file",
       header: { localBase: 40, declaredLength: 28 },
     });
@@ -147,7 +163,10 @@ it("does not infer a fixed-header skip for a data-valid FFS3 declaration", () =>
   file[19] = 1;
   file[23] = 0x38;
   expect(
-    readFfsHeader(imageRegion(file, 0, file.length), 0, true),
+    readFfsHeader(imageRegion(file, 0, file.length), 0, {
+      erasePolarity: true,
+      fileSystem: "ffs3",
+    }),
   ).toMatchObject({
     kind: "unparsed",
     offset: 0,
@@ -164,7 +183,10 @@ it("retains the header-valid FFS extent without validating unwritten data", () =
   });
   file[23] = ~0x03 & 0x3f;
   const region = imageRegion(file, 0, file.length);
-  const result = readFfsHeader(region, 0, true);
+  const result = readFfsHeader(region, 0, {
+    erasePolarity: true,
+    fileSystem: "ffs3",
+  });
   expect(result).toMatchObject({
     kind: "file",
     nextLocal: 32,
@@ -192,7 +214,10 @@ it.each([true, false])(
     });
     file[23] = erasePolarity ? 0xff : 0;
     expect(
-      readFfsHeader(imageRegion(file, 0, file.length), 0, erasePolarity),
+      readFfsHeader(imageRegion(file, 0, file.length), 0, {
+        erasePolarity: erasePolarity,
+        fileSystem: "ffs3",
+      }),
     ).toMatchObject({
       kind: "unparsed",
       offset: 0,

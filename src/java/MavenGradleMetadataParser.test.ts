@@ -623,11 +623,11 @@ it("refuses a document type declaration", () => {
   );
 });
 
-it("refuses XML that is not a Maven project", () => {
-  expectFailure(
-    "<module><artifactId>demo</artifactId></module>",
-    "unsupported",
-  );
+it.each([
+  "<module><artifactId>demo</artifactId></module>",
+  '<project xmlns:ext="urn:example"><ext:artifactId>demo</ext:artifactId></project>',
+])("refuses XML that is not a Maven project: %s", (source) => {
+  expectFailure(source, "unsupported");
 });
 
 it("refuses a POM with two top-level dependencies blocks", () => {
