@@ -392,6 +392,103 @@ it("refuses an oversize config and preserves the oci-layout snapshot", async () 
   }
 });
 
+it("refuses an index.json whose manifests is not an array and keeps the oci-layout snapshot", async () => {
+  const root = await createTestTempDirectory("rea-oci-index-manifests-type-");
+  await writeOciImageLayoutFixture(root);
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({ schemaVersion: 2, manifests: "not-an-array" })}\n`,
+  );
+  const reader = new DirectoryArtifactReader(root);
+  try {
+    await expect(
+      parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({ path: root }),
+      ),
+    ).rejects.toSatisfy((cause: unknown) => {
+      expect(cause).toBeInstanceOf(OciImageLayoutRefusal);
+      if (!(cause instanceof OciImageLayoutRefusal)) return false;
+      expect(cause.failure.kind).toBe("malformed");
+      expect(cause.layoutObservation).toMatchObject({
+        kind: "file-snapshot-hash",
+        path: "oci-layout",
+      });
+      return true;
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("reports a nested index whose manifests is not an array", async () => {
+  const root = await createTestTempDirectory("rea-oci-nested-manifests-type-");
+  await writeOciImageLayoutFixture(root);
+  const nestedJson = `${JSON.stringify({ schemaVersion: 2, manifests: { digest: "x" } })}\n`;
+  const nested = await putOciBlob(root, nestedJson);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: unknown[];
+  };
+  index.manifests.push({
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    digest: nested,
+    size: Buffer.byteLength(nestedJson),
+  });
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(report.findings).toContainEqual(
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      digest: nested,
+      message: expect.stringContaining("manifests is not an array"),
+    }),
+  );
+  expect(
+    report.indexes.find((entry) => entry.digest === nested)?.entries,
+  ).toEqual([]);
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("reports a manifest whose layers is not an array", async () => {
+  const root = await createTestTempDirectory("rea-oci-manifest-layers-type-");
+  const written = await writeOciImageLayoutFixture(root);
+  const manifestPath = join(
+    root,
+    "blobs",
+    "sha256",
+    written.manifestDigest.slice("sha256:".length),
+  );
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  manifest.layers = "not-an-array";
+  const manifestJson = `${JSON.stringify(manifest)}\n`;
+  const manifestDigest = await putOciBlob(root, manifestJson);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: { digest: string; size: number }[];
+  };
+  index.manifests[0] = {
+    ...index.manifests[0]!,
+    digest: manifestDigest,
+    size: Buffer.byteLength(manifestJson),
+  };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  await unlink(manifestPath);
+  const report = await inspectLayout(root);
+  expect(report.findings).toContainEqual(
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      digest: manifestDigest,
+      message: expect.stringContaining("layers is not an array"),
+    }),
+  );
+  expect(report.images[0]?.layers).toEqual([]);
+  expect(report.coverage.status).toBe("partial");
+});
+
 it("records nested index depth as a finding once the bound is exceeded", async () => {
   const root = await createTestTempDirectory("rea-oci-nested-");
   await writeNestedOciIndexFixture(root, 2);

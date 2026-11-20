@@ -604,6 +604,17 @@ const inventoryOciImageLayout = async (
       layoutObservation,
     );
   }
+  // manifests is required; a wrong-typed member is a damaged index, not an
+  // empty one.
+  if (!Array.isArray(indexDocument.value.manifests)) {
+    throw new OciImageLayoutRefusal(
+      malformedInput(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        "index.json manifests is not an array.",
+      ).failure,
+      layoutObservation,
+    );
+  }
   const indexRoot = indexDocument.value;
 
   const referenced = new Map<string, ReferencedBlob>();
@@ -801,9 +812,18 @@ const inventoryOciImageLayout = async (
       Number.isSafeInteger(document.value.schemaVersion)
         ? document.value.schemaVersion
         : null;
-    const manifests = Array.isArray(document.value.manifests)
-      ? document.value.manifests
-      : [];
+    let manifests: unknown[] = [];
+    if (Array.isArray(document.value.manifests))
+      manifests = document.value.manifests;
+    else {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Index ${digest} manifests is not an array; its entries are not modeled.`,
+        digest,
+      );
+    }
     const indexEntries: OciImageLayoutIndex["entries"] = [];
     for (const [position, item] of manifests.entries()) {
       chargeDescriptor();
@@ -903,9 +923,18 @@ const inventoryOciImageLayout = async (
       );
     }
     const layers: OciImageLayoutImage["layers"] = [];
-    const layerItems = Array.isArray(document.value.layers)
-      ? document.value.layers
-      : [];
+    let layerItems: unknown[] = [];
+    if (Array.isArray(document.value.layers))
+      layerItems = document.value.layers;
+    else {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Manifest ${digest} layers is not an array; its layers are not modeled.`,
+        digest,
+      );
+    }
     for (const [position, item] of layerItems.entries()) {
       chargeDescriptor();
       const descriptor = descriptorOf(item);
