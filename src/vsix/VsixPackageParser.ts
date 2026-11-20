@@ -298,13 +298,12 @@ const contributeCount = (value: unknown): number => {
  * path that climbs out of `extension/` keeps its unresolved form, which no
  * member matches. A path that resolves to the package root is `extension`,
  * so the directory lookups that append `/package.json` or `/index.js` name
- * real members.
+ * real members. The declared text is used as written: a member name may
+ * begin or end with whitespace, and Node does not trim the specifier.
  */
 const packageJsonEntryPath = (value: unknown): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (trimmed === "") return null;
-  const relative = vsixPackageLogicalPath(trimmed).replace(/^\/+/u, "");
+  if (typeof value !== "string" || value === "") return null;
+  const relative = vsixPackageLogicalPath(value).replace(/^\/+/u, "");
   const segments: string[] = [];
   for (const segment of relative.split("/")) {
     if (segment === "" || segment === ".") continue;
@@ -324,7 +323,7 @@ const packageJsonEntryPath = (value: unknown): string | null => {
  */
 const packageJsonEntryDirectoryOnly = (value: unknown): boolean => {
   if (typeof value !== "string") return false;
-  const raw = value.trim().replaceAll("\\", "/");
+  const raw = value.replaceAll("\\", "/");
   return (
     raw.endsWith("/") ||
     raw === "." ||
@@ -418,9 +417,9 @@ const directoryManifestMain = (
   if (record === null || typeof record !== "object" || Array.isArray(record))
     return { kind: "malformed" };
   const main = (record as Record<string, unknown>).main;
-  if (typeof main !== "string" || main.trim() === "") return { kind: "none" };
+  if (typeof main !== "string" || main === "") return { kind: "none" };
   const segments: string[] = [];
-  const joined = `${directory}/${vsixPackageLogicalPath(main.trim())}`;
+  const joined = `${directory}/${vsixPackageLogicalPath(main)}`;
   for (const segment of joined.split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment !== "..") segments.push(segment);

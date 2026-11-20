@@ -924,6 +924,79 @@ it("resolves a trailing-slash main through the directory package.json", async ()
   });
 });
 
+it("looks up a main with trailing whitespace by its literal name", async () => {
+  const bytes = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/start.js ",
+    }),
+    extraMembers: {
+      "extension/out/start.js": "exports.activate = () => {};",
+      "extension/out/start.js ": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out/start.js ",
+    present: true,
+  });
+});
+
+it("does not trim whitespace from a directory package.json main", async () => {
+  const bytes = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/",
+    }),
+    extraMembers: {
+      "extension/out/package.json": JSON.stringify({ main: " start.js" }),
+      "extension/out/start.js": "exports.activate = () => {};",
+      "extension/out/index.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out/index.js",
+    present: true,
+  });
+});
+
+it("keeps a main whose trailing separator is followed by whitespace a file path", async () => {
+  const bytes = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/ ",
+    }),
+    extraMembers: {
+      "extension/out/ .js": "exports.activate = () => {};",
+      "extension/out/index.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out/ .js",
+    present: true,
+  });
+});
+
 it.each(["./out/.", "./out/sub/.."])(
   "keeps directory-only intent for main %s",
   async (main) => {
