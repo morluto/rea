@@ -2706,6 +2706,42 @@ it.each([
     "resolved",
   ],
   [
+    "let target before an initializer-free declaration",
+    'let selected;const xs=[1,"one"];[fixed,selected]=xs;let fixed;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "let target before an initialized block declaration",
+    'let selected;{const obj={fixed:1,mode:"one"};({fixed,mode:selected}=obj);let fixed=0;}',
+    ["mode"],
+    "candidate",
+  ],
+  [
+    "let target before the declaration on each loop entry",
+    'let selected;while(next()){const xs=[1,"one"];[fixed,selected]=xs;let fixed;}',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "read before an uninitialized target",
+    "let selected;let later;const xs=[1,2,3];[selected,fixed,later]=xs;let fixed;",
+    ["0"],
+    "resolved",
+  ],
+  [
+    "shadowed later let and initialized inner assignment target",
+    'let selected;{let fixed;const xs=[1,"one"];[fixed,selected]=xs;}let fixed;',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "deferred callable runs after initializing the outer let",
+    'let selected;function read(){const xs=[1,"one"];[fixed,selected]=xs;}let fixed;read();',
+    ["1"],
+    "resolved",
+  ],
+  [
     "immutable lexical declaration",
     'const xs=[1,"one"];const [fixed,selected]=xs;xs[1]="later";',
     ["1"],

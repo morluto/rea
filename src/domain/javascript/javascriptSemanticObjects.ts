@@ -5,6 +5,7 @@ import type {
   JavaScriptSemanticObjectOperation,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
+import { semanticBindingMayRejectAssignmentAt } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStaticPropertyKey,
   semanticWriteSiteReadsFirst,
@@ -14,7 +15,6 @@ import {
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
-  semanticBindingMayRejectAssignment,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
@@ -311,7 +311,7 @@ const collectDestructuring = (
     assignmentBlocked ||=
       assignment &&
       targetBinding !== undefined &&
-      semanticBindingMayRejectAssignment(targetBinding, owner, state);
+      semanticBindingMayRejectAssignmentAt(targetBinding, owner, state);
     if (targetBinding === undefined || assignmentBlocked) ownSlot = undefined;
     if (path === null) continue;
     addObjectOperation(

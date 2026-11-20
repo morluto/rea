@@ -8,7 +8,6 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
-import { javaScriptStrictnessAt } from "./javascriptSourceParser.js";
 
 import type {
   JavaScriptSemanticPropertyPath,
@@ -96,6 +95,8 @@ export interface JavaScriptSemanticBindingState {
   kind: JavaScriptSemanticDefinition["kind"];
   /** Source declaration form retained internally for CommonJS wrapper bindings. */
   declarationKinds: Set<"var" | "let" | "const" | "using" | "await using">;
+  /** Declaration site even when a let binding has no initializer. */
+  letDeclaration?: t.VariableDeclaration | null;
   mutable: boolean;
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];
@@ -108,20 +109,6 @@ export interface JavaScriptSemanticBindingState {
   /** Immutable self-name binding created by evaluating a class or named function expression. */
   selfNameAssignment?: "always-throws" | "throws-in-strict-mode";
 }
-
-/** Classify rejection independently from whether a syntactic write was recorded. */
-export const semanticBindingMayRejectAssignment = (
-  binding: JavaScriptSemanticBindingState,
-  site: t.Node,
-  { parentsByNode }: JavaScriptSemanticAnalysisState,
-): boolean =>
-  binding.runtimeImport ||
-  binding.declarationKinds.has("const") ||
-  binding.declarationKinds.has("using") ||
-  binding.declarationKinds.has("await using") ||
-  binding.selfNameAssignment === "always-throws" ||
-  (binding.selfNameAssignment === "throws-in-strict-mode" &&
-    javaScriptStrictnessAt(site, parentsByNode) !== "sloppy");
 
 /** Mutable lexical-scope state used only during AST recovery. */
 export interface JavaScriptSemanticScopeState {

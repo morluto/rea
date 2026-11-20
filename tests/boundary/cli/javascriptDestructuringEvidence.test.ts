@@ -74,6 +74,13 @@ const classNameTargetSource = `
   }
 `;
 
+const uninitializedTargetSource = `
+  let beforeUninitialized, afterUninitialized;
+  const cells = ["before", 1, "unreached"];
+  [beforeUninitialized, pending, afterUninitialized] = cells;
+  let pending;
+`;
+
 const expectedDependencies = [
   ["declared", ["a"]],
   ["a", ["a"]],
@@ -86,6 +93,8 @@ const expectedDependencies = [
   ["beforeClassName", ["0"]],
   ["afterClassName", ["2"], "candidate"],
   ["afterOuterClass", ["1"]],
+  ["beforeUninitialized", ["0"]],
+  ["afterUninitialized", ["2"], "candidate"],
   ["arrayAssigned", ["0"]],
   ["elided", ["1"]],
   ["projected", ["items", "0"]],
@@ -119,6 +128,8 @@ const tracedBindings = [
   "beforeClassName",
   "afterClassName",
   "afterOuterClass",
+  "beforeUninitialized",
+  "afterUninitialized",
   "arrayAssigned",
   "elided",
   "projected",
@@ -212,6 +223,7 @@ cliTest(
       ["first-default.js", firstDefaultSource],
       ["immutable-target.js", immutableTargetSource],
       ["class-name-target.js", classNameTargetSource],
+      ["uninitialized-target.js", uninitializedTargetSource],
     ] as const)
       await writeFile(join(root, path), source);
     const output = await cli.run({

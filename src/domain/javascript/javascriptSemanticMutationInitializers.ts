@@ -6,6 +6,7 @@ import {
 import { isTypeOnlyExportDeclaration } from "./javascriptModuleDeclaration.js";
 import {
   javaScriptRuntimeContext,
+  javaScriptStrictnessAt,
   javaScriptThisOwner,
 } from "./javascriptSourceParser.js";
 import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
@@ -944,6 +945,31 @@ const bindingReadPosition = (
     cache.set(node, result);
   }
   return result;
+};
+
+/** Check whether declaration rules or known execution order can reject a write. */
+export const semanticBindingMayRejectAssignmentAt = (
+  binding: JavaScriptSemanticBindingState,
+  access: t.Node,
+  { parentsByNode }: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const { declarationKinds } = binding;
+  if (
+    binding.runtimeImport ||
+    declarationKinds.has("const") ||
+    declarationKinds.has("using") ||
+    declarationKinds.has("await using") ||
+    binding.selfNameAssignment === "always-throws" ||
+    (binding.selfNameAssignment === "throws-in-strict-mode" &&
+      javaScriptStrictnessAt(access, parentsByNode) !== "sloppy")
+  )
+    return true;
+  // A later let declaration in the same statement list has not initialized yet.
+  const declaration = binding.letDeclaration;
+  if (declaration == null || declarationKinds.size !== 1) return false;
+  const start = bindingReadPosition(access, parentsByNode).position;
+  const end = statementPosition(declaration, parentsByNode);
+  return start !== null && end !== null && positionPrecedes(start, end);
 };
 
 /** Repeated member reads share unknown ordering, while retaining their source sites. */
