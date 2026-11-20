@@ -585,6 +585,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
             baseProfile,
             this.#inspectionResources,
             options?.signal,
+            target.path,
           );
     return ok({
       ...resolved.value,
