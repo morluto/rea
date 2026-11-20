@@ -998,7 +998,8 @@ export const parseDocumentedNumericLimits = (markdown) => {
 };
 
 /**
- * A documented cell is an integer, `unset` (null), or one exported constant.
+ * A documented cell is one complete integer, optional prose after whitespace,
+ * `unset` (null), or one exported constant. A fraction is not that integer.
  *
  * @param {string} cell
  * @param {Readonly<Record<string, number>>} names
@@ -1013,10 +1014,10 @@ export const documentedLimitCell = (cell, names) => {
       return { ok: false, reason: `unknown constant ${named[1]}` };
     return { ok: true, value: names[named[1]] };
   }
-  const leading = /^(\d+)\b/u.exec(text);
-  if (!leading)
+  const integer = /^(\d+)(?=\s|$)/u.exec(text);
+  if (!integer)
     return { ok: false, reason: `unreadable cell ${JSON.stringify(text)}` };
-  return { ok: true, value: Number(leading[1]) };
+  return { ok: true, value: Number(integer[1]) };
 };
 
 const showLimitValue = (value) => (value === null ? "unset" : String(value));

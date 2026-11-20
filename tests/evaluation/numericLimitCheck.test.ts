@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import {
   compareDocumentedNumericLimits,
   discoverNumericLimitUses,
+  documentedLimitCell,
   loadExportedNumericLimitBounds,
   parseDocumentedNumericLimits,
   parseNumericLimitRegistry,
@@ -562,6 +563,43 @@ const documentedLimits = `
 | --- | --- | --- | --- |
 | \`REA_FIXED\` | 30 | 30 | 30 |
 `;
+
+it("rejects a fractional documented cell instead of keeping its leading digits", () => {
+  expect(documentedLimitCell("5000.5", {}).ok).toBe(false);
+  expect(documentedLimitCell("5000.", {}).ok).toBe(false);
+  expect(documentedLimitCell("60000 (MCP SDK default)", {})).toEqual({
+    ok: true,
+    value: 60_000,
+  });
+  expect(documentedLimitCell("10485760 when unset", {})).toEqual({
+    ok: true,
+    value: 10_485_760,
+  });
+  const rows = parseDocumentedNumericLimits(
+    documentedLimits.replace(
+      "| `sample.bytes` | 10 |",
+      "| `sample.bytes` | 5000.5 |",
+    ),
+  );
+  const failures = compareDocumentedNumericLimits(
+    rows,
+    [
+      { name: "sample.bytes", defaultValue: 5000, minimum: 1, maximum: 20 },
+      {
+        name: "sample.launch",
+        aliases: ["REA_SAMPLE_BYTES"],
+        defaultValue: null,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+      { name: "REA_FIXED", defaultValue: 30, minimum: 30, maximum: 30 },
+    ],
+    { "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER },
+  );
+  expect(failures).toEqual([
+    'sample.bytes default: documented "5000.5" (unreadable cell "5000.5"), code 5000',
+  ]);
+});
 
 it("names the limit and both values when a documented default drifts", () => {
   const failures = compareDocumentedNumericLimits(

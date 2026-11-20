@@ -88,6 +88,17 @@ export function parseDocumentedNumericLimits(
 ): DocumentedNumericLimit[];
 
 /**
+ * Read one documented cell.
+ * A fraction is unreadable. Prose is allowed only after a complete integer and whitespace.
+ */
+export function documentedLimitCell(
+  cell: string,
+  names: Readonly<Record<string, number>>,
+):
+  | { readonly ok: true; readonly value: number | null }
+  | { readonly ok: false; readonly reason: string };
+
+/**
  * Compare documented limits with exported bounds.
  * Each failure names the limit and both values.
  */
