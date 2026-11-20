@@ -260,45 +260,44 @@ class LongRunTest(unittest.TestCase):
             release.touch()
             self.command("run-poll", job=str(self.job), token="owner-token", timeout_s=5)
 
-    def test_reports_incomplete_stderr_while_a_new_session_descendant_holds_the_pipe(self):
+    def start_foreign_stderr_holder(self, timeout):
         release = self.root / "release"
-        self.assertEqual(self.begin(["hold", str(release)], timeout=1), {"started": True})
-        try:
-            result = self.command(
-                "run-poll", job=str(self.job), token="owner-token", timeout_s=8, command_timeout=15,
-            )
-            self.assertTrue(result["finished"])
-            self.assertTrue(result["timed_out"])
-            self.assertFalse(result["settled"])
-            self.assertEqual(result["exit_code"], 0)
-            self.assertIn("outside the supervised group", result["error"])
-            pid = int((self.root / "release.pid").read_text())
-            self.assertEqual(os.getsid(pid), pid)
-            os.kill(pid, 0)
-        finally:
-            release.touch()
-
-    def test_cancel_during_inherited_stderr_drain_stays_unsettled(self):
-        release = self.root / "release"
-        self.assertEqual(self.begin(["hold", str(release)], timeout=30), {"started": True})
+        self.assertEqual(self.begin(["hold", str(release)], timeout=timeout), {"started": True})
         pid_path = self.root / "release.pid"
         leader_path = self.root / "release.leader"
-        try:
-            self.assertTrue(self.wait_until(lambda: pid_path.exists() and leader_path.exists()))
-            leader = int(leader_path.read_text())
-            self.assertTrue(self.wait_until(lambda: self.leader_has_exited(leader)))
-            result = self.command(
-                "run-cancel", job=str(self.job), token="owner-token", timeout_s=8, command_timeout=15,
-            )
-            self.assertTrue(result["finished"])
-            self.assertTrue(result["cancelled"])
-            self.assertFalse(result["settled"])
-            self.assertEqual(result["exit_code"], 0)
-            pid = int(pid_path.read_text())
-            self.assertEqual(os.getsid(pid), pid)
-            os.kill(pid, 0)
-        finally:
-            release.touch()
+        self.assertTrue(self.wait_until(lambda: pid_path.exists() and leader_path.exists()))
+        leader = int(leader_path.read_text())
+        self.assertTrue(
+            self.wait_until(lambda: not self.process_exists(leader)),
+            f"supervised leader {leader} was not reaped",
+        )
+        return int(pid_path.read_text())
+
+    def assert_unsettled_foreign_stderr(self, result, pid):
+        self.assertTrue(result["finished"])
+        self.assertFalse(result["settled"])
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("outside the supervised group", result["error"])
+        self.assertEqual(os.getsid(pid), pid)
+        self.assertTrue(self.process_exists(pid))
+
+    def test_reports_incomplete_stderr_while_a_new_session_descendant_holds_the_pipe(self):
+        pid = self.start_foreign_stderr_holder(timeout=1)
+        result = self.command(
+            "run-poll", job=str(self.job), token="owner-token", timeout_s=8, command_timeout=15,
+        )
+        self.assertTrue(result["timed_out"])
+        self.assertFalse(result["cancelled"])
+        self.assert_unsettled_foreign_stderr(result, pid)
+
+    def test_cancel_during_inherited_stderr_drain_stays_unsettled(self):
+        pid = self.start_foreign_stderr_holder(timeout=30)
+        result = self.command(
+            "run-cancel", job=str(self.job), token="owner-token", timeout_s=8, command_timeout=15,
+        )
+        self.assertTrue(result["cancelled"])
+        self.assertFalse(result["timed_out"])
+        self.assert_unsettled_foreign_stderr(result, pid)
 
     @unittest.skipUnless(PROC_AVAILABLE, "same-session enumeration reads /proc")
     def test_cancel_after_leader_exit_kills_a_same_session_child_holding_stderr(self):
