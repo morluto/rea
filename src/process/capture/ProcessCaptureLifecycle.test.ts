@@ -1,6 +1,8 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import type { IPty } from "@lydell/node-pty";
 
+import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { ProcessCaptureFinalization } from "../../domain/process/processCapture.js";
 import { awaitTerminalExit } from "./ProcessCaptureLifecycle.js";
@@ -408,7 +410,30 @@ it("keeps an observed exit when a late kill delivery reports unverified", async 
 
 it("stops waiting when the escalation delivery never settles and no exit arrives", async () => {
   const fake = fakeTerminal({}, new Promise<void>(() => undefined));
-  const result = await start(fake, { timeout_ms: 100, finalization_ms: 100 });
+  const escalation = phaseArrival();
+  const pending = start(
+    {
+      ...fake,
+      signalTarget: (signal) => {
+        if (signal === "SIGKILL") escalation.arrive();
+        return fake.signalTarget(signal);
+      },
+    },
+    { timeout_ms: 100, finalization_ms: 100 },
+  );
+  await escalation.reached(pending, "SIGKILL delivery");
+
+  // The production grace timer is already scheduled. Race it against the
+  // independent test bound so time spent reaching escalation cannot fail the test.
+  const watchdog = new AbortController();
+  const result = await Promise.race([
+    pending,
+    delay(1_500, null, { signal: watchdog.signal }),
+  ]).finally(() => watchdog.abort());
+  if (result === null) {
+    fake.deliverExit({ exitCode: 0, signal: 0 });
+    throw new Error("Hung SIGKILL delivery outlived its cleanup grace");
+  }
   expect(result.unobserved, "no exit is invented").toBe(true);
   expect(
     result.finalization?.signals.at(-1),
