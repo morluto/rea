@@ -49,8 +49,13 @@ const childElements = (element: Element): Element[] => {
   return children;
 };
 
-const childrenNamed = (element: Element, local: string): Element[] =>
-  childElements(element).filter((child) => child.localName === local);
+const childrenNamed = (element: Element, ...names: string[]): Element[] =>
+  childElements(element).filter(
+    (child) =>
+      (child.namespaceURI ?? "") === (element.namespaceURI ?? "") &&
+      child.localName !== null &&
+      names.includes(child.localName),
+  );
 
 const soleNamed = (element: Element, local: string): Element | undefined => {
   const matches = childrenNamed(element, local);
@@ -73,10 +78,7 @@ const isMavenProjectRoot = (root: Node | null): root is Element => {
   if (root.namespaceURI === MAVEN_POM_NAMESPACE) return true;
   return (
     (root.namespaceURI === null || root.namespaceURI === "") &&
-    childElements(root).some(
-      (child) =>
-        child.localName === "modelVersion" || child.localName === "artifactId",
-    )
+    childrenNamed(root, "modelVersion", "artifactId").length > 0
   );
 };
 

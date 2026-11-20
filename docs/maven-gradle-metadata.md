@@ -21,8 +21,9 @@ requires an absolute filesystem path and preserves that exact selection:
 }
 ```
 
-REA classifies files by their content. A well-formed Maven `<project>` document
-is `maven-pom`. A Gradle metadata object starts with `formatVersion`.
+REA classifies files by their content. A Maven `<project>` uses the Maven POM
+namespace or legacy unqualified elements. REA reads structural declarations
+in the project's namespace. A Gradle metadata object starts with `formatVersion`.
 Version `1.1` can omit `component` and `variants`. For other revisions, REA
 also requires a `component` object or `variants` array as format evidence.
 [Gradle Module Metadata 1.1 specification](https://github.com/gradle/gradle/blob/v9.2.1/platforms/documentation/docs/src/docs/design/gradle-module-metadata-latest-specification.md#contents)
