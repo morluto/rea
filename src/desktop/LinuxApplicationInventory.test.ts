@@ -250,6 +250,46 @@ describe.skipIf(process.platform === "win32")(
       });
     });
 
+    it.each([
+      { before: "", extra: "this is not a key\n", invalidLine: 3 },
+      { before: "[Other]\nName=Other\n", extra: "", invalidLine: 1 },
+    ])(
+      "refuses a hidden override with malformed structure at line $invalidLine",
+      async ({ before, extra, invalidLine }) => {
+        const entry = `${before}[Desktop Entry]\nType=Application\n${extra}Name=User notes\nExec=notes-app\n`;
+        const { inspect, file } = await userOverride(`${entry}Hidden=true\n`);
+        expect(await inspect()).toMatchObject({
+          ok: false,
+          error: {
+            reason: "desktop_entry_invalid",
+            detail: expect.stringContaining(`line ${String(invalidLine)}`),
+          },
+        });
+        const visibleUserEntry = {
+          ok: true,
+          value: { inventory: { desktop_entry: { name: "User notes" } } },
+        };
+        const direct = await inspect(file);
+        expect(direct).toMatchObject(visibleUserEntry);
+        if (!direct.ok) throw new Error(direct.error.reason);
+        expect(direct.value.inventory.desktop_entry).not.toHaveProperty(
+          "malformed_line",
+        );
+        await writeFile(file, `${entry}Hidden=false\n`);
+        expect(await inspect()).toMatchObject(visibleUserEntry);
+      },
+    );
+
+    it("masks a well-formed minimal Application with a localized key", async () => {
+      const { inspect } = await userOverride(
+        "[Desktop Entry]\nType=Application\nName=Notes\nName[fr]=Notes locales\nHidden=true\n",
+      );
+      expect(await inspect()).toMatchObject({
+        ok: false,
+        error: { reason: "desktop_entry_not_found" },
+      });
+    });
+
     it("does not let a Hidden key without an Application type mask the system entry", async () => {
       const { inspect } = await userOverride("[Desktop Entry]\nHidden=true\n");
       const result = await inspect();
