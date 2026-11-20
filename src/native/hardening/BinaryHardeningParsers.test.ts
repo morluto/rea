@@ -757,6 +757,22 @@ it.each([true, false])(
   },
 );
 
+it("uses the ELF byte order when counting sectionless imports through DT_HASH", () => {
+  const image = readElfHardening(
+    elfHardeningFixture({
+      little: false,
+      sections: false,
+      stackChk: true,
+      fortify: true,
+    }),
+  );
+  expect(image.byte_order).toBe("big");
+  expect(states(image.rows)).toMatchObject({
+    stack_protector: "enabled",
+    fortify: "enabled",
+  });
+});
+
 it("reads sectionless GNU hash buckets with many non-owning load declarations", () => {
   const original = elfHardeningFixture({ sections: false, stackChk: true });
   const oldPhoff = Number(original.readBigUInt64LE(32));
@@ -1112,7 +1128,7 @@ it("skips an empty SHT_NOTE section instead of rejecting the image", () => {
   }
   expect(sectionAt).toBeGreaterThan(0);
   bytes.writeBigUInt64LE(0n, sectionAt + 32);
-  expect(() => readElfImage(bytes)).not.toThrow();
+  expect(() => readElfImage(bytes, "elf-directory")).not.toThrow();
   const image = readElfHardening(bytes);
   expect(image.status).toBe("parsed");
   expect(findRow(image.rows, "nx").state).toBe("enabled");
@@ -1715,7 +1731,7 @@ it("rejects p_filesz one above p_memsz like the ELF image reader", () => {
   const load = elfProgramAt(bytes, PT_LOAD);
   bytes.writeBigUInt64LE(bytes.readBigUInt64LE(load + 32) - 1n, load + 40);
   const message = "ELF load segment sizes or addresses are invalid";
-  expect(() => readElfImage(bytes)).toThrow(message);
+  expect(() => readElfImage(bytes, "elf-directory")).toThrow(message);
   expect(() => readElfHardening(bytes)).toThrow(
     expect.objectContaining({ kind: "malformed", message }),
   );

@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
+import {
+  decodeElfSectionNameTable,
+  elfSectionNameBudget,
+} from "../../domain/native/elfSectionNameTable.js";
 import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
 import {
   androidIdentNote,
@@ -12,6 +15,7 @@ import {
   compressedElfNoteSectionFixture,
   coreAuxvNote,
   coreFileNote,
+  corePrpsinfoDescriptor,
   corePrpsinfoNote,
   coreSiginfoNote,
   elfNote,
@@ -23,7 +27,6 @@ import {
   gnuPropertyNote,
 } from "./ElfNotes.fixture.js";
 import { parseElfNotes } from "./ElfNoteParser.js";
-import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
@@ -653,7 +656,7 @@ it.each([
     bytes.set([0x41, 0x42, 0xe9, 0], bytes.length - 4);
     bytes.writeUInt32LE(offset, 64 + 2 * 64);
     const notes = parse(bytes);
-    const directory = readElfDirectoryFromBuffer(bytes);
+    const directory = readElfDirectoryFromBuffer(bytes, "elf-directory");
     expect(notes.tables[0]?.name).toBe(name);
     expect(directory.sections[2]).toMatchObject({ name, name_state: state });
     if (name === null) {
@@ -675,7 +678,7 @@ it.each([65535, 65536])(
     bytes[bytes.length - 1] = 0;
     const name = "A".repeat(terminatorOffset);
     const notes = parse(bytes);
-    const directory = readElfDirectoryFromBuffer(bytes);
+    const directory = readElfDirectoryFromBuffer(bytes, "elf-directory");
     expect(notes.tables[0]?.name).toBe(name);
     expect(notes.coverage.status).toBe("complete");
     expect(directory.sections[2]).toMatchObject(
@@ -757,14 +760,16 @@ it("checks direct section count encoding in notes and the native directory", () 
   bytes.writeBigUInt64LE(0n, sectionZero + 32);
   bytes.writeUInt16LE(0xfeff, 60);
   expect(parse(bytes).tables[0]?.name).toBe(".note.gnu.build-id");
-  expect(readElfDirectoryFromBuffer(bytes).sections[1]?.name).toBe(
-    ".note.gnu.build-id",
-  );
+  expect(
+    readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1]?.name,
+  ).toBe(".note.gnu.build-id");
 
   bytes.writeUInt16LE(0xff00, 60);
   const reason = /e_shnum uses a reserved direct section count/u;
   expect(() => parse(bytes)).toThrow(reason);
-  expect(() => readElfDirectoryFromBuffer(bytes)).toThrow(reason);
+  expect(() => readElfDirectoryFromBuffer(bytes, "elf-directory")).toThrow(
+    reason,
+  );
 });
 
 const repeatedNotes = (count: number, notes: Buffer): Buffer => {
@@ -1130,6 +1135,7 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
 
   const bytes = elfNoteFixture({
     bits: 32,
+    machine: 40,
     little: false,
     type: 4,
     ownership: "program",
@@ -1164,6 +1170,113 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
     { type: 11, type_name: "AT_UID", value: "0x1f4" },
   ]);
 });
+
+it.each([
+  { name: "i386", machine: 3, little: true },
+  { name: "s390 compat", machine: 22, little: false },
+  { name: "x86 x32 compat", machine: 62, little: true },
+])(
+  "decodes the 124-byte prpsinfo with 16-bit IDs for $name",
+  ({ machine, little }) => {
+    const report = parse(
+      elfNoteFixture({
+        bits: 32,
+        machine,
+        little,
+        type: 4,
+        ownership: "program",
+        notes: corePrpsinfoNote({
+          bits: 32,
+          little,
+          state: 1,
+          uid: 500,
+          gid: 600,
+          pid: 4242,
+          ppid: 1,
+          pgrp: 4242,
+          sid: 4242,
+          fname: "legacy-proc",
+          psargs: "./legacy-proc --serve",
+        }),
+      }),
+    );
+    expect(report.entries[0]?.core?.prpsinfo).toEqual({
+      state: 1,
+      pid: 4242,
+      ppid: 1,
+      pgrp: 4242,
+      sid: 4242,
+      uid: 500,
+      gid: 600,
+      filename: "legacy-proc",
+      psargs: "./legacy-proc --serve",
+    });
+  },
+);
+
+it.each([
+  { name: "an oversized legacy layout", machine: 3, idWidth: 4 as const },
+  {
+    name: "an unknown machine with 16-bit fields",
+    machine: 0xffff,
+    idWidth: 2 as const,
+  },
+  {
+    name: "an unknown machine with 32-bit fields",
+    machine: 0xffff,
+    idWidth: 4 as const,
+  },
+])("keeps raw prpsinfo evidence for $name", ({ machine, idWidth }) => {
+  const descriptor = corePrpsinfoDescriptor({ bits: 32, idWidth });
+  const report = parse(
+    elfNoteFixture({
+      bits: 32,
+      machine,
+      type: 4,
+      ownership: "program",
+      notes: elfNote("CORE", 3, descriptor),
+    }),
+  );
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    examined_entries: 1,
+  });
+  expect(report.entries[0]).toMatchObject({
+    type_name: "core_prpsinfo",
+    descriptor: {
+      bytes: descriptor.length,
+      sha256: createHash("sha256").update(descriptor).digest("hex"),
+    },
+    core: null,
+  });
+});
+
+it.each([
+  { bits: 32 as const, little: true, address: 0xf1234567n },
+  { bits: 64 as const, little: false, address: 0xf123456789abcdefn },
+])(
+  "keeps unsigned ELF$bits file and auxiliary words exact",
+  ({ bits, little, address }) => {
+    const mapping = {
+      start: address,
+      end: address + 1n,
+      file_ofs: 1,
+      path: "/image",
+    };
+    const notes = Buffer.concat([
+      coreFileNote([mapping], 4096, bits, little),
+      coreAuxvNote([[9, address]], bits, little),
+    ]);
+    const { entries } = parse(
+      elfNoteFixture({ bits, little, type: 4, ownership: "program", notes }),
+    );
+    const expected = `0x${address.toString(16)}`;
+    expect(entries[0]?.core?.file?.mappings[0]?.start_address).toBe(expected);
+    expect(entries[1]?.core?.auxv).toEqual([
+      { type: 9, type_name: "AT_ENTRY", value: expected },
+    ]);
+  },
+);
 
 it("tolerates malformed core notes by returning null without throwing", () => {
   const truncatedPrpsinfo = elfNote("CORE", 3, Buffer.alloc(20)); // requires 136 for 64-bit

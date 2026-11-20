@@ -3,7 +3,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
+import { readNativeHeaderFormat } from "../../../src/domain/binaryTarget.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
+import { readElfFixedHeader } from "../../../src/domain/elfFixedHeader.js";
 import { expectBinaryTargetError } from "../../fixtures/binaryTargetAdmission.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -65,6 +67,57 @@ const admit = async (bytes: Buffer) => {
   if (result.ok) expect(result.value.sha256).toBe(digest);
   return result;
 };
+
+it.each([
+  [20, 32, true],
+  [20, 64, false],
+  [21, 64, true],
+  [21, 32, false],
+] as const)(
+  "checks PowerPC machine %i with ELF%i before provider selection",
+  async (machine, bits, supported) => {
+    for (const little of [false, true]) {
+      const fixture = image(bits, little);
+      const byteOrder = little ? "little" : "big";
+      const flags = bits === 64 || machine === 21 ? 2 : 0;
+      fixture.u16(18, machine);
+      fixture.u32(bits === 64 ? 48 : 36, flags);
+
+      const result = await admit(fixture.bytes);
+      if (supported)
+        expect(result).toMatchObject({
+          ok: true,
+          value: {
+            architecture: "powerpc",
+            powerpc: { elfClass: bits, byteOrder, flags },
+          },
+        });
+      else
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            constraint: "file_format_rejected",
+            reason: `unsupported ELF architecture: e_machine ${machine}`,
+          },
+        });
+
+      expect(readNativeHeaderFormat(fixture.bytes)).toEqual({
+        ok: true,
+        value: "elf",
+      });
+      expect(readElfFixedHeader(fixture.bytes)).toMatchObject({
+        ok: true,
+        value: {
+          machine,
+          elfClass: bits,
+          byteOrder,
+          flags,
+          architecture: supported ? "powerpc" : null,
+        },
+      });
+    }
+  },
+);
 
 for (const bits of [32, 64] as const) {
   it(`admits a padded declared stride for ELF${bits} program and section tables`, async () => {

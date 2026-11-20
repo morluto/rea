@@ -9,6 +9,7 @@ import {
 import {
   aptListFileName,
   dearmorPublicKeys,
+  deb822Paragraphs,
   declaredPackageFiles,
   entryForTarget,
   isArmoredKey,
@@ -172,6 +173,36 @@ describe("parseOneLineSources", () => {
         architectures: ["amd64", "arm64"],
         signedBy: ["/usr/share/keyrings/vendor.gpg"],
       }),
+    ]);
+  });
+  it("preserves non-ASCII whitespace inside and at the edges of APT list words", () => {
+    const uri = "https://vendor.invalid/edge\u00a0embedded\u00a0";
+    const suite = "\u00a0stable";
+    const component = "main\u00a0";
+    expect(
+      parseOneLineSources(`deb\t${uri} ${suite} ${component}\n`, TYPORA_LIST),
+    ).toMatchObject([
+      {
+        uris: [{ uri, credentials: false }],
+        suites: [suite],
+        components: [component],
+      },
+    ]);
+  });
+
+  it("keeps a hash inside an option and strips the trailing comment", () => {
+    expect(
+      parseOneLineSources(
+        "deb [signed-by=/usr/share/keyrings/vendor#1.gpg] https://vendor.invalid/archive stable main # extra",
+        TYPORA_LIST,
+      ),
+    ).toMatchObject([
+      {
+        uris: [{ uri: "https://vendor.invalid/archive", credentials: false }],
+        suites: ["stable"],
+        components: ["main"],
+        signedBy: ["/usr/share/keyrings/vendor#1.gpg"],
+      },
     ]);
   });
 });
@@ -566,6 +597,39 @@ describe("APT source URI lookup", () => {
   });
 });
 
+it("matches APT's deb822 URI and suite without splitting non-ASCII whitespace", () => {
+  const file = "/etc/apt/sources.list.d/spacing.sources";
+  const uri = "https://vendor.invalid/a\u00a0b";
+  const suite = "stable\u00a0testing/";
+  const mirror = "https://mirror.invalid/archive";
+  const stanzas = parseDeb822Sources(
+    `Types: deb\nURIs: ${uri}\t ${mirror}\nSuites: ${suite} fallback/\n`,
+    file,
+  );
+  // Offline indextargets preserves the NBSP bytes, but splits the ASCII tab.
+  for (const [repoUri, release] of [
+    [uri, suite],
+    [mirror, "fallback/"],
+  ] as const) {
+    const [target] = parseAptIndexTargets(
+      [
+        `Description: ${repoUri} ${release} Packages`,
+        "Filename: /var/lib/apt/lists/vendor",
+        `Base-URI: ${repoUri}/${release}`,
+        `Repo-URI: ${repoUri}/`,
+        `Release: ${release}`,
+        `Sourcesentry: ${file}:1`,
+      ].join("\n"),
+    );
+    if (target === undefined) throw new Error("Missing APT target");
+    expect(entryForTarget(target, stanzas)).toMatchObject({
+      uri: repoUri,
+      suite: release,
+      components: [],
+    });
+  }
+});
+
 describe("credentials in a source URI", () => {
   const ONE_LINE_FILE = "/etc/apt/sources.list.d/private.list";
   const DEB822_FILE = "/etc/apt/sources.list.d/private.sources";
@@ -731,3 +795,136 @@ describe("repository kinds and key files", () => {
     expect(dearmorPublicKeys(Buffer.from("not a key"))).toBeUndefined();
   });
 });
+
+it("keeps APT's source positions when a false Enabled field disables a stanza", () => {
+  const source = (enabled: string) =>
+    `Types: deb\nURIs: https://example.org/repo\nSuites: stable\nComponents: main\nEnabled: ${enabled}\n`;
+  const disabled = [
+    "false",
+    "0",
+    "Off",
+    "without",
+    "disable",
+    "+0",
+    "-0",
+    "0x0",
+    "-0x0",
+    "\tFaLsE \t",
+    "\n false",
+    "\n\t-0",
+  ];
+  const enabled = [
+    "yes",
+    "1",
+    "0x1",
+    "-1",
+    "0.0",
+    "fal\u017fe",
+    "\u00a0false",
+    "false\u00a0",
+    "\u3000FaLsE\u3000",
+    "\n\tfalse",
+    "\n\r \n false",
+    "\n\r false",
+  ];
+  const stanzas = parseDeb822Sources(
+    Buffer.from([...disabled, ...enabled].map(source).join("\n")),
+    "example.sources",
+  );
+  expect(stanzas.map((entry) => entry.position)).toEqual(
+    enabled.map((_, index) => disabled.length + index + 1),
+  );
+});
+
+it.each([
+  ["amd64 arm64", "i386 amd64", "arm64", ["amd64", "i386"]],
+  ["amd64", "arm64 i386 i386", "arm64", ["amd64", "i386"]],
+  ["amd64", "", "amd64", ["all"]],
+  ["", "i386", "arm64", []],
+] as const)(
+  "reads the explicit architecture list %s with additions %s and removals %s",
+  (base, add, remove, expected) => {
+    const fields = [
+      "Types: deb",
+      "URIs: file:/repo",
+      "Suites: stable",
+      "Components: main",
+      ...(base ? [`Architectures: ${base}`] : []),
+      ...(add ? [`Architectures-Add: ${add}`] : []),
+      `Architectures-Remove: ${remove}`,
+    ];
+    const options = [
+      ...(base ? [`arch=${base.replaceAll(" ", ",")}`] : []),
+      `arch-=${remove}`,
+      ...(add ? [`arch+=${add.replaceAll(" ", ",")}`] : []),
+    ];
+    expect(
+      parseDeb822Sources(fields.join("\n"), "vendor.sources")[0]?.architectures,
+    ).toEqual(expected);
+    expect(
+      parseOneLineSources(
+        `deb [${options.join(" ")}] file:/repo stable main`,
+        "vendor.list",
+      )[0]?.architectures,
+    ).toEqual(expected);
+  },
+);
+
+it.each([
+  ["space", " ", "\n"],
+  ["tab", "\t", "\n"],
+  ["space before CRLF", " ", "\r\n"],
+])(
+  "keeps a %s-only continuation inside its deb822 source",
+  (_name, indent, eol) => {
+    const text = [
+      "Types: deb",
+      "URIs: https://disabled.invalid/deb",
+      "Suites: stable",
+      "Components: main",
+      indent,
+      "Enabled: no",
+      "",
+      "Types: deb",
+      "URIs: https://active.invalid/deb",
+      "Suites: next",
+      "Components: main",
+      "",
+    ].join(eol);
+    const stanzas = parseDeb822Sources(Buffer.from(text), "local.sources");
+    expect(
+      stanzas.map(({ position, suites }) => ({ position, suites })),
+    ).toEqual([{ position: 2, suites: ["next"] }]);
+  },
+);
+
+it("reads a CR-led field and preserves a CR-only paragraph separator", () => {
+  const source = [
+    "Types: deb",
+    "URIs: https://disabled.invalid/deb",
+    "Suites: stable",
+    "Components: main",
+    "\rEnabled: no",
+    "\r",
+    "Types: deb",
+    "URIs: https://active.invalid/deb",
+    "Suites: stable",
+    "Components: main",
+    "",
+  ].join("\n");
+  const stanzas = parseDeb822Sources(Buffer.from(source), "local.sources");
+  expect(stanzas.map(({ position }) => position)).toEqual([2]);
+});
+
+it.each([1, 65_536])(
+  "preserves %i interior blank continuations but trims trailing ones",
+  (interiorBlanks) => {
+    const [fields] = deb822Paragraphs(
+      `Name: first\n${" \n".repeat(interiorBlanks)} second\n\t\nOther: value\n`,
+    );
+    expect(fields?.get("name")).toBe(
+      `first${"\n".repeat(interiorBlanks + 1)}second`,
+    );
+    expect(fields?.get("other")).toBe("value");
+  },
+);

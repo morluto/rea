@@ -44,13 +44,26 @@ export interface AptSourceEntry extends Omit<
 const ARMOR_BEGIN = "-----BEGIN PGP PUBLIC KEY BLOCK-----";
 const ARMOR_END = "-----END PGP PUBLIC KEY BLOCK-----";
 
-/** Source fields separate words with whitespace; commas remain URI/name data. */
+/** APT separates source-field values with ASCII whitespace; other characters are data. */
 const fieldValues = (value: string | undefined): readonly string[] =>
-  (value ?? "").split(/\s+/u).filter((part) => part.length > 0);
+  (value ?? "").split(/[ \t\n\v\f\r]+/u).filter((part) => part.length > 0);
 
 /** Architecture and Signed-By options also admit comma-separated values. */
 const optionValues = (value: string | undefined): readonly string[] =>
   (value ?? "").split(/[\s,]+/u).filter((part) => part.length > 0);
+
+/** Resolve an explicit list. Modifier-only entries depend on APT's host defaults. */
+const sourceArchitectures = (
+  options: ReadonlyMap<string, string>,
+): string[] => {
+  const base = optionValues(options.get("arch"));
+  if (base.length === 0) return [];
+  const selected = new Set([...base, ...optionValues(options.get("arch+"))]);
+  for (const removed of optionValues(options.get("arch-")))
+    selected.delete(removed);
+  // APT still selects architecture-independent packages when all named targets were removed.
+  return selected.size === 0 ? ["all"] : [...selected];
+};
 
 /** Keep redundant path separators that APT preserves in Repo-URI. */
 const withoutOptionalTrailingSlash = (uri: string): string =>
@@ -132,7 +145,7 @@ const stanza = (
     }),
     suites: fields.suites,
     components: fields.components,
-    architectures: optionValues(fields.options.get("arch")),
+    architectures: sourceArchitectures(fields.options),
     signedBy: inlineKey === null ? optionValues(signedBy) : [],
     inlineKey,
   };
@@ -157,7 +170,20 @@ function* sourceLines(text: string | Buffer): Generator<string | undefined> {
 }
 
 const ONE_LINE =
-  /^deb(?:\s+\[(?<options>[^\]]*)\])?\s+(?<uri>\S+)\s+(?<suite>\S+)(?<components>(?:\s+\S+)*)\s*$/u;
+  /^[ \t\r]*deb[ \t\v][ \t\v\f\r]*(?:\[(?<options>[^\]]*)\][ \t\v\f\r]+)?(?<fields>.*)$/su;
+
+/** APT cuts a one-line comment only outside unmatched square brackets. */
+const withoutOneLineComment = (line: string): string => {
+  if (!line.includes("#")) return line;
+  let brackets = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === "[") brackets += 1;
+    else if (character === "]") brackets -= 1;
+    else if (character === "#" && brackets <= 0) return line.slice(0, index);
+  }
+  return line;
+};
 
 /** The `deb` lines of a one-line `sources.list` file; `deb-src` lines and comments are skipped. */
 export const parseOneLineSources = (
@@ -166,10 +192,13 @@ export const parseOneLineSources = (
 ): readonly AptSourceStanza[] =>
   [...sourceLines(text)].flatMap((line, index) => {
     if (line === undefined) return [];
-    const groups = ONE_LINE.exec(line.replace(/#.*$/u, "").trim())?.groups;
-    if (groups?.uri === undefined || groups.suite === undefined) return [];
+    const groups = ONE_LINE.exec(withoutOneLineComment(line))?.groups;
+    if (groups === undefined) return [];
+    const [uri, suite, ...components] = fieldValues(groups.fields);
+    if (uri === undefined || suite === undefined || uri.startsWith("["))
+      return [];
     const options = new Map(
-      (groups.options ?? "").split(/\s+/u).flatMap((option) => {
+      fieldValues(groups.options).flatMap((option) => {
         const equals = option.indexOf("=");
         return equals > 0
           ? [[option.slice(0, equals), option.slice(equals + 1)] as const]
@@ -180,15 +209,19 @@ export const parseOneLineSources = (
       stanza(
         { file, position: index + 1 },
         {
-          uris: [groups.uri],
-          suites: [groups.suite],
-          components: fieldValues(groups.components),
+          uris: [uri],
+          suites: [suite],
+          components,
           options,
           oneLine: true,
         },
       ),
     ];
   });
+
+// Match the ASCII whitespace recognized by APT's tag reader within a line.
+const trimDeb822Line = (value: string): string =>
+  value.replace(/^[ \t\v\f\r]+|[ \t\v\f\r]+$/gu, "");
 
 /** Fields of each deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
 export const deb822Paragraphs = (
@@ -201,7 +234,15 @@ export const deb822Paragraphs = (
   const finish = () => {
     // A sources-file stanza's position still counts when it cannot be read.
     if (!readable) found.push(new Map());
-    else if (current.size > 0) found.push(current);
+    else if (current.size > 0) {
+      // TagSection trims trailing whitespace but keeps interior continuations.
+      for (const [name, value] of current) {
+        let end = value.length;
+        while (end > 0 && value.charCodeAt(end - 1) === 0x0a) end--;
+        if (end !== value.length) current.set(name, value.slice(0, end));
+      }
+      found.push(current);
+    }
     current = new Map();
     last = undefined;
     readable = true;
@@ -209,21 +250,37 @@ export const deb822Paragraphs = (
   for (const line of sourceLines(text)) {
     if (line === undefined) {
       readable = false;
-    } else if (line.trim().length === 0) {
+      continue;
+    }
+    // APT skips CRs after a line feed before classifying the next record.
+    const afterLeadingCr = line.replace(/^\r+/u, "");
+    if (afterLeadingCr.length === 0) {
       finish();
     } else if (line.startsWith("#")) continue;
-    else if (/^[ \t]/u.test(line) && last !== undefined)
-      current.set(last, `${current.get(last) ?? ""}\n${line.trim()}`);
-    else {
+    else if (/^[ \t\v\f]/u.test(afterLeadingCr) && last !== undefined) {
+      const content = trimDeb822Line(line);
+      const previous = current.get(last) ?? "";
+      // APT skips an initial newline only before a space-led continuation.
+      current.set(
+        last,
+        previous === "" && line.startsWith(" ")
+          ? content
+          : `${previous}\n${content}`,
+      );
+    } else {
       const colon = line.indexOf(":");
       if (colon <= 0) continue;
-      last = line.slice(0, colon).trim().toLowerCase();
-      current.set(last, line.slice(colon + 1).trim());
+      last = trimDeb822Line(line.slice(0, colon)).toLowerCase();
+      current.set(last, trimDeb822Line(line.slice(colon + 1)));
     }
   }
   finish();
   return found;
 };
+
+// APT's numeric conversion skips leading ASCII whitespace, including a
+// retained newline before a tab-led continuation. Its word comparison is exact.
+const APT_DISABLED = /^(?:no|false|without|off|disable|\n*[+-]?(?:0+|0x0+))$/u;
 
 /** The `deb` stanzas of a deb822 `.sources` file; disabled paragraphs are skipped but still counted. */
 export const parseDeb822Sources = (
@@ -233,7 +290,7 @@ export const parseDeb822Sources = (
   deb822Paragraphs(text).flatMap((fields, index) => {
     if (
       !fieldValues(fields.get("types")).includes("deb") ||
-      fields.get("enabled")?.toLowerCase() === "no"
+      APT_DISABLED.test(fields.get("enabled")?.toLowerCase() ?? "")
     )
       return [];
     return [
@@ -246,6 +303,8 @@ export const parseDeb822Sources = (
           options: new Map([
             ["signed-by", fields.get("signed-by") ?? ""],
             ["arch", fields.get("architectures") ?? ""],
+            ["arch+", fields.get("architectures-add") ?? ""],
+            ["arch-", fields.get("architectures-remove") ?? ""],
           ]),
         },
       ),

@@ -10,6 +10,11 @@ import {
   FIXTURE_BUILD_ID_HEX,
   FIXTURE_DEBUG_NAME,
 } from "../../src/native/elf/ElfDebugLink.fixture.js";
+import {
+  compressedElfNoteSectionFixture,
+  gnuBuildIdNote,
+  withElf64DirectSectionCount,
+} from "../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -163,3 +168,111 @@ cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
     details: { operation: "inspect_elf_debug_link" },
   });
 });
+
+cliTest(
+  "retains separate readable build IDs beside compressed ELF notes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-elf-debug-link-note-storage-",
+    );
+    const candidatePath = join(root, "candidate.debug");
+    const compressed = withElf64DirectSectionCount(
+      compressedElfNoteSectionFixture(64, true, "both"),
+      4,
+    );
+    const buildId = "a1".repeat(20);
+    const program = gnuBuildIdNote(buildId);
+    const section = gnuBuildIdNote(buildId);
+    await writeFile(
+      candidatePath,
+      elfDebugCandidateFixture({ buildIdHex: buildId }),
+    );
+    const programOffset = compressed.length;
+    const sectionOffset = programOffset + program.length;
+    const mixed = Buffer.concat([compressed, program, section]);
+
+    // Point the existing PT_NOTE at the readable program range rather than
+    // its initial alias of the compressed section, which is still section 1.
+    mixed.writeBigUInt64LE(BigInt(programOffset), 64 + 8);
+    mixed.writeBigUInt64LE(BigInt(program.length), 64 + 32);
+    mixed.writeBigUInt64LE(BigInt(program.length), 64 + 40);
+    mixed.writeBigUInt64LE(4n, 64 + 48);
+    // Add a readable section after the compressed section in directory order.
+    const row = Number(mixed.readBigUInt64LE(40)) + 3 * 64;
+    mixed.writeUInt32LE(1, row);
+    mixed.writeUInt32LE(7, row + 4);
+    mixed.writeBigUInt64LE(BigInt(sectionOffset), row + 24);
+    mixed.writeBigUInt64LE(BigInt(section.length), row + 32);
+    mixed.writeBigUInt64LE(4n, row + 48);
+    const withAlias = Buffer.from(mixed);
+    const compressedRow = row - 2 * 64;
+    const compressedOffset = withAlias.readBigUInt64LE(compressedRow + 24);
+    const compressedBytes = withAlias.readBigUInt64LE(compressedRow + 32);
+    // The relocated section directory leaves this program header slot free.
+    // Its range starts inside compressed storage, so it provides no note.
+    const aliasHeader = 64 + 56;
+    withAlias.writeUInt16LE(2, 56);
+    withAlias.fill(0, aliasHeader, aliasHeader + 56);
+    withAlias.writeUInt32LE(4, aliasHeader);
+    withAlias.writeBigUInt64LE(compressedOffset + 4n, aliasHeader + 8);
+    withAlias.writeBigUInt64LE(compressedBytes - 4n, aliasHeader + 32);
+    withAlias.writeBigUInt64LE(compressedBytes - 4n, aliasHeader + 40);
+    withAlias.writeBigUInt64LE(4n, aliasHeader + 48);
+
+    for (const [name, image] of [
+      ["mixed-notes", mixed],
+      ["partial-alias", withAlias],
+    ] as const) {
+      const path = join(root, name);
+      await writeFile(path, image);
+      const result = await cli.run({
+        arguments: [
+          "inspect-elf-debug-link",
+          path,
+          "--candidate-path",
+          candidatePath,
+          "--json",
+        ],
+      });
+      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+      const report = debugLinkContract.outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      expect(report.build_id).toMatchObject({
+        status: "unknown",
+        reason: "note_tables_unsupported",
+        hex: null,
+        ids: [buildId],
+        sources: [
+          {
+            hex: buildId,
+            table_kind: "program",
+            table_index: 0,
+            note: { offset: programOffset, bytes: program.length },
+            descriptor: { offset: programOffset + 16, bytes: 20 },
+          },
+          {
+            hex: buildId,
+            table_kind: "section",
+            table_index: 3,
+            note: { offset: sectionOffset, bytes: section.length },
+            descriptor: { offset: sectionOffset + 16, bytes: 20 },
+          },
+        ],
+      });
+      expect(report.coverage.status).toBe("partial");
+      expect(report.lookup_paths.some(({ kind }) => kind === "build_id")).toBe(
+        false,
+      );
+      expect(report.verification).toMatchObject({
+        status: "cannot_verify",
+        build_id: {
+          status: "unavailable",
+          reason: "binary_build_id_unknown",
+          binary_hex: null,
+          candidate_hex: buildId,
+        },
+      });
+    }
+  },
+);

@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import { zstdCompressSync } from "node:zlib";
+import { runWithAnalysisOperationSnapshot } from "../analysisOperationSnapshot.js";
+import { ConfigurationError } from "../configurationErrors.js";
+import { ZSTD_MAX_FRAMES_ENVIRONMENT } from "../compression/zstandardFrameAllowance.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../analysisResourceLimits.js";
 
 import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 import { expect, it } from "vitest";
@@ -238,6 +245,140 @@ it("reconstructs REPLACE_ZSTD payloads", () => {
   expect(
     Buffer.from(reconstructed.value.subarray(0, plain.length)).equals(plain),
   ).toBe(true);
+});
+
+const zstdByteFrame = (byte: number): Buffer =>
+  Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
+
+it("rejects unread REPLACE_ZSTD bytes and accepts a second frame", () => {
+  const plain = Buffer.from("zstd partition");
+  const trailing = buildAndroidOtaPayload({
+    partitions: [
+      {
+        name: "vendor",
+        operations: [
+          {
+            type: 14,
+            data: Buffer.concat([zstdCompressSync(plain), Buffer.of(0)]),
+          },
+        ],
+      },
+    ],
+  });
+  const trailingParsed = parse(trailing);
+  if (!trailingParsed.ok) throw trailingParsed.error;
+  const trailingBlob = trailing.subarray(
+    trailingParsed.value.header.blobOffset,
+  );
+  expect(
+    reconstructAndroidOtaPartition(
+      trailingParsed.value.partitions[0]!,
+      trailingParsed.value.blockSize,
+      (offset, length) => trailingBlob.subarray(offset, offset + length),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      failure: { field: "trailing_bytes" },
+    },
+  });
+
+  const frames = Buffer.concat([zstdByteFrame(0x61), zstdByteFrame(0x62)]);
+  const concatenated = buildAndroidOtaPayload({
+    partitions: [
+      {
+        name: "vendor",
+        newSize: 2,
+        omitNewHash: true,
+        operations: [
+          {
+            type: 14,
+            data: frames,
+            dstExtents: [{ startBlock: 0, numBlocks: 1 }],
+          },
+        ],
+      },
+    ],
+  });
+  const parsed = parse(concatenated);
+  if (!parsed.ok) throw parsed.error;
+  const blob = concatenated.subarray(parsed.value.header.blobOffset);
+  const read = (offset: number, length: number) =>
+    blob.subarray(offset, offset + length);
+  const reconstructed = reconstructAndroidOtaPartition(
+    parsed.value.partitions[0]!,
+    parsed.value.blockSize,
+    read,
+    { verifyDeclaredHash: false },
+  );
+  if (!reconstructed.ok) throw reconstructed.error;
+  expect([...reconstructed.value.subarray(0, 2)]).toEqual([0x61, 0x62]);
+  expect(
+    runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "zstd.max_frames": 1 } },
+      () =>
+        reconstructAndroidOtaPartition(
+          parsed.value.partitions[0]!,
+          parsed.value.blockSize,
+          read,
+          { verifyDeclaredHash: false },
+        ),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ZstandardFrameWorkRefusal",
+      reason: "work_limit",
+      setting: "zstd.max_frames",
+      value: 1,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+    },
+  });
+});
+
+it("keeps an invalid REPLACE_ZSTD allowance out of the malformed path", () => {
+  const plain = Buffer.from("zstd-partition-bytes");
+  const bytes = buildAndroidOtaPayload({
+    partitions: [
+      {
+        name: "vendor",
+        operations: [
+          {
+            type: 14,
+            data: zstdCompressSync(plain),
+            dstExtents: [{ startBlock: 0, numBlocks: 1 }],
+          },
+        ],
+      },
+    ],
+  });
+  const parsed = parse(bytes);
+  if (!parsed.ok) throw parsed.error;
+  const blob = bytes.subarray(parsed.value.header.blobOffset);
+  const reconstruct = () =>
+    reconstructAndroidOtaPartition(
+      parsed.value.partitions[0]!,
+      parsed.value.blockSize,
+      (offset, length) => blob.subarray(offset, offset + length),
+    );
+  const previous = process.env[ZSTD_MAX_FRAMES_ENVIRONMENT];
+  process.env[ZSTD_MAX_FRAMES_ENVIRONMENT] = "0";
+  try {
+    const refused = reconstruct();
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error).toBeInstanceOf(ConfigurationError);
+    const recovered = runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "zstd.max_frames": 8 } },
+      reconstruct,
+    );
+    expect(recovered.ok).toBe(true);
+  } finally {
+    if (previous === undefined) delete process.env[ZSTD_MAX_FRAMES_ENVIRONMENT];
+    else process.env[ZSTD_MAX_FRAMES_ENVIRONMENT] = previous;
+  }
 });
 
 it("refuses REPLACE_ZSTD output past destination extents as a capacity limit", () => {

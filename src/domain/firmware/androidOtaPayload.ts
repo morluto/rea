@@ -1,11 +1,21 @@
-import { zstdDecompressSync } from "node:zlib";
+import {
+  decodeZstandardFrames,
+  decodeZstandardFramesCooperative,
+  type ZstandardFrameFailure,
+  type ZstandardFramePause,
+  type ZstandardFrameResult,
+} from "../compression/zstandardExactFrame.js";
+import {
+  zstandardWorkLimitFacts,
+  type ZstandardFrameSource,
+} from "../compression/zstandardFrameAllowance.js";
+import { ConfigurationError } from "../configurationErrors.js";
 
 import { BinaryReader, WireType } from "@bufbuild/protobuf/wire";
 
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import {
   decodeLimit,
-  hostRangeErrorKind,
   malformedInput,
   ParseFailureError,
   truncatedInput,
@@ -122,6 +132,7 @@ export type AndroidOtaPayloadParseError =
 
 export type AndroidOtaPayloadReconstructError =
   | AndroidOtaPayloadParseError
+  | ConfigurationError
   | {
       readonly _tag: "AndroidOtaPayloadUnsupportedOperation";
       readonly message: string;
@@ -135,6 +146,17 @@ export type AndroidOtaPayloadReconstructError =
     }
   | {
       readonly _tag: "AndroidOtaPayloadBlobTruncated";
+      readonly message: string;
+    }
+  | {
+      readonly _tag: "ZstandardFrameWorkRefusal";
+      readonly reason: "work_limit";
+      readonly setting: "zstd.max_frames";
+      readonly value: number;
+      readonly source: ZstandardFrameSource;
+      readonly minimum: number;
+      readonly maximum: number;
+      readonly offset: number;
       readonly message: string;
     };
 
@@ -165,6 +187,21 @@ const capacity = (
     `Android OTA payload ${name} exceeds the fixed ${String(maximum)}-${unit} ceiling`,
     { name: `Android OTA payload ${name}`, maximum },
   );
+
+const zstdWorkRefusal = (
+  decoded: ZstandardFrameFailure,
+): AndroidOtaPayloadReconstructError => {
+  const facts = zstandardWorkLimitFacts({
+    maxFrames: decoded.value ?? 0,
+    source: decoded.source ?? "default",
+  });
+  return {
+    _tag: "ZstandardFrameWorkRefusal",
+    ...facts,
+    offset: decoded.offset,
+    message: `${facts.setting} is ${String(facts.value)} (source ${facts.source}, range ${String(facts.minimum)}..${String(facts.maximum)})`,
+  };
+};
 
 const androidOtaUnsupportedVersion = (version: bigint): string =>
   `Android OTA payload major version ${String(version)} is unsupported; this reader supports version 2 only`;
@@ -1391,17 +1428,16 @@ const hasCompleteExtentCoverage = (
   return false;
 };
 
-/**
- * Rebuild a full-payload partition image after checking declared blob hashes.
- * A partition image hash mismatch fails unless `verifyDeclaredHash` is false,
- * which leaves that decision to a caller applying its own integrity policy.
- */
-export const reconstructAndroidOtaPartition = (
+function* reconstructAndroidOtaPartitionSteps(
   partition: AndroidOtaPartition,
   blockSize: number,
   readBlob: (offset: number, length: number) => Uint8Array,
   options: { readonly verifyDeclaredHash?: boolean } = {},
-): Result<Uint8Array, AndroidOtaPayloadReconstructError> => {
+): Generator<
+  { readonly raw: Uint8Array; readonly maxOutputLength: number },
+  Result<Uint8Array, AndroidOtaPayloadReconstructError>,
+  ZstandardFrameResult
+> {
   const refused = androidOtaExtractRefusalError(partition);
   if (refused !== null) return err(refused);
   const size = partition.newPartitionInfo.size!;
@@ -1455,17 +1491,28 @@ export const reconstructAndroidOtaPartition = (
           1,
           Math.min(dstBytes.value, ANDROID_OTA_MAX_EXTRACT_BYTES),
         );
-        try {
-          payload = zstdDecompressSync(raw, { maxOutputLength });
-        } catch (cause: unknown) {
+        const decoded = yield { raw, maxOutputLength };
+        if (!decoded.ok) {
+          if (
+            decoded.reason === "invalid_allowance" &&
+            decoded.configuration !== undefined
+          )
+            return err(decoded.configuration);
+          if (decoded.reason === "work_limit")
+            return err(zstdWorkRefusal(decoded));
+          if (decoded.reason === "output_limit")
+            return err(
+              capacity("REPLACE_ZSTD decoded output", maxOutputLength, "byte"),
+            );
           return err(
-            hostRangeErrorKind(cause) === "host-capacity"
-              ? capacity("REPLACE_ZSTD decoded output", maxOutputLength, "byte")
-              : malformed(
-                  "REPLACE_ZSTD operation payload is not a valid Zstandard frame",
-                ),
+            malformedInput(
+              ANDROID_OTA_FORMAT,
+              "REPLACE_ZSTD operation payload is not a valid Zstandard frame",
+              { offset: decoded.offset, field: decoded.reason },
+            ),
           );
         }
+        payload = decoded.bytes;
       }
       const written = writeExtents(
         image,
@@ -1502,4 +1549,77 @@ export const reconstructAndroidOtaPartition = (
       observedHashHex: observed,
     });
   return ok(image);
+}
+
+const driveAndroidOtaReconstruction = (
+  steps: Generator<
+    { readonly raw: Uint8Array; readonly maxOutputLength: number },
+    Result<Uint8Array, AndroidOtaPayloadReconstructError>,
+    ZstandardFrameResult
+  >,
+  decode: (
+    raw: Uint8Array,
+    maxOutputLength: number,
+  ) => ZstandardFrameResult | Promise<ZstandardFrameResult>,
+): Promise<Result<Uint8Array, AndroidOtaPayloadReconstructError>> => {
+  const run = async (): Promise<
+    Result<Uint8Array, AndroidOtaPayloadReconstructError>
+  > => {
+    let next = steps.next();
+    while (!next.done)
+      next = steps.next(
+        await decode(next.value.raw, next.value.maxOutputLength),
+      );
+    return next.value;
+  };
+  return run();
 };
+
+/**
+ * Rebuild a full-payload partition image after checking declared blob hashes.
+ * A partition image hash mismatch fails unless `verifyDeclaredHash` is false,
+ * which leaves that decision to a caller applying its own integrity policy.
+ */
+export const reconstructAndroidOtaPartition = (
+  partition: AndroidOtaPartition,
+  blockSize: number,
+  readBlob: (offset: number, length: number) => Uint8Array,
+  options: { readonly verifyDeclaredHash?: boolean } = {},
+): Result<Uint8Array, AndroidOtaPayloadReconstructError> => {
+  const steps = reconstructAndroidOtaPartitionSteps(
+    partition,
+    blockSize,
+    readBlob,
+    options,
+  );
+  let next = steps.next();
+  while (!next.done)
+    next = steps.next(
+      decodeZstandardFrames(next.value.raw, {
+        maxOutputLength: next.value.maxOutputLength,
+      }),
+    );
+  return next.value;
+};
+
+/**
+ * Same reconstruction as {@link reconstructAndroidOtaPartition}. REPLACE_ZSTD
+ * frames yield through `pause` so the caller's abort signal can land.
+ */
+export const reconstructAndroidOtaPartitionCooperative = (
+  partition: AndroidOtaPartition,
+  blockSize: number,
+  readBlob: (offset: number, length: number) => Uint8Array,
+  pause: ZstandardFramePause,
+  options: { readonly verifyDeclaredHash?: boolean } = {},
+): Promise<Result<Uint8Array, AndroidOtaPayloadReconstructError>> =>
+  driveAndroidOtaReconstruction(
+    reconstructAndroidOtaPartitionSteps(
+      partition,
+      blockSize,
+      readBlob,
+      options,
+    ),
+    (raw, maxOutputLength) =>
+      decodeZstandardFramesCooperative(raw, { maxOutputLength }, pause),
+  );

@@ -170,6 +170,159 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+describe.skipIf(process.platform === "win32")(
+  "desktop entry ID masking",
+  () => {
+    const userOverride = async (contents: string | Buffer) => {
+      const { home, environment } = await fixture();
+      const applications = join(environment.XDG_DATA_HOME, "applications");
+      await mkdir(applications, { recursive: true });
+      const file = join(applications, "org.example.notes.desktop");
+      await writeFile(file, contents);
+      const inspect = (desktopEntry = "org.example.notes") =>
+        inspectLinuxApplication({
+          desktopEntry,
+          executable: undefined,
+          arguments: [],
+          environment,
+          home,
+          callerDirectory: home,
+        });
+      return { inspect, file };
+    };
+
+    it.each([
+      { setting: "Hidden=true", exec: true, found: false },
+      { setting: "Hidden=true", exec: false, found: false },
+      { setting: "NoDisplay=true", exec: true, found: true },
+      { setting: "Hidden=false", exec: true, found: true },
+    ])(
+      "resolves the user override $setting (Exec present: $exec)",
+      async ({ setting, exec, found }) => {
+        const { inspect, file } = await userOverride(
+          [
+            "[Desktop Entry]",
+            "Type=Application",
+            "Name=User notes",
+            ...(exec ? ["Exec=notes-app"] : []),
+            setting,
+          ].join("\n"),
+        );
+        const result = await inspect();
+        if (found) {
+          expect(result).toMatchObject({
+            ok: true,
+            value: { inventory: { desktop_entry: { name: "User notes" } } },
+          });
+        } else {
+          expect(result).toMatchObject({
+            ok: false,
+            error: { reason: "desktop_entry_not_found" },
+          });
+        }
+        const direct = await inspect(file);
+        if (exec) {
+          if (!direct.ok) throw new Error(direct.error.reason);
+          expect(direct.value.inventory.desktop_entry).toMatchObject({
+            id: null,
+            name: "User notes",
+          });
+          expect(direct.value.inventory.desktop_entry).not.toHaveProperty(
+            "hidden",
+          );
+        } else {
+          expect(direct).toMatchObject({
+            ok: false,
+            error: {
+              reason: "desktop_entry_invalid",
+              detail: "not an Application entry with an Exec key",
+            },
+          });
+        }
+      },
+    );
+
+    it("preserves a read refusal for an invalid user entry above a system copy", async () => {
+      const { inspect } = await userOverride(Buffer.from([0xff]));
+      expect(await inspect()).toMatchObject({
+        ok: false,
+        error: { reason: "desktop_entry_invalid", detail: "not valid UTF-8" },
+      });
+    });
+
+    it.each([
+      { before: "", extra: "this is not a key\n", invalidLine: 3 },
+      { before: "[Other]\nName=Other\n", extra: "", invalidLine: 1 },
+      {
+        before: "",
+        extra: "",
+        trailing: "[Bad[Group]\nName=Other\nExec=missing-app\n",
+        invalidLine: 6,
+      },
+      {
+        before: "",
+        extra: "",
+        trailing: "[Bad\tGroup]\nName=Other\n",
+        invalidLine: 6,
+      },
+    ])(
+      "refuses a hidden override with malformed structure at line $invalidLine",
+      async ({ before, extra, trailing = "", invalidLine }) => {
+        const entry = `${before}[Desktop Entry]\nType=Application\n${extra}Name=User notes\nExec=notes-app\n`;
+        const { inspect, file } = await userOverride(
+          `${entry}Hidden=true\n${trailing}`,
+        );
+        expect(await inspect()).toMatchObject({
+          ok: false,
+          error: {
+            reason: "desktop_entry_invalid",
+            detail: expect.stringContaining(`line ${String(invalidLine)}`),
+          },
+        });
+        const visibleUserEntry = {
+          ok: true,
+          value: { inventory: { desktop_entry: { name: "User notes" } } },
+        };
+        const direct = await inspect(file);
+        expect(direct).toMatchObject(visibleUserEntry);
+        if (!direct.ok) throw new Error(direct.error.reason);
+        expect(direct.value.inventory.desktop_entry).not.toHaveProperty(
+          "malformed_line",
+        );
+        await writeFile(file, `${entry}Hidden=false\n${trailing}`);
+        expect(await inspect()).toMatchObject(visibleUserEntry);
+      },
+    );
+
+    it("masks a minimal Application with a localized key and a valid action group", async () => {
+      const { inspect } = await userOverride(
+        [
+          "[Desktop Entry]",
+          "Type=Application",
+          'Name=Notes "[Bad[Group]"',
+          "Name[fr]=Notes locales",
+          "Hidden=true",
+          "[Desktop Action New]",
+          "Name=New",
+        ].join("\n"),
+      );
+      expect(await inspect()).toMatchObject({
+        ok: false,
+        error: { reason: "desktop_entry_not_found" },
+      });
+    });
+
+    it("does not let a Hidden key without an Application type mask the system entry", async () => {
+      const { inspect } = await userOverride("[Desktop Entry]\nHidden=true\n");
+      const result = await inspect();
+      expect(result).toMatchObject({
+        ok: true,
+        value: { inventory: { desktop_entry: { name: "Notes" } } },
+      });
+    });
+  },
+);
+
 describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
   it("resolves a desktop entry id into a launch command and state directories", async () => {
     const { home, bin, environment } = await fixture();

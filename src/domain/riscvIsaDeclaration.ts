@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { readElfAttributeUleb } from "./elfAttributeUleb.js";
 import type { RiscvIsaDeclaration } from "./binaryTargetTypes.js";
 import {
@@ -35,12 +36,26 @@ export const RISCV_ATTRIBUTES_MAX_BYTES = 4096;
 
 const FORMAT_VERSION = 0x41;
 const TAG_FILE = 1;
+const TAG_SECTION = 2;
+const TAG_SYMBOL = 3;
 const TAG_RISCV_ARCH = 5;
+// RISC-V psABI attributes include the three deprecated privilege-version tags.
+const KNOWN_RISCV_ATTRIBUTE_TAGS = new Set([
+  4,
+  TAG_RISCV_ARCH,
+  6,
+  8,
+  10,
+  12,
+  14,
+  16,
+]);
 
 /**
  * Read `Tag_RISCV_arch` from a `.riscv.attributes` section; null means the
- * section declares no ISA string. The psABI gives odd tags string values and
- * even tags integer values, so tags REA does not use are skipped by that rule.
+ * section declares no ISA string. Decode known unused tags and optional tags
+ * by the psABI's odd-string, even-integer rule. Unknown mandatory tags leave
+ * the file-level declaration unavailable.
  * Other vendors and section or symbol scopes fail closed: their declarations
  * are not skipped.
  */
@@ -50,20 +65,17 @@ export const parseRiscvAttributes = (
 ): Result<string | null, string> => {
   if (bytes.length === 0 || bytes[0] !== FORMAT_VERSION)
     return err("unsupported RISC-V attribute section format version");
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const readU32 = (offset: number): number =>
-    view.getUint32(offset, littleEndian);
+  const section = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = new BinaryReader(section, littleEndian, "RISC-V attributes");
   const readString = (
     offset: number,
     end: number,
   ): { readonly value: string; readonly next: number } | undefined => {
-    const stop = bytes.indexOf(0, offset);
-    return stop < 0 || stop >= end
+    const field = section.subarray(offset, end);
+    const stop = field.indexOf(0);
+    return stop < 0
       ? undefined
-      : {
-          value: Buffer.from(bytes.subarray(offset, stop)).toString("latin1"),
-          next: stop + 1,
-        };
+      : { value: field.toString("latin1", 0, stop), next: offset + stop + 1 };
   };
 
   let arch: string | null = null;
@@ -72,7 +84,7 @@ export const parseRiscvAttributes = (
   while (position < bytes.length) {
     if (bytes.length - position < 4)
       return err("truncated RISC-V attribute subsection length");
-    const length = readU32(position);
+    const length = reader.u32(position);
     if (length < 4 || length > bytes.length - position)
       return err("RISC-V attribute subsection length does not fit the section");
     const end = position + length;
@@ -94,11 +106,13 @@ export const parseRiscvAttributes = (
         return err("malformed RISC-V attribute scope tag");
       if (scope.value !== TAG_FILE)
         return err(
-          "RISC-V attributes scoped to sections or symbols are not inspected by REA",
+          scope.value === TAG_SECTION || scope.value === TAG_SYMBOL
+            ? "RISC-V attributes scoped to sections or symbols are not inspected by REA"
+            : `unknown RISC-V attribute scope tag ${scope.value}`,
         );
       if (end - scope.next < 4)
         return err("truncated RISC-V attribute scope length");
-      const scopeLength = readU32(scope.next);
+      const scopeLength = reader.u32(scope.next);
       if (
         scopeLength < scope.next + 4 - scopeStart ||
         scopeLength > end - scopeStart
@@ -129,6 +143,9 @@ export const parseRiscvAttributes = (
             );
           cursor = value.next;
         }
+        // An uninterpreted value must fit the scope before applicability is checked.
+        if (tag.value % 128 < 64 && !KNOWN_RISCV_ATTRIBUTE_TAGS.has(tag.value))
+          return err(`unknown mandatory RISC-V attribute tag ${tag.value}`);
       }
     }
     position = end;

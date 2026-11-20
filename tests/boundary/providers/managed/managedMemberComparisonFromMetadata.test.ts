@@ -537,10 +537,11 @@ describe("managed comparison method row coverage", () => {
       }),
     };
     expect(compareManagedMembers(full, selected).summary.removed).toBe(0);
+    const { unresolved_definitions: _projection, ...historical } = full.result;
     const unscoped = {
       ...full,
       result: managedMemberInspectionSchema.parse({
-        ...full.result,
+        ...historical,
         method_rows: null,
       }),
     };

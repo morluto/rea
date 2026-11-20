@@ -5,6 +5,7 @@ import socket
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 from hopperBridgeFacadeProbe import load_bridge
 
@@ -41,28 +42,33 @@ def probe(path, socket_path, mode):
         except Exception as error:
             failures.append(repr(error))
 
+    listening = threading.Event()
+    first_client_prepared = threading.Event()
+
+    class ProbeListener(socket.socket):
+        def listen(self, backlog):
+            super().listen(backlog)
+            listening.set()
+            if mode != "initial-expiry":
+                assert first_client_prepared.wait(2), f"{mode}: probe did not prepare the first client"
+
+    bridge["socket"] = SimpleNamespace(
+        socket=ProbeListener, AF_UNIX=socket.AF_UNIX,
+        SOCK_STREAM=socket.SOCK_STREAM, timeout=socket.timeout,
+    )
     worker = threading.Thread(target=serve, daemon=True)
     worker.start()
-    deadline = time.monotonic() + 2
-    while not Path(socket_path).exists():
-        assert time.monotonic() < deadline, failures
-        time.sleep(0.005)
+    assert listening.wait(2), failures
 
-    def connect(wait_until_listening=False):
-        deadline = time.monotonic() + 2 if wait_until_listening else None
-        while True:
-            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            client.settimeout(2)
-            try:
-                client.connect(socket_path)
-            except OSError as error:
-                client.close()
-                if (not isinstance(error, ConnectionRefusedError)
-                        or deadline is None or time.monotonic() >= deadline):
-                    raise
-                time.sleep(0.005)
-            else:
-                return client, client.makefile("rwb")
+    def connect():
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(2)
+        try:
+            client.connect(socket_path)
+        except OSError:
+            client.close()
+            raise
+        return client, client.makefile("rwb")
 
     def send(file, method, token="owned-token", params=None):
         file.write((json.dumps({"id": 1, "method": method, "token": token, "params": params or {}}) + "\n").encode())
@@ -87,9 +93,11 @@ def probe(path, socket_path, mode):
     if mode == "initial-expiry":
         return finish(0)
 
-    # bind() creates the socket path before listen() makes it connectable.
-    client, file = connect(wait_until_listening=True)
+    # The first accept budget starts only after the fixture has queued its
+    # first connection. The shipped bridge still owns all accept/read deadlines.
+    client, file = connect()
     if mode == "silent-expiry":
+        first_client_prepared.set()
         # connect() can finish while the peer is still in the listen backlog.
         # Observe the bridge expiring the silent connection before waiting
         # for its separate reconnect grace period to release the listener.
@@ -98,6 +106,7 @@ def probe(path, socket_path, mode):
             assert file.read(1) == b"", "Silent bridge connection did not close without a reply"
             return finish(0)
     send(file, "health", "foreign-token" if mode == "unauthorized" else "owned-token")
+    first_client_prepared.set()
     if mode == "lost-reply":
         assert entered.wait(2)
     elif mode == "unauthorized":

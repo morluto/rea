@@ -1,7 +1,7 @@
 import type { BinaryReader } from "../binaryContainer.js";
 
 export const ZIP_LOCAL_HEADER_BYTES = 30;
-const ZIP_LOCAL_HEADER_SIGNATURE = 0x04034b50;
+export const ZIP_LOCAL_HEADER_SIGNATURE = 0x04034b50;
 
 /** Locate the data after the fixed header, file name and extra field. */
 export const zipLocalDataOffset = (
