@@ -236,25 +236,49 @@ it("ranks multi-word queries by relevance with keyword scoring and tie-breaking"
     tools: [{ name: "alpha_sqlite" }],
   });
 
-  // 3. Ranking order: more matching words rank higher
-  // Query: "alpha database" -> alpha_sqlite matches 2 tokens ("alpha" in name, "database" in desc)
-  // beta_sqlite and binary_session only match 1 token ("database" in desc)
-  const ranked = await f.discover({
+  // 3. Ranking order: more matching words rank higher (non-alphabetical relevance ordering)
+  // Query: "beta database" -> beta_sqlite matches 2 tokens ("beta" in name, "database" in desc)
+  // alpha_sqlite and binary_session only match 1 token ("database" in desc).
+  // beta_sqlite must rank first, proving relevance ranking overrides alphabetical order.
+  const rankedBeta = await f.discover({
+    query: "beta database",
+    limit: 5,
+  });
+  expect(rankedBeta.structuredContent).toMatchObject({
+    total_matches: 3,
+  });
+  const rankedBetaTools = (
+    rankedBeta.structuredContent as { tools: Array<{ name: string }> }
+  ).tools;
+  expect(rankedBetaTools.map((t) => t.name)).toEqual([
+    "beta_sqlite",
+    "alpha_sqlite",
+    "binary_session",
+  ]);
+
+  // Query: "alpha database" -> alpha_sqlite matches 2 tokens and ranks first
+  const rankedAlpha = await f.discover({
     query: "alpha database",
     limit: 5,
   });
-  expect(ranked.structuredContent).toMatchObject({
-    total_matches: 3,
-  });
-  const rankedTools = (
-    ranked.structuredContent as { tools: Array<{ name: string }> }
+  const rankedAlphaTools = (
+    rankedAlpha.structuredContent as { tools: Array<{ name: string }> }
   ).tools;
-  expect(rankedTools[0]?.name).toBe("alpha_sqlite");
-  expect(rankedTools.map((t) => t.name)).toEqual([
+  expect(rankedAlphaTools.map((t) => t.name)).toEqual([
     "alpha_sqlite",
     "beta_sqlite",
     "binary_session",
   ]);
+
+  // Exact name and phrase bonuses decide ranking over partial description matches
+  const exactName = await f.discover({
+    query: "alpha_sqlite",
+    limit: 5,
+  });
+  const exactNameTools = (
+    exactName.structuredContent as { tools: Array<{ name: string }> }
+  ).tools;
+  expect(exactNameTools[0]?.name).toBe("alpha_sqlite");
 
   // 4. No-match queries
   const noMatch = await f.discover({ query: "completely_unmatched_token" });
