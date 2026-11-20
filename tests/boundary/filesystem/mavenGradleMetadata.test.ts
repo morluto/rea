@@ -73,12 +73,29 @@ describe("Maven POM and Gradle module metadata stable filesystem boundary", () =
       return service.inspect({ path });
     };
     try {
-      const distinct = await inspect(["runtime", " runtime ", undefined]);
+      const whitespaceOnlyName = " \t ";
+      const distinct = await inspect([
+        "runtime",
+        " runtime ",
+        "",
+        undefined,
+        whitespaceOnlyName,
+        "",
+        undefined,
+      ]);
       if (!distinct.ok) throw distinct.error;
       const report = mavenGradleMetadataSchema.parse(
         distinct.value.normalized_result,
       );
-      const expectedNames = ["runtime", " runtime ", null];
+      const expectedNames = [
+        "runtime",
+        " runtime ",
+        null,
+        null,
+        whitespaceOnlyName,
+        null,
+        null,
+      ];
       expect(report.gradle?.variants.map((row) => row.name)).toEqual(
         expectedNames,
       );
