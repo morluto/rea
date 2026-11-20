@@ -34,11 +34,18 @@ moving it into `specs/`.
 
 ## Feature lifecycle
 
+Create a feature record before implementation when the change adds a new MCP
+tool or CLI command, a new provider lane or format reader, or a new public
+contract. A bug fix inside an existing contract does not require a record.
+Records nest under `docs/specs/<domain>/<slug>/`. Every new record gets a
+`docs/specs/README.md` entry in the same pull request.
+
 Create the specification before implementation. Each feature directory contains:
 
 - `spec.md`: problem, desired behavior, requirements, acceptance and non-goals.
 - `plan.md`: the single implementation plan, contracts and architectural choices.
-- `tasks.md`: incremental, testable steps linked to requirements and verification.
+- `tasks.md`: incremental, testable implementation and verification steps linked
+  to requirements. Do not record pull-request process or review steps.
 
 Split independent domains or separately reviewable features before writing their
 specs. A broad `ROADMAP.md`, when useful, only lists child specifications, order
