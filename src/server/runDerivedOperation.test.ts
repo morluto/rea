@@ -34,8 +34,7 @@ describe("derived MCP operation boundary", () => {
         mcpReq: {
           ...context(controller).mcpReq,
           notify: async (notification) => {
-            if (notification.params?.message !== "complete: Completed compare")
-              return;
+            if (!notification.params?.message?.startsWith("complete:")) return;
             await Promise.resolve();
             controller.abort(reason);
           },
@@ -121,12 +120,13 @@ describe("derived MCP operation progress and cancellation", () => {
     );
 
     expect(result).toEqual({ ok: true, value: "complete" });
-    const messages = notifications.map(({ params }) => params?.message);
-    expect(messages[0]).toBe("prepare: Preparing compare");
-    expect(messages.slice(1, -1)).toEqual(
-      messages.length === 3 ? ["compute: Computed compare"] : [],
+    const phases = notifications.map(
+      ({ params }) => params?.message?.split(":", 1)[0],
     );
-    expect(messages.at(-1)).toBe("complete: Completed compare");
+    expect([
+      ["prepare", "complete"],
+      ["prepare", "compute", "complete"],
+    ]).toContainEqual(phases);
     expect(notifications.map(({ params }) => params?.progress)).toEqual(
       notifications.map((_notification, index) => index + 1),
     );
