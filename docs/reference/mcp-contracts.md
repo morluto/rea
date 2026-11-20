@@ -1338,6 +1338,8 @@ resource readers remain read-only within the selected bundle.
 `binary_session` reports `target_required` while neither session is open.
 `source_sha256` records the SHA-256 of the plist bytes read. While an
 executable is open, the Evidence subject remains that program.
+REA writes a private temporary copy for the native commands and leaves the
+selected plist untouched. The tool advertises the temporary filesystem write.
 An app-bundle or resource-only session accepts only plists that resolve inside
 its root. To inspect an outside plist, open the plist itself with `open_binary`
 or pass its path directly to the CLI.
