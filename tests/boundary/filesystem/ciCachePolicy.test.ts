@@ -691,6 +691,43 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(String(windowsNativeKey?.run)).toContain("date -u +%Y-%m-%d");
 });
 
+it("replaces Windows cross-build artifacts on retries under their consumer names", async () => {
+  const ci = (await readWorkflows()).find(({ file }) => file === "ci.yml");
+  const jobs = ci?.workflow.jobs;
+  const producer = jobs?.["windows-native-build"]?.steps ?? [];
+  const uploads = producer
+    .filter((step) => step.uses?.startsWith("actions/upload-artifact@"))
+    .map((step) => step.with);
+  expect(uploads).toMatchObject([
+    {
+      name: "windows-native-inspection-fixture",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-process-boundary-fixture",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-native-controls",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+  ]);
+  const names = new Set(uploads.map((upload) => upload?.name));
+  for (const job of ["package-e2e", "windows-curated"]) {
+    const downloads = jobs?.[job]?.steps?.filter(
+      (step) =>
+        step.uses?.startsWith("actions/download-artifact@") &&
+        names.has(step.with?.name),
+    );
+    expect(downloads?.map((step) => step.with?.name).sort()).toEqual(
+      job === "package-e2e" ? ["windows-native-controls"] : [...names].sort(),
+    );
+  }
+});
+
 it("publishes each hosted npm download cache from one writer", async () => {
   const workflows = await readWorkflows();
   const writers: { file: string; job: string; save: string }[] = [];
