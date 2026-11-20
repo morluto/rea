@@ -969,9 +969,9 @@ cancels from inside final cleanup, and `controlledCleanup` gives children
 refused or confirmed outcomes with counted retries.
 `tests/support/providerLifecycleCoverage.ts` maps every registered provider id
 to its launch, handshake, operation, cancellation, cleanup and retry
-regressions, a not-applicable reason, or an explicit gap. Name the test file
-and literal title when a change adds or moves a provider lifecycle regression;
-the shrink-only gap list closes as stages gain coverage. Check server
+regressions or a reason a stage does not apply. Name the test file and the
+title at its registration site when a change adds or moves a lifecycle
+regression. The check rejects uncovered applicable stages. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
