@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { bindExecutionTarget } from "../../../../src/application/binary/BinarySessionExecution.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { inspectPlistSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { ok } from "../../../../src/domain/result.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -15,7 +16,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 const plist = (marker: string): string =>
   `<plist><dict><key>CFBundleExecutable</key><string>Probe</string><key>Marker</key><string>${marker}</string></dict></plist>`;
 
-it("records each plist byte digest under the open executable including an explicitly selected file outside the bundle", async () => {
+it("records bundle plist digests under the executable and keeps outside files separate", async () => {
   const root = await createTestTempDirectory("rea-plist-bundle-evidence-");
   const app = join(root, "Probe.app");
   const contents = join(app, "Contents");
@@ -85,17 +86,49 @@ it("records each plist byte digest under the open executable including an explic
   if (!helperBound.ok) throw helperBound.error;
   expect(helperBound.value.subject?.sha256).toBe(target.sha256);
 
-  for (const path of [outside, "../Outside.plist"]) {
-    const selected = await client.execute("inspect_plist", { path });
+  const inBundleAlias = "Contents/Helper.plist";
+  const outsideAlias = "Contents/Outside.plist";
+  if (process.platform !== "win32") {
+    await symlink(nested, join(app, inBundleAlias));
+    await symlink(outside, join(app, outsideAlias));
+    const selected = await client.execute("inspect_plist", {
+      path: inBundleAlias,
+    });
     if (!selected.ok) throw selected.error;
     expect(inspectPlistSchema.parse(selected.value.result)).toMatchObject({
-      source_path: path === outside ? outside : `${app}/../Outside.plist`,
-      source_sha256: createHash("sha256")
-        .update(plist("outside"))
-        .digest("hex"),
-      value: { Marker: "outside" },
+      source_path: join(app, inBundleAlias),
+      source_sha256: helperDigest,
     });
   }
+  for (const path of [
+    outside,
+    "../Outside.plist",
+    ...(process.platform === "win32" ? [] : [outsideAlias]),
+  ]) {
+    const selected = await client.execute("inspect_plist", { path });
+    if (selected.ok) throw new Error("Expected scoped selection refusal");
+    expect(projectAnalysisError(selected.error)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["path"], reason: "invalid_value" }] },
+    });
+  }
+  const standalone = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    {
+      kind: "artifact",
+      format: "plist",
+      path: outside,
+      sha256: createHash("sha256").update(plist("outside")).digest("hex"),
+    },
+  );
+  onTestFinished(async () => {
+    await standalone.close();
+  });
+  const result = await standalone.execute("inspect_plist", {});
+  if (!result.ok) throw result.error;
+  expect(inspectPlistSchema.parse(result.value.result)).toMatchObject({
+    source_path: outside,
+    value: { Marker: "outside" },
+  });
 
   expect(
     inspectPlistSchema.parse({
