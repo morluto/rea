@@ -9,7 +9,10 @@ import {
   type ArtifactEntry,
   ZipArtifactReader,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
@@ -575,7 +578,7 @@ export class FlutterBuildProvider {
       const primary = mapOwnedIoFailure(operation, cause, root);
       const released = await this.discardRoot(root);
       if (!released)
-        throw this.withCleanup(
+        throw analysisErrorWithCleanupDependencies(
           primary,
           this.cleanupError(root, operation),
           operation,
@@ -691,14 +694,6 @@ export class FlutterBuildProvider {
     return error;
   }
 
-  private withCleanup(
-    primary: AnalysisError,
-    cleanup: AnalysisError,
-    operation: string,
-  ): AnalysisError {
-    return analysisErrorWithCleanupDependencies(primary, cleanup, operation);
-  }
-
   /** Stop admission and drain active snapshots before attempting retained cleanup. */
   async close(): Promise<void> {
     await this.operations.close();
@@ -715,9 +710,9 @@ export class FlutterBuildProvider {
     }
     if (failures.length === 1) throw failures[0];
     if (failures.length > 1)
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         FLUTTER_PROVIDER_IDENTITY.id,
-        failures.flatMap((failure) => failure.cleanupResources),
+        failures,
         {
           reason: failures
             .map((failure) => failure.diagnostics?.reason ?? failure.message)
@@ -727,11 +722,8 @@ export class FlutterBuildProvider {
             return Array.isArray(roots) ? roots : [];
           }),
         },
-        {
-          cause: new AggregateError(failures),
-          operation,
-        },
-      ).bindCleanupDependencies(failures);
+        { operation },
+      );
   }
 
   async execute(
@@ -849,7 +841,13 @@ export class FlutterBuildProvider {
       );
     if (cleanup !== undefined) {
       if (!result.ok)
-        return err(this.withCleanup(result.error, cleanup, request.operation));
+        return err(
+          analysisErrorWithCleanupDependencies(
+            result.error,
+            cleanup,
+            request.operation,
+          ),
+        );
       cleanup.retainPartialObservation(
         createAnalysisExecutionEvidence(
           request.operation,
