@@ -107,6 +107,12 @@ it("updates atomically, restores launch values, and refuses stale or invalid wri
   expect(new AnalysisSettings({}).inspect().revision).toBe(0);
 });
 
+it("pins the shipped Ghidra value-flow defaults", () => {
+  expect(DEFAULT_GHIDRA_VALUE_FLOW_MAX_OPERATIONS).toBe(3_000);
+  expect(DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION).toBe(64);
+  expect(DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES).toBe(12_000);
+});
+
 it("keeps accepted operations and their typed provider views stable across concurrent updates", async () => {
   const store = new AnalysisSettings({});
   const config = parseConfig({});
