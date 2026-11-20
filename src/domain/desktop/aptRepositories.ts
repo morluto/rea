@@ -220,8 +220,11 @@ export const deb822Paragraphs = (
     if (!readable) found.push(new Map());
     else if (current.size > 0) {
       // TagSection trims trailing whitespace but keeps interior continuations.
-      for (const [name, value] of current)
-        if (value.endsWith("\n")) current.set(name, value.replace(/\n+$/u, ""));
+      for (const [name, value] of current) {
+        let end = value.length;
+        while (end > 0 && value.charCodeAt(end - 1) === 0x0a) end--;
+        if (end !== value.length) current.set(name, value.slice(0, end));
+      }
       found.push(current);
     }
     current = new Map();

@@ -833,10 +833,15 @@ it.each([
   },
 );
 
-it("preserves interior blank continuations but trims them at the end of a deb822 field", () => {
-  const [fields] = deb822Paragraphs(
-    "Name: first\n \n second\n\t\nOther: value\n",
-  );
-  expect(fields?.get("name")).toBe("first\n\nsecond");
-  expect(fields?.get("other")).toBe("value");
-});
+it.each([1, 65_536])(
+  "preserves %i interior blank continuations but trims trailing ones",
+  (interiorBlanks) => {
+    const [fields] = deb822Paragraphs(
+      `Name: first\n${" \n".repeat(interiorBlanks)} second\n\t\nOther: value\n`,
+    );
+    expect(fields?.get("name")).toBe(
+      `first${"\n".repeat(interiorBlanks + 1)}second`,
+    );
+    expect(fields?.get("other")).toBe("value");
+  },
+);
