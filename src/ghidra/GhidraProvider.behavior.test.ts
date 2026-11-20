@@ -97,6 +97,7 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import type { GhidraExtensionResult } from "./extensions/GhidraExtensions.js";
 import { GhidraClient, type GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
   ghidraMissingProgramGuidance,
@@ -4322,97 +4323,102 @@ const peTarget = (
 });
 
 describe("Ghidra extension failures", () => {
-  it.each(["unsupported", "failed", "malformed"] as const)(
+  it.each([
+    "unsupported",
+    "failed",
+    "wrong artifact",
+    "loader failure",
+  ] as const)(
     "preserves %s recovery diagnostics and closes without restarting",
-    async (status) => {
+    async (scenario) => {
       const directory = await createTestTempDirectory(
         "rea-provider-extension-",
       );
       const jar = join(directory, "addon.jar");
-      await writeFile(jar, Buffer.from([0x50, 0x4b, 3, 4]));
-      const config = parseConfig({
-        GHIDRA_INSTALL_DIR: INSTALL,
-        REA_GHIDRA_NATIVEAOT_JAR: jar,
-      });
-      if (!config.ok) throw config.error;
-      let starts = 0,
-        calls = 0,
-        closes = 0;
-      const ghidra = new GhidraProvider(
-        config.value,
-        silentLogger,
-        {},
+      const bytes = Buffer.from([0x50, 0x4b, 3, 4]);
+      await writeFile(jar, bytes);
+      const status =
+        scenario === "unsupported" || scenario === "wrong artifact"
+          ? "unsupported"
+          : "failed";
+      const reason =
+        scenario === "loader failure"
+          ? "Extension loading/analysis failed: ClassNotFoundException"
+          : "directory-discovery: Unsupported layout at 0x401000";
+      const report: GhidraExtensionResult = {
+        id: "nativeaot",
+        sha256:
+          scenario === "wrong artifact"
+            ? "0".repeat(64)
+            : createHash("sha256").update(bytes).digest("hex"),
+        status,
+        reason,
+        result:
+          scenario === "loader failure"
+            ? { loader_failure: reason }
+            : {
+                id: "nativeaot",
+                integration_api: 1,
+                source_revision: "effeb734fc570c32650f88b159608979dc7b423e",
+                source_revision_authority: "build-reported-unattested",
+                status,
+                reason,
+                method_tables: 0,
+                diagnostics: ["exact producer diagnostic"],
+              },
+      };
+
+      const counts = { starts: 0, calls: 0, closes: 0 };
+      const ghidra = provider(
         installationHost(),
         () => ({
-          start: () => {
-            starts++;
-            return Promise.resolve(
-              ok({
-                ...sessionInfo(),
-                analysis_extensions: [
-                  {
-                    id: "nativeaot",
-                    sha256:
-                      status === "malformed"
-                        ? "0".repeat(64)
-                        : createHash("sha256")
-                            .update(Buffer.from([0x50, 0x4b, 3, 4]))
-                            .digest("hex"),
-                    status: status === "malformed" ? "failed" : status,
-                    reason:
-                      "directory-discovery: Unsupported layout at 0x401000",
-                    result: {
-                      id: "nativeaot",
-                      integration_api: 1,
-                      source_revision:
-                        "effeb734fc570c32650f88b159608979dc7b423e",
-                      source_revision_authority: "build-reported-unattested",
-                      status: status === "malformed" ? "failed" : status,
-                      reason:
-                        "directory-discovery: Unsupported layout at 0x401000",
-                      method_tables: 0,
-                      diagnostics: ["exact producer diagnostic"],
-                    },
-                  },
-                ],
-              }),
-            );
+          start: async () => {
+            counts.starts++;
+            return ok({ ...sessionInfo(), analysis_extensions: [report] });
           },
-          callTool: () => {
-            calls++;
-            return Promise.resolve(ok(null));
+          callTool: async () => {
+            counts.calls++;
+            return ok(null);
           },
-          close: () => {
-            closes++;
-            return Promise.resolve(ok(null));
+          close: async () => {
+            counts.closes++;
+            return ok(null);
           },
         }),
+        { REA_GHIDRA_NATIVEAOT_JAR: jar },
       );
-      const target = executableTarget("elf", "x86_64");
-      const resolved = await ghidra.resolveAnalysisProfile(target);
-      if (!resolved.ok || resolved.value.profile === null)
-        throw new Error("expected extension profile");
-      const client = ghidra.createClient(target, resolved.value.profile);
+      onTestFinished(async () => {
+        await ghidra.closeOwnedResources();
+      });
+      const client = await createElfClient(ghidra);
+      onTestFinished(async () => {
+        await client.close();
+      });
       const failed = await client.execute("health", {});
-      expect(failed.ok).toBe(false);
-      if (!failed.ok) {
-        expect(failed.error._tag).toBe(
-          status === "unsupported"
-            ? "AnalysisCapabilityUnavailableError"
-            : "ProviderAdapterError",
-        );
-        expect(JSON.stringify(failed.error)).toContain(
-          status === "malformed"
-            ? "identity mismatch"
-            : "Unsupported layout at 0x401000",
-        );
+      if (failed.ok) throw new Error("Expected extension handshake refusal");
+      if (scenario === "unsupported") {
+        expect(projectAnalysisError(failed.error)).toMatchObject({
+          code: "capability_unavailable",
+          retryable: false,
+          details: { reason: expect.stringContaining(reason) },
+          remediation: {
+            action: expect.stringContaining("REA_GHIDRA_NATIVEAOT_JAR"),
+          },
+        });
+      } else {
+        expect(failed.error).toMatchObject({
+          _tag: "ProviderAdapterError",
+          diagnostics: {
+            reason:
+              scenario === "wrong artifact"
+                ? expect.stringContaining("identity mismatch")
+                : reason,
+            analysis_extensions: [report],
+          },
+        });
       }
       expect(await client.execute("list_procedures", {})).toEqual(failed);
-      expect({ starts, calls, closes }).toEqual({
-        starts: 1,
-        calls: 0,
-        closes: 1,
-      });
+      expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
     },
   );
 });
