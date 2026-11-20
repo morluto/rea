@@ -377,6 +377,7 @@ export class BinaryReader {
 
   table(offset: bigint, count: number, width: number, label: string): number {
     const size = BigInt(count) * BigInt(width);
+    const range = this.fileRange(offset, size, label);
     if (size > 16n * 1024n * 1024n)
       throw new BinaryResourceFailure(
         "structure",
@@ -385,7 +386,7 @@ export class BinaryReader {
         "structure",
         "bytes",
       );
-    return this.fileRange(offset, size, label).offset;
+    return range.offset;
   }
 }
 
@@ -634,11 +635,11 @@ interface MappedStringAccess {
 /** Read a bounded NUL-terminated string while retaining mapping/alias semantics. */
 export const readMappedCString = (
   bytes: Buffer,
-  image: BinaryContainer,
+  mappings: readonly FileMapping[],
   address: bigint,
   maximumBytes: number,
+  zeroFills: readonly ZeroFillMapping[],
 ): Buffer => {
-  const mappings = imageFileMappings(image);
   return readMappedString(
     bytes,
     {
@@ -649,7 +650,7 @@ export const readMappedCString = (
             cursor < range.address + BigInt(range.size),
         ),
       offset: (cursor, size) =>
-        mappedFileOffset(mappings, cursor, size, image.zero_fills),
+        mappedFileOffset(mappings, cursor, size, zeroFills),
     },
     address,
     maximumBytes,

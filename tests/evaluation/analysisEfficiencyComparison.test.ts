@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "vitest";
 import { z } from "zod";
 import { fileURLToPath } from "node:url";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 type Delivery = "complete" | "summary";
 type Observation = {
@@ -90,45 +91,41 @@ const fixture = (delivery: Delivery, artifact: string): Fixture => ({
           ],
   },
 });
-function compare(left: Fixture, right: Fixture) {
-  const root = mkdtempSync(join(tmpdir(), "rea-compare-test-"));
-  try {
-    const directories = [join(root, "left"), join(root, "right")] as const;
-    for (const [index, value] of [left, right].entries()) {
-      const directory = directories[index];
-      assert.ok(directory);
-      mkdirSync(directory);
-      for (const name of ["summary", "answer"] as const)
-        writeFileSync(
-          join(directory, `${name}.json`),
-          JSON.stringify(value[name]),
-        );
-    }
-    const result = spawnSync(
-      process.execPath,
-      [
-        fileURLToPath(
-          new URL(
-            "../../tests/support/analysis-efficiency/compare.mjs",
-            import.meta.url,
-          ),
-        ),
-        "--left",
-        directories[0],
-        "--right",
-        directories[1],
-      ],
-      { encoding: "utf8" },
-    );
-    assert.ifError(result.error);
-    assert.equal(result.stderr, "");
-    return {
-      status: result.status,
-      report: reportSchema.parse(JSON.parse(result.stdout)),
-    };
-  } finally {
-    rmSync(root, { recursive: true, force: true });
+async function compare(left: Fixture, right: Fixture) {
+  const root = await createTestTempDirectory("rea-compare-test-");
+  const directories = [join(root, "left"), join(root, "right")] as const;
+  for (const [index, value] of [left, right].entries()) {
+    const directory = directories[index];
+    assert.ok(directory);
+    mkdirSync(directory);
+    for (const name of ["summary", "answer"] as const)
+      writeFileSync(
+        join(directory, `${name}.json`),
+        JSON.stringify(value[name]),
+      );
   }
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(
+        new URL(
+          "../../tests/support/analysis-efficiency/compare.mjs",
+          import.meta.url,
+        ),
+      ),
+      "--left",
+      directories[0],
+      "--right",
+      directories[1],
+    ],
+    { encoding: "utf8" },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.stderr, "");
+  return {
+    status: result.status,
+    report: reportSchema.parse(JSON.parse(result.stdout)),
+  };
 }
 
 for (const artifact of [
@@ -136,7 +133,7 @@ for (const artifact of [
   "wireshark-dns.cap",
   "wireshark-dhcp.pcap",
 ]) {
-  test(`${artifact}: compare requested facts across packet plans and preserve observations`, () => {
+  test(`${artifact}: compare requested facts across packet plans and preserve observations`, async () => {
     const left = fixture("complete", artifact);
     left.summary.packet_selection = "baseline";
     left.answer.facts = {
@@ -149,7 +146,7 @@ for (const artifact of [
     right.answer.delivery_observations[0]!.evidence_id = "ev_focused";
     right.answer.delivery_observations[0]!.coverage =
       "up-to-input-packet-limit";
-    const equivalent = compare(left, right);
+    const equivalent = await compare(left, right);
     assert.equal(equivalent.status, 0);
     assert.equal(equivalent.report.facts_match, true);
     assert.deepEqual(
@@ -157,15 +154,15 @@ for (const artifact of [
       [left.answer.delivery_observations, right.answer.delivery_observations],
     );
     right.answer.facts!.matching_packets = 1338;
-    assert.equal(compare(left, right).report.facts_match, false);
+    assert.equal((await compare(left, right)).report.facts_match, false);
     right.answer.facts!.matching_packets = 1337;
     right.summary.packet_selection = "baseline";
-    assert.equal(compare(left, right).report.facts_match, false);
+    assert.equal((await compare(left, right)).report.facts_match, false);
   });
 }
 
 for (const artifact of ["sigrok-uart-max3232e.sr", "sigrok-i2c-nunchuk.sr"]) {
-  test(`${artifact}: compare decoded facts across signal plans and preserve display scope`, () => {
+  test(`${artifact}: compare decoded facts across signal plans and preserve display scope`, async () => {
     const left = fixture("complete", artifact);
     left.summary.signal_selection = "baseline";
     left.answer.facts = { kind: "signal", bytes: [72, 101] };
@@ -173,7 +170,7 @@ for (const artifact of ["sigrok-uart-max3232e.sr", "sigrok-i2c-nunchuk.sr"]) {
     right.summary.signal_selection = "focused";
     right.answer.delivery_observations[0]!.coverage =
       "selected annotation lines";
-    const equivalent = compare(left, right);
+    const equivalent = await compare(left, right);
     assert.equal(equivalent.status, 0);
     assert.equal(equivalent.report.facts_match, true);
     assert.deepEqual(
@@ -181,10 +178,10 @@ for (const artifact of ["sigrok-uart-max3232e.sr", "sigrok-i2c-nunchuk.sr"]) {
       [left.answer.delivery_observations, right.answer.delivery_observations],
     );
     right.answer.facts!.bytes![0] = 73;
-    assert.equal(compare(left, right).report.facts_match, false);
+    assert.equal((await compare(left, right)).report.facts_match, false);
     right.answer.facts!.bytes![0] = 72;
     right.summary.signal_selection = "baseline";
-    assert.equal(compare(left, right).report.facts_match, false);
+    assert.equal((await compare(left, right)).report.facts_match, false);
   });
 }
 
@@ -192,7 +189,7 @@ for (const artifact of [
   "wireshark-http.cap",
   "wireshark-http_redirects.pcapng",
 ]) {
-  test(`${artifact}: repeated modes ignore only receipt IDs`, () => {
+  test(`${artifact}: repeated modes ignore only receipt IDs`, async () => {
     for (const delivery of ["complete", "summary"] as const) {
       const left = fixture(delivery, artifact);
       const right = structuredClone(left);
@@ -201,7 +198,7 @@ for (const artifact of [
         if (typeof value.parent_evidence_id === "string")
           value.parent_evidence_id += "_second";
       }
-      const { status, report } = compare(left, right);
+      const { status, report } = await compare(left, right);
       assert.equal(status, 0);
       assert.equal(report.facts_match, true);
       assert.deepEqual(
@@ -211,7 +208,7 @@ for (const artifact of [
     }
   });
 
-  test(`${artifact}: repeated modes reject stable observation changes`, () => {
+  test(`${artifact}: repeated modes reject stable observation changes`, async () => {
     for (const delivery of ["complete", "summary"] as const) {
       const left = fixture(delivery, artifact);
       const mutations: ((values: Observation[]) => void)[] = [
@@ -239,7 +236,7 @@ for (const artifact of [
       for (const mutate of mutations) {
         const right = structuredClone(left);
         mutate(right.answer.delivery_observations);
-        const { status, report } = compare(left, right);
+        const { status, report } = await compare(left, right);
         assert.equal(status, 1);
         assert.equal(report.settings_match, true);
         assert.equal(report.facts_match, false);
@@ -248,10 +245,10 @@ for (const artifact of [
     }
   });
 
-  test(`${artifact}: different modes preserve their different receipt scopes`, () => {
+  test(`${artifact}: different modes preserve their different receipt scopes`, async () => {
     const left = fixture("complete", artifact);
     const right = fixture("summary", artifact);
-    const { status, report } = compare(left, right);
+    const { status, report } = await compare(left, right);
     assert.equal(status, 0);
     assert.equal(report.facts_match, true);
     assert.deepEqual(
@@ -259,6 +256,6 @@ for (const artifact of [
       [left.answer.delivery_observations, right.answer.delivery_observations],
     );
     right.answer.capture.coverage = "partial";
-    assert.equal(compare(left, right).report.facts_match, false);
+    assert.equal((await compare(left, right)).report.facts_match, false);
   });
 }

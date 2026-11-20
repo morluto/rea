@@ -1,5 +1,6 @@
 import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { analysisSettingsResultSchema } from "../../src/contracts/analysisSettingsContracts.js";
+import { DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES } from "../../src/domain/analysisResourceLimits.js";
 import { expect, it } from "vitest";
 import type { AnySchema } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -352,7 +353,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
           setting: "native.matching_representation_bytes",
           value: 4096,
           launch_value: 4096,
-          default_value: 100663296,
+          default_value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
           source: "setting",
           environment: "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
         },
@@ -411,7 +412,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
         {
           setting: "native.matching_representation_bytes",
           action: "set",
-          value: 100663296,
+          value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
         },
       ],
     });
@@ -419,7 +420,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
       settings: [
         {
           source: "runtime",
-          value: 100663296,
+          value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
           pending_restart: false,
           configuration_error: inspected.settings[0]!.configuration_error,
         },

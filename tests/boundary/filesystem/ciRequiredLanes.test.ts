@@ -99,6 +99,135 @@ it("prepares matching Windows controls before EVM portability setup", async () =
   });
 });
 
+it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fallback", async () => {
+  const archive = "./.github/actions/ubuntu-archive";
+  const input = "noble-azure-fallback";
+  const steps = z.array(
+    z.object({
+      uses: z.string().optional(),
+      with: z.record(z.string(), z.unknown()).optional(),
+    }),
+  );
+  const action = async (name: string) =>
+    parse(
+      await readFile(
+        new URL(`../../../.github/actions/${name}/action.yml`, import.meta.url),
+        "utf8",
+      ),
+    );
+  const archiveSteps = z
+    .object({
+      runs: z.object({ steps: z.array(z.object({ run: z.string() })) }),
+    })
+    .parse(await action("ubuntu-archive")).runs.steps;
+  expect(archiveSteps.map(({ run }) => run).join("\n")).toContain(
+    "apt-get -o Acquire::Retries=2 -o Acquire::Languages=none --error-on=any update",
+  );
+  const layout = (await workflow("real-binary-layout.yml")).jobs[
+    "real-binary-layout"
+  ];
+  expect(layout?.["runs-on"]).toBe("ubuntu-24.04");
+  expect(layout?.["timeout-minutes"]).toBe(25);
+  const toolchain = steps
+    .parse(layout?.steps)
+    .find((step) => step.uses === "./.github/actions/host-apt-packages");
+  expect(toolchain?.with).toMatchObject({
+    "download-timeout-seconds": "900",
+    "install-recommends": "false",
+  });
+  expect(
+    steps.parse(layout?.steps).filter((step) => step.uses === archive),
+  ).toEqual([{ uses: archive, with: { [input]: "true" } }]);
+  expect(
+    z
+      .object({ runs: z.object({ steps }) })
+      .parse(await action("windows-cross-compiler"))
+      .runs.steps.filter((step) => step.uses === archive),
+  ).toEqual([{ uses: archive }]);
+  expect(
+    steps
+      .parse((await workflow("real-signal-recording.yml")).jobs.sigrok?.steps)
+      .filter((step) => step.uses === archive),
+  ).toEqual([{ uses: archive }]);
+  expect(
+    z
+      .object({
+        inputs: z.record(z.string(), z.object({ default: z.string() })),
+      })
+      .parse(await action("ubuntu-archive")).inputs[input]?.default,
+  ).toBe("false");
+});
+
+const recordedCrashRefresh = "refresh --kill-after=5s 150s";
+const recordedCrashDownload = "download --kill-after=5s 180s";
+
+it.skipIf(process.platform === "win32").each([
+  ["ok", 0, [recordedCrashRefresh, recordedCrashDownload, "install untimed"]],
+  ["refresh", 100, [recordedCrashRefresh]],
+  ["download", 124, [recordedCrashRefresh, recordedCrashDownload]],
+] as const)(
+  "recorded-crash APT runs the expected stages and deadlines for the %s outcome",
+  async (mode, code, expected) => {
+    const steps = z
+      .array(z.object({ run: z.string().optional() }))
+      .parse(
+        (await workflow("real-recorded-crash.yml")).jobs["real-recorded-crash"]
+          ?.steps,
+      );
+    const provision = steps.find((step) =>
+      step.run?.includes("python3-venv gcc libc6-dev strace gdb"),
+    )?.run;
+    if (!provision) throw new Error("Missing recorded-crash APT step");
+    const mock = `
+      mode=$1
+      timeout() {
+        local args="$1 $2"
+        shift 2
+        apt_timeout="$args" "$@"
+      }
+      record_stage() { printf '%s %s\\n' "$1" "\${apt_timeout:-untimed}"; }
+      apt-get() {
+        case " $* " in
+          *" update "*)
+            record_stage refresh
+            [[ " $* " == *" Acquire::Languages=none "* ]] || return 98
+            [[ " $* " != *" -qq "* ]] || return 99
+            if [[ $mode == refresh && " $* " == *" --error-on=any "* ]]; then
+              return 100
+            fi
+            ;;
+          *" --download-only "*)
+            record_stage download
+            if [[ $mode == download ]]; then return 124; fi
+            ;;
+          *" --no-download "*) record_stage install ;;
+          *) record_stage unexpected-install ;;
+        esac
+      }
+    `;
+    const outcome = await executeWorkflowFixture("bash", [
+      "-e",
+      "-c",
+      mock + provision,
+      "fixture",
+      mode,
+    ])
+      .then(({ stdout }) => ({ code: 0, stdout }))
+      .catch((cause: unknown) =>
+        z.object({ code: z.number(), stdout: z.string() }).parse(cause),
+      );
+    expect(outcome.code).toBe(code);
+    const lines = outcome.stdout.trim().split("\n");
+    expect(lines.filter((line) => !line.startsWith("::error::"))).toEqual(
+      expected,
+    );
+    if (code !== 0)
+      expect(lines.at(-1)).toContain(
+        mode === "refresh" ? "index refresh failed" : "package download failed",
+      );
+  },
+);
+
 it("keeps every SQLite runtime selector inside the published package engine range", async () => {
   const { engines } = z
     .object({ engines: z.object({ node: z.string() }) })
@@ -1117,3 +1246,63 @@ it("requires every client schema engine in the build job of every code change", 
   );
   expect(check?.run).toContain("$SCHEMA_CHECK_OPTIONS");
 });
+
+it.skipIf(process.platform === "win32").each([
+  ["true", "180", "0"],
+  ["false", "120", "0"],
+  ["false", "120", "124"],
+] as const)(
+  "downloads hosted packages within the selected deadline and keeps cached install outside it (%s, %s, %s)",
+  async (recommends, seconds, status) => {
+    const { run } = z
+      .object({
+        runs: z.object({ steps: z.tuple([z.object({ run: z.string() })]) }),
+      })
+      .parse(
+        parse(
+          await readFile(
+            new URL(
+              "../../../.github/actions/host-apt-packages/action.yml",
+              import.meta.url,
+            ),
+            "utf8",
+          ),
+        ),
+      ).runs.steps[0];
+    const result = await executeWorkflowFixture("bash", [
+      "-e",
+      "-c",
+      `
+        REA_APT_INSTALL_RECOMMENDS=$1
+        REA_APT_DOWNLOAD_TIMEOUT=$2
+        REA_APT_PACKAGES="package-one package-two"
+        fixture_status=$3
+        sudo() {
+          printf '%s\n' "$*"
+          if [[ $1 == timeout ]]; then return "$fixture_status"; fi
+        }
+      ` +
+        "\n" +
+        run,
+      "fixture",
+      recommends,
+      seconds,
+      status,
+    ]).then(
+      ({ stdout }) => ({ code: 0, stdout }),
+      (cause: unknown) =>
+        z.object({ code: z.number(), stdout: z.string() }).parse(cause),
+    );
+    const install = `install --yes${recommends === "false" ? " --no-install-recommends" : ""} -- package-one package-two`;
+    const commands = result.stdout
+      .trim()
+      .split("\n")
+      .filter((line) => !line.startsWith("::error::"));
+    expect(result.code).toBe(Number(status));
+    expect(commands).toEqual([
+      `timeout --kill-after=5s ${seconds}s apt-get -o Acquire::Retries=2 --download-only ${install}`,
+      ...(status === "0" ? [`apt-get --no-download ${install}`] : []),
+    ]);
+    if (status !== "0") expect(result.stdout).toContain(`(exit ${status})`);
+  },
+);

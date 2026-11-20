@@ -3292,3 +3292,50 @@ describe("ReleaseExposureService parsed field trailing characters", () => {
     },
   );
 });
+
+it("attempts later release-exposure owners after a synchronous close rejection", async () => {
+  const { service, desktop, goBinaries, rustBinaries } = owners(scan());
+  const failed = new Error("desktop close failed");
+  desktop.close.mockImplementationOnce(() => {
+    throw failed;
+  });
+  await expect(service.close()).rejects.toBe(failed);
+  expect(goBinaries.close).toHaveBeenCalledOnce();
+  expect(rustBinaries.close).toHaveBeenCalledOnce();
+});
+
+it("follows the remaining release-exposure owner when a sibling has already released", async () => {
+  const { service, desktop, goBinaries } = owners(scan());
+  const first = new ProviderCleanupError("desktop", ["desktop-root"], {});
+  const second = new ProviderCleanupError("go", ["go-root"], {});
+  desktop.close.mockRejectedValue(first);
+  goBinaries.close.mockImplementationOnce(async () => {
+    releaseOwnedCleanup(first);
+    throw second;
+  });
+  const failure: unknown = await service
+    .close()
+    .catch((cause: unknown) => cause);
+  if (!(failure instanceof ProviderCleanupError))
+    throw new Error("Expected a combined close error");
+  expect(failure.cleanupResources).toEqual(["go-root"]);
+  expect(failure.cleanupIncomplete).toBe(true);
+  releaseOwnedCleanup(second);
+  expect(failure.cleanupIncomplete).toBe(false);
+});
+
+it("drops a released typed resource even while another owner remains unconfirmed", async () => {
+  const { service, desktop, goBinaries } = owners(scan());
+  const typed = new ProviderCleanupError("desktop", ["desktop-root"], {});
+  const opaque = new Error("cannot confirm Go owner closed");
+  desktop.close.mockRejectedValue(typed);
+  goBinaries.close.mockRejectedValue(opaque);
+  const failure = await service.close().catch((cause: unknown) => cause);
+  if (!(failure instanceof ProviderCleanupError))
+    throw new Error("expected typed aggregate");
+  expect(failure.cleanupResources).toEqual(["desktop-root"]);
+  expect(failure.cleanupIncomplete).toBe(true);
+  releaseOwnedCleanup(typed);
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.cleanupResources).toEqual([]);
+});

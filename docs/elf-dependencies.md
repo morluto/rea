@@ -33,9 +33,11 @@ Linux kernel modules. Core dumps are not this inventory; use
 ## Observations
 
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
-`needed[]` lists every `DT_NEEDED` string in dynamic-table order, including
-duplicate names. `dynamic.soname` is the `DT_SONAME` string when that tag is
-present. `dynamic.rpath` and `dynamic.runpath` keep the raw `DT_RPATH` /
+`needed[]` lists every `DT_NEEDED` entry in dynamic-table order, including
+duplicate names. An unreadable name stays null and retains its string-table
+index. If that index has no backed string location, its diagnostic points to
+the dynamic-table entry. `dynamic.soname` is the `DT_SONAME` string when that
+tag is present. `dynamic.rpath` and `dynamic.runpath` keep the raw `DT_RPATH` /
 `DT_RUNPATH` string, the `:`-split entries without dropping empties, and any
 `$ORIGIN`, `$LIB`, or `$PLATFORM` tokens as written, including `${...}` forms.
 Those tokens are not expanded against the host filesystem.
@@ -57,6 +59,10 @@ out of the derived set. `version_definitions` summarizes the image's own
 each import keeps its version index, hidden bit, and a resolved
 `library@version` when a matching verneed record exists. Index 0 and 1 stay
 `unversioned`. A missing matching record is `unknown` and is an issue.
+For `DT_VERSYM`, the reader keeps the contiguous prefix of complete slots
+that share one unambiguous file translation. It stops at the first slot that
+cannot be admitted, even if later slots map independently. Later import
+versions remain unexamined and coverage is `partial`.
 
 A missing `PT_DYNAMIC` is an observed empty load-time dependency inventory. It
 is not proof another overlay or container carried dynamic linking metadata.
@@ -90,9 +96,11 @@ path, SHA-256, and byte count as a partial observation. Cyclic `vn_next` /
 unsupported ELF extended numbering return no complete inventory.
 
 Each dynamic string and `PT_INTERP` path is scanned for its terminator across at
-most 65536 bytes. Unreadable dynamic strings, `PT_INTERP` paths that are
-unterminated or end past that limit, and tables that cannot be located from
-section headers or `DT_*` tags are reported as partial coverage with `issues`.
+most 65536 bytes. A scan-limit issue means the admitted extent continues beyond
+the checked bytes. If the scan reaches the end of the extent without a
+terminator, the issue identifies an unterminated string. Unreadable strings and
+tables that cannot be located from section headers or `DT_*` tags yield partial
+coverage with `issues`.
 When the symbol count from `DT_HASH` or `DT_GNU_HASH` exceeds the located
 `.dynsym` table, only the symbols inside that table are read and coverage is
 partial. A GNU version chain whose links and declared count

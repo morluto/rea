@@ -1,7 +1,7 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import {
@@ -12,22 +12,18 @@ import { systemProcessOwnershipHost } from "./ProcessOwnershipObservation.js";
 import { spawnOwnedProviderProcess } from "./ProviderProcess.js";
 
 it("does not turn a physical OS read failure into inspection cancellation when reused as the abort reason", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspection-origin-"));
-  try {
-    const failure = await readFile(join(root, "missing")).catch(
-      (cause: unknown) => cause,
-    );
-    expect(failure).toMatchObject({ code: "ENOENT" });
-    const controller = new AbortController();
-    controller.abort(failure);
-    expect(isProcessOwnershipInspectionCancellation(failure)).toBe(false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  const root = await createTestTempDirectory("rea-inspection-origin-");
+  const failure = await readFile(join(root, "missing")).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({ code: "ENOENT" });
+  const controller = new AbortController();
+  controller.abort(failure);
+  expect(isProcessOwnershipInspectionCancellation(failure)).toBe(false);
 });
 
 it("wraps an opaque non-cancellation analysis error at already-aborted spawn admission without launching", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspection-admission-"));
+  const root = await createTestTempDirectory("rea-inspection-admission-");
   const marker = join(root, "launched");
   const prepare = vi
     .spyOn(systemProcessOwnershipHost, "prepare")
@@ -59,6 +55,5 @@ it("wraps an opaque non-cancellation analysis error at already-aborted spawn adm
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     prepare.mockRestore();
-    await rm(root, { recursive: true, force: true });
   }
 });
