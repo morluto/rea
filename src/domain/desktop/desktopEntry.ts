@@ -27,6 +27,7 @@ export interface DesktopEntry {
   readonly categories: readonly string[];
   readonly mime_types: readonly string[];
   readonly terminal: boolean;
+  readonly hidden: boolean;
 }
 
 const GROUP = new RegExp(`^${DESKTOP_GROUP}$`, "u");
@@ -38,7 +39,7 @@ const ENTRY = new RegExp(
 );
 const valueEscape = new RegExp(DESKTOP_VALUE_ESCAPE, "gu");
 // GLib strips its ASCII whitespace from the raw boolean. LF ends the record.
-const TERMINAL_TRUE = /^[ \t\f\r]*(?:true|1)[ \t\f\r]*$/u;
+const BOOLEAN_TRUE = /^[ \t\f\r]*(?:true|1)[ \t\f\r]*$/u;
 
 /** Undo the escapes the desktop entry format allows in string values. */
 const unescapeValue = (value: string): string =>
@@ -158,7 +159,8 @@ export const parseDesktopEntry = (
     startup_wm_class: field("StartupWMClass"),
     categories: listValue(rawField("Categories")),
     mime_types: listValue(rawField("MimeType")),
-    terminal: TERMINAL_TRUE.test(rawField("Terminal") ?? ""),
+    terminal: BOOLEAN_TRUE.test(rawField("Terminal") ?? ""),
+    hidden: BOOLEAN_TRUE.test(rawField("Hidden") ?? ""),
   });
 };
 

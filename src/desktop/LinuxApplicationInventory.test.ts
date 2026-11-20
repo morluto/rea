@@ -170,6 +170,98 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+describe.skipIf(process.platform === "win32")(
+  "desktop entry ID masking",
+  () => {
+    it.each([
+      { setting: "Hidden=true", exec: true, found: false },
+      { setting: "Hidden=true", exec: false, found: false },
+      { setting: "NoDisplay=true", exec: true, found: true },
+      { setting: "Hidden=false", exec: true, found: true },
+    ])(
+      "resolves the user override $setting (Exec present: $exec)",
+      async ({ setting, exec, found }) => {
+        const { home, environment } = await fixture();
+        const applications = join(environment.XDG_DATA_HOME, "applications");
+        await mkdir(applications, { recursive: true });
+        const file = join(applications, "org.example.notes.desktop");
+        await writeFile(
+          file,
+          [
+            "[Desktop Entry]",
+            "Type=Application",
+            "Name=User notes",
+            ...(exec ? ["Exec=notes-app"] : []),
+            setting,
+          ].join("\n"),
+        );
+        const inspect = (desktopEntry: string) =>
+          inspectLinuxApplication({
+            desktopEntry,
+            executable: undefined,
+            arguments: [],
+            environment,
+            home,
+            callerDirectory: home,
+          });
+        const result = await inspect("org.example.notes");
+        if (found) {
+          expect(result).toMatchObject({
+            ok: true,
+            value: { inventory: { desktop_entry: { name: "User notes" } } },
+          });
+        } else {
+          expect(result).toMatchObject({
+            ok: false,
+            error: { reason: "desktop_entry_not_found" },
+          });
+        }
+        const direct = await inspect(file);
+        if (exec) {
+          if (!direct.ok) throw new Error(direct.error.reason);
+          expect(direct.value.inventory.desktop_entry).toMatchObject({
+            id: null,
+            name: "User notes",
+          });
+          expect(direct.value.inventory.desktop_entry).not.toHaveProperty(
+            "hidden",
+          );
+        } else {
+          expect(direct).toMatchObject({
+            ok: false,
+            error: {
+              reason: "desktop_entry_invalid",
+              detail: "not an Application entry with an Exec key",
+            },
+          });
+        }
+      },
+    );
+
+    it("does not let a Hidden key without an Application type mask the system entry", async () => {
+      const { home, environment } = await fixture();
+      const applications = join(environment.XDG_DATA_HOME, "applications");
+      await mkdir(applications, { recursive: true });
+      await writeFile(
+        join(applications, "org.example.notes.desktop"),
+        "[Desktop Entry]\nHidden=true\n",
+      );
+      const result = await inspectLinuxApplication({
+        desktopEntry: "org.example.notes",
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        value: { inventory: { desktop_entry: { name: "Notes" } } },
+      });
+    });
+  },
+);
+
 describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
   it("resolves a desktop entry id into a launch command and state directories", async () => {
     const { home, bin, environment } = await fixture();
