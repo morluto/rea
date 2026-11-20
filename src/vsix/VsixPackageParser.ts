@@ -1159,11 +1159,13 @@ export const parseVsixPackage = async (
           "max_manifest_bytes",
         );
       } catch (cause: unknown) {
-        if (!(
-          cause instanceof ParseFailureError &&
-          cause.failure.kind === "limit" &&
-          cause.failure.limit?.name === "max_manifest_bytes"
-        ))
+        if (
+          !(
+            cause instanceof ParseFailureError &&
+            cause.failure.kind === "limit" &&
+            cause.failure.limit?.name === "max_manifest_bytes"
+          )
+        )
           throw cause;
         mainDirectoryMain = { kind: "unread" };
         limitations.push(
