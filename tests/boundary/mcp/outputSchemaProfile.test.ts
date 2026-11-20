@@ -273,7 +273,9 @@ it("rejects canonical-invalid output that the reduced advertisement accepts", as
       validateFormats: false,
     }).compile(advertised);
     expect(validateAdvertised(malformed)).toBe(true);
+    expect(validateAdvertised([])).toBe(false);
     expect(validateAdvertised({ payload: malformed.payload })).toBe(false);
+    expect(validateAdvertised({ value: malformed.value })).toBe(false);
     expect(validateAdvertised({ ...malformed, extra: true })).toBe(false);
 
     const success = await client.callTool({
