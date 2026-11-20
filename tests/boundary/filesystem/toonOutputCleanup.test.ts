@@ -8,6 +8,7 @@ import { expect, it, vi } from "vitest";
 
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
+import { WindowsPrivateRuntime } from "../../../src/windows/WindowsPrivateRuntime.js";
 import { closeCliResources } from "../../../src/cli/cliResources.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -72,21 +73,31 @@ const withStageFault = async (
       );
     return file;
   });
+  const removeStage = (path: string) => {
+    if (!path.startsWith(root)) return;
+    events.push("remove");
+    if (
+      fault === "close-then-remove" &&
+      !recovering &&
+      !denied &&
+      removalAttempts++ === 0
+    )
+      throw new Error("remove denied after close recovery");
+    if ((fault === "remove" || fault === "capacity-and-remove") && denied)
+      throw new Error("remove denied");
+  };
   vi.mocked(rm).mockImplementation(async (path, options) => {
-    if (String(path).startsWith(root)) {
-      events.push("remove");
-      if (
-        fault === "close-then-remove" &&
-        !recovering &&
-        !denied &&
-        removalAttempts++ === 0
-      )
-        throw new Error("remove denied after close recovery");
-      if ((fault === "remove" || fault === "capacity-and-remove") && denied)
-        throw new Error("remove denied");
-    }
+    removeStage(String(path));
     await native.rm(path, options);
   });
+  // Windows removes the private root through its native handle, not fs.rm.
+  const nativeRemove = WindowsPrivateRuntime.prototype.close;
+  vi.spyOn(WindowsPrivateRuntime.prototype, "close").mockImplementation(
+    async function (this: WindowsPrivateRuntime) {
+      removeStage(this.observation.path);
+      await nativeRemove.call(this);
+    },
+  );
   try {
     await run({
       root,

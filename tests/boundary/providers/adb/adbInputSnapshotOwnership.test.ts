@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, open, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { adbDouble } from "../../../support/adb/adbProcessDouble.js";
 
@@ -9,6 +9,7 @@ import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
+import { WindowsPrivateRuntime } from "../../../../src/windows/WindowsPrivateRuntime.js";
 import { AdbInputSnapshotFailure } from "../../../../src/adb/AdbInputSnapshot.js";
 import { AnalysisOutputError } from "../../../../src/domain/analysisErrorCore.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
@@ -44,6 +45,33 @@ afterEach(async () => {
   vi.mocked(rm).mockImplementation(actual.rm);
   vi.restoreAllMocks();
 });
+
+// The input snapshot is a PrivateRuntimeRoot. POSIX removes it with fs.rm and
+// Windows through its native handle. Run `remove` once, on the first removal
+// of `root()` through either path.
+const interceptRootRemoval = async (root: () => string, remove: () => void) => {
+  const actualFs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  let pending = true;
+  const intercept = (path: string) => {
+    if (!pending || path !== root()) return;
+    pending = false;
+    remove();
+  };
+  vi.mocked(rm).mockImplementation(async (path, options) => {
+    intercept(String(path));
+    return actualFs.rm(path, options);
+  });
+  const nativeRemove = WindowsPrivateRuntime.prototype.close;
+  vi.spyOn(WindowsPrivateRuntime.prototype, "close").mockImplementation(
+    async function (this: WindowsPrivateRuntime) {
+      intercept(this.observation.path);
+      await nativeRemove.call(this);
+    },
+  );
+};
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-adb-input-owner-");
@@ -119,15 +147,12 @@ const fixture = async () => {
 
 test("retains failed snapshot cleanup ownership and retries it on close", async () => {
   const f = await fixture();
-  const actualFs =
-    await vi.importActual<typeof import("node:fs/promises")>(
-      "node:fs/promises",
-    );
-  vi.mocked(rm).mockImplementationOnce(async (path, options) => {
-    if (basename(String(path)).startsWith("rea-adb-input-"))
+  await interceptRootRemoval(
+    () => dirname(f.snapshotPath()),
+    () => {
       throw new Error("snapshot cleanup denied");
-    return actualFs.rm(path, options);
-  });
+    },
+  );
 
   const result = await f.provider.execute(f.request);
   if (result.ok) throw new Error("expected snapshot cleanup failure");
@@ -184,7 +209,7 @@ test("closes retained snapshot handles before removing their runtime root", asyn
     const handle = await originalOpen(...args);
     const path = String(args[0]);
     const isSource = path === f.source;
-    const isSnapshot = path.startsWith(`${runtimePath}/`);
+    const isSnapshot = path.startsWith(`${runtimePath}${sep}`);
     if (!isSource && !isSnapshot) return handle;
     if (isSnapshot) snapshotHandleOpen = true;
     return new Proxy(handle, {
@@ -634,17 +659,13 @@ test.each([false, true])(
     const f = await fixture();
     const controller = new AbortController();
     const abortReason = new Error("caller stopped after snapshot cleanup");
-    const actualFs =
-      await vi.importActual<typeof import("node:fs/promises")>(
-        "node:fs/promises",
-      );
-    vi.mocked(rm).mockImplementationOnce(async (path, options) => {
-      if (basename(String(path)).startsWith("rea-adb-input-")) {
+    await interceptRootRemoval(
+      () => dirname(f.snapshotPath()),
+      () => {
         controller.abort(abortReason);
         if (failCleanup) throw new Error("snapshot cleanup denied");
-      }
-      return actualFs.rm(path, options);
-    });
+      },
+    );
 
     const result = await f.provider.execute(f.request, {
       signal: controller.signal,
