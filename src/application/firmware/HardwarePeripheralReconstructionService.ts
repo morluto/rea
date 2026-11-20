@@ -21,6 +21,7 @@ import {
 import { devicetreeSchema } from "../../domain/firmware/devicetree.js";
 import {
   CUSTOM_HARDWARE_SOURCES,
+  formatAmbiguousPeripheralCandidates,
   hardwareProfileFromDevicetree,
   lookupCustomPeripheral,
   parseCmsisSvd,
@@ -273,6 +274,7 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
       peripheralBlockOffset: z.string(),
       controllerName: z.string().nullable(),
       controllerBasis: z.enum(CONTROLLER_NAME_BASES),
+      ambiguousControllers: z.array(z.string()).optional(),
       registerName: z.string().nullable().optional(),
       registerMnemonic: z.string().nullable().optional(),
       registerBasis: z.enum(REGISTER_NAME_BASES),
@@ -442,7 +444,9 @@ const enrichBlock = (
       continue;
     }
     if (customHit !== null && customHit.kind === "ambiguous") {
-      const names = customHit.candidates.map((item) => item.name).join(", ");
+      const names = formatAmbiguousPeripheralCandidates(
+        customHit.candidates,
+      ).join(", ");
       ctx.limitations.push(
         `Address ${addr} matches overlapping custom profile windows (${names}); controller name left unresolved.`,
       );

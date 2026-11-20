@@ -1507,4 +1507,73 @@ describe("overlapping custom profile MMIO windows", () => {
       ),
     ).toBe(true);
   });
+
+  it("keeps ambiguous accesses at a shared base address separate from narrower matched controllers", async () => {
+    const svdNestedAndTied = `<?xml version="1.0" encoding="utf-8"?>
+      <device><name>MIXED_OVERLAP</name><peripherals>
+        <peripheral>
+          <name>UART</name>
+          <baseAddress>0x40000000</baseAddress>
+          <addressBlock><offset>0x0</offset><size>0x100</size><usage>registers</usage></addressBlock>
+        </peripheral>
+        <peripheral>
+          <name>BUS_A</name>
+          <baseAddress>0x40000000</baseAddress>
+          <addressBlock><offset>0x0</offset><size>0x400</size><usage>registers</usage></addressBlock>
+        </peripheral>
+        <peripheral>
+          <name>BUS_B</name>
+          <baseAddress>0x40000000</baseAddress>
+          <addressBlock><offset>0x0</offset><size>0x400</size><usage>registers</usage></addressBlock>
+        </peripheral>
+      </peripherals></device>`;
+
+    const execution: AnalysisExecution = {
+      result: {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
+        reference_kinds_available: true,
+        references: [
+          { ...ghidraReferenceEdge(), target_address: "0x40000004" },
+          { ...ghidraReferenceEdge(), target_address: "0x40000200" },
+        ],
+        unresolved_calls: [],
+      },
+      rawResult: null,
+      provider: { id: "ghidra", name: "Ghidra", version: "12.2" },
+      locations: [],
+      subject: {
+        sha256: "e".repeat(64),
+        path: "/tmp/mixed.bin",
+        format: "raw-binary",
+        architecture: "cortex-m",
+      },
+      limitations: [],
+    };
+
+    const res = await reconstructProcedureHardwareInteractions(
+      { execute: () => Promise.resolve(ok(execution)) },
+      {
+        procedure: "mixed_init",
+        architecture: "cortex-m",
+        svd_xml: svdNestedAndTied,
+      },
+    );
+    if (!res.ok) throw res.error;
+
+    expect(res.value.peripheralBlocks).toHaveLength(2);
+    const uartBlock = res.value.peripheralBlocks.find(
+      (b) => b.socPeripheralName === "UART",
+    );
+    const unresolvedBlock = res.value.peripheralBlocks.find(
+      (b) => b.socPeripheralName === null,
+    );
+    expect(uartBlock?.uniqueAddresses).toEqual(["0x40000004"]);
+    expect(unresolvedBlock).toMatchObject({
+      blockBase: "0x40000000",
+      socPeripheralName: null,
+      socPeripheralNameBasis: "observed_address",
+      uniqueAddresses: ["0x40000200"],
+    });
+  });
 });

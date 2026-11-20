@@ -430,4 +430,40 @@ describe("CMSIS-SVD bounds, derived spans, and overlapping windows", () => {
       expect(hit.candidates.map((c) => c.name)).toEqual(["PINMUX", "UART_ALT"]);
     }
   });
+
+  it("preserves declared addressBlock bounds and narrow register widths without spilling into neighbors", () => {
+    const parsed = parseCmsisSvd(`
+      <device><name>NeighborSoc</name><peripherals>
+        <peripheral>
+          <name>P_NARROW</name>
+          <baseAddress>0x40000000</baseAddress>
+          <addressBlock><offset>0x0</offset><size>0x100</size><usage>registers</usage></addressBlock>
+          <registers>
+            <register>
+              <name>TAIL16</name>
+              <size>16</size>
+              <addressOffset>0xfe</addressOffset>
+            </register>
+          </registers>
+        </peripheral>
+        <peripheral>
+          <name>P_NEIGHBOR</name>
+          <baseAddress>0x40000100</baseAddress>
+          <addressBlock><offset>0x0</offset><size>0x200</size><usage>registers</usage></addressBlock>
+          <registers>
+            <register><name>CTRL</name><addressOffset>0x00</addressOffset></register>
+          </registers>
+        </peripheral>
+      </peripherals></device>
+    `);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const neighborHit = lookupCustomPeripheral(0x40000100n, parsed.value);
+    expect(neighborHit?.kind).toBe("matched");
+    if (neighborHit?.kind === "matched") {
+      expect(neighborHit.peripheral.name).toBe("P_NEIGHBOR");
+      expect(neighborHit.register?.mnemonic).toBe("P_NEIGHBOR_CTRL");
+    }
+  });
 });

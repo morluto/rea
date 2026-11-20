@@ -118,6 +118,22 @@ export type CustomPeripheralLookupResult =
       readonly candidates: readonly CustomPeripheralWindow[];
     };
 
+export const formatAmbiguousPeripheralCandidates = (
+  candidates: readonly CustomPeripheralWindow[],
+): readonly string[] => {
+  const counts = new Map<string, number>();
+  for (const item of candidates) {
+    counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
+  }
+  return candidates
+    .map((item) =>
+      (counts.get(item.name) ?? 0) > 1 && item.bus !== null
+        ? `${item.name} (${item.bus})`
+        : item.name,
+    )
+    .sort();
+};
+
 /**
  * Look up the most specific peripheral window and optional register offset in a
  * custom profile. When a parent bus/syscon window contains a smaller child
@@ -143,9 +159,12 @@ export const lookupCustomPeripheral = (
   const selected = narrowest[0];
   if (selected === undefined) return null;
   if (narrowest.length > 1) {
-    const uniqueBases = new Set(narrowest.map((item) => item.baseAddressValue));
-    const baseAddressValue =
-      uniqueBases.size === 1 ? selected.baseAddressValue : address;
+    let baseAddressValue = selected.baseAddressValue;
+    for (const item of narrowest) {
+      if (item.baseAddressValue > baseAddressValue) {
+        baseAddressValue = item.baseAddressValue;
+      }
+    }
     return {
       kind: "ambiguous",
       baseAddress: `0x${baseAddressValue.toString(16)}`,
@@ -625,22 +644,38 @@ const formatDimName = (template: string, indexToken: string): string =>
     ? template.replaceAll("%s", indexToken)
     : `${template}${indexToken}`;
 
+const parseSvdBitWidthToBytes = (raw: string | null): number | null => {
+  const bits = parseSvdInt(raw);
+  if (bits === null || bits <= 0n || bits > 1024n) return null;
+  return Math.max(1, Math.ceil(Number(bits) / 8));
+};
+
+interface RawSvdRegister extends CustomPeripheralRegister {
+  readonly explicitByteWidth: number | null;
+}
+
 const parseSvdRegisterTree = (
   containerXml: string,
   baseOffset: bigint,
   ctx: {
     readonly prefix: string;
+    readonly inheritedByteWidth: number | null;
     readonly limitations: string[];
     readonly budget: SvdExpansionBudget;
   },
-): Result<CustomPeripheralRegister[], string> => {
-  const results: CustomPeripheralRegister[] = [];
+): Result<RawSvdRegister[], string> => {
+  const results: RawSvdRegister[] = [];
   for (const item of scanDirectSvdItems(containerXml)) {
     const header =
-      item.tag === "cluster" ? stripNestedSvdChildren(item.body) : item.body;
+      item.tag === "cluster"
+        ? stripNestedSvdChildren(item.body)
+        : item.body.replace(/<fields>[\s\S]*?<\/fields>/giu, "");
     const rawName = xmlTagText(header, "name");
     const offset = parseSvdInt(xmlTagText(header, "addressOffset"));
     if (rawName === null || offset === null) continue;
+    const itemByteWidth =
+      parseSvdBitWidthToBytes(xmlTagText(header, "size")) ??
+      ctx.inheritedByteWidth;
 
     const dimRaw = xmlTagText(header, "dim");
     const dimVal = dimRaw === null ? null : parseSvdInt(dimRaw);
@@ -690,6 +725,7 @@ const parseSvdRegisterTree = (
         const cleanPrefix = instanceName.replace(/[^\w]/gu, "_");
         const nested = parseSvdRegisterTree(item.body, instanceOffset, {
           prefix: `${ctx.prefix}${cleanPrefix}_`,
+          inheritedByteWidth: itemByteWidth,
           limitations: ctx.limitations,
           budget: ctx.budget,
         });
@@ -705,6 +741,7 @@ const parseSvdRegisterTree = (
           offset: instanceOffset,
           mnemonic: `${ctx.prefix}${instanceName}`,
           name: desc,
+          explicitByteWidth: itemByteWidth,
         });
       }
     }
@@ -717,13 +754,16 @@ interface RawSvdPeripheral {
   readonly derivedFrom: string | null;
   readonly base: bigint;
   readonly declaredSize: number | null;
+  readonly declaredByteWidth: number | null;
   readonly group: string | null;
-  readonly registers: readonly CustomPeripheralRegister[];
+  readonly registers: readonly RawSvdRegister[];
 }
 
 interface ResolvedSvdEntry {
   readonly window: CustomPeripheralWindow;
   readonly declaredSize: number | null;
+  readonly defaultRegBytes: number;
+  readonly rawRegisters: readonly RawSvdRegister[];
 }
 
 const resolveSvdPeripheral = (
@@ -733,6 +773,7 @@ const resolveSvdPeripheral = (
     readonly memo: Map<string, ResolvedSvdEntry>;
     readonly visiting: Set<string>;
     readonly budget: SvdExpansionBudget;
+    readonly deviceDefaultRegBytes: number;
   },
 ): Result<ResolvedSvdEntry, string> => {
   const cached = ctx.memo.get(name);
@@ -759,10 +800,14 @@ const resolveSvdPeripheral = (
   ctx.visiting.delete(name);
 
   const parentWindow = parentEntry?.window ?? null;
+  const defaultRegBytes =
+    item.declaredByteWidth ??
+    parentEntry?.defaultRegBytes ??
+    ctx.deviceDefaultRegBytes;
   const sourceRegs =
     item.registers.length > 0
       ? item.registers
-      : (parentWindow?.registers ?? []);
+      : (parentEntry?.rawRegisters ?? []);
   if (item.registers.length === 0 && sourceRegs.length > 0) {
     ctx.budget.remainingRegisters -= sourceRegs.length;
     if (ctx.budget.remainingRegisters < 0) {
@@ -772,7 +817,7 @@ const resolveSvdPeripheral = (
     }
   }
 
-  const registers = sourceRegs.map((reg) => ({
+  const rawRegisters: RawSvdRegister[] = sourceRegs.map((reg) => ({
     offset: reg.offset,
     mnemonic: reg.mnemonic.startsWith(`${item.name}_`)
       ? reg.mnemonic
@@ -786,12 +831,18 @@ const resolveSvdPeripheral = (
           parentWindow ? new RegExp(`^${parentWindow.name} `, "u") : /^$/u,
           "",
         )}`,
+    explicitByteWidth: reg.explicitByteWidth,
+  }));
+  const registers: CustomPeripheralRegister[] = rawRegisters.map((reg) => ({
+    offset: reg.offset,
+    mnemonic: reg.mnemonic,
+    name: reg.name,
   }));
 
-  const maxRegEnd = registers.reduce(
-    (max, reg) => (reg.offset + 4n > max ? reg.offset + 4n : max),
-    0n,
-  );
+  const maxRegEnd = rawRegisters.reduce((max, reg) => {
+    const end = reg.offset + BigInt(reg.explicitByteWidth ?? defaultRegBytes);
+    return end > max ? end : max;
+  }, 0n);
   if (maxRegEnd > BigInt(Number.MAX_SAFE_INTEGER)) {
     return err(
       `CMSIS-SVD peripheral '${item.name}' register span exceeds safe integer bounds`,
@@ -799,10 +850,7 @@ const resolveSvdPeripheral = (
   }
   const inferredSize = maxRegEnd > 0n ? Number(maxRegEnd) : 0x400;
   const declaredSize = item.declaredSize ?? parentEntry?.declaredSize ?? null;
-  const sizeBytes =
-    declaredSize !== null
-      ? Math.max(declaredSize, maxRegEnd > 0n ? Number(maxRegEnd) : 0)
-      : inferredSize;
+  const sizeBytes = declaredSize ?? inferredSize;
   const window: CustomPeripheralWindow = {
     name: item.name,
     baseAddress: `0x${item.base.toString(16)}`,
@@ -813,7 +861,12 @@ const resolveSvdPeripheral = (
     status: "okay",
     registers,
   };
-  const entry: ResolvedSvdEntry = { window, declaredSize };
+  const entry: ResolvedSvdEntry = {
+    window,
+    declaredSize,
+    defaultRegBytes,
+    rawRegisters,
+  };
   ctx.memo.set(name, entry);
   return ok(entry);
 };
@@ -838,7 +891,12 @@ export const parseCmsisSvd = (
     return err("CMSIS-SVD input is missing a <device> root element");
   }
   const deviceBody = deviceMatch[1];
-  const deviceName = xmlTagText(deviceBody, "name") ?? "svd-device";
+  const deviceHeader = deviceBody
+    .replace(/<peripherals>[\s\S]*?<\/peripherals>/giu, "")
+    .replace(/<cpu>[\s\S]*?<\/cpu>/giu, "");
+  const deviceName = xmlTagText(deviceHeader, "name") ?? "svd-device";
+  const deviceDefaultRegBytes =
+    parseSvdBitWidthToBytes(xmlTagText(deviceHeader, "size")) ?? 4;
   const peripheralsBody = /<peripherals>([\s\S]*?)<\/peripherals>/iu.exec(
     deviceBody,
   )?.[1];
@@ -858,9 +916,16 @@ export const parseCmsisSvd = (
     const attrs = match[1] ?? "";
     const body = match[2] ?? "";
     const headerBody = body.replace(/<registers>[\s\S]*?<\/registers>/giu, "");
-    const name = xmlTagText(headerBody, "name");
-    const base = parseSvdInt(xmlTagText(headerBody, "baseAddress"));
+    const periphPropsBody = headerBody.replace(
+      /<addressBlock>[\s\S]*?<\/addressBlock>/giu,
+      "",
+    );
+    const name = xmlTagText(periphPropsBody, "name");
+    const base = parseSvdInt(xmlTagText(periphPropsBody, "baseAddress"));
     if (name === null || base === null) continue;
+    const declaredByteWidth = parseSvdBitWidthToBytes(
+      xmlTagText(periphPropsBody, "size"),
+    );
     const derivedFrom =
       /derivedFrom\s*=\s*["']([^"']+)["']/iu.exec(attrs)?.[1] ?? null;
     const regsSection = /<registers>([\s\S]*?)<\/registers>/iu.exec(body)?.[1];
@@ -878,10 +943,11 @@ export const parseCmsisSvd = (
         }
       }
     }
-    let registers: CustomPeripheralRegister[] = [];
+    let registers: RawSvdRegister[] = [];
     if (regsSection) {
       const parsedRegs = parseSvdRegisterTree(regsSection, 0n, {
         prefix: "",
+        inheritedByteWidth: null,
         limitations,
         budget,
       });
@@ -893,7 +959,8 @@ export const parseCmsisSvd = (
       derivedFrom,
       base,
       declaredSize: totalSpan,
-      group: xmlTagText(headerBody, "groupName"),
+      declaredByteWidth,
+      group: xmlTagText(periphPropsBody, "groupName"),
       registers,
     });
   }
@@ -915,6 +982,7 @@ export const parseCmsisSvd = (
       memo,
       visiting: new Set(),
       budget,
+      deviceDefaultRegBytes,
     });
     if (!resolved.ok) return resolved;
     peripherals.push(resolved.value.window);

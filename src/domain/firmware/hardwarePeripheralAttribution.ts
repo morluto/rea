@@ -4,6 +4,7 @@ import {
   type HardwareMemoryRegionKind,
 } from "./hardwareMemoryMap.js";
 import {
+  formatAmbiguousPeripheralCandidates,
   lookupCustomPeripheral,
   type CustomHardwareProfile,
 } from "./hardwareCustomProfile.js";
@@ -61,6 +62,7 @@ export interface HardwareAccessAttribution {
   readonly peripheralBlockOffset: string;
   readonly controllerName: string | null;
   readonly controllerBasis: ControllerNameBasis;
+  readonly ambiguousControllers?: readonly string[];
   readonly registerName?: string | null;
   readonly registerMnemonic?: string | null;
   readonly registerBasis: RegisterNameBasis;
@@ -140,6 +142,7 @@ export const attributeHardwareAccess = (
   let blockOffsetValue: bigint;
   let controllerName: string | null = null;
   let cBasis: ControllerNameBasis = "observed_address";
+  let ambiguousControllers: readonly string[] | null = null;
 
   if (customMatch !== null && customMatch.kind === "matched") {
     regionKind = "peripheral_mmio";
@@ -161,6 +164,9 @@ export const attributeHardwareAccess = (
     blockOffsetValue = addressValue - blockBaseValue;
     controllerName = null;
     cBasis = "observed_address";
+    ambiguousControllers = formatAmbiguousPeripheralCandidates(
+      customMatch.candidates,
+    );
   } else if (socPeripheral != null) {
     regionKind = "peripheral_mmio";
     regionName = `${socPeripheral.name} (${socPeripheral.bus})`;
@@ -230,6 +236,7 @@ export const attributeHardwareAccess = (
     peripheralBlockOffset: `0x${blockOffsetValue.toString(16)}`,
     controllerName,
     controllerBasis: cBasis,
+    ...(ambiguousControllers === null ? {} : { ambiguousControllers }),
     registerName,
     registerMnemonic,
     registerBasis: rBasis,
@@ -253,6 +260,7 @@ export const summarizeHardwarePeripheralInteractions = (
   let nonMmioAccessCount = 0;
 
   interface BlockAccumulator {
+    readonly groupKey: string;
     readonly blockBase: string;
     readonly regionName: string;
     readonly regionKind: HardwareMemoryRegionKind;
@@ -273,9 +281,17 @@ export const summarizeHardwarePeripheralInteractions = (
     }
 
     mmioAccessCount += 1;
-    let block = blocks.get(item.peripheralBlockBase);
+    const identityKey =
+      item.controllerName !== null
+        ? `named:${item.controllerBasis}:${item.controllerName}`
+        : item.ambiguousControllers && item.ambiguousControllers.length > 0
+          ? `ambiguous:${item.ambiguousControllers.join("|")}`
+          : "observed";
+    const groupKey = `${item.peripheralBlockBase}::${identityKey}`;
+    let block = blocks.get(groupKey);
     if (block === undefined) {
       block = {
+        groupKey,
         blockBase: item.peripheralBlockBase,
         regionName: item.regionName,
         regionKind: item.regionKind,
@@ -286,7 +302,7 @@ export const summarizeHardwarePeripheralInteractions = (
         observedOffsets: new Set<string>(),
         knownRegisters: new Set<string>(),
       };
-      blocks.set(item.peripheralBlockBase, block);
+      blocks.set(groupKey, block);
     }
 
     block.totalAccesses += 1;
@@ -306,7 +322,11 @@ export const summarizeHardwarePeripheralInteractions = (
   const peripheralBlocks: HardwarePeripheralBlockSummary[] = Array.from(
     blocks.values(),
   )
-    .sort((a, b) => (BigInt(a.blockBase) < BigInt(b.blockBase) ? -1 : 1))
+    .sort((a, b) => {
+      const baseDiff = BigInt(a.blockBase) - BigInt(b.blockBase);
+      if (baseDiff !== 0n) return baseDiff < 0n ? -1 : 1;
+      return a.groupKey < b.groupKey ? -1 : a.groupKey > b.groupKey ? 1 : 0;
+    })
     .map((block) => ({
       blockBase: block.blockBase,
       regionName: block.regionName,
