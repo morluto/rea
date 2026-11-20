@@ -3,16 +3,21 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
   artifactFilePrimaryFacts,
+  bindArtifactFileCleanup,
+  completedStableArtifactObservation,
   projectArtifactCloseFailure,
-  projectOwnedArtifactIdentityFailure,
   projectOwnedArtifactInputFailure,
-  projectSelectedArtifactFileFailure,
-  projectStableArtifactFailure,
   readStableArtifact,
   translateArtifactFailure,
-  type ArtifactFilePrimaryFacts,
   type StableArtifactSnapshot,
 } from "../resources/index.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
+import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   isParseLimit,
   parseFailureAnalysisError,
@@ -41,119 +46,159 @@ const budgetRecovery = (
     ? `${parameter} is at this operation's maximum of ${String(VSIX_PACKAGE_LIMIT_MAXIMA[parameter])}; select a complete artifact within that bound.`
     : `Raise ${parameter} above ${String(selected)}, up to ${String(VSIX_PACKAGE_LIMIT_MAXIMA[parameter])}, or select a smaller artifact. The budget applies on the next call; repeating the unchanged request does not raise it.`;
 
-const vsixFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
+const vsixFileSizeFailure = (
+  cause: ArtifactReaderFailure,
+  details: AnalysisErrorOptions,
+  input: InspectVsixPackageInput,
+) =>
+  parseLimitConstraint(
+    OPERATION,
+    "file-size",
+    decodeLimit(
+      VSIX_PACKAGE_FORMAT,
+      cause.message,
+      { name: "max_file_bytes", maximum: input.max_file_bytes },
+      { cause },
+    ),
+    {
+      ...details,
+      retryable: false,
+      remediationAction: budgetRecovery("max_file_bytes", input.max_file_bytes),
+    },
+  );
+
+/** The VSIX parse ceilings, with recovery for each caller-selected budget. */
+const vsixParseLimit = (
+  cause: Parameters<typeof parseLimitConstraint>[2],
   input: InspectVsixPackageInput,
 ) => {
-  const { cause, origin } = facts;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
+  if (cause.failure.limit.name === "xml_nodes")
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      path: input.path,
+      ...fixedAllowanceOptions(
+        `The ${String(cause.failure.limit.maximum)}-node allowance for an extension.vsixmanifest document tree`,
+        "parser",
+        { limit: cause.failure.limit.maximum, unit: "nodes" },
+      ),
+    });
+  const parameter = (
+    Object.keys(
+      VSIX_PACKAGE_LIMIT_MAXIMA,
+    ) as (keyof typeof VSIX_PACKAGE_LIMIT_MAXIMA)[]
+  ).find((name) => name === cause.failure.limit.name);
+  return parseLimitConstraint(
     OPERATION,
-    input.path,
+    cause.failure.limit.name === "max_entries" ? "capacity" : "memory",
+    cause,
+    {
+      path: input.path,
+      retryable: false,
+      ...(parameter === undefined
+        ? {}
+        : {
+            remediationAction: budgetRecovery(
+              parameter,
+              cause.failure.limit.maximum,
+            ),
+          }),
+    },
   );
-  if (identityFailure !== undefined) return identityFailure;
-  if (isParseLimit(cause, VSIX_PACKAGE_FORMAT)) {
-    if (cause.failure.limit.name === "xml_nodes")
-      return parseLimitConstraint(OPERATION, "memory", cause, {
-        path: input.path,
-        ...fixedAllowanceOptions(
-          `The ${String(cause.failure.limit.maximum)}-node allowance for an extension.vsixmanifest document tree`,
-          "parser",
-          { limit: cause.failure.limit.maximum, unit: "nodes" },
-        ),
-      });
-    const parameter = (
-      Object.keys(
-        VSIX_PACKAGE_LIMIT_MAXIMA,
-      ) as (keyof typeof VSIX_PACKAGE_LIMIT_MAXIMA)[]
-    ).find((name) => name === cause.failure.limit.name);
-    return parseLimitConstraint(
+};
+
+/**
+ * The VSIX dialect for the shared provider failure classifier: only the
+ * package's own parse ceilings, format refusals and fixed reader allowances.
+ * Cancellation, identity, path and selected-file failures are the shared
+ * owner's.
+ */
+const vsixFailureDialect = (
+  input: InspectVsixPackageInput,
+): ProviderFailureDialect => ({
+  providerId: VSIX_PACKAGE_PROVIDER_IDENTITY.id,
+  operation: OPERATION,
+  file: {
+    path: input.path,
+    description: "VS Code extension package",
+    retainCompletedIdentity: true,
+    fileSize: (cause, details) => vsixFileSizeFailure(cause, details, input),
+  },
+  recognise: (raw, details) => {
+    const facts = artifactFilePrimaryFacts(raw);
+    const { cause, origin } = facts;
+    if (isParseLimit(cause, VSIX_PACKAGE_FORMAT))
+      return vsixParseLimit(cause, input);
+    const formatFailure = parseFailureAnalysisError(
       OPERATION,
-      cause.failure.limit.name === "max_entries" ? "capacity" : "memory",
+      input.path,
       cause,
-      {
-        path: input.path,
-        retryable: false,
-        ...(parameter === undefined
-          ? {}
-          : {
-              remediationAction: budgetRecovery(
-                parameter,
-                cause.failure.limit.maximum,
-              ),
-            }),
-      },
     );
-  }
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  const inputFailure = projectOwnedArtifactInputFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (inputFailure !== undefined) return inputFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
+    if (formatFailure !== undefined) return formatFailure;
+    if (
+      origin !== "owned-or-classified" ||
+      !(cause instanceof ArtifactReaderFailure)
+    )
+      return undefined;
     if (cause.reason === "limit" && cause.fixedAllowance !== undefined)
       return fixedCeilingConstraint(
         OPERATION,
         cause.boundary ?? "memory",
         cause.message,
         cause.fixedAllowance,
-        { cause },
+        { ...details, cause },
       );
-    if (cause.reason === "limit" && cause.boundary === "file-size")
-      return parseLimitConstraint(
-        OPERATION,
-        "file-size",
-        decodeLimit(
-          VSIX_PACKAGE_FORMAT,
-          cause.message,
-          { name: "max_file_bytes", maximum: input.max_file_bytes },
-          { cause },
-        ),
-        {
-          retryable: false,
-          remediationAction: budgetRecovery(
-            "max_file_bytes",
-            input.max_file_bytes,
-          ),
-        },
-      );
-    return translateArtifactFailure(OPERATION, cause);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "VS Code extension package",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    "io",
-    undefined,
-    errorMessage(cause),
-    { cause },
-  );
-};
+    // Path and format refusals are the shared owner's; the parser's own
+    // unsupported, malformed and truncated refusals keep their projection.
+    if (cause.reason === "path" || cause.reason === "format") return undefined;
+    return projectOwnedArtifactInputFailure(facts, OPERATION, input.path);
+  },
+  readCleanup: (read, primary) => {
+    const cleanup = new ProviderCleanupError(
+      VSIX_PACKAGE_PROVIDER_IDENTITY.id,
+      read.cleanup.resources,
+      { reason: read.cleanup.reason },
+      { cause: read, operation: OPERATION },
+    );
+    const error =
+      primary === undefined
+        ? cleanup
+        : analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
+    bindArtifactFileCleanup(read, error);
+    return error;
+  },
+  unclassified: (raw, details) => {
+    const { cause, origin } = artifactFilePrimaryFacts(raw);
+    return origin === "owned-or-classified" &&
+      cause instanceof ArtifactReaderFailure
+      ? translateArtifactFailure(OPERATION, cause)
+      : new ArtifactOperationError(
+          OPERATION,
+          "io",
+          undefined,
+          errorMessage(cause),
+          { ...details, cause },
+        );
+  },
+});
 
+/**
+ * Classify through the shared owner. A parser failure after a completed read
+ * carries no read identity of its own, so the held snapshot supplies it.
+ */
 const vsixFailure = (
   cause: unknown,
   input: InspectVsixPackageInput,
   snapshot?: StableArtifactSnapshot,
-) =>
-  projectStableArtifactFailure(
+) => {
+  const failure = classifyProviderFailure(cause, vsixFailureDialect(input));
+  const observation = completedStableArtifactObservation(
     cause,
-    vsixFailurePrimary(artifactFilePrimaryFacts(cause), input),
     input.path,
-    VSIX_PACKAGE_PROVIDER_IDENTITY.id,
-    OPERATION,
     snapshot,
   );
+  if (failure.partialObservation === undefined && observation !== undefined)
+    failure.retainPartialObservation(observation);
+  return failure;
+};
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class VsixPackageProvider {
