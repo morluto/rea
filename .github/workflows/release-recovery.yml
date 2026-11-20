@@ -85,7 +85,7 @@ jobs:
       - name: Verify published CLI, MCP and update
         env:
           RECOVERY_VERSION: ${{ steps.release.outputs.version }}
-        run: node scripts/verify-published-package.mjs "$RECOVERY_VERSION"
+        run: node scripts/verify-published-package.mjs "$RECOVERY_VERSION" --recovery
       - name: Validate released registry metadata
         working-directory: .cache/release-source
         run: npm run mcp-registry:check

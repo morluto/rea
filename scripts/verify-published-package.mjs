@@ -16,13 +16,16 @@ import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const verifierRun = createVerifierRun();
 
-const version = process.argv[2];
+const [version, mode, ...extra] = process.argv.slice(2);
 if (
   typeof version !== "string" ||
   valid(version) !== version ||
-  process.argv.length !== 3
+  (mode !== undefined && mode !== "--recovery") ||
+  extra.length > 0
 )
-  throw new Error("Usage: node scripts/verify-published-package.mjs <version>");
+  throw new Error(
+    "Usage: node scripts/verify-published-package.mjs <version> [--recovery]",
+  );
 
 // npm and the package's children write beneath the root, as under the former mkdtemp.
 const fixture = await VerifierFixture.open({
@@ -58,6 +61,7 @@ await withVerifierCleanup(async () => {
     version,
     canaryRoot,
     updaterRoot: publishedRoot,
+    allowSuperseded: mode === "--recovery",
   });
 }, [() => commands.close()]);
 process.stdout.write(
@@ -68,10 +72,12 @@ async function verifyPublishedUpdate({
   version: targetVersion,
   canaryRoot,
   updaterRoot,
+  allowSuperseded,
 }) {
   const updateVersion = stableUpdateVersion(
     targetVersion,
     await readNpmRelease(targetVersion),
+    { allowSuperseded },
   );
   const prefix = join(canaryRoot, "update-prefix");
   const home = join(canaryRoot, "update-home");
