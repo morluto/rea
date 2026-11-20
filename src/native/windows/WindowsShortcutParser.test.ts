@@ -527,6 +527,40 @@ it("reports an ExtraData size that overruns the file", async () => {
   ).toBe(true);
 });
 
+it.each([
+  [0xa0000001, null, null],
+  [0xa0000007, true, ".dll"],
+] as const)(
+  "uses an admitted ExtraData signature to retain target uncertainty (%s)",
+  async (signature, difference, extension) => {
+    const prefix = windowsShortcutBytes({
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Tools\\ordinary.dll" },
+      iconLocation: "C:\\Tools\\intended.exe",
+      extraData: [],
+      terminalBlock: false,
+    });
+    const header = Buffer.alloc(8);
+    header.writeUInt32LE(0x314);
+    header.writeUInt32LE(signature, 4);
+    const report = await parse(Buffer.concat([prefix, header]));
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: prefix.length,
+    });
+    expect(report.extra_data.blocks).toEqual([]);
+    expect(report.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "icon_location_differs_from_target",
+          value: difference,
+        }),
+        expect.objectContaining({ kind: "target_extension", extension }),
+      ]),
+    );
+  },
+);
+
 const HAS_EXP_STRING = 0x00000200;
 const HAS_EXP_ICON = 0x00004000;
 
