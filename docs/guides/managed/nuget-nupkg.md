@@ -29,9 +29,13 @@ requires an absolute filesystem path and preserves that exact selection:
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 `identity` reports `id`, `version`, `authors`, and `description` as present in
-the `.nuspec` metadata. Missing fields are `null`. The `.nuspec` and OPC
-relationships go through XML end-of-line handling, as NuGet's reader applies
-it: CRLF and lone CR read as LF. When no `.nuspec` can be
+the `.nuspec` metadata. Authors and description follow NuGet's first eligible
+leaf rule with case-insensitive local names. Empty leaves and ordinary
+whitespace-only leaves are skipped. Whitespace preserved by CDATA or
+`xml:space` can occupy the first slot and yield `null` even when a later leaf
+has text. The package ID and version use their case-sensitive names in the
+metadata namespace. Missing fields are `null`. In the `.nuspec` and OPC
+relationships, XML end-of-line handling maps CRLF and lone CR to LF. When no `.nuspec` can be
 selected, `identity` is `null`.
 
 `license` reports the `.nuspec` license element: `type` is `expression` or
@@ -73,8 +77,12 @@ When selection is missing or ambiguous, `nuspec` is `null` and the inventory
 still succeeds with a limitation.
 
 The `.nuspec` is chosen from a unique OPC relationship with Type
-`http://schemas.microsoft.com/packaging/2010/07/manifest` when that target exists in the ZIP. Otherwise a unique `.nuspec` at
-the package root is used. Multiple conflicting manifests are not decoded.
+`http://schemas.microsoft.com/packaging/2010/07/manifest` when that target
+exists in the ZIP. Both `Relationships` and `Relationship` must use the OPC
+relationships namespace. The inspector skips other child elements and still
+considers eligible relationships beside them. Without an eligible target, it
+uses a unique `.nuspec` at the package root. Multiple conflicting manifests
+are not decoded.
 
 ## Limits and failures
 

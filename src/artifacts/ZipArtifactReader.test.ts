@@ -238,31 +238,81 @@ describe("ZIP Zstandard method 93", () => {
 
   it.each([
     [
-      "frameParameter_unsupported",
+      "reserved_frame_descriptor",
       "28b52ffddf339d0000686d656d626572206279746573200100e1995f",
     ],
     [
-      "corruption_detected",
+      "ZSTD_error_corruption_detected",
       "28b52ffd20cc9d0000686d656d626572206279746573200100e1995f",
     ],
     [
-      "dictionary_corrupted",
+      "ZSTD_error_dictionary_corrupted",
       "28b52ffd20339d0000976d656d626572206279746573200100e1995f",
     ],
+  ] as const)("keeps the %s format fault and its cause", async (code, hex) => {
+    const content = Buffer.from(
+      "member bytes member bytes member bytes member bytes",
+    );
+    await expect(
+      readFirstZstandardMember(
+        zstandardZipFixture(content, { compressed: Buffer.from(hex, "hex") }),
+      ),
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("Invalid compressed data"),
+      cause: { code },
+    });
+  });
+});
+
+describe("ZIP Zstandard frame completion", () => {
+  const first = Buffer.from("first text frame\n");
+  const second = Buffer.from("second text frame: café\n");
+  const firstFrame = zstdCompressSync(first);
+  const secondFrame = zstdCompressSync(second, {
+    params: { [constants.ZSTD_c_checksumFlag]: 1 },
+  });
+  // The skippable payload spans chunks and the next magic straddles a
+  // zip.js input chunk boundary (64 KiB).
+  const skipped = Buffer.alloc(1024 * 1024 - firstFrame.length - 2);
+  skipped.writeUInt32LE(0x184d2a5f, 0);
+  skipped.writeUInt32LE(skipped.length - 8, 4);
+  const content = Buffer.concat([first, second]);
+
+  it.each([
+    ["two ordinary", [firstFrame, secondFrame]],
+    ["ordinary and skippable", [firstFrame, skipped, secondFrame]],
+  ] as const)("streams complete %s frames in order", async (_label, frames) => {
+    const compressed = Buffer.concat(frames);
+    const decoded = await readFirstZstandardMember(
+      zstandardZipFixture(content, { compressed }),
+    );
+    expect(decoded.equals(content)).toBe(true);
+  });
+
+  it.each([
+    ["a partial frame magic", first, secondFrame.subarray(0, 3)],
+    ["an incomplete ordinary frame", first, secondFrame.subarray(0, 5)],
+    [
+      "an incomplete skippable frame",
+      first,
+      skipped.subarray(0, skipped.length - 1),
+    ],
+    [
+      "an incomplete checksum",
+      content,
+      secondFrame.subarray(0, secondFrame.length - 1),
+    ],
   ] as const)(
-    "keeps the native %s format fault and its cause",
-    async (code, hex) => {
-      const content = Buffer.from(
-        "member bytes member bytes member bytes member bytes",
-      );
+    "refuses %s after a complete frame",
+    async (_label, output, suffix) => {
+      const compressed = Buffer.concat([firstFrame, suffix]);
       await expect(
-        readFirstZstandardMember(
-          zstandardZipFixture(content, { compressed: Buffer.from(hex, "hex") }),
-        ),
+        readFirstZstandardMember(zstandardZipFixture(output, { compressed })),
       ).rejects.toMatchObject({
+        name: "ArtifactReaderFailure",
         reason: "format",
         message: expect.stringContaining("Invalid compressed data"),
-        cause: { code: `ZSTD_error_${code}` },
       });
     },
   );

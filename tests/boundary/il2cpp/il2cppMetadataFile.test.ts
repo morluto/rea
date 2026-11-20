@@ -890,3 +890,24 @@ describe("IL2CPP global-metadata version 24", () => {
     );
   });
 });
+
+it("keeps unsigned legacy literal lengths distinct from signed counted offsets", () => {
+  const legacy = mutated(
+    (fixture, bytes) => {
+      bytes.writeUInt32LE(0xffffffff, fixture.section("stringLiterals").offset);
+    },
+    createIl2cppMetadataFixture({ version: 29 }),
+  );
+  expect(failure(legacy)).toMatchObject({
+    reason: "index-out-of-range",
+    message: expect.stringContaining("4294967295"),
+  });
+
+  const counted = mutated((fixture, bytes) => {
+    bytes.writeInt32LE(-1, fixture.section("stringLiterals").offset);
+  });
+  expect(failure(counted)).toMatchObject({
+    reason: "index-out-of-range",
+    message: expect.stringContaining("[-1,"),
+  });
+});

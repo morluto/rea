@@ -22,6 +22,11 @@ import {
 import { readCudaTarget } from "./CudaTarget.js";
 import { readCudaFatbinary } from "./CudaFatbinary.js";
 import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../domain/compression/zstandardFrameAllowance.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createHash } from "node:crypto";
 import { scheduler } from "node:timers/promises";
 import {
@@ -35,7 +40,10 @@ import {
   readPeSectionDirectory,
   type NativeSectionDirectory,
 } from "../domain/native/nativeSectionDirectory.js";
-import { assertArtifactReadActive } from "../resources/index.js";
+import {
+  assertArtifactReadActive,
+  yieldArtifactRead,
+} from "../resources/index.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -179,6 +187,7 @@ export class GpuInventory {
         elf
           ? readElfSectionDirectory(source.size)
           : readPeSectionDirectory(source.size),
+        () => yieldArtifactRead(this.signal),
       );
       if (elf && (directory.machine === 190 || directory.machine === 224)) {
         const row = gpuObject(source, {
@@ -295,6 +304,9 @@ export class GpuInventory {
   }
   #retainFailure(row: GpuObject, cause: unknown): void {
     if (cause instanceof GpuReportCapacityFailure) throw cause;
+    if (cause instanceof ZstandardFrameAllowanceError)
+      throw projectZstandardFrameAllowance("inspect_gpu_code_objects", cause);
+    if (cause instanceof AnalysisError) throw cause;
     const capacity =
       cause instanceof BinaryResourceFailure || isBinaryStringReadLimit(cause);
     if (!capacity && !(cause instanceof BinaryFormatFailure)) throw cause;
@@ -358,7 +370,16 @@ export class GpuInventory {
             this.signal,
           );
         } catch (cause) {
-          if (cause instanceof BinaryResourceFailure) throw cause;
+          if (cause instanceof ZstandardFrameAllowanceError)
+            throw projectZstandardFrameAllowance(
+              "inspect_gpu_code_objects",
+              cause,
+            );
+          if (
+            cause instanceof BinaryResourceFailure ||
+            cause instanceof AnalysisError
+          )
+            throw cause;
           assertArtifactReadActive(this.signal);
           throw new BinaryFormatFailure(
             "malformed",
@@ -515,6 +536,7 @@ export class GpuInventory {
         (await readGpuNativeDirectory(
           child,
           readElfSectionDirectory(child.size),
+          () => yieldArtifactRead(this.signal),
         ));
       const inspected = await readAmdElfMetadata(child, native);
       const prepared = inspected.ok ? inspected.value : inspected.error.partial;
@@ -558,6 +580,7 @@ export class GpuInventory {
         this.#retain(kernel);
         this.kernels.push(kernel);
       },
+      () => yieldArtifactRead(this.signal),
       preparedAmd,
       (target) => {
         conflict = this.#target(row, target);

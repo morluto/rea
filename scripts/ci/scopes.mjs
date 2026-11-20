@@ -20,6 +20,8 @@ const CAPTURE_SHARED_INPUTS = [
   "src/process/LinuxResourceLimits*",
   "scripts/ci/require-provider-tests.mjs",
 ];
+const UBUNTU_ARCHIVE_ACTION =
+  ".github/actions/ubuntu-archive/action.{yml,yaml}";
 
 // Ownership of the native-host, real-provider and website verification lanes.
 // Shared build inputs are classified once in plan.mjs rather than repeated in
@@ -68,8 +70,8 @@ const PATH_SCOPES = {
     ...CAPTURE_SHARED_INPUTS,
     "scripts/verify-signal-recording.mjs",
     ".github/workflows/real-signal-recording.yml",
-    ".github/actions/ubuntu-archive/action.yml",
-    ".github/actions/host-apt-packages/action.yml",
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
   ],
   readiness: [
     "tests/conformance/readiness/**",
@@ -238,6 +240,7 @@ const PATH_SCOPES = {
     "scripts/run-exclusive-command.mjs",
     "tests/process-global/runnerCancellation.test.ts",
     "tests/process-global/windowsOwnedCommand.test.ts",
+    "tests/process-global/curatedWindowsLane.test.ts",
     "src/ghidra/GhidraBridgeSources.ts",
     "native/windows/**",
     "src/process/capture/FilesystemSnapshot.ts",
@@ -249,9 +252,9 @@ const PATH_SCOPES = {
     "scripts/verify-package-*",
     "scripts/verify-packed-bridge.*",
     "scripts/verify-windows-*.mjs",
-    ".github/actions/windows-cross-compiler/action.yml",
-    ".github/actions/ubuntu-archive/action.yml",
-    ".github/actions/host-apt-packages/action.yml",
+    ".github/actions/windows-cross-compiler/action.{yml,yaml}",
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "scripts/build-windows-native.mjs",
     "scripts/windows-capabilities.mjs",
     "scripts/prepack.mjs",
@@ -441,8 +444,8 @@ const PATH_SCOPES = {
   ],
   binary_layout: [
     ".github/workflows/real-binary-layout.yml",
-    ".github/actions/ubuntu-archive/action.yml",
-    ".github/actions/host-apt-packages/action.yml",
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "bridge/pwntools/**",
     "src/native/pwntools/**",
     "src/config/pwntoolsInputLimit*.ts",

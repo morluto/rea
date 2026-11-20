@@ -31,6 +31,17 @@ import type {
   ManagedMemberViewRow as Row,
 } from "./managedMemberViewSchemas.js";
 
+export const MANAGED_MEMBER_SCOPE_GUIDANCE = {
+  selectedNominalRows:
+    "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
+  unresolvedTypeRows:
+    "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
+  unresolvedMethodRows:
+    "Unresolved MethodDef coordinates follow the recorded source method interval and any declaring-type selection.",
+  unexaminedMethodRows:
+    "MethodDef name coordinates are unavailable in this capacity recovery.",
+} as const;
+
 type Selection<C extends MemberCollection, T extends Row, K extends keyof T> = {
   readonly collection: C;
   readonly rows: readonly T[] | null | undefined;
@@ -129,8 +140,29 @@ const collectionPage = (
         },
         view,
       );
+    case "unresolved_definitions":
+      return sliceMemberRows(
+        collection,
+        report.unresolved_definitions?.rows,
+        view,
+      );
   }
 };
+
+const sliceMemberRows = <C extends MemberCollection, T extends Row>(
+  collection: C,
+  rows: readonly T[] | undefined,
+  view: { readonly offset: number; readonly limit: number },
+) =>
+  rows === undefined
+    ? null
+    : {
+        page: {
+          collection,
+          rows: rows.slice(view.offset, view.offset + view.limit),
+        },
+        total: rows.length,
+      };
 
 /** Keep only one page while counting matches; never copy the matched inventory. */
 const selectRows = <
@@ -151,16 +183,12 @@ const selectRows = <
       ? new Set(view.declaring_types)
       : undefined;
   const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
+    "fields" in view && view.fields !== undefined
+      ? new Set<string>(view.fields)
+      : undefined;
   const filtering = names !== undefined || declaringTypes !== undefined;
   if (!filtering && fields === undefined)
-    return {
-      page: {
-        collection: source.collection,
-        rows: source.rows.slice(view.offset, view.offset + view.limit),
-      },
-      total: source.rows.length,
-    };
+    return sliceMemberRows(source.collection, source.rows, view);
   const selected: (Partial<T> & Pick<T, K> & { source_index: number })[] = [];
   const start = filtering ? 0 : Math.min(view.offset, source.rows.length);
   const end = filtering
@@ -257,10 +285,17 @@ const summarizeMembers = (
     call_edges,
     field_accesses,
     user_strings,
+    unresolved_definitions,
     ...identity
   } = report;
   return {
     ...identity,
+    ...(unresolved_definitions === undefined
+      ? {}
+      : {
+          unresolved_method_names_examined:
+            unresolved_definitions.method_names_examined,
+        }),
     user_strings:
       user_strings === null
         ? null
@@ -274,6 +309,9 @@ const summarizeMembers = (
       call_edges: call_edges.length,
       field_accesses: field_accesses.length,
       user_strings: user_strings?.literals.length ?? null,
+      ...(unresolved_definitions === undefined
+        ? {}
+        : { unresolved_definitions: unresolved_definitions.rows.length }),
     },
   };
 };
@@ -312,6 +350,7 @@ export const projectManagedMemberView = (
     parent.evidenceId,
   );
   if (!scope.ok) return scope;
+  const coordinates = report.unresolved_definitions;
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_managed_members" as const,
@@ -322,8 +361,14 @@ export const projectManagedMemberView = (
       "Collection counts and pages cover producer-returned rows; member completeness remains the original coverage, not an absence claim about unreturned rows.",
       ...(report.selection === null
         ? []
+        : [MANAGED_MEMBER_SCOPE_GUIDANCE.selectedNominalRows]),
+      ...(coordinates === undefined
+        ? []
         : [
-            "Exported types and member references cover the whole assembly; the other collections cover only the selected declaring types.",
+            MANAGED_MEMBER_SCOPE_GUIDANCE.unresolvedTypeRows,
+            coordinates.method_names_examined
+              ? MANAGED_MEMBER_SCOPE_GUIDANCE.unresolvedMethodRows
+              : MANAGED_MEMBER_SCOPE_GUIDANCE.unexaminedMethodRows,
           ]),
       ...managedViewIdentityUnknowns(
         parent,
@@ -352,7 +397,10 @@ export const projectManagedMemberView = (
         {
           path: ["view", "collection"],
           reason: "invalid_value",
-          message: `The parent Evidence did not examine ${view.collection}; repeat inspect_managed_members with the current runtime to record it.`,
+          message:
+            view.collection === "unresolved_definitions"
+              ? "The parent Evidence did not record unresolved_definitions. Repeat inspect_managed_members to obtain checked coordinates."
+              : `The parent Evidence did not examine ${view.collection}; repeat inspect_managed_members with the current runtime to record it.`,
         },
       ]),
     );
@@ -376,6 +424,12 @@ export const projectManagedMemberView = (
     identity_scope: report.identity_scope,
     selection: report.selection,
     method_rows: report.method_rows,
+    ...(view.collection === "unresolved_definitions" &&
+    coordinates !== undefined
+      ? {
+          unresolved_method_names_examined: coordinates.method_names_examined,
+        }
+      : {}),
     source_metadata_status: report.metadata.status,
     ...(report.metadata.unresolved_module_name === undefined
       ? {}

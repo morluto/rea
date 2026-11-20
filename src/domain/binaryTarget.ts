@@ -3,14 +3,16 @@ import {
   type FileMapping,
   type ZeroFillMapping,
 } from "./virtualFileMapping.js";
-import type {
-  ElfFamilyMetadata,
-  HeaderArchitecture,
-  MipsElfMetadata,
-  PeCodeViewRecord,
-  RiscvElfMetadata,
-  UniversalMachOSlice,
-  UniversalMachOSliceIdentity,
+import {
+  PE_CODEVIEW_PREFIX_BYTES,
+  type ElfFamilyMetadata,
+  type HeaderArchitecture,
+  type MipsElfMetadata,
+  type PeCodeViewPath,
+  type PeCodeViewRecord,
+  type RiscvElfMetadata,
+  type UniversalMachOSlice,
+  type UniversalMachOSliceIdentity,
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import {
@@ -21,6 +23,7 @@ import {
 import type { PeOptionalHeaderFacts } from "./peMachine.js";
 import { readPeCoffHeader } from "./peCoffHeader.js";
 import { readPeSectionHeader } from "./peSectionHeader.js";
+import { isStrictUtf8 } from "./strictUtf8.js";
 import { readElfFixedHeader } from "./elfFixedHeader.js";
 import {
   mzWindowsHeaderLayoutLimitation,
@@ -712,11 +715,12 @@ export const parseCodeViewData = (
     buffer.length <= pathOffset
   )
     return undefined;
-  const end = buffer.indexOf(0, pathOffset);
-  if (end <= pathOffset || end >= sizeOfData) return undefined;
-  const pdbPath = buffer.toString("utf8", pathOffset, end);
-  const pdbFileName = pdbPath.split(/[/\\]/u).pop() ?? pdbPath;
-  if (magic === "RSDS" && sizeOfData >= 24 && buffer.length >= 24) {
+  const end = buffer
+    .subarray(0, Math.min(sizeOfData, PE_CODEVIEW_PREFIX_BYTES))
+    .indexOf(0, pathOffset);
+  if (end <= pathOffset) return undefined;
+  const path = decodeCodeViewPath(buffer.subarray(pathOffset, end), magic);
+  if (magic === "RSDS") {
     const part1 = buffer.readUInt32LE(4).toString(16).padStart(8, "0");
     const part2 = buffer.readUInt16LE(8).toString(16).padStart(4, "0");
     const part3 = buffer.readUInt16LE(10).toString(16).padStart(4, "0");
@@ -724,13 +728,24 @@ export const parseCodeViewData = (
     const part5 = buffer.subarray(14, 20).toString("hex");
     const guid = `${part1}-${part2}-${part3}-${part4}-${part5}`;
     const age = buffer.readUInt32LE(20);
-    return { pdbPath, pdbFileName, guid, age };
+    return { ...path, guid, age };
   }
-  if (magic === "NB10") {
-    const age = buffer.readUInt32LE(12);
-    return { pdbPath, pdbFileName, guid: null, age };
-  }
-  return undefined;
+  return { ...path, guid: null, age: buffer.readUInt32LE(12) };
+};
+
+const decodeCodeViewPath = (bytes: Buffer, magic: string): PeCodeViewPath => {
+  // Microsoft's locator reads RSDS as UTF-8 and NB10 in the active ANSI code
+  // page. Without that code page, only ASCII NB10 text is unambiguous.
+  const textAvailable =
+    magic === "RSDS" ? isStrictUtf8(bytes) : bytes.every((byte) => byte < 0x80);
+  if (!textAvailable)
+    return {
+      pdbPath: null,
+      pdbFileName: null,
+      pdbPathBytesHex: bytes.toString("hex"),
+    };
+  const pdbPath = bytes.toString("utf8");
+  return { pdbPath, pdbFileName: pdbPath.split(/[/\\]/u).at(-1) ?? pdbPath };
 };
 
 /** Locate the debug directory RVA and size from a PE optional header. */
@@ -797,10 +812,7 @@ export const peRvaToFileOffset = (
   return mapped.ok ? mapped.value : undefined;
 };
 
-/** CodeView RVA admission uses the same bounded prefix as target file reads. */
-const PE_CODEVIEW_MAPPING_BYTES = 4096;
-
-/** Interpret complete debug entries once; callers own directory and payload read bounds. */
+/** Interpret complete debug entries once; callers own directory reads. */
 export function* peCodeViewDataRanges(
   directory: Buffer,
   sectionTable: Buffer,
@@ -820,7 +832,7 @@ export function* peCodeViewDataRanges(
             sectionTable,
             numberOfSections,
             sizeOfHeaders,
-            Math.min(declaredSize, PE_CODEVIEW_MAPPING_BYTES),
+            Math.min(declaredSize, PE_CODEVIEW_PREFIX_BYTES),
           );
     if (fileOffset !== undefined) yield { fileOffset, declaredSize };
   }
@@ -926,7 +938,7 @@ export const inspectPeCodeViewFromBuffer = (
       continue;
     const codeViewData = fileBytes.subarray(
       pointerToRawData,
-      Math.min(fileBytes.length, pointerToRawData + sizeOfData),
+      pointerToRawData + Math.min(sizeOfData, PE_CODEVIEW_PREFIX_BYTES),
     );
     const parsed = parseCodeViewData(codeViewData, sizeOfData);
     if (parsed !== undefined) return ok(parsed);

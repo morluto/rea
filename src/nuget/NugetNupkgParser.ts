@@ -15,6 +15,7 @@ import {
 import type { Element, Node } from "@xmldom/xmldom";
 
 import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   decodeZipEntryText,
   zipEntryNameLimitations,
@@ -69,11 +70,22 @@ const childElements = (element: Element): Element[] => {
   return children;
 };
 
-const childrenNamed = (element: Element, local: string): Element[] =>
-  childElements(element).filter((child) => child.localName === local);
+const childrenNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element[] =>
+  childElements(element).filter(
+    (child) =>
+      child.localName === local &&
+      (namespace === undefined || (child.namespaceURI ?? "") === namespace),
+  );
 
-const firstNamed = (element: Element, local: string): Element | undefined =>
-  childrenNamed(element, local)[0];
+const firstNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element | undefined => childrenNamed(element, local, namespace)[0];
 
 const nonempty = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) return null;
@@ -102,20 +114,45 @@ const zipSize = (value: number | undefined): number | null =>
     ? value
     : null;
 
+/** NuGet indexes nonempty leaf metadata by local name and keeps its first value. */
+const indexedMetadataText = (
+  metadata: Element,
+  name: string,
+): string | null => {
+  for (const child of childElements(metadata)) {
+    if (
+      child.localName?.toLowerCase() !== name ||
+      childElements(child).length > 0
+    )
+      continue;
+    const text = child.textContent ?? "";
+    if (!text) continue;
+    // XDocument ignores ordinary XML whitespace. CDATA and xml:space can
+    // retain a whitespace-only value that occupies this key in NuGet's index.
+    if (/[^\t\r\n ]/u.test(text)) return nonempty(text);
+    if (
+      Array.from(child.childNodes).some(
+        (node) => node.nodeType === 4 && node.nodeValue,
+      )
+    )
+      return null;
+    for (
+      let scope: Node | null = child;
+      isElement(scope);
+      scope = scope.parentNode
+    ) {
+      const space = scope.getAttribute("xml:space");
+      if (space === "preserve") return null;
+      if (space === "default") break;
+    }
+  }
+  return null;
+};
+
 const asFileEntry = (entry: Entry): entry is FileEntry =>
   !entry.directory && "getData" in entry;
 
-const wrapZipFailure = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-  compressionMethod?: number,
-): never => {
-  // zip.js rejects with the caller's abort reason; keep it as cancellation
-  // rather than reporting the package as damaged.
-  if (signal?.aborted === true && Object.is(cause, signal.reason))
-    throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
-      cause: signal.reason,
-    });
+const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
   if (
     cause instanceof ArtifactReaderFailure ||
     cause instanceof ParseFailureError
@@ -187,7 +224,7 @@ const readMemberBytes = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    return wrapZipFailure(cause, signal, entry.compressionMethod);
+    return wrapZipFailure(cause, entry.compressionMethod);
   }
 };
 
@@ -216,6 +253,9 @@ interface OpcManifestTarget {
 const targetLabel = (display: string | null): string =>
   display === null ? "[URL withheld]" : JSON.stringify(display);
 
+const OPC_RELATIONSHIP_NAMESPACE =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+
 const NUGET_MANIFEST_RELATIONSHIP =
   "http://schemas.microsoft.com/packaging/2010/07/manifest";
 
@@ -236,14 +276,19 @@ const opcManifestTargets = (
     return [];
   }
   const root = parsed.value.documentElement;
-  if (!isElement(root) || root.localName !== "Relationships") {
+  if (
+    !isElement(root) ||
+    root.localName !== "Relationships" ||
+    root.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE
+  ) {
     limitations.push(
-      "OPC relationships root is not Relationships; the .nuspec was selected by ZIP name when possible.",
+      "OPC relationships root is not Relationships in the OPC namespace; the .nuspec was selected by ZIP name when possible.",
     );
     return [];
   }
   const targets = new Map<string, OpcManifestTarget>();
   for (const relationship of childrenNamed(root, "Relationship")) {
+    if (relationship.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE) continue;
     const type = attribute(relationship, "Type");
     if (type !== NUGET_MANIFEST_RELATIONSHIP) continue;
     const target = attribute(relationship, "Target");
@@ -285,16 +330,17 @@ const parseBooleanAttribute = (value: string | null): boolean | null => {
 
 const parseDependencies = (
   metadata: Element,
+  namespace: string,
   limitations: string[],
 ): NugetNupkg["dependency_groups"] => {
   // NuspecReader walks every <dependencies> element, with one decision about
   // groups across all of them.
-  const containers = childrenNamed(metadata, "dependencies");
+  const containers = childrenNamed(metadata, "dependencies", namespace);
   const groups = containers.flatMap((container) =>
-    childrenNamed(container, "group"),
+    childrenNamed(container, "group", namespace),
   );
   const ungrouped = containers.flatMap((container) =>
-    childrenNamed(container, "dependency"),
+    childrenNamed(container, "dependency", namespace),
   );
   const readDependency = (
     element: Element,
@@ -311,7 +357,9 @@ const parseDependencies = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number] => ({
     target_framework: attribute(element, "targetFramework"),
-    dependencies: childrenNamed(element, "dependency").map(readDependency),
+    dependencies: childrenNamed(element, "dependency", namespace).map(
+      readDependency,
+    ),
   });
   // NuGet's NuspecReader reads ungrouped dependencies only when no group is
   // present, so those beside groups never reach restore.
@@ -368,19 +416,26 @@ const parseNuspecDocument = (
     limitations.push("The selected .nuspec has no metadata element.");
     return empty;
   }
+  // NuGet's typed getters select children in the default namespace in scope.
+  // Authors and description come from its local-name metadata index.
+  const metadataNamespace = metadata.lookupNamespaceURI("") ?? "";
   const metadataText = (local: string): string | null => {
-    const element = firstNamed(metadata, local);
+    const element = firstNamed(metadata, local, metadataNamespace);
     return element === undefined ? null : elementText(element);
   };
-  const licenseElement = firstNamed(metadata, "license");
+  const licenseElement = firstNamed(metadata, "license", metadataNamespace);
   const licenseType = licenseElement ? attribute(licenseElement, "type") : null;
-  const repositoryElement = firstNamed(metadata, "repository");
+  const repositoryElement = firstNamed(
+    metadata,
+    "repository",
+    metadataNamespace,
+  );
   return {
     identity: {
       id: metadataText("id"),
       version: metadataText("version"),
-      authors: metadataText("authors"),
-      description: metadataText("description"),
+      authors: indexedMetadataText(metadata, "authors"),
+      description: indexedMetadataText(metadata, "description"),
     },
     license:
       licenseElement === undefined
@@ -401,7 +456,11 @@ const parseNuspecDocument = (
             commit: attribute(repositoryElement, "commit"),
             branch: attribute(repositoryElement, "branch"),
           },
-    dependency_groups: parseDependencies(metadata, limitations),
+    dependency_groups: parseDependencies(
+      metadata,
+      metadataNamespace,
+      limitations,
+    ),
   };
 };
 
@@ -508,15 +567,29 @@ export const parseNugetNupkg = async (
     );
   const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
   const limitations: string[] = [...BASE_LIMITATIONS];
+  const zipAbort = signal === undefined ? undefined : new AbortController();
+  const zipSignal = zipAbort?.signal;
+  // zip.js throws its signal's reason. Give it an owned cancellation record
+  // so an independent ZIP failure cannot be confused with the caller's reason.
+  const onAbort = () =>
+    zipAbort?.abort(
+      new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
+        cause: signal?.reason,
+      }),
+    );
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    assertArtifactReadActive(signal);
     // Count while enumerating so an oversized directory stops at the budget
     // instead of materializing and decoding every member first.
     const entries: Entry[] = [];
     try {
       for await (const entry of reader.getEntriesGenerator({
         decodeText: decodeZipEntryText,
-        ...(signal === undefined ? {} : { signal }),
       })) {
+        // zip.js observes cancellation for member reads, but not for directory enumeration.
+        assertArtifactReadActive(signal);
         if (entries.length >= input.max_entries)
           throw decodeLimit(
             NUGET_NUPKG_FORMAT,
@@ -530,8 +603,9 @@ export const parseNugetNupkg = async (
         entries.push(entry);
       }
     } catch (cause: unknown) {
-      return wrapZipFailure(cause, signal);
+      return wrapZipFailure(cause);
     }
+    assertArtifactReadActive(signal);
     // The inventory comes from the central directory; local entries it omits
     // are only visible as bytes no listed record accounts for.
     const directoryOffset = reader.directoryOffset;
@@ -593,7 +667,7 @@ export const parseNugetNupkg = async (
       else {
         const relsBytes = await readMemberBytes(
           rels.entry,
-          signal,
+          zipSignal,
           input.max_nuspec_bytes,
           "OPC relationships member",
         );
@@ -658,7 +732,7 @@ export const parseNugetNupkg = async (
     }
     const nuspecBytes = await readMemberBytes(
       selected.member.entry,
-      signal,
+      zipSignal,
       input.max_nuspec_bytes,
       "Selected .nuspec",
     );
@@ -725,6 +799,7 @@ export const parseNugetNupkg = async (
       limitations,
     };
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     await reader.close().catch(() => undefined);
   }
 };

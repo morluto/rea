@@ -3,6 +3,7 @@ import { projectMachoBinary } from "./MachoBinaryProjection.js";
 import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import {
+  lazyLoadDylibInfoCommand,
   machoImage,
   readerOf,
   segmentCommand,
@@ -392,6 +393,30 @@ it("distinguishes exact fixed command extents from unmodeled trailing bytes", as
   ]);
 });
 
+it("reports lazy dylib linkedit fields and retains a digest when the command has a tail", async () => {
+  const exact = lazyLoadDylibInfoCommand(0x340, 56);
+  const extended = Buffer.concat([exact, Buffer.alloc(8, 0xa5)]);
+  extended.writeUInt32LE(extended.length, 4);
+  const image = machoImage({ commands: [exact, extended] });
+  const result = projectMachoBinary(
+    await readMachoCommandNames(readerOf(image), image.length, 1024, 8),
+  );
+
+  expect(result.commands[0]?.fields).toMatchObject({
+    dataoff: 0x340,
+    datasize: 56,
+  });
+  expect(result.commands[0]?.fields).not.toHaveProperty("command_sha256");
+  expect(result.commands[1]?.fields).toMatchObject({
+    dataoff: 0x340,
+    datasize: 56,
+    command_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+  });
+  expect(result.dependencyLimitations).toEqual([
+    "The linkedit dependency payload is not decoded.",
+  ]);
+});
+
 it("preserves leading UTF-8 BOM characters in names and dependency paths", () => {
   const marker = "\uFEFF";
   const commands = multilineBinary.commands.map((row) => ({
@@ -449,7 +474,15 @@ it("reports undecoded lazy dependency payloads and unsafe entrypoint offsets", (
       flags: 0,
     },
     commands: [
-      { index: 0, command: 0x3a, offset: 0, size: 16, rawSha256: null },
+      {
+        index: 0,
+        command: 0x3a,
+        offset: 0,
+        size: 16,
+        fixedFields: { dataoff: 0x340, datasize: 56 },
+        fullyDecoded: true,
+        rawSha256: null,
+      },
       {
         index: 1,
         command: 0x80000028,

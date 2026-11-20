@@ -44,7 +44,7 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
 | `npm run check:fast`              | Cached typecheck and lint, then the architecture guards and their counted baselines                                     |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
-| `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
+| `npm run check:pr`                | Opt-in deterministic test suite and generated-file checks                                                               |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
 | `npm run docs:build`              | Generate and build the VitePress site for local preview                                                                 |
 | `npm run verify:docs:routes`      | Build the VitePress site and verify rendered local routes, anchors, images, and physical edit targets                   |
@@ -262,11 +262,10 @@ does not cap the complete process family's memory; measure the full invocation
 when enforcing a host budget.
 
 Routine iterations and rebases need focused regressions and relevant checks.
-Before handing off a PR, run `npm run check` and generated-document checks when
-applicable; CI owns the full suite and coverage. Use the full local gate for
-broad changes or diagnosing CI, rather than after every edit. Package/install
-changes additionally need package verification; provider changes need actual
-provider evidence.
+Follow the [contributor checks](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#development-feedback-and-pr-verification)
+before handing off a PR. Use `check:pr` for broad changes or CI diagnosis.
+Architecture guards run in `check`, `check:fast`, and `check:ci:deep`.
+The standalone test-discovery check runs in `check:ci:deep`.
 
 Vitest projects use up to two workers, bounded by host parallelism. GitHub
 Actions jobs own their runner and use up to four; see
@@ -1203,15 +1202,14 @@ and job log also list up to 20 reported failed test files and the count of
 unhandled Vitest errors when reported. Partial reports are marked diagnostic
 only. Failed, cancelled, or missing selected shards still fail the required gate,
 and aggregate coverage thresholds remain enforced in full qualification.
-Only a successful complete merge on the default branch publishes shard history,
-and only from a push, schedule, or manual run. Fast runs publish
-`test-timings-fast`. Full runs publish `test-timings-full`. Pull requests do not
-publish it: the lookup reads one unpaginated artifact page, and pull-request
-artifacts would crowd out the default branch. The build job downloads the
-artifact that matches its tier, so fast shards use durations measured without
-coverage and full shards keep coverage-weighted durations. A tier with no
-qualifying artifact leaves history unset. The download is that small
-checkout-relative timing file, not the coverage/JUnit bundle. Timing weights come from Vitest module
+A complete shard merge on a default-branch push, schedule, or manual run can
+publish timing history. Fast runs publish `test-timings-fast` and full runs
+publish `test-timings-full`. The build job accepts only verified artifacts from
+successful default-branch CI runs that match its tier. It lists one page of
+matching artifacts and checks up to five producer runs individually. When
+eligible artifacts remain, it can check them against one page of successful CI
+runs. A tier with no qualifying artifact leaves history unset. The build
+downloads the small, checkout-relative timing file. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are
 not added again. The weights describe file costs under the measured worker and
@@ -1398,8 +1396,10 @@ baselines (`scripts/verify/baselines/*.json`,
 `scripts/lib/module-layers.baseline.json`), `.git-blame-ignore-revs`, Python
 analysis-efficiency test scripts, and advertised-schema summaries select no
 portable Vitest tests unless named by path, because static, Python, and build
-jobs check them. Non-module CLI parity fixtures with a single known test suite
-are bound in `EXPLICIT_FIXTURE_OWNERS` and fail closed if their owner is missing.
+jobs check them. `EXPLICIT_TEST_OWNERS` binds inputs with a known test suite the
+selector cannot reach by imports or file names. These include non-module CLI
+parity fixtures and the managed pointer rows integration test. Selection falls
+back to the complete suite if a declared owner is missing.
 
 The PR falls back to the complete fast suite when it cannot decide:
 

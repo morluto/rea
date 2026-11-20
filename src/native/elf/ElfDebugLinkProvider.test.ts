@@ -1,3 +1,4 @@
+import { scheduler } from "node:timers/promises";
 import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
 import { expect, it, vi } from "vitest";
 
@@ -11,6 +12,7 @@ import {
   inspectElfDebugLinkInputSchema,
   elfDebugLinkSchema,
 } from "../../domain/native/elfDebugLink.js";
+import { elfFrameAllowanceFixture } from "../../../tests/fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { elfDebugLinkFixture } from "./ElfDebugLink.fixture.js";
 
 const image = elfDebugLinkFixture();
@@ -142,6 +144,52 @@ it("keeps a completed candidate stream's identity when cancellation arrives duri
   expect(report?.limitations).not.toContain(
     ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   );
+});
+
+it("preserves the completed candidate when its ELF comparison is cancelled", async () => {
+  const { streamStableArtifact } = await import("../../resources/index.js");
+  const prefix = elfFrameAllowanceFixture();
+  const sha256 = "cd".repeat(32);
+  vi.mocked(streamStableArtifact).mockResolvedValueOnce({
+    prefix,
+    sha256,
+    size: prefix.length,
+  });
+  const provider = new ElfDebugLinkProvider();
+  const controller = new AbortController();
+  const reason = new Error("candidate comparison cancelled");
+  const originalYield = scheduler.yield.bind(scheduler);
+  const pause = vi
+    .spyOn(scheduler, "yield")
+    .mockImplementationOnce(async () => {
+      await originalYield();
+      controller.abort(reason);
+    });
+  try {
+    const result = await provider.inspect(
+      inspectElfDebugLinkInputSchema.parse({
+        path: "/artifacts/prog",
+        candidate_path: "/artifacts/prog.debug",
+      }),
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected interrupted comparison");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+    });
+    expect(retainedReport(result.error)).toMatchObject({
+      candidate: {
+        path: "/artifacts/prog.debug",
+        sha256,
+        bytes: prefix.length,
+      },
+      verification: null,
+    });
+  } finally {
+    pause.mockRestore();
+    await provider.close();
+  }
 });
 
 it("recovers a completed stream's whole-file size, not its prefix length", () => {

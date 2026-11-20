@@ -1,3 +1,4 @@
+import { probeUefiFlashImage } from "../uefi/UefiFormatProbe.js";
 import {
   BINARY_TARGET_FORMAT_KINDS,
   type TargetFormatHint,
@@ -49,11 +50,12 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import type {
-  BinaryTarget,
-  BinaryArchitecture,
-  PeCodeViewRecord,
-  UniversalMachOSlice,
+import {
+  PE_CODEVIEW_PREFIX_BYTES,
+  type BinaryTarget,
+  type BinaryArchitecture,
+  type PeCodeViewRecord,
+  type UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
@@ -117,6 +119,7 @@ import {
 import {
   classifyFatContainerIdentity,
   readFatContainerHeader,
+  readFatJvmIdentityLimitIssue,
   readMachoHeaderPrefixFacts,
   type FatSliceHeaderEvidence,
   type MachoHeaderPrefixFacts,
@@ -125,7 +128,6 @@ import {
   hasJvmClassHeader,
   isJvmClassFile,
   MAX_JVM_CLASS_IDENTITY_BYTES,
-  JVM_CLASS_IDENTITY_LIMIT_REASON,
 } from "../domain/apple/jvmClassFile.js";
 import {
   MachoLoadCommandCursor,
@@ -499,6 +501,7 @@ const readOpenedBinaryTarget = async (
     targetKind === "database" ||
     (targetKind === undefined &&
       artifactFormat !== "ines" &&
+      artifactFormat !== "uefi" &&
       artifactFormat !== "plist" &&
       path.toLowerCase().endsWith(".hop"))
   )
@@ -800,6 +803,7 @@ const detectArtifactFormat = async (
     ))
   )
     return "dmg";
+  if (await probeUefiFlashImage(handle, signal)) return "uefi";
   // XML property lists can use archive-specific suffixes such as .archive.
   // The named-format check above keeps .js, .map, and .asar classifications.
   const xmlProbe = createXmlPlistSignatureProbe();
@@ -1061,13 +1065,20 @@ const readExecutableMetadata = async (
   if (
     mayBeJvmClass &&
     fileSize > MAX_JVM_CLASS_IDENTITY_BYTES &&
-    fatEvidence !== undefined &&
-    classifyFatContainerIdentity(
-      fatEvidence.header,
-      (offset) => fatEvidence.sliceHeadersByOffset.get(offset)?.magic,
-    ).state === "malformed"
-  )
-    return err(JVM_CLASS_IDENTITY_LIMIT_REASON);
+    fatEvidence !== undefined
+  ) {
+    const { header, sliceHeadersByOffset } = fatEvidence;
+    const identity = classifyFatContainerIdentity(
+      header,
+      (offset) => sliceHeadersByOffset.get(offset)?.magic,
+    );
+    const limitIssue = await readFatJvmIdentityLimitIssue(
+      header,
+      identity,
+      (offset, length) => readHandleRange(handle, offset, length, signal),
+    );
+    if (limitIssue !== null) return err(limitIssue);
+  }
   const parsed = parseExecutableHeader(
     bytes,
     hostArchitecture,
@@ -1337,13 +1348,7 @@ const readFatSliceHeaderEvidence = async (
   for (let index = 0; index < header.slices.length; index += 1) {
     const slice = header.slices[index];
     if (slice === undefined) continue;
-    if (header.rangeIssues[index] !== null) {
-      sliceHeadersByOffset.set(
-        slice.offset,
-        readMachoHeaderPrefixFacts(Buffer.alloc(0)),
-      );
-      continue;
-    }
+    if (header.rangeIssues[index] !== null) continue;
     const observedLength = Math.min(12, slice.size);
     const thinHeader = await readHandleRange(
       handle,
@@ -1456,7 +1461,7 @@ const readPeCodeView = async (
     numberOfSections,
     debugDir.sizeOfHeaders,
   )) {
-    const maxCodeViewRead = Math.min(sizeOfData, 4096);
+    const maxCodeViewRead = Math.min(sizeOfData, PE_CODEVIEW_PREFIX_BYTES);
     const codeViewBuffer = await readHandleRange(
       handle,
       pointerToRawData,
