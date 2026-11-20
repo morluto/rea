@@ -7,7 +7,7 @@ import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
 import { RecordingHexRaysIdaMcp } from "../../tests/fixtures/idaHexRaysMcp.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type { IdaMcpConnection } from "./IdaMcpConnection.js";
+import { IdaToolRejection, type IdaMcpConnection } from "./IdaMcpConnection.js";
 import { readCallGraphCallees } from "./IdaCallGraph.js";
 import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
@@ -359,6 +359,46 @@ it.skipIf(!hasPython)(
 );
 
 describe("Hex-Rays IDA MCP evidence", () => {
+  it.each(["idalib", "idat"])(
+    "retains the %s backend with completed reads when decompilation fails",
+    async (backend) => {
+      const { producer, client } = await fixture();
+      producer.openBackend = backend;
+      producer.reads.beforeCall = async (name) => {
+        if (name === "decompile")
+          throw new IdaToolRejection("Fixture decompilation failed");
+      };
+      try {
+        const result = await client.execute("procedure_pseudo_code", {
+          procedure: "main",
+        });
+        if (result.ok) throw new Error("expected decompilation failure");
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "unreadable_output",
+          details: {
+            partial_observation: {
+              normalized_result: {
+                status: "partial",
+                target_binding: { status: "not_verified" },
+              },
+              raw_result: {
+                worker_backend: backend,
+                observations: [
+                  {
+                    tool: "execute_python",
+                    arguments: { query: "lookup_funcs" },
+                  },
+                ],
+              },
+            },
+          },
+        });
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+    },
+  );
+
   it("refuses a conflicting IDA input hash even when the private file is unchanged", async () => {
     const { target, producer, client } = await fixture();
     producer.recordedInputSha256 = target.sha256.toUpperCase();

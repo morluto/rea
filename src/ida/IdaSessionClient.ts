@@ -469,16 +469,7 @@ export class IdaSessionClient implements AnalysisClient {
         throw cancelledBy(operation, options?.signal);
       return ok(
         createAnalysisExecution(result, IDA_PROVIDER_IDENTITY, {
-          rawResult: {
-            upstream: this.connection.serverInfo(),
-            metadata_before: before,
-            metadata_after: after,
-            observations: jsonValueSchema.parse(runner.raw),
-            ...(this.#hexRaysOpenedBackend === undefined
-              ? {}
-              : { worker_backend: this.#hexRaysOpenedBackend }),
-            ...this.#healthEvidence(),
-          },
+          rawResult: this.#operationRawResult(runner, before, after),
           limitations: [...this.#limitations(), ...runner.limitations],
           ...(runner.relationshipCoverage === undefined
             ? {}
@@ -627,8 +618,11 @@ export class IdaSessionClient implements AnalysisClient {
       runner.raw.length > 0 &&
       metadataBefore !== undefined
     ) {
-      const observations = jsonValueSchema.parse(runner.raw);
-      const upstream = this.connection.serverInfo();
+      const rawResult = this.#operationRawResult(
+        runner,
+        metadataBefore,
+        metadataAfter,
+      );
       const binding =
         context.postOperationIdentityCheck !== "verified"
           ? {
@@ -647,7 +641,7 @@ export class IdaSessionClient implements AnalysisClient {
           result: {
             status: "partial",
             failed_operation: operation,
-            observations,
+            observations: rawResult.observations,
             metadata_before: metadataBefore,
             target_binding: binding,
             ...(metadataAfter === undefined
@@ -655,13 +649,7 @@ export class IdaSessionClient implements AnalysisClient {
               : { metadata_after: metadataAfter }),
           },
           rawResult: {
-            upstream,
-            observations,
-            metadata_before: metadataBefore,
-            ...(metadataAfter === undefined
-              ? {}
-              : { metadata_after: metadataAfter }),
-            ...this.#healthEvidence(),
+            ...rawResult,
             post_operation_identity_check: context.postOperationIdentityCheck,
           },
           confidence: "observed",
@@ -912,13 +900,27 @@ export class IdaSessionClient implements AnalysisClient {
     return observation.result;
   }
 
-  /** The bridge digest and engine output behind this operation's identity checks. */
-  #healthEvidence() {
-    return this.#healthObservations.length === 0
-      ? {}
-      : {
-          health_observations: jsonValueSchema.parse(this.#healthObservations),
-        };
+  #operationRawResult(
+    runner: IdaOperationRunner,
+    metadataBefore: JsonValue,
+    metadataAfter: JsonValue | undefined,
+  ) {
+    return {
+      upstream: this.connection.serverInfo(),
+      metadata_before: metadataBefore,
+      ...(metadataAfter === undefined ? {} : { metadata_after: metadataAfter }),
+      observations: jsonValueSchema.parse(runner.raw),
+      ...(this.#hexRaysOpenedBackend === undefined
+        ? {}
+        : { worker_backend: this.#hexRaysOpenedBackend }),
+      ...(this.#healthObservations.length === 0
+        ? {}
+        : {
+            health_observations: jsonValueSchema.parse(
+              this.#healthObservations,
+            ),
+          }),
+    };
   }
 
   async #nativeMetadata(signal?: AbortSignal): Promise<JsonValue> {
