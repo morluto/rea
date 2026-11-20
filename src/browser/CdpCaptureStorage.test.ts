@@ -11,6 +11,7 @@ import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCaptur
 import { captureStorage } from "./CdpCaptureStorage.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import type { CdpConnection } from "./CdpConnection.js";
+import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 
 const NO_CACHE_COMMAND = Symbol("unsupported");
 
@@ -19,7 +20,7 @@ const captureWithCacheResult = async (
   storageEntries: unknown = [],
 ): Promise<Awaited<ReturnType<typeof captureStorage>>["value"]> => {
   const connection = {
-    send(method: string, params: Record<string, unknown>): Promise<unknown> {
+    send: fakeCdpSend((method, params): Promise<unknown> => {
       switch (method) {
         case "Storage.getUsageAndQuota":
           return Promise.resolve({ usage: 1, quota: 10 });
@@ -46,7 +47,7 @@ const captureWithCacheResult = async (
         default:
           return Promise.reject(new Error(`Unexpected command: ${method}`));
       }
-    },
+    }),
   } as unknown as CdpConnection;
   const { value } = await captureStorage(
     {
@@ -123,10 +124,10 @@ it("keeps an omitted IndexedDB remote value unknown", async () => {
     },
   };
   const connection = {
-    async send(method: string): Promise<unknown> {
+    send: fakeCdpSend(async (method): Promise<unknown> => {
       if (!(method in replies)) throw new Error(method);
       return replies[method];
-    },
+    }),
   } as unknown as CdpConnection;
   const { value } = await captureStorage(
     {
@@ -192,10 +193,7 @@ it.each(["indexed_db", "cache"] as const)(
       "CacheStorage.requestCachedResponse": { response: { body: "" } },
     };
     const connection = {
-      async send(
-        method: string,
-        params: Record<string, unknown>,
-      ): Promise<unknown> {
+      send: fakeCdpSend(async (method, params): Promise<unknown> => {
         if (
           method === "IndexedDB.requestData" ||
           method === "CacheStorage.requestEntries"
@@ -225,7 +223,7 @@ it.each(["indexed_db", "cache"] as const)(
         }
         if (!(method in replies)) throw new Error(method);
         return replies[method];
-      },
+      }),
     } as unknown as CdpConnection;
     const { value } = await captureStorage(
       {
@@ -277,10 +275,10 @@ const captureCookies = async (
     "Network.getCookies": { cookies },
   };
   const connection = {
-    async send(method: string): Promise<unknown> {
+    send: fakeCdpSend(async (method): Promise<unknown> => {
       if (!(method in replies)) throw new Error(method);
       return replies[method];
-    },
+    }),
   } as unknown as CdpConnection;
   const { value } = await captureStorage(
     {

@@ -65,6 +65,7 @@ it.each([
           observed_ipc: 0,
           observed_runtime: 3,
           hook_error: false,
+          single_instance_lock_refused: false,
         },
       },
     );
@@ -117,6 +118,7 @@ it("projects hook retention and dropped event families through the result schema
         observed_ipc: 1,
         observed_runtime: 1,
         hook_error: false,
+        single_instance_lock_refused: false,
       },
     },
   );
@@ -199,6 +201,7 @@ it("keeps renderer coverage unavailable when only the main process was observed"
         observed_ipc: 0,
         observed_runtime: 1,
         hook_error: false,
+        single_instance_lock_refused: false,
       },
     },
   );
@@ -239,6 +242,7 @@ it("does not correlate legacy dropped families and roles", () => {
         observed_ipc: 1,
         observed_runtime: 1,
         hook_error: false,
+        single_instance_lock_refused: false,
       },
     },
   );

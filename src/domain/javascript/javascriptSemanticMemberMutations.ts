@@ -1,3 +1,4 @@
+import { builtinResourceReleases } from "./javascriptBuiltinResourceMethods.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
@@ -5,7 +6,8 @@ import {
   createGlobalPathReader,
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
-import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import { isIntrinsicMapLookup } from "./javascriptSemanticIntrinsicInstances.js";
+import { JavaScriptSemanticWorkMeter } from "./javascriptSemanticWorkAllowance.js";
 import {
   isIntrinsicTypedArrayConstruction,
   isTypedArrayNumericIndex,
@@ -14,7 +16,7 @@ import {
 import {
   semanticGlobalProcessOrigin,
   semanticGlobalProcessPathOrigin,
-  semanticOriginalGlobalProcessAt,
+  semanticEffectMayReachOriginalGlobalProcess,
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
   semanticRequireOriginCandidate,
@@ -34,9 +36,18 @@ import {
   clearSemanticValueCaches,
   evaluateSemanticBinding,
   evaluateSemanticExpression,
+  evaluateSemanticExpressionProvenance,
+  semanticSelectedBranchNodesAt,
 } from "./javascriptSemanticValues.js";
+import {
+  bindingHasMemberWrites,
+  bindingProjectedContentsMayChangeAt,
+  semanticAmbientArrayIterationUnknown,
+  semanticArrayPrototypeIterationMayChange,
+} from "./javascriptSemanticEffectLog.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
+  hasFreshProjectedReceiver,
   semanticProjectedSourceFactsAtRead,
   semanticCapturedSelectionsAfterPropertyRead,
   semanticShiftCapturedSelections,
@@ -52,14 +63,14 @@ import {
   semanticObjectPropertyReferences,
   semanticObjectAccessorReferences,
   semanticNativePrototypeChain,
-  type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
+import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
 import {
   semanticIterationSources,
   semanticPropertyReadSources,
-  type SemanticIterationSource,
   type SemanticPropertyReadSource,
 } from "./javascriptSemanticIterationSources.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
 import { semanticGetterReceiverReferences } from "./javascriptSemanticGetterResults.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
@@ -67,15 +78,27 @@ import {
   semanticMutationInitializers,
   semanticBindingAtRead,
   semanticCaptureOrderingIdentity,
+  semanticArrayPatternCloseScope,
+  semanticArrayPatternAcquisitionEffect,
   semanticScopeExitEffect,
 } from "./javascriptSemanticMutationInitializers.js";
-import { semanticCoercionOperands } from "./javascriptSemanticLanguageInvocations.js";
 import {
+  javaScriptDefinitionKeyCoercions,
+  javaScriptDefinitionTimeExpressions,
+  javaScriptExecutions,
+  type JavaScriptExecution,
+} from "./javascriptSemanticExecutionPoints.js";
+import {
+  semanticArrayPatternCloseSelection,
   semanticKnownArrayIteration,
   semanticReferenceSourcesInactive,
   semanticSelectedReferenceSlot,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import {
+  semanticArgumentStaysInSource,
+  semanticDirectInvocationArgument,
+} from "./javascriptSemanticDirectInvocations.js";
 import {
   semanticArrayIndex,
   joinSemanticPropertyPaths,
@@ -90,8 +113,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   semanticStaticPropertyKey,
-  semanticWriteSiteTarget,
-  semanticWriteSiteReadsFirst,
+  semanticMemberChain,
   semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -105,23 +127,6 @@ interface MutationSelectionContext {
 }
 
 type ValueEffect = "write" | "escape";
-
-/** Only replacing or possibly selecting an iterator-bearing prototype slot changes iteration. */
-const arrayPrototypeIterationMayChange = (path: PropertyPath): boolean => {
-  // Array.prototype and Object.prototype are on native arrays' prototype
-  // chain. Their default constructor.prototype pairs return to the same owner.
-  let offset = 0;
-  while (path[offset] === "constructor" && path[offset + 1] === "prototype")
-    offset += 2;
-  const key = path[offset];
-  return (
-    key === undefined ||
-    key === null ||
-    typeof key === "object" ||
-    semanticArrayIndex(key) !== null ||
-    key === "__proto__"
-  );
-};
 
 /** Preserve uncertainty from property writes and references exposed to calls, yielding during traversal and fixpoint iteration. */
 
@@ -259,7 +264,11 @@ const localPropertyMethods = (
           (capture) => capture.depth === 1 && capture.ownEnumerable,
         )
       ) {
-        for (const prototype of semanticNativePrototypeChain(node, selected!)) {
+        for (const prototype of semanticNativePrototypeChain(
+          node,
+          selected!,
+          state,
+        )) {
           if (selected === null || typeof selected === "object")
             return undefined;
           const at = current.memberReadAt ?? root;
@@ -290,7 +299,7 @@ const localPropertyMethods = (
         }
       }
       const references = t.isArrayExpression(node)
-        ? semanticArrayPropertyReferences(node, [selected!])
+        ? semanticArrayPropertyReferences(node, [selected!], state)
         : remaining.length === 0 && accessor !== "invoke"
           ? semanticObjectAccessorReferences(
               node,
@@ -400,66 +409,94 @@ const accessorEffectOperands = (
   const cached = accessorOperands.get(method);
   if (cached !== undefined) return cached;
   const operands: AccessorEffectOperand[] = [];
+  const escape = (nodes: readonly t.Node[]): void => {
+    for (const node of nodes) operands.push({ kind: "escape", node });
+  };
+  const writeOnly = new WeakSet<t.Node>();
+  const apply = (execution: JavaScriptExecution): void => {
+    const { node } = execution;
+    switch (execution.kind) {
+      case "property-write":
+        if (!execution.readsFirst)
+          for (const target of semanticWriteTargets(execution.target))
+            writeOnly.add(target);
+        escape(execution.operands);
+        return;
+      case "property-read":
+        if (
+          (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+          !writeOnly.has(node)
+        )
+          operands.push({
+            kind: "read",
+            node: node.object,
+            path: [semanticStaticPropertyKey(node.property, node.computed)],
+            lookup: "prototype",
+          });
+        return;
+      case "call":
+      case "construction":
+      case "tagged-template":
+        if (t.isTaggedTemplateExpression(node))
+          operands.push({ kind: "invoke", node: node.tag });
+        else if (
+          t.isCallExpression(node) ||
+          t.isOptionalCallExpression(node) ||
+          t.isNewExpression(node)
+        )
+          operands.push({
+            kind: "invoke",
+            node: node.callee,
+            ...(t.isNewExpression(node) ? {} : { invocation: node }),
+          });
+        escape(execution.operands);
+        return;
+      // Projected getter and `then` reads belong to the read-source owner.
+      case "destructuring":
+      case "property-copy":
+      case "thenable":
+      // Static module evaluation finishes before this module's code runs.
+      case "module-evaluation":
+      // Ordinary objects enumerate without user code; Proxy traps escaped
+      // when the Proxy was constructed.
+      case "enumeration":
+        return;
+      // Without a narrower proof, code that may run receives its operands.
+      case "class-definition":
+      case "coercion":
+      case "disposal":
+      case "iteration":
+      case "suspension":
+      case "decorator":
+      case "dynamic-import":
+      case "dynamic-scope":
+      case "jsx-element":
+      case "unsupported-syntax":
+        escape(execution.operands);
+        return;
+      default:
+        execution satisfies never;
+    }
+  };
   const pending: { node: t.Node; parent: t.Node | null }[] = [
     { node: method.body, parent: method },
   ];
-  const writeOnly = new WeakSet<t.Node>();
   while (pending.length > 0) {
     const { node, parent } = pending.pop()!;
-    // Defining a nested callable does not invoke it.
-    if (t.isFunction(node) || t.isClass(node)) continue;
-    const write = semanticWriteSiteTarget(node);
-    if (write !== null) {
-      for (const target of semanticWriteTargets(write)) {
-        if (!semanticWriteSiteReadsFirst(node)) writeOnly.add(target);
-        if (!t.isIdentifier(target))
-          operands.push({ kind: "escape", node: target.object });
-      }
+    // Defining a nested callable does not invoke it, but the definition itself
+    // evaluates heritage, decorators and computed keys against the enclosing
+    // receiver.
+    if (t.isFunction(node) || t.isClass(node)) {
+      if (t.isClass(node))
+        for (const execution of javaScriptExecutions(node, parent))
+          apply(execution);
+      escape(javaScriptDefinitionKeyCoercions(node));
+      for (const child of javaScriptDefinitionTimeExpressions(node).reverse())
+        pending.push({ node: child, parent: node });
+      continue;
     }
-    if (
-      (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-      !writeOnly.has(node)
-    )
-      operands.push({
-        kind: "read",
-        node: node.object,
-        path: [semanticStaticPropertyKey(node.property, node.computed)],
-        lookup: "prototype",
-      });
-    if (
-      t.isCallExpression(node) ||
-      t.isOptionalCallExpression(node) ||
-      t.isNewExpression(node)
-    ) {
-      const callee = unwrapJavaScriptExpression(node.callee).node;
-      operands.push({
-        kind: "invoke",
-        node: node.callee,
-        ...(t.isNewExpression(node) ? {} : { invocation: node }),
-      });
-      if (
-        !t.isNewExpression(node) &&
-        (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
-      )
-        operands.push({ kind: "escape", node: callee.object });
-      for (const argument of node.arguments)
-        operands.push({
-          kind: "escape",
-          node: t.isSpreadElement(argument) ? argument.argument : argument,
-        });
-    } else if (t.isTaggedTemplateExpression(node)) {
-      operands.push({ kind: "invoke", node: node.tag });
-      const tag = unwrapJavaScriptExpression(node.tag).node;
-      if (t.isMemberExpression(tag) || t.isOptionalMemberExpression(tag))
-        operands.push({ kind: "escape", node: tag.object });
-      for (const expression of node.quasi.expressions)
-        operands.push({ kind: "escape", node: expression });
-    }
-    for (const operand of semanticCoercionOperands(node))
-      operands.push({ kind: "escape", node: operand });
-    if (t.isTemplateLiteral(node) && !t.isTaggedTemplateExpression(parent))
-      for (const expression of node.expressions)
-        operands.push({ kind: "escape", node: expression });
+    for (const execution of javaScriptExecutions(node, parent))
+      apply(execution);
     for (const source of semanticPropertyReadSources(node, parent))
       operands.push({
         kind: "read",
@@ -469,12 +506,6 @@ const accessorEffectOperands = (
         ...(source.invoke ? { invoke: true } : {}),
         guards: source,
       });
-    if (
-      t.isVariableDeclarator(node) &&
-      t.isVariableDeclaration(parent) &&
-      (parent.kind === "using" || parent.kind === "await using")
-    )
-      operands.push({ kind: "escape", node: node.init ?? node.id });
     for (const child of childNodes(node).reverse())
       pending.push({ node: child, parent: node });
   }
@@ -485,11 +516,14 @@ const accessorEffectOperands = (
 export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
-  referenceMayHaveChangedAt: JavaScriptBindingIndex["referenceMayHaveChangedAt"],
+  mayObserve: JavaScriptBindingIndex["mayObserve"],
 ): Generator<void, void> {
   const deferredMapReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
+  // Alias states are retained until their query finishes; bound the phase
+  // before a pathological alias history exhausts the worker heap.
+  const work = new JavaScriptSemanticWorkMeter(state.memberMutationAllowance);
   // The binding pass already retained callable nodes. Ordinary data-only code
   // must not pay an alias walk for every member read or assignment.
   const accessorKeys = {
@@ -732,12 +766,12 @@ export function* collectSemanticMemberMutationsSteps(
       path[1] === "process" &&
       path.length > 2 &&
       node !== undefined &&
-      semanticOriginalGlobalProcessAt(node, state)
+      semanticEffectMayReachOriginalGlobalProcess(node, state)
     )
       recordRequiredEffect("node:process", path.slice(2), "write", node);
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
-  state.arrayIterationUnknown = false;
+  state.arrayIterationUnknown = semanticAmbientArrayIterationUnknown(state);
   // Definition collection finishes before this phase, so a scope's bindings no
   // longer change and one node resolves to one binding. Repeated visits of the
   // same node otherwise repeat the same scope walk.
@@ -837,6 +871,7 @@ export function* collectSemanticMemberMutationsSteps(
       reference.memberReadAt?.end,
       capturedSelectionKey(reference.capturedSelections),
       reference.iterationOnly,
+      reference.arrayPattern?.start,
       reference.widenedGetterResult === true,
       reference.definiteReceiver === true,
       reference.assignedSources?.[0]?.target?.start,
@@ -897,7 +932,12 @@ export function* collectSemanticMemberMutationsSteps(
           readonly value: JoinedProjection;
         };
       };
+    const patternClose = semanticArrayPatternCloseScope(mutation);
     const pending: PendingValue[] = [];
+    const schedule = (value: PendingValue): void => {
+      work.charge();
+      pending.push(value);
+    };
     // The effect, mutation and assigned sources belong to this invocation.
     // Alias histories do not select a value: the binding/capture/projection do.
     // Keep small alternatives exact. Bound additional states across this whole
@@ -924,7 +964,7 @@ export function* collectSemanticMemberMutationsSteps(
         ? resolveBinding(expression, expression.name)
         : undefined;
       if (binding === undefined) {
-        pending.push(value);
+        schedule(value);
         return;
       }
       const observablePath = observablePaths.normalize(
@@ -989,12 +1029,12 @@ export function* collectSemanticMemberMutationsSteps(
           : { path, definiteReceiver, scheduled: false };
       joinedProjections.set(key, joined);
       if (!projectionsWidened) {
-        pending.push({ ...value, exactKey: key });
+        schedule({ ...value, exactKey: key });
         return;
       }
       if (joined.scheduled) return;
       joined.scheduled = true;
-      pending.push({
+      schedule({
         ...value,
         path,
         definiteReceiver,
@@ -1007,7 +1047,8 @@ export function* collectSemanticMemberMutationsSteps(
       bindings,
       originAt,
       definiteReceiver,
-      memberReadAt: selection?.memberReadAt ?? mutation ?? originAt,
+      memberReadAt:
+        selection?.memberReadAt ?? patternClose ?? mutation ?? originAt,
       capturedSelections: selection?.capturedSelections,
       ...(ownerInitializer === undefined ? {} : { ownerInitializer }),
     });
@@ -1035,7 +1076,11 @@ export function* collectSemanticMemberMutationsSteps(
         );
         continue;
       }
-      const globalProcess = semanticGlobalProcessPathOrigin(expression, state);
+      const globalProcess = semanticGlobalProcessPathOrigin(
+        expression,
+        state,
+        "effect",
+      );
       if (globalProcess !== undefined) {
         recordRequiredEffect(
           globalProcess.specifier,
@@ -1064,7 +1109,11 @@ export function* collectSemanticMemberMutationsSteps(
               recordedEffectCount += 1;
               clearSemanticValueCaches(state);
             }
-          const processOrigin = semanticGlobalProcessOrigin(expression, state);
+          const processOrigin = semanticGlobalProcessOrigin(
+            expression,
+            state,
+            "effect",
+          );
           if (processOrigin !== undefined)
             recordRequiredEffect(
               processOrigin.specifier,
@@ -1075,14 +1124,16 @@ export function* collectSemanticMemberMutationsSteps(
           if (
             (["Array", "Object"].includes(expression.name) &&
               (current.path[0] === "prototype" || current.path[0] === null) &&
-              arrayPrototypeIterationMayChange(current.path.slice(1))) ||
+              semanticArrayPrototypeIterationMayChange(
+                current.path.slice(1),
+              )) ||
             (["globalThis", "global", "window", "self"].includes(
               expression.name,
             ) &&
               (["Array", "Object"].includes(String(current.path[0])) ||
                 current.path[0] === null) &&
               (current.path[1] === "prototype" || current.path[1] === null) &&
-              arrayPrototypeIterationMayChange(current.path.slice(2)))
+              semanticArrayPrototypeIterationMayChange(current.path.slice(2)))
           )
             state.arrayIterationUnknown = true;
           if (lookup?.kind !== "uncertain-binding") continue;
@@ -1322,7 +1373,7 @@ export function* collectSemanticMemberMutationsSteps(
             ...origins.initializers,
             ...origins.referenceInitializers,
           ];
-          const receiver =
+          const storedReceiverPath =
             effect === "write" &&
             current.path.length > 1 &&
             binding.memberWrites.some(
@@ -1330,27 +1381,39 @@ export function* collectSemanticMemberMutationsSteps(
                 write.assignedSources !== undefined &&
                 write.path.length < current.path.length,
             )
-              ? semanticProjectedSourceFactsAtRead(
+              ? current.path.slice(0, -1)
+              : patternClose !== undefined &&
+                  current.path.length > 0 &&
+                  bindingHasMemberWrites(binding)
+                ? current.path
+                : undefined;
+          const receiver =
+            storedReceiverPath === undefined
+              ? undefined
+              : semanticProjectedSourceFactsAtRead(
                   binding,
                   current.node,
-                  current.path.slice(0, -1),
+                  storedReceiverPath,
                   state,
                   false,
                   current.memberReadAt ?? current.originAt ?? current.node,
                   current.capturedSelections,
-                )
-              : undefined;
+                );
           // Stored receiver projections preserve their raw capture authority.
           // Initializer origins retain the normalized mutation traversal below.
           retainsInitializers = receiver?.retainsOrigin !== false;
+          // A direct receiver keeps its alias capture. Projected receivers
+          // select their child at the member read, after capturing the root.
+          const receiverAt =
+            current.path.length > 1
+              ? (current.memberReadAt ?? current.originAt)
+              : current.originAt;
           if (effect === "escape")
             recordBindingEffect(binding.escapedPaths, {
               path,
               node: mutation,
               receiverInitializers,
-              ...(current.originAt === undefined
-                ? {}
-                : { receiverAt: current.memberReadAt ?? current.originAt }),
+              ...(receiverAt === undefined ? {} : { receiverAt }),
             });
           else
             recordBindingEffect(binding.memberWrites, {
@@ -1358,9 +1421,7 @@ export function* collectSemanticMemberMutationsSteps(
               path,
               node: mutation,
               receiverInitializers,
-              ...(current.originAt === undefined
-                ? {}
-                : { receiverAt: current.memberReadAt ?? current.originAt }),
+              ...(receiverAt === undefined ? {} : { receiverAt }),
               ...(assignedSources === undefined ? {} : { assignedSources }),
             });
           clearSemanticValueCaches(state);
@@ -1371,20 +1432,43 @@ export function* collectSemanticMemberMutationsSteps(
             for (const source of receiver.storedSources)
               enqueue({
                 node: source.node,
-                path: [...source.path, current.path.at(-1)!],
+                path:
+                  patternClose === undefined
+                    ? [...source.path, current.path.at(-1)!]
+                    : source.path,
                 bindings: nested,
                 definiteReceiver: false,
                 originAt: source.node,
-                memberReadAt: current.memberReadAt,
+                memberReadAt:
+                  patternClose === undefined
+                    ? current.memberReadAt
+                    : source.node,
                 capturedSelections: semanticNormalizeCapturedSelections([
                   ...(semanticShiftCapturedSelections(
                     current.capturedSelections,
-                    source.path.length - (current.path.length - 1),
+                    source.path.length - storedReceiverPath!.length,
                   ) ?? []),
                   ...(source.capturedSelections ?? []),
                 ]),
               });
           }
+          // A directly invoked function's parameter starts as its argument,
+          // which therefore did not escape at the call.
+          const argument = semanticDirectInvocationArgument(
+            expression,
+            binding,
+            state,
+          );
+          if (argument !== undefined)
+            enqueue({
+              node: argument,
+              path,
+              bindings: nested,
+              definiteReceiver: false,
+              originAt: argument,
+              memberReadAt: current.memberReadAt,
+              capturedSelections: current.capturedSelections,
+            });
           for (const initializer of retainsInitializers
             ? origins.initializers
             : [])
@@ -1576,10 +1660,10 @@ export function* collectSemanticMemberMutationsSteps(
       t.isArrayExpression(expression) &&
       ((path[0] === "__proto__" &&
         (effect === "escape" || path.length > 1) &&
-        arrayPrototypeIterationMayChange(path.slice(1))) ||
+        semanticArrayPrototypeIterationMayChange(path.slice(1))) ||
         (path[0] === "constructor" &&
           path[1] === "prototype" &&
-          arrayPrototypeIterationMayChange(path.slice(2))))
+          semanticArrayPrototypeIterationMayChange(path.slice(2))))
     )
       state.arrayIterationUnknown = true;
     const references = referencedValues(
@@ -1734,13 +1818,75 @@ export function* collectSemanticMemberMutationsSteps(
           sourcesByTarget.get(target) ?? [],
         );
   };
+  /** Disposal runs when the declaration's lexical scope exits. */
+  const markDisposal = (
+    node: t.Node,
+    readAncestors: () => readonly t.Node[],
+  ): void => {
+    if (!t.isVariableDeclarator(node)) return;
+    const scope = readAncestors().findLast(
+      (ancestor) =>
+        t.isBlockStatement(ancestor) ||
+        t.isProgram(ancestor) ||
+        t.isStaticBlock(ancestor) ||
+        t.isSwitchStatement(ancestor) ||
+        t.isLoop(ancestor),
+    );
+    if (scope === undefined) return;
+    const exit = semanticScopeExitEffect(scope);
+    if (t.isIdentifier(node.id))
+      markValue(
+        node.id,
+        [],
+        new Set(),
+        "escape",
+        exit,
+        node.id,
+        node.init ?? undefined,
+      );
+    else if (node.init != null) markEscaped(node.init, exit);
+  };
+  const markInvocation = (
+    node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  ): void => {
+    for (const source of returnedReferences(node.callee).references)
+      markEscaped(source.node, node, source.projection);
+    for (const [index, argument] of node.arguments.entries())
+      // A directly invoked source function receives it through a parameter,
+      // which `markValue` follows back to the argument.
+      if (semanticArgumentStaysInSource(node, index, state)) continue;
+      else if (t.isSpreadElement(argument))
+        deferIterable({
+          node: argument.argument,
+          projection: [],
+          path: [null],
+          fallbackPath: [],
+          bindings: new Set(),
+          effect: "escape",
+          mutation: node,
+          originAt: node,
+        });
+      else markEscaped(argument, node);
+    // Constructing a member does not pass its container as `this`.
+    if (!t.isNewExpression(node)) {
+      const mapLookup = isIntrinsicMapLookup(node, state);
+      if (mapLookup === undefined) deferredMapReceivers.add(node);
+      else if (!mapLookup) markReceiver(node.callee, node);
+    }
+  };
   const writeOnlyMembers = new WeakSet<t.Node>();
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
-      const writeTarget = semanticWriteSiteTarget(node);
-      if (writeTarget !== null && !semanticWriteSiteReadsFirst(node))
-        for (const target of semanticWriteTargets(writeTarget))
-          writeOnlyMembers.add(target);
+      const executions = javaScriptExecutions(node, parent, {
+        isObject: (operand) => {
+          const value = evaluateSemanticExpression(operand, state, node);
+          return value.status === "object" || value.status === "array";
+        },
+      });
+      for (const execution of executions)
+        if (execution.kind === "property-write" && !execution.readsFirst)
+          for (const target of semanticWriteTargets(execution.target))
+            writeOnlyMembers.add(target);
       for (const source of semanticIterationSources(node, parent)) {
         // Local stores retain their sources on member writes. Only the ambient
         // identity owner can establish that storing itself exposes a reference.
@@ -1770,43 +1916,10 @@ export function* collectSemanticMemberMutationsSteps(
           effect: "escape",
           originAt: source.mutation,
           iterationOnly: source.kind === "iteration",
+          ...(source.arrayPattern === undefined
+            ? {}
+            : { arrayPattern: source.arrayPattern }),
         });
-      }
-      for (const operand of semanticCoercionOperands(node, (operand) => {
-        const value = evaluateSemanticExpression(operand, state, node);
-        return value.status === "object" || value.status === "array";
-      }))
-        if (!semanticKnownSymbolKey(operand, state)) markEscaped(operand, node);
-      if (t.isTemplateLiteral(node) && !t.isTaggedTemplateExpression(parent))
-        for (const expression of node.expressions)
-          markEscaped(expression, node);
-      if (
-        t.isVariableDeclarator(node) &&
-        t.isVariableDeclaration(parent) &&
-        (parent.kind === "using" || parent.kind === "await using")
-      ) {
-        const scope = readAncestors().findLast(
-          (ancestor) =>
-            t.isBlockStatement(ancestor) ||
-            t.isProgram(ancestor) ||
-            t.isStaticBlock(ancestor) ||
-            t.isSwitchStatement(ancestor) ||
-            t.isLoop(ancestor),
-        );
-        if (scope !== undefined) {
-          const exit = semanticScopeExitEffect(scope);
-          if (t.isIdentifier(node.id))
-            markValue(
-              node.id,
-              [],
-              new Set(),
-              "escape",
-              exit,
-              node.id,
-              node.init ?? undefined,
-            );
-          else if (node.init != null) markEscaped(node.init, exit);
-        }
       }
       for (const source of semanticPropertyReadSources(node, parent, state)) {
         if (semanticReferenceSourcesInactive(source, state)) continue;
@@ -1818,50 +1931,179 @@ export function* collectSemanticMemberMutationsSteps(
         ))
           markEscaped(effect.node, source.mutation, effect.path);
       }
-      if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-        // The write owner classifies direct and destructuring stores once.
-        if (!writeOnlyMembers.has(node))
-          for (const effect of propertyReadEffects(node.object, [
-            semanticStaticPropertyKey(node.property, node.computed),
-          ]))
-            markEscaped(effect.node, node, effect.path);
-      }
-      if (writeTarget !== null) markTarget(writeTarget, node);
-      else if (
-        t.isCallExpression(node) ||
-        t.isOptionalCallExpression(node) ||
-        t.isNewExpression(node)
-      ) {
-        for (const source of returnedReferences(node.callee).references)
-          markEscaped(source.node, node, source.projection);
-        for (const argument of node.arguments)
-          if (t.isSpreadElement(argument))
-            deferIterable({
-              node: argument.argument,
-              projection: [],
-              path: [null],
-              fallbackPath: [],
-              bindings: new Set(),
-              effect: "escape",
-              mutation: node,
-              originAt: node,
-            });
-          else markEscaped(argument, node);
-        // Constructing a member does not pass its container as `this`.
-        if (!t.isNewExpression(node)) {
-          const mapLookup = isIntrinsicMapLookup(node, state);
-          if (mapLookup === undefined) deferredMapReceivers.add(node);
-          else if (!mapLookup) markReceiver(node.callee, node);
+      for (const execution of executions)
+        switch (execution.kind) {
+          case "coercion":
+            for (const operand of execution.operands)
+              if (!semanticKnownSymbolKey(operand, state))
+                markEscaped(operand, node);
+            break;
+          case "disposal":
+            markDisposal(node, readAncestors);
+            break;
+          case "property-read":
+            // The write owner classifies direct and destructuring stores once.
+            if (
+              (t.isMemberExpression(node) ||
+                t.isOptionalMemberExpression(node)) &&
+              !writeOnlyMembers.has(node)
+            )
+              for (const effect of propertyReadEffects(node.object, [
+                semanticStaticPropertyKey(node.property, node.computed),
+              ]))
+                markEscaped(effect.node, node, effect.path);
+            break;
+          case "property-write":
+            markTarget(execution.target, node);
+            break;
+          case "call":
+          case "construction":
+            if (
+              t.isCallExpression(node) ||
+              t.isOptionalCallExpression(node) ||
+              t.isNewExpression(node)
+            )
+              markInvocation(node);
+            break;
+          case "tagged-template":
+            if (t.isTaggedTemplateExpression(node)) {
+              for (const source of returnedReferences(node.tag).references)
+                markEscaped(source.node, node, source.projection);
+              markReceiver(node.tag, node);
+              for (const expression of node.quasi.expressions)
+                markEscaped(expression, node);
+            }
+            break;
+          // Projected getter, iterator and `then` reads belong to the
+          // read-source and iteration owners above.
+          case "destructuring":
+          case "property-copy":
+          case "iteration":
+          case "thenable":
+          // Definition-time code is traversed as ordinary code.
+          case "class-definition":
+          // Static module evaluation finishes before this module's code runs.
+          case "module-evaluation":
+          // Ordinary objects enumerate without user code; Proxy traps escaped
+          // when the Proxy was constructed.
+          case "enumeration":
+            break;
+          // Without a narrower proof, code that may run receives its operands.
+          case "suspension":
+          case "decorator":
+          case "dynamic-import":
+          case "dynamic-scope":
+          case "jsx-element":
+          case "unsupported-syntax":
+            for (const operand of execution.operands)
+              markEscaped(operand, node);
+            break;
+          default:
+            execution satisfies never;
         }
-      } else if (t.isTaggedTemplateExpression(node)) {
-        for (const source of returnedReferences(node.tag).references)
-          markEscaped(source.node, node, source.projection);
-        markReceiver(node.tag, node);
-        for (const expression of node.quasi.expressions)
-          markEscaped(expression, node);
-      }
     },
   });
+  // A value thrown out of its function or the program reaches handlers the
+  // throw-to-catch index does not link to it.
+  for (const node of state.escapingThrows) markEscaped(node.argument, node);
+  const markAcquiredNestedIterator = (
+    reference: IterableReference,
+  ): boolean => {
+    const { arrayPattern: pattern, mutation, node, projection } = reference;
+    if (pattern === undefined || projection.length === 0) return false;
+    const receiver = semanticMemberChain(node);
+    if (receiver === undefined || !t.isIdentifier(receiver.root)) return false;
+    const binding = resolveBinding(receiver.root, receiver.root.name);
+    if (binding === undefined || !bindingHasMemberWrites(binding)) return false;
+    const path = [...receiver.members, ...projection];
+    // The RHS captures the parent, while the nested pattern selects the
+    // iterable later, after any preceding defaults or assignments.
+    const receiverCaptures = semanticNormalizeCapturedSelections([
+      ...(semanticShiftCapturedSelections(
+        reference.capturedSelections,
+        receiver.members.length,
+      ) ?? []),
+      ...(receiver.members.length === 0
+        ? []
+        : [{ at: node, depth: receiver.members.length }]),
+    ]);
+    const captured = semanticProjectedSourceFactsAtRead(
+      binding,
+      receiver.root,
+      path,
+      state,
+      true,
+      pattern,
+      receiverCaptures,
+    );
+    // A later-only write can invalidate the merged lattice without changing
+    // this acquisition. Leave the original capture on its established route.
+    if (captured === undefined || captured.storedSources.length === 0)
+      return false;
+    const contentsMayChange = bindingProjectedContentsMayChangeAt(
+      state,
+      binding,
+      path,
+      pattern,
+    );
+    for (const source of captured.sources) {
+      const pending = [source.node];
+      while (pending.length > 0) {
+        work.charge();
+        const alternative = unwrapJavaScriptExpression(pending.pop()!).node;
+        if (
+          t.isConditionalExpression(alternative) ||
+          t.isLogicalExpression(alternative)
+        ) {
+          for (const branch of semanticSelectedBranchNodesAt(
+            alternative,
+            state,
+            source.node,
+          ))
+            pending.push(branch);
+          continue;
+        }
+        const value = semanticSelectedReferenceSlot(
+          { node: alternative, projection: source.path },
+          state,
+          source.node,
+        )?.value;
+        const native =
+          !contentsMayChange &&
+          semanticKnownArrayIteration(value, state, pattern) &&
+          hasFreshProjectedReceiver(alternative, source.path, state);
+        const selection = native
+          ? semanticArrayPatternCloseSelection(pattern, mutation, value, state)
+          : undefined;
+        if (!native || selection !== undefined)
+          markValue(
+            alternative,
+            selection === undefined ? source.path : [...source.path, selection],
+            reference.bindings,
+            "escape",
+            native
+              ? semanticScopeExitEffect(pattern, mutation)
+              : semanticArrayPatternAcquisitionEffect(pattern, mutation),
+            alternative,
+            undefined,
+            false,
+            undefined,
+            false,
+            {
+              memberReadAt: source.node,
+              capturedSelections: semanticNormalizeCapturedSelections([
+                ...(semanticShiftCapturedSelections(
+                  reference.capturedSelections,
+                  source.path.length - projection.length,
+                ) ?? []),
+                ...(source.capturedSelections ?? []),
+              ]),
+            },
+          );
+      }
+    }
+    return true;
+  };
   // A later effect can make a previously defined destructuring source uncertain.
   // Reconsider defaults and iterable origins until their effects are stable.
   while (
@@ -1951,11 +2193,52 @@ export function* collectSemanticMemberMutationsSteps(
           continue;
         }
       }
-      const slot = semanticSelectedReferenceSlot(reference, state);
+      const { mutation, node, projection } = reference;
+      // A root array pattern acquires its iterator from the completed RHS.
+      // A nested iterator can run after earlier pattern reads and defaults.
+      const capturesRootPattern =
+        reference.iterationOnly &&
+        projection.length === 0 &&
+        ((t.isVariableDeclarator(mutation) && mutation.init === node) ||
+          (t.isAssignmentExpression(mutation) && mutation.right === node));
+      const slot = semanticSelectedReferenceSlot(
+        reference,
+        state,
+        capturesRootPattern ? node : undefined,
+      );
+      // A slot's value lattice loses identities invalidated by writes. Recover
+      // stored alternatives at the nested receiver's actual acquisition.
+      if (slot?.presence !== "present" && markAcquiredNestedIterator(reference))
+        continue;
       // Custom iteration can yield the iterable itself as well as any child.
       // Treat its root as escaped, including writes through yielded references.
-      const knownArray = semanticKnownArrayIteration(slot?.value, state);
-      if (knownArray && reference.iterationOnly) continue;
+      const knownArray = semanticKnownArrayIteration(
+        slot?.value,
+        state,
+        reference.node,
+      );
+      if (knownArray && reference.iterationOnly) {
+        const pattern = reference.arrayPattern;
+        const selection =
+          pattern === undefined
+            ? undefined
+            : semanticArrayPatternCloseSelection(
+                pattern,
+                mutation,
+                slot.value,
+                state,
+              );
+        if (pattern !== undefined && selection !== undefined)
+          markValue(
+            node,
+            [...projection, selection],
+            reference.bindings,
+            "escape",
+            semanticScopeExitEffect(pattern, mutation),
+            reference.originAt,
+          );
+        continue;
+      }
       markValue(
         reference.node,
         knownArray ? reference.path : reference.fallbackPath,
@@ -1976,11 +2259,7 @@ export function* collectSemanticMemberMutationsSteps(
     let receiverIndex = 0;
     for (const node of deferredMapReceivers) {
       if (receiverIndex++ % 64 === 0) yield;
-      if (
-        isIntrinsicMapLookup(node, state, { referenceMayHaveChangedAt }) ===
-        true
-      )
-        continue;
+      if (isIntrinsicMapLookup(node, state, { mayObserve }) === true) continue;
       deferredMapReceivers.delete(node);
       markReceiver(node.callee, node);
     }
@@ -2008,6 +2287,7 @@ interface IterableReference extends ReferencedValue, MutationSelectionContext {
   readonly mutation?: t.Node;
   readonly originAt: t.Node | undefined;
   readonly iterationOnly?: boolean;
+  readonly arrayPattern?: t.ArrayPattern;
   readonly definiteReceiver?: boolean;
   readonly assignedSources?: readonly SemanticIterationSource[];
   readonly requiredSources?: NonNullable<
@@ -2090,7 +2370,7 @@ const referencedValues = (
     if (effect === "write" && path.length < 2) return [];
     return t.isObjectExpression(node)
       ? semanticObjectPropertyReferences(node, path, state)
-      : semanticArrayPropertyReferences(node, path);
+      : semanticArrayPropertyReferences(node, path, state);
   }
   if (t.isClass(node) || t.isNewExpression(node))
     return constructedReferenceValues(
@@ -2305,6 +2585,34 @@ const observableMutationPaths = (
         const selected = pendingExpressions.pop();
         if (selected === undefined) break;
         const { expression, observer } = selected;
+        if (
+          t.isCallExpression(expression) ||
+          t.isOptionalCallExpression(expression)
+        ) {
+          // Retain possible resource slots from provenance alone. Final built-in
+          // admission depends on the mutations this pass is still collecting.
+          if (
+            evaluateSemanticExpressionProvenance(
+              expression.callee,
+              state,
+            ).origins.some(({ specifier, importedPath }) => {
+              const identity = semanticRequireExportsIdentity(
+                specifier,
+                importedPath[0] === "default"
+                  ? importedPath.slice(1)
+                  : importedPath,
+              );
+              return (
+                identity.path.length === 1 &&
+                builtinResourceReleases(
+                  identity.specifier,
+                  identity.path[0]!,
+                ) !== undefined
+              );
+            })
+          )
+            (observer.origins ??= new Set()).add("opaque");
+        }
         if (t.isFunction(expression))
           // Keep own-member writes precise without replacing the existing
           // links to references handed to a function's eventual caller.

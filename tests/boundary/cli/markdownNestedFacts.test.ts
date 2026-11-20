@@ -1,6 +1,7 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { Cli } from "incur";
 import { expect, it } from "vitest";
 import { createMarkdownRenderer } from "vitepress";
 import { parseFragment, type DefaultTreeAdapterTypes } from "parse5";
@@ -9,10 +10,7 @@ import {
   parseCliOutputArguments,
   renderCliDocument,
 } from "../../../src/cliOutput.js";
-import {
-  createCliResultOutput,
-  streamCliCommandResults,
-} from "../../../src/cli/cliResultOutput.js";
+import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
@@ -30,8 +28,6 @@ it("keeps source keys literal in Markdown headings through CLI result output", a
     plain: Object.freeze({ nested: Object.freeze({ value: false }) }),
   });
   const original = JSON.stringify(value);
-  const cli = Cli.create("heading-facts-test", { sync: false });
-  cli.command("facts", { run: () => value });
   const args = ["facts", "--format", "md"];
   const chunks: Buffer[] = [];
   const output = createCliResultOutput(
@@ -44,7 +40,8 @@ it("keeps source keys literal in Markdown headings through CLI result output", a
     }),
   );
   if (output === undefined) throw new Error("Missing CLI result output owner");
-  streamCliCommandResults(cli, output);
+  const cli = createCommandCli(output);
+  registerCliCommand(cli, "facts", { run: () => value });
   let fallback = "";
   await cli.serve(args, {
     exit: (code) => expect(code).toBe(0),

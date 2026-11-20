@@ -1,11 +1,13 @@
+import * as linuxSampling from "../../process/capture/LinuxProcessSampling.js";
 import {
   samplingInspectionFailures,
+  samplingObservation,
   settleSamplingReads,
   SamplingReadBatchFailure,
 } from "../../process/capture/ProcessSamplingObservation.js";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { readFileSync, rmSync } from "node:fs";
+import { accessSync, readFileSync, rmSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -42,13 +44,17 @@ import * as captureFailures from "./DesktopCaptureFailure.js";
 import * as providerProcess from "../../process/ProviderProcess.js";
 import { systemProcessOwnershipHost } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessOwnershipInspectionCancelled } from "../../process/ProcessInspectionCancellation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import {
   desktopApplicationCaptureSchema,
   desktopCaptureEventSchema,
 } from "../../domain/desktop/desktopCapture.js";
-import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
 import * as desktopSession from "../../desktop/DesktopApplicationSession.js";
+import { createDesktopCaptureProvider } from "../../desktop/DesktopCaptureProvider.js";
+import {
+  DesktopSessionCleanupError,
+  type SessionRequest,
+} from "../../ports/DesktopApplicationSession.js";
 import * as linuxInventory from "../../desktop/LinuxApplicationInventory.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
@@ -140,12 +146,22 @@ const installProcessFamily = async (root: string, path: string) => {
       "#!/bin/sh",
       `trap 'rm -f "${windowFile}"; exit 0' TERM`,
       `touch "${windowFile}"`,
-      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; ${loop} ) &`,
-      `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; ${loop}' &`,
+      // Install each trap before reporting ready, so the caller can stop deterministically after readiness.
+      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; touch "${join(root, "group-ready")}"; ${loop} ) &`,
+      `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; touch "${join(root, "setsid-ready")}"; ${loop}' &`,
+      // Wait for both children to install their traps before writing state.ini.
+      // Fail loudly rather than continue when a child never reports ready.
+      `ready=; for i in $(seq 1 500); do if [ -f "${join(root, "group-ready")}" ] && [ -f "${join(root, "setsid-ready")}" ]; then ready=1; break; fi; sleep 0.01; done; [ -n "$ready" ] || { echo "synthetic children did not report ready" >&2; touch "${join(root, "children-not-ready")}"; exit 97; }`,
       'printf "count=1\\n" > "$HOME/.config/fakeapp/state.ini"',
       loop,
     ].join("\n"),
   );
+};
+
+/** Surface a fake application whose children never got ready, instead of waiting. */
+const failIfChildrenNotReady = (root: string): void => {
+  if (fileExists(join(root, "children-not-ready")))
+    throw new Error("synthetic children did not report ready");
 };
 
 const host = (
@@ -156,6 +172,7 @@ const host = (
   platform,
   environment,
   callerDirectory: environment.HOME ?? "/",
+  desktop: createDesktopCaptureProvider(),
   nextRequest,
   report: async () => {},
 });
@@ -353,7 +370,59 @@ it.skipIf(process.platform !== "linux")(
       spy.mockRestore();
     }
   },
-  30_000,
+);
+
+it.skipIf(process.platform !== "linux")(
+  "keeps ownership of a worker after its clean-env launcher exits",
+  async () => {
+    const { root, environment } = await fixture();
+    const app = join(root, "bin/fakeapp");
+    const worker = join(root, "worker");
+    const pidFile = join(root, "worker-pid");
+    const completed = join(root, "worker-completed");
+    await executable(app, `#!/bin/sh\n"${worker}" &\nexit 0\n`);
+    await executable(
+      worker,
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$$" > "${pidFile}"`,
+        "/bin/sleep 2",
+        '[ "${INHERITED-unset}" = unset ] && [ "$SELECTED" = yes ] || exit 91',
+        `touch "${completed}"`,
+      ].join("\n"),
+    );
+    const entry = join(root, "clean.desktop");
+    const argv = ["/usr/bin/env", "-i", "SELECTED=yes", app];
+    await writeFile(
+      entry,
+      `[Desktop Entry]\nType=Application\nName=FakeApp\nExec=${argv.join(" ")}\n`,
+    );
+
+    const evidence = await captureDesktopApplication(
+      {
+        ...request(join(root, "out")),
+        desktopEntry: entry,
+        executable: undefined,
+        maxDurationSeconds: 8,
+      },
+      host({ ...environment, INHERITED: "host" }),
+    );
+    if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+    const capture = desktopApplicationCaptureSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(capture.application.argv).toEqual(argv);
+    expect(capture.session).toMatchObject({
+      end_reason: "application_exited",
+      cleanup: { verified: true },
+    });
+    const workerPid = Number(await readFile(pidFile, "utf8"));
+    expect(workerPid).not.toBe(capture.session.launch_pid);
+    expect(capture.session.processes).toContainEqual(
+      expect.objectContaining({ pid: workerPid, started_by_capture: true }),
+    );
+    expect(fileExists(completed)).toBe(true);
+  },
 );
 
 describe.skipIf(process.platform !== "linux")(
@@ -416,7 +485,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(
         JSON.parse(await readFile(join(output, "capture.json"), "utf8")),
       ).toEqual(JSON.parse(JSON.stringify(evidence)));
-    }, 30_000);
+    });
 
     it("keeps a baseline-only capture when cancelled before any checkpoint", async () => {
       const { root, home, environment } = await fixture();
@@ -517,7 +586,7 @@ describe.skipIf(process.platform !== "linux")(
           after: expect.objectContaining({ sha256: sha256("count=2\n") }),
         }),
       ]);
-    }, 30_000);
+    });
   },
 );
 
@@ -589,7 +658,7 @@ describe.skipIf(process.platform !== "linux")(
         { name: "stop", trigger: "stop" },
         { name: "exit", trigger: "exit" },
       ]);
-    }, 30_000);
+    });
   },
 );
 
@@ -644,7 +713,6 @@ describe.skipIf(process.platform !== "linux")(
           details: { cleanup: "incomplete", resources: [statePath] },
         });
       },
-      30_000,
     );
   },
 );
@@ -658,7 +726,14 @@ describe.skipIf(process.platform !== "linux")(
       const statePath = join(home, ".config/fakeapp/state.ini");
       let writtenAt: number | undefined;
       const nextRequest = (): SessionRequest | undefined => {
+        failIfChildrenNotReady(root);
+        // Wait for both children to install their traps before issuing the stop.
         if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
+        if (
+          !fileExists(join(root, "group-ready")) ||
+          !fileExists(join(root, "setsid-ready"))
+        )
+          return undefined;
         writtenAt ??= performance.now();
         return performance.now() - writtenAt > 1500
           ? { kind: "stop" }
@@ -678,17 +753,19 @@ describe.skipIf(process.platform !== "linux")(
       expect(await readdir(root)).toEqual(
         expect.arrayContaining(["group-term", "setsid-term"]),
       );
-    }, 30_000);
+    });
 
     it("stops the application gracefully and removes retained content when the session fails", async () => {
       const { root, home, environment } = await fixture();
       await installProcessFamily(root, environment.PATH);
       const statePath = join(home, ".config/fakeapp/state.ini");
       const output = join(root, "out");
-      const nextRequest = (): SessionRequest | undefined =>
-        readFileSyncSafe(statePath) === "count=1\n"
+      const nextRequest = (): SessionRequest | undefined => {
+        failIfChildrenNotReady(root);
+        return readFileSyncSafe(statePath) === "count=1\n"
           ? { kind: "checkpoint", name: "written" }
           : undefined;
+      };
 
       const failed = await captureDesktopApplication(request(output), {
         ...host(environment, nextRequest),
@@ -703,7 +780,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(await readdir(root)).toEqual(
         expect.arrayContaining(["group-term", "setsid-term"]),
       );
-    }, 30_000);
+    });
   },
 );
 
@@ -774,7 +851,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(capture.limitations).toContainEqual(
         expect.stringMatching(/^The window list could not be read in [34] /u),
       );
-    }, 30_000);
+    });
   },
 );
 
@@ -783,6 +860,15 @@ const readFileSyncSafe = (path: string): string | undefined => {
     return readFileSync(path, "utf8");
   } catch {
     return undefined;
+  }
+};
+
+const fileExists = (path: string): boolean => {
+  try {
+    accessSync(path, 0);
+    return true;
+  } catch {
+    return false;
   }
 };
 
@@ -1081,7 +1167,7 @@ const sessionInspectionFailure = async (
     stopped.inspectionCleanup === undefined
   )
     throw new Error("Expected actual supervisor-held inspection cleanup");
-  return new desktopSession.DesktopSessionCleanupError(cause, {
+  return new DesktopSessionCleanupError(cause, {
     reason: stopped.reason,
     inspectionCleanup: stopped.inspectionCleanup,
     leases: [
@@ -1092,6 +1178,18 @@ const sessionInspectionFailure = async (
     ],
   });
 };
+
+// Supply the Linux identity sample even when the test host has no procfs.
+// The real run-token reader still transfers the descriptor failure.
+const fixtureProcessStat = samplingObservation({
+  pid: process.pid,
+  parent_pid: process.ppid,
+  process_group_id: process.pid,
+  session_id: process.pid,
+  command: "",
+  startTime: "1",
+  lifecycle: "non-zombie" as const,
+});
 
 it.for([
   { retrySucceeds: true, sessionOwns: false, neutralBatch: false },
@@ -1111,7 +1209,7 @@ it.for([
     const completed = { value: "caller-selected completed sampling peer" };
     let sourceFailure: unknown = descriptor.failure;
     const captured = captureFixture();
-    let sessionFailure: desktopSession.DesktopSessionCleanupError | undefined;
+    let sessionFailure: DesktopSessionCleanupError | undefined;
     const retainedStores = new Set<DesktopContentStore>();
     let projectedFailure: AnalysisError | undefined;
     vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
@@ -1131,6 +1229,9 @@ it.for([
       state: "listed",
       windows: [],
     });
+    vi.spyOn(linuxSampling, "readLinuxProcessStat").mockResolvedValue(
+      fixtureProcessStat,
+    );
     const environmentRead = vi
       .spyOn(systemProcessOwnershipHost, "environment")
       .mockRejectedValue(descriptor.failure);

@@ -87,7 +87,11 @@ export const electronRuntimeEvidence = (
         file_path: join(root, "index.html"),
       },
     ],
-    dom: { total_nodes: 0, nodes: [] },
+    dom: {
+      total_nodes: 0,
+      node_value_length_unit: "utf8-bytes",
+      nodes: [],
+    },
     scripts: {
       total: 1,
       items: [

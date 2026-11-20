@@ -1,6 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import type { Readable } from "node:stream";
-import { assertArtifactReadActive } from "../../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../../resources/index.js";
 import { AnalysisResourceConstraintError } from "../../../domain/analysisErrorCore.js";
 import {
   PLAYWRIGHT_TRACE_LIMITS,

@@ -1,6 +1,6 @@
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
-import { pcapEvidenceSchemas } from "../pcap/pcapAnalysis.js";
+import { pcapResultSchemas } from "../pcap/pcapAnalysis.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { err, ok, type Result } from "../result.js";
@@ -15,8 +15,9 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisTextPage } from "./analysisViewText.js";
+import { evidenceFileTarget } from "../evidence.js";
 
-const captureSchema = pcapEvidenceSchemas.inspect_pcap_capture;
+const captureSchema = pcapResultSchemas.inspect_pcap_capture;
 const fields = captureSchema.shape;
 const pageShape = {
   kind: z.literal("pcap"),
@@ -39,9 +40,10 @@ export const pcapViewRequestSchema = z.discriminatedUnion("facet", [
     ...pageShape,
     facet: z.literal("dns-addresses"),
     query: z.string().min(1),
-    query_labels_hex:
-      fields.dns_queries.element.shape.query_labels_hex.describe(
-        "Select the exact retained wire label bytes for this query display. Null selects unknown identity, including historical records with the field omitted; omit this selector to match any identity.",
+    query_labels_hex: fields.dns_queries.element.shape.query_labels_hex
+      .optional()
+      .describe(
+        "Select the exact retained wire label bytes for this query display. Null selects unknown identity; omit this selector to match any identity.",
       ),
     query_index: z
       .int()
@@ -125,8 +127,8 @@ const parseParent = (
 ): Result<Capture, AnalysisError> => {
   const parsed = parseAnalysisViewResult(captureSchema, parent);
   if (!parsed.ok) return parsed;
-  const subject = parent.subject;
-  if (subject == null || subject.digest.sha256 !== parsed.value.target.sha256)
+  const subject = evidenceFileTarget(parent);
+  if (subject == null || subject.sha256 !== parsed.value.target.sha256)
     return err(
       analysisViewInputError([
         {
@@ -226,7 +228,7 @@ const selectRows = (
           query.query === view.query &&
           (view.query_index === undefined || index === view.query_index) &&
           (view.query_labels_hex === undefined ||
-            JSON.stringify(query.query_labels_hex ?? null) ===
+            JSON.stringify(query.query_labels_hex) ===
               JSON.stringify(view.query_labels_hex)),
       );
       if (matches.length !== 1)
@@ -292,7 +294,7 @@ export const projectPcapCaptureView = (
       view,
       ...shared,
       summary: summarize(capture),
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (view.facet === "diagnostics") {
     const value =

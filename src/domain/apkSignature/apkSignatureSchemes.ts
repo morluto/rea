@@ -11,6 +11,7 @@
  * or inconsistent length is a `malformed-signer` error, and a count past a
  * resource admission cap is a distinct `budget-exceeded` error, never conflated.
  */
+import { BinaryReader } from "../binaryContainer.js";
 import { type Result, err, ok } from "../result.js";
 
 export type ApkSchemeVersion = "v2" | "v3" | "v3.1";
@@ -66,28 +67,32 @@ const MAX_ELEMENTS = 4096;
  * Resource admission for signer fan-out, including per-signer X.509 work.
  * This is not an APK format maximum; excess records return a capacity error.
  */
-export const MAX_SIGNERS = 32;
+const MAX_SIGNERS = 32;
 /**
  * Resource admission for lineage fan-out before certificate materialisation.
  * This is not a format maximum; longer declared chains are refused explicitly.
  */
-export const MAX_LINEAGE_NODES = 32;
+const MAX_LINEAGE_NODES = 32;
 /** The only proof-of-rotation lineage encoding version apksig accepts. */
 const LINEAGE_VERSION = 1;
 
 /** Sequential little-endian reader over a byte range; every read is bounds-checked. */
 class LeReader {
   offset = 0;
-  private readonly dv: DataView;
+  private readonly reader: BinaryReader;
   constructor(private readonly bytes: Uint8Array) {
-    this.dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.reader = new BinaryReader(
+      Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+      true,
+      "apk",
+    );
   }
   get remaining(): number {
     return this.bytes.length - this.offset;
   }
   u32(): number | null {
     if (this.remaining < 4) return null;
-    const v = this.dv.getUint32(this.offset, true);
+    const v = this.reader.u32(this.offset);
     this.offset += 4;
     return v;
   }

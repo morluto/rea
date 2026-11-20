@@ -4,9 +4,9 @@ import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 const errorSources = (error: unknown): ReadonlySet<unknown> => {
@@ -101,9 +101,16 @@ it("starts child finalization synchronously and shares concurrent closes", async
   ]);
   const first = owner.close();
   expect(calls).toBe(1);
-  expect(owner.close()).toBe(first);
+  const second = owner.close();
+  let secondSettled = false;
+  void second.then(() => {
+    secondSettled = true;
+  });
+  await Promise.resolve();
+  expect(secondSettled).toBe(false);
   complete?.();
   expect(await first).toBeUndefined();
+  expect(await second).toBeUndefined();
   expect(await owner.close()).toBeUndefined();
   expect(calls).toBe(1);
 });

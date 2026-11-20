@@ -1,7 +1,7 @@
 import { execFile, spawnSync } from "node:child_process";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
@@ -55,7 +55,7 @@ describe("binary production construction ownership", () => {
     ).toEqual([]);
   });
 
-  it("rejects the former runtime composition exception", () => {
+  it("rejects an application module that re-exports composition", () => {
     expect(
       inspectModuleBoundaries(
         "src/application/runtime.ts",
@@ -176,6 +176,28 @@ describe("live capability constructor ownership", () => {
 const execute = promisify(execFile);
 const verifier = resolve("scripts/verify-module-boundaries.mjs");
 
+const resolvePackageImport = (
+  root: string,
+  file: string,
+  specifier: string,
+) => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--experimental-import-meta-resolve",
+      "--input-type=module",
+      "-e",
+      "console.log(import.meta.resolve(process.argv[1], process.argv[2]))",
+      specifier,
+      pathToFileURL(join(root, file)).href,
+    ],
+    { encoding: "utf8" },
+  );
+  if (result.error !== undefined) throw result.error;
+  expect(result.status, result.stderr).toBe(0);
+  return fileURLToPath(result.stdout.trim());
+};
+
 describe("incremental module import boundaries", () => {
   it.each([
     ["src/domain/probe.ts", "../application/Workflow.js", false],
@@ -212,7 +234,7 @@ describe("incremental module import boundaries", () => {
     ],
     [
       "src/application/javascript/probe.ts",
-      "../../artifacts/DirectoryArtifactReader.js",
+      "../../resources/DirectoryArtifactReader.js",
       false,
     ],
     [
@@ -284,6 +306,72 @@ describe("incremental module import boundaries", () => {
   });
 });
 
+describe("package-map module ownership", () => {
+  it.each([
+    ["./dist/composition/worker.js"],
+    ["./dist/%63omposition/worker.js"],
+    ["./%64ist/composition/worker.js"],
+  ])("checks the package-map source owner for %s", async (target) => {
+    const root = await createTestTempDirectory("rea-module-package-");
+    await mkdir(join(root, "src/application"), { recursive: true });
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ imports: { "#worker": target } }),
+    );
+    const file = "src/application/probe.ts";
+    await writeFile(join(root, file), 'import "#worker";\n');
+    expect(resolvePackageImport(root, file, "#worker")).toBe(
+      join(root, "dist/composition/worker.js"),
+    );
+    const checked = spawnSync(process.execPath, [verifier, file], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    if (checked.error !== undefined) throw checked.error;
+    expect(checked.status).toBe(1);
+    expect(checked.stderr).toContain(
+      "application-composition: #worker resolves to src/composition/worker.ts",
+    );
+  });
+
+  it.each([
+    [
+      "#worker",
+      {
+        "#worker": {
+          import: "./dist/composition/worker.js",
+          default: "./dist/composition/other.js",
+        },
+      },
+    ],
+    ["#worker", { "#worker": ["./dist/composition/worker.js"] }],
+    ["#workers/worker", { "#workers/*": "./dist/composition/*.js" }],
+  ])(
+    "fails closed for unsupported package map %s",
+    async (specifier, imports) => {
+      const root = await createTestTempDirectory("rea-module-package-");
+      await mkdir(join(root, "src/domain"), { recursive: true });
+      await writeFile(join(root, "package.json"), JSON.stringify({ imports }));
+      const file = "src/domain/probe.ts";
+      await writeFile(
+        join(root, file),
+        `import ${JSON.stringify(specifier)};\n`,
+      );
+      expect(resolvePackageImport(root, file, specifier)).toBe(
+        join(root, "dist/composition/worker.js"),
+      );
+      const checked = spawnSync(process.execPath, [verifier, file], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      if (checked.error !== undefined) throw checked.error;
+      expect(checked.status).toBe(1);
+      expect(checked.stderr).toContain("Cannot resolve package import");
+      expect(checked.stderr).toContain("relative source import");
+    },
+  );
+});
+
 describe("module import syntax and source discovery", () => {
   it.each([
     'import { value } from "../android/Provider.js";',
@@ -297,6 +385,21 @@ describe("module import syntax and source discovery", () => {
     'import { value } from "../domain/../android/Provider.js";',
     'const loaded = import("../%61ndroid/Provider.js?view=one#fragment");',
   ])("checks the resolved owner in %s", (source) => {
+    // Host path admission uses node:path without a domain-to-platform exception.
+    expect(
+      inspectModuleBoundaries(
+        "src/domain/localPath.ts",
+        'import { HOST_PLATFORM } from "../platform/HostPlatform.js";',
+        process.cwd(),
+      ),
+    ).toEqual([expect.objectContaining({ boundary: "pure-layer" })]);
+    expect(
+      inspectModuleBoundaries(
+        "src/domain/probe.ts",
+        'import { HOST_PLATFORM } from "../platform/HostPlatform.js";',
+        process.cwd(),
+      ),
+    ).toEqual([expect.objectContaining({ boundary: "pure-layer" })]);
     expect(
       inspectModuleBoundaries("src/domain/probe.ts", source, process.cwd()),
     ).toEqual([
@@ -486,12 +589,12 @@ describe.each(["apple", "inventory", "extraction"])(
       ["../../application/Workflow.js", false],
       ["../../composition/android.js", false],
       ["../../cli.js", false],
-      ["../../server/registerEvidenceTools.js", false],
+      ["../../server/providerOperationToolHandler.js", false],
       ["../../main.ts", false],
       ["../../domain/apple/plistValue.js", true],
       ["../../domain/artifactInventorySnapshot.js", true],
       ["../../contracts/artifactGraph.js", true],
-      ["../DirectoryArtifactReader.js", true],
+      ["../AsarArtifactReader.js", true],
       ["../ArtifactHash.js", true],
     ])("checks the producer dependency %s", (dependency, allowed) => {
       const violations = inspectModuleBoundaries(
@@ -506,3 +609,159 @@ describe.each(["apple", "inventory", "extraction"])(
     });
   },
 );
+
+describe("layer baseline ratchet", () => {
+  const baselineFile = "scripts/lib/module-layers.baseline.json";
+
+  /** A tree with one native -> application import and the given baseline. */
+  const layeredTree = async (recorded: number) => {
+    const root = await createTestTempDirectory("rea-module-layers-");
+    await mkdir(join(root, "src", "native"), { recursive: true });
+    await mkdir(join(root, "src", "application"), { recursive: true });
+    await mkdir(join(root, "scripts", "lib"), { recursive: true });
+    await writeFile(
+      join(root, "src/application/Port.ts"),
+      "export type P = 1;\n",
+    );
+    await writeFile(
+      join(root, "src/native/Provider.ts"),
+      'import type { P } from "../application/Port.js";\nexport type Q = P;\n',
+    );
+    const upward = recorded > 0 ? { "native -> application": recorded } : {};
+    await writeFile(
+      join(root, baselineFile),
+      `${JSON.stringify({ upward, cycles: [] }, null, 2)}\n`,
+    );
+    return root;
+  };
+  const run = (root: string, ...flags: string[]) => {
+    const result = spawnSync(process.execPath, [verifier, ...flags], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    if (result.error !== undefined) throw result.error;
+    return result;
+  };
+  const recorded = async (root: string): Promise<unknown> =>
+    JSON.parse(await readFile(join(root, baselineFile), "utf8"));
+
+  it("fails on a recorded count above the observed imports", async () => {
+    const root = await layeredTree(2);
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "upward import native -> application: 1, baseline 2",
+    );
+    expect(await recorded(root)).toEqual({
+      upward: { "native -> application": 2 },
+      cycles: [],
+    });
+  });
+
+  it("lowers a stale count when asked and then passes", async () => {
+    const root = await layeredTree(2);
+    expect(run(root, "--shrink-layer-baseline").status).toBe(0);
+    expect(await recorded(root)).toEqual({
+      upward: { "native -> application": 1 },
+      cycles: [],
+      crossProvider: {},
+      entry: {},
+    });
+    expect(run(root).status).toBe(0);
+  });
+
+  it("refuses to record growth when asked to shrink", async () => {
+    const root = await layeredTree(0);
+    const result = run(root, "--shrink-layer-baseline");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "upward import native -> application: 1 imports, baseline 0",
+    );
+    expect(await recorded(root)).toEqual({ upward: {}, cycles: [] });
+  });
+
+  it("does not lower the baseline while a source file cannot be inspected", async () => {
+    const root = await layeredTree(1);
+    // The unparsable file holds the tree's only native -> application import.
+    await writeFile(
+      join(root, "src/native/Provider.ts"),
+      "export type Q = 1;\n",
+    );
+    await writeFile(
+      join(root, "src/native/Broken.ts"),
+      'import type { P } from "../application/Port.js";\nimport {',
+    );
+    const result = run(root, "--shrink-layer-baseline");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Could not inspect src/native/Broken.ts");
+    expect(await recorded(root)).toEqual({
+      upward: { "native -> application": 1 },
+      cycles: [],
+    });
+  });
+
+  /**
+   * A tree with one import of another provider folder, one composition import
+   * past ghidra's entry files (beside an import of a declared one) and one
+   * import of a toolkit file past src/resources/index.ts.
+   */
+  const providerTree = async (baseline: object) => {
+    const root = await createTestTempDirectory("rea-provider-boundaries-");
+    const files: Record<string, string> = {
+      "src/native/Reader.ts": "export type R = 1;\n",
+      "src/gpu/Probe.ts":
+        'import type { R } from "../native/Reader.js";\nexport type G = R;\n',
+      "src/ghidra/Doctor.ts": "export type D = 1;\n",
+      "src/ghidra/GhidraDoctor.ts": 'export type { D } from "./Doctor.js";\n',
+      "src/composition/ghidra.ts":
+        'import type { D } from "../ghidra/Doctor.js";\nimport type { D as E } from "../ghidra/GhidraDoctor.js";\nexport type C = D | E;\n',
+      "src/resources/Scope.ts": "export type S = 1;\n",
+      "src/resources/index.ts": 'export type { S } from "./Scope.js";\n',
+      "src/process/Lease.ts":
+        'import type { S } from "../resources/Scope.js";\nexport type L = S;\n',
+    };
+    for (const [path, source] of Object.entries(files)) {
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      await writeFile(join(root, path), source);
+    }
+    await mkdir(join(root, "scripts", "lib"), { recursive: true });
+    await writeFile(
+      join(root, baselineFile),
+      `${JSON.stringify({ upward: {}, cycles: [], ...baseline }, null, 2)}\n`,
+    );
+    return root;
+  };
+
+  it("fails on provider boundary imports the baseline does not record", async () => {
+    const root = await providerTree({});
+    const result = run(root, "--shrink-layer-baseline");
+    expect(result.status).toBe(1);
+    for (const finding of [
+      "cross-provider import gpu -> native: 1 imports, baseline 0",
+      "import past the entry file composition -> ghidra: 1 imports, baseline 0",
+      "import past the entry file process -> resources: 1 imports, baseline 0",
+    ])
+      expect(result.stderr).toContain(finding);
+    expect(await recorded(root)).toEqual({ upward: {}, cycles: [] });
+  });
+
+  it("lowers stale provider boundary counts when asked and then passes", async () => {
+    const root = await providerTree({
+      crossProvider: { "gpu -> native": 2, "go -> native": 1 },
+      entry: { "composition -> ghidra": 3, "process -> resources": 1 },
+    });
+    const stale = run(root);
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain(
+      "cross-provider import gpu -> native: 1, baseline 2",
+    );
+    expect(run(root, "--shrink-layer-baseline").status).toBe(0);
+    expect(await recorded(root)).toEqual({
+      upward: {},
+      cycles: [],
+      crossProvider: { "gpu -> native": 1 },
+      entry: { "composition -> ghidra": 1, "process -> resources": 1 },
+    });
+    expect(run(root).status).toBe(0);
+  });
+});

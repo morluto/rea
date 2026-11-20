@@ -5,10 +5,11 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const identity: ProviderIdentity = {
   id: "bundle-resource-close-fixture",
@@ -133,7 +134,7 @@ it("updates retained cleanup facts as the two child owners release independently
     execute: async () => ok(createAnalysisExecution(null, identity)),
     close: async () => {
       if (!released()) return err(failure);
-      failure.resolveCleanup();
+      releaseOwnedCleanup(failure);
       return ok(null);
     },
   });
@@ -173,6 +174,6 @@ it("keeps cleanup unknown when a child close failure has no cleanup lifecycle", 
     client(new AnalysisInputError("close_binary")),
   ).close();
   if (closed.ok) throw new Error("Expected child close failures");
-  owned.resolveCleanup();
+  releaseOwnedCleanup(owned);
   expect(closed.error.cleanupIncomplete).toBe(true);
 });

@@ -1,0 +1,10 @@
+$ COMPLETE=zsh rea -- rea mcp doctor --
+exit: 0
+--- stdout
+--format:Output format
+--json:Emit the report as JSON
+--full-output:Show the full output envelope
+--help:Show help
+--timings<end>
+--- stderr
+<end>

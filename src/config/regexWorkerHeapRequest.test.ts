@@ -16,7 +16,6 @@ import {
   resolveRegexWorkerHeapRequest,
   REGEX_WORKER_HEAP_REQUEST_SETTING,
   regexWorkerHeapRequestContinuingRecovery,
-  regexWorkerHeapRequestRecovery,
 } from "./regexWorkerHeapRequest.js";
 import {
   MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,

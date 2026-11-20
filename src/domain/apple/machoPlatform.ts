@@ -1,5 +1,18 @@
+import { LC } from "./machoLoadCommandCodes.js";
+
 /** Device platform encoded by a legacy LC_VERSION_MIN_* command. */
 export type MachoVersionMinPlatform = 1 | 2 | 3 | 4;
+
+/** loader.h LC_VERSION_MIN_* command codes and their device platforms. */
+export const MACHO_VERSION_MIN_PLATFORMS: ReadonlyMap<
+  number,
+  MachoVersionMinPlatform
+> = new Map([
+  [LC.VERSION_MIN_MACOSX, 1],
+  [LC.VERSION_MIN_IPHONEOS, 2],
+  [LC.VERSION_MIN_TVOS, 3],
+  [LC.VERSION_MIN_WATCHOS, 4],
+]);
 
 /**
  * dyld derives legacy simulator platforms from the CPU type. tvOS uses

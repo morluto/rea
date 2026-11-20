@@ -1,5 +1,5 @@
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
-import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
 import { APPLE_DISPATCH_TARGET_APPLICABILITY } from "../domain/native/objcSwiftMetadata.js";
@@ -25,7 +25,7 @@ const OWNED_PROCESS_OPERATIONS: ReadonlySet<string> = new Set([
 
 /** Declare native host coverage without creating a command runner. */
 export const nativeMacOSCapabilities = (
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): readonly CapabilityDescriptor[] => {
   const available = platform === "darwin";
   return Object.freeze(

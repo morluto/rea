@@ -8,11 +8,15 @@ import {
   artifactFilePrimaryFacts,
   ArtifactFileCleanupFailure,
   ArtifactFileCancelled,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
+import {
+  cancelDuringCleanup,
+  controlledCleanup,
+} from "../../tests/support/lifecycleHarness.js";
 
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
@@ -47,17 +51,15 @@ it.each(["source", "snapshot", "output"] as const)(
         : kind === "snapshot"
           ? join(root.path, "input.apk")
           : output;
-    let denied = true;
-    const closes = vi.fn();
+    const descriptor = controlledCleanup({
+      refused: true,
+      failure: new Error("authored close denial"),
+    });
     vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
       const handle = await actual.open(path, flags, mode);
       if (String(path) === selected) {
         const close = handle.close.bind(handle);
-        handle.close = async () => {
-          closes();
-          if (denied) throw new Error("authored close denial");
-          await close();
-        };
+        handle.close = () => descriptor.close(close);
       }
       return handle;
     });
@@ -75,17 +77,17 @@ it.each(["source", "snapshot", "output"] as const)(
         ArtifactReaderFailure,
       );
       await expect(fs.stat(root.path)).resolves.toBeDefined();
-      denied = false;
+      descriptor.allow();
       await workspace.close();
       expect(failure.cleanupLease.released).toBe(true);
-      const count = closes.mock.calls.length;
+      const count = descriptor.attempts;
       await workspace.close();
-      expect(closes).toHaveBeenCalledTimes(count);
+      expect(descriptor.attempts).toBe(count);
       await expect(fs.stat(root.path)).rejects.toMatchObject({
         code: "ENOENT",
       });
     } finally {
-      denied = false;
+      descriptor.allow();
       await workspace.close();
       await commands.close();
     }
@@ -104,10 +106,11 @@ it("retains a physical decode-output failure when cancellation arrives during de
   vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
     const handle = await actual.open(path, flags, mode);
     const close = handle.close.bind(handle);
-    handle.close = async () => {
-      controller.abort({ caller: "after malformed bytes" });
-      await close();
-    };
+    handle.close = cancelDuringCleanup(
+      controller,
+      { caller: "after malformed bytes" },
+      close,
+    );
     return handle;
   });
   try {
@@ -133,10 +136,7 @@ it("records cancellation observed during a successful output descriptor close", 
   vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
     const handle = await actual.open(path, flags, mode);
     const close = handle.close.bind(handle);
-    handle.close = async () => {
-      controller.abort(reason);
-      await close();
-    };
+    handle.close = cancelDuringCleanup(controller, reason, close);
     return handle;
   });
   try {
@@ -188,7 +188,10 @@ it.each([false, true])(
     const workspace = new ApktoolWorkspace(root, commands);
     const path = join(root.path, "malformed.xml");
     const controller = new AbortController();
-    let denied = deniedInitially;
+    const descriptor = controlledCleanup({
+      refused: deniedInitially,
+      failure: new Error("authored denial"),
+    });
     await fs.writeFile(path, Buffer.from([0xff]));
     vi.mocked(fs.open).mockImplementation(async (name, flags, mode) => {
       const handle = await actual.open(name, flags, mode);
@@ -207,10 +210,7 @@ it.each([false, true])(
           return value;
         })) as typeof handle.stat;
       const close = handle.close.bind(handle);
-      handle.close = async () => {
-        if (denied) throw new Error("authored denial");
-        await close();
-      };
+      handle.close = () => descriptor.close(close);
       return handle;
     });
     try {
@@ -224,14 +224,14 @@ it.each([false, true])(
       expect(artifactFilePrimaryFacts(failure).origin).toBe(
         "owned-or-classified",
       );
-      if (denied)
+      if (deniedInitially)
         await expect(workspace.close()).rejects.toBeInstanceOf(
           ArtifactReaderFailure,
         );
-      denied = false;
+      descriptor.allow();
       await workspace.close();
     } finally {
-      denied = false;
+      descriptor.allow();
       await workspace.close();
       await commands.close();
     }

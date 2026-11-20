@@ -1,12 +1,16 @@
-import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
 import {
+  readFieldDefinitionName,
+  readFieldDefinitionRow,
+} from "./ManagedFieldDefinitionRows.js";
+import {
+  readMethodDefinitionName,
   readMethodDefinitionRow,
   type ManagedMethodImplementationFlags,
 } from "./ManagedMethodDefinitionRows.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedNativeBoundaryInspectionSchema,
@@ -16,22 +20,22 @@ import {
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   metadataRowCursor,
   decodeMetadataCodedIndex,
   metadataToken,
   readMetadataString,
-} from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataHeaps.js";
 import { managedPeInspectionEnvelope } from "./ManagedPeInspectionEnvelope.js";
-import type { ManagedMetadataInventory } from "./ManagedMetadataInventory.js";
+import type { ManagedMetadataInventory } from "../domain/managed/managedMetadataInventory.js";
 import {
   managedCli32BitRequirement,
   managedCliIsMixedClrNative,
   type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
-import { readManagedValue } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedPeReader.js";
+import { readManagedValue } from "../domain/managed/managedReaderFailure.js";
 
 type ModuleRef = ManagedNativeBoundaryInspection["module_refs"][number];
 type NativeImport = ManagedNativeBoundaryInspection["pinvoke_imports"][number];
@@ -63,7 +67,6 @@ const flagsHex = (value: number): string =>
 export const parseModuleRefs = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
   issues: ManagedParseIssue[],
 ): readonly ModuleRef[] => {
   const refs: ModuleRef[] = [];
@@ -78,7 +81,6 @@ export const parseModuleRefs = (
           bytes,
           layout,
           cursor.readIndex(layout.stringIndexSize),
-          heapExtent,
         ),
       });
     }, issues);
@@ -89,19 +91,15 @@ export const parseModuleRefs = (
 export const parseFields = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
   issues: ManagedParseIssue[],
 ): ReadonlyMap<string, MemberCore> => {
   const fields = new Map<string, MemberCore>();
   const table = layout.table(4);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const { token, rowOffset, flags, nameIndex } = readFieldDefinitionRow(
-        bytes,
-        layout,
-        row,
-      );
-      const name = readMetadataString(bytes, layout, nameIndex, heapExtent);
+      const definition = readFieldDefinitionRow(bytes, layout, row);
+      const { token, rowOffset, flags } = definition;
+      const name = readFieldDefinitionName(bytes, layout, definition);
       fields.set(token, {
         token,
         rowOffset,
@@ -119,23 +117,16 @@ export const parseFields = (
 export const parseMethods = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
   issues: ManagedParseIssue[],
 ): ReadonlyMap<string, MemberCore> => {
   const methods = new Map<string, MemberCore>();
   const table = layout.table(6);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const {
-        token,
-        rowOffset,
-        rva,
-        implFlags,
-        flags,
-        nameIndex,
-        implementation,
-      } = readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex, heapExtent);
+      const definition = readMethodDefinitionRow(bytes, layout, row);
+      const { token, rowOffset, rva, implFlags, flags, implementation } =
+        definition;
+      const name = readMethodDefinitionName(bytes, layout, definition);
       methods.set(token, {
         token,
         rowOffset,
@@ -154,7 +145,6 @@ export const parseMethods = (
 interface ParseImplMapsContext {
   readonly bytes: Buffer;
   readonly layout: ManagedMetadataLayout;
-  readonly heapExtent: number;
   readonly modules: readonly ModuleRef[];
   readonly members: ReadonlyMap<string, MemberCore>;
   readonly issues: ManagedParseIssue[];
@@ -163,7 +153,6 @@ interface ParseImplMapsContext {
 export const parseImplMaps = ({
   bytes,
   layout,
-  heapExtent,
   modules,
   members,
   issues,
@@ -174,7 +163,7 @@ export const parseImplMaps = ({
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
       const cursor = metadataRowCursor(bytes, layout, 28, row);
-      const mappingFlags = cursor.readUInt16();
+      const mappingFlags = cursor.u16();
       const memberForwardedOffset = cursor.offset;
       const memberForwardedRaw = cursor.readIndex(
         layout.codedIndexSize("MemberForwarded"),
@@ -201,7 +190,6 @@ export const parseImplMaps = ({
         bytes,
         layout,
         cursor.readIndex(layout.stringIndexSize),
-        heapExtent,
       );
       const importScopeOffset = cursor.offset;
       const importScopeRow = cursor.readIndex(layout.tableIndexSize(26));
@@ -431,7 +419,7 @@ export const buildNativeBoundaryInspection = ({
           target,
           bytes.length,
           layout,
-          inventory.module,
+          inventory,
           issues,
         ),
         cli_native: cliNative(pe.cli),

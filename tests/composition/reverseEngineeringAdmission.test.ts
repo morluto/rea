@@ -1,3 +1,4 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,10 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
+import {
+  ownedFailure,
+  ownedOutput,
+} from "../support/reverseEngineeringCompositionFixtures.js";
 
 it.each([
   { budget: undefined, capacity: 8 },
@@ -27,16 +32,12 @@ it.each([
     let calls = 0;
     let mode: "success" | "failure" | "timeout" = "success";
     const service = new TestReverseEngineeringService({
-      run: async () => {
+      runOwned: async (spawn) => {
         calls += 1;
-        if (mode === "failure")
-          throw Object.assign(new Error("provider failed"), { code: "ENOENT" });
-        if (mode === "timeout")
-          throw Object.assign(new Error("provider timed out"), {
-            code: "ETIMEDOUT",
-          });
+        if (mode === "failure") throw spawnFailure("ENOENT", spawn.command);
+        if (mode === "timeout") throw ownedFailure("timeout", null);
         await gate;
-        return { stdout: "", stderr: "" };
+        return ownedOutput();
       },
     });
 
@@ -115,9 +116,9 @@ it("preserves the exact caller reason when objdump admission is already aborted"
   controller.abort(reason);
   let runs = 0;
   const service = new TestReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       runs += 1;
-      return { stdout: "", stderr: "" };
+      return ownedOutput();
     },
   });
   try {
@@ -143,9 +144,9 @@ it("preserves the caller reason when cancellation arrives after provider output"
   const reason = Object.freeze({ requested: "stop-after-output" });
   const controller = new AbortController();
   const service = new TestReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       controller.abort(reason);
-      return { stdout: "symbols", stderr: "" };
+      return ownedOutput("symbols");
     },
   });
   try {
@@ -181,9 +182,9 @@ it("keeps a physical digest denial primary when the caller aborts during that fa
       controller.abort(reason);
       throw denied;
     },
-    run: async () => {
+    runOwned: async () => {
       runs += 1;
-      return { stdout: "", stderr: "" };
+      return ownedOutput();
     },
   });
   try {
@@ -233,35 +234,56 @@ it("keeps an unrelated digest ABORT_ERR as an adapter failure", async () => {
   }
 });
 
+it("does not report a command ABORT_ERR without the caller's abort as cancellation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-command-abort-"));
+  const path = join(directory, "fixture.bin");
+  await writeFile(path, "fixture");
+  const failure = Object.assign(new Error("aborted by another signal"), {
+    code: "ABORT_ERR",
+  });
+  const service = new TestReverseEngineeringService({
+    runOwned: async () => {
+      throw failure;
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump(
+      { path, operation: "symbols" },
+      { signal: new AbortController().signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).not.toBe("AnalysisCancelledError");
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it.each([
   {
-    captured: true,
+    captured: false,
     code: "EACCES",
     tag: "AnalysisCapabilityUnavailableError",
   },
   {
     captured: true,
-    code: "ETIMEDOUT",
+    code: "timeout",
     tag: "AnalysisTimeoutError",
   },
   {
     captured: true,
-    code: "ABORT_ERR",
+    code: "cancelled",
     tag: "AnalysisCancelledError",
   },
   {
     captured: false,
-    code: "EACCES",
-    tag: "AnalysisCapabilityUnavailableError",
-  },
-  {
-    captured: false,
-    code: "ETIMEDOUT",
+    code: "timeout",
     tag: "AnalysisTimeoutError",
   },
   {
     captured: false,
-    code: "ABORT_ERR",
+    code: "cancelled",
     tag: "AnalysisCancelledError",
   },
 ] as const)(
@@ -274,14 +296,20 @@ it.each([
     await writeFile(path, "fixture");
     const reason = Object.freeze({ requested: `stop-${code}` });
     const controller = new AbortController();
-    const failure = Object.assign(new Error("provider failure"), {
-      code,
-      ...(captured
-        ? { stdout: "partial stdout", stderr: "partial stderr" }
-        : {}),
-    });
+    const failure =
+      code === "EACCES"
+        ? spawnFailure(code, "objdump")
+        : ownedFailure(
+            code,
+            captured
+              ? ownedOutput("partial stdout", "partial stderr", {
+                  exitCode: null,
+                })
+              : null,
+            code === "cancelled" ? { cancellation: { reason } } : undefined,
+          );
     const service = new TestReverseEngineeringService({
-      run: async () => {
+      runOwned: async () => {
         controller.abort(reason);
         throw failure;
       },
@@ -293,7 +321,9 @@ it.each([
       );
       expect(result).toMatchObject({ ok: false, error: { _tag: tag } });
       if (result.ok) return;
-      expect(result.error.cause).toBe(code === "ABORT_ERR" ? reason : failure);
+      if (code === "cancelled") expect(result.error.cause).toBe(reason);
+      else if (code === "EACCES") expect(result.error.cause).toBe(failure);
+      else expect(result.error.cause).toMatchObject({ cause: failure });
       if (code === "EACCES") {
         expect(result.error).toMatchObject({
           providerId: "objdump.command",
@@ -304,7 +334,7 @@ it.each([
           },
         });
       }
-      if (captured && code === "ABORT_ERR") {
+      if (captured && code === "cancelled") {
         expect(result.error.capturedOutput).toMatchObject({
           stdout: "partial stdout",
           stderr: "partial stderr",

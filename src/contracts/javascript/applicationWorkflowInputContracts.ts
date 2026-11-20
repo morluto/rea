@@ -1,7 +1,4 @@
-import {
-  absoluteLocalPathStringSchema,
-  localPathStringSchema,
-} from "../../domain/localPath.js";
+import { absoluteLocalPathStringSchema } from "../../domain/localPath.js";
 import { sourceToBundleViewRequestSchema } from "../../domain/analysisView/sourceToBundleView.js";
 import { featureTraceViewRequestSchema } from "../../domain/analysisView/featureTraceView.js";
 import { z } from "zod";
@@ -85,9 +82,10 @@ export const compareApplicationVersionsRequestSchema = z.strictObject({
   right: evidenceInputSchema,
 });
 
+/** Historical graph JSON is a transport alternative to the inline graph, authenticated by the same graph parser. */
 const referenceFile = z.strictObject({
   kind: z.literal("file"),
-  path: localPathStringSchema,
+  path: absoluteLocalPathStringSchema,
 });
 const sourceToBundleSelection = {
   view: z
@@ -97,19 +95,11 @@ const sourceToBundleSelection = {
     ])
     .optional(),
 };
-/** Historical graph JSON is a transport alternative to the inline graph, authenticated by the same graph parser. */
-export const compareSourceToBundleCliInputSchema = z.strictObject({
-  reference: z.union([
-    compareSourceToBundleInputSchema.shape.reference,
-    referenceFile,
-  ]),
-  application: evidenceInputSchema,
-});
 /** The MCP host accepts absolute local paths; omitted view preserves the full report. */
 export const compareSourceToBundleRequestSchema = z.strictObject({
   reference: z.union([
     compareSourceToBundleInputSchema.shape.reference,
-    referenceFile.extend({ path: absoluteLocalPathStringSchema }),
+    referenceFile,
   ]),
   application: evidenceInputSchema,
   ...sourceToBundleSelection,

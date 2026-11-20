@@ -23,7 +23,7 @@ const { metadata, link: facts } = readIl2cppMetadataForLinking(
   createLinkedIl2cppMetadataFixture().bytes,
 );
 const link = (bytes: Buffer) => linkIl2cppBinary(bytes, metadata, facts);
-const open = (bytes: Buffer) => drain(openImageSteps(bytes, undefined));
+const open = (bytes: Buffer) => drain(openImageSteps(bytes));
 
 /** Replace PT_LOAD declarations, keeping the original PT_DYNAMIC and payload. */
 const withLoadRanges = (

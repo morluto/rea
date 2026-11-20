@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -13,6 +12,10 @@ import {
   withArtifactMcp,
   withBundleResourcesMcp,
 } from "../../lib/artifact-e2e.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
@@ -22,9 +25,10 @@ const exec = promisify(execFile);
 await exec("/usr/bin/xcrun", ["--find", "actool"]);
 await exec("/usr/bin/xcrun", ["--find", "clang"]);
 await exec("/usr/bin/assetutil", ["--version"]);
-const root = await mkdtemp(join(tmpdir(), "rea-asset-e2e-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-asset-e2e-" });
+const root = fixture.path;
 let report;
-try {
+await withVerifierFixture(fixture, async () => {
   const app = join(root, "Fixture.app");
   const resources = join(app, "Contents", "Resources");
   await mkdir(resources, { recursive: true });
@@ -124,7 +128,5 @@ try {
     pagination: true,
     malformed_input_rejected: true,
   };
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+});
 process.stdout.write(`${JSON.stringify(report)}\n`);

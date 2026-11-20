@@ -5,7 +5,6 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { evidenceSchema } from "../../../src/domain/evidence.js";
-import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,

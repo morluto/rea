@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../../../domain/strictUtf8.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import type { ProtobufBudget } from "./ProtobufWire.js";
 
@@ -20,7 +21,7 @@ export const parseGrpcWebTrailers = (
   bytes: Uint8Array,
   budget: ProtobufBudget,
 ): Result<TrailerFacts, TrailerFailure> => {
-  let decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  let decoder = strictUtf8Decoder("preserve");
   const trailers: TrailerFacts["trailers"] = [];
   let examinedBytes = 0;
   const facts = (): TrailerFacts => ({
@@ -103,7 +104,7 @@ export const parseGrpcWebTrailers = (
       value = decoder.decode(bytes.subarray(valueStart, valueEnd));
     } catch (cause) {
       if (!(cause instanceof TypeError)) throw cause;
-      decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+      decoder = strictUtf8Decoder("preserve");
       opaqueValueFailure ??= {
         ...facts(),
         kind: "invalid-utf8-value",

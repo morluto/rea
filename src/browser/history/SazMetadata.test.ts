@@ -42,7 +42,7 @@ it.each([
   ],
 ] as const)("rejects %s", (_label, bytes, reason) => {
   expect(() => decodeSazMetadata(bytes)).toThrow(
-    expect.objectContaining({ reason }),
+    expect.objectContaining({ replyReason: reason }),
   );
 });
 
@@ -109,7 +109,7 @@ it("rejects DTDs without resolving entities", () => {
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "unsupported",
+      replyReason: "unsupported",
     } satisfies Partial<CaptureFormatError>),
   );
 });

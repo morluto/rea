@@ -1,23 +1,24 @@
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
+  ArtifactReaderFailure,
+  stableArtifactInputFailure,
+  readerIntegrityFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+  completedStableArtifactObservation,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
 import type { ApkSigningBlockError } from "../domain/apkSignature/apkSigningBlock.js";
@@ -27,6 +28,7 @@ import {
   APK_SIGNATURE_LIMITS,
   APK_SIGNATURE_PROVIDER_IDENTITY,
 } from "./ApkSignatureRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -53,6 +55,13 @@ export const mapApkBlockError = (
         OPERATION,
         path,
         `This archive uses a Zip64 structure this reader does not decode (${error.detail}).`,
+      );
+    case "multi-disk-unsupported":
+      return new AnalysisUnsupportedTargetError(
+        OPERATION,
+        path,
+        `The selected archive declares an unsupported multi-disk ZIP layout (${error.detail}).`,
+        { remediationAction: "Select a complete single-disk APK/ZIP archive." },
       );
     case "malformed-zip":
       return inputError(
@@ -136,8 +145,12 @@ export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
     `The decoded signing report (${String(projectedBytes)} bytes) exceeds the ${String(APK_SIGNATURE_LIMITS.outputBytes)}-byte output budget.`,
     { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
     fixedAllowanceOptions(
-      `The decoded APK signing report allowance of ${String(APK_SIGNATURE_LIMITS.outputBytes)} bytes (this release has no runtime override)`,
+      "The decoded APK signing report allowance",
       "report",
+      {
+        limit: APK_SIGNATURE_LIMITS.outputBytes,
+        unit: "bytes",
+      },
     ),
   );
 
@@ -211,13 +224,12 @@ const artifactReaderFailure = (
 ): AnalysisError => {
   switch (cause.reason) {
     case "integrity":
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(OPERATION, path, cause);
     case "cancelled":
-      return new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        OPERATION,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     case "limit":
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -231,11 +243,7 @@ const artifactReaderFailure = (
         },
       );
     case "path":
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
     default:
       return adapterFailure(cause, path);
   }
@@ -246,6 +254,6 @@ const adapterFailure = (cause: unknown, path: string): AnalysisError =>
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });

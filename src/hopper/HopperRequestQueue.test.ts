@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  HopperCancelledError,
-  HopperProtocolError,
-} from "../domain/hopperErrors.js";
+import { HopperCancelledError, HopperProtocolError } from "./HopperErrors.js";
 import { ok } from "../domain/result.js";
 import { HopperRequestQueue } from "./HopperRequestQueue.js";
 
@@ -163,7 +160,7 @@ describe("HopperRequestQueue deadlines", () => {
     await expect(queued).resolves.toEqual({ ok: false, error: failure });
     expect(result).toHaveBeenCalledTimes(1);
     expect(queue.activity()).toBeNull();
-    expect(queue.queuedCount()).toBe(0);
+    expect(queue.hasQueued(2)).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
 });
@@ -197,7 +194,9 @@ describe("HopperRequestQueue deadline admission and races", () => {
       ok: false,
       error: { _tag: "HopperCancelledError" },
     });
-    expect(queue.queuedCount()).toBe(0);
+    expect(queue.hasQueued(2)).toBe(false);
+    expect(queue.hasQueued(3)).toBe(false);
+    expect(queue.activity()?.queuedRequests).toBe(0);
     queue.accept(1, ok(null));
     await active;
     expect(sent).toEqual([1]);
@@ -356,7 +355,7 @@ it("does not hand a waiting request to the sender until it reaches the wire", as
   const active = queue.run(1, "active", { value: "A" }, {});
   const queued = queue.run(2, "queued", { value: "B" }, {});
   expect(sent).toEqual([1]);
-  expect(queue.queuedCount()).toBe(1);
+  expect(queue.activity()?.queuedRequests).toBe(1);
   queue.accept(1, ok(null));
   expect(sent).toEqual([1, 2]);
   queue.accept(2, ok(null));

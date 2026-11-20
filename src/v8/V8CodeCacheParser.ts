@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import {
   MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   V8_CODE_CACHE_COMPILE_FUNCTION_BIT,
+  V8_CODE_CACHE_LEGACY_MODULE_BIT,
   V8_CODE_CACHE_MODULE_BIT,
   V8_CODE_CACHE_HEADER_BYTES,
   V8_CODE_CACHE_MAGIC_HIGH,
@@ -10,15 +10,17 @@ import {
 } from "../domain/v8/v8CodeCache.js";
 import type { V8CodeCacheInputBudget } from "../domain/v8/v8CodeCacheBudget.js";
 import {
-  V8CodeCacheBudgetFailure,
-  V8CodeCacheFormatFailure,
+  V8_CODE_CACHE_FORMAT,
+  v8CodeCacheBudgetFailure,
 } from "../v8/V8CodeCache.errors.js";
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const unsupported = (message: string): never => {
-  throw new V8CodeCacheFormatFailure("unsupported", message);
+  throw unsupportedInput(V8_CODE_CACHE_FORMAT, message);
 };
 const malformed = (message: string): never => {
-  throw new V8CodeCacheFormatFailure("malformed", message);
+  throw malformedInput(V8_CODE_CACHE_FORMAT, message);
 };
 
 /**
@@ -48,12 +50,12 @@ const LIMITATIONS = [
   "An unflagged producer word is reported as unknown: whether V8 marks a vm.compileFunction cache at all is a build detail, so the container cannot separate a vm.Script from an unmarked function cache on its own.",
 ];
 
+/** Bit 30 (V8 13.4+) or bit 31 (earlier V8, including Node 22) marks a module cache. */
+const MODULE_BITS = V8_CODE_CACHE_MODULE_BIT | V8_CODE_CACHE_LEGACY_MODULE_BIT;
+
 /** Printable ASCII and horizontal tab, the run alphabet of one observation. */
 const isPrintable = (byte: number): boolean =>
   (byte >= 0x20 && byte <= 0x7e) || byte === 0x09;
-
-const payloadSha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /**
  * Read one V8 code cache container without executing it.
@@ -105,7 +107,7 @@ export const parseV8CodeCache = (
   // separates them. `fields` keeps the observed word so a caller can resolve it against a
   // build fingerprint it trusts.
   const producer =
-    (sourceWord & V8_CODE_CACHE_MODULE_BIT) !== 0
+    (sourceWord & MODULE_BITS) !== 0
       ? ("module" as const)
       : (sourceWord & V8_CODE_CACHE_COMPILE_FUNCTION_BIT) !== 0
         ? ("compile_function" as const)
@@ -121,7 +123,7 @@ export const parseV8CodeCache = (
       if (observations.length >= input.max_strings)
         // The message states the fact. Recovery advice belongs to the provider, which
         // can see whether either budget still has headroom before recommending a retry.
-        throw new V8CodeCacheBudgetFailure(
+        throw v8CodeCacheBudgetFailure(
           "max_strings",
           input.max_strings,
           `Payload contains more than ${String(input.max_strings)} printable runs of at least ${String(input.min_string_bytes)} bytes, so the max_strings observation budget was exhausted before the scan finished.`,
@@ -173,7 +175,7 @@ export const parseV8CodeCache = (
     payload: {
       offset: payloadOffset,
       bytes: payload.length,
-      sha256: payloadSha256(payload),
+      sha256: sha256Hex(payload),
       trailing_bytes: 0,
     },
     embedded_strings: observations,

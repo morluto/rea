@@ -25,7 +25,7 @@ const { createServer } = await import("../../dist/server/createServer.js");
 const config = parseConfig({});
 if (!config.ok) throw config.error;
 const session = createBinarySession(config.value, silentLogger, {});
-const server = createServer({ kind: "session", session });
+const server = createServer({ kind: "session", session }, { environment: {} });
 const client = new Client({ name: "contract-presentation", version: "1" });
 const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 await withVerifierCleanup(async () => {
@@ -52,7 +52,10 @@ await withVerifierCleanup(async () => {
       }),
     });
   }
-  process.stdout.write(JSON.stringify({ catalog: catalog.tools, responses }));
+  const presentationOrder = TOOL_CONTRACTS.map(({ name }) => name);
+  process.stdout.write(
+    JSON.stringify({ presentationOrder, catalog: catalog.tools, responses }),
+  );
 }, [
   () => client.close(),
   () => server.close(),

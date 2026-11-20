@@ -1,3 +1,4 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 
@@ -390,10 +391,9 @@ describe("managed member grounding", () => {
     ).toBe("failed");
     const conflicting = {
       ...fixture.artifactEvidence,
-      subject:
-        fixture.memberEvidence.subject === null
-          ? null
-          : { ...fixture.memberEvidence.subject, local_path: "/other.dll" },
+      subject: displayedEvidenceSubject(fixture.memberEvidence.subject, {
+        local_path: "/other.dll",
+      }),
     };
     expect(
       fixture.grade([
@@ -749,10 +749,9 @@ describe("fixture identity and provenance binding", () => {
     const evidence = createObservation();
     const conflicting = {
       ...evidence,
-      subject:
-        evidence.subject === null
-          ? null
-          : { ...evidence.subject, local_path: "/targets/other.asar" },
+      subject: displayedEvidenceSubject(evidence.subject, {
+        local_path: "/targets/other.asar",
+      }),
     };
     expect(
       assess(

@@ -1,3 +1,4 @@
+import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
 import { elfNote, gnuBuildIdNote } from "../elf/ElfNotes.fixture.js";
 import {
   peLoadConfigImage,
@@ -705,12 +706,17 @@ const assignElfProgramSpans = (
   },
 ): void => {
   const programAt = (typeId: number, payload: number, size: number): void => {
-    const program = programs.find((candidate) => candidate.type === typeId);
-    if (program === undefined) return;
-    program.offset = payload;
-    program.address = payload;
-    program.filesz = size;
-    program.memsz = size;
+    const program = uniqueKeyed(
+      keyedBy(programs, ({ type }) => type),
+      typeId,
+    );
+    if (!program.ok) throw new Error("fixture repeats a program type");
+    if (program.value === undefined) return;
+    const header = program.value;
+    header.offset = payload;
+    header.address = payload;
+    header.filesz = size;
+    header.memsz = size;
   };
   if (facts.interp) programAt(PT_INTERP, facts.interpAt, facts.interpBytes);
   if (facts.dynamic)
@@ -1076,9 +1082,7 @@ const machoSymbolPayload = (
           : options.stackChk === false
             ? 1
             : 0)) + (options.trailingBrokenStrx === true ? 1 : 0);
-  const storedSymbols =
-    options.nsyms !== undefined && options.nsyms > 4096 ? 0 : declaredSymbols;
-  const symbolBytes = Buffer.alloc(Math.max(storedSymbols, 0) * nlistWidth);
+  const symbolBytes = Buffer.alloc(declaredSymbols * nlistWidth);
   const symbolType = options.definedSymbol === true ? 0x0f : 0x01;
   const writeSymbol = (index: number, nameOffset: number): void => {
     const at = index * nlistWidth;
@@ -1088,7 +1092,7 @@ const machoSymbolPayload = (
       symbolBytes.writeUInt32LE(options.commonSize, at + 8);
   };
   if (options.symbolScanBudget === true) {
-    for (let index = 0; index < storedSymbols; index += 1)
+    for (let index = 0; index < declaredSymbols; index += 1)
       writeSymbol(index, 1);
   } else if (options.brokenStrx === true && symbolBytes.length >= 4)
     writeSymbol(0, 50);
@@ -1098,7 +1102,7 @@ const machoSymbolPayload = (
   )
     writeSymbol(0, 1);
   if (options.trailingBrokenStrx === true)
-    writeSymbol(storedSymbols - 1, strings.length + 50);
+    writeSymbol(declaredSymbols - 1, strings.length + 50);
   return { wantSymtab, strings, declaredSymbols, symbolBytes };
 };
 

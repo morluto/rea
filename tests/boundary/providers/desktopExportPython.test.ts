@@ -29,9 +29,7 @@ import {
 } from "../../../src/domain/desktop/appExportPython.js";
 import {
   detectStateFormat,
-  keyfileView,
-  isJsonText,
-  jsonView,
+  textSyntaxFormat,
   textualView,
 } from "../../../src/domain/desktop/stateFormats.js";
 import { safeParseJson } from "../../../src/domain/safeJson.js";
@@ -215,31 +213,29 @@ it("seeds each file the bundle lists in SEED_MODES with that mode, as a lock who
     "[s]\n",
   );
   await writeFile(join(root, "seed", "run.sh"), "#!/bin/sh\n");
+  const work = "work.txt";
+  const home = join(root, "home");
+  await writeFile(join(root, "seed", work), utf16("/home/ada/project\n", "be"));
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
 SEED_HOME = "/home/ada"
-TEXT_SEEDS = frozenset()
+TEXT_SEEDS = frozenset(["work.txt"])
 SEED_MODES = {".config/notes/secret.ini": 0o600, "run.sh": 0o755}
 HERE = Path(sys.argv[1])
 ${PYTHON_HELPERS}
 _seed_home(Path(sys.argv[2]))
 `;
 
-  execFileSync("python3", [
-    "-I",
-    "-B",
-    "-c",
-    program,
-    root,
-    join(root, "home"),
-  ]);
+  execFileSync("python3", ["-I", "-B", "-c", program, root, home]);
 
   const mode = async (path: string) =>
     (await stat(join(root, "home", path))).mode & 0o777;
   expect(await mode(".config/notes/secret.ini")).toBe(0o600);
   expect(await mode("run.sh")).toBe(0o755);
+  const restored = await readFile(join(home, work));
+  expect(restored.equals(utf16(`${home}/project\n`, "be"))).toBe(true);
 });
 
 it.each([true, false])(
@@ -450,7 +446,8 @@ windows = json.loads(${JSON.stringify(table)})
 if sys.argv[1:3] == ["-root", "_NET_CLIENT_LIST"]:
     print("_NET_CLIENT_LIST(WINDOW): window id # " + ", ".join(windows))
 else:
-    print(windows[sys.argv[2]])
+    window = sys.argv[2].lower()
+    print(next((props for xid, props in windows.items() if xid.lower() == window), ""))
 `,
   );
   await chmod(join(bin, "xprop"), 0o755);
@@ -504,6 +501,56 @@ it("holds readiness until a window of the app's class that the taskbar lists is 
   ).toBe("False");
 });
 
+it.each([
+  [
+    "canonicalizes a hexadecimal window id",
+    { "0xA00007": 'WM_CLASS(STRING) = "editor", "ModelEditor"' },
+    "ModelEditor",
+    "True",
+  ],
+  [
+    "decodes an escaped class",
+    { "0x1": String.raw`WM_CLASS(STRING) = "editor", "Model\042Editor"` },
+    'Model"Editor',
+    "True",
+  ],
+  [
+    "requires the class field",
+    { "0x1": 'WM_CLASS(STRING) = "ModelEditor", "OtherApp"' },
+    "ModelEditor",
+    "False",
+  ],
+  [
+    "finds no class property",
+    { "0x1": "WM_CLASS: not found." },
+    "ModelEditor",
+    "False",
+  ],
+  [
+    "cannot decode the class property",
+    { "0x1": String.raw`WM_CLASS(STRING) = "editor", "Model\qEditor"` },
+    "ModelEditor",
+    "False",
+  ],
+  [
+    "observes a differently cased class",
+    { "0x1": 'WM_CLASS(STRING) = "editor", "modeleditor"' },
+    "ModelEditor",
+    "False",
+  ],
+  [
+    "reads splash markers from their own properties",
+    { "0x1": 'WM_CLASS(STRING) = "editor", "_NET_WM_STATE_SKIP_TASKBAR"' },
+    "_NET_WM_STATE_SKIP_TASKBAR",
+    "True",
+  ],
+])(
+  "interprets X11 readiness when xprop %s",
+  async (_, windows, class_, ready) => {
+    expect(taskbarWindow(await fakeXprop(windows), class_)).toBe(ready);
+  },
+);
+
 /** The exported module's JSON verdict for each text, with only its standard library imports: its view or its error. */
 const pythonJson = (texts: readonly string[]) => {
   const imports = PYTHON_IMPORTS.split("\n")
@@ -539,7 +586,7 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
   const python = pythonJson(texts);
 
   texts.forEach((text, index) => {
-    const typescript = jsonView(text);
+    const typescript = textualView("json", new TextEncoder().encode(text));
     const verdict = python[index];
     expect(verdict?.error === undefined).toBe(typescript.ok);
     if (typescript.ok) expect(verdict?.view).toEqual(typescript.value);
@@ -733,7 +780,9 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
   ) as { syntax: boolean[]; built: boolean[] };
 
   const parsed = texts.map((text) => safeParseJson(text).ok);
-  expect(texts.map((text) => isJsonText(text))).toEqual(parsed);
+  expect(
+    texts.map((text) => textSyntaxFormat("fixture.json", text) === "json"),
+  ).toEqual(parsed);
   expect(python.syntax).toEqual(parsed);
   expect(python.built).toEqual(parsed);
   expect(parsed.filter(Boolean)).toHaveLength(10);
@@ -804,29 +853,43 @@ with sqlite3.connect(":memory:") as db:
   });
 });
 
-it("keeps the same keyfile whitespace as the retained state view", async () => {
-  const inputs = [
-    "[ui]\nsuffix=hello \nunicode=\u00a0hello\u00a0\npadded=   hello\n",
-    "[ui]\r\nsuffix=hello  \r\nunicode=\u00a0hello\u00a0\u00a0\r\npadded=\thello\r\n",
-  ];
-  const imports = PYTHON_IMPORTS.split("\n")
-    .filter((line) => !line.includes("agentenv_protocol"))
-    .join("\n");
-  const program = `${imports}${PYTHON_HELPERS}
-print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["groups"] for text in json.load(sys.stdin)]))
-`;
-  const root = await createTestTempDirectory("rea-keyfile-python-");
-  const script = join(root, "fixture.py");
-  await writeFile(script, program, "utf8");
-  const output = execFileSync(
-    process.platform === "win32" ? "python" : "python3",
-    ["-I", "-B", "-X", "utf8", script],
+it("agrees on keyfile whitespace in both state readers", () => {
+  const files = [
+    ["settings.ini", "[ui]\n\u0085\nzoom=2\n"],
+    ["settings.ini", "[ui]\n\ufeffzoom=2\n"],
+    [
+      "settings.ini",
+      "[ui]\r\nsuffix=hello  \r\nunicode=\u00a0hello\u00a0\u00a0\r\npadded=\thello\r\n",
+    ],
+  ] as const;
+  const expected = [
     {
-      input: JSON.stringify(inputs),
-      encoding: "utf8",
+      format: "text",
+      view: {
+        lines: ["[ui]", "\u0085", "zoom=2"],
+        line_count: 3,
+        truncated: false,
+      },
+      error: null,
     },
-  );
-  expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
+    { format: "keyfile", view: { groups: { ui: { zoom: "2" } } }, error: null },
+    {
+      format: "keyfile",
+      view: {
+        groups: {
+          ui: {
+            suffix: "hello  ",
+            unicode: "\u00a0hello\u00a0\u00a0",
+            padded: "hello",
+          },
+        },
+      },
+      error: null,
+    },
+  ];
+  const { python, rea } = textViews(files);
+  expect(rea).toEqual(expected);
+  expect(python).toEqual(expected);
 });
 
 const hasPydantic2 =

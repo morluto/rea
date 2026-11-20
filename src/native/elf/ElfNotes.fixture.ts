@@ -230,6 +230,7 @@ export const elfNoteWithUnreadableSectionNameFixture = (
 export const compressedElfNoteSectionFixture = (
   bits: 32 | 64 = 64,
   little = true,
+  ownership: "section" | "both" = "section",
 ): Buffer => {
   const notes = concat(
     gnuBuildIdNote(undefined, little),
@@ -243,14 +244,35 @@ export const compressedElfNoteSectionFixture = (
     bits,
     little,
     type: 1,
-    ownership: "section",
+    ownership,
     sectionName: ".debug.notes",
     alignment: bits === 64 ? 8 : 4,
     notes: concat(header, deflateSync(notes)),
   });
-  const noteSection = (bits === 64 ? 64 : 52) + (bits === 64 ? 64 : 40);
+  const headerSize = bits === 64 ? 64 : 52;
+  const programSize = bits === 64 ? 56 : 32;
+  const sectionSize = bits === 64 ? 64 : 40;
+  const noteSection =
+    headerSize + (ownership === "both" ? programSize : 0) + sectionSize;
   writeWord(bytes, noteSection + 8, 0x800, bits, little);
   return bytes;
+};
+
+/** Move an ELF64 little-endian fixture's existing section rows to a backed direct-count table. */
+export const withElf64DirectSectionCount = (
+  image: Buffer,
+  count: number,
+): Buffer => {
+  const offset = Number(image.readBigUInt64LE(40));
+  const priorCount = image.readUInt16LE(60);
+  const table = Math.ceil(image.length / 8) * 8;
+  const result = Buffer.alloc(table + count * 64);
+  image.copy(result);
+  image.copy(result, table, offset, offset + priorCount * 64);
+  result.writeBigUInt64LE(BigInt(table), 40);
+  result.writeUInt16LE(64, 58);
+  result.writeUInt16LE(count, 60);
+  return result;
 };
 
 /** Valid ELF64 section count stored in section header zero per the gABI. */
@@ -299,6 +321,7 @@ export const compressedElfNoteFixture = (
   little = true,
   compressionType = 1,
   sectionName = ".note.gnu.build-id",
+  compressedPayload?: Buffer,
 ): Buffer => {
   const image = elfNoteFixture({
     bits,
@@ -327,7 +350,8 @@ export const compressedElfNoteFixture = (
   const namesSize = word(namesHeader + (wide ? 32 : 20));
   const names = image.subarray(namesOffset, namesOffset + namesSize);
   const compressed =
-    compressionType === 2 ? zstdCompressSync(names) : deflateSync(names);
+    compressedPayload ??
+    (compressionType === 2 ? zstdCompressSync(names) : deflateSync(names));
   const compressionHeaderBytes = wide ? 24 : 12;
   const replacement = Buffer.alloc(compressionHeaderBytes);
   if (little) replacement.writeUInt32LE(compressionType, 0);
@@ -419,17 +443,14 @@ export interface CorePrpsinfoOptions {
   readonly sid?: number;
   readonly fname?: string;
   readonly psargs?: string;
-  /**
-   * Width of `__kernel_uid_t` for a 32-bit image: 2 on i386, ARM, m68k and sparc32, and 4 on
-   * every ABI that takes `asm-generic/posix_types.h` (MIPS o32, PowerPC-32, s390) or
-   * `compat_elf_prpsinfo`. Selects the 124- or 128-byte descriptor the kernel writes. Ignored for
-   * a 64-bit image, whose layout is fixed.
-   */
+  /** UID/GID byte width in the ELF32 descriptor. ELF64 always uses four bytes. */
   readonly idWidth?: 2 | 4;
 }
 
-/** Linux CORE NT_PRPSINFO note (type 3). */
-export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
+/** Descriptor bytes for a Linux NT_PRPSINFO note. */
+export const corePrpsinfoDescriptor = (
+  options: CorePrpsinfoOptions = {},
+): Buffer => {
   const bits = options.bits ?? 64;
   const little = options.little ?? true;
   const idWidth = bits === 64 ? 4 : (options.idWidth ?? 2);
@@ -490,8 +511,12 @@ export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
     );
     psargs.copy(desc, pidAt + 32, 0, Math.min(psargs.length, 80));
   }
-  return elfNote("CORE", 3, desc, little);
+  return desc;
 };
+
+/** Linux CORE NT_PRPSINFO note (type 3). */
+export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer =>
+  elfNote("CORE", 3, corePrpsinfoDescriptor(options), options.little ?? true);
 
 export interface CoreFileMapping {
   readonly start: bigint | number;

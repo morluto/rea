@@ -103,37 +103,26 @@ Ghidra analysis profile; non-PE profiles do not include that contract.
 
 ## Evidence boundaries
 
-The built-in parser uses an initialized non-executable PE signature scan and
-requires a unique RTR 9.1 header and exactly one DEHYDRATED_DATA row. Rehydrated
-bytes live only in a parser-owned overlay, identified by virtual address, size,
-and SHA-256; the caller's source Buffer remains unchanged. Limits derive from
-captured section extents and format field bounds. Separate resource policies
-admit up to 128 MiB of captured PE bytes, 64 MiB-equivalent parser work, 64 MiB
-of exact parser-owned overlay/index storage, and 4 MiB of serialized NativeAOT
-report JSON. These are local parser limits, independent of MCP delivery; the
-buffer counter does not claim to cap V8 heap or total process memory. Rows that
-do not fit the report budget are omitted with explicit partial status and
-coverage. Coverage counts describe the pointer scan, recovered MethodTables,
-and frozen-string candidates examined, not every possible runtime type or
-object. Cancellation is honored during snapshot I/O and checked immediately
-before and after parsing; the synchronous parser call itself is bounded but
-cannot be interrupted mid-call. Parser output never claims that a Ghidra
-database type was defined.
+The built-in parser scans readable, non-executable PE sections within their
+file-backed virtual extents. It requires a unique RTR 9.1 header and exactly
+one DEHYDRATED_DATA row. The directory header and rows must fit the same
+section. Rehydrated bytes stay in a parser-owned overlay identified by virtual
+address, size, and SHA-256. The source bytes remain unchanged. Evidence
+from the overlay establishes parser findings. Ghidra database types require
+the optional adapter and a database lookup.
 
-RTR signature omission counts include every eligible section before the work
-budget is spent, including later sections that were never visited. MethodTable
-closure indexes each validated table's related pointer once and visits a work
-queue for inheritance and interface reachability. Its temporary index and queue
-consume the existing working-memory budget; the parser does not increase its
-work limit. Candidate headers/counts are parsed once; unmapped table bodies are
-rejected before charging table entries, and validation charges only each slot or
-interface pointer actually examined. Declared counts and unvisited tails do not
-become examined coverage. Discovery still must finish before claiming a unique System.Object
-root, so a discovery budget stop can return zero recovered tables without
-establishing their absence. Performance on the large bflat report has not been
-measured. Indexed closure and candidate validation avoid separate repeated or
-unperformed work, but do not establish that the fixed discovery budget admits
-that artifact. Budget stops remain partial results with unknown type absence.
+The parser admits up to 128 MiB of captured PE bytes. Its `work_budget_units`
+starts at 64 × 2²⁰ work units and adds eight units per admitted source byte.
+Separate ceilings apply to parser-owned overlay and index storage (64 MiB)
+and serialized report JSON (4 MiB). These limits count the stated resources.
+They do not measure total process memory or MCP response delivery.
+
+Coverage counts work actually examined. Declared table sizes and unvisited
+tails do not become examined records. A budget stop yields partial output.
+If discovery stops before it proves a unique System.Object root, zero
+recovered tables leaves their presence unknown. Snapshot I/O honors
+cancellation. The bounded synchronous parse checks cancellation before and
+after it runs.
 
 If captured snapshot bytes no longer match their admitted digest, the parser
 retains both digests and the Ghidra owner reports `artifact_changed`, with the
@@ -158,7 +147,7 @@ does not imply that ordinary native disassembly/decompilation is impossible.
 
 ## Verification
 
-See [the dedicated lane](../development/testing.md#optional-nativeaot-ghidra-analysis).
+See [the dedicated lane](../testing-lanes.md#optional-nativeaot-ghidra-analysis).
 Fixtures are source-built benign .NET programs with inheritance, an interface,
 virtual dispatch, representative arithmetic and frozen strings. Independent
 compiler/linker symbols and raw directory bytes provide the oracle. Stripped
@@ -166,8 +155,8 @@ fixtures exercise heuristic detection. Tests do not execute the resulting
 NativeAOT binaries. Fixture generation and adapter compilation are optional and
 never prerequisites of ordinary native analysis or setup.
 
-The real MCP lane runs only on a Linux x64 host with the adapter. The
-Windows-host behavior above was checked manually over MCP on Windows 11 x64
+The real MCP lane runs on Linux x64 with the adapter. A historical
+Windows-host check ran manually over MCP on Windows 11 x64
 (non-elevated, Ghidra 12.1.4, JDK 21, no JAR) with the source-built win-x64
 symbols fixture. The format, RTR version and frozen strings matched the fixture
 oracle; the derived MethodTable, its base type, its interface and a virtual

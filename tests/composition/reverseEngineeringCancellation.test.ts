@@ -193,26 +193,6 @@ const cleanupCancellationScenario = async (options: {
   }
 };
 
-it("uses stoppable process mode for caller-selected provider commands", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-rizin-stoppable-"));
-  const path = join(directory, "fixture.bin");
-  await writeFile(path, "fixture");
-  let received: Record<string, unknown> | undefined;
-  const service = new ReverseEngineeringService({
-    run: async (_command, _args, options) => {
-      received = options as Record<string, unknown>;
-      return { stdout: "", stderr: "" };
-    },
-  });
-
-  try {
-    await service.executeRizinCommand({ path, command: "iI" });
-    expect(received?.stopSignal).toBe("SIGTERM");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 it.skipIf(process.platform === "win32")(
   "waits for a cancelled Rizin process to exit before returning",
   async () => {

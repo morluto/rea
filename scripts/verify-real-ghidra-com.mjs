@@ -1,8 +1,6 @@
 #!/usr/bin/env node
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpLifecycleResult,
@@ -11,15 +9,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -30,9 +20,20 @@ import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { nativeInstructionSchema } from "../dist/domain/native/nativeInstruction.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
-import { buildDosComFixture } from "../tests/conformance/ghidra/dos-com-fixture.mjs";
+import {
+  buildDosComFixture,
+  buildRejectedDosComFixture,
+} from "../tests/conformance/ghidra/dos-com-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundaries.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
+import {
+  createVerifierMcpOwner,
+  VerifierStdioTransport,
+} from "./lib/verifier-mcp-owner.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -72,7 +73,10 @@ const entrypoint =
     ? fileURLToPath(new URL("./rea.mjs", import.meta.url))
     : join(packageRoot, "scripts", "rea.mjs");
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-com-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-com-proof-",
+});
+const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const fixture = buildDosComFixture();
@@ -95,7 +99,7 @@ const env = {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env,
+  env: env,
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-com-proof", version: "1" });
@@ -106,10 +110,28 @@ let report;
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
-await withVerifierCleanup(async () => {
+workspaceFixture.releaseAfter(async () => {
+  await closeVerifierResources([
+    async () => {
+      if (connected) await call("close_binary", {});
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
+  assert.deepEqual(
+    (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+    [],
+    "Owned Ghidra runtime survived close",
+  );
+  verifierRun = await completeVerifierRun(run);
+  assert.equal(verifierRun.process_lineage.status, "verified");
+  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+});
+await withVerifierFixture(workspaceFixture, async () => {
   try {
     await client.connect(transport);
     connected = true;
+    const fallbackImport = await verifyRejectedCom();
 
     const untyped = await client.callTool({
       name: "open_binary",
@@ -137,9 +159,18 @@ await withVerifierCleanup(async () => {
     assert.equal(image.format, "dos-com");
     assert.equal(image.header_bytes, 0);
     assert.equal(image.module_bytes, fixture.bytes.length);
+    assert.equal(image.loader, fixture.loader);
+    assert.equal(image.load_address, fixture.load_address);
+    assert.equal(image.loader_fallback, undefined);
     assert.equal(image.entry.linear_address, fixture.entry);
     assert.equal(image.entry.offset, 256);
-    assert.equal(image.observations.entry_context[0].registers.length, 4);
+    assert.deepEqual(
+      image.observations.entry_context[0].registers.map((register) => [
+        register.name,
+        register.value_hex,
+      ]),
+      ["CS", "DS", "ES", "SS"].map((name) => [name, "0x0"]),
+    );
     const memory = await call("read_bytes", {
       address: fixture.entry,
       length: fixture.bytes.length,
@@ -150,10 +181,16 @@ await withVerifierCleanup(async () => {
       address: fixture.near,
     });
     assert.equal(mapping.file_offset, 32);
-    const psp = await call("read_bytes", { address: "0x10000", length: 16 });
-    assert.equal(psp.returned_bytes, 0);
-    assert.equal(psp.complete, false);
-    const tail = await call("read_bytes", { address: "0x1013e", length: 8 });
+    const psp = await call("read_bytes", { address: "0x0", length: 16 });
+    assert.equal(psp.bytes_hex, "00".repeat(16));
+    assert.equal(psp.complete, true);
+    const oldSegment = await call("read_bytes", {
+      address: "0x10000",
+      length: 16,
+    });
+    assert.equal(oldSegment.returned_bytes, 0);
+    assert.equal(oldSegment.complete, false);
+    const tail = await call("read_bytes", { address: fixture.tail, length: 8 });
     assert.equal(tail.returned_bytes, 2);
     assert.equal(tail.complete, false);
     const procedures = await call("list_procedures");
@@ -176,7 +213,7 @@ await withVerifierCleanup(async () => {
     );
     // This NOP follows the entry's terminating INT 20h and is not reached by
     // either function. It remains valid instruction bytes outside the listing.
-    const unlistedAddress = "0x1013f";
+    const unlistedAddress = fixture.unlisted;
     const unlistedBytes = await call("read_bytes", {
       address: unlistedAddress,
       length: 1,
@@ -201,22 +238,32 @@ await withVerifierCleanup(async () => {
     const advertised = tools.find(
       (tool) => tool.name === "inspect_native_instruction",
     );
-    assert.ok(advertised?.outputSchema);
+    assert.ok(advertised);
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    assert.equal(ajv.validateSchema(advertised.outputSchema), true);
     assert.equal(
-      ajv.validate(advertised.outputSchema, unlistedResponse.structuredContent),
+      ajv.validateSchema(canonicalOutputSchema(advertised.name)),
+      true,
+    );
+    assert.equal(
+      ajv.validate(
+        canonicalOutputSchema(advertised.name),
+        unlistedResponse.structuredContent,
+      ),
       true,
       JSON.stringify(ajv.errors),
     );
-    assert.ok(
+    // Evidence format 1 has no legacy `undecodable` status: an unlisted
+    // address is `not-in-listing`, and the relabelled record is refused.
+    assert.equal(nativeInstructionSchema.safeParse(unlisted).success, true);
+    assert.equal(
       nativeInstructionSchema.safeParse({ ...unlisted, status: "undecodable" })
         .success,
+      false,
     );
     const contextDefinition = tools.find(
       (tool) => tool.name === "inspect_address_context",
     );
-    assert.ok(contextDefinition?.outputSchema);
+    assert.ok(contextDefinition);
     const documents = await call("list_documents");
     assert.equal(documents.length, 1);
     const document = documents[0];
@@ -296,7 +343,7 @@ await withVerifierCleanup(async () => {
     // Ghidra, rather than assuming the provider exposes direct comment methods.
     const contextCall = async (name, args) => {
       const definition = tools.find((tool) => tool.name === name);
-      assert.ok(definition?.outputSchema, `${name} must be advertised`);
+      assert.ok(definition, `${name} must be advertised`);
       const response = await client.callTool(
         { name, arguments: args },
         { timeout: 240000, toolDefinition: definition },
@@ -447,14 +494,18 @@ await withVerifierCleanup(async () => {
       load_image: {
         status: image.status,
         checks: image.checks.length,
+        loader: image.loader,
+        load_address: image.load_address,
         entry: fixture.entry,
         entry_context: image.observations.entry_context,
       },
+      loader_fallback: fallbackImport,
       transport: { cli: true, stdio_mcp: true },
       memory_evidence: {
         complete_file_read: true,
         source_offset: 32,
-        psp_unmapped: true,
+        placeholder_psp_zero: true,
+        old_segment_unmapped: true,
         partial_read_bytes: 2,
       },
       functions: { entry: true, near: true, pseudocode_nonempty: true },
@@ -475,26 +526,7 @@ await withVerifierCleanup(async () => {
     if (stderr.trim()) process.stderr.write(stderr);
     throw error;
   }
-}, [
-  async () => {
-    await closeVerifierResources([
-      async () => {
-        if (connected) await call("close_binary", {});
-      },
-      () => client.close(),
-      () => transport.close(),
-    ]);
-    assert.deepEqual(
-      (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
-      [],
-      "Owned Ghidra runtime survived close",
-    );
-    verifierRun = await completeVerifierRun(run);
-    assert.equal(verifierRun.process_lineage.status, "verified");
-    assert.deepEqual(verifierRun.process_lineage.descendants, []);
-    await rm(workspace, { recursive: true, force: true });
-  },
-]);
+});
 assert.ok(report);
 verifierRun = await completeVerifierRun(run);
 assert.equal(verifierRun.process_lineage.status, "verified");
@@ -506,6 +538,81 @@ process.stdout.write(
     cleanup: "complete",
   }) + "\n",
 );
+async function verifyRejectedCom() {
+  const rejectedFixture = buildRejectedDosComFixture();
+  const rejectedPath = join(workspace, "rejected.com");
+  await writeFile(rejectedPath, rejectedFixture.bytes, { mode: 0o600 });
+  const fallbackOwner = createVerifierMcpOwner();
+  workspaceFixture.releaseAfter(() => fallbackOwner.close());
+  const rejectedClient = new Client({
+    name: "rea-real-com-fallback",
+    version: "1",
+  });
+  const rejectedTransport = new VerifierStdioTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env,
+    stderr: "pipe",
+  });
+  const connection = await fallbackOwner.open(
+    rejectedClient,
+    rejectedTransport,
+  );
+  try {
+    const opened = await rejectedClient.callTool(
+      {
+        name: "open_binary",
+        arguments: {
+          path: rejectedPath,
+          provider_id: "ghidra",
+          format: "dos-com",
+        },
+      },
+      { timeout: 240000 },
+    );
+    const session = requireMcpLifecycleResult(opened, "open_binary");
+    assert.equal(session.format, "dos-com");
+    const response = await rejectedClient.callTool(
+      { name: "inspect_native_load_image", arguments: {} },
+      { timeout: 240000 },
+    );
+    const evidence = parseEvidence(
+      requireMcpOutput(response, "inspect_native_load_image"),
+    );
+    const image = evidence.normalized_result;
+    assert.equal(image.status, "verified");
+    assert.equal(image.loader, rejectedFixture.loader);
+    assert.equal(image.load_address, rejectedFixture.load_address);
+    assert.deepEqual(image.loader_fallback, {
+      loader: "ComLoader",
+      reason: rejectedFixture.fallback_reason,
+    });
+    assert.equal(image.entry.linear_address, rejectedFixture.entry);
+    assert.equal(
+      evidence.analysis_profile.parameters.loader,
+      rejectedFixture.loader,
+    );
+    assert.equal(
+      evidence.analysis_profile.parameters.load_address,
+      rejectedFixture.load_address,
+    );
+    assert.deepEqual(evidence.analysis_profile.parameters.loader_fallback, {
+      loader: "ComLoader",
+      reason: rejectedFixture.fallback_reason,
+    });
+    return {
+      loader: image.loader,
+      load_address: image.load_address,
+      reason: image.loader_fallback.reason,
+      entry: image.entry.linear_address,
+    };
+  } finally {
+    await rejectedClient
+      .callTool({ name: "close_binary", arguments: {} }, { timeout: 240000 })
+      .catch(() => undefined);
+    await fallbackOwner.closeConnection(connection);
+  }
+}
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -517,7 +624,7 @@ async function call(name, args = {}) {
   if (["open_binary", "close_binary"].includes(name))
     return requireMcpLifecycleResult(value, name);
   const evidence = parseEvidence(requireMcpOutput(value, name));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   return evidence.normalized_result;
 }
 async function cli(command, address, options = []) {
@@ -538,9 +645,14 @@ async function cli(command, address, options = []) {
     { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
   );
   const evidence = parseEvidence(JSON.parse(stdout));
-  assert.equal(evidence.subject.digest.sha256, sha256);
-  assert.equal(evidence.subject.format, "dos-com");
-  assert.equal(evidence.analysis_profile.parameters.loader, "BinaryLoader");
+  assert.equal(evidence.subject.identity.sha256, sha256);
+  assert.equal(evidence.subject.identity.format, "dos-com");
+  assert.equal(evidence.analysis_profile.parameters.loader, fixture.loader);
+  assert.equal(
+    evidence.analysis_profile.parameters.load_address,
+    fixture.load_address,
+  );
+  assert.equal(evidence.analysis_profile.parameters.loader_fallback, undefined);
   assert.equal(
     evidence.analysis_profile.parameters.language_id,
     "x86:LE:16:Real Mode",

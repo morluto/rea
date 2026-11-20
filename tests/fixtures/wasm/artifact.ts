@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { WasmArtifactExecution } from "../../../src/application/wasm/WasmArtifactPort.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import type { WasmArtifactExecution } from "../../../src/ports/wasm/WasmArtifactPort.js";
 import type { WasmArtifact } from "../../../src/domain/wasm/wasmArtifact.js";
 /** Source-owned transport seam; upstream binaries are verified in a separate lane. */
 export const wasmArtifactFixture = (

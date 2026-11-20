@@ -1,8 +1,5 @@
 #!/usr/bin/env node
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpLifecycleResult,
@@ -10,15 +7,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -29,6 +18,10 @@ import { nativeDataTypeSchema } from "../dist/domain/native/nativeDataType.js";
 import { nativeLoadImageSchema } from "../dist/domain/native/nativeLoadImage.js";
 
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 const run = createVerifierRun();
 const mode = process.argv[2] ?? "symbols";
 if (
@@ -90,7 +83,10 @@ const target =
       : symbolTarget;
 const bytes = await readFile(target);
 const sha256 = hash(bytes);
-const workspace = await mkdtemp(join(tmpdir(), "rea-nativeaot-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-nativeaot-proof-",
+});
+const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const packageRoot = process.env.REA_NATIVEAOT_PROOF_PACKAGE_ROOT;
@@ -161,7 +157,24 @@ let opened = false;
 let connected = false;
 let verifierRun;
 let report;
-await withVerifierCleanup(async () => {
+workspaceFixture.releaseAfter(async () => {
+  await closeVerifierResources([
+    async () => {
+      if (connected) await call("close_binary", {});
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
+  assert.deepEqual(
+    await readdir(runtime),
+    [],
+    "Owned runtime/project/extension files leaked after close",
+  );
+  verifierRun = await completeVerifierRun(run);
+  assert.equal(verifierRun.process_lineage.status, "verified");
+  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+});
+await withVerifierFixture(workspaceFixture, async () => {
   try {
     if (mode === "loader-failure") await prepareLoaderFailure();
     await client.connect(transport);
@@ -360,7 +373,7 @@ await withVerifierCleanup(async () => {
             { env, timeout: 360000, maxBuffer: 16 * 1024 * 1024 },
           );
           const evidence = parseEvidence(JSON.parse(stdout));
-          assert.equal(evidence.subject.digest.sha256, sha256);
+          assert.equal(evidence.subject.identity.sha256, sha256);
           assert.deepEqual(
             evidence.normalized_result.metadata_recovery,
             metadata,
@@ -382,26 +395,7 @@ await withVerifierCleanup(async () => {
     console.error(stderr);
     throw error;
   }
-}, [
-  async () => {
-    await closeVerifierResources([
-      async () => {
-        if (connected) await call("close_binary", {});
-      },
-      () => client.close(),
-      () => transport.close(),
-    ]);
-    assert.deepEqual(
-      await readdir(runtime),
-      [],
-      "Owned runtime/project/extension files leaked after close",
-    );
-    verifierRun = await completeVerifierRun(run);
-    assert.equal(verifierRun.process_lineage.status, "verified");
-    assert.deepEqual(verifierRun.process_lineage.descendants, []);
-    await rm(workspace, { recursive: true, force: true });
-  },
-]);
+});
 const capture = process.env.REA_NATIVEAOT_PROOF_CAPTURE_DIR;
 if (capture !== undefined) {
   assert.ok(isAbsolute(capture));
@@ -430,6 +424,6 @@ async function call(name, args = {}) {
   );
   if (name === "close_binary") return requireMcpLifecycleResult(response, name);
   const evidence = parseEvidence(requireMcpOutput(response, name));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   return evidence.normalized_result;
 }

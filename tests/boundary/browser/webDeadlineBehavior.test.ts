@@ -26,6 +26,7 @@ const targetList = browserTargetListSchema.parse({
 const bundle = webBundleAnalysisSchema.parse({
   capture: {
     target_url: "https://example.test/",
+    target_origin: "https://example.test",
     scripts_observed: 0,
     scripts_analyzed: 0,
     source_artifacts: [],

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { EvmInterfaceService } from "./EvmInterfaceService.js";
-import type { EvmInterfaceExecution } from "./EvmInterfacePort.js";
+import type { EvmInterfaceExecution } from "../../ports/evm/EvmInterfacePort.js";
 import {
   evmInterfaceExecution,
   evmInterfaceFixture,

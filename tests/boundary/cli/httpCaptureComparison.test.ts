@@ -116,5 +116,4 @@ cliTest(
       await fixture.browser.close();
     }
   },
-  60_000,
 );

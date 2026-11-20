@@ -7,11 +7,12 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { artifactInventorySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   bunModuleGraphPayload,
   elfAppendedBunPayload,
 } from "../../../src/artifacts/bun/BunStandalone.fixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("exposes Bun graph metadata through the existing MCP artifact tool", async () => {
   const root = await createTestTempDirectory("rea-bun-mcp-");
@@ -28,7 +29,10 @@ it("exposes Bun graph metadata through the existing MCP artifact tool", async ()
   );
   const session = createTestBinarySession(new ArtifactProvider({}));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "bun-contract-test", version: "1" });
+  const client = new Client(
+    { name: "bun-contract-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

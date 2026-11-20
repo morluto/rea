@@ -5,8 +5,7 @@ import {
   applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
 } from "../config/windowsChangeTimeSettle.js";
-import { pwntoolsInputBytes } from "../native/pwntools/PwntoolsInputLimit.js";
-import { resolveBridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
+import { pwntoolsInputBytes } from "../config/pwntoolsInputLimit.js";
 import { resolveCaptureDecoderHeap } from "../config/captureDecoderHeap.js";
 import { resolveRegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import { resolveRegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
@@ -157,6 +156,53 @@ it("keeps accepted operations and their typed provider views stable across concu
   });
 });
 
+it("lists zstd.max_frames for every operation that enforces the cap", () => {
+  const store = new AnalysisSettings({});
+  for (const operation of [
+    "inspect_artifact",
+    "extract_artifact",
+    "inspect_gpu_code_objects",
+    "inspect_dwarf_units",
+    "inspect_elf_notes",
+    "inspect_binary_hardening",
+    "inspect_elf_unwind_ranges",
+    "inspect_native_exports",
+    "inspect_native_initializers",
+    "inspect_kernel_module",
+    "inspect_elf_debug_link",
+    "inspect_go_binary",
+    "inspect_rust_binary",
+    "inspect_il2cpp_metadata",
+    "inspect_android_jni_bindings",
+  ])
+    expect(
+      store.inspect({ operation }).settings.map(({ setting }) => setting),
+    ).toContain("zstd.max_frames");
+  for (const provider of [
+    "gpu-code-objects",
+    "rea-dwarf-units",
+    "rea-elf-notes",
+    "rea-binary-hardening",
+    "rea-elf-unwind-ranges",
+    "rea-native-exports",
+    "rea-native-initializers",
+    "rea-kernel-module",
+    "rea-elf-debug-link",
+    "go-build-info",
+    "rust-auditable",
+    "il2cpp-metadata",
+    "jadx",
+  ])
+    expect(
+      store.inspect({ provider }).settings.map(({ setting }) => setting),
+    ).toContain("zstd.max_frames");
+  expect(
+    store
+      .inspect({ operation: "inspect_binary_layout" })
+      .settings.map(({ setting }) => setting),
+  ).not.toContain("zstd.max_frames");
+});
+
 it("exposes shared provider controls and preserves the explicit unbounded decompile value", () => {
   const environment = {
     REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "7",
@@ -182,7 +228,11 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     store
       .inspect({ provider: "ghidra", operation: "search_strings" })
       .settings.map(({ setting }) => setting),
-  ).toEqual(["ghidra.startup_timeout_ms", "bridge.max_request_bytes"]);
+  ).toEqual([
+    "ghidra.startup_timeout_ms",
+    "bridge.max_request_bytes",
+    "bridge.max_reply_bytes",
+  ]);
   for (const operation of ["list_cutter_sessions", "cutter_command"] as const)
     expect(
       store
@@ -366,7 +416,6 @@ it("reads an accepted override before an invalid launch seed", () => {
     {
       revision: 1,
       overrides: {
-        "bridge.max_request_bytes": 8192,
         "capture.decoder_old_generation_mib": 64,
         "regex.matching_deadline_ms": 250,
         "regex.worker_heap_request_mib": 128,
@@ -375,9 +424,6 @@ it("reads an accepted override before an invalid launch seed", () => {
       },
     },
     () => ({
-      bridge: resolveBridgeMaxRequestBytes({
-        REA_BRIDGE_MAX_REQUEST_BYTES: "nope",
-      }),
       capture: resolveCaptureDecoderHeap({
         REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "0",
       }),
@@ -393,10 +439,6 @@ it("reads an accepted override before an invalid launch seed", () => {
       }),
     }),
   );
-  expect(resolved.bridge).toMatchObject({
-    maximumBytes: 8192,
-    source: "runtime",
-  });
   expect(resolved.capture).toMatchObject({
     oldGenerationMiB: 64,
     source: "runtime",

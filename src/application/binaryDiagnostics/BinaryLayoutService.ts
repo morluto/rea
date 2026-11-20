@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { BinaryLayoutPort } from "./BinaryLayoutPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { BinaryLayoutPort } from "../../ports/binaryDiagnostics/BinaryLayoutPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";

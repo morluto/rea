@@ -10,7 +10,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 
 it.each(["timeout", "resource"] as const)(
@@ -53,6 +53,7 @@ it.each(["timeout", "resource"] as const)(
         url: "http://127.0.0.1:12345/mcp",
         headers: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -170,6 +171,7 @@ it.each([
         url: "http://127.0.0.1:12345/mcp",
         headers: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },

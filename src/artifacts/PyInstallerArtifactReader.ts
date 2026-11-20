@@ -4,7 +4,19 @@ import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { normalizeArtifactPath } from "./ArtifactPaths.js";
+import {
+  normalizeArtifactPath,
+  ArtifactReaderFailure,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
+  artifactReadCancelledBy,
+  ArtifactResourceScope,
+  abortIfNeeded,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
 import type { PyInstallerMetadata } from "../domain/artifactFormatMetadata.js";
@@ -14,19 +26,7 @@ import {
 } from "./pyinstaller/PyInstallerMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import {
-  ArtifactReaderFailure,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
-import { artifactReadCancelledBy } from "./ArtifactFileOperation.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { parseMzHeaderEvidence } from "../domain/dosMz.js";
+import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
@@ -51,7 +51,7 @@ import {
   type CarrierPathDialect,
 } from "./pyinstaller/CArchiveMembers.js";
 import { readPyzArchive } from "./pyinstaller/PyzArchive.js";
-import type { PyInstallerFailure } from "./pyinstaller/PyInstallerFailure.js";
+import { pyInstallerReaderFailure as failure } from "./pyinstaller/PyInstallerFailure.js";
 import { readPyInstallerBytes } from "./pyinstaller/PyInstallerBytes.js";
 
 const MAX_PARSED_FACT_BYTES = 32 * 1024 * 1024;
@@ -74,7 +74,7 @@ const carrierPathDialect = async (
   });
   if (!prefixRead.ok) return "unknown";
   const prefix = prefixRead.value;
-  let windowsHeader = parseMzHeaderEvidence(prefix, fileSize).windowsHeader;
+  let windowsHeader = observeMzWindowsHeader(prefix, fileSize);
   if (windowsHeader.state === "signature-needed") {
     const signatureRead = await readPyInstallerBytes(handle, {
       position: windowsHeader.offset,
@@ -83,10 +83,10 @@ const carrierPathDialect = async (
       signal,
     });
     if (!signatureRead.ok) return "unknown";
-    windowsHeader = parseMzHeaderEvidence(prefix, fileSize, {
+    windowsHeader = observeMzWindowsHeader(prefix, fileSize, {
       offset: windowsHeader.offset,
       bytes: signatureRead.value,
-    }).windowsHeader;
+    });
   }
   if (windowsHeader.state === "declared")
     return windowsHeader.signature === "PE" ? "windows" : "unknown";
@@ -180,6 +180,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       this.#members.clear();
       return value;
     });
+    this.#signal(signal);
     options?.onCoverage?.(loaded.traversal);
     for (const member of loaded.members) {
       abortIfNeeded(active);
@@ -187,17 +188,18 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       this.#members.set(sealed.entry.adapterKey, sealed);
       yield sealed.entry;
     }
+    this.#signal(signal);
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     const active = this.#signal(signal);
     return this.#scope.run(async () => {
       const stored = this.#members.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored.entry))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `PyInstaller entry was not produced by this reader: ${entry.path}`,
-        );
+      assertProducedEntry(
+        entry,
+        stored?.entry,
+        `PyInstaller entry was not produced by this reader: ${entry.path}`,
+      );
       if (entry.kind !== "file")
         throw new ArtifactReaderFailure(
           "format",
@@ -685,6 +687,3 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     state.charged += bytes;
   }
 }
-
-const failure = (error: PyInstallerFailure): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(error.reason, error.message);

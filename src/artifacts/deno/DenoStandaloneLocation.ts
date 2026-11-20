@@ -1,8 +1,13 @@
-import { createHash } from "node:crypto";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import {
+  hashArtifactRange,
+  readArtifactRange as readExact,
+} from "../ArtifactCarrierRange.js";
 import type { FileHandle } from "node:fs/promises";
 
 import {
-  isMachoZeroFillSection,
+  machoSectionBacking,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
 import {
@@ -15,15 +20,25 @@ import {
   validateFatSliceIdentity,
   type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
-import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
+  readElfProgramHeader,
+} from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
+import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
+  ELF_NOTE_HEADER_BYTES,
   elfNoteAlignment,
-  elfNoteLayout,
-  readElfNoteHeader,
+  elfNoteSectionStorage,
+  isElfNotePadding,
+  readElfNoteFrame,
+  type ElfNoteAlignment,
 } from "../../domain/native/elfNoteLayout.js";
 import {
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
@@ -34,22 +49,19 @@ import {
   readMachoContainer,
   readSliceCommandTable,
   type ReadAt,
-} from "../apple/MachoLoadCommandReader.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { locatePeResourcePayloads } from "../../native/pe/PeResourceLayout.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
+import {
+  abortIfNeeded,
+  ArtifactReaderFailure,
+  artifactParseFailure,
+} from "../../resources/index.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
+import { locatePeResourcePayloads } from "../../domain/pe/peResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
 const CPU_TYPE_ARM64 = 0x0100000c;
 const PT_NOTE = 4;
 const PN_XNUM = 0xffff;
-const ELF64_PROGRAM_HEADER_BYTES = 56;
-const ELF32_PROGRAM_HEADER_BYTES = 32;
-const ELF64_SECTION_HEADER_BYTES = 64;
-const ELF32_SECTION_HEADER_BYTES = 40;
-const SHT_NOTE = 7;
 const RT_RCDATA = 10;
 const RESOURCE_NAME = "D3N0L4ND";
 const SECTION_NAME = "d3n0l4nd";
@@ -58,10 +70,9 @@ const SEGMENT_NAME = "__SUI";
 const LINKEDIT_SEGMENT_NAME = "__LINKEDIT";
 const ELF_NOTE_OWNER = Buffer.from("SUI\0", "latin1");
 const ELF_NOTE_TYPE = 0x53554901;
-const PE_HEADER_PROBE_BYTES = 64 * 1024;
 const INTEL_CHUNK_BYTES = 1024 * 1024;
 /** Trailer candidates examined before the search stops. */
-export const MAX_DENO_INTEL_TRAILER_SENTINELS = 64;
+const MAX_DENO_INTEL_TRAILER_SENTINELS = 64;
 const INTEL_SENTINEL = Buffer.concat([
   Buffer.from("<~sui-data~>", "latin1"),
   Buffer.from([0xef, 0xbe, 0xad, 0xde]),
@@ -145,7 +156,11 @@ export const locateDenoStandalone = async (
   } catch (cause) {
     if (
       cause instanceof ArtifactReaderFailure &&
-      (cause.reason === "format" || cause.reason === "limit")
+      (cause.reason === "format" ||
+        cause.reason === "malformed" ||
+        cause.reason === "truncated" ||
+        cause.reason === "unsupported" ||
+        cause.reason === "limit")
     )
       return { status: "present", failure: cause };
     throw cause;
@@ -169,7 +184,11 @@ const findDenoSection = async (
   if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
     return collapseRanges(carrier, "elf", await locateElfNotes(carrier));
   if (prefix[0] === 0x4d && prefix[1] === 0x5a)
-    return collapseRanges(carrier, "pe", await locatePeResources(carrier));
+    return collapseRanges(
+      carrier,
+      "pe",
+      await locatePeResources(carrier, prefix),
+    );
   return undefined;
 };
 
@@ -249,9 +268,9 @@ const locateMachOSlice = async (
   // until that name is confirmed and otherwise leaves the slice unread.
   let damage: string | undefined;
   const framed = frameLoadCommands(table, (command) => {
-    if (command.command !== LC_SEGMENT && command.command !== LC_SEGMENT_64)
+    if (command.command !== LC.SEGMENT && command.command !== LC.SEGMENT_64)
       return;
-    const segment64 = command.command === LC_SEGMENT_64;
+    const segment64 = command.command === LC.SEGMENT_64;
     const parsedSegment = readMachoSegmentHeader(command.body, segment64, true);
     if (!parsedSegment.ok) {
       // An unparsed segment may be __SUI, so the slice is not fully examined.
@@ -348,45 +367,18 @@ const namesDenoSection = (body: Uint8Array, at: number): boolean =>
  * matching MachoImage, even when the file itself still holds them.
  */
 const denoSectionRange = (
-  record: {
-    readonly address: bigint;
-    readonly size: bigint;
-    readonly offset: number;
-    readonly flags: number;
-  },
-  segment: {
-    readonly fileOffset: bigint;
-    readonly fileSize: bigint;
-    readonly address: bigint;
-    readonly memorySize: bigint;
-  },
+  record: Parameters<typeof machoSectionBacking>[0],
+  segment: Parameters<typeof machoSectionBacking>[1],
   base: number,
   sliceSize: number,
   fileSize: number,
 ): SectionRange => {
-  if (isMachoZeroFillSection(record.flags))
-    throw denoCarrierFailure("Mach-O d3n0l4nd section is zero-fill");
+  const { issue } = machoSectionBacking(record, segment);
+  if (issue !== null)
+    throw denoCarrierFailure(`Mach-O d3n0l4nd section ${issue}`);
   if (record.size > BigInt(Number.MAX_SAFE_INTEGER))
     throw denoCarrierFailure(
       "Mach-O d3n0l4nd section size is not a safe integer",
-    );
-  const virtualDelta = record.address - segment.address;
-  if (
-    virtualDelta < 0n ||
-    virtualDelta > segment.memorySize ||
-    record.size > segment.memorySize - virtualDelta
-  )
-    throw denoCarrierFailure(
-      "Mach-O d3n0l4nd section exceeds its segment's virtual extent",
-    );
-  const segmentDelta = BigInt(record.offset) - segment.fileOffset;
-  if (
-    segmentDelta < 0n ||
-    segmentDelta > segment.fileSize ||
-    record.size > segment.fileSize - segmentDelta
-  )
-    throw denoCarrierFailure(
-      "Mach-O d3n0l4nd section exceeds its segment's file extent",
     );
   const length = Number(record.size);
   const fileOffset = record.offset;
@@ -471,7 +463,7 @@ const locateIntelTrailers = async (
       const at = BigInt(sentinelStart);
       if (owned.some((range) => at >= range.start && at < range.end)) continue;
       if (lengthAt + 8 > window.length) continue;
-      const claimed = window.readBigUInt64LE(lengthAt);
+      const claimed = new BinaryReader(window, true, "deno").word(lengthAt, 64);
       const sliceEnd = base + sliceSize;
       const offset = sentinelStart + INTEL_SENTINEL.length + 8;
       if (offset < base || offset > sliceEnd) continue;
@@ -526,7 +518,7 @@ const locateIntelTrailers = async (
 interface ElfNoteTable {
   offset: number;
   length: number;
-  alignment: number;
+  alignment: ElfNoteAlignment;
   copies: number;
 }
 
@@ -561,12 +553,14 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
     walk.damage ??= denoCarrierFailure(detail);
   };
   const little = header.value.byteOrder === "little";
-  const wide = header.value.elfClass === 64;
+  const { elfClass } = header.value;
   const { programs, sections } = raw.value;
   if (programs.count === PN_XNUM)
     damaged("ELF extended program numbering is unsupported");
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) damaged(sectionTable.error);
   // A zero e_shnum with a section table moves the count into section zero.
-  if (sections.count === 0 && sections.offset !== 0n)
+  else if (sections.count === 0 && sections.offset !== 0n)
     damaged("ELF extended section numbering is unsupported");
   const programHeaders =
     programs.count === PN_XNUM
@@ -575,16 +569,18 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
           carrier,
           walk,
           programs,
-          wide ? ELF64_PROGRAM_HEADER_BYTES : ELF32_PROGRAM_HEADER_BYTES,
+          elfProgramHeaderWidth(elfClass),
           "program header table",
         );
-  const sectionHeaders = await readElfHeaderTable(
-    carrier,
-    walk,
-    sections,
-    wide ? ELF64_SECTION_HEADER_BYTES : ELF32_SECTION_HEADER_BYTES,
-    "section header table",
-  );
+  const sectionHeaders = sectionTable.ok
+    ? await readElfHeaderTable(
+        carrier,
+        walk,
+        sections,
+        elfSectionHeaderWidth(elfClass),
+        "section header table",
+      )
+    : undefined;
   const tables = new Map<string, ElfNoteTable>();
   const addTable = (offset: bigint, length: bigint, align: bigint): void => {
     if (
@@ -651,8 +647,9 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
         damaged(parsed.error.message);
         continue;
       }
-      if (parsed.value.type !== SHT_NOTE) continue;
-      if (parsed.value.compressed) {
+      const storage = elfNoteSectionStorage(parsed.value);
+      if (storage === "not-note") continue;
+      if (storage === "compressed") {
         damaged("compressed ELF note sections are unsupported");
         continue;
       }
@@ -717,46 +714,53 @@ const scanElfNoteTable = async (
   };
   let cursor = 0;
   let notes = 0;
-  while (cursor + 12 <= table.length) {
+  while (cursor + ELF_NOTE_HEADER_BYTES <= table.length) {
     abortIfNeeded(carrier.signal);
     notes += 1;
     if (examined + notes * table.copies > MAX_INSPECT_ELF_NOTE_ENTRIES) {
       walk.damage ??= denoElfNoteLimit();
       return notes;
     }
-    const header = await readExact(carrier, table.offset + cursor, 12);
+    const header = await readExact(
+      carrier,
+      table.offset + cursor,
+      ELF_NOTE_HEADER_BYTES,
+    );
     if (header === undefined)
       return stop("ELF note header is truncated", notes);
-    const parsed = readElfNoteHeader(header, little);
+    const parsed = readElfNoteFrame(
+      header,
+      little,
+      table.alignment,
+      table.length - cursor,
+    );
     if (!parsed.ok) return stop(parsed.error.message, notes);
-    const { namesz, descsz, type } = parsed.value;
-    const layout = elfNoteLayout(namesz, descsz, table.alignment);
+    const { namesz, descsz, type, descriptor, next, framing } = parsed.value;
     const sui = namesz === ELF_NOTE_OWNER.length && type === ELF_NOTE_TYPE;
-    if (
-      !Number.isSafeInteger(layout.descriptor) ||
-      !Number.isSafeInteger(layout.next) ||
-      layout.next < 12 ||
-      layout.next > table.length - cursor
-    ) {
+    if (framing !== "complete") {
       // The owner and descriptor name are read within the table, apart from
       // the claimed extent, so a confirmed Deno note still fails closed.
-      if (sui && (await confirmsSuiNote(carrier, table, cursor, layout)))
+      if (sui && (await confirmsSuiNote(carrier, table, cursor, descriptor)))
         throw denoCarrierFailure("ELF SUI note entry exceeds its table");
       return stop("ELF note entry exceeds its table", notes);
     }
     if (sui) {
-      const name = await readExact(carrier, table.offset + cursor + 12, namesz);
+      const name = await readExact(
+        carrier,
+        table.offset + cursor + ELF_NOTE_HEADER_BYTES,
+        namesz,
+      );
       if (name === undefined) return stop("ELF note name is truncated", notes);
       if (name.equals(ELF_NOTE_OWNER)) {
         const payload = await readSuiRange(
           carrier,
-          table.offset + cursor + layout.descriptor,
+          table.offset + cursor + descriptor,
           descsz,
         );
         if (payload !== undefined) walk.found.push(payload);
       }
     }
-    cursor += layout.next;
+    cursor += next;
   }
   if (cursor >= table.length) return notes;
   // A table too short for any note still costs one read of its tail.
@@ -786,7 +790,7 @@ const noteTableTailIssue = async (
   );
   if (tail === undefined)
     return denoCarrierFailure("ELF note table is truncated");
-  if (tail.some((byte) => byte !== 0))
+  if (!isElfNotePadding(tail))
     return denoCarrierFailure("ELF note table has trailing non-zero bytes");
   return undefined;
 };
@@ -796,22 +800,26 @@ const confirmsSuiNote = async (
   carrier: Carrier,
   table: ElfNoteTable,
   cursor: number,
-  layout: { readonly descriptor: number },
+  descriptor: number,
 ): Promise<boolean> => {
-  const wanted = layout.descriptor + 2 + SECTION_NAME_BYTES.length;
-  if (!Number.isSafeInteger(wanted) || wanted > table.length - cursor)
-    return false;
+  const wanted = descriptor + 2 + SECTION_NAME_BYTES.length;
+  if (wanted > table.length - cursor) return false;
   const at = table.offset + cursor;
-  const name = await readExact(carrier, at + 12, ELF_NOTE_OWNER.length);
+  const name = await readExact(
+    carrier,
+    at + ELF_NOTE_HEADER_BYTES,
+    ELF_NOTE_OWNER.length,
+  );
   if (name === undefined || !name.equals(ELF_NOTE_OWNER)) return false;
   const prefix = await readExact(
     carrier,
-    at + layout.descriptor,
+    at + descriptor,
     2 + SECTION_NAME_BYTES.length,
   );
   return (
     prefix !== undefined &&
-    prefix.readUInt16LE(0) === SECTION_NAME_BYTES.length &&
+    new BinaryReader(prefix, true, "deno").u16(0) ===
+      SECTION_NAME_BYTES.length &&
     prefix.subarray(2).equals(SECTION_NAME_BYTES)
   );
 };
@@ -826,7 +834,7 @@ const readSuiRange = async (
   const prefix = await readExact(carrier, descriptorOffset, wanted);
   if (prefix === undefined)
     throw denoCarrierFailure("ELF SUI descriptor is truncated");
-  const nameLength = prefix.readUInt16LE(0);
+  const nameLength = new BinaryReader(prefix, true, "deno").u16(0);
   if (nameLength !== SECTION_NAME_BYTES.length) return undefined;
   // A descriptor too short for the whole name has not shown `d3n0l4nd`, so
   // the note stays unconfirmed and the image stays with native inventory.
@@ -841,21 +849,39 @@ const readSuiRange = async (
   return { offset, length, embedding: "elf-note" };
 };
 
-const locatePeResources = async (carrier: Carrier): Promise<SectionRange[]> => {
-  const headers = await readExact(
-    carrier,
-    0,
-    Math.min(carrier.fileSize, PE_HEADER_PROBE_BYTES),
-  );
-  if (headers === undefined) return [];
-  const payloads = await locatePeResourcePayloads(
-    headers,
-    carrier.fileSize,
-    (offset, length) => readExact(carrier, offset, length),
-    RT_RCDATA,
-    RESOURCE_NAME,
-    MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-  );
+const locatePeResources = async (
+  carrier: Carrier,
+  prefix: Buffer,
+): Promise<SectionRange[]> => {
+  let payloads: Awaited<ReturnType<typeof locatePeResourcePayloads>>;
+  try {
+    payloads = await locatePeResourcePayloads(
+      prefix,
+      carrier.fileSize,
+      (offset, length) => readExact(carrier, offset, length),
+      RT_RCDATA,
+      RESOURCE_NAME,
+      MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+    );
+  } catch (cause) {
+    if (cause instanceof ParseFailureError && cause.failure.kind === "limit") {
+      const parserLimit = cause.failure.limit;
+      throw new ArtifactReaderFailure("limit", cause.message, {
+        cause,
+        boundary: "capacity",
+        parserLimit,
+        fixedAllowance: {
+          kind: "parser",
+          name: parserLimit.name,
+          limit: parserLimit.maximum,
+          unit: "entries",
+        },
+      });
+    }
+    // Range reads tag cancellation at its origin. Coincidence with the
+    // caller's abort reason cannot turn a physical read failure into cancellation.
+    throw artifactParseFailure(cause, undefined);
+  }
   return payloads.map(({ offset, bytes }) => {
     if (bytes > MAX_INSPECT_PE_FILE_BYTES) throw denoPeLimit();
     return { offset, length: bytes, embedding: "pe-resource" };
@@ -895,7 +921,9 @@ const collapseRanges = async (
           "capacity",
         );
       remainingBytes -= range.length;
-      const hash = await digestRange(carrier, range.offset, range.length);
+      const hash = await hashArtifactRange(carrier, range.offset, range.length);
+      if (hash === undefined)
+        throw denoCarrierFailure("Deno compile section is truncated");
       if (chosenHash === undefined) chosenHash = hash;
       else if (hash !== chosenHash) throw conflict();
     }
@@ -906,59 +934,6 @@ const collapseRanges = async (
     offset: chosen.offset,
     length: chosen.length,
   };
-};
-
-const digestRange = async (
-  carrier: Carrier,
-  offset: number,
-  length: number,
-): Promise<string> => {
-  const hash = createHash("sha256");
-  let remaining = length;
-  let position = offset;
-  while (remaining > 0) {
-    const chunkLength = Math.min(64 * 1024, remaining);
-    const chunk = await readExact(carrier, position, chunkLength);
-    if (chunk === undefined)
-      throw denoCarrierFailure("Deno compile section is truncated");
-    hash.update(chunk);
-    position += chunkLength;
-    remaining -= chunkLength;
-  }
-  return hash.digest("hex");
-};
-
-const readExact = async (
-  carrier: Carrier,
-  offset: number,
-  length: number,
-): Promise<Buffer | undefined> => {
-  abortIfNeeded(carrier.signal);
-  if (
-    !Number.isSafeInteger(offset) ||
-    !Number.isSafeInteger(length) ||
-    offset < 0 ||
-    length < 0 ||
-    offset > carrier.fileSize ||
-    length > carrier.fileSize - offset
-  )
-    return undefined;
-  if (length === 0) return Buffer.alloc(0);
-  const bytes = Buffer.alloc(length);
-  let filled = 0;
-  while (filled < length) {
-    abortIfNeeded(carrier.signal);
-    const read = await carrier.handle.read(
-      bytes,
-      filled,
-      length - filled,
-      offset + filled,
-    );
-    abortIfNeeded(carrier.signal);
-    if (read.bytesRead === 0) return undefined;
-    filled += read.bytesRead;
-  }
-  return bytes;
 };
 
 const fixedCString = (bytes: Uint8Array): string => {

@@ -7,8 +7,8 @@ import {
   prepareOwnedCommand,
   runOwnedCommand,
 } from "../../dist/process/OwnedCommand.js";
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { retainOwnedCommandCleanup } from "../../dist/providers/OwnedCommandCleanup.js";
 
 /** Keep command ownership through failure and join cleanup before removing a run. */
@@ -173,7 +173,8 @@ export function createAgentEvaluationCommands({
         ["--version"],
         repositoryRoot,
         process.env,
-        { timeoutMs: 10_000, diagnosticBytes: 8192 },
+        // A version probe is short; it never outlasts the command budget.
+        { timeoutMs: Math.min(timeoutMs, 10_000), diagnosticBytes: 8192 },
         `${command} --version timed out`,
       );
       if (result.exitCode !== 0)

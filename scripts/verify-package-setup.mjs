@@ -1,4 +1,3 @@
-import { deepStrictEqual } from "node:assert";
 import {
   lstat,
   mkdir,
@@ -13,7 +12,6 @@ import { dirname, isAbsolute, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
-import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import { pathExists } from "./lib/verify-package-core.mjs";
 import { parse as parseJsonc } from "jsonc-parser";
 import { skillReferenceIssues } from "./lib/docs-facts.mjs";

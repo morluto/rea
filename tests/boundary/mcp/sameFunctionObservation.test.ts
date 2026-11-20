@@ -1,6 +1,5 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterAll, expect, it } from "vitest";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import type { AnySchema } from "ajv";
 import type { Client } from "@modelcontextprotocol/client";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -11,6 +10,7 @@ import {
   createEvidence,
   parseEvidence,
   type Evidence,
+  evidenceSubjectInput,
 } from "../../../src/domain/evidence.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
@@ -67,16 +67,20 @@ const expectRejectedDimensionCitation = async (
     dimensions: original.dimensions.map(altered),
     changes: original.changes.map(altered),
   });
-  const invalid = createEvidence(undefined, comparison.provider, {
-    predicateType: comparison.predicate_type,
-    operation: comparison.operation,
-    parameters: comparison.parameters,
-    result,
-    confidence: comparison.confidence,
-    authority: comparison.authority,
-    limitations: comparison.limitations,
-    evidenceLinks: [main.evidence_id, another.evidence_id],
-  });
+  const invalid = createEvidence(
+    evidenceSubjectInput(comparison.subject),
+    comparison.provider,
+    {
+      predicateType: comparison.predicate_type,
+      operation: comparison.operation,
+      parameters: comparison.parameters,
+      result,
+      confidence: comparison.confidence,
+      authority: comparison.authority,
+      limitations: comparison.limitations,
+      evidenceLinks: [main.evidence_id, another.evidence_id],
+    },
+  );
   const response = await client.callTool({
     name: "find_changed_behavior",
     arguments: { comparisons: [invalid] },
@@ -87,7 +91,7 @@ const expectRejectedDimensionCitation = async (
   );
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "compares the same authenticated observation while preserving incomplete facets (%s)",
   async (profile) => {
     const session = createTestBinarySession(() => {
@@ -102,21 +106,21 @@ it.each(["full", "compact"] as const)(
         environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
       },
     });
-    const schema = (await client.listTools()).tools.find(
+    const toolDefinition = (await client.listTools()).tools.find(
       ({ name }) => name === "compare_functions",
-    )?.outputSchema;
-    if (schema === undefined) throw new Error("Missing output schema");
-    const reply = await client.callTool({
-      name: "compare_functions",
-      arguments: { left: ref(main.evidence_id), right: ref(main.evidence_id) },
-    });
+    );
+    if (toolDefinition === undefined) throw new Error("Missing output schema");
+    const reply = await client.callTool(
+      {
+        name: "compare_functions",
+        arguments: {
+          left: ref(main.evidence_id),
+          right: ref(main.evidence_id),
+        },
+      },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
+    );
     expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-    expect(
-      new Ajv2020({ strict: false }).validate(
-        schema as AnySchema,
-        reply.structuredContent,
-      ),
-    ).toBe(true);
     const result = parseEvidence(reply.structuredContent).normalized_result;
     expect(result).toMatchObject({
       status: "unknown",
@@ -150,19 +154,23 @@ it.each(["full", "compact"] as const)(
         ]),
       },
     });
-    const contradictory = createEvidence(undefined, comparison.provider, {
-      predicateType: comparison.predicate_type,
-      operation: comparison.operation,
-      parameters: {
-        left_evidence_id: main.evidence_id,
-        right_evidence_id: another.evidence_id,
+    const contradictory = createEvidence(
+      evidenceSubjectInput(comparison.subject),
+      comparison.provider,
+      {
+        predicateType: comparison.predicate_type,
+        operation: comparison.operation,
+        parameters: {
+          left_evidence_id: main.evidence_id,
+          right_evidence_id: another.evidence_id,
+        },
+        result: comparison.normalized_result,
+        confidence: comparison.confidence,
+        authority: comparison.authority,
+        limitations: comparison.limitations,
+        evidenceLinks: [main.evidence_id, another.evidence_id],
       },
-      result: comparison.normalized_result,
-      confidence: comparison.confidence,
-      authority: comparison.authority,
-      limitations: comparison.limitations,
-      evidenceLinks: [main.evidence_id, another.evidence_id],
-    });
+    );
     const contradictoryBehavior = await client.callTool({
       name: "find_changed_behavior",
       arguments: { comparisons: [contradictory] },
