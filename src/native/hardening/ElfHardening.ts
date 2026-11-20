@@ -45,6 +45,9 @@ import {
 import {
   elfNoteAlignment,
   elfNoteSectionStorage,
+  elfNoteSpanOverlapIndex as overlapIndex,
+  sortElfNoteSpans as byOffset,
+  type ElfNoteSpan as NoteSpan,
 } from "../../domain/native/elfNoteLayout.js";
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
@@ -757,49 +760,6 @@ const noteTable = (
   if (size > bytes.length - offset)
     malformed(`ELF ${label} extends outside the file`);
   return { offset, size, alignment };
-};
-
-type NoteSpan = { readonly offset: number; readonly size: number };
-
-const byOffset = <T extends NoteSpan>(spans: readonly T[]): T[] =>
-  spans.filter(({ size }) => size > 0).toSorted((a, b) => a.offset - b.offset);
-
-/**
- * Overlap queries over spans sorted once. A section table can hold hundreds of
- * thousands of headers, so a query must not rescan the spans.
- */
-const overlapIndex = (spans: readonly NoteSpan[]) => {
-  const sorted: NoteSpan[] = [];
-  for (const span of byOffset(spans)) {
-    const previous = sorted.at(-1);
-    if (
-      previous !== undefined &&
-      span.offset <= previous.offset + previous.size
-    )
-      sorted[sorted.length - 1] = {
-        offset: previous.offset,
-        size: Math.max(
-          previous.size,
-          span.offset + span.size - previous.offset,
-        ),
-      };
-    else sorted.push(span);
-  }
-  return ({ offset, size }: NoteSpan): "none" | "covered" | "partial" => {
-    if (size <= 0) return "none";
-    let low = 0;
-    let high = sorted.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if ((sorted[middle]?.offset ?? 0) < offset + size) low = middle + 1;
-      else high = middle;
-    }
-    const span = sorted[low - 1];
-    if (span === undefined || span.offset + span.size <= offset) return "none";
-    return span.offset <= offset && span.offset + span.size >= offset + size
-      ? "covered"
-      : "partial";
-  };
 };
 
 type NoteOverlap = "uncovered" | "cut" | "framing";
