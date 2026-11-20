@@ -39,7 +39,11 @@ import {
   readElfImage,
   readElfImageCooperative,
 } from "../../domain/native/elfImage.js";
-import { parseElfNotes, parseElfNotesCooperative } from "./ElfNoteParser.js";
+import {
+  ElfNoteStorageFailure,
+  parseElfNotes,
+  parseElfNotesCooperative,
+} from "./ElfNoteParser.js";
 import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
 import {
   sharedElfSectionNameDecoder,
@@ -395,18 +399,20 @@ const observeBuildId = (
   input: InspectElfDebugLinkInput,
   preparedNotes?: PreparedNotes,
 ): ObservedBuildId => {
-  let notes: ReturnType<typeof parseElfNotes>;
+  let entries: ElfNoteStorageFailure["readableEntries"];
+  let unsupportedStorage: ElfNoteStorageFailure | undefined;
   try {
     if (preparedNotes !== undefined && !preparedNotes.ok)
       throw preparedNotes.error;
-    notes =
+    entries = (
       preparedNotes?.value ??
       parseElfNotes(
         bytes,
         artifact,
         buildIdNoteInput(artifact, input),
         BUILD_ID_NOTE_OPTIONS,
-      );
+      )
+    ).entries;
   } catch (cause) {
     if (
       isRethrownBudget(cause) ||
@@ -418,19 +424,24 @@ const observeBuildId = (
         "note_tables_malformed",
         `ELF note tables could not be decoded: ${cause.message}`,
       );
-    if (cause instanceof BinaryFormatFailure)
+    if (cause instanceof ElfNoteStorageFailure) {
+      unsupportedStorage = cause;
+      entries = cause.readableEntries;
+    } else if (cause instanceof BinaryFormatFailure) {
       return unknownBuildId(
         cause.kind === "unsupported"
           ? "note_tables_unsupported"
           : "note_tables_malformed",
         `ELF note tables could not be decoded: ${cause.message}`,
       );
-    throw cause;
+    } else {
+      throw cause;
+    }
   }
   const ids: string[] = [];
   const sources: BuildId["sources"] = [];
   let oversized = false;
-  for (const entry of notes.entries) {
+  for (const entry of entries) {
     if (entry.owner !== "GNU" || entry.type !== GNU_BUILD_ID_NOTE_TYPE)
       continue;
     // The parser leaves oversized descriptors undecoded, so judge the raw size.
@@ -449,18 +460,23 @@ const observeBuildId = (
       descriptor: entry.descriptor.location,
     });
   }
-  // An oversized note leaves the identity unknown, but the bounded ids and
-  // their note locations that were read stay as evidence.
-  if (oversized)
+  // Retain readable ids and their note locations when identity is incomplete.
+  if (unsupportedStorage !== undefined || oversized)
     return {
       buildId: {
         status: "unknown",
         hex: null,
         ids,
         sources,
-        reason: "build_id_exceeds_limit",
+        reason:
+          unsupportedStorage === undefined
+            ? "build_id_exceeds_limit"
+            : "note_tables_unsupported",
       },
-      limitation: "A GNU build-id exceeds 256 bytes and was not copied.",
+      limitation:
+        unsupportedStorage === undefined
+          ? "A GNU build-id exceeds 256 bytes and was not copied."
+          : unsupportedStorage.message,
     };
   if (ids.length === 0)
     return {
@@ -498,6 +514,7 @@ const sectionsNamed = (
 
 const BUILD_ID_NOTE_OPTIONS = {
   maxGnuBuildIdBytes: MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
+  retainReadableNotes: true,
 };
 const buildIdNoteInput = (
   artifact: Report["artifact"],

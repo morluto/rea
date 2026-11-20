@@ -43,6 +43,37 @@ const abruptObjectPatternSource = `
   box.sibling[0] = "later";
 `;
 
+const firstDefaultSource = `
+  const defined = [0, ["one"]];
+  const [used = (defined[1][0] = "dormant"), [inactiveDefaultElement]] = defined;
+  defined[1][0] = "later";
+  const missing = [undefined, ["one"]];
+  const [other = (missing[1][0] = "active"), [activeDefaultElement]] = missing;
+  missing[1][0] = "later";
+`;
+
+const immutableTargetSource = `
+  const fixed = 0;
+  let beforeImmutable, afterImmutable;
+  const values = ["before", 1, "unreached"];
+  [beforeImmutable, fixed, afterImmutable] = values;
+  values[0] = "later";
+`;
+
+const classNameTargetSource = `
+  class OuterFixed {}
+  let afterOuterClass;
+  const outer = [1, "reachable"];
+  [OuterFixed, afterOuterClass] = outer;
+  class Fixed {
+    static {
+      let beforeClassName, afterClassName;
+      const inner = ["before", 1, "unreached"];
+      [beforeClassName, Fixed, afterClassName] = inner;
+    }
+  }
+`;
+
 const expectedDependencies = [
   ["declared", ["a"]],
   ["a", ["a"]],
@@ -50,16 +81,23 @@ const expectedDependencies = [
   ["fallback", ["a", "0"]],
   ["scalar", ["b"]],
   ["ordinary", ["0"]],
+  ["beforeImmutable", ["0"]],
+  ["afterImmutable", ["2"], "candidate"],
+  ["beforeClassName", ["0"]],
+  ["afterClassName", ["2"], "candidate"],
+  ["afterOuterClass", ["1"]],
   ["arrayAssigned", ["0"]],
   ["elided", ["1"]],
   ["projected", ["items", "0"]],
   ["arrayObject", ["0", "mode"]],
   ["nestedElement", ["items", "0"]],
   ["siblingObjectElement", ["sibling", "0"]],
-  ["numericInnerElement", ["0", "0"]],
+  ["projectedNumericInnerElement", ["pairs", "0", "0"]],
   ["unreachedSibling", ["sibling", "0"], "candidate"],
   ["innerElement", ["0", "0"]],
   ["siblingInnerElement", ["1", "0"]],
+  ["inactiveDefaultElement", ["1", "0"]],
+  ["activeDefaultElement", ["1", "0"], "candidate"],
   ["spreadElement", ["1"]],
   ["aliasedPrototypeElement", ["0", "0"], "candidate"],
   ["selected", ["0"], "candidate"],
@@ -76,16 +114,23 @@ const expectedDependencies = [
 const tracedBindings = [
   "declared",
   "ordinary",
+  "beforeImmutable",
+  "afterImmutable",
+  "beforeClassName",
+  "afterClassName",
+  "afterOuterClass",
   "arrayAssigned",
   "elided",
   "projected",
   "arrayObject",
   "nestedElement",
   "siblingObjectElement",
-  "numericInnerElement",
+  "projectedNumericInnerElement",
   "unreachedSibling",
   "innerElement",
   "siblingInnerElement",
+  "inactiveDefaultElement",
+  "activeDefaultElement",
   "spreadElement",
   "aliasedPrototypeElement",
   "selected",
@@ -139,11 +184,11 @@ cliTest(
     const { items: [nestedElement], empty: {}, sibling: [siblingObjectElement] } = nestedSource;
     nestedSource.items[0] = "later";
     nestedSource.sibling[0] = "later";
-    const numericSource = [["read-time"]];
-    const { 0: [numericInnerElement] } = numericSource;
-    numericSource[0][0] = "later";
+    const numericSource = { pairs: [["read-time"]] };
+    const { 0: [projectedNumericInnerElement] } = numericSource.pairs;
+    numericSource.pairs = [];
     const nestedPairs = [["read-time"], ["sibling"]];
-    const [[innerElement], [siblingInnerElement]] = nestedPairs;
+    const [[innerElement] = ["fallback"], [siblingInnerElement]] = nestedPairs;
     nestedPairs[0][0] = "later";
     nestedPairs[1][0] = "later";
     const spreadSource = [...["prefix"], "read-time"];
@@ -160,15 +205,15 @@ cliTest(
     [selected] = after;
   `,
     );
-    await writeFile(join(root, "iterator-close.js"), iteratorCloseSource);
-    await writeFile(
-      join(root, "array-prototype-alias.js"),
-      arrayPrototypeAliasSource,
-    );
-    await writeFile(
-      join(root, "abrupt-object-pattern.js"),
-      abruptObjectPatternSource,
-    );
+    for (const [path, source] of [
+      ["iterator-close.js", iteratorCloseSource],
+      ["array-prototype-alias.js", arrayPrototypeAliasSource],
+      ["abrupt-object-pattern.js", abruptObjectPatternSource],
+      ["first-default.js", firstDefaultSource],
+      ["immutable-target.js", immutableTargetSource],
+      ["class-name-target.js", classNameTargetSource],
+    ] as const)
+      await writeFile(join(root, path), source);
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });

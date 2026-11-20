@@ -7,8 +7,10 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   coreAuxvNote,
   coreFileNote,
+  corePrpsinfoDescriptor,
   corePrpsinfoNote,
   coreSiginfoNote,
+  elfNote,
   elfNoteFixture,
 } from "../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -180,6 +182,152 @@ cliTest(
         },
       });
       assertCoreEntries(report.entries);
+    }
+  },
+);
+
+const uid32CoreLayouts = [
+  { name: "MIPS little", machine: 8, byteOrder: "little", coreFlags: 0 },
+  { name: "MIPS big", machine: 8, byteOrder: "big", coreFlags: 0 },
+  { name: "PowerPC big", machine: 20, byteOrder: "big", coreFlags: 0 },
+  { name: "RISC-V little", machine: 243, byteOrder: "little", coreFlags: 0 },
+  {
+    name: "Hexagon V4 little",
+    machine: 164,
+    byteOrder: "little",
+    coreFlags: 3,
+  },
+  { name: "PA-RISC big", machine: 15, byteOrder: "big", coreFlags: 0 },
+  { name: "OpenRISC big", machine: 92, byteOrder: "big", coreFlags: 0 },
+  {
+    name: "OpenRISC Linux big",
+    machine: 0x8472,
+    byteOrder: "big",
+    coreFlags: 0,
+  },
+  {
+    name: "ARC compact little",
+    machine: 93,
+    byteOrder: "little",
+    coreFlags: 0,
+  },
+  { name: "ARCv2 big", machine: 195, byteOrder: "big", coreFlags: 0 },
+  { name: "Xtensa little", machine: 94, byteOrder: "little", coreFlags: 0 },
+  { name: "MicroBlaze big", machine: 189, byteOrder: "big", coreFlags: 0 },
+  { name: "C-SKY little", machine: 252, byteOrder: "little", coreFlags: 0 },
+  { name: "C-SKY big", machine: 252, byteOrder: "big", coreFlags: 0 },
+  { name: "Blackfin little", machine: 106, byteOrder: "little", coreFlags: 0 },
+  { name: "UniCore little", machine: 110, byteOrder: "little", coreFlags: 0 },
+  { name: "Nios II little", machine: 113, byteOrder: "little", coreFlags: 0 },
+  { name: "C6x little", machine: 140, byteOrder: "little", coreFlags: 0 },
+  { name: "C6x big", machine: 140, byteOrder: "big", coreFlags: 0 },
+  { name: "NDS32 little", machine: 167, byteOrder: "little", coreFlags: 0 },
+  { name: "NDS32 big", machine: 167, byteOrder: "big", coreFlags: 0 },
+  { name: "Meta little", machine: 174, byteOrder: "little", coreFlags: 0 },
+  { name: "TILEPro little", machine: 188, byteOrder: "little", coreFlags: 0 },
+  {
+    name: "TILE-Gx m32 little",
+    machine: 191,
+    byteOrder: "little",
+    coreFlags: 0,
+  },
+] as const;
+
+cliTest.for([
+  ...uid32CoreLayouts.map((layout) => ({ ...layout, idWidth: 4 as const })),
+  {
+    name: "SuperH little",
+    machine: 42,
+    byteOrder: "little",
+    coreFlags: 0,
+    idWidth: 2,
+  },
+  {
+    name: "SuperH big",
+    machine: 42,
+    byteOrder: "big",
+    coreFlags: 0,
+    idWidth: 2,
+  },
+] as const)(
+  "decodes Linux ELF32 process identity through CLI and MCP ($name)",
+  async ({ machine, byteOrder, coreFlags, idWidth }, { cli }) => {
+    const root = await createTestTempDirectory("rea-elf-prpsinfo32-core-");
+    const path = join(root, "core.elf");
+    const little = byteOrder === "little";
+    const uid = idWidth === 4 ? 70001 : 500;
+    const gid = idWidth === 4 ? 90002 : 600;
+    const descriptor = corePrpsinfoDescriptor({
+      bits: 32,
+      idWidth,
+      little,
+      state: 1,
+      uid,
+      gid,
+      pid: 1234,
+      ppid: 12,
+      pgrp: 4321,
+      sid: 5678,
+      fname: "core-probe",
+      psargs: "core-probe --flag",
+    });
+    const shortened = descriptor.subarray(0, descriptor.length - 4);
+    const bytes = elfNoteFixture({
+      bits: 32,
+      machine,
+      little,
+      type: 4,
+      ownership: "program",
+      notes: Buffer.concat([
+        elfNote("CORE", 3, descriptor, little),
+        elfNote("CORE", 3, shortened, little),
+      ]),
+    });
+    if (little) bytes.writeUInt32LE(coreFlags, 0x24);
+    else bytes.writeUInt32BE(coreFlags, 0x24);
+    await writeFile(path, bytes);
+
+    const output = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_elf_notes", { path });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+
+    const schema = toolContract("inspect_elf_notes").outputSchema;
+    for (const raw of [output.json, response.structuredContent]) {
+      const evidence = schema.parse(raw);
+      expect(evidence.subject).toMatchObject({
+        local_path: path,
+        identity: { sha256: descriptorHash(bytes) },
+      });
+      const report = evidence.normalized_result;
+      expect(report).toMatchObject({
+        format: "elf32",
+        byte_order: byteOrder,
+        machine,
+        coverage: { status: "complete", examined_entries: 2 },
+      });
+      expect(report.entries[0]?.core?.prpsinfo).toEqual({
+        state: 1,
+        uid,
+        gid,
+        pid: 1234,
+        ppid: 12,
+        pgrp: 4321,
+        sid: 5678,
+        filename: "core-probe",
+        psargs: "core-probe --flag",
+      });
+      expect(report.entries[1]).toMatchObject({
+        type_name: "core_prpsinfo",
+        descriptor: {
+          bytes: shortened.length,
+          sha256: descriptorHash(shortened),
+        },
+        core: null,
+      });
     }
   },
 );

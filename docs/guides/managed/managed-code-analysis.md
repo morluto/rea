@@ -944,7 +944,7 @@ The current lane uses source-owned byte-built fixtures and malformed-input
 regressions, with optional operator-supplied applications and ILSpy verification.
 
 Run the deterministic lane with `npm run verify:managed`. See
-[testing](../../development/testing.md#real-toolchain-verification-lanes) for prerequisites and
+[testing](../../testing-lanes.md#real-toolchain-verification-lanes) for prerequisites and
 coverage. Generated outputs belong outside tracked fixture directories and must
 not remain after verification or packaging.
 

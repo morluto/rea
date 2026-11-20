@@ -236,10 +236,10 @@ type MethodTable = {
 };
 
 const METHOD_TABLE_HEADER_BYTES = 24;
-const METHOD_TABLE_POINTER_BYTES = 8;
+const NATIVE_AOT_POINTER_BYTES = 8;
 const METHOD_TABLE_FORMAT = "NativeAOT MethodTable";
 const methodTableSlotOffset = (slot: number): number =>
-  METHOD_TABLE_HEADER_BYTES + slot * METHOD_TABLE_POINTER_BYTES;
+  METHOD_TABLE_HEADER_BYTES + slot * NATIVE_AOT_POINTER_BYTES;
 const methodTableInterfaceOffset = (
   slotsCount: number,
   index: number,
@@ -252,20 +252,34 @@ const methodTablePointerAddress = (
   table: MethodTable,
   offset: number,
 ): bigint => table.address + BigInt(offset);
-const readMethodTablePointer = (
+const readMappedPointer = (
   image: PeImage,
   address: bigint,
   budget: NativeAotParserBudget,
 ): bigint | null => {
-  const bytes = image.read(address, METHOD_TABLE_POINTER_BYTES, budget);
+  const bytes = image.read(address, NATIVE_AOT_POINTER_BYTES, budget);
   return bytes === null
     ? null
-    : new BinaryReader(bytes, true, METHOD_TABLE_FORMAT).word(0, 64);
+    : new BinaryReader(bytes, true, NATIVE_AOT_FORMAT).word(0, 64);
 };
 
 const METHOD_TABLE_RECORD_BYTES = 32;
+const METHOD_TABLE_RECORD = {
+  address: 0,
+  flags: 8,
+  baseSize: 12,
+  related: 16,
+  slotsCount: 24,
+  interfacesCount: 26,
+  included: 28,
+} as const;
+
 class MethodTableIndex {
-  #records = Buffer.alloc(0);
+  #records = new BinaryReader(
+    Buffer.alloc(0),
+    true,
+    "NativeAOT MethodTable index",
+  );
   #count = 0;
   #includedCount = 0;
 
@@ -281,15 +295,24 @@ class MethodTableIndex {
   append(table: MethodTable): boolean {
     if (!this.#ensureCapacity(this.#count + 1)) return false;
     const offset = this.#count * METHOD_TABLE_RECORD_BYTES;
-    this.#records.writeBigUInt64LE(table.address, offset);
-    this.#records.writeUInt32LE(table.flags, offset + 8);
-    this.#records.writeUInt32LE(table.baseSize, offset + 12);
-    this.#records.writeBigUInt64LE(table.related, offset + 16);
-    this.#records.writeUInt16LE(table.slotsCount, offset + 24);
-    this.#records.writeUInt16LE(table.interfacesCount, offset + 26);
-    this.#records.writeUInt8(0, offset + 28);
-    this.#records.writeUInt8(0, offset + 29);
-    this.#records.writeUInt16LE(0, offset + 30);
+    const { bytes } = this.#records;
+    bytes.writeBigUInt64LE(table.address, offset + METHOD_TABLE_RECORD.address);
+    bytes.writeUInt32LE(table.flags, offset + METHOD_TABLE_RECORD.flags);
+    bytes.writeUInt32LE(table.baseSize, offset + METHOD_TABLE_RECORD.baseSize);
+    bytes.writeBigUInt64LE(table.related, offset + METHOD_TABLE_RECORD.related);
+    bytes.writeUInt16LE(
+      table.slotsCount,
+      offset + METHOD_TABLE_RECORD.slotsCount,
+    );
+    bytes.writeUInt16LE(
+      table.interfacesCount,
+      offset + METHOD_TABLE_RECORD.interfacesCount,
+    );
+    bytes.fill(
+      0,
+      offset + METHOD_TABLE_RECORD.included,
+      offset + METHOD_TABLE_RECORD_BYTES,
+    );
     this.#count++;
     return true;
   }
@@ -299,12 +322,14 @@ class MethodTableIndex {
       return undefined;
     const offset = index * METHOD_TABLE_RECORD_BYTES;
     return {
-      address: this.#records.readBigUInt64LE(offset),
-      flags: this.#records.readUInt32LE(offset + 8),
-      baseSize: this.#records.readUInt32LE(offset + 12),
-      related: this.#records.readBigUInt64LE(offset + 16),
-      slotsCount: this.#records.readUInt16LE(offset + 24),
-      interfacesCount: this.#records.readUInt16LE(offset + 26),
+      address: this.#records.word(offset + METHOD_TABLE_RECORD.address, 64),
+      flags: this.#records.u32(offset + METHOD_TABLE_RECORD.flags),
+      baseSize: this.#records.u32(offset + METHOD_TABLE_RECORD.baseSize),
+      related: this.#records.word(offset + METHOD_TABLE_RECORD.related, 64),
+      slotsCount: this.#records.u16(offset + METHOD_TABLE_RECORD.slotsCount),
+      interfacesCount: this.#records.u16(
+        offset + METHOD_TABLE_RECORD.interfacesCount,
+      ),
     };
   }
 
@@ -312,13 +337,18 @@ class MethodTableIndex {
     return (
       index >= 0 &&
       index < this.#count &&
-      this.#records.readUInt8(index * METHOD_TABLE_RECORD_BYTES + 28) !== 0
+      this.#records.u8(
+        index * METHOD_TABLE_RECORD_BYTES + METHOD_TABLE_RECORD.included,
+      ) !== 0
     );
   }
 
   include(index: number): void {
     if (!this.isIncluded(index)) {
-      this.#records.writeUInt8(1, index * METHOD_TABLE_RECORD_BYTES + 28);
+      this.#records.bytes.writeUInt8(
+        1,
+        index * METHOD_TABLE_RECORD_BYTES + METHOD_TABLE_RECORD.included,
+      );
       this.#includedCount++;
     }
   }
@@ -334,8 +364,9 @@ class MethodTableIndex {
       const next = storage.subarray(this.#count, this.#count * 2).fill(-1);
       const queue = storage.subarray(this.#count * 2);
       for (let index = 0; index < this.#count; index += 1) {
-        const related = this.#records.readBigUInt64LE(
-          index * METHOD_TABLE_RECORD_BYTES + 16,
+        const related = this.#records.word(
+          index * METHOD_TABLE_RECORD_BYTES + METHOD_TABLE_RECORD.related,
+          64,
         );
         if (related === 0n) continue;
         const parent = this.find(related, this.budget);
@@ -366,9 +397,8 @@ class MethodTableIndex {
           include(child);
         }
         for (let index = 0; index < base.interfacesCount; index += 1) {
-          if (!this.budget.consumeWork(METHOD_TABLE_POINTER_BYTES))
-            return false;
-          const address = readMethodTablePointer(
+          if (!this.budget.consumeWork(NATIVE_AOT_POINTER_BYTES)) return false;
+          const address = readMappedPointer(
             image,
             methodTablePointerAddress(
               base,
@@ -395,12 +425,18 @@ class MethodTableIndex {
       if (!budget.consumeWork(8)) return -1;
       const middle = low + ((high - low) >>> 1);
       const record = middle * METHOD_TABLE_RECORD_BYTES;
-      const candidate = this.#records.readBigUInt64LE(record);
+      const candidate = this.#records.word(
+        record + METHOD_TABLE_RECORD.address,
+        64,
+      );
       if (candidate < address) low = middle + 1;
       else high = middle;
     }
     return low < this.#count &&
-      this.#records.readBigUInt64LE(low * METHOD_TABLE_RECORD_BYTES) === address
+      this.#records.word(
+        low * METHOD_TABLE_RECORD_BYTES + METHOD_TABLE_RECORD.address,
+        64,
+      ) === address
       ? low
       : -1;
   }
@@ -422,10 +458,11 @@ class MethodTableIndex {
 
   #ensureCapacity(requiredRecords: number): boolean {
     const requiredBytes = requiredRecords * METHOD_TABLE_RECORD_BYTES;
-    if (requiredBytes <= this.#records.byteLength) return true;
+    const { bytes, little, format } = this.#records;
+    if (requiredBytes <= bytes.byteLength) return true;
     const capacityBytes = Math.min(
       this.budget.limits.workingMemoryBytes,
-      Math.max(requiredBytes, this.#records.byteLength * 2 || 4096),
+      Math.max(requiredBytes, bytes.byteLength * 2 || 4096),
     );
     if (capacityBytes < requiredBytes) {
       this.budget.truncationReason ??= "working-memory-budget";
@@ -433,9 +470,9 @@ class MethodTableIndex {
     }
     if (!this.budget.reserveWorkingMemory(capacityBytes)) return false;
     const expanded = Buffer.allocUnsafe(capacityBytes);
-    this.#records.copy(expanded, 0, 0, this.#count * METHOD_TABLE_RECORD_BYTES);
-    this.budget.releaseWorkingMemory(this.#records.byteLength);
-    this.#records = expanded;
+    bytes.copy(expanded, 0, 0, this.#count * METHOD_TABLE_RECORD_BYTES);
+    this.budget.releaseWorkingMemory(bytes.byteLength);
+    this.#records = new BinaryReader(expanded, little, format);
     return true;
   }
 }
@@ -852,14 +889,6 @@ class PeImage {
 }
 
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
-const readU64 = (bytes: Buffer | null, offset = 0): bigint | null =>
-  bytes === null || offset > bytes.length - 8
-    ? null
-    : bytes.readBigUInt64LE(offset);
-const readU32 = (bytes: Buffer | null, offset = 0): number | null =>
-  bytes === null || offset > bytes.length - 4
-    ? null
-    : bytes.readUInt32LE(offset);
 const notApplicable = (
   sha: string,
   reason: NativeAotReason,
@@ -1061,13 +1090,13 @@ const parseMethodTable = (
   if (bytes === null) return null;
   const pointers = new BinaryReader(bytes, true, METHOD_TABLE_FORMAT);
   for (let slot = 0; slot < slotsCount; slot++) {
-    if (!budget.consumeWork(METHOD_TABLE_POINTER_BYTES)) return null;
+    if (!budget.consumeWork(NATIVE_AOT_POINTER_BYTES)) return null;
     validation.itemsExamined++;
     const target = pointers.word(methodTableSlotOffset(slot), 64);
     if (target !== 0n && !image.isExecutable(target, budget)) return null;
   }
   for (let index = 0; index < interfacesCount; index++) {
-    if (!budget.consumeWork(METHOD_TABLE_POINTER_BYTES)) return null;
+    if (!budget.consumeWork(NATIVE_AOT_POINTER_BYTES)) return null;
     validation.itemsExamined++;
     const iface = pointers.word(
       methodTableInterfaceOffset(slotsCount, index),
@@ -1084,14 +1113,19 @@ const readRelativePointer = (
   budget: NativeAotParserBudget,
 ): bigint | null => {
   const raw = image.read(address, 4, budget);
-  return raw === null ? null : address + BigInt(raw.readInt32LE(0));
+  return raw === null
+    ? null
+    : address + BigInt(new BinaryReader(raw, true, NATIVE_AOT_FORMAT).i32(0));
 };
 
 /** Exact UTF-8 length of JSON.stringify for a UTF-16 string without allocating it. */
-const jsonUtf16StringBytes = (bytes: Buffer, codeUnits: number): number => {
+const jsonUtf16StringBytes = (
+  fields: BinaryReader,
+  codeUnits: number,
+): number => {
   let total = 2;
   for (let index = 0; index < codeUnits; index++) {
-    const value = bytes.readUInt16LE(index * 2);
+    const value = fields.u16(index * 2);
     if (value === 0x22 || value === 0x5c) total += 2;
     else if (value < 0x20)
       total +=
@@ -1103,8 +1137,7 @@ const jsonUtf16StringBytes = (bytes: Buffer, codeUnits: number): number => {
           ? 2
           : 6;
     else if (value >= 0xd800 && value <= 0xdbff) {
-      const next =
-        index + 1 < codeUnits ? bytes.readUInt16LE((index + 1) * 2) : 0;
+      const next = index + 1 < codeUnits ? fields.u16((index + 1) * 2) : 0;
       if (next >= 0xdc00 && next <= 0xdfff) {
         total += 4;
         index++;
@@ -1427,7 +1460,7 @@ const discoverTables = (
         truncated = true;
         break scan;
       }
-      const value = readU64(image.read(address, 8, budget));
+      const value = readMappedPointer(image, address, budget);
       if (budget.truncationReason !== undefined) {
         truncated = true;
         break scan;
@@ -1466,7 +1499,7 @@ const discoverTables = (
       return;
     // The root heuristic samples its three declared slots and one following
     // word. That extra word is outside the declared slot/interface arrays.
-    const sampleBytes = (candidate.slotsCount + 1) * METHOD_TABLE_POINTER_BYTES;
+    const sampleBytes = (candidate.slotsCount + 1) * NATIVE_AOT_POINTER_BYTES;
     if (!budget.consumeWork(sampleBytes)) {
       truncated = true;
       return;
@@ -1480,15 +1513,12 @@ const discoverTables = (
     const sample = new BinaryReader(vtable, true, METHOD_TABLE_FORMAT);
     if (
       image.isExecutable(sample.word(0, 64), budget) &&
-      image.isExecutable(sample.word(METHOD_TABLE_POINTER_BYTES, 64), budget) &&
+      image.isExecutable(sample.word(NATIVE_AOT_POINTER_BYTES, 64), budget) &&
       image.isExecutable(
-        sample.word(2 * METHOD_TABLE_POINTER_BYTES, 64),
+        sample.word(2 * NATIVE_AOT_POINTER_BYTES, 64),
         budget,
       ) &&
-      !image.isExecutable(
-        sample.word(3 * METHOD_TABLE_POINTER_BYTES, 64),
-        budget,
-      )
+      !image.isExecutable(sample.word(3 * NATIVE_AOT_POINTER_BYTES, 64), budget)
     ) {
       objectRoot = index;
       objectCount++;
@@ -1840,7 +1870,7 @@ export const parseNativeAotPe = (
         frozenScanTruncated = true;
         break;
       }
-      const table = readU64(image.read(address, 8, budget));
+      const table = readMappedPointer(image, address, budget);
       if (budget.truncationReason !== undefined) {
         frozenScanTruncated = true;
         break;
@@ -1856,11 +1886,15 @@ export const parseNativeAotPe = (
         continue;
       }
       frozenCandidates++;
-      const length = readU32(image.read(address + 8n, 4, budget));
+      const rawLength = image.read(address + 8n, 4, budget);
       if (budget.truncationReason !== undefined) {
         frozenScanTruncated = true;
         break;
       }
+      const length =
+        rawLength === null
+          ? null
+          : new BinaryReader(rawLength, true, NATIVE_AOT_FORMAT).u32(0);
       if (length === null || address + 14n + BigInt(length) * 2n > frozen.end) {
         address += 8n;
         continue;
@@ -1880,7 +1914,9 @@ export const parseNativeAotPe = (
         break;
       }
       frozenStringDataBytesExamined += stringBytes;
-      if (raw === null || raw.readUInt16LE(length * 2) !== 0) {
+      const fields =
+        raw === null ? null : new BinaryReader(raw, true, NATIVE_AOT_FORMAT);
+      if (fields === null || fields.u16(length * 2) !== 0) {
         address += 8n;
         continue;
       }
@@ -1894,7 +1930,7 @@ export const parseNativeAotPe = (
       const rowBytes =
         rowPrefixBytes -
         2 +
-        jsonUtf16StringBytes(raw, length) +
+        jsonUtf16StringBytes(fields, length) +
         (frozenStrings.length > 0 ? 1 : 0);
       if (rowBytes > remainingSummaryBytes) {
         frozenStringsOmitted++;
@@ -1903,7 +1939,7 @@ export const parseNativeAotPe = (
       }
       const row: NativeAotString = {
         address: hex(address),
-        value: raw.toString("utf16le", 0, length * 2),
+        value: fields.bytes.toString("utf16le", 0, length * 2),
       };
       frozenStrings.push(row);
       remainingSummaryBytes -= rowBytes;
@@ -2046,7 +2082,7 @@ export const parseNativeAotPe = (
         interfacesOmitted += table.interfacesCount - index;
         break;
       }
-      if (!detailBudget.consumeWork(METHOD_TABLE_POINTER_BYTES)) {
+      if (!detailBudget.consumeWork(NATIVE_AOT_POINTER_BYTES)) {
         interfacesOmitted += table.interfacesCount - index;
         break;
       }
@@ -2054,7 +2090,7 @@ export const parseNativeAotPe = (
         address: hex(table.address),
         type: null,
       };
-      const value = readMethodTablePointer(
+      const value = readMappedPointer(
         image,
         methodTablePointerAddress(
           table,
@@ -2092,7 +2128,7 @@ export const parseNativeAotPe = (
         slotsOmitted += table.slotsCount - slot;
         break;
       }
-      if (!detailBudget.consumeWork(METHOD_TABLE_POINTER_BYTES)) {
+      if (!detailBudget.consumeWork(NATIVE_AOT_POINTER_BYTES)) {
         slotsOmitted += table.slotsCount - slot;
         break;
       }
@@ -2100,7 +2136,7 @@ export const parseNativeAotPe = (
         table,
         methodTableSlotOffset(slot),
       );
-      const value = readMethodTablePointer(image, slotAddress, detailBudget);
+      const value = readMappedPointer(image, slotAddress, detailBudget);
       if (value === null) {
         slotsOmitted += table.slotsCount - slot;
         break;

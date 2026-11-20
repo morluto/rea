@@ -23,6 +23,7 @@ type Artifact = WindowsShortcut["artifact"];
 
 export const SHELL_LINK_CLSID = "00021401-0000-0000-C000-000000000046";
 const HEADER_BYTES = 76;
+const ENVIRONMENT_TARGET_SIGNATURE = 0xa0000001;
 const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
 const ENTRIES_PER_YIELD = 32;
@@ -168,14 +169,15 @@ const namedBits = (
   decoded: names.flatMap(([bit, name]) => ((raw & bit) !== 0 ? [name] : [])),
 });
 
-const formatGuid = (bytes: Buffer, offset: number): string => {
-  const d1 = bytes.readUInt32LE(offset).toString(16).padStart(8, "0");
-  const d2 = bytes
-    .readUInt16LE(offset + 4)
+const formatGuid = (reader: BinaryReader, offset: number): string => {
+  const { bytes } = reader;
+  const d1 = reader.u32(offset).toString(16).padStart(8, "0");
+  const d2 = reader
+    .u16(offset + 4)
     .toString(16)
     .padStart(4, "0");
-  const d3 = bytes
-    .readUInt16LE(offset + 6)
+  const d3 = reader
+    .u16(offset + 6)
     .toString(16)
     .padStart(4, "0");
   const d4 = bytes.subarray(offset + 8, offset + 10).toString("hex");
@@ -243,15 +245,16 @@ const utf16Z = (bytes: Buffer): string => {
 };
 
 const uuidV1 = (
-  bytes: Buffer,
+  reader: BinaryReader,
   offset: number,
 ): WindowsShortcutUuidV1 | null => {
-  const timeHiVersion = bytes.readUInt16LE(offset + 6);
+  const { bytes } = reader;
+  const timeHiVersion = reader.u16(offset + 6);
   if (timeHiVersion >> 12 !== 1) return null;
   // RFC 4122 variant: clock_seq_hi_and_reserved must have top bits 10.
   if (((bytes[offset + 8] ?? 0) & 0xc0) !== 0x80) return null;
-  const timeLow = BigInt(bytes.readUInt32LE(offset));
-  const timeMid = BigInt(bytes.readUInt16LE(offset + 4));
+  const timeLow = BigInt(reader.u32(offset));
+  const timeMid = BigInt(reader.u16(offset + 4));
   const timeHi = BigInt(timeHiVersion & 0x0fff);
   const timestamp = (timeHi << 48n) | (timeMid << 32n) | timeLow;
   return {
@@ -579,7 +582,10 @@ const decodeIdListItem = (
       size,
       type_byte: typeByte,
       sort_index: data[1] ?? 0,
-      folder_id: formatGuid(data, 2),
+      folder_id: formatGuid(
+        new BinaryReader(data, true, "windows-shortcut"),
+        2,
+      ),
     };
   }
   if (typeByte === 0x2f && data.length >= 2) {
@@ -644,6 +650,7 @@ const note = (
   if (stop) walk.stopped = true;
 };
 
+/** Charge the retained source text bytes, excluding framing. */
 const charge = (walk: Walk, bytes: number): void => {
   walk.stringBytes += bytes;
   if (walk.stringBytes > walk.maxStringBytes)
@@ -689,7 +696,7 @@ const readAnsiAt = (
     );
     return null;
   }
-  charge(walk, end + 1);
+  charge(walk, end);
   return slice.subarray(0, end).toString("latin1");
 };
 
@@ -722,7 +729,7 @@ const readUtf16At = (
     );
     return null;
   }
-  charge(walk, end + 2);
+  charge(walk, end);
   return slice.subarray(0, end).toString("utf16le");
 };
 
@@ -1066,11 +1073,12 @@ const environmentTargets = (
 
 const decodeExtra = (
   signature: number,
-  payload: Buffer,
+  reader: BinaryReader,
   walk: Walk,
   offset: number,
 ): WindowsShortcutExtraDataBlock["decoded"] => {
-  const isEnvironmentTarget = signature === 0xa0000001;
+  const { bytes: payload } = reader;
+  const isEnvironmentTarget = signature === ENVIRONMENT_TARGET_SIGNATURE;
   const expectedBytes = FIXED_EXTRA_PAYLOAD_BYTES[signature];
   if (expectedBytes !== undefined && payload.length !== expectedBytes) {
     walk.pathUncertainty.environment ||= isEnvironmentTarget;
@@ -1094,8 +1102,8 @@ const decodeExtra = (
     };
   }
   if (signature === 0xa0000003) {
-    const length = payload.readUInt32LE(0);
-    const version = payload.readUInt32LE(4);
+    const length = reader.u32(0);
+    const version = reader.u32(4);
     if (length !== 0x58 || version !== 0) {
       note(
         walk,
@@ -1107,34 +1115,34 @@ const decodeExtra = (
     }
     const machine = latin1Z(payload.subarray(8, 24));
     charge(walk, machine.length);
-    const droid0 = formatGuid(payload, 24);
-    const droid1 = formatGuid(payload, 40);
-    const birth0 = formatGuid(payload, 56);
-    const birth1 = formatGuid(payload, 72);
+    const droid0 = formatGuid(reader, 24);
+    const droid1 = formatGuid(reader, 40);
+    const birth0 = formatGuid(reader, 56);
+    const birth1 = formatGuid(reader, 72);
     return {
       kind: "tracker",
       machine_id: machine,
       droid: [droid0, droid1],
       birth_droid: [birth0, birth1],
-      droid_uuid_v1: [uuidV1(payload, 24), uuidV1(payload, 40)],
-      birth_droid_uuid_v1: [uuidV1(payload, 56), uuidV1(payload, 72)],
+      droid_uuid_v1: [uuidV1(reader, 24), uuidV1(reader, 40)],
+      birth_droid_uuid_v1: [uuidV1(reader, 56), uuidV1(reader, 72)],
     };
   }
   if (signature === 0xa0000004) {
-    return { kind: "console_fe", code_page: payload.readUInt32LE(0) };
+    return { kind: "console_fe", code_page: reader.u32(0) };
   }
   if (signature === 0xa0000005) {
     return {
       kind: "special_folder",
-      folder_id: payload.readUInt32LE(0),
-      item_offset: payload.readUInt32LE(4),
+      folder_id: reader.u32(0),
+      item_offset: reader.u32(4),
     };
   }
   if (signature === 0xa000000b) {
     return {
       kind: "known_folder",
-      folder_id: formatGuid(payload, 0),
-      item_offset: payload.readUInt32LE(16),
+      folder_id: formatGuid(reader, 0),
+      item_offset: reader.u32(16),
     };
   }
   const minimum = OPAQUE_EXTRA_MIN_PAYLOAD_BYTES[signature];
@@ -1252,11 +1260,12 @@ const parseIdList = async (
 };
 
 const parseExtraData = async (
-  bytes: Buffer,
+  file: BinaryReader,
   walk: Walk,
   maxBlocks: number,
   signal?: AbortSignal,
 ): Promise<WindowsShortcut["extra_data"]> => {
+  const { bytes } = file;
   const blocks: WindowsShortcutExtraDataBlock[] = [];
   let terminalOffset: number | null = null;
   while (walk.offset < bytes.length) {
@@ -1274,7 +1283,7 @@ const parseExtraData = async (
       );
       break;
     }
-    const size = bytes.readUInt32LE(walk.offset);
+    const size = file.u32(walk.offset);
     // TerminalSize MUST be below 4; any such value ends ExtraData.
     if (size < 4) {
       terminalOffset = walk.offset;
@@ -1290,7 +1299,12 @@ const parseExtraData = async (
       );
       break;
     }
-    if (!fits(bytes, walk.offset, size)) {
+    const signature = fits(bytes, walk.offset, 8)
+      ? file.u32(walk.offset + 4)
+      : null;
+    if (signature === null || !fits(bytes, walk.offset, size)) {
+      walk.pathUncertainty.environment ||=
+        signature === ENVIRONMENT_TARGET_SIGNATURE;
       note(
         walk,
         "block_size_overrun",
@@ -1306,8 +1320,11 @@ const parseExtraData = async (
         maxBlocks,
         `ExtraData declares more than the ${String(maxBlocks)}-block allowance`,
       );
-    const signature = bytes.readUInt32LE(walk.offset + 4);
-    const payload = bytes.subarray(walk.offset + 8, walk.offset + size);
+    const payload = new BinaryReader(
+      file.range(walk.offset + 8, size - 8, "ExtraData payload"),
+      file.little,
+      file.format,
+    );
     blocks.push({
       offset: walk.offset,
       size,
@@ -1347,7 +1364,7 @@ export const parseWindowsShortcut = async (
       `HeaderSize ${String(headerSize)} is not 0x4C`,
       { offset: 0, field: "HeaderSize" },
     );
-  const clsid = formatGuid(bytes, 4);
+  const clsid = formatGuid(reader, 4);
   if (clsid !== SHELL_LINK_CLSID)
     throw malformedInput(
       "windows-shortcut",
@@ -1417,7 +1434,7 @@ export const parseWindowsShortcut = async (
     }
   }
   const extraData = !walk.stopped
-    ? await parseExtraData(bytes, walk, input.max_extra_data_blocks, signal)
+    ? await parseExtraData(reader, walk, input.max_extra_data_blocks, signal)
     : { blocks: [], terminal_offset: null };
   // The TerminalBlock ends the Shell Link. Appended bytes are not examined, so
   // the file is not completely covered; payloads are often hidden there.

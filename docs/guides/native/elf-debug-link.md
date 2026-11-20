@@ -38,6 +38,10 @@ bytes that follow it. `build_id` reports the GNU build-id from `PT_NOTE` and
 Distinct build-ids stay in `ids` and none is selected.
 `sources` lists each contributing GNU build-id note with its table kind and
 index and the note and descriptor file ranges.
+When compressed note storage prevents a complete scan, `build_id.status`
+is `unknown`. Readable build IDs and their locations stay in `ids` and
+`sources`. The report needs a complete build ID to derive an image build-ID
+lookup path or compare against a candidate.
 
 `lookup_paths` lists conventional GNU/Linux strings:
 
