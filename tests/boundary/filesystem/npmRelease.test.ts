@@ -90,7 +90,8 @@ it.each([
     ).toBe(latest);
     if (published.status !== "published")
       throw new Error("Fixture release is absent");
-    for (const taggedVersion of [null, "6.0.0", "invalid"]) {
+    const wrongChannel = tag === "latest" ? "6.11.0-rc.1" : "6.11.0";
+    for (const taggedVersion of [null, "6.0.0", "invalid", wrongChannel]) {
       expect(() =>
         stableUpdateVersion(
           version,
