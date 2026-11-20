@@ -14,7 +14,7 @@ Preserve caller-selected inputs and local evidence, including output, URLs, path
 
 ## Architecture and Cleanup
 
-Dependencies flow inward: domain semantics and contracts, provider adapters, shared application workflows, then CLI/MCP adapters. Keep engine protocols and provider-specific code out of domain/application layers. See [docs/architecture/architecture.mermaid](docs/architecture/architecture.mermaid) when changing composition.
+Dependencies flow inward: domain semantics and contracts, provider adapters, shared application workflows, then CLI/MCP adapters. Keep engine protocols and provider-specific code out of domain/application layers. Read the relevant wiring in `src/composition/` when changing composition.
 
 Give each interpretation and resource a clear owner. Consumers must use that owner's parsed facts rather than reinterpret raw source. Preserve identity, omission, uncertainty, and source evidence across boundaries. Retain ownership of resources whose cleanup failed. Reuse `src/process/` supervision and identity primitives; a PID and executable path alone do not establish ownership after exit or reuse.
 
@@ -77,11 +77,11 @@ do not establish fewer tokens or faster analysis.
 
 ## Development
 
+Treat code as the source of truth for implemented behavior and architecture.
+Keep specs, implementation plans, task lists, ADRs, and architecture diagrams
+in issue or pull request discussions or in local drafts outside Git.
 Use the [documentation directory](docs/README.md) and
-[authoring guide](docs/development/documentation.md) to find the owning page.
-Follow the [feature lifecycle](docs/development/documentation.md#feature-lifecycle)
-to decide whether a change needs a feature record. The authoring guide defines
-the paths for feature records and architecture decisions.
+[authoring guide](docs/development/documentation.md) for guides and references.
 
 Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain. Cursor Cloud may place older Node.js first on `PATH`; environment setup installs the pinned toolchain under `/usr/local/bin`. Prefix `PATH="/usr/local/bin:$PATH"` before `node` and `npm`.
 
@@ -105,7 +105,7 @@ Coordinate expensive checks across agents. If a test unexpectedly consumes heavy
 
 For tool design, follow [docs/development/tool-design.md](docs/development/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
 
-Choose the scope of a new limit from [analysis settings, limits, and recovery](docs/design/limits-and-recovery.md).
+Choose the scope of a new limit from [analysis settings, limits, and recovery](docs/reference/limits-and-recovery.md).
 A registered runtime setting may have an optional launch seed. Per-call and
 launch-only controls have their own contracts. Report the effective limit and
 recovery for the control that stopped the work, and document the setting ID

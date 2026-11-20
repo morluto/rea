@@ -1136,7 +1136,7 @@ host memory or `NODE_OPTIONS` does not raise the old-generation heap. Update
 `capture.decoder_old_generation_mib` through MCP, or set
 `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` before starting a new REA process.
 Retry after owned cleanup completes; the update does not release resources.
-See the [settings design](../../design/limits-and-recovery.md#failure-and-retry).
+See the [analysis settings and recovery](../../reference/limits-and-recovery.md#failure-and-retry).
 Record selection happens after complete decoding and does not reduce that
 workload. Use a smaller capture exported by its producer or another decoder
 with sufficient capacity, retaining the original for provenance. Subsets do
