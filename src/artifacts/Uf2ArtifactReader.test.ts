@@ -7,6 +7,7 @@ import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import {
   RP2040_FAMILY,
   RP2XXX_ABSOLUTE_FAMILY,
+  UF2_FLAGS,
   patternBytes,
   uf2Block,
   uf2File,
@@ -111,6 +112,49 @@ it("inventories each family's regions with family and block facts", async () => 
     ],
   ]);
 });
+
+it.each([
+  [[0x1000], [0, 0xffff_ffff]],
+  [[0x1000, 0x2000], [0]],
+] as const)(
+  "keeps addressless UF2 comments out of copy counting (%j, %j)",
+  async (flash, comments) => {
+    const blocks = [
+      ...flash.map((address) =>
+        uf2Block({ address, payload: [1, 2, 3, 4], blockNo: 0, numBlocks: 2 }),
+      ),
+      ...comments.map((address) =>
+        uf2Block({
+          address,
+          payload: [9, 9],
+          blockNo: 1,
+          numBlocks: 2,
+          flags: UF2_FLAGS.notMainFlash,
+        }),
+      ),
+    ];
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeImage("comments.uf2", uf2File(blocks)),
+    );
+    expect(snapshot.coverage).toEqual({
+      scope: "container-entries",
+      status: "complete",
+    });
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      kind: "uf2",
+      ambiguous_numbering_group_count: 0,
+      missing_block_count: 0,
+      repeated_block_count: 1,
+      not_main_flash_block_count: comments.length,
+      flash_block_count: flash.length,
+      region_count: flash.length,
+      data_bytes: 4 * flash.length,
+    });
+  },
+);
 
 it("leaves short files unrecognized", async () => {
   const truncated = await scanCanonicalArtifactInventory(
