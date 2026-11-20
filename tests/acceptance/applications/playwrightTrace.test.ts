@@ -18,6 +18,42 @@ import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 type McpCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];
 
 cliTest(
+  "reports the fixed trace nesting limit through CLI and MCP",
+  async ({ cli }) => {
+    const trace =
+      '{"type":"context-options","version":10}\n' +
+      `{"type":"console","args":${"[".repeat(65)}${"]".repeat(65)}}\n`;
+    const fixture = await playwrightTraceFixture({ trace, network: "" });
+    const expected = {
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reason: expect.stringContaining("fixed JSON nesting allowance"),
+        reported_limits: {
+          boundary: "nesting-depth",
+          maximum: 64,
+          nesting_levels: 64,
+        },
+        refusal: { kind: "fixed_ceiling", limit: 64, unit: "nesting levels" },
+      },
+    };
+    const result = await cli.run({
+      arguments: ["inspect-playwright-trace", fixture.path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.json).toMatchObject(expected);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application",
+    });
+    const response = await call("inspect_playwright_trace", {
+      path: fixture.path,
+    });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response).error).toMatchObject(expected);
+  },
+);
+
+cliTest(
   "preserves original ZIP paths across CLI/MCP, resource lookup and exact member filters",
   async ({ cli }) => {
     const fixture = await playwrightTracePathFixture();

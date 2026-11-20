@@ -1,4 +1,5 @@
-import { observeMzWindowsHeader } from "../domain/dosMz.js";
+import { hasDosMzMagic, observeMzWindowsHeader } from "../domain/dosMz.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import {
   hasGodotPckHeader,
@@ -204,8 +205,9 @@ export const inspectDesktopFile = async (
     prefix.toString("latin1", 0, 4) === "FORM" &&
     prefix.toString("latin1", 8, 12) === "GEN8"
   ) {
-    const containerBytes = prefix.readUInt32LE(4);
-    const chunkBytes = prefix.readUInt32LE(12);
+    const form = new BinaryReader(prefix, true, "gamemaker-form");
+    const containerBytes = form.u32(4);
+    const chunkBytes = form.u32(12);
     if (
       containerBytes >= 8 &&
       containerBytes <= size - 8 &&
@@ -254,7 +256,8 @@ export const inspectDesktopFile = async (
       if (!row.issues.includes(cause.message)) row.issues.push(cause.message);
     }
   };
-  if (prefix.length === 64 && prefix.readUInt16LE(0) === 0x5a4d)
+  const mz = hasDosMzMagic(prefix);
+  if (prefix.length === 64 && mz)
     await observe(() =>
       inspectPeFile(
         prefix,
@@ -266,10 +269,7 @@ export const inspectDesktopFile = async (
         signal,
       ),
     );
-  if (
-    (native || (prefix.length >= 2 && prefix.readUInt16LE(0) === 0x5a4d)) &&
-    size >= 12
-  )
+  if ((native || mz) && size >= 12)
     await observe(() => inspectPckTrailer(size, read, fact));
 };
 
@@ -375,12 +375,7 @@ const inspectPeFile = async (
         await setImmediate();
         abortIfNeeded(signal);
       }
-      const reference = readAssemblyReferenceName(
-        bytes,
-        layout,
-        index,
-        layout.strings.size,
-      );
+      const reference = readAssemblyReferenceName(bytes, layout, index);
       if (
         reference.name !== "UnityEngine" &&
         !reference.name.startsWith("UnityEngine.")

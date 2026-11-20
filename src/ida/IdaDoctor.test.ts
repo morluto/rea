@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { inspectIdaRegistration } from "./IdaDoctor.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
@@ -11,16 +11,10 @@ const resourceScope: RetainedResourceScope = {
   run: (operation) => operation(),
 };
 
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
 it.each([true, false])(
   "uses allocation filesystem resolution without creating entries (traversed directory exists=%s)",
   async (exists) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-ida-workspace-parent-"));
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-workspace-parent-");
     const path = join(root, "registration.json");
     await mkdir(join(root, "existing"));
     const rawRoot = exists ? `${root}/existing/..` : `${root}/missing/..`;
@@ -49,8 +43,7 @@ it.each([true, false])(
 it.skipIf(process.platform === "win32")(
   "rejects a non-directory intermediate component before canonicalizing readiness",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-ida-workspace-lookup-"));
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-workspace-lookup-");
     const path = join(root, "registration.json");
     const workspace = join(root, "workspace");
     await mkdir(workspace);
@@ -81,8 +74,7 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "marks an unusable system temporary parent unavailable when workspaceRoot is omitted",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-ida-default-parent-"));
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-default-parent-");
     const path = join(root, "registration.json");
     const unusableDefault = join(root, "not-a-directory");
     await writeFile(unusableDefault, "file");
@@ -108,8 +100,7 @@ it.skipIf(process.platform === "win32")(
   },
 );
 it("keeps IDA configuration for setup without copying transport credentials or claiming runtime verification", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-ida-doctor-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-ida-doctor-");
   const path = join(root, "registration.json");
   await writeFile(
     path,

@@ -43,12 +43,7 @@ export const distinctSelectedNestedOwners = () => {
     const method = readMethodDefinitionRow(bytes, layout, 1);
     if (index === 1) {
       bytes.writeUInt16LE(3, metadataRowOffset(layout, 41, 1) + 2);
-      readMetadataBlob(
-        bytes,
-        layout,
-        method.signatureIndex,
-        layout.blob!.size,
-      )[2] = 0x0a;
+      readMetadataBlob(bytes, layout, method.signatureIndex)[2] = 0x0a;
       const field = metadataRowCursor(bytes, layout, 4, 1);
       field.u16();
       field.readIndex(layout.stringIndexSize);
@@ -56,7 +51,6 @@ export const distinctSelectedNestedOwners = () => {
         bytes,
         layout,
         field.readIndex(layout.blobIndexSize),
-        layout.blob!.size,
       )[1] = 0x0a;
     }
     // All three MethodDefs share this fixture body and signature. Tiny bodies

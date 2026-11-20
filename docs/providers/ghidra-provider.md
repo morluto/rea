@@ -148,6 +148,9 @@ PDB identity or complete symbol-coverage attestation, and retains an inline
 coverage caveat. Handshake PDB strings share a 4096 UTF-16-unit serialization
 budget (at most 24 KiB after JSON escaping); whole attributes that do not fit
 are omitted with an explicit resource limitation, rather than truncated.
+When the CodeView path's text encoding is unknown, the caveat identifies that
+uncertainty and retains the original path bytes in hex when they fit the inline
+locator budget. This observation is independent of Ghidra's reported filename.
 
 Original names and types may be missing even when auto-analysis completes.
 An empty name search does not establish that a function is absent; use
@@ -396,9 +399,9 @@ DWARF 4 type-layout object. It proves the admitted operations, external function
 behavior, direct and targetless indirect calls, typed references, strings/xrefs,
 multi-block CFG, bounded p-code def-use/effect links, semantic enhanced workflows, cancellation, startup deadlines,
 serialized concurrency, malformed-target rejection, profile identity, and
-process/project cleanup against real Ghidra 12.1.4. Unit fixtures separately
-cover startup deadlines, process exit, queued cancellation, and malformed wire
-output.
+process/project cleanup. Recorded on Ghidra 12.1.4 (no longer accepted); not
+yet re-run on 12.2. Unit fixtures separately cover startup deadlines, process
+exit, queued cancellation, and malformed wire output.
 
 `npm run verify:ghidra:cross-format` adds AArch64 ELF, x86-64 PE, and x86-64
 Mach-O target coverage. It requires `clang`, LLD, and `lld-link`; set

@@ -6,6 +6,8 @@ import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
 } from "../managed/managedArtifact.js";
+import { managedModuleRow } from "../managed/managedModuleIdentity.js";
+import { validateManagedTokenScope } from "../managed/managedInspectionEvidence.js";
 import { err, ok } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -49,6 +51,8 @@ export const managedViewContextSchema = z.strictObject({
   identity_scope: managedMemberInspectionSchema.shape.identity_scope,
   source_metadata_status:
     managedArtifactInspectionSchema.shape.metadata.shape.status,
+  unresolved_module_name:
+    managedArtifactInspectionSchema.shape.metadata.shape.unresolved_module_name,
   source_coverage: managedArtifactInspectionSchema.shape.coverage,
 });
 
@@ -95,10 +99,16 @@ export const projectManagedArtifactView = (
   );
   if (!parsed.ok) return parsed;
   const report = parsed.value;
+  const scope = validateManagedTokenScope(
+    report,
+    "inspect_managed_artifact",
+    parent.evidenceId,
+  );
+  if (!scope.ok) return scope;
   const identity_scope = {
     token_identity: "build-local" as const,
     requires_artifact_sha256: report.artifact.sha256,
-    requires_mvid: report.module?.mvid ?? null,
+    requires_mvid: managedModuleRow(report)?.mvid ?? null,
   };
   const shared = {
     parent_evidence_id: parent.evidenceId,
@@ -136,6 +146,11 @@ export const projectManagedArtifactView = (
     ...shared,
     identity_scope,
     source_metadata_status: report.metadata.status,
+    ...(report.metadata.unresolved_module_name === undefined
+      ? {}
+      : {
+          unresolved_module_name: report.metadata.unresolved_module_name,
+        }),
     source_coverage: report.coverage,
     coverage: pageViewCoverage(view.offset, item.length, collection.length),
   });

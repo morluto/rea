@@ -361,6 +361,9 @@ when the plugin did not declare them, for example when no reply was read, the
 reply was malformed, or an older plugin omitted them. A null generation means
 the document may have changed; list sessions again before choosing an
 `expected_generation`. Evidence carries a limitation for each unknown field.
+With `json: true`, Cutter command output retains integer literals outside
+JavaScript's safe integer range as decimal strings, so 64-bit addresses and
+offsets keep their original digits.
 Each bridge request waits 25000 ms. The Cutter hello frame still must arrive
 within 1 second. The authenticated command frame is read with one second per
 mebibyte of `REA_BRIDGE_MAX_REQUEST_BYTES`, and that read never waits longer

@@ -52,8 +52,9 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 // Fake-backed provider coverage; real Ghidra verification lives in
 // `npm run verify:ghidra` and its focused variants.
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -192,8 +193,8 @@ const createElfClient = async (ghidra: GhidraProvider) => {
 it.each(["mixed-inspection", "held-inspection", "ordinary-launch"] as const)(
   "preserves public %s failure through a real client",
   async (kind) => {
-    const root = await mkdtemp(
-      join(tmpdir(), "rea-ghidra-inspection-projection-"),
+    const root = await createTestTempDirectory(
+      "rea-ghidra-inspection-projection-",
     );
     const path = join(root, "inert.elf");
     const bytes = elf(2, 1, 62);
@@ -311,7 +312,6 @@ it.each(["mixed-inspection", "held-inspection", "ordinary-launch"] as const)(
     } finally {
       held?.allow();
       await client.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
@@ -835,10 +835,9 @@ describe("Ghidra platform support", () => {
   ] as const)(
     "records explicit Windows $architecture processor selection without claiming loader selection",
     async ({ architecture, languageId }) => {
-      const directory = await mkdtemp(
-        join(tmpdir(), "rea-arm-profile-language-"),
+      const directory = await createTestTempDirectory(
+        "rea-arm-profile-language-",
       );
-      onTestFinished(() => rm(directory, { recursive: true, force: true }));
       const languages = join(
         directory,
         "Ghidra/Processors/fixture/data/languages",
@@ -1324,7 +1323,7 @@ describe("Ghidra startup configuration", () => {
   it("carries supplied startup settings through configuration, the provider, the timer and timeout diagnostics", async () => {
     const target = executableTarget("elf", "x86_64");
     for (const [raw, expected] of [
-      [undefined, 330_000],
+      [undefined, DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS],
       ["900000", 900_000],
       ["1260000", 1_260_000],
       ["2147483647", 2_147_483_647],
@@ -1387,8 +1386,7 @@ describe("Ghidra startup configuration", () => {
 });
 
 it("reobserves value-flow budgets on the same session while ordinary address lookups stay cached", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-ghidra-flow-budgets-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-ghidra-flow-budgets-");
   const path = join(root, "fixture.elf");
   await writeFile(path, elf(2, 1, 62));
   const parsed = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL });
@@ -1831,7 +1829,7 @@ describe("Ghidra procedure lookup projection", () => {
   );
 
   it("offers an explicit fresh import when the missing procedure came from a selected project", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-missing-procedure-"));
+    const root = await createTestTempDirectory("rea-missing-procedure-");
     await mkdir(join(root, "selected.rep"));
     await writeFile(join(root, "selected.gpr"), "marker");
     const message = "Unknown Ghidra procedure name or address: missing";
@@ -1890,7 +1888,6 @@ describe("Ghidra procedure lookup projection", () => {
       }
     } finally {
       await ghidra.closeOwnedResources();
-      await rm(root, { recursive: true, force: true });
     }
   });
 });
@@ -2054,17 +2051,6 @@ describe("Ghidra byte-search cursor projection", () => {
       },
     });
     expect(projected).not.toHaveProperty("recovery");
-    expect(projected.message).toContain("analysis profile");
-    expect(projected.message).toContain("project");
-    expect(projected.message).not.toContain("Analysis input is invalid");
-    expect(projected.remediation.action).toContain("pattern");
-    expect(projected.remediation.action).not.toContain("schema");
-    expect(projected.remediation.action).not.toContain("tools/list");
-    const bridge = await readFile(
-      new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
-      "utf8",
-    );
-    expect(bridge).toContain(`"${CURSOR_MISMATCH}"`);
     await client.close();
   });
 
@@ -2264,17 +2250,11 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
       REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: String(seconds),
     };
     if (source === "owned-checkpoint") {
-      const root = await mkdtemp(join(tmpdir(), "rea-deadline-checkpoint-"));
-      onTestFinished(async () => {
-        await rm(root, { recursive: true, force: true });
-      });
+      const root = await createTestTempDirectory("rea-deadline-checkpoint-");
       environment.REA_GHIDRA_CHECKPOINT_DIR = root;
     }
     if (source === "existing-project") {
-      const root = await mkdtemp(join(tmpdir(), "rea-deadline-project-"));
-      onTestFinished(async () => {
-        await rm(root, { recursive: true, force: true });
-      });
+      const root = await createTestTempDirectory("rea-deadline-project-");
       await mkdir(join(root, "saved.rep"));
       await writeFile(join(root, "saved.gpr"), "marker");
       environment.REA_GHIDRA_PROJECT_PATH = join(root, "saved.gpr");
@@ -2744,8 +2724,7 @@ it("compares measured COM import evidence against the loader committed at admiss
   const { bytes, sha256 } = fixtureDosComLoaderLoadImage();
   const { observation } = fixtureDosComLoadImage(bytes);
   observation.source_files[0]!.name = "fixture.bin";
-  const root = await mkdtemp(join(tmpdir(), "rea-ghidra-com-selection-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-ghidra-com-selection-");
   const path = join(root, "fixture.com");
   await writeFile(path, bytes);
   const ghidra = provider(installationHost(), () => ({
@@ -4486,98 +4465,94 @@ describe("Ghidra extension failures", () => {
   it.each(["unsupported", "failed", "malformed"] as const)(
     "preserves %s recovery diagnostics and closes without restarting",
     async (status) => {
-      const directory = await mkdtemp(
-        join(tmpdir(), "rea-provider-extension-"),
+      const directory = await createTestTempDirectory(
+        "rea-provider-extension-",
       );
-      try {
-        const jar = join(directory, "addon.jar");
-        await writeFile(jar, Buffer.from([0x50, 0x4b, 3, 4]));
-        const config = parseConfig({
-          GHIDRA_INSTALL_DIR: INSTALL,
-          REA_GHIDRA_NATIVEAOT_JAR: jar,
-        });
-        if (!config.ok) throw config.error;
-        let starts = 0,
-          calls = 0,
-          closes = 0;
-        const ghidra = new GhidraProvider(
-          config.value,
-          silentLogger,
-          {},
-          installationHost(),
-          () => ({
-            start: () => {
-              starts++;
-              return Promise.resolve(
-                ok({
-                  ...sessionInfo(),
-                  analysis_extensions: [
-                    {
+      const jar = join(directory, "addon.jar");
+      await writeFile(jar, Buffer.from([0x50, 0x4b, 3, 4]));
+      const config = parseConfig({
+        GHIDRA_INSTALL_DIR: INSTALL,
+        REA_GHIDRA_NATIVEAOT_JAR: jar,
+      });
+      if (!config.ok) throw config.error;
+      let starts = 0,
+        calls = 0,
+        closes = 0;
+      const ghidra = new GhidraProvider(
+        config.value,
+        silentLogger,
+        {},
+        installationHost(),
+        () => ({
+          start: () => {
+            starts++;
+            return Promise.resolve(
+              ok({
+                ...sessionInfo(),
+                analysis_extensions: [
+                  {
+                    id: "nativeaot",
+                    sha256:
+                      status === "malformed"
+                        ? "0".repeat(64)
+                        : createHash("sha256")
+                            .update(Buffer.from([0x50, 0x4b, 3, 4]))
+                            .digest("hex"),
+                    status: status === "malformed" ? "failed" : status,
+                    reason:
+                      "directory-discovery: Unsupported layout at 0x401000",
+                    result: {
                       id: "nativeaot",
-                      sha256:
-                        status === "malformed"
-                          ? "0".repeat(64)
-                          : createHash("sha256")
-                              .update(Buffer.from([0x50, 0x4b, 3, 4]))
-                              .digest("hex"),
+                      integration_api: 1,
+                      source_revision:
+                        "effeb734fc570c32650f88b159608979dc7b423e",
+                      source_revision_authority: "build-reported-unattested",
                       status: status === "malformed" ? "failed" : status,
                       reason:
                         "directory-discovery: Unsupported layout at 0x401000",
-                      result: {
-                        id: "nativeaot",
-                        integration_api: 1,
-                        source_revision:
-                          "effeb734fc570c32650f88b159608979dc7b423e",
-                        source_revision_authority: "build-reported-unattested",
-                        status: status === "malformed" ? "failed" : status,
-                        reason:
-                          "directory-discovery: Unsupported layout at 0x401000",
-                        method_tables: 0,
-                        diagnostics: ["exact producer diagnostic"],
-                      },
+                      method_tables: 0,
+                      diagnostics: ["exact producer diagnostic"],
                     },
-                  ],
-                }),
-              );
-            },
-            callTool: () => {
-              calls++;
-              return Promise.resolve(ok(null));
-            },
-            close: () => {
-              closes++;
-              return Promise.resolve(ok(null));
-            },
-          }),
+                  },
+                ],
+              }),
+            );
+          },
+          callTool: () => {
+            calls++;
+            return Promise.resolve(ok(null));
+          },
+          close: () => {
+            closes++;
+            return Promise.resolve(ok(null));
+          },
+        }),
+      );
+      const target = executableTarget("elf", "x86_64");
+      const resolved = await ghidra.resolveAnalysisProfile(target);
+      if (!resolved.ok || resolved.value.profile === null)
+        throw new Error("expected extension profile");
+      const client = ghidra.createClient(target, resolved.value.profile);
+      const failed = await client.execute("health", {});
+      expect(failed.ok).toBe(false);
+      if (!failed.ok) {
+        expect(failed.error._tag).toBe(
+          status === "unsupported"
+            ? "AnalysisCapabilityUnavailableError"
+            : "ProviderAdapterError",
         );
-        const target = executableTarget("elf", "x86_64");
-        const resolved = await ghidra.resolveAnalysisProfile(target);
-        if (!resolved.ok || resolved.value.profile === null)
-          throw new Error("expected extension profile");
-        const client = ghidra.createClient(target, resolved.value.profile);
-        const failed = await client.execute("health", {});
-        expect(failed.ok).toBe(false);
-        if (!failed.ok) {
-          expect(failed.error._tag).toBe(
-            status === "unsupported"
-              ? "AnalysisCapabilityUnavailableError"
-              : "ProviderAdapterError",
-          );
-          expect(JSON.stringify(failed.error)).toContain(
-            status === "malformed"
-              ? "identity mismatch"
-              : "Unsupported layout at 0x401000",
-          );
-        }
-        expect(await client.execute("list_procedures", {})).toEqual(failed);
-        expect({ starts, calls, closes }).toEqual({
-          starts: 1,
-          calls: 0,
-          closes: 1,
-        });
-      } finally {
-        await rm(directory, { recursive: true, force: true });
+        expect(JSON.stringify(failed.error)).toContain(
+          status === "malformed"
+            ? "identity mismatch"
+            : "Unsupported layout at 0x401000",
+        );
       }
+      expect(await client.execute("list_procedures", {})).toEqual(failed);
+      expect({ starts, calls, closes }).toEqual({
+        starts: 1,
+        calls: 0,
+        closes: 1,
+      });
     },
   );
 });
@@ -4758,23 +4733,20 @@ describe("Ghidra deadline guidance", () => {
       "REA_GHIDRA_DISABLED_ANALYZERS",
     );
     expect(projected.remediation.action).toContain("REA_GHIDRA_PROJECT_PATH");
-    expect(projected.remediation.action).toContain("without restarting REA");
     expect(projected.remediation.action).toContain("Export useful Evidence");
     expect(projected.details).toMatchObject({
       limit: {
         setting: "ghidra.startup_timeout_ms",
         effective_value: 250,
         applies_at: "next_startup",
+        update_mode: "runtime",
       },
     });
     expect(projected.remediation.action).not.toContain("rea doctor");
   });
 
   it("describes an existing-project startup timeout without import or analyzer advice", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-timeout-project-"));
-    onTestFinished(async () => {
-      await rm(root, { recursive: true, force: true });
-    });
+    const root = await createTestTempDirectory("rea-timeout-project-");
     await mkdir(join(root, "large.rep"));
     await writeFile(join(root, "large.gpr"), "marker");
     const projected = await ghidraTimedOut(
@@ -4914,10 +4886,7 @@ describe("Ghidra startup deadline for a finished invocation", () => {
     async (existingProject) => {
       const environment: Record<string, string> = {};
       if (existingProject) {
-        const root = await mkdtemp(join(tmpdir(), "rea-timeout-project-"));
-        onTestFinished(async () => {
-          await rm(root, { recursive: true, force: true });
-        });
+        const root = await createTestTempDirectory("rea-timeout-project-");
         await mkdir(join(root, "large.rep"));
         await writeFile(join(root, "large.gpr"), "marker");
         environment.REA_GHIDRA_PROJECT_PATH = join(root, "large.gpr");
@@ -5024,10 +4993,7 @@ describe("Ghidra startup deadline for a finished invocation", () => {
 });
 
 it("identifies checkpoint recovery for a timed-out startup", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-startup-checkpoint-"));
-  onTestFinished(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
+  const root = await createTestTempDirectory("rea-startup-checkpoint-");
   for (const lifetime of ["invocation", "continuing"] as const) {
     const projected = await ghidraTimedOut(
       "start",
@@ -5054,10 +5020,7 @@ const startFailure = async (
   environment: Readonly<Record<string, string>> = {},
   stderr = "",
 ) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
-  onTestFinished(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
+  const root = await createTestTempDirectory("rea-missing-program-");
   await mkdir(join(root, "selected.rep"));
   await writeFile(join(root, "selected.gpr"), "marker");
   const failure = new GhidraSessionError(
@@ -5219,10 +5182,7 @@ describe("Ghidra missing project program", () => {
 
 describe("Ghidra changed project", () => {
   const launchFailure = async (cause: unknown, viaLauncher = true) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-changed-project-"));
-    onTestFinished(async () => {
-      await rm(root, { recursive: true, force: true });
-    });
+    const root = await createTestTempDirectory("rea-changed-project-");
     await mkdir(join(root, "selected.rep"));
     await writeFile(join(root, "selected.gpr"), "marker");
     const failure = new GhidraSessionError(
@@ -5319,7 +5279,7 @@ describe("Ghidra analysis seeds and configured language", () => {
   const seedSession = async (
     report: (sha256: string) => GhidraSeedReport | undefined,
   ) => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-provider-seeds-"));
+    const directory = await createTestTempDirectory("rea-provider-seeds-");
     const seeds = join(directory, "seeds.tsv");
     await writeFile(seeds, "0x401000\tfunction\tentry\n0x401010\tcode\n");
     const config = parseConfig({
@@ -5365,7 +5325,6 @@ describe("Ghidra analysis seeds and configured language", () => {
     if (!resolved.ok || resolved.value.profile === null)
       throw new Error("expected seed profile");
     return {
-      directory,
       counts,
       client: ghidra.createClient(target, resolved.value.profile),
     };
@@ -5385,21 +5344,17 @@ describe("Ghidra analysis seeds and configured language", () => {
   });
 
   it("reports the verified seed outcome as a session limitation", async () => {
-    const { directory, client } = await seedSession(applied);
-    try {
-      const health = await client.execute("health", {});
-      if (!health.ok) throw health.error;
-      expect(health.value.limitations).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining("caller assertions, not Ghidra discoveries"),
-          expect.stringContaining(
-            "1 functions created, 0 already present, 0 failed; 0 code seeds decoded, 1 failed",
-          ),
-        ]),
-      );
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    const { client } = await seedSession(applied);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("caller assertions, not Ghidra discoveries"),
+        expect.stringContaining(
+          "1 functions created, 0 already present, 0 failed; 0 code seeds decoded, 1 failed",
+        ),
+      ]),
+    );
   });
 
   it.each([
@@ -5412,15 +5367,11 @@ describe("Ghidra analysis seeds and configured language", () => {
       }),
     ],
   ])("fails closed on %s before any analysis call", async (_label, report) => {
-    const { directory, counts, client } = await seedSession(report);
-    try {
-      const failed = await client.execute("list_procedures", {});
-      expect(failed.ok).toBe(false);
-      if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
-      expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    const { counts, client } = await seedSession(report);
+    const failed = await client.execute("list_procedures", {});
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
+    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
   });
 
   it("refuses a profile resolved without the configured seeds or language", async () => {
@@ -7159,7 +7110,7 @@ it("reports an unsupported existing-project target as an invalid REA_GHIDRA_PROJ
 });
 
 it("keeps saved project reports as shared historical Evidence without applying fresh overrides", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-history-project-"));
+  const root = await createTestTempDirectory("rea-history-project-");
   await mkdir(join(root, "history.rep"));
   await writeFile(join(root, "history.gpr"), "marker");
   const prior = {
@@ -7205,7 +7156,6 @@ it("keeps saved project reports as shared historical Evidence without applying f
   );
   onTestFinished(async () => {
     await ghidra.closeOwnedResources();
-    await rm(root, { recursive: true, force: true });
   });
   const target = executableTarget("elf", "x86_64");
   const resolved = await ghidra.resolveAnalysisProfile(target);

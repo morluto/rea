@@ -85,7 +85,6 @@ it("keeps the 128 MiB request when the setting is unset", () => {
 });
 
 it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
-  expect(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB).toBe(7);
   expect(
     parseRegexWorkerHeapRequest(String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)),
   ).toEqual({

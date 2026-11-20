@@ -15,19 +15,34 @@ that key, with those libraries, and starts it.
   the source as `apt-cache policy` lists it, and the sources file entry
   `apt-get indextargets` names for it (its `Sourcesentry` file and line or
   deb822 stanza; `sources.list`, one-line `*.list` or deb822 `*.sources`) with
-  its URI, suite, components and architecture restriction. Flat repositories
+  its authored URI, suite and components, and its architecture restriction. The optional
+  `repo_uri` field records the index's sanitized `Repo-URI` independently of
+  the authored URI. When APT selects a different suite, `repo_suite`
+  records the index's source suite separately from the authored value.
+  One-line source words keep their authored spelling, including quotes and
+  escapes. `repo_components` records the effective component words when
+  one-line parsing changes their spelling. Architecture and signing-key options
+  use APT's decoded option values. Undecodable UTF-8 entries and index
+  paragraphs are withheld without substituting replacement characters.
+  A policy query with undecodable bytes leaves repository attribution unknown.
+  Flat repositories
   (suite `./` or `/`, no components), `[signed-by=…]` and `Signed-By:` options
   and architecture options are read; a deb822 stanza's URIs and suites are
-  kept as lists, never expanded into every pair. `release` is the release's
+  kept as lists, never expanded into every pair. REA matches `$(ARCH)` in
+  a URI or suite against the effective architecture read from `apt-config`
+  and keeps the authored URI and suite. A template match requires that
+  configuration fact. `release` is the release's
   Suite (`a=`), or else its Codename, from the same index target. A user name
   or password in a URI, up to the last `@` before its path as apt reads it,
   is removed from every sources entry, from `apt-get indextargets`'
   `Description`, `Repo-URI` and `Base-URI`, and from the sources
   `apt-cache policy` lists, as they are parsed, so no stanza, entry, record,
   reason or limitation holds it and entries match whether or not apt prints
-  it; `uri_credentials_removed` records that the entry's URI held one.
-  Captures written before `architectures`, `release` and
-  `uri_credentials_removed` were recorded omit them, and still open.
+  it. `uri_credentials_removed` records credentials seen in the entry or
+  index URI. If APT reveals encoded credentials without a safely identifiable
+  boundary in the authored token, the capture omits that token's value.
+  Older captures may omit `architectures`, `release`, `repo_uri` and
+  `uri_credentials_removed`.
 - The repository's key is the candidate that verifies the release beside the
   index in apt's lists folder (`InRelease`, or `Release` with `Release.gpg`,
   named from the target's `Base-URI`) with
@@ -86,7 +101,14 @@ that key, with those libraries, and starts it.
   (`uri_credentials_removed`; a capture written before that field whose
   `uri` still holds them is refused whole, since its library packages counted
   that repository), it is reached over http or https, and its architecture
-  restriction includes the host's. With none usable, the export is refused
+  restriction includes the host's. AgentEnv writes a deb822 source. The
+  exporter and package attribution share the URI, concrete suite and
+  components that reproduce the observed index identity. A capture with
+  a templated suite needs `repo_suite` to replay it. A legacy one-line URI
+  with percent escapes needs a new capture with `repo_uri`. Older captures
+  can replay complete one-line words. When a word was split during capture,
+  capture the application again. A value that cannot be represented as
+  one deb822 token is withheld with the reason. With none usable, the export is refused
   naming each repository, by its URI without credentials, and its reason; the
   credentials reason names no URI. A capture written before
   restrictions and releases were recorded counts its repositories as

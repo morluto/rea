@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { compositeKey } from "./unicodeCodePointOrder.js";
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
@@ -34,14 +35,47 @@ const artifactClaimSchema = z.object({
   kind: z.literal("structural-artifact"),
   dimension: z.literal("overall"),
 });
+const visualClaimSchema = z.object({
+  ...commonClaim,
+  kind: z.literal("visual"),
+  dimension: z.literal("overall"),
+  source_evidence: z
+    .strictObject({
+      before_evidence_id: evidenceIdSchema,
+      after_evidence_id: evidenceIdSchema,
+    })
+    .optional()
+    .describe(
+      "Select the retained screenshot capture for each side. Supply both IDs when a digest matches multiple captures, including byte-identical before and after captures.",
+    ),
+});
 
 const reconstructionClaimSchema = z.discriminatedUnion("kind", [
   behavioralClaimSchema,
   functionClaimSchema,
   artifactClaimSchema,
+  visualClaimSchema,
 ]);
 
-/** Finite, typed behavioral and structural specification. */
+export const reconstructionClaimSelector = (
+  claim: ReconstructionClaim,
+  resolvedPair?: readonly [string, string],
+): string => {
+  const selected = claim.kind === "visual" ? claim.source_evidence : undefined;
+  const pair =
+    resolvedPair ??
+    (selected === undefined
+      ? []
+      : [selected.before_evidence_id, selected.after_evidence_id]);
+  return compositeKey([
+    claim.kind,
+    claim.comparison_evidence_id,
+    claim.dimension,
+    ...pair,
+  ]);
+};
+
+/** Finite, typed behavioral, structural, and visual specification. */
 export const reconstructionSpecificationSchema = z
   .object({
     name: z.string().trim().min(1),
@@ -51,9 +85,8 @@ export const reconstructionSpecificationSchema = z
     const ids = value.claims.map(({ claim_id: id }) => id);
     if (new Set(ids).size !== ids.length)
       context.addIssue({ code: "custom", message: "Claim IDs must be unique" });
-    const selectors = value.claims.map(
-      ({ kind, comparison_evidence_id: id, dimension }) =>
-        `${kind}:${id}:${dimension}`,
+    const selectors = value.claims.map((claim) =>
+      reconstructionClaimSelector(claim),
     );
     if (new Set(selectors).size !== selectors.length)
       context.addIssue({
@@ -69,7 +102,12 @@ export const reconstructionVerificationInputSchema = z.strictObject({
 
 export const reconstructionClaimResultSchema = z.object({
   claim_id: claimIdSchema,
-  kind: z.enum(["behavioral", "structural-function", "structural-artifact"]),
+  kind: z.enum([
+    "behavioral",
+    "structural-function",
+    "structural-artifact",
+    "visual",
+  ]),
   dimension: z.string().min(1),
   status: verificationStatusSchema,
   observed_status: z.enum([
@@ -89,6 +127,17 @@ export const reconstructionClaimResultSchema = z.object({
   limitations: z.array(z.string()),
 });
 
+export const countReconstructionClaimKinds = (
+  claims: readonly Pick<ReconstructionClaimResult, "kind">[],
+) => ({
+  behavioral: claims.filter(({ kind }) => kind === "behavioral").length,
+  structural: claims.filter(
+    ({ kind }) =>
+      kind === "structural-function" || kind === "structural-artifact",
+  ).length,
+  visual: claims.filter(({ kind }) => kind === "visual").length,
+});
+
 /** Evidence-cited result over every declared claim. */
 export const reconstructionVerificationResultSchema = z
   .object({
@@ -101,6 +150,7 @@ export const reconstructionVerificationResultSchema = z
       unknown: z.int().min(0),
       behavioral: z.int().min(0),
       structural: z.int().min(0),
+      visual: z.int().min(0).default(0),
     }),
     claims: z.object({
       items: z.array(reconstructionClaimResultSchema),
@@ -119,6 +169,7 @@ export const reconstructionVerificationResultSchema = z
   .superRefine((result, context) => {
     const { summary } = result;
     const claims = result.claims.items;
+    const kinds = countReconstructionClaimKinds(claims);
     const expectedStatus =
       summary.failed > 0 ? "fail" : summary.unknown > 0 ? "unknown" : "pass";
     const issues = [
@@ -133,10 +184,9 @@ export const reconstructionVerificationResultSchema = z
         ["summary"],
       ],
       [
-        summary.behavioral !==
-          claims.filter(({ kind }) => kind === "behavioral").length ||
-          summary.structural !==
-            claims.filter(({ kind }) => kind !== "behavioral").length,
+        summary.behavioral !== kinds.behavioral ||
+          summary.structural !== kinds.structural ||
+          summary.visual !== kinds.visual,
         "Claim kind counts must summarize retained claims",
         ["summary"],
       ],
@@ -146,7 +196,8 @@ export const reconstructionVerificationResultSchema = z
         ["summary", "total"],
       ],
       [
-        summary.total !== summary.behavioral + summary.structural,
+        summary.total !==
+          summary.behavioral + summary.structural + summary.visual,
         "Claim kind counts must equal the summary total",
         ["summary", "total"],
       ],

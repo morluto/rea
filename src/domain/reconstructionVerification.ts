@@ -1,4 +1,7 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { evidenceFileTarget } from "./evidence.js";
+import { z } from "zod";
 import {
   ArtifactInventoryCarrierError,
   parseArtifactInventoryEvidence,
@@ -11,7 +14,11 @@ import { readComparisonResult } from "./comparisonEvidenceResult.js";
 import type { Evidence } from "./evidence.js";
 import { hasComparisonEvidenceIdentity } from "./comparisonEvidenceIdentity.js";
 import { readEvidenceBundle } from "./evidenceBundle.js";
-import { AnalysisInputError } from "./analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
+} from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
@@ -29,7 +36,9 @@ import {
 import type { ProcessObservationSource } from "./process/processObservation.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
+  countReconstructionClaimKinds,
   reconstructionClaimResultSchema,
+  reconstructionClaimSelector,
   reconstructionSpecificationSchema,
   reconstructionVerificationResultSchema,
   type ReconstructionClaim as Claim,
@@ -43,11 +52,14 @@ import {
   reconstructionUnknownHeads,
 } from "./reconstructionUnknowns.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
+import { comparePngScreenshots } from "./pngVisualDiff.js";
+import { webScreenshotSchema, type WebScreenshot } from "./webScreenshot.js";
 
 const comparisonOperationsByClaimKind = {
   behavioral: "compare_process_captures",
   "structural-function": "compare_functions",
   "structural-artifact": "compare_artifacts",
+  visual: "compare_web_screenshots",
 } as const;
 
 interface FunctionSourceFacts {
@@ -95,10 +107,38 @@ export const verifyReconstruction = (
   );
   const heads = reconstructionUnknownHeads(bundle.unknowns);
   const artifactReplays = new Map<string, ArtifactReplay>();
+  const screenshots: ScreenshotAssessment = {
+    captures: specification.claims.some(({ kind }) => kind === "visual")
+      ? indexScreenshotCaptures(records.values())
+      : new Map(),
+    replayBlockers: new Map(),
+  };
+  const visualSelectors = new Set<string>();
   const results = specification.claims
-    .map((claim, index) =>
-      evaluateClaim(claim, index, records, heads, artifactReplays),
-    )
+    .map((claim, index) => {
+      const result = evaluateClaim(
+        claim,
+        index,
+        records,
+        heads,
+        artifactReplays,
+        screenshots,
+      );
+      if (claim.kind === "visual") {
+        // An inferred capture pair can resolve to the same selector as an explicit pair.
+        const selector = reconstructionClaimSelector(claim, [
+          result.left_evidence_ids[0]!,
+          result.right_evidence_ids[0]!,
+        ]);
+        if (visualSelectors.has(selector))
+          throw claimComparisonInputError(
+            index,
+            "Claim comparison selectors must be unique",
+          );
+        visualSelectors.add(selector);
+      }
+      return result;
+    })
     .sort((left, right) =>
       compareUnicodeCodePoints(left.claim_id, right.claim_id),
     );
@@ -124,8 +164,7 @@ export const verifyReconstruction = (
       passed: count(results, "pass"),
       failed,
       unknown: unresolved,
-      behavioral: results.filter(({ kind }) => kind === "behavioral").length,
-      structural: results.filter(({ kind }) => kind !== "behavioral").length,
+      ...countReconstructionClaimKinds(results),
     },
     claims: {
       items: results,
@@ -145,17 +184,28 @@ const evaluateClaim = (
   records: ReadonlyMap<string, Evidence>,
   heads: ReadonlyMap<string, ResidualUnknown>,
   artifactReplays: Map<string, ArtifactReplay>,
+  screenshots: ScreenshotAssessment,
 ): ClaimResult => {
   const comparison = records.get(claim.comparison_evidence_id);
   if (comparison === undefined)
-    throw missingSourceInputError(
+    throw claimComparisonInputError(
       claimIndex,
       `Missing comparison Evidence ${claim.comparison_evidence_id}`,
     );
   validateComparisonIdentity(claim, comparison, claimIndex);
-  const sides = comparisonSourceEvidenceSides(comparison);
+  const { sides, observation, visualBlockers } =
+    claim.kind === "visual"
+      ? assessScreenshotComparison(claim, comparison, screenshots)
+      : {
+          sides: comparisonSourceEvidenceSides(comparison),
+          observation: comparisonObservation(claim, comparison),
+          visualBlockers: [],
+        };
   const allSourceIds = uniqueSorted([...sides.left, ...sides.right]);
-  if (!sameSet(comparison.evidence_links, allSourceIds))
+  if (
+    claim.kind !== "visual" &&
+    !sameSet(comparison.evidence_links, allSourceIds)
+  )
     throw new EvidenceIntegrityError(
       "Comparison Evidence closure disagrees with its parameters",
       {
@@ -163,17 +213,31 @@ const evaluateClaim = (
           "Comparison Evidence closure disagrees with its parameters",
       },
     );
+  if (
+    claim.kind === "visual" &&
+    comparison.evidence_links.length > 0 &&
+    !sameSet(comparison.evidence_links, allSourceIds)
+  )
+    throw new EvidenceIntegrityError(
+      "Screenshot comparison Evidence links disagree with its artifact inputs",
+      {
+        userMessage:
+          "Screenshot comparison Evidence links disagree with its artifact inputs",
+      },
+    );
   const sources = allSourceIds.map((id) => {
     const source = records.get(id);
     if (source === undefined)
-      throw missingSourceInputError(
+      throw claimComparisonInputError(
         claimIndex,
         `Missing source Evidence ${id}`,
       );
     return source;
   });
-  const sourceFacts = readValidatedSourceFacts(claim, sources);
-  const observation = comparisonObservation(claim, comparison);
+  const sourceFacts =
+    claim.kind === "visual"
+      ? { functions: [], processes: [] }
+      : readValidatedSourceFacts(claim, sources);
   const observed = observation.status;
   const callCoverage = sourceCallCoverage(
     claim,
@@ -183,6 +247,7 @@ const evaluateClaim = (
   const blockers = [
     ...authorityLimitations(claim, sources, sides),
     ...callCoverage.blockers,
+    ...visualBlockers,
     ...sourceProcessCoverage(claim, sourceFacts.processes, observed),
     ...(claim.kind === "structural-artifact"
       ? assessArtifactSourceComparison(
@@ -222,6 +287,159 @@ const evaluateClaim = (
       ),
     ]),
   });
+};
+
+const screenshotComparisonParametersSchema = z.strictObject({
+  before_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  after_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  channel_threshold: z.int().min(0).max(255),
+  comparison_input_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
+});
+
+interface ScreenshotCapture {
+  readonly evidenceId: string;
+  readonly screenshot: WebScreenshot;
+}
+
+interface ScreenshotAssessment {
+  readonly captures: ReadonlyMap<string, readonly ScreenshotCapture[]>;
+  readonly replayBlockers: Map<string, string | null>;
+}
+
+const indexScreenshotCaptures = (records: Iterable<Evidence>) => {
+  const captures = new Map<string, ScreenshotCapture[]>();
+  for (const source of records) {
+    if (
+      source.operation !== "capture_web_screenshot" ||
+      source.predicate_type !== "rea.web-screenshot"
+    )
+      continue;
+    const parsed = readEvidencePayload(
+      webScreenshotSchema,
+      source.normalized_result,
+      { within: ["normalized_result"] },
+    );
+    if (!parsed.ok) throw parsed.error;
+    const sha256 = parsed.value.artifact.sha256;
+    const capture = {
+      evidenceId: source.evidence_id,
+      screenshot: parsed.value,
+    };
+    const existing = captures.get(sha256);
+    if (existing === undefined) captures.set(sha256, [capture]);
+    else existing.push(capture);
+  }
+  return captures;
+};
+
+const assessScreenshotComparison = (
+  claim: Extract<Claim, { kind: "visual" }>,
+  comparison: Evidence,
+  { captures, replayBlockers }: ScreenshotAssessment,
+): {
+  sides: { left: string[]; right: string[] };
+  observation: ComparisonObservation;
+  visualBlockers: string[];
+} => {
+  const parsed = readEvidencePayload(
+    screenshotComparisonParametersSchema,
+    comparison.parameters,
+    { within: ["parameters"] },
+  );
+  if (!parsed.ok) throw parsed.error;
+  const sourceForArtifact = (
+    sha256: string,
+    side: "before" | "after",
+    evidenceId: string | undefined,
+  ) => {
+    const matches = captures.get(sha256);
+    if (evidenceId !== undefined) {
+      const selected = matches?.find((item) => item.evidenceId === evidenceId);
+      if (selected !== undefined) return selected;
+      const message = `Screenshot comparison ${side} capture Evidence does not match its artifact digest or is missing from the bundle (${evidenceId}).`;
+      throw new EvidenceIntegrityError(message, { userMessage: message });
+    }
+    if (matches?.length !== 1) {
+      const message = `Screenshot comparison ${side} artifact does not identify exactly one captured Evidence record. Supply both capture IDs in source_evidence when the digest is ambiguous.`;
+      throw new EvidenceIntegrityError(message, { userMessage: message });
+    }
+    return matches[0]!;
+  };
+  const before = sourceForArtifact(
+    parsed.value.before_artifact_sha256,
+    "before",
+    claim.source_evidence?.before_evidence_id,
+  );
+  const after = sourceForArtifact(
+    parsed.value.after_artifact_sha256,
+    "after",
+    claim.source_evidence?.after_evidence_id,
+  );
+  const saved = readComparisonResult(comparison, "compare_web_screenshots");
+  if (!saved.ok) throw saved.error;
+  const { limitations, ...recorded } = saved.value.result;
+  const visualBlockers: string[] = [];
+  for (const { evidenceId, screenshot } of [before, after]) {
+    const { status, conditions } = screenshot.completeness;
+    if (
+      status !== "complete_within_window" ||
+      conditions.some((condition) => condition !== "complete_within_window")
+    )
+      visualBlockers.push(
+        `Source ${evidenceId}: Screenshot coverage is incomplete (${uniqueSorted([status, ...conditions]).join(", ")}).`,
+      );
+  }
+  // The comparison fixes both artifact digests and the threshold. Coverage
+  // stays specific to the selected captures, while the pixel replay is reusable.
+  let replayBlocker = replayBlockers.get(comparison.evidence_id);
+  if (replayBlocker === undefined) {
+    try {
+      const { limitations: _limitations, ...replayed } = comparePngScreenshots({
+        before: before.screenshot.artifact,
+        after: after.screenshot.artifact,
+        channel_threshold: parsed.value.channel_threshold,
+      });
+      replayBlocker = isDeepStrictEqual(recorded, replayed)
+        ? null
+        : "Retained screenshot pixels do not corroborate the recorded comparison.";
+    } catch (cause) {
+      if (
+        !(cause instanceof TypeError) &&
+        !(cause instanceof AnalysisResourceConstraintError) &&
+        !(cause instanceof AnalysisUnsupportedTargetError)
+      )
+        throw cause;
+      replayBlocker = `Retained screenshot comparison could not be replayed: ${cause.message}`;
+    }
+    replayBlockers.set(comparison.evidence_id, replayBlocker);
+  }
+  if (replayBlocker !== null) visualBlockers.push(replayBlocker);
+  return {
+    sides: { left: [before.evidenceId], right: [after.evidenceId] },
+    observation: {
+      status:
+        recorded.status === "identical"
+          ? "unchanged"
+          : recorded.status === "different"
+            ? "changed"
+            : "unknown",
+      limitations: [
+        ...limitations,
+        ...[before, after].flatMap(({ evidenceId, screenshot }) =>
+          screenshot.limitations.map(
+            (detail) => `Source ${evidenceId}: ${detail}`,
+          ),
+        ),
+        ...(recorded.status === "dimension_mismatch"
+          ? ["Screenshot dimensions differ."]
+          : []),
+      ],
+    },
+    visualBlockers,
+  };
 };
 
 const assessArtifactSourceComparison = (
@@ -295,7 +513,7 @@ const assessArtifactSourceComparison = (
 };
 
 const readValidatedSourceFacts = (
-  claim: Claim,
+  claim: Exclude<Claim, { kind: "visual" }>,
   sources: readonly Evidence[],
 ): ValidatedSourceFacts => {
   const isExpectedType = (source: Evidence): boolean => {
@@ -381,7 +599,7 @@ const validateComparisonIdentity = (
 ): void => {
   const expectedOperation = comparisonOperationsByClaimKind[claim.kind];
   if (evidence.operation !== expectedOperation)
-    throw missingSourceInputError(
+    throw claimComparisonInputError(
       claimIndex,
       `Claim ${claim.claim_id} requires ${expectedOperation} Evidence; selected ${evidence.operation}`,
     );
@@ -391,15 +609,17 @@ const validateComparisonIdentity = (
   }
 };
 
-const comparisonObservation = (
-  claim: Claim,
-  evidence: Evidence,
-): {
+interface ComparisonObservation {
   readonly status: ObservedStatus;
   readonly limitations: readonly string[];
   readonly hasIndependentFunctionChange?: boolean;
   readonly selectedDimensions?: readonly string[];
-} => {
+}
+
+const comparisonObservation = (
+  claim: Exclude<Claim, { kind: "visual" }>,
+  evidence: Evidence,
+): ComparisonObservation => {
   if (claim.kind === "behavioral") {
     const parsed = readComparisonResult(evidence, "compare_process_captures");
     if (!parsed.ok) throw parsed.error;
@@ -460,7 +680,7 @@ const comparisonObservation = (
   return { status: result.status, limitations: [] };
 };
 
-const missingSourceInputError = (claimIndex: number, message: string) =>
+const claimComparisonInputError = (claimIndex: number, message: string) =>
   new AnalysisInputError("verify_reconstruction", { userMessage: message }, [
     {
       path: ["claims", claimIndex, "comparison_evidence_id"],
@@ -478,7 +698,11 @@ const authorityLimitations = (
   },
 ): string[] => {
   const requiredAuthority =
-    claim.kind === "behavioral" ? "controlled-replay" : "shipped-artifact";
+    claim.kind === "behavioral"
+      ? "controlled-replay"
+      : claim.kind === "visual"
+        ? "external-service"
+        : "shipped-artifact";
   const limitations: string[] = [];
   if (sides.left.some((id) => sides.right.includes(id)))
     limitations.push(
@@ -497,7 +721,8 @@ const authorityLimitations = (
       `Source Evidence lacks qualifying ${requiredAuthority} authority.`,
     );
   if (
-    claim.kind !== "behavioral" &&
+    (claim.kind === "structural-function" ||
+      claim.kind === "structural-artifact") &&
     sources.some((source) => evidenceFileTarget(source) === undefined)
   )
     limitations.push("Structural source artifact identity is unavailable.");
