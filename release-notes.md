@@ -360,6 +360,7 @@
 * **web:** consolidate accessibility and storage comparison proofs ([#13085](https://github.com/morluto/rea/issues/13085)) ([3f494e1](https://github.com/morluto/rea/commit/3f494e18fa6aac74199bda740a11c6c94e242d5c))
 * **web:** consolidate artifact cleanup ownership proofs ([#13077](https://github.com/morluto/rea/issues/13077)) ([82224d9](https://github.com/morluto/rea/commit/82224d9f6ccd845a87ff9ff45643c560e4c625f5))
 * **web:** consolidate attached navigation stop checks ([#13143](https://github.com/morluto/rea/issues/13143)) ([ad6e511](https://github.com/morluto/rea/commit/ad6e511b60b6288ce413ff91e4a8ee7302319aaa))
+* **web:** consolidate browser artifact privacy checks ([#13150](https://github.com/morluto/rea/issues/13150)) ([f609aa3](https://github.com/morluto/rea/commit/f609aa3393fba07dbd27e7ad5de6c7a0e930fc34))
 * **web:** consolidate browser event ownership checks ([#13135](https://github.com/morluto/rea/issues/13135)) ([3eff450](https://github.com/morluto/rea/commit/3eff45097763704a45b9830c6cc15ebaec45828a))
 * **web:** consolidate browser session cleanup receipts ([#13146](https://github.com/morluto/rea/issues/13146)) ([65038fa](https://github.com/morluto/rea/commit/65038faf7e0fc424df2f764aa56d34b853c7e3dc))
 * **web:** consolidate browser session initialization cleanup checks ([#13144](https://github.com/morluto/rea/issues/13144)) ([811e26d](https://github.com/morluto/rea/commit/811e26d339aa75e62531761557eb85b338d5b78a))
