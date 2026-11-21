@@ -78,6 +78,9 @@ const registrationSchema = launcherSchema.extend({
 });
 
 export type ClientRegistration = z.output<typeof registrationSchema>;
+const registrationActivationSchema = registrationSchema
+  .pick({ disabled: true, enabled: true })
+  .passthrough();
 
 // Codex, Kimi Code and Pi use enabled. Devin uses disabled. Grok reads its
 // disable list. OpenCode's effective document already uses the selected dialect.
@@ -86,7 +89,7 @@ const ignoresEnabledKey = new Set(["devin"]);
 
 /** Interpret activation on the effective, validated registration. */
 export const clientRegistrationActivation = (
-  registration: ClientRegistration,
+  registration: z.output<typeof registrationActivationSchema>,
   client: SetupClient,
   parsed: ClientConfigurationDocument,
 ): "enabled" | "disabled" => {
@@ -143,6 +146,18 @@ const registrationError = (error: z.ZodError): ConfigurationError =>
       constraint: issue.message,
     })),
   });
+
+/** Read activation from an effective row regardless of its transport. */
+export const parseClientRegistrationActivation = (
+  value: unknown,
+  client: SetupClient,
+  document: ClientConfigurationDocument,
+): Result<"enabled" | "disabled", ConfigurationError> => {
+  const parsed = registrationActivationSchema.safeParse(value);
+  return parsed.success
+    ? ok(clientRegistrationActivation(parsed.data, client, document))
+    : err(registrationError(parsed.error));
+};
 
 /** Launcher identity remains usable when unrelated readiness settings are invalid. */
 export const parseClientRegistrationLauncher = (

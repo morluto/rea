@@ -413,11 +413,33 @@ cliTest(
   },
 );
 
-for (const fallback of ["none", "foreign local", "remote"] as const) {
+for (const { label, entry, permitsRemoval } of [
+  { label: "no fallback", entry: undefined, permitsRemoval: true },
+  {
+    label: "a foreign local fallback",
+    entry: openCodePeer,
+    permitsRemoval: false,
+  },
+  {
+    label: "an enabled remote fallback",
+    entry: openCodeRemote,
+    permitsRemoval: false,
+  },
+  {
+    label: "a disabled remote fallback",
+    entry: { ...openCodeRemote, disabled: true },
+    permitsRemoval: true,
+  },
+  {
+    label: "a remote fallback with malformed activation",
+    entry: { ...openCodeRemote, disabled: "true" },
+    permitsRemoval: false,
+  },
+]) {
   cliTest(
-    fallback !== "none"
-      ? `project uninstall preserves the whole selected set when removing copies would expose a ${fallback} fallback`
-      : "project uninstall removes all owned files after checking their combined fallback",
+    permitsRemoval
+      ? `project uninstall removes all owned files with ${label}`
+      : `project uninstall preserves the whole selected set when removal would expose ${label}`,
     async ({ cli }) => {
       const root = await createTestTempDirectory(
         "rea-project-uninstall-multi-file-",
@@ -434,15 +456,9 @@ for (const fallback of ["none", "foreign local", "remote"] as const) {
       });
       const lowerPath = join(root, "opencode.json");
       const lower =
-        fallback === "none"
+        entry === undefined
           ? undefined
-          : await put(lowerPath, {
-              mcp: {
-                servers: {
-                  rea: fallback === "remote" ? openCodeRemote : openCodePeer,
-                },
-              },
-            });
+          : await put(lowerPath, { mcp: { servers: { rea: entry } } });
       const run = () =>
         cli.run({
           arguments: ["uninstall", "--project", selected, "--json"],
@@ -451,7 +467,7 @@ for (const fallback of ["none", "foreign local", "remote"] as const) {
         });
 
       const result = await run();
-      if (fallback !== "none") {
+      if (!permitsRemoval) {
         expect(result.exitCode, result.stdout).toBe(1);
         expect(result.json).toMatchObject({ status: "failed" });
         expect(await readFile(firstPath, "utf8")).toBe(first);
@@ -489,6 +505,8 @@ for (const fallback of ["none", "foreign local", "remote"] as const) {
           }),
         ]),
       });
+      if (lower !== undefined)
+        expect(await readFile(lowerPath, "utf8")).toBe(lower);
       expect(JSON.parse(await readFile(firstPath, "utf8"))).toEqual({
         mcp: { servers: { first: openCodePeer } },
       });

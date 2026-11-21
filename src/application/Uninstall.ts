@@ -46,9 +46,8 @@ import {
   type ClientConfigurationSource,
 } from "./ClientConfigurationFiles.js";
 import {
-  clientRegistrationActivation,
   clientRegistrationOwnership,
-  parseClientRegistrationPolicy,
+  parseClientRegistrationActivation,
 } from "./ClientRegistration.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -1543,16 +1542,19 @@ const verifyProjectFallback = async (
     clientRegistrationOwnership(remaining, project.userClient) !== "owned"
   )
     return undefined;
+  if (document !== undefined && remaining !== undefined) {
+    const activation = parseClientRegistrationActivation(
+      remaining,
+      project.userClient,
+      document,
+    );
+    if (activation.ok && activation.value === "disabled") return undefined;
+  }
   if (environmentError !== undefined) return failed(environmentError.detail);
-  if (document === undefined || remaining === undefined) return undefined;
-  const parsed = parseClientRegistrationPolicy(remaining, project.userClient);
-  return parsed.ok &&
-    clientRegistrationActivation(parsed.value, project.userClient, document) ===
-      "disabled"
-    ? undefined
-    : failed(
-        `Removing this registration would leave another or unresolved REA registration at ${configPath}. No change was made. Review that registration, then rerun uninstall.`,
-      );
+  if (remaining === undefined) return undefined;
+  return failed(
+    `Removing this registration would leave another or unresolved REA registration at ${configPath}. No change was made. Review that registration, then rerun uninstall.`,
+  );
 };
 
 /** Match the planned bytes and path identities before applying its next edit. */
