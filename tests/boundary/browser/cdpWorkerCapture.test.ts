@@ -3605,43 +3605,91 @@ it("retains attach-limited worker node and containment coverage", async () => {
   ).toMatchObject({ status: "partial", omitted_count: null });
 });
 
-it.each(["controlled", "revoked", "foreign"] as const)(
+const unresolvedWorkerScopes = [
+  "controlled",
+  "revoked",
+  "foreign",
+  "anonymous-controlled",
+  "anonymous-foreign",
+  "anonymous-stopped",
+  "anonymous-late-iframe",
+  "anonymous-late-worker",
+  "anonymous-late-foreign",
+] as const;
+it.each(unresolvedWorkerScopes)(
   "retains discovery gaps for unresolved Service Worker versions: %s",
   (scope) => verifyUnresolved(scope),
 );
-async function verifyUnresolved(scope: "controlled" | "revoked" | "foreign") {
+async function verifyUnresolved(
+  scope: (typeof unresolvedWorkerScopes)[number],
+) {
+  const anonymous = scope.startsWith("anonymous-");
+  const lateClient = scope.startsWith("anonymous-late-");
+  const foreign =
+    scope === "foreign" ||
+    scope === "anonymous-foreign" ||
+    scope === "anonymous-late-foreign";
+  const incomplete = !foreign && scope !== "anonymous-stopped";
   const { provider, input } = await fixture({
     commandResult: (c) =>
       c.method === "Target.getTargets" ? { targetInfos: [] } : undefined,
-    commandEvents: (command) =>
-      command.method === "ServiceWorker.enable"
+    eventsBeforeReply: ["ServiceWorker.enable", "Target.setAutoAttach"],
+    commandEvents: (command, origin) =>
+      lateClient &&
+      command.method === "Target.setAutoAttach" &&
+      command.params.autoAttach === true &&
+      command.sessionId === "session-1"
         ? [
             {
-              method: "ServiceWorker.workerVersionUpdated",
+              method: "Target.attachedToTarget",
               sessionId: "session-1",
               params: {
-                versions: [
-                  {
-                    targetId: "vanished",
-                    controlledClients: [
-                      scope === "foreign" ? "other-page" : "allowed-page",
-                    ],
-                    status: "activated",
-                  },
-                  ...(scope === "revoked"
-                    ? [
-                        {
-                          targetId: "vanished",
-                          controlledClients: [],
-                          status: "redundant",
-                        },
-                      ]
-                    : []),
-                ],
+                sessionId: "owned-client-session",
+                targetInfo: {
+                  targetId: "late-client",
+                  type: scope === "anonymous-late-iframe" ? "iframe" : "worker",
+                  url: origin + "/client.js",
+                  attached: true,
+                },
               },
             },
           ]
-        : undefined,
+        : command.method === "ServiceWorker.enable"
+          ? [
+              {
+                method: "ServiceWorker.workerVersionUpdated",
+                sessionId: "session-1",
+                params: {
+                  versions: [
+                    {
+                      ...(anonymous ? {} : { targetId: "vanished" }),
+                      versionId: "hidden-version-marker",
+                      scriptURL: "https://unpublished.invalid/hidden-script.js",
+                      runningStatus:
+                        scope === "anonymous-stopped" ? "stopped" : "running",
+                      controlledClients: [
+                        foreign
+                          ? "other-page"
+                          : lateClient
+                            ? "late-client"
+                            : "allowed-page",
+                      ],
+                      status: "activated",
+                    },
+                    ...(scope === "revoked"
+                      ? [
+                          {
+                            targetId: "vanished",
+                            controlledClients: [],
+                            status: "redundant",
+                          },
+                        ]
+                      : []),
+                  ],
+                },
+              },
+            ]
+          : undefined,
   });
   const captured = await provider.inspectPage(input);
   if (!captured.ok) throw captured.error;
@@ -3650,7 +3698,13 @@ async function verifyUnresolved(scope: "controlled" | "revoked" | "foreign") {
   );
   expect(
     captured.value.completeness.unavailable_sections.includes("workers"),
-  ).toBe(scope !== "foreign");
+  ).toBe(incomplete);
+  if (anonymous) {
+    expect(JSON.stringify(captured.value)).not.toContain(
+      "hidden-version-marker",
+    );
+    expect(JSON.stringify(captured.value)).not.toContain("hidden-script.js");
+  }
   const evidence = createBrowserEvidence(
     "inspect_web_page",
     input,
@@ -3658,7 +3712,7 @@ async function verifyUnresolved(scope: "controlled" | "revoked" | "foreign") {
     provider.identity(),
   );
   expect(parseRuntimeCaptures([evidence])[0]?.scriptsCompleteWithinScope).toBe(
-    scope === "foreign",
+    !incomplete,
   );
 }
 

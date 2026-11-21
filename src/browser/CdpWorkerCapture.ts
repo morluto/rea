@@ -86,6 +86,7 @@ export class CdpWorkerCapture {
     { targetId: string; detached: boolean; autoAttach: boolean }
   >();
   readonly #controlled = new Set<string>();
+  readonly #targetlessRunningClients = new Set<string>();
   readonly #versionsByTarget = new Map<
     string,
     {
@@ -599,7 +600,7 @@ export class CdpWorkerCapture {
         if (existing !== undefined) return;
         const frame = { targetId, detached: false, autoAttach: false };
         this.#frames.set(sessionId, frame);
-        this.#refreshServiceClients();
+        this.#refreshServiceClients(targetId);
         this.#queue(async () => {
           if (frame.detached) return;
           try {
@@ -627,7 +628,7 @@ export class CdpWorkerCapture {
       if (related && worker.item.observation.ownership !== "page_related") {
         worker.item.observation.ownership = "page_related";
         worker.item.observation.page_target_id = this.context.target.id;
-        this.#refreshServiceClients();
+        this.#refreshServiceClients(worker.item.target_id);
       }
       this.#attach(worker, sessionId);
       return;
@@ -830,8 +831,24 @@ export class CdpWorkerCapture {
         );
         continue;
       }
-      // Installed/stopped versions need not have a running Target.
-      if (version.targetId === undefined) continue;
+      const clients =
+        Array.isArray(version.controlledClients) &&
+        version.controlledClients.every(
+          (client) => typeof client === "string" && client.length > 0,
+        )
+          ? version.controlledClients
+          : null;
+      if (version.targetId === undefined) {
+        // A running controlled worker without a target cannot be reconciled with inventory.
+        if (version.runningStatus === "running" && clients !== null) {
+          if (this.#controlsPage(clients) === true)
+            this.pageEvents.completeness.unavailable("workers");
+          else
+            for (const client of clients)
+              this.#targetlessRunningClients.add(client);
+        }
+        continue;
+      }
       const id = cdpStringValue(version.targetId);
       if (id === undefined || id.length === 0) {
         this.pageEvents.completeness.exclude(
@@ -845,13 +862,6 @@ export class CdpWorkerCapture {
         this.#invalidServiceTarget(id);
         continue;
       }
-      const clients =
-        Array.isArray(version.controlledClients) &&
-        version.controlledClients.every(
-          (client) => typeof client === "string" && client.length > 0,
-        )
-          ? version.controlledClients
-          : null;
       if (version.controlledClients !== undefined && clients === null) {
         this.pageEvents.completeness.unavailable("workers");
         this.pageEvents.completeness.exclude(
@@ -899,7 +909,12 @@ export class CdpWorkerCapture {
     );
   }
 
-  #refreshServiceClients(): void {
+  #refreshServiceClients(newOwnedClient?: string): void {
+    if (
+      newOwnedClient !== undefined &&
+      this.#targetlessRunningClients.delete(newOwnedClient)
+    )
+      this.pageEvents.completeness.unavailable("workers");
     for (const [id, versions] of this.#versionsByTarget) {
       let current: boolean | null = null;
       let observedControl = false;
