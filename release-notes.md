@@ -34,6 +34,7 @@
 * **build:** keep Windows import symbols independent of the build path ([#12753](https://github.com/morluto/rea/issues/12753)) ([f85fae6](https://github.com/morluto/rea/commit/f85fae63e149a8164e17949f65f7884fd043a4b5))
 * **bun:** keep budget refusals out of layout selection ([#12763](https://github.com/morluto/rea/issues/12763)) ([ae72c30](https://github.com/morluto/rea/commit/ae72c30e2c4b37b1ab24028d474e8e40502feb46))
 * **capture:** distinguish corrupt SAZ metadata bytes ([#13204](https://github.com/morluto/rea/issues/13204)) ([ff3919f](https://github.com/morluto/rea/commit/ff3919f3eb9bbbe311b1632990da29776a1fb407))
+* **capture:** keep credential checks independent of body filters ([#13215](https://github.com/morluto/rea/issues/13215)) ([587cca5](https://github.com/morluto/rea/commit/587cca5c5c82fbb4bb86307670fe79638ff82003))
 * **capture:** retain credential checks across MIME conflicts ([#13209](https://github.com/morluto/rea/issues/13209)) ([6152c02](https://github.com/morluto/rea/commit/6152c02f3f384723f6fac2470b380b682e1c6387))
 * **capture:** surface unsupported decoder requirements ([#13203](https://github.com/morluto/rea/issues/13203)) ([088bc68](https://github.com/morluto/rea/commit/088bc68b1cbddb11b7432e7541ba66f47409abf2))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
