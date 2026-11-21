@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { constants } from "node:fs";
+import { copyFile, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { delimiter, dirname, join } from "node:path";
 import { expect, it } from "vitest";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import {
@@ -375,6 +376,79 @@ it
     });
     expect(launchFromClient(command)).toBe("6.7.0");
     expect(await claudeCodeState(home, entrypoint)).toBe("aligned");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps an independent Node alias across sibling removal and a runtime upgrade",
+  async () => {
+    const home = await createTestTempDirectory("rea-aube-node-upgrade-");
+    const { entrypoint, shim } = await installWithMise(
+      join(home, "installs", "rea"),
+      "6.7.0",
+    );
+    const oldVersion = join(home, "node-versions", "old");
+    const oldRuntime = join(oldVersion, "node");
+    await mkdir(oldVersion, { recursive: true });
+    await copyFile(process.execPath, oldRuntime, constants.COPYFILE_FICLONE);
+
+    const bin = dirname(shim);
+    const sibling = join(bin, "node");
+    const dependentBin = join(home, "dependent-bin");
+    const stableBin = join(home, "stable-bin");
+    const fallback = join(stableBin, "node");
+    await mkdir(dependentBin);
+    await mkdir(stableBin);
+    await rm(sibling);
+    await symlink(oldRuntime, sibling);
+    await symlink(sibling, join(dependentBin, "node"));
+    await symlink(oldRuntime, fallback);
+    await writeFile(entrypoint, "console.log(process.execPath);\n");
+
+    const owner = new URL(
+      "../../../dist/application/ClientRegistrationIdentity.js",
+      import.meta.url,
+    );
+    const command: readonly string[] = JSON.parse(
+      execFileSync(
+        oldRuntime,
+        [
+          "--input-type=module",
+          "--eval",
+          `
+          import { currentClientRegistrationCommand } from ${JSON.stringify(owner.href)};
+          console.log(JSON.stringify(currentClientRegistrationCommand({ entrypointPath: process.argv[1] })));
+        `,
+          entrypoint,
+        ],
+        {
+          encoding: "utf8",
+          env: { PATH: [dependentBin, bin, stableBin].join(delimiter) },
+        },
+      ),
+    );
+    expect(launchFromClient(command)).toBe(oldRuntime);
+    await rm(sibling);
+    expect(launchFromClient(command)).toBe(oldRuntime);
+
+    await rm(fallback);
+    await symlink(process.execPath, fallback);
+    await rm(oldVersion, { recursive: true });
+    expect(launchFromClient(command)).toBe(process.execPath);
+    await registerWithClaudeCode(home, command);
+    expect(await claudeCodeState(home, entrypoint)).toBe("aligned");
+
+    // A previously saved alias through the sibling still identifies REA,
+    // but doctor should recommend a refresh before that sibling is removed.
+    await symlink(process.execPath, sibling);
+    const dependentCommand = command.map((word) =>
+      word === fallback ? join(dependentBin, "node") : word,
+    );
+    await registerWithClaudeCode(home, dependentCommand);
+    expect(
+      classifyClientRegistrationCommand(dependentCommand, entrypoint),
+    ).toBe("owned");
+    expect(await claudeCodeState(home, entrypoint)).toBe("stale");
   },
 );
 

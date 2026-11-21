@@ -26,7 +26,7 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   aubeShimLauncher,
   aubeShimRegistration,
-  aubeShimTarget,
+  inspectAubeShim,
   type AubeShimLauncher,
   registeredAubeShim,
 } from "../process/AubeBinShim.js";
@@ -105,10 +105,19 @@ export const managedClientLauncher = (
     PRODUCT_IDENTITY.cliBinary,
     process.execPath,
   );
-  return launcher === undefined ||
-    usesTransientLauncherPath(launcher.shim, roots)
+  if (launcher === undefined || usesTransientLauncherPath(launcher.shim, roots))
+    return undefined;
+  // A fallback that walks through the sibling fails when the sibling disappears.
+  const fallbackRuntime = registrationRuntimePath(
+    process.execPath,
+    "node",
+    environment,
+    platform,
+    launcher.siblingRuntime,
+  );
+  return fallbackRuntime === undefined
     ? undefined
-    : launcher;
+    : { shim: launcher.shim, fallbackRuntime };
 };
 
 /** Restrictions on the automatically selected launcher shared by setup and mcp add. */
@@ -241,16 +250,19 @@ const sameFileExecutableAlias = (
   name: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   identify: typeof entrypointIdentity,
+  excludedPath?: string,
 ): string | undefined => {
   const roots = transientLauncherRoots(environment);
+  const excluded = (path: string) =>
+    launcherPathWalksThrough(
+      path,
+      (hop) => hop === excludedPath || transientLauncherPath(hop, roots),
+    );
   let fallback = selected;
-  if (usesTransientLauncherPath(selected, roots)) {
+  if (excluded(selected)) {
     try {
       fallback = realpathSync.native(selected);
-      if (
-        transientLauncherPath(fallback, roots) ||
-        identify(fallback, selected) !== "owned"
-      )
+      if (excluded(fallback) || identify(fallback, selected) !== "owned")
         return undefined;
     } catch {
       return undefined;
@@ -262,7 +274,7 @@ const sameFileExecutableAlias = (
     { relativeEntries: "skip" },
   )) {
     if (identify(candidate, selected) !== "owned") continue;
-    if (usesTransientLauncherPath(candidate, roots)) continue;
+    if (excluded(candidate)) continue;
     try {
       accessSync(candidate, constants.X_OK);
       return candidate;
@@ -273,23 +285,23 @@ const sameFileExecutableAlias = (
   return fallback;
 };
 
-/** Follow directory and file links in POSIX lookup order, before realpath can erase a session hop. */
-const usesTransientLauncherPath = (
+/** Follow directory and file links in POSIX order before realpath erases the hops. */
+const launcherPathWalksThrough = (
   path: string,
-  roots: readonly string[],
+  matches: (hop: string) => boolean,
 ): boolean => {
   if (!posix.isAbsolute(path)) return false;
   const activeLinks = new Set<string>();
-  const transient = Symbol("transient");
+  const matched = Symbol("matched");
   const walk = (
     target: string,
     directory: string,
-  ): string | typeof transient | undefined => {
+  ): string | typeof matched | undefined => {
     const absolute = posix.isAbsolute(target);
     const spelled = absolute
       ? target
       : appendCallerPath(directory, target, "linux");
-    if (transientLauncherPath(spelled, roots)) return transient;
+    if (matches(spelled)) return matched;
     let current = absolute ? "/" : directory;
     for (const component of target.split("/")) {
       if (component === "" || component === ".") continue;
@@ -298,7 +310,7 @@ const usesTransientLauncherPath = (
         continue;
       }
       const next = posix.join(current, component);
-      if (transientLauncherPath(next, roots)) return transient;
+      if (matches(next)) return matched;
       if (!lstatSync(next).isSymbolicLink()) {
         current = next;
         continue;
@@ -313,13 +325,19 @@ const usesTransientLauncherPath = (
     return current;
   };
   try {
-    return walk(path, "/") === transient;
+    return walk(path, "/") === matched;
   } catch {
-    // A missing or unreadable component is not evidence of a session hop.
+    // Missing evidence cannot prove that a path goes through the matched hop.
     // Ownership and launch readiness are checked independently.
     return false;
   }
 };
+
+const usesTransientLauncherPath = (
+  path: string,
+  roots: readonly string[],
+): boolean =>
+  launcherPathWalksThrough(path, (hop) => transientLauncherPath(hop, roots));
 
 const transientLauncherRoots = (
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -398,6 +416,7 @@ export const registrationRuntimePath = (
   runtime: JavaScriptRuntime["id"],
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
+  excludedPath?: string,
 ): string | undefined =>
   platform === "win32"
     ? executable
@@ -406,6 +425,7 @@ export const registrationRuntimePath = (
         runtime,
         environment,
         entrypointIdentity,
+        excludedPath,
       );
 
 /** Preserve aliases only when the execution form and selected file agree. */
@@ -430,8 +450,7 @@ export const equivalentClientRegistrationCommands = (
     prior.entrypoint !== undefined &&
     prior.identity === "owned" &&
     prior.launch === requestedFacts.launch &&
-    (prior.launch !== "managed_shim" ||
-      prior.fallbackRuntimeIdentity === "owned")
+    (prior.launch !== "managed_shim" || prior.independentFallback === true)
   );
 };
 
@@ -446,8 +465,8 @@ export interface ClientRegistrationCommandFacts {
     | "unknown";
   /** Selected absolute launcher/script path; excludes package and unresolved PATH commands. */
   readonly entrypoint: string | undefined;
-  /** A managed shim's fallback can drift while its primary interpreter still runs. */
-  readonly fallbackRuntimeIdentity?: ClientRegistrationCommandIdentity;
+  /** The fallback must reach the current interpreter without the shim's sibling. */
+  readonly independentFallback?: boolean;
   readonly package:
     | {
         readonly reference: string;
@@ -501,10 +520,10 @@ const inspectDirectRegistrationCommand = (
     currentCommandPath !== undefined && currentCommandPath.length > 0;
   const managed = registeredAubeShim(command);
   if (managed !== undefined) {
-    const target =
+    const shim =
       HOST_PLATFORM.platform === "win32"
         ? undefined
-        : aubeShimTarget(
+        : inspectAubeShim(
             managed.shim,
             process.execPath,
             managed.fallbackRuntime,
@@ -512,14 +531,18 @@ const inspectDirectRegistrationCommand = (
     return {
       launch: "managed_shim",
       identity:
-        target === undefined || !currentPathAvailable
+        shim === undefined || !currentPathAvailable
           ? "unknown"
-          : entrypointIdentity(target, currentCommandPath),
-      entrypoint: target,
-      fallbackRuntimeIdentity: entrypointIdentity(
-        managed.fallbackRuntime,
-        process.execPath,
-      ),
+          : entrypointIdentity(shim.target, currentCommandPath),
+      entrypoint: shim?.target,
+      independentFallback:
+        shim !== undefined &&
+        entrypointIdentity(managed.fallbackRuntime, process.execPath) ===
+          "owned" &&
+        !launcherPathWalksThrough(
+          managed.fallbackRuntime,
+          (hop) => hop === shim.siblingRuntime,
+        ),
       package: undefined,
     };
   }
@@ -569,7 +592,7 @@ const inspectDirectRegistrationCommand = (
     const managedTarget =
       HOST_PLATFORM.platform !== "win32" &&
       javaScriptRuntime(process.versions).id === "node"
-        ? aubeShimTarget(executable, process.execPath)
+        ? inspectAubeShim(executable, process.execPath)?.target
         : undefined;
     if (managedTarget !== undefined)
       return {

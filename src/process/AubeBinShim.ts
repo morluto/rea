@@ -135,12 +135,18 @@ const sameFile = (left: string, right: string): boolean => {
   }
 };
 
-/** The script launched by a supported Aube Node shim with its recorded binding. */
-export const aubeShimTarget = (
+interface AubeShimFacts {
+  readonly target: string;
+  /** The sibling slot, before any symlink at that file is followed. */
+  readonly siblingRuntime: string;
+}
+
+/** The script and sibling slot of a supported Aube Node shim. */
+export const inspectAubeShim = (
   shim: string,
   runtime: string,
   fallbackRuntime?: string,
-): string | undefined => {
+): AubeShimFacts | undefined => {
   if (!isAbsolute(shim)) return undefined;
   const lines = readShim(shim)?.split("\n");
   if (lines?.shift() !== "#!/bin/sh") return undefined;
@@ -204,20 +210,28 @@ export const aubeShimTarget = (
       )
         return undefined;
     }
-    return resolve(parent, target);
+    return {
+      target: resolve(parent, target),
+      siblingRuntime: appendCallerPath(realpathSync.native(parent), "node"),
+    };
   } catch {
     return undefined;
   }
 };
+
+interface AubeShimLocation {
+  readonly shim: string;
+  readonly siblingRuntime: string;
+}
 
 /** The outer generated shim that selects the running installation's script. */
 export const aubeShimLauncher = (
   entrypoint: string,
   name: string,
   installedRuntime: string,
-): AubeShimLauncher | undefined => {
+): AubeShimLocation | undefined => {
   if (!isAbsolute(entrypoint) || !shellHelpersAvailable()) return undefined;
-  let launcher: AubeShimLauncher | undefined;
+  let launcher: AubeShimLocation | undefined;
   for (
     let directory = dirname(entrypoint);
     directory !== dirname(directory);
@@ -225,14 +239,13 @@ export const aubeShimLauncher = (
   ) {
     if (basename(directory) !== "node_modules") continue;
     const candidate = join(directory, ".bin", name);
-    const target = aubeShimTarget(
+    const inspected = inspectAubeShim(
       candidate,
       installedRuntime,
       installedRuntime,
     );
-    // The fallback must survive independently of the shim's sibling Node.
-    if (target !== undefined && sameFile(target, entrypoint))
-      launcher = { shim: candidate, fallbackRuntime: installedRuntime };
+    if (inspected !== undefined && sameFile(inspected.target, entrypoint))
+      launcher = { shim: candidate, siblingRuntime: inspected.siblingRuntime };
   }
   return launcher;
 };

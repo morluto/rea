@@ -31,8 +31,9 @@ repairing it; an unidentified registration remains untouched. See
 For a supported Aube v2 package shim, setup saves a wrapper around the shim so
 the registration can follow the manager's REA installation across upgrades.
 The wrapper supplies shell helpers by absolute path and binds a verified
-absolute Node path for the shim's fallback. The shim can use its own
-interpreter when available and can launch without Node on the client's
+Node path for the shim's fallback. Setup prefers a Node alias that works
+independently of the shim's sibling interpreter, then falls back to the
+installed Node executable. The shim can launch without Node on the client's
 `PATH` if the sibling interpreter is missing or stops resolving.
 
 Setup forwards supported, explicitly selected REA settings into client
