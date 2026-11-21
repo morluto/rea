@@ -287,13 +287,16 @@ it("decodes an archive another keyed archiver wrote, as Foundation does", async 
       }),
     ),
   );
-  const { roots, objects, references, limitations } = await inspect(root, {
-    path: "Contents/Resources/Model.plist",
-  });
+  const { archiver, roots, objects, references, limitations } = await inspect(
+    root,
+    { path: "Contents/Resources/Model.plist" },
+  );
+  expect(archiver).toBe("NSKeyedArchiver");
   await expect(
     inspect(root, { path: "Contents/Resources/Scene.scn" }),
   ).resolves.toMatchObject({
     archive_path: "Contents/Resources/Scene.scn",
+    archiver: "SCNKeyedArchiver",
     roots,
     objects,
     references,
