@@ -217,8 +217,11 @@ instructions and references. Consumers should use `identity.skill.state`,
 obsolete `installed_catalog_digest` field has been removed; current catalog
 identity remains available at `identity.catalog`.
 
-Setup pins package-runner MCP registrations to the exact installed REA version,
-installs the matching skill and on-demand references in the same plan, and adds
+Setup records MCP registrations that launch the installation performing setup
+directly: its absolute JavaScript runtime and entry script, followed by `mcp`
+(see [MCP Registry](#mcp-registry)). Client starts therefore run that
+installation instead of resolving a package. In the same plan, setup installs
+the matching skill and on-demand references and adds
 `startup_timeout_sec = 30` for Codex and Grok Build when no positive timeout
 is already configured. Codex also receives a
 `tool_timeout_sec` derived from known provider startup plus operation headroom.
@@ -630,6 +633,10 @@ cd rea
 npm ci
 npm run build:cached
 ```
+
+These commands do not build the Windows x64 native addon or its manifest.
+Windows workflows that need native controls require the extra step in
+[Windows source checkouts](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#windows-source-checkouts).
 
 Then run `npm link` once in the checkout to put its `rea` on your `PATH`, or,
 wherever these docs say `rea …`, run

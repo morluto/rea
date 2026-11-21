@@ -1,7 +1,6 @@
 import { expect, it } from "vitest";
 import { RecordingIdaMcp } from "../../tests/fixtures/idaMcp.js";
 import { IdaOperationRunner } from "./IdaOperationRunner.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 
 const target: BinaryTarget = {
@@ -60,71 +59,38 @@ it("rejects file coordinates before any symbol lookup", async () => {
   });
 });
 
-it("retains usable function identities and raw spans without inventing body ranges", async () => {
+it("projects the native xref source function and retains unused span evidence", async () => {
   const producer = new RecordingIdaMcp(target, "attached");
   const runner = new IdaOperationRunner(producer, "native");
-  const identity = { address: "0x1000", name: "main" };
-  const spans: Record<string, JsonValue>[] = [
-    {},
-    { size: null },
-    { size: { bytes: 32 } },
-    { size: "0x20" },
-  ];
-  for (const span of spans) {
-    const fn = { addr: "0x1000", name: "main", ...span };
-    const inventory = [{ data: [fn], next_offset: null }];
-    producer.overrideCall = (tool) => {
-      switch (tool) {
-        case "list_funcs":
-          return inventory;
-        case "lookup_funcs":
-          return [{ query: "main", fn, error: null }];
-        case "xrefs_to":
-          return [
-            {
-              xrefs: [{ addr: "0x1004", type: "code", fn }],
-              more: false,
-              error: null,
-            },
-          ];
-        default:
-          return undefined;
-      }
-    };
-
-    expect(await runner.run("list_procedures", {})).toEqual([
-      { address: "0x1000", value: "main" },
-    ]);
-    expect(await runner.resolve("main")).toEqual(identity);
-    expect(await runner.xrefs("0x1000")).toEqual([
-      { address: "0x1004", type: "code", function: identity },
-    ]);
-    expect(
-      await runner.run("read_function_instructions", { procedure: "main" }),
-    ).toMatchObject({
-      procedure: {
-        ...identity,
-        body: {
-          available: false,
-          reason: expect.stringContaining("complete function body ranges"),
+  const response = [
+    {
+      xrefs: [
+        {
+          addr: "0x1004",
+          type: "code",
+          fn: { addr: "0x1000", name: "main", size: { bytes: 32 } },
         },
-      },
-    });
-    expect(runner.raw).toContainEqual(
-      expect.objectContaining({ tool: "list_funcs", result: inventory }),
-    );
-  }
-
-  for (const fn of [
-    { address: "invalid", name: "main" },
-    { address: "0x1000", name: "" },
-  ]) {
-    producer.overrideCall = (tool) =>
-      tool === "lookup_funcs"
-        ? [{ query: "main", fn, error: null }]
-        : undefined;
-    await expect(runner.resolve("main")).rejects.toThrow();
-  }
+      ],
+      more: false,
+      error: null,
+    },
+  ];
+  producer.overrideCall = (tool) =>
+    tool === "xrefs_to" ? response : undefined;
+  expect(await runner.xrefs("0x1000")).toEqual([
+    {
+      address: "0x1004",
+      type: "code",
+      function: { address: "0x1000", name: "main" },
+    },
+  ]);
+  expect(runner.raw).toEqual([
+    {
+      tool: "xrefs_to",
+      arguments: { addrs: ["0x1000"], limit: 1000 },
+      result: response,
+    },
+  ]);
 });
 
 it.each([

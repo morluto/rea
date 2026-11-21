@@ -10,7 +10,7 @@ import type { Logger } from "pino";
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
 import type { DesktopStateReaders } from "../application/desktop/DesktopApplicationState.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   ArtifactReaderFailure,
@@ -256,13 +256,10 @@ const withStateReaders = async (
             bindArtifactFileCleanup(cause, failure);
             return failure;
           });
-          const combined = analysisErrorWithCleanupFailure(
-            typed[0]!,
-            typed[1]!,
-            operation,
+          // Fold left so every close failure keeps its reason and owner.
+          throw typed.reduce((primary, cleanup) =>
+            analysisErrorWithCleanupDependencies(primary, cleanup, operation),
           );
-          combined.bindCleanupDependencies(typed);
-          throw combined;
         }
       },
     },

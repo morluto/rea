@@ -654,6 +654,116 @@ describe("DeepSeek Harness repair boundaries", () => {
   });
 });
 
+it("recognizes REA inside nested Cordis groups and removes only its row", async () => {
+  const { home, client } = await harnessClient();
+  const entry = canonicalEntry();
+  const callerPeer = { id: "caller-peer", name: "caller-plugin" };
+  const opaque = {
+    id: "caller-config",
+    name: "caller-plugin",
+    group: false,
+    config: [entry],
+  };
+  const group = {
+    id: "tools",
+    name: "@deepseek-ai/cordis-plugin-group",
+    group: true,
+    config: [
+      {
+        id: "local",
+        name: "@deepseek-ai/cordis-plugin-group",
+        group: true,
+        config: [entry, callerPeer, opaque],
+      },
+    ],
+  };
+  const initial = stringifyYaml([{ insert: [group] }]).replace(
+    /^(\s*)- id: caller-peer$/m,
+    "$1# keep group sibling\n$1- id: caller-peer",
+  );
+  await writeFile(client.configPath, initial);
+
+  expect(await inspectClientConfiguration(client, {}, command)).toMatchObject({
+    status: "invalid",
+    remediation: expect.stringContaining("group"),
+  });
+  expect(await dshStatus(home)).toMatchObject({
+    state: "invalid",
+    remediation: expect.stringContaining("group"),
+  });
+  expect((await configureClientConfiguration(client, {}, command)).status).toBe(
+    "failed",
+  );
+  expect(await readFile(client.configPath, "utf8")).toBe(initial);
+
+  const host = systemUninstallHost(home);
+  expect(await host.inspectClient(client)).toBeUndefined();
+  expect((await host.removeClient(client)).status).toBe("removed");
+  const text = await readFile(client.configPath, "utf8");
+  expect(parseYaml(text)).toEqual([
+    {
+      insert: [
+        {
+          ...group,
+          config: [{ ...group.config[0], config: [callerPeer, opaque] }],
+        },
+      ],
+    },
+  ]);
+  expect(text).toContain("# keep group sibling");
+  expect((await host.removeClient(client)).status).toBe("skipped");
+  expect(await readFile(client.configPath, "utf8")).toBe(text);
+  expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+    initial,
+  );
+});
+
+it("preserves alias-site comments when removing a nested DSH row", async () => {
+  const { home, client } = await harnessClient();
+  const initial = `- insert:
+    - id: holder
+      name: caller-plugin
+      config:
+        group: &group
+          id: tools
+          name: "@deepseek-ai/cordis-plugin-group"
+          group: true
+          config: &rows
+            - id: rea-mcp
+              name: "@deepseek-ai/dsh-mcp-client"
+            - id: caller-peer
+              name: caller-plugin
+    # caller group placement
+    - *group # caller group explanation
+    - id: second-tools
+      name: "@deepseek-ai/cordis-plugin-group"
+      group: true
+      config: *rows # caller config explanation
+`;
+  await writeFile(client.configPath, initial);
+  const host = systemUninstallHost(home);
+  expect((await host.removeClient(client)).status).toBe("removed");
+  const text = await readFile(client.configPath, "utf8");
+  for (const comment of [
+    "# caller group placement",
+    "# caller group explanation",
+    "# caller config explanation",
+  ])
+    expect(text).toContain(comment);
+  const rows = loadedInserts(text);
+  const expectedPeer = { id: "caller-peer", name: "caller-plugin" };
+  expect(rows.find(({ id }) => id === "holder")?.config).toMatchObject({
+    group: {
+      config: [expect.objectContaining({ id: "rea-mcp" }), expectedPeer],
+    },
+  });
+  for (const id of ["tools", "second-tools"])
+    expect(rows.find((row) => row.id === id)?.config).toEqual([expectedPeer]);
+  expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+    initial,
+  );
+});
+
 describe("DeepSeek Harness expression-backed structure", () => {
   it.each([
     `- !!js process.env.DSH_PATCH\n`,
@@ -1966,6 +2076,54 @@ describe("DeepSeek Harness inert anchors", () => {
 });
 
 describe("DeepSeek Harness alias anchors", () => {
+  it.each(["setup", "uninstall"] as const)(
+    "retains caller alias annotations when %s removes their anchor",
+    async (operation) => {
+      const { home, client } = await harnessClient();
+      const initial = `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        command: &oldLauncher stale-launcher
+- insert:
+    - id: caller
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        command:
+          # caller command explanation
+          *oldLauncher # caller inline comment
+        transport: &callerTransport stdio
+        env:
+          CALLER_TRANSPORT: *callerTransport # unrelated alias
+`;
+      await writeFile(client.configPath, initial);
+      const result =
+        operation === "setup"
+          ? await configureClientConfiguration(client, {}, command)
+          : await systemUninstallHost(home).removeClient(client);
+      expect(result.status).toBe(
+        operation === "setup" ? "configured" : "removed",
+      );
+      const text = await readFile(client.configPath, "utf8");
+      expect(loadedInserts(text).find(({ id }) => id === "caller")).toEqual({
+        id: "caller",
+        name: "@deepseek-ai/dsh-mcp-client",
+        config: {
+          command: "stale-launcher",
+          transport: "stdio",
+          env: { CALLER_TRANSPORT: "stdio" },
+        },
+      });
+      expect(text).toContain("# caller command explanation");
+      expect(text).toContain("# caller inline comment");
+      expect(text).toContain("*callerTransport # unrelated alias");
+      expect(text).not.toContain("*oldLauncher");
+      expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+        initial,
+      );
+    },
+  );
+
   it("rewrites an entry id alias before removing its anchor", async () => {
     const { client } = await harnessClient();
     await writeFile(
@@ -2700,14 +2858,19 @@ describe("DeepSeek Harness caller node metadata", () => {
 });
 
 describe("DeepSeek Harness uninstall of a shared operation", () => {
-  it("keeps a group patch's own fields and comment when its only row was REA's", async () => {
+  it("keeps a group insert from activating its ignored overrides on uninstall", async () => {
     const { home, client } = await harnessClient();
     const entry = canonicalEntry();
-    await writeFile(
-      client.configPath,
-      `- insert:
-    - id: user-a
-      name: plugin-a
+    const initial = `- insert:
+    - id: tools
+      name: "@deepseek-ai/cordis-plugin-group"
+      group: true
+      config:
+        - id: user-a
+          name: plugin-a
+- id: user-a
+  config:
+    sandbox: permissive
 # caller group patch
 - id: tools
   config:
@@ -2720,18 +2883,32 @@ describe("DeepSeek Harness uninstall of a shared operation", () => {
         transport: stdio
         command: ${entry.config.command}
         args: ${JSON.stringify(entry.config.args)}
-`,
-    );
+`;
+    await writeFile(client.configPath, initial);
 
-    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
-      "removed",
-    );
+    const host = systemUninstallHost(home);
+    expect((await host.removeClient(client)).status).toBe("removed");
     const text = await readFile(client.configPath, "utf8");
     expect(parseYaml(text)).toEqual([
-      { insert: [{ id: "user-a", name: "plugin-a" }] },
-      { id: "tools", config: { sandbox: "strict" } },
+      {
+        insert: [
+          {
+            id: "tools",
+            name: "@deepseek-ai/cordis-plugin-group",
+            group: true,
+            config: [{ id: "user-a", name: "plugin-a" }],
+          },
+        ],
+      },
+      { id: "user-a", config: { sandbox: "permissive" } },
+      { id: "tools", config: { sandbox: "strict" }, insert: [] },
     ]);
     expect(text).toContain("# caller group patch");
+    expect((await host.removeClient(client)).status).toBe("skipped");
+    expect(await readFile(client.configPath, "utf8")).toBe(text);
+    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+      initial,
+    );
   });
 
   it("keeps an operation's own fields when setup removes a second REA row from it", async () => {
@@ -2762,7 +2939,10 @@ ${row("second-launcher")}`,
     const text = await readFile(client.configPath, "utf8");
     expect(text).toContain("# caller operation");
     expect(loadedInserts(text)).toHaveLength(1);
-    expect((parseYaml(text) as unknown[]).at(-1)).toEqual({ disabled: false });
+    expect((parseYaml(text) as unknown[]).at(-1)).toEqual({
+      disabled: false,
+      insert: [],
+    });
     expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
   });
 

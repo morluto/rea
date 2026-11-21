@@ -17,17 +17,30 @@ it("starts each domain at its first event or enable acknowledgment, preserving e
     }),
     new Set(["https://example.test"]),
   );
+  const networkEvent = receiveCdpEvent({
+    method: "Network.loadingFinished",
+    params: { requestId: "unobserved", encodedDataLength: 0 },
+  });
+  events.ingest(networkEvent);
+  expect(() => events.coverageStartedAt("Network")).toThrow();
+
   events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "main" }));
   vi.setSystemTime(new Date("2026-10-24T00:00:01.000Z"));
-  events.ingest(
-    receiveCdpEvent({
-      method: "Network.loadingFinished",
-      params: { requestId: "unobserved", encodedDataLength: 0 },
-    }),
-  );
+  events.ingest(networkEvent);
   vi.setSystemTime(new Date("2026-10-24T00:00:02.000Z"));
   events.markDomainEnabled("Network");
   events.markDomainEnabled("Runtime");
   expect(events.coverageStartedAt("Network")).toBe("2026-10-24T00:00:01.000Z");
   expect(events.coverageStartedAt("Runtime")).toBe("2026-10-24T00:00:02.000Z");
+
+  vi.setSystemTime(new Date("2026-10-24T00:00:03.000Z"));
+  events.ingest(
+    receiveCdpEvent({ method: "Runtime.executionContextsCleared", params: {} }),
+  );
+  expect(events.coverageStartedAt("Runtime")).toBe("2026-10-24T00:00:02.000Z");
+
+  events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "next" }));
+  expect(() => events.coverageStartedAt("Runtime")).toThrow();
+  events.ingest(networkEvent);
+  expect(events.coverageStartedAt("Network")).toBe("2026-10-24T00:00:03.000Z");
 });

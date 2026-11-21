@@ -342,7 +342,7 @@ it("advertises caller paths as local spellings the CLI resolves, not URLs", asyn
     expect(validate(document(path)), path).toBe(false);
 });
 
-it("validates representative parsed documents with the advertised schema", async () => {
+it("advertises coverage input that admits a complete document and checks its boundary", async () => {
   const input = advertisedInput(
     (
       await serve([
@@ -380,8 +380,11 @@ it("validates representative parsed documents with the advertised schema", async
     boundaries: [],
   };
   const accepted = { coverage, boundary_id: "main" };
+  const { boundaries: _boundaries, ...withoutBoundaries } = coverage;
   const rejected = [
     { coverage, boundary_id: "" },
+    { coverage, boundary_id: "main section" },
+    { ...accepted, coverage: withoutBoundaries },
     { coverage },
     { coverage, boundary_id: "main", extra: true },
     { coverage: { arbitrary: true }, boundary_id: "main" },
@@ -458,29 +461,7 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
   );
 });
 
-it("advertises the reconstruction documents their readers admit", async () => {
-  const coverage = advertisedInput(
-    (
-      await serve([
-        cliCommandFor("evaluate_reconstruction_coverage"),
-        "--schema",
-        "--json",
-      ])
-    ).stdout,
-  );
-  // The reader authenticates the embedded bundle, but --schema still shows
-  // the document it admits, as the MCP contract does.
-  expect(coverage.contentSchema?.properties?.coverage).toMatchObject({
-    type: "object",
-    required: expect.arrayContaining(["evidence_bundle", "boundaries"]),
-  });
-  // boundary_id is a stable identifier (#9919), so its pattern is advertised.
-  expect(coverage.contentSchema?.properties?.boundary_id).toMatchObject({
-    type: "string",
-    pattern: expect.any(String),
-  });
-  expect(coverage.contentSchema?.required).toEqual(["coverage", "boundary_id"]);
-
+it("advertises the reconstruction obligation ledger its reader admits", async () => {
   const ledger = advertisedInput(
     (
       await serve([

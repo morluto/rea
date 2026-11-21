@@ -21,6 +21,22 @@ const browserUnconfiguredMcp = lazyLocalToolsMcp({
   REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
 });
 
+const traceCliArgs = (
+  manifest: string,
+  path: string,
+  url: string,
+  column = 0,
+) => [
+  "trace-web-source-location",
+  manifest,
+  "0",
+  path,
+  url,
+  "1",
+  String(column),
+  "--json",
+];
+
 const expectRetainedSourceMap = async (
   path: string,
   evidenceId: string,
@@ -370,6 +386,14 @@ cliTest(
     const manifest = join(root, "manifest.json");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
     const { call } = await browserUnconfiguredMcp();
+    const runCliMap = (path: string) =>
+      cli.run({
+        arguments: traceCliArgs(manifest, path, fixture.sourceMap.url),
+        environment: {
+          REA_LOG_LEVEL: "silent",
+          REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
+        },
+      });
     const leaf: unknown = JSON.parse(fixture.sourceMap.text);
     for (const [index, version] of [3, 2, null, undefined, "3"].entries()) {
       const text = JSON.stringify({
@@ -386,22 +410,6 @@ cliTest(
       });
       const path = join(root, `nested-${index}.map`);
       await writeFile(path, text);
-      const result = await cli.run({
-        arguments: [
-          "trace-web-source-location",
-          manifest,
-          "0",
-          path,
-          fixture.sourceMap.url,
-          "1",
-          "0",
-          "--json",
-        ],
-        environment: {
-          REA_LOG_LEVEL: "silent",
-          REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
-        },
-      });
       const response = await call("trace_web_source_location", {
         manifest_path: manifest,
         script_index: 0,
@@ -409,6 +417,7 @@ cliTest(
         generated_position: { line: 1, column: 0 },
       });
       if (version === 3) {
+        const result = await runCliMap(path);
         expect(result.exitCode, result.stderr).toBe(0);
         expect(result.json).toMatchObject({
           normalized_result: {
@@ -459,9 +468,12 @@ cliTest(
             ],
           },
         };
-        expect(result.exitCode).toBe(1);
-        expect(result.json).toMatchObject(failure);
-        expect(result.json).not.toHaveProperty("normalized_result");
+        if (version === 2) {
+          const result = await runCliMap(path);
+          expect(result.exitCode).toBe(1);
+          expect(result.json).toMatchObject(failure);
+          expect(result.json).not.toHaveProperty("normalized_result");
+        }
         expect(parseMcpToolError(response).error).toMatchObject(failure);
         expect(response.structuredContent).toBeUndefined();
       }
@@ -493,27 +505,53 @@ cliTest(
       names: ["earlierName"],
       mappings: "AAAAA,CAAAA",
     };
-    for (const [index, sample] of [
-      { first: empty, firstColumn: 0, nextColumn: 0, succeeds: true },
-      { first: nestedEmpty, firstColumn: 0, nextColumn: 0, succeeds: true },
-      { first: empty, firstColumn: 0, nextColumn: 1, succeeds: true },
-      {
-        first: leaf,
-        firstColumn: 0,
-        nextColumn: 0,
-        succeeds: true,
-        shared: true,
-      },
-      {
-        first: boundaryLeaf,
-        firstColumn: 0,
-        nextColumn: 1,
-        succeeds: true,
-        shared: true,
-      },
-      { first: boundaryLeaf, firstColumn: 0, nextColumn: 0, succeeds: false },
-      { first: empty, firstColumn: 1, nextColumn: 0, succeeds: false },
-    ].entries()) {
+    const runCliMap = (path: string, column: number) =>
+      cli.run({
+        arguments: traceCliArgs(manifest, path, fixture.sourceMap.url, column),
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+    for (const [index, sample] of (
+      [
+        { first: empty, firstColumn: 0, nextColumn: 0, succeeds: true },
+        {
+          first: nestedEmpty,
+          firstColumn: 0,
+          nextColumn: 0,
+          succeeds: true,
+          cliParity: true,
+        },
+        { first: empty, firstColumn: 0, nextColumn: 1, succeeds: true },
+        {
+          first: leaf,
+          firstColumn: 0,
+          nextColumn: 0,
+          succeeds: true,
+          shared: true,
+        },
+        {
+          first: boundaryLeaf,
+          firstColumn: 0,
+          nextColumn: 1,
+          succeeds: true,
+          shared: true,
+          cliParity: true,
+        },
+        {
+          first: boundaryLeaf,
+          firstColumn: 0,
+          nextColumn: 0,
+          succeeds: false,
+          diagnostic: "overlap",
+        },
+        {
+          first: empty,
+          firstColumn: 1,
+          nextColumn: 0,
+          succeeds: false,
+          diagnostic: "nondecreasing",
+        },
+      ] as const
+    ).entries()) {
       const path = join(root, `empty-${index}.map`);
       await writeFile(
         path,
@@ -528,19 +566,6 @@ cliTest(
           ],
         }),
       );
-      const result = await cli.run({
-        arguments: [
-          "trace-web-source-location",
-          manifest,
-          "0",
-          path,
-          fixture.sourceMap.url,
-          "1",
-          String(sample.nextColumn),
-          "--json",
-        ],
-        environment: { REA_LOG_LEVEL: "silent" },
-      });
       const response = await call("trace_web_source_location", {
         manifest_path: manifest,
         script_index: 0,
@@ -548,8 +573,8 @@ cliTest(
         generated_position: { line: 1, column: sample.nextColumn },
       });
       if (sample.succeeds) {
-        expect(result.exitCode, result.stderr).toBe(0);
-        expect(result.json).toMatchObject({
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
           normalized_result: {
             lookup: {
               matched_generated_position: {
@@ -579,12 +604,11 @@ cliTest(
             ],
           },
         });
-        const matches = (
-          result.json as { normalized_result: { matches: unknown[] } }
-        ).normalized_result.matches;
-        expect(matches).toHaveLength("shared" in sample ? 2 : 1);
-        expect(response.isError, JSON.stringify(response)).not.toBe(true);
-        expect(response.structuredContent).toEqual(result.json);
+        if ("cliParity" in sample) {
+          const result = await runCliMap(path, sample.nextColumn);
+          expect(result.exitCode, result.stderr).toBe(0);
+          expect(response.structuredContent).toEqual(result.json);
+        }
       } else {
         const failure = {
           code: "invalid_request",
@@ -593,11 +617,12 @@ cliTest(
               {
                 path: ["source_map", "path"],
                 reason: "invalid_format",
-                message: expect.stringMatching(/overlap|nondecreasing/u),
+                message: expect.stringContaining(sample.diagnostic),
               },
             ],
           },
         };
+        const result = await runCliMap(path, sample.nextColumn);
         expect(result.exitCode).toBe(1);
         expect(result.json).toMatchObject(failure);
         expect(parseMcpToolError(response).error).toMatchObject(failure);
@@ -629,16 +654,7 @@ cliTest(
     await writeFile(map, text);
     const url = "https://cdn.test/npm/app@1/dist/app.js.map";
     const result = await cli.run({
-      arguments: [
-        "trace-web-source-location",
-        manifest,
-        "0",
-        map,
-        url,
-        "1",
-        "0",
-        "--json",
-      ],
+      arguments: traceCliArgs(manifest, map, url),
       environment: {
         REA_LOG_LEVEL: "silent",
         REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
@@ -771,16 +787,7 @@ cliTest(
     const map = join(root, "app.js.map");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
     await writeFile(map, fixture.sourceMap.text);
-    const arguments_ = [
-      "trace-web-source-location",
-      manifest,
-      "0",
-      map,
-      fixture.sourceMap.url,
-      "1",
-      "0",
-      "--json",
-    ];
+    const arguments_ = traceCliArgs(manifest, map, fixture.sourceMap.url);
     const refused = await cli.run({
       arguments: [...arguments_, "--source-map-bytes", "4194304"],
       environment: silentCliEnv,
