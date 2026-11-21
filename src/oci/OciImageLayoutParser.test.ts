@@ -1,6 +1,7 @@
 import {
   mkdir,
   readFile,
+  rename,
   symlink,
   truncate,
   unlink,
@@ -323,6 +324,88 @@ it("reports partial coverage when a referenced config is a symlink", async () =>
     ]),
   );
   expect(report.coverage.status).toBe("partial");
+});
+
+it.each([["blobs"], ["blobs/sha256"]])(
+  "reports a symlinked %s directory as unexamined, not empty",
+  async (linked) => {
+    const root = await createTestTempDirectory("rea-oci-symlink-blob-dir-");
+    await writeOciImageLayoutFixture(root);
+    await writeFile(
+      join(root, "index.json"),
+      `${JSON.stringify({ schemaVersion: 2, manifests: [] })}\n`,
+    );
+    const linkPath = join(root, ...linked.split("/"));
+    const target = join(root, "elsewhere");
+    await rename(linkPath, target);
+    await symlink(target, linkPath);
+    const report = await inspectLayout(root);
+    expect(report.findings).toContainEqual({
+      kind: "symlink_blob",
+      digest: null,
+      path: linked,
+      message: `Blob directory ${linked} is a symlink and was not followed; blobs under it are not inventoried.`,
+    });
+    expect(report.coverage.status).toBe("partial");
+  },
+);
+
+it.each([
+  [
+    "annotations",
+    { bad: false },
+    "annotations has 1 value that is not a string; it is omitted",
+  ],
+  ["annotations", ["x"], "annotations is not a JSON object; it is not modeled"],
+  ["platform", [], "platform is not a JSON object; it is not modeled"],
+  [
+    "platform",
+    { os: 7, architecture: "amd64" },
+    "platform os is not a string; it is omitted",
+  ],
+])(
+  "reports malformed index entry %s %j and keeps the entry",
+  async (member, value, defect) => {
+    const root = await createTestTempDirectory("rea-oci-descriptor-meta-");
+    await writeOciImageLayoutFixture(root);
+    const indexPath = join(root, "index.json");
+    const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+      manifests: Record<string, unknown>[];
+    };
+    const entry = index.manifests[0];
+    if (entry === undefined) throw new Error("fixture has no manifest");
+    entry[member] = value;
+    await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+    const report = await inspectLayout(root);
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        kind: "malformed_blob_json",
+        message: expect.stringContaining(`manifests[0] ${defect}.`),
+      }),
+    );
+    expect(report.indexes[0]?.entries).toHaveLength(1);
+    expect(report.coverage.status).toBe("partial");
+  },
+);
+
+it("keeps readable index entry annotations and platform without findings", async () => {
+  const root = await createTestTempDirectory("rea-oci-descriptor-meta-ok-");
+  await writeOciImageLayoutFixture(root);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  const entry = index.manifests[0];
+  if (entry === undefined) throw new Error("fixture has no manifest");
+  entry.annotations = { "org.example": "kept" };
+  entry.platform = { os: "linux", architecture: "amd64" };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([]);
+  expect(report.indexes[0]?.entries[0]).toMatchObject({
+    annotations: [{ name: "org.example", value: "kept" }],
+    platform: { os: "linux", architecture: "amd64" },
+  });
 });
 
 it("refuses an oversize index.json and preserves the oci-layout snapshot", async () => {

@@ -155,6 +155,46 @@ const describeSizeValue = (size: unknown): string => {
   return "(an object)";
 };
 
+/**
+ * Why a descriptor's present platform or annotations cannot be modeled in
+ * full. `descriptorOf` still keeps the readable parts; null counts as absent.
+ */
+const descriptorMetadataDefects = (value: unknown): string[] => {
+  if (!isRecord(value)) return [];
+  const defects: string[] = [];
+  const { platform, annotations } = value;
+  if (platform !== undefined && platform !== null) {
+    if (!isRecord(platform))
+      defects.push("platform is not a JSON object; it is not modeled");
+    else {
+      const bad = ["os", "architecture", "variant", "os.version"].filter(
+        (name) =>
+          platform[name] !== undefined &&
+          platform[name] !== null &&
+          typeof platform[name] !== "string",
+      );
+      if (bad.length > 0)
+        defects.push(
+          `platform ${bad.join(", ")} ${bad.length === 1 ? "is" : "are"} not a string; ${bad.length === 1 ? "it is" : "they are"} omitted`,
+        );
+    }
+  }
+  if (annotations !== undefined && annotations !== null) {
+    if (!isRecord(annotations))
+      defects.push("annotations is not a JSON object; it is not modeled");
+    else {
+      const dropped = Object.values(annotations).filter(
+        (entry) => typeof entry !== "string",
+      ).length;
+      if (dropped > 0)
+        defects.push(
+          `annotations has ${String(dropped)} value${dropped === 1 ? "" : "s"} that ${dropped === 1 ? "is" : "are"} not a string; ${dropped === 1 ? "it is" : "they are"} omitted`,
+        );
+    }
+  }
+  return defects;
+};
+
 /** What a descriptor that `descriptorOf` cannot model is missing. */
 const descriptorDefect = (value: unknown): string => {
   if (!isRecord(value)) return "is not a JSON object";
@@ -871,19 +911,28 @@ const inventoryOciImageLayout = async (
   // A descriptor whose required size is unusable keeps its other facts, but
   // its blob cannot be size-checked against that declaration, so the defect
   // is reported instead of disappearing into a null size.
-  const reportSizeDefect = (
+  const reportDescriptorDefects = (
     where: string,
     value: unknown,
     ownerDigest: string,
   ): void => {
     const defect = descriptorSizeDefect(value);
-    if (defect === undefined) return;
-    recordFinding(
-      findings,
-      "malformed_blob_json",
-      `${where} ${defect}; its declared size is not checked.`,
-      ownerDigest,
-    );
+    if (defect !== undefined)
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${where} ${defect}; its declared size is not checked.`,
+        ownerDigest,
+      );
+    // Damaged platform or annotations are reported rather than read as
+    // absent; the readable entries stay on the descriptor.
+    for (const metadataDefect of descriptorMetadataDefects(value))
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${where} ${metadataDefect}.`,
+        ownerDigest,
+      );
   };
 
   const indexes: OciImageLayoutIndex[] = [];
@@ -1111,7 +1160,11 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
-    reportSizeDefect(`${owner} ${ownerDigest} subject`, value, ownerDigest);
+    reportDescriptorDefects(
+      `${owner} ${ownerDigest} subject`,
+      value,
+      ownerDigest,
+    );
     const parsed = parseOciDigest(descriptor.digest);
     const path =
       parsed === undefined
@@ -1200,7 +1253,7 @@ const inventoryOciImageLayout = async (
       }
       chargeDescriptorBytes(descriptor);
       indexEntries.push(descriptor);
-      reportSizeDefect(
+      reportDescriptorDefects(
         `Index ${digest} manifests[${String(position)}]`,
         item,
         digest,
@@ -1312,7 +1365,7 @@ const inventoryOciImageLayout = async (
         );
         continue;
       }
-      reportSizeDefect(
+      reportDescriptorDefects(
         `Manifest ${digest} layers[${String(position)}]`,
         item,
         digest,
@@ -1342,7 +1395,7 @@ const inventoryOciImageLayout = async (
     }
     let configFacts = EMPTY_CONFIG_FACTS;
     if (configDescriptor !== undefined) {
-      reportSizeDefect(
+      reportDescriptorDefects(
         `Manifest ${digest} config`,
         document.value.config,
         digest,
@@ -1702,6 +1755,23 @@ const inventoryOciImageLayout = async (
     limitations.push(
       "The reference graph was not fully examined, so blobs it did not reach are listed with an unknown referenced status instead of being reported as unreferenced.",
     );
+  // A symlink at blobs or blobs/<algorithm> is not followed, so whatever it
+  // points at is unexamined, not absent, and the inventory cannot be complete.
+  for (const entry of entries) {
+    if (entry.kind !== "symlink") continue;
+    if (
+      entry.path !== "blobs" &&
+      !(entry.path.startsWith("blobs/") && entry.path.split("/").length === 2)
+    )
+      continue;
+    recordFinding(
+      findings,
+      "symlink_blob",
+      `Blob directory ${entry.path} is a symlink and was not followed; blobs under it are not inventoried.`,
+      null,
+      entry.path,
+    );
+  }
   for (const entry of entries) {
     if (!entry.path.startsWith("blobs/") || entry.path === "blobs") continue;
     const parts = entry.path.split("/");
