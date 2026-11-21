@@ -90,6 +90,7 @@ import {
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import { semanticInactiveFirstDefaultWritesSteps } from "./javascriptSemanticReadPresence.js";
+import { collectJavaScriptDestructuringCompletion } from "./javascriptSemanticObjects.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   type JavaScriptMemberMutationAllowance,
@@ -320,6 +321,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   yield* collectDefinitionsSteps(file.program, state);
   yield* indexSemanticAmbientWritesSteps(state);
   yield* indexSemanticMemberMutationFactsSteps(state);
+  collectJavaScriptDestructuringCompletion(file.program, state);
   const commonJsReceivers = yield* indexCommonJsExportReceiversSteps(state);
   yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => collectSemanticModuleLink(node, state, commonJsReceivers),
@@ -1121,6 +1123,7 @@ const createState = (
     moduleLinkBindings: new WeakMap(),
     defaultExportExpressions: new WeakMap(),
     conditionallySkippedExpressions: new WeakSet(),
+    destructuringIncompleteBindings: new Set<string>(),
     requiredModuleEffects: new Map(),
     ambientBindingWrites: new Map(),
     ambientWrites: new SemanticPropertyPathCoverage(),

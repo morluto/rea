@@ -527,7 +527,10 @@ const evaluateBinding = (
   const initializer = binding.initializers[0];
   if (initializer === undefined)
     return { status: "unknown", reason: "Missing binding initializer." };
-  if (context.state.conditionallySkippedExpressions.has(initializer.node))
+  if (
+    context.state.conditionallySkippedExpressions.has(initializer.node) ||
+    context.state.destructuringIncompleteBindings.has(binding.bindingId)
+  )
     return {
       status: "unknown",
       reason: `Binding ${binding.name} may remain uninitialized.`,
