@@ -9,8 +9,8 @@ import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -34,16 +34,21 @@ export async function verifyElectronToolContracts({
     private: false,
   });
   const root = rootFixture.path;
-  const main = join(root, "main.cjs");
-  const preload = join(root, "preload.cjs");
+  const applicationRoot = join(root, "app");
+  const main = join(applicationRoot, "main.cjs");
+  const preload = join(applicationRoot, "preload.cjs");
   const ready = join(root, "ready");
   const entrypoint = join(repositoryRoot, "scripts", "rea.mjs");
   const runId = randomUUID();
-  await writeFile(
-    main,
-    `const electron = require("electron");
+  const prepare = async () => {
+    await mkdir(applicationRoot);
+    await writeFile(
+      main,
+      `const electron = require("electron");
 const path = require("node:path");
 const { app, BrowserWindow, ipcMain } = electron;
+const fs = require("node:fs");
+app.setPath("userData", fs.mkdtempSync(path.join(${JSON.stringify(root)}, "profile-")));
 const Window = BrowserWindow;
 const mainIpc = ipcMain;
 app.whenReady().then(() => {
@@ -51,34 +56,35 @@ app.whenReady().then(() => {
     webPreferences: { preload: path.join(__dirname, "preload.cjs") },
   });
   window.loadFile("renderer.html");
-  require("node:fs").writeFileSync(${JSON.stringify(ready)}, "ready");
+  fs.writeFileSync(${JSON.stringify(ready)}, app.getPath("userData"));
 });
 mainIpc.handle("fixture:echo", (_event, value) => ({ value }));`,
-  );
-  await writeFile(
-    join(root, "renderer.html"),
-    `<!doctype html>
+    );
+    await writeFile(
+      join(applicationRoot, "renderer.html"),
+      `<!doctype html>
 <button id="run">Run</button>
 <output id="result"></output>
 <script src="renderer.js"></script>`,
-  );
-  await writeFile(
-    preload,
-    `const electron = require("electron");
+    );
+    await writeFile(
+      preload,
+      `const electron = require("electron");
 const { contextBridge, ipcRenderer } = electron;
 const bridge = contextBridge;
 const rendererIpc = ipcRenderer;
 bridge.exposeInMainWorld("fixture", {
   echo: (value) => rendererIpc.invoke("fixture:echo", value),
 });`,
-  );
-  await writeFile(
-    join(root, "renderer.js"),
-    `document.querySelector("#run").addEventListener("click", async () => {
+    );
+    await writeFile(
+      join(applicationRoot, "renderer.js"),
+      `document.querySelector("#run").addEventListener("click", async () => {
   const result = await window.fixture.echo("renderer");
   document.querySelector("#result").textContent = result.value;
 });`,
-  );
+    );
+  };
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -119,6 +125,7 @@ bridge.exposeInMainWorld("fixture", {
   });
   await withVerifierFixture(rootFixture, async () => {
     try {
+      await prepare();
       await readProcessRunId(process.pid);
       application = spawn(
         executable,
@@ -177,7 +184,7 @@ bridge.exposeInMainWorld("fixture", {
         await pause(100);
       }
       const target = targets.normalized_result.targets.find(
-        (item) => item.file_path === join(root, "renderer.html"),
+        (item) => item.file_path === join(applicationRoot, "renderer.html"),
       );
       assert.ok(target, JSON.stringify(targets));
       const page = await call("inspect_electron_page", {
@@ -189,12 +196,12 @@ bridge.exposeInMainWorld("fixture", {
       assert.ok(
         page.normalized_result.scripts.items.some(
           (script) =>
-            script.file_path === join(root, "renderer.js") &&
+            script.file_path === join(applicationRoot, "renderer.js") &&
             script.source.included,
         ),
       );
       const staticAnalysis = await call("analyze_javascript_application", {
-        input_path: root,
+        input_path: applicationRoot,
       });
       assert.equal(staticAnalysis.normalized_result.summary.browser_windows, 1);
       assert.equal(
@@ -221,13 +228,24 @@ bridge.exposeInMainWorld("fixture", {
       const reconciled = await call("reconcile_javascript_runtime", {
         static_layers: [
           {
-            analysis: staticAnalysis,
-            runtime_mappings: [{ kind: "file-root", root }],
+            analysis: {
+              kind: "retained-evidence",
+              evidence_id: staticAnalysis.evidence_id,
+            },
+            runtime_mappings: [{ kind: "file-root", root: applicationRoot }],
           },
         ],
-        runtime_observations: [page],
+        runtime_observations: [
+          { kind: "retained-evidence", evidence_id: page.evidence_id },
+        ],
       });
-      assert.ok(reconciled.normalized_result.runtime_captures.length > 0);
+      assert.deepEqual(
+        [
+          ...reconciled.normalized_result.static_layers,
+          ...reconciled.normalized_result.runtime_captures,
+        ].map(({ evidence_id }) => evidence_id),
+        [staticAnalysis.evidence_id, page.evidence_id],
+      );
       const cli = await execute(
         process.execPath,
         [
@@ -248,10 +266,12 @@ bridge.exposeInMainWorld("fixture", {
         JSON.parse(cli.stdout).normalized_result.target.file_path,
         target.file_path,
       );
+      const inspectionProfile = await readFile(ready, "utf8");
+      assert.equal(dirname(inspectionProfile), root);
       const input = {
         executable_path: executable,
         application_path: main,
-        application_root: root,
+        application_root: applicationRoot,
         actions: [{ step_id: "ipc", kind: "click", selector: "#run" }],
       };
       const active = await client.callTool(
@@ -281,6 +301,9 @@ bridge.exposeInMainWorld("fixture", {
         assert.equal(capture.application.cleanup, "terminated-owned-process");
       }
       assert.equal(capture.actions[0].status, "completed");
+      const activeProfile = await readFile(ready, "utf8");
+      assert.equal(dirname(activeProfile), root);
+      assert.notEqual(activeProfile, inspectionProfile);
       assert.ok(
         capture.ipc.events.some(
           ({ kind, channel }) =>
