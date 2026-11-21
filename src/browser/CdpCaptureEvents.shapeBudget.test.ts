@@ -253,15 +253,20 @@ it("reuses the prior allowance when replacing a retained response shape", () => 
   );
 });
 
-it("refunds replaced and removed request records while ignoring stale response occurrences", () => {
+it("refunds request and response shapes when records are replaced, removed, or reset", () => {
   const events = createEvents();
-  request(events, "redirect", deep(100));
-  const stale = response(events, "redirect", deep(100));
-  request(events, "redirect", '{"next":true}', true);
-  const retained = events.retainedEventBytes;
-  events.ingestResponseBody(stale, { body: deep(760), base64Encoded: false });
-  expect(events.retainedEventBytes).toBe(retained);
-  expect(events.network.get("redirect")?.body_shapes.response).toBeNull();
+  request(events, "redirect", deep(400));
+  response(events, "redirect", deep(400));
+  request(events, "redirect", deep(600), true);
+  const replacement = events.network.get("redirect")?.body_shapes;
+  expect(replacement).toMatchObject({
+    status: "included",
+    request: { max_depth_observed: 600 },
+    response: null,
+  });
+  expect(events.retainedEventBytes).toBe(
+    Buffer.byteLength(JSON.stringify(replacement?.request)),
+  );
   events.ingest(
     receiveCdpEvent({
       method: "Network.responseReceived",
