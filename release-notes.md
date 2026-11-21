@@ -362,6 +362,7 @@
 * **web:** consolidate CDP resource metadata proofs ([#13103](https://github.com/morluto/rea/issues/13103)) ([3ef94f1](https://github.com/morluto/rea/commit/3ef94f1f338349ad1aecb2ec3ea8f7d9217f9fc5))
 * **web:** consolidate CDP response body lifecycle proofs ([#13094](https://github.com/morluto/rea/issues/13094)) ([e76b521](https://github.com/morluto/rea/commit/e76b521461b64907795435eba9db5b79e0af2e3e))
 * **web:** consolidate CDP response status proofs ([#13095](https://github.com/morluto/rea/issues/13095)) ([68f13d0](https://github.com/morluto/rea/commit/68f13d06d22ba9b5a57788c3aba29c7bd6a3dd70))
+* **web:** consolidate DOM base URL and origin checks ([#13108](https://github.com/morluto/rea/issues/13108)) ([15d5119](https://github.com/morluto/rea/commit/15d511951f9e759c5c8601267f71e7a54c0f0a5e))
 * **web:** consolidate DOM snapshot position and SVG proofs ([#13104](https://github.com/morluto/rea/issues/13104)) ([4ad0e3e](https://github.com/morluto/rea/commit/4ad0e3ea786dfc2fe1784ca8d2d3e8328637ad9c))
 * **web:** consolidate interrupted module resolution evidence ([#13072](https://github.com/morluto/rea/issues/13072)) ([f63915d](https://github.com/morluto/rea/commit/f63915d6f2bc55328bd3e38a337079b127d8113d))
 * **web:** consolidate module context and resolver evidence checks ([#13071](https://github.com/morluto/rea/issues/13071)) ([56a0617](https://github.com/morluto/rea/commit/56a0617f518432f14ba981c8c55f1b920f857f5e))
