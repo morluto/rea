@@ -59,3 +59,15 @@ it.each([-1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648])(
     );
   },
 );
+
+it("projects the budget onto a reader's wall clock without moving it", () => {
+  vi.useFakeTimers();
+  const deadline = Deadline.after(1_000);
+  const epoch = 1_700_000_000_000;
+  expect(deadline.wallClockEpochMs(epoch)).toBe(epoch + 1_000);
+  vi.advanceTimersByTime(400);
+  expect(deadline.wallClockEpochMs(epoch)).toBe(epoch + 600);
+  vi.advanceTimersByTime(700);
+  // An expired budget projects to the reader's present, never into the past.
+  expect(deadline.wallClockEpochMs(epoch)).toBe(epoch);
+});
