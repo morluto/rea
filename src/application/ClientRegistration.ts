@@ -17,8 +17,11 @@ import {
 } from "../config/mcpStartupPolicy.js";
 import {
   clientConfigurationRecordSchema,
+  clientServerForcedEnabled,
+  clientServerListedDisabled,
   clientRegistrationEntry,
   clientRegistrationLauncherEntry,
+  type ClientConfigurationDocument,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
@@ -75,6 +78,35 @@ const registrationSchema = launcherSchema.extend({
 });
 
 export type ClientRegistration = z.output<typeof registrationSchema>;
+
+// Codex, Kimi Code and Pi use enabled. Devin uses disabled. Grok reads its
+// disable list. OpenCode's effective document already uses the selected dialect.
+const ignoresDisabledKey = new Set(["codex", "kimi", "pi"]);
+const ignoresEnabledKey = new Set(["devin"]);
+
+/** Interpret activation on the effective, validated registration. */
+export const clientRegistrationActivation = (
+  registration: ClientRegistration,
+  client: SetupClient,
+  parsed: ClientConfigurationDocument,
+): "enabled" | "disabled" => {
+  // Shared storage also serves ZCode. Its flag binds every reader of the row.
+  const sharedDisabled =
+    (parsed.dialect === "zcode" ||
+      parsed.dialect === "zcode_fallback" ||
+      client.sharedRegistration === true) &&
+    registration.enable === false;
+  return (client.format !== "grok" &&
+    !ignoresDisabledKey.has(client.name) &&
+    registration.disabled === true) ||
+    (registration.enabled === false &&
+      !ignoresEnabledKey.has(client.name) &&
+      !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
+    sharedDisabled ||
+    clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
+    ? "disabled"
+    : "enabled";
+};
 
 // https://developers.openai.com/codex/config-reference/#mcp_servers
 const codexApprovalModeSchema = z.enum(["auto", "prompt", "writes", "approve"]);

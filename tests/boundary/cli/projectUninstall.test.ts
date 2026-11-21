@@ -100,48 +100,75 @@ cliTest(
   },
 );
 
-for (const [scenario, trusted, fallback] of [
+for (const [scenario, trusted, fallback, status = "failed"] of [
   ["Pi trust is denied", false, undefined],
+  ["a user fallback would become active", true, { command: "unrelated" }],
   [
-    "a user fallback would become active",
+    "the user fallback carries only a foreign disabled flag",
     true,
-    { mcpServers: { rea: { command: "unrelated" } } },
+    { command: "unrelated", disabled: true },
   ],
   ["a user fallback is malformed", true, "{ bad"],
+  [
+    "the user fallback stays disabled under Pi's enabled flag",
+    true,
+    { command: "unrelated", enabled: false },
+    "removed",
+  ],
 ] as const) {
-  cliTest(`project uninstall is refused when ${scenario}`, async ({ cli }) => {
-    const root = await createTestTempDirectory(
-      "rea-project-uninstall-refused-",
-    );
-    const home = join(root, "home");
-    const project = join(root, "selected");
-    const environment = await registrationEnvironment(home);
-    await put(join(home, ".pi", "agent", "trust.json"), { [project]: trusted });
-    const piUser = join(home, ".pi", "agent", "mcp.json");
-    const userOriginal =
-      fallback === undefined ? undefined : await put(piUser, fallback);
-    const piPath = join(project, ".pi", "mcp.json");
-    const original = await put(piPath, { mcpServers: { rea: piRegistration } });
+  cliTest(
+    `project uninstall reports ${status} when ${scenario}`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-project-uninstall-fallback-",
+      );
+      const home = join(root, "home");
+      const project = join(root, "selected");
+      const environment = await registrationEnvironment(home);
+      await put(join(home, ".pi", "agent", "trust.json"), {
+        [project]: trusted,
+      });
+      const piUser = join(home, ".pi", "agent", "mcp.json");
+      const userOriginal =
+        fallback === undefined
+          ? undefined
+          : await put(
+              piUser,
+              typeof fallback === "string"
+                ? fallback
+                : { mcpServers: { rea: fallback } },
+            );
+      const piPath = join(project, ".pi", "mcp.json");
+      const original = await put(piPath, {
+        mcpServers: { rea: piRegistration },
+      });
 
-    const result = await cli.run({
-      arguments: ["uninstall", "--project", project, "--json"],
-      environment,
-      cwd: root,
-    });
-    expect(result.exitCode, result.stdout).toBe(1);
-    expect(result.json).toMatchObject({
-      status: "failed",
-      items: expect.arrayContaining([
-        expect.objectContaining({ name: "pi", status: "failed" }),
-      ]),
-    });
-    expect(await readFile(piPath, "utf8")).toBe(original);
-    await expect(readFile(`${piPath}.rea.backup`)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    if (userOriginal !== undefined)
-      expect(await readFile(piUser, "utf8")).toBe(userOriginal);
-  });
+      const result = await cli.run({
+        arguments: ["uninstall", "--project", project, "--json"],
+        environment,
+        cwd: root,
+      });
+      expect(result.exitCode, result.stdout).toBe(status === "removed" ? 0 : 1);
+      expect(result.json).toMatchObject({
+        status: status === "removed" ? "complete" : "failed",
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "pi", status }),
+        ]),
+      });
+      const updated = await readFile(piPath, "utf8");
+      if (status === "removed") {
+        expect(JSON.parse(updated)).toEqual({ mcpServers: {} });
+        expect(await readFile(`${piPath}.rea.backup`, "utf8")).toBe(original);
+      } else {
+        expect(updated).toBe(original);
+        await expect(readFile(`${piPath}.rea.backup`)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
+      if (userOriginal !== undefined)
+        expect(await readFile(piUser, "utf8")).toBe(userOriginal);
+    },
+  );
 }
 
 for (const scope of ["outside", "user"] as const) {

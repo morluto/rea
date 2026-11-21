@@ -204,7 +204,7 @@ describe("Pi registration semantics", () => {
     [undefined, false, "stale"],
     ["stdio", false, "stale"],
   ])(
-    "doctor handles type %s and enabled %s without OMP allowlist overrides",
+    "doctor handles type %s and enabled %s despite foreign activation settings",
     async (type, enabled, state) => {
       const { home, client } = await piClient();
       await writeFile(
@@ -216,6 +216,7 @@ describe("Pi registration semantics", () => {
               args: command.slice(1),
               type,
               enabled,
+              disabled: true,
             },
           },
           enabledServers: ["rea"],
@@ -722,6 +723,38 @@ describe("Pi project-scoped inherited environment validation", () => {
     expect(piStatus?.remediation).not.toContain(
       "REA setup writes only user-level configuration",
     );
+  });
+});
+
+it("attributes a Pi replacement with a missing launcher to the project file", async () => {
+  const { home, client } = await piClient();
+  const project = await createTestTempDirectory("rea-pi-replacement-source-");
+  vi.spyOn(process, "cwd").mockReturnValue(project);
+  await trustPiProject(home, project);
+  await writeFile(
+    client.configPath,
+    JSON.stringify({
+      mcpServers: { rea: { command: command[0], args: command.slice(1) } },
+    }),
+  );
+  const configPath = join(project, ".pi", "mcp.json");
+  await mkdir(dirname(configPath), { recursive: true });
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      mcpServers: { rea: { type: "stdio", env: { CALLER: "retained" } } },
+    }),
+  );
+  const registrations = await readClientRegistrationStatuses(home, undefined, {
+    platform: HOST_PLATFORM.platform,
+    environment: {},
+    selectedClientIds: ["pi"],
+  });
+  expect(registrations.find(({ client }) => client === "pi")).toMatchObject({
+    state: "invalid",
+    scope: "project",
+    config_path: configPath,
+    remediation: expect.stringContaining("command"),
   });
 });
 

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 
@@ -79,13 +79,17 @@ it("loads OpenCode V2 ancestors beyond Git and layers all direct files before .o
     configPath: nested,
     launcherConfigPath: nested,
     activationConfigPath: nested,
-    sources: [
-      { sourcePath: outer },
-      { sourcePath: direct },
-      { sourcePath: nested },
-    ],
   });
   expect(readReaServer(result.value.document)).toEqual(localServer("nested"));
+
+  await unlink(nested);
+  const directOnly = await read();
+  if (!directOnly.ok) throw Error(directOnly.error.detail);
+  expect(directOnly.value.configPath).toBe(direct);
+  await unlink(direct);
+  const aboveRepository = await read();
+  if (!aboveRepository.ok) throw Error(aboveRepository.error.detail);
+  expect(aboveRepository.value.configPath).toBe(outer);
 });
 
 it.each(["legacy", "native"] as const)(

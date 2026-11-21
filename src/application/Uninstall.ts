@@ -46,6 +46,7 @@ import {
   type ClientConfigurationSource,
 } from "./ClientConfigurationFiles.js";
 import {
+  clientRegistrationActivation,
   clientRegistrationOwnership,
   parseClientRegistrationPolicy,
 } from "./ClientRegistration.js";
@@ -1436,11 +1437,15 @@ const verifyProjectRemoval = async (
     document === undefined
       ? undefined
       : effectiveClientServer(document, PRODUCT_IDENTITY.mcpServerKey);
-  if (remaining !== undefined) {
+  if (document !== undefined && remaining !== undefined) {
     const parsed = parseClientRegistrationPolicy(remaining, project.userClient);
     if (
       !parsed.ok ||
-      (parsed.value.enabled !== false && parsed.value.disabled !== true)
+      clientRegistrationActivation(
+        parsed.value,
+        project.userClient,
+        document,
+      ) !== "disabled"
     )
       return failed(
         `Removing this registration would leave another or unresolved REA registration at ${configPath}. No change was made. Review that registration, then rerun uninstall.`,

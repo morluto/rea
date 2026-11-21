@@ -5,12 +5,11 @@ import {
   inlineRegistrationOrigins,
   readEffectiveClientRegistrationConfiguration,
   type ClientRegistrationScope,
+  type EffectiveClientRegistrationConfiguration,
 } from "./ClientConfigurationFiles.js";
 
 export type { ClientRegistrationScope };
 import {
-  clientServerForcedEnabled,
-  clientServerListedDisabled,
   effectiveClientServer,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
@@ -54,6 +53,7 @@ import type {
 import type { ArtifactResourceScope } from "../resources/index.js";
 
 import {
+  clientRegistrationActivation,
   parseClientRegistrationPolicy,
   parseClientRegistrationLauncher,
   clientRegistrationOwnershipRemediation,
@@ -271,10 +271,9 @@ export const readClientRegistrationInspections = async (
         scope,
         launcherScope,
         launcherConfigPath,
-        activationScope,
-        activationConfigPath,
-        sources,
       } = configuration.value;
+      const launcherPath = launcherConfigPath ?? configPath;
+      const launcherRegistrationScope = launcherScope ?? scope;
       selectedConfigPath = configPath;
       if (scope !== undefined) selectedScope = scope;
       // A client applicable only through REA's registration has none to report.
@@ -349,17 +348,15 @@ export const readClientRegistrationInspections = async (
         effectiveClient,
       );
       if (!parsedRegistration.ok) {
-        const contributingDoc =
-          sources === undefined
-            ? undefined
-            : contributingRegistrationSource(sources, parsedRegistration.error);
+        const contributingDoc = contributingRegistrationSource(
+          configuration.value,
+          parsedRegistration.error,
+        );
         const errorPath = contributingDoc?.sourcePath ?? configPath;
-        const errorScope: ClientRegistrationScope | undefined =
-          contributingDoc?.scope ??
-          (contributingDoc !== undefined &&
-          contributingDoc.sourcePath === client.configPath
-            ? "user"
-            : selectedScope);
+        const errorScope =
+          contributingDoc === undefined
+            ? selectedScope
+            : (contributingDoc.scope ?? "user");
         // Invalid readiness settings do not erase a usable launcher identity.
         const launcher = parseClientRegistrationLauncher(raw, {
           dialect: parsed.dialect,
@@ -450,7 +447,11 @@ export const readClientRegistrationInspections = async (
         continue;
       }
       const packageReference = commandFacts.package?.reference;
-      const activation = registrationActivation(registration, client, parsed);
+      const activation = clientRegistrationActivation(
+        registration,
+        client,
+        parsed,
+      );
       const packageVersion = commandFacts.package?.exactVersion;
       const packageVersionDrift =
         packageVersion !== undefined &&
@@ -471,31 +472,33 @@ export const readClientRegistrationInspections = async (
             client: effectiveClient,
             commandFacts,
           });
-      const status = configuredStatus(
-        effectiveClient,
+      const status = configuredStatus({
+        client: effectiveClient,
         command,
-        commandFacts.identity,
-        alignment === "unknown"
-          ? "unknown"
-          : activation === "enabled" &&
-              !packageVersionDrift &&
-              alignment === "aligned" &&
-              transientPaths.length === 0 &&
-              (parsed.dialect !== "dsh" ||
-                dshDocument(parsed.document).ready) &&
-              policyBlock === undefined
-            ? "aligned"
-            : "stale",
-        (nativeApplicability.ok
-          ? await missingTransientLauncherRemediation(
-              transientPaths,
-              commandFacts.identity,
-              effectiveClient,
-            )
-          : undefined) ??
+        commandIdentity: commandFacts.identity,
+        state:
+          alignment === "unknown"
+            ? "unknown"
+            : activation === "enabled" &&
+                !packageVersionDrift &&
+                alignment === "aligned" &&
+                transientPaths.length === 0 &&
+                (parsed.dialect !== "dsh" ||
+                  dshDocument(parsed.document).ready) &&
+                policyBlock === undefined
+              ? "aligned"
+              : "stale",
+        policyRemediation:
+          (nativeApplicability.ok
+            ? await missingTransientLauncherRemediation(
+                transientPaths,
+                commandFacts.identity,
+                effectiveClient,
+              )
+            : undefined) ??
           (parsed.dialect !== "dsh" && commandFacts.identity !== "owned"
             ? clientRegistrationOwnershipRemediation(commandFacts.identity, [
-                launcherConfigPath ?? configPath,
+                launcherPath,
                 ...inlineRegistrationOrigins(client),
               ])
             : undefined) ??
@@ -507,10 +510,8 @@ export const readClientRegistrationInspections = async (
             ? packageVersionRemediation(
                 packageReference ?? "",
                 client,
-                selectedConfigPath,
-                selectedScope,
-                launcherScope,
-                launcherConfigPath,
+                launcherPath,
+                launcherRegistrationScope,
               )
             : alignment === "unknown"
               ? unknownEntryPointRemediation()
@@ -519,38 +520,35 @@ export const readClientRegistrationInspections = async (
             ? sharedDisabledActivationRemediation()
             : undefined) ??
           (transientPaths.length > 0 && commandFacts.identity === "owned"
-            ? `The saved launcher uses a session path (${transientPaths.join(", ")}). ${remediation(effectiveClient, launcherConfigPath ?? configPath, launcherScope ?? scope)}`
+            ? `The saved launcher uses a session path (${transientPaths.join(", ")}). ${remediation(effectiveClient, launcherPath, launcherRegistrationScope)}`
             : undefined),
         packageReference,
-        registrationEnvironment?.ok === true
-          ? timeoutAdvisory(
-              client,
-              registration,
-              registrationEnvironment.value.timeoutInputs,
-            )
-          : undefined,
-        selectedConfigPath,
-        selectedScope,
-        launcherScope,
-        launcherConfigPath,
-        alignment === "stale",
-        options.providerSettings === undefined
-          ? undefined
-          : recordedProviderSettings(
-              parsed,
-              client,
-              options.providerSettings,
-              options.platform,
-              options.ownedProviderSetting,
-              options.observeProviderSetting === undefined
-                ? undefined
-                : (name, value) =>
-                    options.observeProviderSetting!(client.name, name, value),
-            ),
-        activationScope,
-        activationConfigPath,
-        activation === "disabled",
-      );
+        advisory:
+          registrationEnvironment?.ok === true
+            ? timeoutAdvisory(
+                client,
+                registration,
+                registrationEnvironment.value.timeoutInputs,
+              )
+            : undefined,
+        configuration: configuration.value,
+        alignmentStale: alignment === "stale",
+        providerSettings:
+          options.providerSettings === undefined
+            ? undefined
+            : recordedProviderSettings(
+                parsed,
+                client,
+                options.providerSettings,
+                options.platform,
+                options.ownedProviderSetting,
+                options.observeProviderSetting === undefined
+                  ? undefined
+                  : (name, value) =>
+                      options.observeProviderSetting!(client.name, name, value),
+              ),
+        activation,
+      });
       record(
         sharedDisabledConflict && status.state !== "aligned"
           ? { ...status, manual_conflict: "shared_disabled_activation" }
@@ -578,46 +576,10 @@ export const readClientRegistrationInspections = async (
   );
 };
 
-/** Shared registration storage doubles as ZCode's fallback, so its
- * `enable: false` activation fact binds every reader of that storage.
- * Maintenance must not drop the flag by rewriting the row as another
- * product's registration and silently re-enabling it; whether a repair
- * actually preserves it is setupPreservesDisabledActivation. */
-const sharedEnableFlagBinds = (
-  registration: ClientRegistration,
-  client: SetupClient,
-  parsed: ClientConfigurationDocument,
-): boolean =>
-  (parsed.dialect === "zcode" ||
-    parsed.dialect === "zcode_fallback" ||
-    client.sharedRegistration === true) &&
-  registration.enable === false;
-
 /** A disable that setup preserves is a manual conflict: its remediation
  * must not point at an ineffective setup run. */
 const sharedDisabledActivationRemediation = (): string =>
   "This shared registration row carries enable: false, which binds every reader of the shared storage, including ZCode's fallback view. REA preserves that flag, so rea setup will not change this row. Re-enable it with the product that disabled it, or remove enable: false manually, then rerun rea doctor.";
-// Codex and Kimi Code load a server marked `disabled: true` and honor only
-// `enabled`; Devin loads one marked `enabled: false` and honors only `disabled`.
-const ignoresDisabledKey = new Set(["codex", "kimi"]);
-const ignoresEnabledKey = new Set(["devin"]);
-
-const registrationActivation = (
-  registration: ClientRegistration,
-  client: SetupClient,
-  parsed: ClientConfigurationDocument,
-): "enabled" | "disabled" =>
-  (client.format !== "grok" &&
-    !ignoresDisabledKey.has(client.name) &&
-    registration.disabled === true) ||
-  (registration.enabled === false &&
-    !ignoresEnabledKey.has(client.name) &&
-    !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
-  sharedEnableFlagBinds(registration, client, parsed) ||
-  clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
-    ? "disabled"
-    : "enabled";
-
 const registrationAligned = ({
   registration,
   client,
@@ -711,24 +673,63 @@ const missingTransientLauncherRemediation = async (
   return undefined;
 };
 
-const configuredStatus = (
-  client: SetupClient,
-  command: RegistrationCommand,
-  commandIdentity: ClientRegistrationCommandIdentity,
-  state: "aligned" | "stale" | "unknown",
-  policyRemediation?: string,
-  packageReference?: string,
-  advisory?: string,
-  configPath: string = client.configPath,
-  scope?: ClientRegistrationScope,
-  launcherScope?: ClientRegistrationScope,
-  launcherConfigPath?: string,
-  alignmentStale = false,
-  providerSettings?: RecordedProviderSettings,
-  activationScope?: ClientRegistrationScope,
-  activationConfigPath?: string,
-  activationDisabled = false,
-): ClientRegistrationStatus => {
+const configuredStatus = (input: {
+  readonly client: SetupClient;
+  readonly command: RegistrationCommand;
+  readonly commandIdentity: ClientRegistrationCommandIdentity;
+  readonly state: "aligned" | "stale" | "unknown";
+  readonly policyRemediation: string | undefined;
+  readonly packageReference: string | undefined;
+  readonly advisory: string | undefined;
+  readonly configuration: EffectiveClientRegistrationConfiguration;
+  readonly alignmentStale: boolean;
+  readonly providerSettings: RecordedProviderSettings | undefined;
+  readonly activation: "enabled" | "disabled";
+}): ClientRegistrationStatus => {
+  const {
+    client,
+    command,
+    commandIdentity,
+    state,
+    policyRemediation,
+    packageReference,
+    advisory,
+    configuration,
+    alignmentStale,
+    providerSettings,
+    activation,
+  } = input;
+  const {
+    configPath,
+    scope,
+    launcherScope,
+    launcherConfigPath,
+    activationScope,
+    activationConfigPath,
+  } = configuration;
+  const base = {
+    client: client.name,
+    config_path: configPath,
+    ...(scope === undefined ? {} : { scope }),
+    ...(scope === "project" && launcherScope === "user"
+      ? { launcher_scope: "user" as const }
+      : {}),
+    command,
+    command_identity: commandIdentity,
+    ...(packageReference === undefined
+      ? {}
+      : { package_reference: packageReference }),
+    ...(providerSettings === undefined
+      ? {}
+      : { provider_settings: providerSettings }),
+  };
+  if (state === "aligned")
+    return {
+      ...base,
+      state,
+      remediation: null,
+      ...(advisory === undefined ? {} : { advisory }),
+    };
   const launcherRepair =
     policyRemediation ??
     (alignmentStale
@@ -739,7 +740,7 @@ const configuredStatus = (
         )
       : undefined);
   const activationRepair =
-    activationDisabled &&
+    activation === "disabled" &&
     (scope === "project" ||
       launcherScope === "project" ||
       activationScope === "project")
@@ -756,47 +757,14 @@ const configuredStatus = (
       ),
     ),
   ];
-  return state === "aligned"
-    ? {
-        client: client.name,
-        config_path: configPath,
-        ...(scope === undefined ? {} : { scope }),
-        ...(scope === "project" && launcherScope === "user"
-          ? { launcher_scope: "user" }
-          : {}),
-        command,
-        command_identity: commandIdentity,
-        ...(packageReference === undefined
-          ? {}
-          : { package_reference: packageReference }),
-        state,
-        remediation: null,
-        ...(advisory === undefined ? {} : { advisory }),
-        ...(providerSettings === undefined
-          ? {}
-          : { provider_settings: providerSettings }),
-      }
-    : {
-        client: client.name,
-        config_path: configPath,
-        ...(scope === undefined ? {} : { scope }),
-        ...(scope === "project" && launcherScope === "user"
-          ? { launcher_scope: "user" }
-          : {}),
-        command,
-        command_identity: commandIdentity,
-        ...(packageReference === undefined
-          ? {}
-          : { package_reference: packageReference }),
-        state,
-        remediation:
-          repairs.length > 0
-            ? repairs.join(" ")
-            : remediation(client, configPath, scope),
-        ...(providerSettings === undefined
-          ? {}
-          : { provider_settings: providerSettings }),
-      };
+  return {
+    ...base,
+    state,
+    remediation:
+      repairs.length > 0
+        ? repairs.join(" ")
+        : remediation(client, configPath, scope),
+  };
 };
 
 const timeoutAdvisory = (
@@ -850,13 +818,10 @@ const timeoutAdvisory = (
 const packageVersionRemediation = (
   packageReference: string,
   client: SetupClient,
-  configPath?: string,
-  scope?: ClientRegistrationScope,
-  launcherScope?: ClientRegistrationScope,
-  launcherConfigPath?: string,
+  launcherTarget: string,
+  scope: ClientRegistrationScope | undefined,
 ): string => {
-  const launcherTarget = launcherConfigPath ?? configPath ?? client.configPath;
-  return (launcherScope ?? scope) === "project"
+  return scope === "project"
     ? `This project-scoped registration in ${launcherTarget} requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA setup writes only user-level configuration; update the package version in ${launcherTarget}, then restart the client.`
     : `This registration requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA does not resolve package-runner requests during doctor; update the registration with rea setup --client ${client.name}, then restart the client.`;
 };

@@ -538,7 +538,7 @@ export interface EffectiveClientRegistrationConfiguration {
   readonly launcherConfigPath?: string;
   readonly activationScope?: ClientRegistrationScope;
   readonly activationConfigPath?: string;
-  readonly sources?: readonly ClientConfigurationSource[];
+  readonly declarations: readonly ServerDeclaration[];
   readonly projectInspection?: "evaluated" | "untrusted";
   /** Project candidate spellings already owned by the same physical user files. */
   readonly projectUserAliases?: readonly string[];
@@ -656,10 +656,14 @@ export const readEffectiveClientRegistrationConfiguration = async (
   const user = await readUserConfigurationSources(client, resources);
   if (!user.ok) return user;
   const sources = [...user.value, ...projectSources];
-  const declarations = serverDeclarations(sources);
   const wholeRows =
     client.format === "opencode" &&
     sources.some(({ dialect }) => dialect === "opencode_v2");
+  const projectedSources =
+    client.format === "opencode"
+      ? sources.map((source) => projectOpenCodeSource(source, wholeRows))
+      : sources;
+  const declarations = serverDeclarations(projectedSources);
   const winning = declarations.at(-1);
   const piOverride =
     client.format === "pi" &&
@@ -673,10 +677,6 @@ export const readEffectiveClientRegistrationConfiguration = async (
     if (!override.ok) return override;
   }
 
-  const projectedSources =
-    client.format === "opencode"
-      ? sources.map((source) => projectOpenCodeSource(source, wholeRows))
-      : sources;
   const document = piOverride
     ? withPiOverride(sources, active)
     : replaces
@@ -703,13 +703,12 @@ export const readEffectiveClientRegistrationConfiguration = async (
         {
           document,
           configPath: client.configPath,
-          sources,
+          declarations: active,
           ...(paths.value.userAliases.length === 0
             ? {}
             : { projectUserAliases: paths.value.userAliases }),
         },
         "evaluated",
-        active,
       ),
     );
 
@@ -730,7 +729,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
     launcherConfigPath: launcher.source.sourcePath ?? client.configPath,
     activationScope: activation.source.scope ?? "user",
     activationConfigPath: activation.source.sourcePath ?? client.configPath,
-    sources,
+    declarations: active,
     projectInspection: "evaluated",
     ...(paths.value.userAliases.length === 0
       ? {}
@@ -743,10 +742,10 @@ const projectViewOfUserRegistration = (
   projectInspection: NonNullable<
     EffectiveClientRegistrationConfiguration["projectInspection"]
   >,
-  active = activeDeclarations(serverDeclarations(user.sources ?? []), false),
 ): EffectiveClientRegistrationConfiguration => {
-  const source = active.at(-1)?.source.sourcePath;
-  const launcher = active.findLast(declaresLauncher)?.source.sourcePath;
+  const source = user.declarations.at(-1)?.source.sourcePath;
+  const launcher =
+    user.declarations.findLast(declaresLauncher)?.source.sourcePath;
   return {
     ...user,
     scope: "user",
@@ -781,7 +780,10 @@ const readEffectiveUserConfiguration = async (
   const native = {
     document: nativeDocument,
     configPath: client.configPath,
-    sources: nativeSources.value,
+    declarations: activeDeclarations(
+      serverDeclarations(nativeSources.value),
+      false,
+    ),
   };
   const fallbackPath =
     client.format === "zcode" ? client.zcodeFallbackPath : undefined;
@@ -813,7 +815,10 @@ const readEffectiveUserConfiguration = async (
       : {
           document,
           configPath: fallbackPath,
-          sources: fallbackSources.value,
+          declarations: activeDeclarations(
+            serverDeclarations(fallbackSources.value),
+            false,
+          ),
         },
   );
 };
@@ -975,16 +980,9 @@ const activeDeclarations = (
 
 /** Report the active source of a registration schema failure. */
 export const contributingRegistrationSource = (
-  sources: readonly ClientConfigurationSource[],
+  { declarations }: EffectiveClientRegistrationConfiguration,
   error: ConfigurationError,
 ): ClientConfigurationSource | undefined => {
-  const nativeV2 =
-    sources.some(({ dialect }) => dialect === "opencode_v2") &&
-    sources.some(({ scope }) => scope === "project");
-  const declarations = activeDeclarations(
-    serverDeclarations(sources),
-    nativeV2,
-  );
   const last = declarations.at(-1);
   if (last === undefined || !isRecord(last.entry)) return last?.source;
   const fields = new Set(
