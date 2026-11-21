@@ -25,6 +25,7 @@
   "src/application/investigation/InvestigationRetention.ts": 1,
   "src/application/native/NativeMatchingAdmission.ts": 1,
   "src/application/ntfs/NtfsJournalService.ts": 2,
+  "src/application/otlpTrace/OtlpTraceService.ts": 1,
   "src/application/reverse/ReverseEngineeringService.ts": 1,
   "src/application/wasm/WasmArtifactService.ts": 1,
   "src/artifacts/DesktopApplicationReader.ts": 1,
