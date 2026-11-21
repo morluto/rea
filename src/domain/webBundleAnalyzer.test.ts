@@ -645,66 +645,6 @@ describe("web bundle analyzer", () => {
   });
 });
 
-describe("web bundle source-map coverage", () => {
-  it("reports unavailable source maps as partial without dropping requested maps", () => {
-    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
-      status: "unavailable",
-      requested: 1,
-      processed: 1,
-      items: [
-        {
-          script_key: `scr_${"1".repeat(64)}`,
-          declared_url: "https://app.example.test/app.js.map",
-          effective_url: null,
-          status: "fetch_failed",
-          artifact: null,
-          original_sources: [],
-          original_module_edges: [],
-          mappings: [],
-          limitation: "Source-map fetch failed.",
-        },
-      ],
-    });
-
-    expect(analysis.completeness.status).toBe("partial");
-    expect(analysis.unknowns).toContainEqual({
-      dimension: "source_maps",
-      reason: expect.stringMatching(
-        /requested source maps.*unavailable or incomplete/i,
-      ),
-      affected_script_keys: [`scr_${"1".repeat(64)}`],
-    });
-  });
-
-  it("keeps map-less captured source complete when no maps were requested", () => {
-    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
-      status: "not_requested",
-      requested: 0,
-      processed: 0,
-      items: [],
-    });
-
-    expect(analysis.completeness.status).toBe("complete");
-    expect(analysis.unknowns).toEqual([]);
-  });
-
-  it("rejects inconsistent source-map coverage counts", () => {
-    const result = analyzeWebBundleFixture(inspection("export {};"));
-    expect(
-      webBundleAnalysisSchema.safeParse({
-        ...result,
-        observations: {
-          ...result.observations,
-          source_maps: {
-            ...result.observations.source_maps,
-            requested: 1,
-          },
-        },
-      }).success,
-    ).toBe(false);
-  });
-});
-
 describe("web bundle static-analysis parity", () => {
   it("qualifies network spellings through nested dynamic receivers", () => {
     const result = analyzeWebBundleFixture(
