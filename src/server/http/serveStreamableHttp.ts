@@ -415,18 +415,21 @@ export class McpSessionSlot {
 
   /** Answer one request that already named a session. Never arms a transport. */
   async #presented(request: Request): Promise<Response> {
+    const presented = request.headers.get("mcp-session-id");
+    const matches = (
+      session: LiveSession | undefined,
+    ): session is LiveSession =>
+      presented !== null &&
+      session !== undefined &&
+      session.transport.sessionId !== undefined &&
+      session.transport.sessionId === presented;
+    // An unmatched id must not join the drain. A timeout there would answer 503.
+    if (!matches(this.#live)) return SESSION_NOT_FOUND();
     if (this.#draining) await this.#live?.transport.close();
     if (this.#closed) return SHUTTING_DOWN();
-    const presented = request.headers.get("mcp-session-id");
-    const live = this.#live;
-    if (
-      presented !== null &&
-      live !== undefined &&
-      live.transport.sessionId !== undefined &&
-      live.transport.sessionId === presented
-    )
-      return live.handle(request);
-    return SESSION_NOT_FOUND();
+    const current = this.#live;
+    if (!matches(current)) return SESSION_NOT_FOUND();
+    return current.handle(request);
   }
 
   /** Cancel and drain MCP work before any shared provider shutdown hook can run. */
