@@ -374,6 +374,11 @@ export const documentationSections = [
         route: "/nuget-nupkg",
       },
       {
+        text: "VS Code extension packages",
+        source: "guides/managed/vsix-package.md",
+        route: "/vsix-package",
+      },
+      {
         text: ".NET single-file bundles",
         source: "dotnet-bundles.md",
         route: "/dotnet-bundles",

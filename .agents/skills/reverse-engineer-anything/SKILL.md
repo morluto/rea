@@ -440,6 +440,15 @@ explicit path or endpoint and do not need it.
   `.nuspec` members still return the inventory with limitations. Encrypted
   members are listed and not extracted. See the
   [NuGet packages guide](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
+- VS Code `.vsix` identity, activation, contributes and ZIP inventory:
+  `inspect_vsix_package` with the explicit local file. This built-in
+  target-free inspection does not install the extension, execute it, or
+  contact a marketplace. Preserve identity from both manifests and any
+  disagreement, engine range, activation events (`*` and `onStartupFinished`
+  are eager), hashed native/wasm/executable members, and signature-file
+  presence without verification. Missing or malformed manifests still return
+  the inventory with limitations. See the
+  [VS Code extension packages guide](https://github.com/morluto/rea/blob/main/docs/guides/managed/vsix-package.md).
 
 - Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
   with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema

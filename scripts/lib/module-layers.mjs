@@ -79,6 +79,7 @@ export const UNIT_LAYERS = Object.freeze(
       "model",
       "native",
       "nuget",
+      "vsix",
       "objdump",
       "pcap",
       "python",
@@ -364,6 +365,7 @@ export const ENTRY_FILES = Object.freeze(
         "windows/WindowsShortcutProvider.ts",
       ],
       nuget: ["NugetNupkgProvider.ts", "NugetNupkgProviderIdentity.ts"],
+      vsix: ["VsixPackageProvider.ts", "VsixPackageProviderIdentity.ts"],
       objdump: ["ObjdumpCommand.ts", "ObjdumpProviderIdentity.ts"],
       pcap: [
         "PcapConfiguration.ts",

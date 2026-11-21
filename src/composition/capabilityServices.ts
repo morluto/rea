@@ -41,6 +41,7 @@ import { createElectronFuseService } from "./electronFuses.js";
 import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
 import { createNugetNupkgService } from "./nugetNupkg.js";
+import { createVsixPackageService } from "./vsixPackage.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
@@ -105,6 +106,7 @@ import type { ElectronFuseService } from "../application/electron/ElectronFuseSe
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
+import type { VsixPackageService } from "../application/vsix/VsixPackageService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
@@ -146,6 +148,7 @@ export interface CapabilityServiceOptions {
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
   readonly nugetNupkg?: NugetNupkgService;
+  readonly vsixPackage?: VsixPackageService;
   readonly erlangBeam?: BeamService;
   readonly v8CodeCache?: V8CodeCacheService;
   readonly mavenGradleMetadata?: MavenGradleMetadataService;
@@ -416,6 +419,9 @@ const modules = {
   ),
   nugetNupkg: service(
     ({ options }) => options.nugetNupkg ?? createNugetNupkgService(),
+  ),
+  vsixPackage: service(
+    ({ options }) => options.vsixPackage ?? createVsixPackageService(),
   ),
   webNetworkCapture: service(
     ({ environment, options, settings }) =>

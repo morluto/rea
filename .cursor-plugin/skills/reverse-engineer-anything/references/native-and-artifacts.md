@@ -400,6 +400,21 @@ inventory and limitations. Encrypted members are listed and not extracted.
 Roles are folder conventions, not restore-time asset selection. See
 [NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
+## VS Code extension packages
+
+Use `inspect_vsix_package` for an explicit local `.vsix` when the question
+concerns package identity from `extension.vsixmanifest` and
+`extension/package.json`, engine range, activation events, contributes,
+declared dependencies, native/wasm/executable members, or signature-file
+presence. No `open_binary`, install, marketplace access, or target execution
+is required. The CLI equivalent is `inspect-vsix-package PATH`. Preserve
+artifact SHA-256, both manifests as present, identity disagreements, and
+hashed interesting members with observed vs inferred classification. Missing
+or malformed manifests succeed with inventory and limitations. Encrypted
+members are listed and not extracted. Signature files are reported present or
+absent and are not verified. See
+[VS Code extension packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/vsix-package.md).
+
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its
