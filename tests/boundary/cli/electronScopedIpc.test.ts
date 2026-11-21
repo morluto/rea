@@ -310,3 +310,37 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps an ESM channel unknown after its property is overwritten through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-ipc-mutated-channel-");
+    await writeFixtureFiles(root, {
+      "preload.mjs": [
+        'import { ipcRenderer } from "electron";',
+        'const channels = { send: "old" };',
+        "const alias = channels;",
+        "alias.send = unknown;",
+        "ipcRenderer.send(channels.send);",
+      ].join("\n"),
+    });
+    const application = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(application.summary.ipc).toMatchObject({
+      operations: 1,
+      literal_channels: 0,
+      dynamic_channel_operations: 1,
+    });
+    expect(
+      application.graph.nodes
+        .filter(({ kind }) => kind === "ipc-channel")
+        .flatMap(({ observations }) =>
+          observations.map(({ properties }) => properties),
+        ),
+    ).toEqual([
+      expect.objectContaining({
+        channel: null,
+        channel_expression: "channels.send",
+      }),
+    ]);
+  },
+);
