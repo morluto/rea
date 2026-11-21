@@ -2873,7 +2873,14 @@ it("detects 32-bit and 64-bit machine width from PE and TE headers", () => {
   teX64.writeUInt16LE(0x8664, 2);
   expect(detectPeTeMachineWidth(teX64)).toBe("64");
 
-  // TE ARMNT (Thumb-2): signature "VZ" + machine 0x01c2
+  // TE ARMNT: signature "VZ" + machine 0x01c4
+  const teArmnt = Buffer.alloc(16);
+  teArmnt[0] = 0x56;
+  teArmnt[1] = 0x5a;
+  teArmnt.writeUInt16LE(0x01c4, 2);
+  expect(detectPeTeMachineWidth(teArmnt)).toBe("32");
+
+  // TE ARM Thumb: signature "VZ" + machine 0x01c2
   const teArm = Buffer.alloc(16);
   teArm[0] = 0x56;
   teArm[1] = 0x5a;
@@ -2888,6 +2895,24 @@ it("detects 32-bit and 64-bit machine width from PE and TE headers", () => {
   peIa32.set(Buffer.from("PE\0\0"), 0x40);
   peIa32.writeUInt16LE(0x014c, 0x44);
   expect(detectPeTeMachineWidth(peIa32)).toBe("32");
+
+  // PE ARMNT: machine 0x01c4 at 0x44
+  const peArmnt = Buffer.alloc(0x80);
+  peArmnt[0] = 0x4d;
+  peArmnt[1] = 0x5a;
+  peArmnt.writeUInt32LE(0x40, 0x3c);
+  peArmnt.set(Buffer.from("PE\0\0"), 0x40);
+  peArmnt.writeUInt16LE(0x01c4, 0x44);
+  expect(detectPeTeMachineWidth(peArmnt)).toBe("32");
+
+  // PE AARCH64: machine 0xaa64 at 0x44
+  const peAarch64 = Buffer.alloc(0x80);
+  peAarch64[0] = 0x4d;
+  peAarch64[1] = 0x5a;
+  peAarch64.writeUInt32LE(0x40, 0x3c);
+  peAarch64.set(Buffer.from("PE\0\0"), 0x40);
+  peAarch64.writeUInt16LE(0xaa64, 0x44);
+  expect(detectPeTeMachineWidth(peAarch64)).toBe("64");
 
   // PE X64: "MZ" at 0, e_lfanew at 0x3c -> 0x40, PE\0\0 at 0x40, machine 0x8664 at 0x44
   const peX64 = Buffer.alloc(0x80);

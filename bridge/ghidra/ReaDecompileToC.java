@@ -5,10 +5,10 @@ import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -47,12 +47,11 @@ public class ReaDecompileToC extends GhidraScript {
                 return;
             }
 
-            try (PrintWriter writer = new PrintWriter(
+            try (BufferedWriter writer = new BufferedWriter(
                     new OutputStreamWriter(new FileOutputStream(outputFile), StandardCharsets.UTF_8))) {
-                writer.println("/*");
-                writer.println(" * Decompiled with Ghidra (" + currentProgram.getName() + ")");
-                writer.println(" */");
-                writer.println();
+                writer.write("/*\n");
+                writer.write(" * Decompiled with Ghidra (" + currentProgram.getName() + ")\n");
+                writer.write(" */\n\n");
 
                 FunctionIterator iter = currentProgram.getListing().getFunctions(true);
                 int decompiledCount = 0;
@@ -67,14 +66,21 @@ public class ReaDecompileToC extends GhidraScript {
                         if (decompFunc != null) {
                             String cCode = decompFunc.getC();
                             if (cCode != null && !cCode.trim().isEmpty()) {
-                                writer.println(cCode);
-                                writer.println();
+                                writer.write(cCode);
+                                writer.write("\n\n");
                                 decompiledCount++;
                             }
                         }
                     }
                 }
+                writer.flush();
                 println("ReaDecompileToC: decompiled " + decompiledCount + " functions to " + outputFile.getAbsolutePath());
+            } catch (Exception writeEx) {
+                printerr("ReaDecompileToC: failed writing decompiled output: " + writeEx.getMessage());
+                if (outputFile.exists()) {
+                    outputFile.delete();
+                }
+                throw writeEx;
             }
         } finally {
             decompiler.dispose();

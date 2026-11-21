@@ -1,4 +1,5 @@
 import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
+import { decodePeMachine } from "../domain/peMachine.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import type { UefiDecodeFormat } from "./FfsSections.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -137,23 +138,14 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
 
   try {
     const reader = new BinaryReader(bytes, true, "UEFI image header");
+    let candidateMachine: number | undefined;
 
     // 1. Check for TE header (Signature "VZ" = 0x56, 0x5A)
     if (bytes[0] === 0x56 && bytes[1] === 0x5a && bytes.length >= 4) {
-      const machine = reader.u16(2);
-      if (
-        machine === 0x014c || // IA32
-        machine === 0x01c0 || // ARM
-        machine === 0x01c2 || // ARMNT
-        machine === 0x5032 // RISCV32
-      ) {
-        return "32";
-      }
-      return "64";
+      candidateMachine = reader.u16(2);
     }
-
     // 2. Check for PE header ("MZ" DOS header followed by PE signature at e_lfanew)
-    if (bytes[0] === 0x4d && bytes[1] === 0x5a && bytes.length >= 0x40) {
+    else if (bytes[0] === 0x4d && bytes[1] === 0x5a && bytes.length >= 0x40) {
       const eLfanew = reader.u32(0x3c);
       if (eLfanew + 6 <= bytes.length) {
         if (
@@ -162,38 +154,32 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
           bytes[eLfanew + 2] === 0x00 &&
           bytes[eLfanew + 3] === 0x00
         ) {
-          const machine = reader.u16(eLfanew + 4);
-          if (
-            machine === 0x014c || // IA32
-            machine === 0x01c0 || // ARM
-            machine === 0x01c2 || // ARMNT
-            machine === 0x5032 // RISCV32
-          ) {
-            return "32";
-          }
-          return "64";
+          candidateMachine = reader.u16(eLfanew + 4);
         }
       }
     }
-
     // 3. Direct COFF header without DOS stub
-    if (
+    else if (
       bytes.length >= 6 &&
       bytes[0] === 0x50 &&
       bytes[1] === 0x45 &&
       bytes[2] === 0x00 &&
       bytes[3] === 0x00
     ) {
-      const machine = reader.u16(4);
-      if (
-        machine === 0x014c ||
-        machine === 0x01c0 ||
-        machine === 0x01c2 ||
-        machine === 0x5032
-      ) {
+      candidateMachine = reader.u16(4);
+    }
+
+    if (candidateMachine !== undefined) {
+      const decoded = decodePeMachine(candidateMachine);
+      if (decoded !== undefined) {
+        return decoded.architecture === "x86_64" ||
+          decoded.architecture === "arm64"
+          ? "64"
+          : "32";
+      }
+      if (candidateMachine === 0x5032) {
         return "32";
       }
-      return "64";
     }
   } catch {
     return "64";
