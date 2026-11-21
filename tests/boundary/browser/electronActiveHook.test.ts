@@ -2079,114 +2079,75 @@ process.stdout.write(JSON.stringify({
   });
 });
 
-it("lets a later data listener link win over an earlier owned callback", async () => {
-  const root = await createTestTempDirectory(
-    "rea-electron-hook-removal-later-data-link-",
-  );
-  await writeElectronFixture(root);
-  const script = join(root, "removal-later-data-link.cjs");
-  await writeFile(
-    script,
-    `const { EventEmitter } = require("node:events");
-const { ipcMain } = require("electron");
-const scenario = (emitter) => {
+it("removes the newest matching raw link and reports its original callback", async () => {
+  const result = await runIpcHookFixture(`const scenario = (emitter, mode) => {
   const calls = [];
   const original = function original() { calls.push("original"); };
   const later = function later() { calls.push("later"); };
+  const tail = function tail() { calls.push("tail"); };
+  const names = new Map([[original, "original"], [later, "later"], [tail, "tail"]]);
   const removed = [];
-  emitter.on("removeListener", (_channel, callback) => removed.push(callback === original ? "original" : callback === later ? "later" : "other"));
-  emitter.on("ch", original);
-  emitter.on("ch", later);
-  emitter.rawListeners("ch")[1].listener = original;
-  emitter.removeListener("ch", original);
-  return { remaining: emitter.listenerCount("ch"), removed,
-    originalStillRegistered: emitter.listeners("ch").includes(original),
-    laterStillRegistered: emitter.listeners("ch").includes(later) };
-};
-console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain),
-  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const result = JSON.parse(execution.stdout) as {
-    readonly plain: {
-      readonly remaining: number;
-      readonly removed: readonly string[];
-      readonly originalStillRegistered: boolean;
-      readonly laterStillRegistered: boolean;
-    };
-    readonly hooked: {
-      readonly remaining: number;
-      readonly removed: readonly string[];
-      readonly originalStillRegistered: boolean;
-      readonly laterStillRegistered: boolean;
-    };
-    readonly hook_error: boolean;
-  };
-  expect(result.hook_error).toBe(false);
-  expect(result.hooked).toEqual(result.plain);
-  expect(result.plain).toEqual({
-    remaining: 1,
-    removed: ["original"],
-    originalStillRegistered: true,
-    laterStillRegistered: false,
+  emitter.on("removeListener", (channel, callback) => {
+    if (channel === mode) removed.push(names.get(callback) ?? "other");
   });
-});
-
-it("normalizes a later raw link to an earlier owned registration", async () => {
-  const root = await createTestTempDirectory(
-    "rea-electron-hook-removal-owned-link-chain-",
-  );
-  await writeElectronFixture(root);
-  const script = join(root, "removal-owned-link-chain.cjs");
-  await writeFile(
-    script,
-    `const { EventEmitter } = require("node:events");
-const { ipcMain } = require("electron");
-const scenario = (emitter) => {
-  const calls = [];
-  const original = function original() { calls.push("original"); };
-  const later = function later() { calls.push("later"); };
-  const foreign = function foreign() {};
-  const removed = [];
-  emitter.on("removeListener", (_channel, callback) => removed.push(callback === original ? "original" : callback === later ? "later" : "other"));
-  emitter.on("ch", original);
-  emitter.on("ch", later);
-  const first = emitter.rawListeners("ch")[0];
-  const second = emitter.rawListeners("ch")[1];
-  first.listener = foreign;
-  second.listener = first;
-  emitter.removeListener("ch", original);
-  emitter.emit("ch");
-  return { remaining: emitter.listenerCount("ch"), removed, calls };
+  emitter.on(mode, original);
+  const first = emitter.rawListeners(mode)[0];
+  if (mode === "prior-removal") emitter.removeListener(mode, original);
+  if (mode === "changed-owner") first.listener = () => {};
+  if (mode === "chain") later.listener = first;
+  emitter.on(mode, later);
+  if (mode === "chain") {
+    tail.listener = later;
+    emitter.on(mode, tail);
+  } else {
+    emitter.rawListeners(mode).at(-1).listener = mode === "direct" ? original : first;
+  }
+  emitter.removeListener(mode, original);
+  emitter.emit(mode);
+  const registrations = mode === "direct"
+    ? emitter.listeners(mode).map(callback => names.get(callback) ?? "other")
+    : undefined;
+  return { remaining: emitter.listenerCount(mode), removed, calls, registrations };
 };
-console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain),
-  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const result = JSON.parse(execution.stdout) as {
-    readonly plain: {
-      readonly remaining: number;
-      readonly removed: readonly string[];
-      readonly calls: readonly string[];
-    };
-    readonly hooked: {
-      readonly remaining: number;
-      readonly removed: readonly string[];
-      readonly calls: readonly string[];
-    };
-    readonly hook_error: boolean;
+const rows = ["direct", "changed-owner", "prior-removal", "chain"].map(mode => ({
+  mode, plain: scenario(new EventEmitter(), mode), hooked: scenario(ipcMain, mode),
+}));
+console.log(JSON.stringify({ rows, hookError: globalThis.__reaElectronActiveSnapshot().hook_error }));
+`);
+  const { rows, hookError } = result as {
+    rows: { mode: string; plain: unknown; hooked: unknown }[];
+    hookError: boolean;
   };
-  expect(result.hook_error).toBe(false);
-  expect(result.hooked).toEqual(result.plain);
-  expect(result.plain).toEqual({
-    remaining: 1,
-    removed: ["original"],
-    calls: ["original"],
-  });
+  expect(hookError).toBe(false);
+  expect(rows.map(({ mode, plain }) => ({ mode, plain }))).toEqual([
+    {
+      mode: "direct",
+      plain: {
+        remaining: 1,
+        removed: ["original"],
+        calls: ["original"],
+        registrations: ["original"],
+      },
+    },
+    {
+      mode: "changed-owner",
+      plain: { remaining: 1, removed: ["original"], calls: ["original"] },
+    },
+    {
+      mode: "prior-removal",
+      plain: { remaining: 0, removed: ["original", "original"], calls: [] },
+    },
+    {
+      mode: "chain",
+      plain: {
+        remaining: 2,
+        removed: ["original"],
+        calls: ["original", "tail"],
+      },
+    },
+  ]);
+  for (const { mode, plain, hooked } of rows)
+    expect(hooked, mode).toEqual(plain);
 });
 
 it("preserves native direct-removal cleanup with throwing listener metadata", async () => {
@@ -2449,186 +2410,74 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
   });
 });
 
-it("normalizes an earlier raw owner in a later removal meta payload", async () => {
-  const root = await createTestTempDirectory(
-    "rea-electron-hook-removal-owned-meta-link-",
-  );
-  await writeElectronFixture(root);
-  const script = join(root, "removal-owned-meta-link.cjs");
-  await writeFile(
-    script,
-    `const { EventEmitter } = require("node:events");
-const { ipcMain } = require("electron");
-const scenario = (emitter) => {
-  const original = function original() {};
-  const later = function later() {};
-  const payloads = [];
-  emitter.on("removeListener", (_channel, callback) => payloads.push(
-    callback === original ? "original" : callback === later ? "later" : "other"));
-  emitter.on("ch", original);
-  const firstRaw = emitter.rawListeners("ch")[0];
-  emitter.removeListener("ch", original);
-  emitter.on("ch", later);
-  emitter.rawListeners("ch")[0].listener = firstRaw;
-  emitter.removeListener("ch", original);
-  return { payloads, remaining: emitter.listenerCount("ch") };
-};
-console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain),
-  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const result = JSON.parse(execution.stdout);
-  expect(result.hook_error).toBe(false);
-  expect(result.hooked).toEqual(result.plain);
-  expect(result.plain).toEqual({
-    payloads: ["original", "original"],
-    remaining: 0,
-  });
-});
-
-it("preserves the native argument that proves a chained removal match", async () => {
-  const root = await createTestTempDirectory(
-    "rea-electron-hook-removal-chain-argument-",
-  );
-  await writeElectronFixture(root);
-  const script = join(root, "removal-chain-argument.cjs");
-  await writeFile(
-    script,
-    `const { EventEmitter } = require("node:events");
-const { ipcMain } = require("electron");
-const scenario = (emitter) => {
-  const calls = [];
-  const original = function original() { calls.push("original"); };
-  const g = function g() { calls.push("g"); };
-  const h = function h() { calls.push("h"); };
-  const removed = [];
-  emitter.on("removeListener", (_channel, callback) => removed.push(
-    callback === original ? "original" : callback === g ? "g" : callback === h ? "h" : "other"));
-  emitter.on("ch", original);
-  const firstRaw = emitter.rawListeners("ch")[0];
-  g.listener = firstRaw;
-  emitter.on("ch", g);
-  h.listener = g;
-  emitter.on("ch", h);
-  emitter.removeListener("ch", original);
-  emitter.emit("ch");
-  return { remaining: emitter.listenerCount("ch"), removed, calls };
-};
-console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain),
-  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const result = JSON.parse(execution.stdout);
-  expect(result.hook_error).toBe(false);
-  expect(result.hooked).toEqual(result.plain);
-  expect(result.plain).toEqual({
-    remaining: 2,
-    removed: ["original"],
-    calls: ["original", "h"],
-  });
-});
-
-it("falls back to native errors for a revoked listener-array proxy", async () => {
-  const root = await createTestTempDirectory(
-    "rea-electron-hook-revoked-listener-array-",
-  );
-  await writeElectronFixture(root);
-  const script = join(root, "revoked-listener-array.cjs");
-  await writeFile(
-    script,
-    `const { EventEmitter } = require("node:events");
-const { ipcMain } = require("electron");
-const scenario = (emitter) => {
+it("keeps native removal outcomes when listener ownership is opaque", async () => {
+  const result = await runIpcHookFixture(`const scenario = (emitter, mode) => {
   const listener = function original() {};
-  const marker = function marker() {};
-  emitter.on("ch", listener);
-  emitter.on("ch", marker);
-  const entry = emitter.rawListeners("ch")[0];
-  entry.listener = function foreign() {};
-  const revocable = Proxy.revocable(emitter._events.ch, {});
-  emitter._events.ch = revocable.proxy;
-  revocable.revoke();
+  emitter.on(mode, listener);
+  emitter.on(mode, function later() {});
+  const entries = emitter.rawListeners(mode);
+  let reads = 0;
+  const stored = emitter._events[mode];
+  if (mode === "revoked-array") {
+    entries[0].listener = function foreign() {};
+    const revocable = Proxy.revocable(stored, {});
+    emitter._events[mode] = revocable.proxy;
+    revocable.revoke();
+  } else {
+    entries[0].listener = listener;
+    Object.defineProperty(entries[1], "listener", {
+      get() { reads++; return undefined; },
+    });
+  }
   let failure = null;
-  try { emitter.removeListener("ch", listener); } catch (cause) { failure = { name: cause.name, message: cause.message }; }
-  return failure;
+  try { emitter.removeListener(mode, listener); }
+  catch (cause) { failure = { name: cause.name, message: cause.message }; }
+  finally {
+    if (mode === "revoked-array") emitter._events[mode] = stored;
+  }
+  return { remaining: emitter.listenerCount(mode), reads, failure };
 };
-const plain = scenario(new EventEmitter());
-const hooked = scenario(ipcMain);
-console.log(JSON.stringify({ plain, hooked,
-  gaps: globalThis.__reaElectronActiveSnapshot().events.filter((event) => event.kind === "ipc-observation-gap"),
-  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const result = JSON.parse(execution.stdout) as {
-    readonly plain: { readonly name: string; readonly message: string };
-    readonly hooked: { readonly name: string; readonly message: string };
-    readonly gaps: readonly {
-      readonly event: string;
-      readonly target: string;
-    }[];
-    readonly hook_error: boolean;
-  };
-  expect(result.hook_error).toBe(false);
-  expect(result.hooked).toEqual(result.plain);
-  expect(result.gaps).toContainEqual(
-    expect.objectContaining({
-      event: "listener-removal",
-      target: "ipcMain.removeListener",
-    }),
-  );
-});
-
-it("records a gap when an opaque later registration blocks ownership ordering", async () => {
-  const root = await createTestTempDirectory(
-    "rea-electron-hook-removal-opaque-gap-",
-  );
-  await writeElectronFixture(root);
-  const script = join(root, "removal-opaque-gap.cjs");
-  await writeFile(
-    script,
-    `const { ipcMain } = require("electron");
-const listener = function original() {};
-const opaque = function opaque() {};
-ipcMain.on("ch", listener);
-ipcMain.on("ch", opaque);
-ipcMain.rawListeners("ch")[0].listener = listener;
-Object.defineProperty(ipcMain.rawListeners("ch")[1], "listener", { get() { return undefined; } });
-ipcMain.removeListener("ch", listener);
+const modes = ["revoked-array", "opaque-later"];
+const rows = modes.map(mode => ({
+  mode, plain: scenario(new EventEmitter(), mode), hooked: scenario(ipcMain, mode),
+}));
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-console.log(JSON.stringify({ remaining: ipcMain.listenerCount("ch"),
-  gaps: snapshot.events.filter((event) => event.kind === "ipc-observation-gap"),
-  hook_error: snapshot.hook_error }));
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const result = JSON.parse(execution.stdout) as {
-    readonly remaining: number;
-    readonly gaps: readonly {
-      readonly event: string;
-      readonly channel: string | null;
-    }[];
-    readonly hook_error: boolean;
+console.log(JSON.stringify({ rows, hookError: snapshot.hook_error,
+  gaps: snapshot.events.filter(event => event.kind === "ipc-observation-gap"),
+}));
+`);
+  const { rows, gaps, hookError } = result as {
+    rows: { mode: string; plain: unknown; hooked: unknown }[];
+    gaps: unknown[];
+    hookError: boolean;
   };
-  expect(result.remaining).toBe(1);
-  expect(result.gaps).toContainEqual(
-    expect.objectContaining({
-      kind: "ipc-observation-gap",
-      event: "listener-removal",
-      phase: "observed",
-      channel: "ch",
-      target: "ipcMain.removeListener",
-      process_type: "main",
-      error: false,
-    }),
+  expect(hookError).toBe(false);
+  expect(rows.map(({ mode, plain }) => ({ mode, plain }))).toEqual([
+    {
+      mode: "revoked-array",
+      plain: {
+        remaining: 2,
+        reads: 0,
+        failure: { name: "TypeError", message: expect.any(String) },
+      },
+    },
+    { mode: "opaque-later", plain: { remaining: 1, reads: 1, failure: null } },
+  ]);
+  for (const { mode, plain, hooked } of rows)
+    expect(hooked, mode).toEqual(plain);
+  expect(gaps).toEqual(
+    ["revoked-array", "opaque-later"].map((channel) =>
+      expect.objectContaining({
+        kind: "ipc-observation-gap",
+        event: "listener-removal",
+        phase: "observed",
+        channel,
+        target: "ipcMain.removeListener",
+        process_type: "main",
+        error: false,
+      }),
+    ),
   );
-  expect(result.hook_error).toBe(false);
 });
 
 it("preserves pre-hook removeListener decorator receiver and callback identity", async () => {
