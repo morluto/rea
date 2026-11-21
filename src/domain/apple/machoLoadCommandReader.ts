@@ -754,14 +754,14 @@ const decodeCommand = (
         "malformed",
         `load command ${index} is too short for LC_BUILD_VERSION`,
       );
-    const view = viewOf(body);
-    const toolCount = view.getUint32(20, true);
+    const reader = machoWordReader(body, true);
+    const toolCount = reader.u32(20);
     if (toolCount > Math.floor((body.byteLength - 24) / 8))
       throw machoIssue(
         "malformed",
         `load command ${index} LC_BUILD_VERSION tool records exceed cmdsize`,
       );
-    const platform = view.getUint32(8, true);
+    const platform = reader.u32(8);
     slice.platforms.push(platform);
     return;
   }
@@ -1141,6 +1141,3 @@ const fileTypeName = (fileType: number): MachoSlice["file_type"] =>
 
 const version = (value: number): string =>
   `${value >>> 16}.${(value >>> 8) & 0xff}.${value & 0xff}`;
-
-const viewOf = (bytes: Uint8Array): DataView =>
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

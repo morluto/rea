@@ -102,8 +102,8 @@ const historicalCapture = (
   stages: {
     launch: covered(
       test(
-        HISTORICAL_DECODER,
-        "cancels after snapshot acquisition before launch and removes private input declarations",
+        "tests/boundary/browser/historicalCapturePreparationCleanup.test.ts",
+        "cancels after snapshot acquisition without launching or adopting the opaque caller reason",
       ),
     ),
     handshake: notApplicable(
@@ -1703,7 +1703,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/v8CodeCacheCli.test.ts",
-        "reports wide and synthetic narrow header extents through the public CLI",
+        "reports wide, synthetic narrow and synthetic six-word header extents through the public CLI",
       ),
     ),
     covered(

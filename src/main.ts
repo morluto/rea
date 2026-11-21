@@ -127,9 +127,26 @@ export const run = async (
   );
 };
 
+/** Only the production entrypoints read the account's configuration file. */
+const runWithUserConfiguration = async (
+  dependencies: RuntimeDependencies,
+): Promise<number> => {
+  const { loadUserConfiguration } =
+    await import("./application/UserConfigurationStore.js");
+  const configuration = await loadUserConfiguration(
+    snapshotEnvironment(dependencies.env, HOST_PLATFORM.platform),
+  );
+  if (!configuration.ok) {
+    dependencies.writeStderr(`${configuration.error.message}\n`);
+    return 1;
+  }
+  return run({ ...dependencies, env: configuration.value.environment });
+};
+
 /** Run the executable boundary without exposing an unexpected startup cause. */
 export const runEntrypoint = async (
-  start: () => Promise<number> = () => run(),
+  start: () => Promise<number> = () =>
+    runWithUserConfiguration(runtimeDependencies()),
   writeStderr: (text: string) => void = (text) => process.stderr.write(text),
   setExitCode: (code: number) => void = (code) => {
     process.exitCode = code;
@@ -199,7 +216,10 @@ export const runMcpHttpEntrypoint = async (
   const exit = createExitStatus(io.setExitCode);
   try {
     await runEntrypoint(
-      () => run(httpRuntimeDependencies(endpoint.value, latch, exit)),
+      () =>
+        runWithUserConfiguration(
+          httpRuntimeDependencies(endpoint.value, latch, exit),
+        ),
       io.writeStderr,
       exit.set,
     );

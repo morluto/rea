@@ -24,6 +24,8 @@ import {
 } from "../config/mcpStartupPolicy.js";
 import {
   inspectClientRegistrationCommand,
+  managedClientLauncher,
+  transientClientLauncherPaths,
   type ClientRegistrationCommandFacts,
   type ClientRegistrationCommandIdentity,
 } from "./ClientRegistrationIdentity.js";
@@ -164,6 +166,12 @@ export const readClientRegistrationInspections = async (
   options: ClientRegistrationReadOptions,
 ): Promise<readonly ClientRegistrationInspection[]> => {
   const inspections: ClientRegistrationInspection[] = [];
+  const preferManaged =
+    managedClientLauncher(
+      currentCommandPath,
+      options.environment ?? process.env,
+      options.platform,
+    ) !== undefined;
   for (const client of await resolveSupportedClients(
     home,
     options.platform,
@@ -340,6 +348,11 @@ export const readClientRegistrationInspections = async (
         command,
         currentCommandPath,
       );
+      const transientPaths = transientClientLauncherPaths(
+        command,
+        options.environment ?? process.env,
+        options.platform,
+      );
       const nativeApplicability = admitClientStdioConnection(raw, {
         dialect: parsed.dialect,
         profile: client.registrationProfile,
@@ -409,6 +422,7 @@ export const readClientRegistrationInspections = async (
             registration,
             client: effectiveClient,
             commandFacts,
+            preferManaged,
           });
       const status = configuredStatus(
         effectiveClient,
@@ -419,17 +433,25 @@ export const readClientRegistrationInspections = async (
           : activation === "enabled" &&
               !packageVersionDrift &&
               alignment === "aligned" &&
+              transientPaths.length === 0 &&
               (parsed.dialect !== "dsh" ||
                 dshDocument(parsed.document).ready) &&
               policyBlock === undefined
             ? "aligned"
             : "stale",
-        (parsed.dialect !== "dsh" && commandFacts.identity !== "owned"
-          ? clientRegistrationOwnershipRemediation(commandFacts.identity, [
-              configPath,
-              ...inlineRegistrationOrigins(client),
-            ])
+        (nativeApplicability.ok
+          ? await missingTransientLauncherRemediation(
+              transientPaths,
+              commandFacts.identity,
+              effectiveClient,
+            )
           : undefined) ??
+          (parsed.dialect !== "dsh" && commandFacts.identity !== "owned"
+            ? clientRegistrationOwnershipRemediation(commandFacts.identity, [
+                configPath,
+                ...inlineRegistrationOrigins(client),
+              ])
+            : undefined) ??
           (!nativeApplicability.ok
             ? nativeApplicability.error.cause.message
             : undefined) ??
@@ -441,6 +463,9 @@ export const readClientRegistrationInspections = async (
               : undefined) ??
           (sharedDisabledConflict
             ? sharedDisabledActivationRemediation()
+            : undefined) ??
+          (transientPaths.length > 0 && commandFacts.identity === "owned"
+            ? `The saved launcher uses a session path (${transientPaths.join(", ")}). ${remediation(effectiveClient)}`
             : undefined),
         packageReference,
         registrationEnvironment?.ok === true
@@ -534,10 +559,12 @@ const registrationAligned = ({
   registration,
   client,
   commandFacts,
+  preferManaged,
 }: {
   readonly registration: ClientRegistration;
   readonly client: SetupClient;
   readonly commandFacts: ClientRegistrationCommandFacts;
+  readonly preferManaged: boolean;
 }): "aligned" | "stale" | "unknown" => {
   const { identity } = commandFacts;
   if (identity === "unknown") return "unknown";
@@ -570,7 +597,11 @@ const registrationAligned = ({
   if (commandFacts.package !== undefined) return "stale";
   // Owning the script does not establish how its shebang interpreter resolves
   // in the client. Setup migrates these launchers without losing ownership.
-  return commandFacts.launch === "runtime_script" ? "aligned" : "stale";
+  if (commandFacts.launch === "managed_shim")
+    return commandFacts.independentFallback === true ? "aligned" : "stale";
+  return commandFacts.launch === "runtime_script" && !preferManaged
+    ? "aligned"
+    : "stale";
 };
 
 /** A client that rewrites its file from memory must be quit before setup. */
@@ -593,6 +624,27 @@ const inlineRegistrationRemediation = (client: SetupClient): string => {
 
 const unknownEntryPointRemediation = (): string =>
   "The existing registration was retained because its executable identity cannot be verified. Check the registered launcher path, symlink targets and access permissions. Run the installed REA CLI or a supported package runner, then rerun rea doctor; no registration was changed.";
+
+const missingTransientLauncherRemediation = async (
+  paths: readonly string[],
+  identity: ClientRegistrationCommandIdentity,
+  client: SetupClient,
+): Promise<string | undefined> => {
+  if (identity !== "unknown") return undefined;
+  for (const path of paths) {
+    try {
+      await stat(path);
+    } catch (cause) {
+      if (isMissing(cause)) {
+        const detail = `The saved session launcher path ${path} is missing.`;
+        return client.format === "dsh"
+          ? `${detail} Run rea setup --client dsh to review and refresh the installed REA registration, then restart the client.`
+          : `${detail} Launcher ownership is unknown. Back up the client configuration and replace that path with the verified installed interpreter or REA script, then rerun rea doctor and restart the client.`;
+      }
+    }
+  }
+  return undefined;
+};
 
 const configuredStatus = (
   client: SetupClient,

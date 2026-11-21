@@ -17,19 +17,36 @@ the client can launch it.
 For JavaScript installations, setup registers the selected runtime
 executable and REA script by absolute path. On POSIX, it prefers executable
 `node` or `bun` and REA aliases on setup's `PATH` only when they resolve to the
-same selected files. This preserves manager-owned aliases across version updates;
-otherwise setup uses the selected paths directly. This also applies when setup
+same selected files. Setup skips paths that pass through fnm multishell
+directories or `XDG_RUNTIME_DIR`, including through another symlink.
+This preserves durable manager aliases across
+version updates. When no eligible alias exists, setup uses the selected
+installation paths. This also applies when setup
 runs through a package runner: retain the selected cache entry and runtime while
 the registration uses them. Clearing either makes startup fail without resolving
 another package from the client's project. Restore the same installation before
 repairing it; an unidentified registration remains untouched. See
 [installation and recovery](installation.md#package-runners-and-global-installation).
+
+For a supported Aube v2 package shim, setup saves a wrapper around the shim so
+the registration can follow the manager's REA installation across upgrades.
+The wrapper supplies shell helpers by absolute path and binds a verified
+Node path for the shim's fallback. Setup prefers a Node alias that works
+independently of the shim's sibling interpreter, then falls back to the
+installed Node executable. The wrapper uses an executable sibling Node when
+the shim selects it and uses the saved Node for bare or hardcoded interpreter
+commands. This works without Node on the client's `PATH` and when an upgrade
+switches between the two supported shim formats.
+
 Setup forwards supported, explicitly selected REA settings into client
 configuration, but does not copy unrelated ambient environment values. To refresh an older registration, preview
 `rea setup --client <client-id> --skill=false --dry-run`, then run the same command
 without `--dry-run` and approve the displayed changes. Setup preserves unrelated
 settings, backs up changed configuration and leaves an aligned registration
 unchanged. Restart the client after applying the update.
+
+If doctor reports a saved session path that still resolves, run setup to
+refresh that registration before the session directory is removed.
 
 If a runtime manager removes the registered executable and no surviving alias
 was available, doctor reports its identity as unknown and setup retains the
@@ -311,8 +328,9 @@ read it. From that redirected view, setup and uninstall refuse to change other
 clients' files there (VS Code, Trae, Devin and Hermes) and skill directories
 there. `npm install -g` run from such a process installs into the package's
 `LocalCache\Roaming\npm`, which other processes cannot see at the `%APPDATA%`
-path. Setup refuses to register a launcher stored in any MSIX package's
-private storage. Install REA from an ordinary terminal and rerun setup there.
+path. Setup and the default `rea mcp add` launcher reject runtimes and REA
+scripts stored in any MSIX package's private storage. Install REA from an
+ordinary terminal and retry the registration there.
 
 Uninstall removes REA's entry from both the private copy and the `%APPDATA%`
 file, including registrations that earlier releases wrote to `%APPDATA%`.
@@ -567,7 +585,7 @@ the diagnostic identifies the setting to repair. See the
 for the supported policy values.
 
 When direct launcher paths prove the same executable or Node entrypoint,
-setup retains the existing caller-selected spelling. An otherwise aligned
+setup retains an existing spelling outside known session directories. An otherwise aligned
 registration therefore needs no rewrite or recovery backup merely because
 REA was invoked through another symlink. Setup also retains that spelling when
 another field, such as an invalid timeout, needs repair. Unresolved identity
@@ -1225,3 +1243,27 @@ persisting an internal versioned script path. Unresolved aliases and wrappers
 that are different files do not establish that proof; setup retains its selected
 entrypoint. A manager-specific upgrade remains subject to that manager's alias
 policy.
+
+## Persisted provider settings
+
+Use `rea config --set NAME=VALUE` to save a provider path in
+`${XDG_CONFIG_HOME:-~/.config}/rea/rea.json`. `rea config --get NAME --json`
+shows the value and its source. For Hopper on macOS and Linux, it reports
+the launcher path the provider would try when no value is set.
+`rea config --unset NAME` removes the saved value. Environment variables override the file, and absent settings
+use provider discovery. When setup relies on saved defaults from a non-default
+`XDG_CONFIG_HOME`, it records that directory only if the client registration
+does not already define `XDG_CONFIG_HOME`. Each MCP start reads the saved
+file from the selected directory. Setup uses its saved IDA request budget
+when recommending client deadlines and preserves any existing client deadline.
+When one client is selected, doctor uses that registration's configuration
+location for provider probes. The JSON report lists the effective settings
+and their source (`env`, `config`, or `auto`) under
+`providerInspections[].providerSettings` and `staticProviderSettings` for
+Hopper and ILSpy. Setup leaves values from the saved file in that file so a
+later edit takes effect at the next MCP start.
+
+An edit to an existing file retains its original contents in
+`rea.json.rea.backup`. If doctor reports malformed or unreadable configuration,
+repair the named file or restore the verified backup. MCP startup reports the
+same file error.

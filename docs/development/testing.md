@@ -788,11 +788,16 @@ ownership or finalization changes; a single malformed fixture cannot establish
 the whole contract.
 
 When consolidating interpretation across consumers, use the same authored
-input and an independently specified expected fact at the boundary where
-each consumer previously made its own decision. Allow differences in
-recovery or display when those belong to the consumer. For generated
-installers and verifiers, exercise the emitted artifact in its supported
-runtime so the test covers the code that actually receives the input.
+input at the boundary where each consumer previously made its own decision.
+Choose a case that makes competing interpretations disagree and a control
+that should succeed. Assert the expected fact and its provenance independently
+of the implementation. Allow differences in recovery or display when those
+belong to the consumer. For generated installers and verifiers, exercise the
+emitted artifact in its supported runtime.
+
+When the operation changes state, verify the published or retained result as
+well as preflight. When ownership includes cleanup, check who retains
+responsibility after a failed attempt and what happens on retry.
 
 When detection and detailed inspection share a reader, compare a valid
 input, a recognizable malformed input, and a valid input whose examined
