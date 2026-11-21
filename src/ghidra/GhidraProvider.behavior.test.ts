@@ -105,6 +105,7 @@ import {
   type GhidraProviderClientFactory,
 } from "./GhidraProviderClient.js";
 import { GhidraLaunchError, GhidraHeadlessLauncher } from "./GhidraLauncher.js";
+import { strippedMachoWithMain } from "./GhidraMachoEntryHint.fixture.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
@@ -1861,6 +1862,238 @@ describe("Ghidra procedure lookup projection", () => {
     } finally {
       await ghidra.closeOwnedResources();
     }
+  });
+});
+
+const MACHO_MAIN_ENTRY_HINT =
+  "This Mach-O declares its entry point with LC_MAIN at file offset 0x460, analysis address 0x100000460; stripped binaries often have no main symbol, and Ghidra often names that function entry. Request 0x100000460 explicitly to read it.";
+const universalArm64Target: BinaryTarget = {
+  path: "/tmp/fixture",
+  sha256: "a".repeat(64),
+  kind: "executable",
+  format: "mach-o-universal",
+  architecture: "arm64",
+  availableArchitectures: ["arm64"],
+  universalSlice: { offset: 0, size: 32 },
+};
+const missingMachoMain = async (options: {
+  readonly target: BinaryTarget;
+  readonly selector: string;
+  readonly remoteCode?: string;
+  readonly snapshotSize?: number;
+  readonly snapshotFailure?: GhidraSessionError;
+  readonly session?: GhidraSessionInfo;
+  readonly environment?: Readonly<Record<string, string>>;
+}) => {
+  const remoteCode = options.remoteCode ?? "procedure_not_found";
+  const message = `Unknown Ghidra procedure name or address: ${options.selector}`;
+  const image = strippedMachoWithMain();
+  const snapshot = { reads: 0, bytes: 0 };
+  const ghidra = provider(
+    installationHost(),
+    () => ({
+      start: async () => ok(options.session ?? sessionInfo()),
+      callTool: async () =>
+        err(
+          new GhidraSessionError(
+            "remote",
+            message,
+            { remote_code: remoteCode },
+            { remoteCode },
+          ),
+        ),
+      readTargetSnapshotRanges: async <T>(
+        read: (
+          range: (position: number, length: number) => Promise<Uint8Array>,
+          size: number,
+        ) => Promise<T>,
+      ) => {
+        snapshot.reads += 1;
+        if (options.snapshotFailure !== undefined)
+          return err(options.snapshotFailure);
+        return ok(
+          await read(async (position, length) => {
+            const bytes = image.subarray(position, position + length);
+            snapshot.bytes += bytes.byteLength;
+            return bytes;
+          }, options.snapshotSize ?? image.byteLength),
+        );
+      },
+      close: async () => ok(null),
+    }),
+    options.environment,
+  );
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const resolved = await ghidra.resolveAnalysisProfile(options.target);
+  if (!resolved.ok) throw resolved.error;
+  if (resolved.value.profile === null)
+    throw new Error("Expected a bound Ghidra profile");
+  const client = ghidra.createClient(options.target, resolved.value.profile);
+  try {
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: options.selector,
+    });
+    if (result.ok) throw new Error("Expected a missing procedure");
+    return {
+      error: result.error,
+      projected: projectAnalysisError(result.error),
+      snapshot,
+    };
+  } finally {
+    await client.close();
+  }
+};
+
+describe("Ghidra missing main on a Mach-O with LC_MAIN", () => {
+  it.each(["main", "_main", "MAIN", " main "])(
+    "names the LC_MAIN entry address for %j on a thin Mach-O",
+    async (selector) => {
+      const { projected, snapshot } = await missingMachoMain({
+        target: executableTarget("mach-o", "arm64"),
+        selector,
+      });
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        details: {
+          related_operations: ["list_procedures", "search_procedures"],
+          diagnostics: { remote_code: "procedure_not_found" },
+        },
+      });
+      expect(projected.remediation.action).toContain("list_procedures");
+      expect(
+        projected.remediation.action.endsWith(
+          `${ghidraFunctionSeedRecovery("fresh-import")} ${MACHO_MAIN_ENTRY_HINT}`,
+        ),
+      ).toBe(true);
+      expect(snapshot.reads).toBe(1);
+    },
+  );
+
+  it.each([
+    {
+      name: "another procedure name",
+      target: executableTarget("mach-o", "arm64"),
+      selector: "foo",
+    },
+    {
+      name: "an ELF target",
+      target: executableTarget("elf", "x86_64"),
+      selector: "main",
+    },
+    {
+      name: "a universal Mach-O whose Ghidra slice is not committed",
+      target: universalArm64Target,
+      selector: "main",
+    },
+    {
+      name: "an ambiguous main",
+      target: executableTarget("mach-o", "arm64"),
+      selector: "main",
+      remoteCode: "procedure_ambiguous",
+    },
+  ])(
+    "leaves the recovery unchanged for $name without reading the snapshot",
+    async (options) => {
+      const { projected, snapshot } = await missingMachoMain(options);
+      expect(projected.remediation.action).not.toContain("LC_MAIN");
+      expect(snapshot.reads).toBe(0);
+    },
+  );
+
+  it("leaves a selected project's recovery unchanged because its image base is not established", async () => {
+    const root = await createTestTempDirectory("rea-missing-main-project-");
+    await mkdir(join(root, "selected.rep"));
+    await writeFile(join(root, "selected.gpr"), "marker");
+    const { projected, snapshot } = await missingMachoMain({
+      target: executableTarget("mach-o", "arm64"),
+      selector: "main",
+      session: {
+        ...sessionInfo(),
+        read_only: true,
+        existing_project: true as const,
+        analysis_complete: null,
+        capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
+          (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
+        ),
+      },
+      environment: { REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr") },
+    });
+    expect(projected.remediation.action).toContain("REA_GHIDRA_PROJECT_PATH");
+    expect(projected.remediation.action).not.toContain("LC_MAIN");
+    expect(snapshot.reads).toBe(0);
+  });
+
+  it("reads only the header and load commands of a target larger than 128 MiB", async () => {
+    const { projected, snapshot } = await missingMachoMain({
+      target: executableTarget("mach-o", "arm64"),
+      selector: "main",
+      snapshotSize: 160 * 1024 * 1024,
+    });
+    expect(
+      projected.remediation.action.endsWith(` ${MACHO_MAIN_ENTRY_HINT}`),
+    ).toBe(true);
+    expect(snapshot.bytes).toBeLessThan(1024);
+  });
+
+  it("keeps the original failure and generic recovery when the snapshot read fails", async () => {
+    const { projected, snapshot } = await missingMachoMain({
+      target: executableTarget("mach-o", "arm64"),
+      selector: "main",
+      snapshotFailure: new GhidraSessionError(
+        "protocol",
+        "Ghidra target snapshot read or finalization did not complete",
+      ),
+    });
+    expect(snapshot.reads).toBe(1);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      details: { diagnostics: { remote_code: "procedure_not_found" } },
+    });
+    expect(
+      projected.remediation.action.endsWith(
+        ghidraFunctionSeedRecovery("fresh-import"),
+      ),
+    ).toBe(true);
+  });
+
+  it("attaches a failed snapshot read's cleanup to the unchanged missing-procedure error", async () => {
+    const cleanup = new ProviderCleanupError(
+      "ghidra",
+      ["controlled snapshot descriptor"],
+      { reason: "controlled close failure" },
+    );
+    const lease = new AnalysisCleanupLease(async () => {}, [
+      "controlled snapshot descriptor",
+    ]);
+    lease.bindCleanupError(cleanup);
+    onTestFinished(() => lease.release());
+    const { error, snapshot } = await missingMachoMain({
+      target: executableTarget("mach-o", "arm64"),
+      selector: "main",
+      snapshotFailure: new GhidraSessionError(
+        "protocol",
+        "Ghidra target snapshot read or finalization did not complete",
+      ).withCleanupFailure(cleanup),
+    });
+    expect(snapshot.reads).toBe(1);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toEqual(["controlled snapshot descriptor"]);
+    const primary = error.cleanupPrimary;
+    if (primary === undefined) throw new Error("Expected a cleanup primary");
+    const projected = projectAnalysisError(primary);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      details: { diagnostics: { remote_code: "procedure_not_found" } },
+    });
+    expect(
+      projected.remediation.action.endsWith(
+        ghidraFunctionSeedRecovery("fresh-import"),
+      ),
+    ).toBe(true);
+    await lease.release();
+    expect(error.cleanupIncomplete).toBe(false);
   });
 });
 
