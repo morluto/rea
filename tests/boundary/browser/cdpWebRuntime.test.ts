@@ -46,7 +46,7 @@ describe("native runtime producer boundary", () => {
       },
       initiator: {
         type: "script",
-        producerExtension: "retain-unknown-fields",
+        producerExtension: { occurrence: 1, label: "initial" },
         stack: {
           description: "observed-sync-stack",
           callFrames: [
@@ -74,6 +74,10 @@ describe("native runtime producer boundary", () => {
         },
       },
     };
+    const redirectedInitiator = {
+      ...params.initiator,
+      producerExtension: { occurrence: 2, label: "redirected" },
+    };
     const result = await provider.observeExecution(
       { ...execution, observation_ms: 30 },
       {
@@ -96,6 +100,7 @@ describe("native runtime producer boundary", () => {
                 ...params,
                 timestamp: 13,
                 request: { url: redirectedUrl, method: "GET" },
+                initiator: redirectedInitiator,
               },
               sessionId: "session-1",
             });
@@ -124,7 +129,7 @@ describe("native runtime producer boundary", () => {
     ]);
     expect(
       result.value.requests.map(({ reported_initiator }) => reported_initiator),
-    ).toEqual([params.initiator, params.initiator]);
+    ).toEqual([params.initiator, redirectedInitiator]);
   });
 });
 
