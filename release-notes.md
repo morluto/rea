@@ -41,6 +41,7 @@
 * **setup:** preserve caller comments on detached DSH aliases ([#13032](https://github.com/morluto/rea/issues/13032)) ([270c3a6](https://github.com/morluto/rea/commit/270c3a6b285b30c71bcd2f57fad451417769840f))
 * **setup:** recognize DSH registrations nested in Cordis groups ([#13037](https://github.com/morluto/rea/issues/13037)) ([9fd8c8d](https://github.com/morluto/rea/commit/9fd8c8d90331a16164a9849d56bf84ed8682b139))
 * **uninstall:** keep emptied DSH inserts from applying overrides ([#13036](https://github.com/morluto/rea/issues/13036)) ([76da8fd](https://github.com/morluto/rea/commit/76da8fd8baa9ffe61be1d772a3cc1d0ac65dbf8b))
+* **v8:** admit the six-word code cache header of V8 8.8 through 11.7 ([cc19240](https://github.com/morluto/rea/commit/cc19240ca963a263f8c33a061782385e76344e0f))
 * **verify:** cancel owned DeepSeek Harness commands ([#13035](https://github.com/morluto/rea/issues/13035)) ([42a34f8](https://github.com/morluto/rea/commit/42a34f8a7fea243b1f8e9b3574c814b1d52438b9))
 * **verify:** require confirmed DeepSeek process cleanup ([#13043](https://github.com/morluto/rea/issues/13043)) ([4aed56e](https://github.com/morluto/rea/commit/4aed56eccb68e49f411e472134feafd6b2a7996f))
 * **verify:** require DeepSeek Harness terminal JSON ([#13034](https://github.com/morluto/rea/issues/13034)) ([9b1631a](https://github.com/morluto/rea/commit/9b1631a1d73e44156b5347838198da358341fc34))
@@ -92,6 +93,7 @@
 * **skill:** move WASM interface comparison under Offline WASM ([c5c0063](https://github.com/morluto/rea/commit/c5c0063d4ca8d27b57bb29588cfffaea04c23fe0)), closes [#8334](https://github.com/morluto/rea/issues/8334)
 * **sqlite:** distinguish exhausted windows from unordered samples ([#13124](https://github.com/morluto/rea/issues/13124)) ([49b9245](https://github.com/morluto/rea/commit/49b92452627b4d6a7bbd455163532f170277093a))
 * streamline the README and expand the RL environment guide ([f3ce9a1](https://github.com/morluto/rea/commit/f3ce9a14c7b7ea482352bc6c8c66bdcd22ba7705))
+* **v8:** describe the six-word code cache header ([56838a0](https://github.com/morluto/rea/commit/56838a036c2c43afee56b0336a35abbf959770f2))
 
 
 ### Tests
@@ -393,6 +395,7 @@
 * **v8:** consolidate code cache parser and recovery coverage ([#12784](https://github.com/morluto/rea/issues/12784)) ([8af645c](https://github.com/morluto/rea/commit/8af645c25c7f36f6be74d4baff4aee6d8b422d75))
 * **v8:** consolidate code-cache parser and recovery coverage ([8af645c](https://github.com/morluto/rea/commit/8af645c25c7f36f6be74d4baff4aee6d8b422d75))
 * **v8:** consolidate relative CLI and source-byte checks ([#12867](https://github.com/morluto/rea/issues/12867)) ([aa16513](https://github.com/morluto/rea/commit/aa1651311d27a4a0a224d00f427eaee9c4fd1387))
+* **v8:** cover the six-word code cache header ([978cc6d](https://github.com/morluto/rea/commit/978cc6d46bb663cb97244a758205e0988a238deb))
 * **wasm:** consolidate WABT and glue parser checks ([c11e73b](https://github.com/morluto/rea/commit/c11e73bd642cee0e12f0dfd7826d412dd9332506))
 * **wasm:** consolidate WABT output and glue scanner checks ([#12822](https://github.com/morluto/rea/issues/12822)) ([c11e73b](https://github.com/morluto/rea/commit/c11e73bd642cee0e12f0dfd7826d412dd9332506))
 * **web:** acknowledge CDP socket timeout phases before advancing time ([#13181](https://github.com/morluto/rea/issues/13181)) ([8691cfa](https://github.com/morluto/rea/commit/8691cfa96b9130262491b7af991583c1aca63f1d))
