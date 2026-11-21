@@ -391,6 +391,53 @@ it("registers the selected Windows package runner after canonicalizing environme
   }
 });
 
+it("wires the injected DesktopBuildSetupHost factory with environment, platform, registrations, and shared resources", async () => {
+  const clientRegistrations = vi.fn().mockResolvedValue([]);
+  const doctor = createDoctorHostFixture({
+    platform: "linux",
+    clientRegistrations,
+  });
+  const environment = { REA_AGENT_ENV_COMMAND: "/custom/agent-env" };
+  let released = false;
+  let capturedRegistrations: unknown;
+
+  const bareHost = systemSetupHost(doctor, environment);
+  expect(bareHost.desktopBuild).toBeUndefined();
+  await bareHost.close?.();
+
+  const stubDesktopBuild = {
+    facts: vi.fn(),
+    packRuntime: vi.fn(),
+    installAgentenv: vi.fn(),
+  };
+  const factory = vi.fn((env, platform, registrations, resources) => {
+    expect(env).toBe(environment);
+    expect(platform).toBe("linux");
+    capturedRegistrations = registrations;
+    resources.retain({
+      kind: "lease",
+      resource: "desktop-build-probe",
+      lease: {
+        resources: ["desktop-build-probe"],
+        release: async () => {
+          released = true;
+        },
+      },
+    });
+    return stubDesktopBuild;
+  });
+
+  const host = systemSetupHost(doctor, environment, factory);
+  try {
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(capturedRegistrations).toBe(clientRegistrations);
+    expect(host.desktopBuild).toBe(stubDesktopBuild);
+  } finally {
+    await host.close?.();
+  }
+  expect(released).toBe(true);
+});
+
 let updateCommands: UpdateCommandRunner;
 beforeEach(() => {
   updateCommands = new UpdateCommandRunner();

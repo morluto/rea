@@ -22,11 +22,7 @@ import {
   hopperInstallRefusal,
   planSetupActions,
 } from "./SetupPlan.js";
-import {
-  filterClientsNeedingConfigure,
-  hostRemediation,
-  systemSetupHost,
-} from "./SetupHost.js";
+import { filterClientsNeedingConfigure, hostRemediation } from "./SetupHost.js";
 import {
   AnalysisError,
   type AnalysisCleanupObservation,
@@ -92,10 +88,10 @@ const setupProgressFacts = (progress: SetupProgress) => {
   });
 };
 
-/** Discover, approve, and apply setup actions idempotently. */
+/** Discover, approve, and apply setup actions using the caller's composed host. */
 export const runSetup = async (
   options: SetupOptions,
-  host: SetupHost = systemSetupHost(),
+  host: SetupHost,
   confirm?: SetupConfirmation,
 ): Promise<SetupResult> => {
   const progress: SetupProgress = {

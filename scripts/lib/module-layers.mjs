@@ -274,6 +274,8 @@ export const ENTRY_FILES = Object.freeze(
         "BuildComputerEnvironment.ts",
         "DconfDatabaseReader.ts",
         "DesktopBuildDoctorFacts.ts",
+        // Setup composition (`setupCommands`) wires `systemDesktopBuildSetupHost` into `systemSetupHost`.
+        "DesktopBuildSetupHost.ts",
         "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
         // Build-computer composition (`capabilityServices`) wires `readHostFile` into `DesktopBuildComputers`.

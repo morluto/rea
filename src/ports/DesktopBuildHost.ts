@@ -147,3 +147,11 @@ export interface DesktopBuildSetupHost {
     signal?: AbortSignal,
   ): Promise<string | undefined>;
 }
+
+/** Creates the desktop build host effects bound to a caller's cleanup scope. */
+export type DesktopBuildSetupHostFactory = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+  registrations: DesktopBuildRegistrationReader | undefined,
+  resources: ArtifactResourceScope,
+) => DesktopBuildSetupHost;
