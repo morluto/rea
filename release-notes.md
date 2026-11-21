@@ -395,6 +395,7 @@
 * **managed:** consolidate snapshot cancellation coverage ([52cf28b](https://github.com/morluto/rea/commit/52cf28b28e544eae8c4f9af5587de8d11aa78dda))
 * **mcp:** consolidate admission and lifecycle checks ([#12833](https://github.com/morluto/rea/issues/12833)) ([bb7bdd2](https://github.com/morluto/rea/commit/bb7bdd2fba4cbdd72e3c82df93fa64b7f0575799))
 * **mcp:** consolidate browser provider probe ownership checks ([#13166](https://github.com/morluto/rea/issues/13166)) ([96d88a6](https://github.com/morluto/rea/commit/96d88a67c31da87bf470629e9c90fcddb8d275fc))
+* **mcp:** consolidate browser source boundary checks ([#13234](https://github.com/morluto/rea/issues/13234)) ([2e83fbd](https://github.com/morluto/rea/commit/2e83fbd394fcae313b58767d4c028f23a4c33935))
 * **mcp:** consolidate debugger retirement evidence checks ([#13014](https://github.com/morluto/rea/issues/13014)) ([72a8ae0](https://github.com/morluto/rea/commit/72a8ae01a3cb006b8ff5320a92177d4841b801af))
 * **mcp:** consolidate derived operation progress coverage ([#12778](https://github.com/morluto/rea/issues/12778)) ([3caa46f](https://github.com/morluto/rea/commit/3caa46f980bbc1d9ef9e1f25b4e046cfc0d03ca9))
 * **mcp:** consolidate JavaScript Evidence transport checks ([#13055](https://github.com/morluto/rea/issues/13055)) ([9a388af](https://github.com/morluto/rea/commit/9a388afdfca3acbb7a4dc849b047e5c5faf4e906))
