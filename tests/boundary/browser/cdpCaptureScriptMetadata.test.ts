@@ -121,60 +121,35 @@ const captureEvents = (): CdpCaptureEvents =>
     new Set(["https://app.example"]),
   );
 
-it.each([
-  {
-    name: "absent auxiliary data",
-    auxiliary: undefined,
-    frame: "frame-1",
-    invalid: false,
-  },
-  {
-    name: "conflicting frame",
-    auxiliary: { frameId: "other-frame" },
-    frame: null,
-    invalid: true,
-  },
-  {
-    name: "empty frame",
-    auxiliary: { frameId: "" },
-    frame: null,
-    invalid: true,
-  },
-  {
-    name: "null frame",
-    auxiliary: { frameId: null },
-    frame: null,
-    invalid: true,
-  },
-  {
-    name: "numeric frame",
-    auxiliary: { frameId: 7 },
-    frame: null,
-    invalid: true,
-  },
-  {
-    name: "malformed auxiliary data",
-    auxiliary: null,
-    frame: null,
-    invalid: true,
-  },
-])(
-  "keeps script ownership uncertain for $name",
-  ({ auxiliary, frame, invalid }) => {
-    const events = captureEvents();
-    events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "frame-1" }));
-    events.ingest(
-      receiveCdpEvent({
-        method: "Runtime.executionContextCreated",
-        params: { context: { id: 7, auxData: { frameId: "frame-1" } } },
-      }),
-    );
+it("retains script identity and classifies each frame claim independently", () => {
+  const events = captureEvents();
+  const frameId = "frame-1";
+  const allowedFrames = new Set([frameId]);
+  events.beginAuthorizedFrame(new CdpTargetDocument({ frameId }));
+  events.ingest(
+    receiveCdpEvent({
+      method: "Runtime.executionContextCreated",
+      params: { context: { id: 7, auxData: { frameId } } },
+    }),
+  );
+
+  let invalidClaims = 0;
+  for (const [scriptId, auxiliary, expectedFrame] of [
+    ["no-auxiliary-data", undefined, frameId],
+    ["omitted-frame", { isDefault: true }, frameId],
+    ["matching-frame", { frameId }, frameId],
+    ["conflicting-frame", { frameId: "other-frame" }, null],
+    ["empty-frame", { frameId: "" }, null],
+    ["null-frame", { frameId: null }, null],
+    ["numeric-frame", { frameId: 7 }, null],
+    ["malformed-auxiliary-data", null, null],
+  ] as const) {
     events.ingest(
       receiveCdpEvent({
         method: "Debugger.scriptParsed",
         params: {
-          scriptId: "script",
-          url: "https://app.example/app.js",
+          scriptId,
+          url: `https://app.example/${scriptId}.js`,
           executionContextId: 7,
           ...(auxiliary === undefined
             ? {}
@@ -182,22 +157,31 @@ it.each([
         },
       }),
     );
-    const script = events.scripts.get("script");
-    if (script === undefined)
-      throw new Error("Expected retained script metadata");
-    expect(script.frameId).toBe(frame);
-    expect(events.frameForScript(script, new Set(["frame-1"]))).toBe(frame);
+    const script = events.scripts.get(scriptId);
+    if (script === undefined) throw new Error(`Missing script ${scriptId}`);
+    expect(script.frameId, scriptId).toBe(expectedFrame);
+    expect(events.frameForScript(script, allowedFrames), scriptId).toBe(
+      expectedFrame,
+    );
+    invalidClaims += expectedFrame === null ? 1 : 0;
     expect(
       events.completeness
         .snapshot()
         .excluded.filter(({ section }) => section === "scripts"),
+      scriptId,
     ).toEqual(
-      invalid
-        ? [{ section: "scripts", reason: "invalid_protocol_value", count: 1 }]
-        : [],
+      invalidClaims === 0
+        ? []
+        : [
+            {
+              section: "scripts",
+              reason: "invalid_protocol_value",
+              count: invalidClaims,
+            },
+          ],
     );
-  },
-);
+  }
+});
 
 it("rejects an empty script ID before retaining its metadata", () => {
   const events = captureEvents();
