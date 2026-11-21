@@ -152,7 +152,10 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-const connectedScenario = (serviceWorkers: "block" | "allow") =>
+const connectedScenario = (
+  serviceWorkers: "block" | "allow",
+  storage: unknown = scenario.storage,
+) =>
   browserScenarioSchema.parse({
     ...scenario,
     browser: {
@@ -161,6 +164,7 @@ const connectedScenario = (serviceWorkers: "block" | "allow") =>
       target_id: "target",
     },
     environment: { service_workers: serviceWorkers },
+    storage,
   });
 
 const fixture = () => {
@@ -794,16 +798,7 @@ it("retains transferred navigation stopping after setup cleanup fails", async ()
 it("allows the bounded policy cleanup chain to cross one second", async () => {
   const { cleanup } = fixture();
   mocks.storage = undefined;
-  const attached = browserScenarioSchema.parse({
-    ...scenario,
-    browser: {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "target",
-    },
-    environment: { service_workers: "block" },
-    storage: {},
-  });
+  const attached = connectedScenario("block", {});
   const session = await PlaywrightScenarioSession.open(attached, {}, {});
   const { promise: stopped, resolve: releaseStop } = deferred();
   const { promise: started, resolve: stopStarted } = deferred();
@@ -839,54 +834,6 @@ it("allows the bounded policy cleanup chain to cross one second", async () => {
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
-it("does not await policy initialization after its child target detaches", async () => {
-  const { cleanup } = fixture();
-  mocks.storage = undefined;
-  const attached = browserScenarioSchema.parse({
-    ...scenario,
-    browser: {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "target",
-    },
-    environment: { service_workers: "block" },
-    storage: {},
-  });
-  const session = await PlaywrightScenarioSession.open(attached, {}, {});
-  const { promise: started, resolve: childStarted } = deferred();
-  const { promise: held, resolve: releaseChild } = deferred();
-  mocks.policySend.mockImplementation(
-    async (method: string, _params: unknown, target: string) => {
-      if (method === "Page.enable" && target === "child-session") {
-        childStarted();
-        await held;
-      }
-      return policyResponse(method);
-    },
-  );
-  mocks.policyEvent?.({
-    method: "Target.attachedToTarget",
-    params: {
-      sessionId: "child-session",
-      targetInfo: { type: "iframe" },
-    },
-    sessionId: "policy-session",
-  });
-  try {
-    await awaitAcknowledgement(started, held, "child policy admission");
-    const closing = session.close();
-    mocks.policyEvent?.({
-      method: "Target.detachedFromTarget",
-      params: { sessionId: "child-session" },
-    });
-    await expect(closing).resolves.toBe("disconnected-external");
-    expect(cleanup.close).toHaveBeenCalledTimes(1);
-  } finally {
-    releaseChild();
-    await session.close();
-  }
-});
-
 it("skips policy restoration for a child without a committed document", async () => {
   const { cleanup, page } = fixture();
   mocks.storage = undefined;
@@ -896,16 +843,7 @@ it("skips policy restoration for a child without a committed document", async ()
     evaluate: vi.fn(() => new Promise(() => undefined)),
   };
   const session = await PlaywrightScenarioSession.open(
-    browserScenarioSchema.parse({
-      ...scenario,
-      browser: {
-        mode: "connect",
-        cdp_endpoint: "http://127.0.0.1:9222",
-        target_id: "target",
-      },
-      environment: { service_workers: "block" },
-      storage: {},
-    }),
+    connectedScenario("block", {}),
     {},
     {},
   );
@@ -916,158 +854,222 @@ it("skips policy restoration for a child without a committed document", async ()
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
-it("rejects an init script accepted by CDP when the live realm is unprotected", async () => {
-  const { page, cleanup } = fixture();
-  page.evaluate
-    .mockResolvedValueOnce(null)
-    .mockResolvedValueOnce("policy_unprotected");
-  const attached = connectedScenario("block");
-  await expect(
-    PlaywrightScenarioSession.open(attached, {}, {}),
-  ).rejects.toMatchObject({
-    reason: "target_not_allowed",
-  });
-  expect(
-    mocks.policySend.mock.calls.some(
-      ([method]) => method === "Page.addScriptToEvaluateOnNewDocument",
-    ),
-  ).toBe(true);
-  expect(
-    mocks.policySend.mock.calls.some(
-      ([method]) => method === "Page.removeScriptToEvaluateOnNewDocument",
-    ),
-  ).toBe(true);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-});
+it.each(["unprotected live realm", "failed auto-attach"])(
+  "restores the installed policy before disconnect after %s",
+  async (phase) => {
+    const { page, cleanup } = fixture();
+    const setupFailure = new Error("auto-attach rejected");
+    if (phase === "unprotected live realm") {
+      page.evaluate
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce("policy_unprotected");
+    } else {
+      mocks.policySend.mockImplementation(async (method: string) => {
+        if (method === "Target.setAutoAttach") throw setupFailure;
+        return policyResponse(method);
+      });
+    }
+    const opening = PlaywrightScenarioSession.open(
+      connectedScenario("block"),
+      {},
+      {},
+    );
+    if (phase === "unprotected live realm")
+      await expect(opening).rejects.toMatchObject({
+        reason: "target_not_allowed",
+      });
+    else await expect(opening).rejects.toBe(setupFailure);
 
-it("restores an owned policy script after later setup fails", async () => {
-  const { cleanup } = fixture();
-  const setupFailure = new Error("auto-attach rejected");
-  mocks.policySend.mockImplementation(async (method: string) => {
-    if (method === "Target.setAutoAttach") throw setupFailure;
-    return policyResponse(method);
-  });
-  const attached = connectedScenario("block");
-
-  await expect(PlaywrightScenarioSession.open(attached, {}, {})).rejects.toBe(
-    setupFailure,
-  );
-  expect(mocks.policySend).toHaveBeenCalledWith(
-    "Page.removeScriptToEvaluateOnNewDocument",
-    { identifier: "owned-policy-script" },
-    "policy-session",
-  );
-  expect(
-    mocks.policySend.mock.calls.some(
-      ([method]) => method === "Runtime.evaluate",
-    ),
-  ).toBe(true);
-  expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-});
-
-it("retires a child policy session that CDP reports gone during restoration", async () => {
-  const { cleanup } = fixture();
-  const session = await PlaywrightScenarioSession.open(
-    connectedScenario("block"),
-    {},
-    {},
-  );
-  mocks.policyEvent?.({
-    method: "Target.attachedToTarget",
-    params: { sessionId: "child-session", targetInfo: { type: "iframe" } },
-    sessionId: "policy-session",
-  });
-  await waitFor(() =>
     expect(mocks.policySend).toHaveBeenCalledWith(
       "Page.addScriptToEvaluateOnNewDocument",
-      expect.anything(),
-      "child-session",
-    ),
-  );
-  // The child detached without a delivered notice (for example while event
-  // delivery is stopped by a listener failure); CDP rejects its session.
-  mocks.policySend.mockImplementation(
-    async (method: string, _params: unknown, target: string) => {
-      if (target === "child-session")
-        throw new CdpCommandRejection(
-          "capture_browser_scenario",
-          method,
-          -32_001,
-          "Session with given id not found.",
+      expect.objectContaining({ runImmediately: true }),
+      "policy-session",
+    );
+    expect(mocks.policySend).toHaveBeenCalledWith(
+      "Page.removeScriptToEvaluateOnNewDocument",
+      { identifier: "owned-policy-script" },
+      "policy-session",
+    );
+    expect(mocks.policySend).toHaveBeenCalledWith(
+      "Runtime.evaluate",
+      expect.objectContaining({
+        expression: expect.stringContaining("policy_owned"),
+      }),
+      "policy-session",
+    );
+    expect(mocks.policyTransportClose).toHaveBeenCalledOnce();
+    expect(cleanup.close).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(["detach notice", "missing-session rejection"])(
+  "releases the parent policy when the child is retired by %s",
+  async (retirement) => {
+    const { cleanup } = fixture();
+    const session = await PlaywrightScenarioSession.open(
+      connectedScenario("block"),
+      {},
+      {},
+    );
+    const child = phaseGate();
+    const notified = retirement === "detach notice";
+    const childPhase = notified
+      ? "Page.enable"
+      : "Page.addScriptToEvaluateOnNewDocument";
+    mocks.policySend.mockImplementation(
+      async (method: string, _params: unknown, target: string) => {
+        if (target === "child-session" && method === childPhase)
+          await child.hold();
+        if (
+          target === "child-session" &&
+          method === "Page.removeScriptToEvaluateOnNewDocument"
+        )
+          throw new CdpCommandRejection(
+            "capture_browser_scenario",
+            method,
+            -32_001,
+            "Session with given id not found.",
+          );
+        return policyResponse(method);
+      },
+    );
+    mocks.policyEvent?.({
+      method: "Target.attachedToTarget",
+      params: { sessionId: "child-session", targetInfo: { type: "iframe" } },
+      sessionId: "policy-session",
+    });
+    const closing = session.close();
+    try {
+      await child.reached(closing, "child policy acknowledgement");
+      if (notified) {
+        mocks.policyEvent?.({
+          method: "Target.detachedFromTarget",
+          params: { sessionId: "child-session" },
+        });
+        const pending = new Promise((resolve) =>
+          setImmediate(() => resolve("still pending")),
         );
-      return policyResponse(method);
-    },
-  );
+        await expect(Promise.race([closing, pending])).resolves.toBe(
+          "disconnected-external",
+        );
+      } else {
+        child.release();
+        await expect(closing).resolves.toBe("disconnected-external");
+      }
+      const removals = mocks.policySend.mock.calls
+        .filter(
+          ([method]) => method === "Page.removeScriptToEvaluateOnNewDocument",
+        )
+        .map(([, params, target]) => [params.identifier, target])
+        .sort();
+      expect(removals).toEqual(
+        notified
+          ? [["owned-policy-script", "policy-session"]]
+          : [
+              ["owned-policy-script", "child-session"],
+              ["owned-policy-script", "policy-session"],
+            ],
+      );
+      expect(mocks.policySend).toHaveBeenCalledWith("Target.detachFromTarget", {
+        sessionId: "policy-session",
+      });
+      expect(mocks.policyTransportClose).toHaveBeenCalledOnce();
+      expect(cleanup.close).toHaveBeenCalledOnce();
+    } finally {
+      child.release();
+      await closing.catch(() => undefined);
+      await session.close();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    if (notified)
+      expect(
+        mocks.policySend.mock.calls
+          .filter(([, , target]) => target === "child-session")
+          .map(([method]) => method),
+      ).toEqual(["Page.enable"]);
+  },
+);
 
-  await expect(session.close()).resolves.toBe("disconnected-external");
-  expect(mocks.policySend).toHaveBeenCalledWith(
-    "Page.removeScriptToEvaluateOnNewDocument",
-    { identifier: "owned-policy-script" },
-    "policy-session",
-  );
-  expect(mocks.policySend).toHaveBeenCalledWith("Target.detachFromTarget", {
-    sessionId: "policy-session",
-  });
-  expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-});
+it.each(["script removal", "realm restoration", "transport close"])(
+  "retries policy cleanup after %s fails without repeating successful phases",
+  async (phase) => {
+    const { cleanup, storage } = fixture();
+    if (phase === "realm restoration") mocks.storage = undefined;
+    const session = await PlaywrightScenarioSession.open(
+      phase === "realm restoration"
+        ? connectedScenario("block", {})
+        : connectedScenario("block"),
+      {},
+      {},
+    );
+    const afterSetup = mocks.policySend.mock.calls.length;
+    const failure = new Error(`${phase} rejected`);
+    if (phase === "transport close") {
+      mocks.policyTransportClose.mockRejectedValueOnce(failure);
+    } else {
+      const blocked =
+        phase === "script removal"
+          ? "Page.removeScriptToEvaluateOnNewDocument"
+          : "Runtime.evaluate";
+      let attempted = false;
+      mocks.policySend.mockImplementation(async (method: string) => {
+        if (method === blocked && !attempted) {
+          attempted = true;
+          throw failure;
+        }
+        return policyResponse(method);
+      });
+    }
 
-it("retains an owned script identifier after rejected removal", async () => {
-  const { cleanup } = fixture();
-  const attached = connectedScenario("block");
-  const session = await PlaywrightScenarioSession.open(attached, {}, {});
-  const failure = new Error("removeScript rejected");
-  mocks.policySend.mockRejectedValueOnce(failure);
-  await expect(session.close()).rejects.toMatchObject({
-    cause: failure,
-    cleanupIncomplete: true,
-  });
-  expect(cleanup.close).not.toHaveBeenCalled();
-  await expect(session.close()).resolves.toBe("disconnected-external");
-  const removals = mocks.policySend.mock.calls.filter(
-    ([method]) => method === "Page.removeScriptToEvaluateOnNewDocument",
-  );
-  expect(removals).toHaveLength(2);
-  expect(
-    removals.every(([, params]) => params.identifier === "owned-policy-script"),
-  ).toBe(true);
-});
+    const rejected = await session
+      .close(phase === "realm restoration")
+      .catch((cause: unknown) => cause);
+    expect(rejected).toMatchObject({ cleanupIncomplete: true });
+    if (!(rejected instanceof Error))
+      throw new Error("Expected a cleanup error");
+    const physical = rejected.cause;
+    expect(
+      phase === "transport close" ? (physical as Error).cause : physical,
+    ).toBe(failure);
+    expect(cleanup.close).not.toHaveBeenCalled();
 
-it("retries transport close without detaching an already released policy session", async () => {
-  fixture();
-  const attached = connectedScenario("block");
-  const session = await PlaywrightScenarioSession.open(attached, {}, {});
-  const failure = new Error("transport close rejected");
-  mocks.policyTransportClose.mockRejectedValueOnce(failure);
-  await expect(session.close()).rejects.toMatchObject({
-    cause: { cause: failure },
-    cleanupIncomplete: true,
-  });
-  await expect(session.close()).resolves.toBe("disconnected-external");
-  expect(
-    mocks.policySend.mock.calls.filter(
-      ([method]) => method === "Target.detachFromTarget",
-    ),
-  ).toHaveLength(1);
-  expect(mocks.policyTransportClose).toHaveBeenCalledTimes(2);
-});
+    await expect(session.close()).resolves.toBe("disconnected-external");
+    await expect(session.close()).resolves.toBe("disconnected-external");
+    const calls = mocks.policySend.mock.calls.slice(afterSetup);
+    const dispatched = (method: string) =>
+      calls.filter(([name]) => name === method);
+    expect(dispatched("Page.removeScriptToEvaluateOnNewDocument")).toEqual(
+      Array.from({ length: phase === "script removal" ? 2 : 1 }, () => [
+        "Page.removeScriptToEvaluateOnNewDocument",
+        { identifier: "owned-policy-script" },
+        "policy-session",
+      ]),
+    );
+    expect(dispatched("Runtime.evaluate")).toHaveLength(
+      phase === "realm restoration" ? 2 : 1,
+    );
+    expect(dispatched("Page.stopLoading")).toHaveLength(
+      phase === "realm restoration" ? 1 : 0,
+    );
+    expect(dispatched("Target.detachFromTarget")).toEqual([
+      ["Target.detachFromTarget", { sessionId: "policy-session" }],
+    ]);
+    expect(mocks.policyTransportClose).toHaveBeenCalledTimes(
+      phase === "transport close" ? 2 : 1,
+    );
+    expect(storage.close).toHaveBeenCalledTimes(
+      phase === "realm restoration" ? 0 : 1,
+    );
+    expect(cleanup.close).toHaveBeenCalledOnce();
+  },
+);
 
 it.each(["closed page", "detached target"])(
   "releases its policy transport after a %s",
   async (terminal) => {
     const { page } = fixture();
     mocks.storage = undefined;
-    const attached = browserScenarioSchema.parse({
-      ...scenario,
-      browser: {
-        mode: "connect",
-        cdp_endpoint: "http://127.0.0.1:9222",
-        target_id: "target",
-      },
-      environment: { service_workers: "block" },
-      storage: {},
-    });
+    const attached = connectedScenario("block", {});
     const session = await PlaywrightScenarioSession.open(attached, {}, {});
     if (terminal === "closed page") page.isClosed = () => true;
     else
@@ -1094,16 +1096,7 @@ it.each(["closed page", "detached target"])(
 it("retains a detached policy connection until the main realm is restored", async () => {
   const { cleanup, page } = fixture();
   mocks.storage = undefined;
-  const attached = browserScenarioSchema.parse({
-    ...scenario,
-    browser: {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "target",
-    },
-    environment: { service_workers: "block" },
-    storage: {},
-  });
+  const attached = connectedScenario("block", {});
   const session = await PlaywrightScenarioSession.open(attached, {}, {});
   mocks.policyEvent?.({
     method: "Target.detachedFromTarget",
@@ -1355,44 +1348,6 @@ it("blocks new attached service-worker registration without removing existing re
     "policy-session",
   );
   expect(cleanup.close).toHaveBeenCalledTimes(1);
-});
-
-it("retains the attached connection when registration restoration fails", async () => {
-  const { cleanup } = fixture();
-  mocks.storage = undefined;
-  const attached = browserScenarioSchema.parse({
-    ...scenario,
-    browser: {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "target",
-    },
-    environment: { service_workers: "block" },
-    storage: {},
-  });
-  const session = await PlaywrightScenarioSession.open(attached, {}, {});
-  const failure = new Error("registration restoration failed");
-  let failRestoration = true;
-  mocks.policySend.mockImplementation(async (method: string) => {
-    if (method === "Runtime.evaluate" && failRestoration) {
-      failRestoration = false;
-      throw failure;
-    }
-    return policyResponse(method);
-  });
-  await expect(session.close(true)).rejects.toMatchObject({
-    cause: failure,
-    cleanupIncomplete: true,
-  });
-  expect(cleanup.close).not.toHaveBeenCalled();
-  await expect(session.close()).resolves.toBe("disconnected-external");
-  expect(
-    mocks.policySend.mock.calls.filter(
-      ([method]) => method === "Page.stopLoading",
-    ),
-  ).toHaveLength(1);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-  await expect(session.close()).resolves.toBe("disconnected-external");
 });
 
 it("cancels a stalled policy preflight without allowing late setup", async () => {
