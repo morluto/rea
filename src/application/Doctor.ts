@@ -16,7 +16,7 @@ import {
   ArtifactResourceScope,
 } from "../resources/index.js";
 import { constants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
+import { access, readdir, realpath, stat } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
@@ -80,6 +80,11 @@ import {
   type DoctorScopeReport,
 } from "./DoctorScope.js";
 import { selectedDesktopBuildChecks } from "./DesktopBuildDoctor.js";
+import {
+  macHopperPythonCheck,
+  macHopperPythonCommandEnvironment,
+  readMacHopperPythonFacts,
+} from "./MacHopperPython.js";
 import type {
   DesktopBuildFacts,
   DesktopBuildFactsInput,
@@ -112,6 +117,8 @@ export interface DoctorHost {
     path: string,
   ): Promise<Result<VerifiedLinuxHopperLauncher, HopperReleaseError>>;
   linuxDemoRuntimeCheck(): Promise<DoctorCheck>;
+  /** macOS Hopper Python observations; omitted hosts report no check. */
+  macHopperPythonCheck?(launcherPath: string): Promise<DoctorCheck>;
   /** Homebrew cask launcher; consulted only where macOS bundles are probed. */
   brewHopperPath(): Promise<string | undefined>;
   /** Renamed `Hopper*.app` launchers; consulted only where macOS bundles are probed. */
@@ -874,6 +881,34 @@ export const systemDoctorHost = (
       options.linuxDemoRuntimeCheck === undefined
         ? uncomposedLinuxDemoRuntimeCheck()
         : options.linuxDemoRuntimeCheck(resourceScope, inspectionSignal),
+    macHopperPythonCheck: async (launcherPath) =>
+      macHopperPythonCheck(
+        await readMacHopperPythonFacts(
+          {
+            run: hostExecFileOutput,
+            env: macHopperPythonCommandEnvironment(environment),
+            isFile: async (path) => {
+              try {
+                return (await stat(path)).isFile();
+              } catch (cause: unknown) {
+                // An absent or unreadable candidate is not a usable framework.
+                void cause;
+                return false;
+              }
+            },
+            listDirectory: async (path) => {
+              try {
+                return await readdir(path);
+              } catch (cause: unknown) {
+                // An absent framework root contributes no versions.
+                void cause;
+                return [];
+              }
+            },
+          },
+          launcherPath,
+        ),
+      ),
     inspectLinuxHopper: (path) => inspectLinuxHopperLauncher(path, environment),
     async brewHopperPath() {
       return probeHomebrew(async (command) => {

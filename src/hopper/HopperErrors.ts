@@ -80,11 +80,11 @@ export type HopperLauncherOutcome = {
 
 /** Startup-timeout recovery that holds after the calling invocation has ended. */
 export const HOPPER_STARTUP_TIMEOUT_REMEDIATION =
-  "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, set REA_HOPPER_STARTUP_TIMEOUT_MS higher in the environment of a new REA invocation, then rerun the command; that invocation starts Hopper again. Resolve retained cleanup before rerunning.";
+  'Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. On macOS, if Hopper logged "Cannot execute Python script" or shows "Python is Unavailable", it could not load a Python framework for REA\'s bridge bootstrap; run rea doctor --provider hopper to check its PythonPath default and installed frameworks. For a large target, set REA_HOPPER_STARTUP_TIMEOUT_MS higher in the environment of a new REA invocation, then rerun the command; that invocation starts Hopper again. Resolve retained cleanup before rerunning.';
 
 /** Startup-timeout recovery for a caller whose REA runtime keeps running. */
 const HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION =
-  "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening.";
+  'Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. On macOS, if Hopper logged "Cannot execute Python script" or shows "Python is Unavailable", it could not load a Python framework for REA\'s bridge bootstrap; run rea doctor --provider hopper to check its PythonPath default and installed frameworks. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening.';
 
 /** Hopper did not respond within the configured operation deadline. */
 const RESTART_OWNED_PROVIDER =
@@ -156,7 +156,7 @@ export class HopperTimeoutError extends HopperError {
       ...HOPPER_CLASSIFICATIONS.timeout,
       message:
         operation === undefined
-          ? "REA timed out waiting for Hopper bridge readiness, which includes initial analysis. Hopper may still be analyzing the target or waiting for a loader, demo, or license dialog. Review the captured launcher outcome and resolve retained cleanup before retrying."
+          ? 'REA timed out waiting for Hopper bridge readiness, which includes initial analysis. Hopper may still be analyzing the target or waiting for a loader, demo, or license dialog. On macOS, Hopper also cannot start the bridge without a usable Python framework ("Cannot execute Python script"); run rea doctor --provider hopper to check it. Review the captured launcher outcome and resolve retained cleanup before retrying.'
           : this.providerState === "busy"
             ? `Hopper timed out during ${operation} while the provider remained busy.`
             : `Hopper timed out during ${operation} before it started.`,
