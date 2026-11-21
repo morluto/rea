@@ -27,8 +27,8 @@ export const PYTHON_READER_RUNNER = String.raw`"""REA's reader runner: one task 
 It joins its JSON argument chunks and prints one JSON line: {"view": ...}, {"absent": true} when the file is not there, or
 {"error": ...}. The command runs in a temporary folder with a fresh home, without the desktop's display (unless the
 reader asks for it), the session bus or the computer's AGENTENV_ variables, so it reads none of the user's settings,
-cannot hand the file to the running app and holds no control token; it can change only its copy, which goes with the
-folder. Lines it prints starting with MARKER make its view; everything else it prints is left out.
+cannot hand the file to the running app and holds no control token. Its copy, home and ordinary temporary files stay in
+that folder. Lines it prints starting with MARKER make its view; everything else it prints is left out.
 """
 import json
 import math
@@ -69,13 +69,15 @@ def _say(answer: dict) -> int:
     return 0
 
 
-def _environment(home: str, display: bool) -> dict:
+def _environment(home: str, temporary: str, display: bool) -> dict:
     """The session's environment without what ties a command to the session or the computer, in a fresh home."""
     kept = {name: value for name, value in os.environ.items()
             if not name.startswith("AGENTENV_") and name not in NEVER and (display or name not in SESSION)}
     if display and "XAUTHORITY" not in kept and os.path.isfile(os.path.expanduser("~/.Xauthority")):
         kept["XAUTHORITY"] = os.path.expanduser("~/.Xauthority")
     kept["HOME"] = home
+    for name in ("TMPDIR", "TMP", "TEMP"):
+        kept[name] = temporary
     for name, folder in FRESH:
         kept[name] = os.path.join(home, folder)
     return kept
@@ -130,11 +132,13 @@ def _run(arguments: dict, source: str, work: str) -> dict:
     shutil.copyfile(source, copy)
     home = os.path.join(work, "home")
     os.makedirs(home)
+    temporary = os.path.join(work, "t")
+    os.mkdir(temporary, 0o700)
     argv = [part.replace(PLACEHOLDER, copy) for part in arguments["argv"]]
     stdin = arguments.get("stdin")
     timeout = arguments["timeout_s"]
     try:
-        process = subprocess.Popen(argv, cwd=os.path.dirname(copy), env=_environment(home, arguments.get("display") is True),
+        process = subprocess.Popen(argv, cwd=os.path.dirname(copy), env=_environment(home, temporary, arguments.get("display") is True),
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    start_new_session=True)
     except OSError as error:
@@ -200,7 +204,8 @@ def main(arguments: dict) -> int:
             owner.write(lease["token"])
         return _say(_run(arguments, source, work))
     # A caller that names a work folder removes it itself, even when this runner is killed.
-    work = os.path.realpath(tempfile.mkdtemp(prefix="rea-reader-", dir=arguments.get("work")))
+    # Short private names leave room for the command's temporary Unix sockets.
+    work = os.path.realpath(tempfile.mkdtemp(prefix="", dir=arguments.get("work")))
     try:
         return _say(_run(arguments, source, work))
     finally:
