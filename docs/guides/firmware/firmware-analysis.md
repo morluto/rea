@@ -50,6 +50,7 @@ rea inspect-uefi-firmware /path/to/flash.bin --json
 rea inspect-uefi-nvram /path/to/flash.bin --json
 rea extract-uefi-firmware /path/to/flash.bin /path/to/new-output \
   --volume-offset 4096 --source-stream flash --json
+rea decompile-uefi-firmware /path/to/flash.bin /path/to/new-decompiled-tree --json
 ```
 
 Use `inspect_uefi_firmware` and `inspect_uefi_nvram` from MCP with
@@ -114,6 +115,71 @@ GUID. Data-only records have neither. Links remain observations and variable
 contents are retained as byte ranges. A nested NVAR chain can begin with a
 framed inactive record. The scan continues past framed inactive entries and
 reports partial coverage for incomplete successors.
+
+### Decompile UEFI firmware modules into source tree
+
+To reconstruct a navigable source code tree from executable PE32 and TE modules
+across all initialization phases (SEC, PEI, DXE, SMM, APP, MISC):
+
+```sh
+rea decompile-uefi-firmware /path/to/flash.bin /path/to/new-decompiled-tree --json
+```
+
+Or from MCP:
+
+```json
+{
+  "name": "decompile_uefi_firmware",
+  "arguments": {
+    "path": "/path/to/flash.bin",
+    "output_directory": "/path/to/new-decompiled-tree",
+    "max_modules": 500,
+    "include_disassembly": true,
+    "filter_phase": "all"
+  }
+}
+```
+
+#### Inputs and Discovery
+
+The tool accepts two input formats:
+
+1. **Full firmware images**: Local binary flash images (`.bin`, `.rom`, `.cap`, `.FIb`) up to 128 MiB.
+   Volumes, FFS files, and compressed sections are parsed and decoded in-memory.
+2. **Pre-extracted directories**: An existing directory tree containing pre-extracted `.efi`,
+   `.pe`, `.te`, or raw binaries. Directory mode scans recursively, performs bounded 64-byte magic
+   sniffing (checking for PE `MZ` and TE `VZ` headers), ignores files larger than 32 MiB, deterministically
+   sorts modules by path, and classifies them into phases (`SEC`, `PEI`, `DXE`, `SMM`, `APP`, `MISC`) based
+   on directory hierarchy and GUID metadata.
+
+#### Decompilation and Scaffolding
+
+- **Headless Ghidra C Decompilation**: When an authorized Ghidra installation is detected (`ghidraRun` on
+  `PATH` or via `GHIDRA_INSTALL_DIR`), REA runs headless Ghidra with the embedded `ReaDecompileToC.java`
+  script (`CppExporter`) to produce recovered C source code. C output is bounded at 4 MiB per module
+  and a 64 MiB aggregate staging budget.
+- **Phase-Correct Scaffolding Fallback**: When Ghidra is absent or decompilation exceeds budget, REA
+  generates typed C entry point scaffolding adhering to PI and UEFI specifications:
+  - `PEIM`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_PEI_FILE_HANDLE, const EFI_PEI_SERVICES **)`
+  - `PEI_CORE`: `void EFIAPI ModuleEntryPoint(const EFI_SEC_PEI_HAND_OFF *, const EFI_PEI_PPI_DESCRIPTOR *, void *Context)`
+  - `SEC` / `security-core`: `void EFIAPI ModuleEntryPoint(void *PeiCoreEntryPoint)`
+  - `DXE_CORE`: `void EFIAPI ModuleEntryPoint(void *HobStart)`
+  - `DXE` driver, `SMM`, and `APP`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_HANDLE, EFI_SYSTEM_TABLE *)`
+- **Disassembly**: When `include_disassembly` is enabled (default `true`), instructions are disassembled
+  using system `llvm-objdump` (or `objdump`) bounded at 2 MiB per module and 64 MiB total.
+
+#### Output Organization and Evidence
+
+All artifacts are staged in isolated scratch space and published through `SafeOutputTree` into
+the requested absent `output_directory`:
+
+- Per-phase subdirectories (`SEC/`, `PEI/`, `DXE/`, `SMM/`, `APP/`, `MISC/`).
+- Per-module folders named `{guid}_{cleanName}/` containing `{cleanName}.efi`, `{cleanName}.h`, `{cleanName}.c`,
+  and optional `{cleanName}.asm`.
+- `firmware_manifest.json` indexing all modules, relative paths, phase counts, and active limitations.
+- `README.md` markdown table summarizing module metadata with portable relative links.
+- Retained Evidence registers confidence as `"derived"`, reflecting decompiled control flow and reconstructed prototypes.
+- Contract metadata declares `mayDiscardData: false` and `mutatesSession: true`.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
 structural records. Artifact inventory applies the same ceiling to volume

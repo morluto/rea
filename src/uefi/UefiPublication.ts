@@ -20,20 +20,27 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 
 import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
 
+export interface UefiWriteReceipt {
+  readonly relativePath: string;
+  readonly path: string;
+  readonly size: number;
+  readonly sha256: string;
+}
+
 type UefiPublishedFile = UefiExtractResult["files"][number];
 
 /** One staged payload with provenance from the scanner that supplied it. */
 export interface UefiPublicationEntry {
   readonly relativePath: string;
   readonly bytes: Buffer;
-  readonly facts: Omit<
+  readonly facts?: Omit<
     UefiPublishedFile,
     "path" | "size" | "sha256" | "relative_path"
   >;
 }
 
-interface UefiPublicationOutcome {
-  readonly result: UefiExtractResult;
+interface UefiPublicationOutcome<T = UefiExtractResult> {
+  readonly result: T;
   readonly failure?: AnalysisError;
 }
 
@@ -42,7 +49,7 @@ interface UefiPublicationOutcome {
  * output directory, exclusive creation, digest-verified writes, commit or
  * rollback. No executable bits are ever set by the tree.
  */
-export const publishUefiFiles = async (context: {
+export const publishUefiFiles = async <T = UefiExtractResult>(context: {
   readonly outputDirectory: string;
   readonly operation: UefiOperation;
   readonly entries: readonly UefiPublicationEntry[];
@@ -53,11 +60,13 @@ export const publishUefiFiles = async (context: {
   readonly buildResult: (
     outputRoot: string,
     files: UefiPublishedFile[],
-  ) => UefiExtractResult;
-}): Promise<UefiPublicationOutcome> => {
+    receipts: readonly UefiWriteReceipt[],
+  ) => T;
+}): Promise<UefiPublicationOutcome<T>> => {
   let tree: SafeOutputTree | undefined;
-  let result: UefiExtractResult | undefined;
+  let result: T | undefined;
   const files: UefiPublishedFile[] = [];
+  const receipts: UefiWriteReceipt[] = [];
   try {
     context.checkpoint();
     tree = await SafeOutputTree.create(context.outputDirectory);
@@ -70,15 +79,23 @@ export const publishUefiFiles = async (context: {
         { sha256, bytes: entry.bytes.length },
         context.signal,
       );
-      files.push({
-        ...entry.facts,
-        relative_path: written.relativePath,
+      receipts.push({
+        relativePath: written.relativePath,
         path: join(tree.outputRoot, written.relativePath),
         size: written.bytesWritten,
         sha256: written.sha256,
       });
+      if (entry.facts !== undefined) {
+        files.push({
+          ...entry.facts,
+          relative_path: written.relativePath,
+          path: join(tree.outputRoot, written.relativePath),
+          size: written.bytesWritten,
+          sha256: written.sha256,
+        });
+      }
     }
-    result = context.buildResult(tree.outputRoot, files);
+    result = context.buildResult(tree.outputRoot, files, receipts);
     context.checkpoint();
     await tree.commit(context.signal);
     return { result };

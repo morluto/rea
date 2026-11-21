@@ -485,6 +485,13 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     reason:
       "live packet capture selects and verifies tshark with the pcap provider's Wireshark tool configuration",
   }),
+  Object.freeze({
+    from: "uefi",
+    to: "ghidra",
+    files: Object.freeze(["GhidraInstallation.ts"]),
+    reason:
+      "UEFI decompiler reuses the authoritative Ghidra installation observation for headless decompile-to-C admission",
+  }),
 ]);
 
 /** Whether one provider-to-provider import is a declared dependency. */
