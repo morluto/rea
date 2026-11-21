@@ -2188,8 +2188,16 @@ export function* collectSemanticMemberMutationsSteps(
           markEscaped(source.node, node, source.projection);
         // The invocation owner includes captured bind arguments and call/apply
         // inputs for generic intrinsics as well as the mutators handled above.
+        if (invocation?.receiver !== undefined)
+          markEscaped(
+            invocation.receiver,
+            node,
+            [],
+            inputReadAt(invocation.receiver, node),
+          );
         for (const argument of args ?? node.arguments)
-          if (t.isSpreadElement(argument))
+          if (argument == null) continue;
+          else if (t.isSpreadElement(argument))
             deferIterable({
               node: argument.argument,
               projection: [],

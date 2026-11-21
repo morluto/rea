@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import * as t from "@babel/types";
 import {
   analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
@@ -29,6 +30,34 @@ import {
   commonJsPrimitiveReceiverCases,
   commonJsUncertainReceiverCases,
 } from "./javascriptCommonJsExposure.fixture.js";
+
+it.each([
+  [
+    "let set=Reflect.set; eval('set=custom'); set(fs,'readFileSync',custom,{});",
+    [],
+  ],
+  ["const set=Reflect.set; set(fs,'readFileSync',custom,{});", ["config.json"]],
+  ["Object.prototype.__defineGetter__.call(fs,'readFileSync',get);", []],
+  [
+    "const install=Object.prototype.__defineGetter__.bind(fs); install('readFileSync',get);",
+    [],
+  ],
+  [
+    "Object.prototype.__defineGetter__.call({},'readFileSync',get);",
+    ["config.json"],
+  ],
+] as const)(
+  "tracks the actual mutator and receiver at the call: %s",
+  (body, expected) => {
+    const file = parseJavaScriptSource(
+      `const fs=require("fs"); ${body} fs.readFileSync("config.json");`,
+      "fixture.cjs",
+    );
+    if (file === null) throw new Error("Expected a CommonJS fixture");
+    const ir = analyzeParsedJavaScriptSemantics(file, "require");
+    expect(ir.configurationOperations.map(({ key }) => key)).toEqual(expected);
+  },
+);
 
 const referenceChanged = (source: string, writesOnly = false): boolean => {
   const parsed = parseJavaScriptSource(source);

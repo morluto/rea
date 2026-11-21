@@ -2139,11 +2139,13 @@ const writesModuleRequire = (
       // The immediate prefix may itself be scalar (name in name.length).
       // Earlier ancestors and opaque binding effects can replace that scalar.
       changed?: "parent" | "ancestor";
-    }[] = nodes.map((node) => ({
-      node,
-      path: [],
-      ...(calleeRoot ? { callee: true } : {}),
-    }));
+    }[] = nodes
+      .filter((node) => node != null)
+      .map((node) => ({
+        node,
+        path: [],
+        ...(calleeRoot ? { callee: true } : {}),
+      }));
     const traversals = Array.from(
       { length: 12 },
       () => new WeakMap<t.Node, Map<t.Node, SemanticPropertyPathCoverage>>(),

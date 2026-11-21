@@ -286,6 +286,11 @@ export const createSemanticModuleInterop = (
             return finish(["intrinsic", ...suffix]);
         if (!t.isIdentifier(root)) return finish(undefined);
         const binding = resolveSemanticBindingState(state, root, root.name);
+        if (
+          binding !== undefined &&
+          semanticOpaqueBindingReadMayHaveChanged(binding, root, state)
+        )
+          return undefined;
         const cached =
           binding === undefined
             ? undefined
@@ -330,6 +335,8 @@ export const createSemanticModuleInterop = (
       if (!t.isIdentifier(root)) return undefined;
       const binding = resolveSemanticBindingState(state, root, root.name);
       if (binding === undefined) return { path, capturedAt };
+      if (semanticOpaqueBindingReadMayHaveChanged(binding, root, state))
+        return undefined;
       const initializer = semanticStableInitializer(binding, state);
       if (
         initializer === undefined ||

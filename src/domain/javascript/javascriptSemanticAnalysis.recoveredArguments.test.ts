@@ -39,4 +39,13 @@ describe("JavaScript semantic analysis: recovered arguments", () => {
       }),
     ]);
   });
+  it("retains later evidence after a recovered argument in a replaced intrinsic", () => {
+    const result = analyzeJavaScriptSemantics(
+      'Object.assign = custom; Object.assign(, "kept"); require("fs").readFileSync("config.json");',
+    );
+    expect(result.coverage.status).toBe("partial");
+    expect(result.configurationOperations.map(({ key }) => key)).toEqual([
+      "config.json",
+    ]);
+  });
 });
