@@ -33,6 +33,13 @@ export const createDoctorHostFixture = (
       ok: true,
       classification: "healthy",
     }),
+  // Keep doctor tests independent of the host's real Hopper Python setup.
+  macHopperPythonCheck: () =>
+    Promise.resolve({
+      name: "hopper-python",
+      ok: true,
+      classification: "healthy",
+    }),
   brewHopperPath: () => Promise.resolve(undefined),
   manualHopperPaths: () => Promise.resolve([]),
   installedSkillIdentity: () =>
