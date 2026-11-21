@@ -1,8 +1,15 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  open,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
@@ -2867,7 +2874,7 @@ it("surfaces a ProviderCleanupError when closing directory sniff file handle fai
   const provider = new UefiAnalysisProvider();
   const spy = vi
     .spyOn(OwnedFileHandle.prototype, "close")
-    .mockRejectedValueOnce(new Error("file handle close error"));
+    .mockRejectedValue(new Error("file handle close error"));
   let cleanupErr: ProviderCleanupError | undefined;
   try {
     const executed = await provider.execute(
@@ -4038,7 +4045,9 @@ it("detects concurrent source module modification via expectedSha256 and refuses
         executed.error.message +
         " " +
         ((executed.error.cause as Error)?.message ?? "");
-      expect(detail).toContain("modified concurrently during analysis");
+      expect(detail).toMatch(
+        /modified concurrently during analysis|Directory entry changed before open/,
+      );
     }
   } finally {
     createSpy.mockRestore();
@@ -4098,13 +4107,11 @@ it("honors REA_OBJDUMP_COMMAND and reports mixed disassembler when both LLVM and
   );
 
   const origExec = ExecFileOutputModule.execFileOutput;
-  let callCount = 0;
   const execSpy = vi
     .spyOn(ExecFileOutputModule, "execFileOutput")
     .mockImplementation(async (command, args, options) => {
-      callCount++;
       if (command === "llvm-objdump") {
-        if (callCount === 1) {
+        if (args.some((a) => a.includes("mod_1"))) {
           const stdout = "Disassembly of mod1 from llvm";
           return {
             stdout,
@@ -4274,4 +4281,145 @@ it("retains directory reader ownership in provider scope when reader cleanup fai
   } finally {
     closeSpy.mockRestore();
   }
+});
+
+it("resolves relative REA_OBJDUMP_COMMAND paths against process.cwd()", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-relative-objdump-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+
+  let executedCommand: string | undefined;
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command === "llvm-objdump") {
+        throw new Error("Simulated llvm-objdump unavailable");
+      }
+      executedCommand = command;
+      const stdout = "Disassembly from relative objdump";
+      return {
+        stdout,
+        stderr: "",
+        stdoutBytes: Buffer.byteLength(stdout),
+        stderrBytes: 0,
+      };
+    });
+
+  const relativeCommand = "./tools/custom-objdump";
+  const origEnv = process.env.REA_OBJDUMP_COMMAND;
+  process.env.REA_OBJDUMP_COMMAND = relativeCommand;
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    expect(executed.value.result).toBeDefined();
+    expect(executedCommand).toBe(resolve(process.cwd(), relativeCommand));
+  } finally {
+    execSpy.mockRestore();
+    if (origEnv !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origEnv;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+  }
+});
+
+it("computes whole-corpus image_sha256 invariant under filter_phase in directory mode", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-phase-hash-");
+  const inDir = join(directory, "in");
+  const outDirAll = join(directory, "out-all");
+  const outDirDxe = join(directory, "out-dxe");
+  const outDirPei = join(directory, "out-pei");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(join(inDir, "pei"), { recursive: true });
+  await mkdirFs(join(inDir, "dxe"), { recursive: true });
+  await writeFile(join(inDir, "pei", "peim.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "dxe", "driver.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  const resAll = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDirAll, { filter_phase: "all" }),
+    ),
+  ).value.result as UefiDecompileResult;
+
+  const resDxe = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDirDxe, { filter_phase: "dxe" }),
+    ),
+  ).value.result as UefiDecompileResult;
+
+  const resPei = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDirPei, { filter_phase: "pei" }),
+    ),
+  ).value.result as UefiDecompileResult;
+
+  expect(resAll.image_sha256).toBe(resDxe.image_sha256);
+  expect(resAll.image_sha256).toBe(resPei.image_sha256);
+  expect(resDxe.modules.length).toBe(1);
+  expect(resPei.modules.length).toBe(1);
+  expect(resAll.modules.length).toBe(2);
+});
+
+it("reports candidate files exceeding 32 MiB in limitations without failing", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-oversized-cand-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const oversizedPath = join(inDir, "huge.efi");
+  const handle = await open(oversizedPath, "w");
+  await handle.truncate(33 * 1024 * 1024);
+  await handle.close();
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(decompileRequest(inDir, outDir)),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(result.modules.length).toBe(1);
+  expect(
+    result.limitations.some(
+      (lim) => lim.includes("huge.efi") && lim.includes("32 MiB"),
+    ),
+  ).toBe(true);
+});
+
+it("reports and ignores manifest exceeding 16 MiB", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-oversized-manifest-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  const handle = await open(manifestPath, "w");
+  await handle.truncate(17 * 1024 * 1024);
+  await handle.close();
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(decompileRequest(inDir, outDir)),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(result.modules.length).toBe(1);
+  expect(
+    result.limitations.some(
+      (lim) =>
+        lim.includes("firmware_manifest.json") && lim.includes("size limit"),
+    ),
+  ).toBe(true);
 });

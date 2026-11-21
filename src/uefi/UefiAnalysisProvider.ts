@@ -21,6 +21,7 @@ import { inflate } from "node:zlib";
 import { promisify } from "node:util";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buffer } from "node:stream/consumers";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { isAbortOf } from "../process/SignalAbort.js";
@@ -37,8 +38,10 @@ import {
   SafeOutputTree,
   outputDirectoryAdmissionRefusal,
   DirectoryArtifactReader,
+  type DirectoryArtifactEntry,
   DirectoryArtifactRootFailure,
   DirectoryArtifactTraversalLimit,
+  ArtifactFileCleanupFailure,
 } from "../resources/index.js";
 import {
   inspectGhidraInstallation,
@@ -143,6 +146,7 @@ interface DiscoveredUefiModule {
     | undefined;
   readonly expectedSha256?: string | undefined;
   readonly byteLength: number;
+  readonly entry?: DirectoryArtifactEntry | undefined;
 }
 
 interface UefiEntryPointScaffolding {
@@ -1099,6 +1103,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     checkpoint: () => void,
     format: "file" | "directory" = "file",
     remainingTimeMs?: () => number,
+    reader?: DirectoryArtifactReader | undefined,
   ): Promise<AnalysisExecution> {
     const input = request.input;
     const modulesToProcess = discoveredModules.slice(0, input.max_modules);
@@ -1133,11 +1138,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       ...(ghidraInstallDir ? { installDir: ghidraInstallDir } : {}),
       ...(ghidraJavaHome ? { javaHome: ghidraJavaHome } : {}),
     };
-    const ghidraInspection = await (
-      this.#ghidraInstallationHost === undefined
-        ? inspectGhidraInstallation(ghidraOptions)
-        : inspectGhidraInstallation(ghidraOptions, this.#ghidraInstallationHost)
-    ).catch(() => null);
+    const ghidraInspection = await (this.#ghidraInstallationHost === undefined
+      ? inspectGhidraInstallation(ghidraOptions)
+      : inspectGhidraInstallation(ghidraOptions, this.#ghidraInstallationHost));
     const ghidraBin =
       ghidraInspection?.status === "available"
         ? ghidraInspection.analyzeHeadlessPath
@@ -1237,8 +1240,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
         moduleSeq++;
         let modBytes = mod.bytes;
-        if (modBytes === undefined && mod.sourcePath) {
-          const freshBytes = await readFile(mod.sourcePath);
+        if (modBytes === undefined && (mod.entry || mod.sourcePath)) {
+          let freshBytes: Buffer;
+          if (reader !== undefined && mod.entry !== undefined) {
+            freshBytes = await buffer(await reader.open(mod.entry, signal));
+          } else {
+            freshBytes = await readFile(mod.sourcePath!);
+          }
           const freshSha256 = sha256Hex(freshBytes);
           if (
             mod.expectedSha256 !== undefined &&
@@ -1448,8 +1456,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     const objdumpTimeout = Math.floor(
                       Math.min(15_000, Math.max(500, remainingForObjdump)),
                     );
-                    const objdumpExecutable =
+                    let objdumpExecutable =
                       process.env.REA_OBJDUMP_COMMAND ?? "objdump";
+                    if (
+                      objdumpExecutable.includes("/") ||
+                      objdumpExecutable.includes("\\")
+                    ) {
+                      objdumpExecutable = resolve(
+                        process.cwd(),
+                        objdumpExecutable,
+                      );
+                    }
                     try {
                       const { stdout } = await execFileOutput(
                         objdumpExecutable,
@@ -2222,500 +2239,547 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const input = request.input;
     const MAX_DIRECTORY_INVENTORY_ENTRIES = 10_000;
     const limitations: string[] = [];
-    const dirEntries: Array<{
-      name: string;
-      parentPath: string;
-      isFile: () => boolean;
-      relPath: string;
-    }> = [];
 
     const reader = new DirectoryArtifactReader(input.path, "omit");
-    let readerFailed: { cause: unknown } | undefined;
+    let establishedError: unknown | undefined;
     try {
-      for await (const entry of reader.entries(signal, {
-        maximumEntries: MAX_DIRECTORY_INVENTORY_ENTRIES,
-        onCoverage: (coverage) => {
-          for (const lim of coverage.limitations) {
-            if (limitations.length < 50) limitations.push(lim);
+      let manifestEntry: DirectoryArtifactEntry | undefined;
+      const candidateEntries: DirectoryArtifactEntry[] = [];
+
+      try {
+        for await (const entry of reader.entries(signal, {
+          maximumEntries: MAX_DIRECTORY_INVENTORY_ENTRIES,
+          onCoverage: (coverage) => {
+            for (const lim of coverage.limitations) {
+              if (limitations.length < 50) limitations.push(lim);
+            }
+          },
+          onOmission: (omission) => {
+            if (limitations.length < 50) {
+              limitations.push(`Omitted unreadable path: ${omission.path}`);
+            }
+          },
+        })) {
+          checkpoint();
+          signal.throwIfAborted();
+          if (entry.kind === "file") {
+            if (entry.path === "firmware_manifest.json") {
+              manifestEntry = entry;
+            } else {
+              candidateEntries.push(entry);
+            }
           }
-        },
-        onOmission: (omission) => {
-          if (limitations.length < 50) {
-            limitations.push(`Omitted unreadable path: ${omission.path}`);
-          }
-        },
-      })) {
-        checkpoint();
-        signal.throwIfAborted();
-        if (entry.kind === "file") {
-          const relPath = entry.path;
-          const fullPath = join(input.path, relPath);
-          dirEntries.push({
-            name: basename(relPath),
-            parentPath: dirname(fullPath),
-            isFile: () => true,
-            relPath,
-          });
         }
-      }
-    } catch (dirErr: unknown) {
-      if (dirErr instanceof DirectoryArtifactTraversalLimit) {
-        limitations.push(
-          `Directory discovery stopped after reaching ${MAX_DIRECTORY_INVENTORY_ENTRIES} entry budget.`,
-        );
-      } else {
-        readerFailed = { cause: dirErr };
-        if (dirErr instanceof DirectoryArtifactRootFailure) {
+      } catch (dirErr: unknown) {
+        if (dirErr instanceof DirectoryArtifactTraversalLimit) {
+          limitations.push(
+            `Directory discovery stopped after reaching ${MAX_DIRECTORY_INVENTORY_ENTRIES} entry budget.`,
+          );
+        } else if (dirErr instanceof DirectoryArtifactRootFailure) {
           throw new Error(
             `Selected directory root is not accessible: ${errorMessage(dirErr)}`,
           );
-        }
-        throw dirErr;
-      }
-    } finally {
-      try {
-        await reader.close();
-      } catch (closeErr: unknown) {
-        this.#resources.retain({
-          kind: "reader",
-          resource: input.path,
-          reader,
-        });
-        if (readerFailed === undefined) {
-          throw closeErr;
+        } else {
+          throw dirErr;
         }
       }
-    }
 
-    dirEntries.sort((a, b) => compareUnicodeCodePoints(a.relPath, b.relPath));
+      candidateEntries.sort((a, b) => compareUnicodeCodePoints(a.path, b.path));
 
-    const guidRegex =
-      /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-    const embeddedGuidRegex =
-      /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+      const guidRegex =
+        /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+      const embeddedGuidRegex =
+        /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
-    type ManifestModuleEntry = {
-      guid?: string | null | undefined;
-      name?: string | undefined;
-      phase?: string | undefined;
-      type?: string | undefined;
-    };
-    const isWindows = HOST_PLATFORM.platform === "win32";
-    const manifestModulesByExactRelPath = new Map<
-      string,
-      ManifestModuleEntry
-    >();
-    const manifestModulesByFoldedRelPath = new Map<
-      string,
-      ManifestModuleEntry
-    >();
-    const manifestModulesByFallbackRelPath = new Map<
-      string,
-      ManifestModuleEntry
-    >();
-    let manifestSha256: string | null = null;
-    try {
-      const manifestPath = join(input.path, "firmware_manifest.json");
-      if (existsSync(manifestPath)) {
-        const manifestRaw = await readFile(manifestPath);
-        manifestSha256 = sha256Hex(manifestRaw);
-        const parsed = JSON.parse(manifestRaw.toString("utf8"));
-        if (Array.isArray(parsed?.modules)) {
-          for (let mIdx = 0; mIdx < parsed.modules.length; mIdx++) {
-            const m = parsed.modules[mIdx];
-            if (!m || typeof m !== "object") continue;
-            if (typeof m.payload_file !== "string") continue;
-            const exactNorm = isWindows
-              ? m.payload_file.split(/[/\\]+/).join("/")
-              : m.payload_file.split(/\/+/).join("/");
-            const foldedNorm = exactNorm.toLowerCase();
-            const crossPlatformNorm = m.payload_file.split(/[/\\]+/).join("/");
-            const crossPlatformFolded = crossPlatformNorm.toLowerCase();
+      type ManifestModuleEntry = {
+        guid?: string | null | undefined;
+        name?: string | undefined;
+        phase?: string | undefined;
+        type?: string | undefined;
+      };
+      const isWindows = HOST_PLATFORM.platform === "win32";
+      const manifestModulesByExactRelPath = new Map<
+        string,
+        ManifestModuleEntry
+      >();
+      const manifestModulesByFoldedRelPath = new Map<
+        string,
+        ManifestModuleEntry
+      >();
+      const manifestModulesByFallbackRelPath = new Map<
+        string,
+        ManifestModuleEntry
+      >();
+      let manifestSha256: string | null = null;
 
-            let validGuid: string | null | undefined = undefined;
-            if (m.guid !== undefined && m.guid !== null) {
-              if (typeof m.guid === "string" && guidRegex.test(m.guid)) {
-                validGuid = m.guid.toLowerCase();
-              } else {
-                limitations.push(
-                  `Manifest module at index ${mIdx} has invalid GUID format; using payload-derived fallback.`,
-                );
-              }
-            } else if (m.guid === null) {
-              validGuid = null;
-            }
-
-            let validName: string | undefined = undefined;
-            if (typeof m.name === "string" && m.name.length > 0) {
-              validName = m.name;
-            } else if (m.name !== undefined) {
-              limitations.push(
-                `Manifest module at index ${mIdx} has non-string name; using filename fallback.`,
-              );
-            }
-
-            let validPhase: string | undefined = undefined;
-            if (typeof m.phase === "string") {
-              const upperPhase = m.phase.toUpperCase();
-              if (
-                ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"].includes(upperPhase)
-              ) {
-                validPhase = upperPhase;
-              } else {
-                limitations.push(
-                  `Manifest module at index ${mIdx} has unrecognized phase "${m.phase}"; using path-derived fallback.`,
-                );
-              }
-            } else if (m.phase !== undefined) {
-              limitations.push(
-                `Manifest module at index ${mIdx} has non-string phase; using path-derived fallback.`,
-              );
-            }
-
-            let validType: string | undefined = undefined;
-            if (typeof m.type === "string" && m.type.length > 0) {
-              validType = m.type;
-            } else if (
-              typeof m.typeName === "string" &&
-              m.typeName.length > 0
-            ) {
-              validType = m.typeName;
-            } else if (
-              typeof m.type_name === "string" &&
-              m.type_name.length > 0
-            ) {
-              validType = m.type_name;
-            }
-
-            const manifestEntry: ManifestModuleEntry = {
-              guid: validGuid,
-              name: validName,
-              phase: validPhase,
-              type: validType,
-            };
-            manifestModulesByExactRelPath.set(exactNorm, manifestEntry);
-            if (!manifestModulesByFoldedRelPath.has(foldedNorm)) {
-              manifestModulesByFoldedRelPath.set(foldedNorm, manifestEntry);
-            }
-            if (!isWindows) {
-              manifestModulesByFallbackRelPath.set(
-                crossPlatformNorm,
-                manifestEntry,
-              );
-              if (!manifestModulesByFallbackRelPath.has(crossPlatformFolded)) {
-                manifestModulesByFallbackRelPath.set(
-                  crossPlatformFolded,
-                  manifestEntry,
-                );
-              }
-            }
-          }
-        }
-      }
-    } catch (manifestErr) {
-      limitations.push(
-        `Failed to parse firmware_manifest.json: ${errorMessage(manifestErr)}`,
-      );
-    }
-
-    interface CandidateModule {
-      readonly fullPath: string;
-      readonly identityRelPath: string;
-      readonly name: string;
-      readonly size: number;
-      readonly phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
-      readonly typeName?: string | undefined;
-      readonly guid: string | null;
-      readonly rawName: string;
-      readonly cleanName: string;
-    }
-    const candidates: CandidateModule[] = [];
-
-    for (const entry of dirEntries) {
-      checkpoint();
-      signal.throwIfAborted();
-      if (!entry.isFile()) continue;
-
-      const parent = entry.parentPath ?? input.path;
-      const fullPath = join(parent, entry.name);
-
-      let fileStat;
-      try {
-        fileStat = await stat(fullPath);
-      } catch (sniffErr: unknown) {
-        if (limitations.length < 50) {
+      if (manifestEntry !== undefined) {
+        const declared = manifestEntry.declaredSize ?? 0;
+        const MANIFEST_MAX_BYTES = 16 * 1024 * 1024;
+        if (declared > MANIFEST_MAX_BYTES) {
           limitations.push(
-            `Candidate file ${entry.name} could not be read: ${errorMessage(sniffErr)}`,
+            `Manifest firmware_manifest.json exceeds size limit (${MANIFEST_MAX_BYTES} bytes); ignoring manifest.`,
           );
-        }
-        continue;
-      }
-      if (fileStat.size < 40 || fileStat.size > 32 * 1024 * 1024) continue;
-
-      let isPeOrTe = false;
-      let owner: OwnedFileHandle | undefined;
-      try {
-        const rawHandle = await open(fullPath, "r");
-        owner = new OwnedFileHandle(rawHandle);
-        const probeLen = Math.min(fileStat.size, 4096);
-        const headerBuf = Buffer.alloc(probeLen);
-        const { bytesRead } = await owner.handle.read(
-          headerBuf,
-          0,
-          probeLen,
-          0,
-        );
-        if (bytesRead >= 40) {
-          if (headerBuf[0] === 0x56 && headerBuf[1] === 0x5a) {
-            // Terse Executable ("VZ")
-            const reader = new BinaryReader(
-              headerBuf,
-              true,
-              "UEFI candidate TE header",
-            );
-            const machine = reader.u16(2);
-            const numSections = reader.u8(4);
-            if (machine !== 0 && numSections > 0) {
-              isPeOrTe = true;
-            }
-          } else if (
-            headerBuf[0] === 0x4d &&
-            headerBuf[1] === 0x5a &&
-            bytesRead >= 64
-          ) {
-            // Portable Executable ("MZ")
-            const reader = new BinaryReader(
-              headerBuf,
-              true,
-              "UEFI candidate PE DOS header",
-            );
-            const eLfanew = reader.u32(60);
-            if (eLfanew >= 64 && eLfanew + 24 <= fileStat.size) {
-              let peHeaderBuf: Buffer | undefined;
-              if (eLfanew + 24 <= bytesRead) {
-                peHeaderBuf = headerBuf.subarray(eLfanew, eLfanew + 24);
-              } else {
-                const extraBuf = Buffer.alloc(24);
-                const { bytesRead: extraRead } = await owner.handle.read(
-                  extraBuf,
-                  0,
-                  24,
-                  eLfanew,
-                );
-                if (extraRead >= 24) {
-                  peHeaderBuf = extraBuf;
+        } else {
+          try {
+            const stream = await reader.open(manifestEntry, signal);
+            const chunks: Buffer[] = [];
+            let total = 0;
+            for await (const chunk of stream) {
+              const b = chunk as Buffer;
+              total += b.length;
+              if (total > MANIFEST_MAX_BYTES) {
+                if (
+                  "destroy" in stream &&
+                  typeof stream.destroy === "function"
+                ) {
+                  stream.destroy();
                 }
-              }
-              if (peHeaderBuf !== undefined) {
-                const peReader = new BinaryReader(
-                  peHeaderBuf,
-                  true,
-                  "UEFI candidate PE header",
+                throw new Error(
+                  `Manifest firmware_manifest.json exceeded size limit (${MANIFEST_MAX_BYTES} bytes)`,
                 );
-                const peSig = peReader.u32(0);
-                if (peSig === 0x00004550) {
-                  const machine = peReader.u16(4);
-                  const numSections = peReader.u16(6);
-                  if (machine !== 0 && numSections > 0) {
-                    isPeOrTe = true;
+              }
+              chunks.push(b);
+            }
+            const manifestRaw = Buffer.concat(chunks);
+            manifestSha256 = sha256Hex(manifestRaw);
+            const parsed = JSON.parse(manifestRaw.toString("utf8"));
+            if (Array.isArray(parsed?.modules)) {
+              for (let mIdx = 0; mIdx < parsed.modules.length; mIdx++) {
+                const m = parsed.modules[mIdx];
+                if (!m || typeof m !== "object") continue;
+                if (typeof m.payload_file !== "string") continue;
+                const exactNorm = isWindows
+                  ? m.payload_file.split(/[/\\]+/).join("/")
+                  : m.payload_file.split(/\/+/).join("/");
+                const foldedNorm = exactNorm.toLowerCase();
+                const crossPlatformNorm = m.payload_file
+                  .split(/[/\\]+/)
+                  .join("/");
+                const crossPlatformFolded = crossPlatformNorm.toLowerCase();
+
+                let validGuid: string | null | undefined = undefined;
+                if (m.guid !== undefined && m.guid !== null) {
+                  if (typeof m.guid === "string" && guidRegex.test(m.guid)) {
+                    validGuid = m.guid.toLowerCase();
+                  } else {
+                    limitations.push(
+                      `Manifest module at index ${mIdx} has invalid GUID format; using payload-derived fallback.`,
+                    );
+                  }
+                } else if (m.guid === null) {
+                  validGuid = null;
+                }
+
+                let validName: string | undefined = undefined;
+                if (typeof m.name === "string" && m.name.length > 0) {
+                  validName = m.name;
+                } else if (m.name !== undefined) {
+                  limitations.push(
+                    `Manifest module at index ${mIdx} has non-string name; using filename fallback.`,
+                  );
+                }
+
+                let validPhase: string | undefined = undefined;
+                if (typeof m.phase === "string") {
+                  const upperPhase = m.phase.toUpperCase();
+                  if (
+                    ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"].includes(
+                      upperPhase,
+                    )
+                  ) {
+                    validPhase = upperPhase;
+                  } else {
+                    limitations.push(
+                      `Manifest module at index ${mIdx} has unrecognized phase "${m.phase}"; using path-derived fallback.`,
+                    );
+                  }
+                } else if (m.phase !== undefined) {
+                  limitations.push(
+                    `Manifest module at index ${mIdx} has non-string phase; using path-derived fallback.`,
+                  );
+                }
+
+                let validType: string | undefined = undefined;
+                if (typeof m.type === "string" && m.type.length > 0) {
+                  validType = m.type;
+                } else if (
+                  typeof m.typeName === "string" &&
+                  m.typeName.length > 0
+                ) {
+                  validType = m.typeName;
+                } else if (
+                  typeof m.type_name === "string" &&
+                  m.type_name.length > 0
+                ) {
+                  validType = m.type_name;
+                }
+
+                const manifestEntryRecord: ManifestModuleEntry = {
+                  guid: validGuid,
+                  name: validName,
+                  phase: validPhase,
+                  type: validType,
+                };
+                manifestModulesByExactRelPath.set(
+                  exactNorm,
+                  manifestEntryRecord,
+                );
+                if (!manifestModulesByFoldedRelPath.has(foldedNorm)) {
+                  manifestModulesByFoldedRelPath.set(
+                    foldedNorm,
+                    manifestEntryRecord,
+                  );
+                }
+                if (!isWindows) {
+                  manifestModulesByFallbackRelPath.set(
+                    crossPlatformNorm,
+                    manifestEntryRecord,
+                  );
+                  if (
+                    !manifestModulesByFallbackRelPath.has(crossPlatformFolded)
+                  ) {
+                    manifestModulesByFallbackRelPath.set(
+                      crossPlatformFolded,
+                      manifestEntryRecord,
+                    );
                   }
                 }
               }
             }
-          }
-        }
-      } catch (sniffErr: unknown) {
-        if (limitations.length < 50) {
-          limitations.push(
-            `Candidate file ${entry.name} could not be read: ${errorMessage(sniffErr)}`,
-          );
-        }
-        continue;
-      } finally {
-        if (owner !== undefined) {
-          const released = await this.#resources.release({
-            kind: "file-handle",
-            resource: fullPath,
-            handle: owner,
-          });
-          if (released.kind === "failed") {
-            const cleanupErr = new ProviderCleanupError(
-              UEFI_PROVIDER_IDENTITY.id,
-              released.lease.cleanupResources ?? [fullPath],
-              { reason: errorMessage(released.cause) },
-              { cause: released.cause, operation: "decompile_uefi_firmware" },
+          } catch (manifestErr) {
+            limitations.push(
+              `Failed to parse firmware_manifest.json: ${errorMessage(manifestErr)}`,
             );
-            new AnalysisCleanupLeaseGroup(cleanupErr, [released.lease]);
-            throw cleanupErr;
           }
         }
       }
-      if (!isPeOrTe) continue;
 
-      const relPath = relative(input.path, fullPath);
-      const identityRelPath =
-        HOST_PLATFORM.platform === "win32"
-          ? relPath.replaceAll("\\", "/")
-          : relPath;
-      const exactLookupKey = isWindows
-        ? relPath.split(/[/\\]+/).join("/")
-        : relPath.split(/\/+/).join("/");
-      const foldedLookupKey = exactLookupKey.toLowerCase();
-      const crossPlatformLookupKey = isWindows
-        ? exactLookupKey
-        : relPath.split(/[/\\]+/).join("/");
-      const crossPlatformFoldedKey = crossPlatformLookupKey.toLowerCase();
-      const segments = exactLookupKey.toLowerCase().split("/");
-      const fromManifest =
-        manifestModulesByExactRelPath.get(exactLookupKey) ??
-        manifestModulesByFoldedRelPath.get(foldedLookupKey) ??
-        manifestModulesByFallbackRelPath.get(crossPlatformLookupKey) ??
-        manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey);
-
-      let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
-      const manifestPhase = fromManifest?.phase?.toUpperCase();
-      if (
-        manifestPhase &&
-        ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"].includes(manifestPhase)
-      ) {
-        phase = manifestPhase as "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
-      } else if (segments.some((s) => s === "sec")) {
-        phase = "SEC";
-      } else if (segments.some((s) => s === "pei" || s === "peim")) {
-        phase = "PEI";
-      } else if (segments.some((s) => s === "smm")) {
-        phase = "SMM";
-      } else if (segments.some((s) => s === "app" || s === "application")) {
-        phase = "APP";
-      } else if (segments.some((s) => s === "misc")) {
-        phase = "MISC";
-      } else if (segments.some((s) => s === "dxe")) {
-        phase = "DXE";
+      interface AdmittedCandidateModule {
+        readonly entry: DirectoryArtifactEntry;
+        readonly fullPath: string;
+        readonly identityRelPath: string;
+        readonly name: string;
+        readonly size: number;
+        readonly phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
+        readonly typeName?: string | undefined;
+        readonly guid: string | null;
+        readonly rawName: string;
+        readonly cleanName: string;
       }
+      const admittedCandidates: AdmittedCandidateModule[] = [];
 
-      const requested = input.filter_phase.toLowerCase();
-      const isCombinedPeimDriver =
-        fromManifest?.type?.toLowerCase() === "combined-peim-driver";
-      const isCombinedSmmDxe =
-        fromManifest?.type?.toLowerCase() === "combined-smm-dxe";
-      const matchesPhase =
-        requested === "all" ||
-        phase.toLowerCase() === requested ||
-        (requested === "dxe" && (isCombinedPeimDriver || isCombinedSmmDxe)) ||
-        (requested === "pei" && isCombinedPeimDriver) ||
-        (requested === "smm" && isCombinedSmmDxe);
+      for (const entry of candidateEntries) {
+        checkpoint();
+        signal.throwIfAborted();
 
-      if (!matchesPhase) {
-        continue;
-      }
+        const size = entry.declaredSize ?? 0;
+        if (size > 32 * 1024 * 1024) {
+          if (limitations.length < 50) {
+            limitations.push(
+              `Candidate file ${entry.path} exceeds maximum module size limit (32 MiB).`,
+            );
+          }
+          continue;
+        }
+        if (size < 40) continue;
 
-      let guid: string | null = null;
-      if (fromManifest?.guid) {
-        guid = fromManifest.guid.toLowerCase();
-      } else {
-        const nameMatch = entry.name.match(embeddedGuidRegex);
-        if (nameMatch && nameMatch[1]) {
-          guid = nameMatch[1].toLowerCase();
+        const isPeOrTe = await reader
+          .inspectFile(
+            entry,
+            async (fileHandle) => {
+              const probeLen = Math.min(size, 4096);
+              const headerBuf = Buffer.alloc(probeLen);
+              const { bytesRead } = await fileHandle.read(
+                headerBuf,
+                0,
+                probeLen,
+                0,
+              );
+              if (bytesRead < 40) return false;
+              if (headerBuf[0] === 0x56 && headerBuf[1] === 0x5a) {
+                // Terse Executable ("VZ")
+                const r = new BinaryReader(
+                  headerBuf,
+                  true,
+                  "UEFI candidate TE header",
+                );
+                const machine = r.u16(2);
+                const numSections = r.u8(4);
+                return machine !== 0 && numSections > 0;
+              }
+              if (
+                headerBuf[0] === 0x4d &&
+                headerBuf[1] === 0x5a &&
+                bytesRead >= 64
+              ) {
+                // Portable Executable ("MZ")
+                const r = new BinaryReader(
+                  headerBuf,
+                  true,
+                  "UEFI candidate PE DOS header",
+                );
+                const eLfanew = r.u32(60);
+                if (eLfanew >= 64 && eLfanew + 24 <= size) {
+                  let peHeaderBuf: Buffer | undefined;
+                  if (eLfanew + 24 <= bytesRead) {
+                    peHeaderBuf = headerBuf.subarray(eLfanew, eLfanew + 24);
+                  } else {
+                    const extraBuf = Buffer.alloc(24);
+                    const { bytesRead: extraRead } = await fileHandle.read(
+                      extraBuf,
+                      0,
+                      24,
+                      eLfanew,
+                    );
+                    if (extraRead >= 24) {
+                      peHeaderBuf = extraBuf;
+                    }
+                  }
+                  if (peHeaderBuf !== undefined) {
+                    const peReader = new BinaryReader(
+                      peHeaderBuf,
+                      true,
+                      "UEFI candidate PE header",
+                    );
+                    const peSig = peReader.u32(0);
+                    if (peSig === 0x00004550) {
+                      const machine = peReader.u16(4);
+                      const numSections = peReader.u16(6);
+                      return machine !== 0 && numSections > 0;
+                    }
+                  }
+                }
+              }
+              return false;
+            },
+            signal,
+          )
+          .catch((sniffErr: unknown) => {
+            if (sniffErr instanceof ArtifactFileCleanupFailure) {
+              const leases = sniffErr.cleanupLeases ?? [];
+              const cleanupErr = new ProviderCleanupError(
+                UEFI_PROVIDER_IDENTITY.id,
+                leases.flatMap((l) => l.cleanupResources ?? [entry.adapterKey]),
+                { reason: errorMessage(sniffErr.cause) },
+                {
+                  cause: sniffErr.cause,
+                  operation: "decompile_uefi_firmware",
+                },
+              );
+              new AnalysisCleanupLeaseGroup(cleanupErr, leases);
+              throw cleanupErr;
+            }
+            if (limitations.length < 50) {
+              limitations.push(
+                `Candidate file ${basename(entry.path)} could not be read: ${errorMessage(sniffErr)}`,
+              );
+            }
+            return false;
+          });
+
+        if (!isPeOrTe) continue;
+
+        const relPath = entry.path;
+        const fullPath = entry.adapterKey;
+        const entryName = basename(relPath);
+        const identityRelPath =
+          HOST_PLATFORM.platform === "win32"
+            ? relPath.replaceAll("\\", "/")
+            : relPath;
+        const exactLookupKey = isWindows
+          ? relPath.split(/[/\\]+/).join("/")
+          : relPath.split(/\/+/).join("/");
+        const foldedLookupKey = exactLookupKey.toLowerCase();
+        const crossPlatformLookupKey = isWindows
+          ? exactLookupKey
+          : relPath.split(/[/\\]+/).join("/");
+        const crossPlatformFoldedKey = crossPlatformLookupKey.toLowerCase();
+        const segments = exactLookupKey.toLowerCase().split("/");
+        const fromManifest =
+          manifestModulesByExactRelPath.get(exactLookupKey) ??
+          manifestModulesByFoldedRelPath.get(foldedLookupKey) ??
+          manifestModulesByFallbackRelPath.get(crossPlatformLookupKey) ??
+          manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey);
+
+        let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
+        const manifestPhase = fromManifest?.phase?.toUpperCase();
+        if (
+          manifestPhase &&
+          ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"].includes(manifestPhase)
+        ) {
+          phase = manifestPhase as
+            | "SEC"
+            | "PEI"
+            | "DXE"
+            | "SMM"
+            | "APP"
+            | "MISC";
+        } else if (segments.some((s) => s === "sec")) {
+          phase = "SEC";
+        } else if (segments.some((s) => s === "pei" || s === "peim")) {
+          phase = "PEI";
+        } else if (segments.some((s) => s === "smm")) {
+          phase = "SMM";
+        } else if (segments.some((s) => s === "app" || s === "application")) {
+          phase = "APP";
+        } else if (segments.some((s) => s === "misc")) {
+          phase = "MISC";
+        } else if (segments.some((s) => s === "dxe")) {
+          phase = "DXE";
+        }
+
+        let guid: string | null = null;
+        if (fromManifest?.guid) {
+          guid = fromManifest.guid.toLowerCase();
         } else {
-          const pathMatch = foldedLookupKey.match(embeddedGuidRegex);
-          if (pathMatch && pathMatch[1]) {
-            guid = pathMatch[1].toLowerCase();
+          const nameMatch = entryName.match(embeddedGuidRegex);
+          if (nameMatch && nameMatch[1]) {
+            guid = nameMatch[1].toLowerCase();
+          } else {
+            const pathMatch = foldedLookupKey.match(embeddedGuidRegex);
+            if (pathMatch && pathMatch[1]) {
+              guid = pathMatch[1].toLowerCase();
+            }
           }
         }
-      }
 
-      let rawName = entry.name.replace(/\.(pe|efi|bin|te)$/i, "");
-      if (
-        typeof fromManifest?.name === "string" &&
-        fromManifest.name.length > 0
-      ) {
-        rawName = fromManifest.name;
-      } else if (guid) {
-        const parentBase = basename(parent);
-        const prefix = `${guid}_`;
-        if (parentBase.toLowerCase().startsWith(prefix)) {
-          const candidateName = parentBase.slice(prefix.length);
-          if (candidateName.length > 0) {
-            rawName = candidateName;
+        let rawName = entryName.replace(/\.(pe|efi|bin|te)$/i, "");
+        if (
+          typeof fromManifest?.name === "string" &&
+          fromManifest.name.length > 0
+        ) {
+          rawName = fromManifest.name;
+        } else if (guid) {
+          const parentBase = basename(dirname(fullPath));
+          const prefix = `${guid}_`;
+          if (parentBase.toLowerCase().startsWith(prefix)) {
+            const candidateName = parentBase.slice(prefix.length);
+            if (candidateName.length > 0) {
+              rawName = candidateName;
+            }
           }
         }
+        const cleanName = rawName.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+        admittedCandidates.push({
+          entry,
+          fullPath,
+          identityRelPath,
+          name: entryName,
+          size,
+          phase,
+          typeName: fromManifest?.type,
+          guid,
+          rawName,
+          cleanName,
+        });
       }
-      const cleanName = rawName.replace(/[^a-zA-Z0-9_-]/g, "_");
 
-      candidates.push({
-        fullPath,
-        identityRelPath,
-        name: entry.name,
-        size: fileStat.size,
-        phase,
-        typeName: fromManifest?.type,
-        guid,
-        rawName,
-        cleanName,
-      });
-    }
-
-    // Sort candidates deterministically by Unicode code point order (locale-independent)
-    candidates.sort((a, b) =>
-      compareUnicodeCodePoints(a.identityRelPath, b.identityRelPath),
-    );
-
-    const dirHash = createHash("sha256");
-    dirHash.update("manifest:" + (manifestSha256 ?? "none") + "\n");
-    const discoveredModules: DiscoveredUefiModule[] = [];
-
-    const MAX_PRELOAD_BYTES = 32 * 1024 * 1024;
-    let retainedPreloadBytes = 0;
-
-    for (let i = 0; i < candidates.length; i++) {
-      checkpoint();
-      signal.throwIfAborted();
-      const candidate = candidates[i]!;
-      const content = await readFile(candidate.fullPath);
-      const fileSha256 = sha256Hex(content);
-      dirHash.update(
-        compositeKey([candidate.identityRelPath, fileSha256]) + "\n",
+      // Sort admitted candidate modules deterministically by Unicode code point order
+      admittedCandidates.sort((a, b) =>
+        compareUnicodeCodePoints(a.identityRelPath, b.identityRelPath),
       );
 
-      const isSelected = i < request.input.max_modules;
-      let retainedBytes: Buffer | undefined;
-      if (
-        isSelected &&
-        retainedPreloadBytes + content.byteLength <= MAX_PRELOAD_BYTES
-      ) {
-        retainedBytes = content;
-        retainedPreloadBytes += content.byteLength;
+      const dirHash = createHash("sha256");
+      dirHash.update("manifest:" + (manifestSha256 ?? "none") + "\n");
+
+      const MAX_PRELOAD_BYTES = 32 * 1024 * 1024;
+      let retainedPreloadBytes = 0;
+      const moduleDataByIdentity = new Map<
+        string,
+        { bytes?: Buffer | undefined; sha256: string }
+      >();
+
+      for (let i = 0; i < admittedCandidates.length; i++) {
+        checkpoint();
+        signal.throwIfAborted();
+        const cand = admittedCandidates[i]!;
+        const content = await buffer(await reader.open(cand.entry, signal));
+        const fileSha256 = sha256Hex(content);
+        dirHash.update(compositeKey([cand.identityRelPath, fileSha256]) + "\n");
+
+        let retainedBytes: Buffer | undefined;
+        if (retainedPreloadBytes + content.byteLength <= MAX_PRELOAD_BYTES) {
+          retainedBytes = content;
+          retainedPreloadBytes += content.byteLength;
+        }
+        moduleDataByIdentity.set(cand.identityRelPath, {
+          ...(retainedBytes !== undefined ? { bytes: retainedBytes } : {}),
+          sha256: fileSha256,
+        });
       }
 
-      discoveredModules.push({
-        guid: candidate.guid,
-        rawName: candidate.rawName,
-        cleanName: candidate.cleanName,
-        phase: candidate.phase,
-        typeName: candidate.typeName,
-        sourceRelPath: candidate.identityRelPath,
-        ...(retainedBytes !== undefined ? { bytes: retainedBytes } : {}),
-        sourcePath: candidate.fullPath,
-        expectedSha256: fileSha256,
-        byteLength: candidate.size,
+      const dirSha256 =
+        admittedCandidates.length === 0 && manifestSha256 === null
+          ? sha256Hex(Buffer.alloc(0))
+          : dirHash.digest("hex");
+
+      const requested = input.filter_phase.toLowerCase();
+      const discoveredModules: DiscoveredUefiModule[] = [];
+
+      for (const cand of admittedCandidates) {
+        const isCombinedPeimDriver =
+          cand.typeName?.toLowerCase() === "combined-peim-driver";
+        const isCombinedSmmDxe =
+          cand.typeName?.toLowerCase() === "combined-smm-dxe";
+        const matchesPhase =
+          requested === "all" ||
+          cand.phase.toLowerCase() === requested ||
+          (requested === "dxe" && (isCombinedPeimDriver || isCombinedSmmDxe)) ||
+          (requested === "pei" && isCombinedPeimDriver) ||
+          (requested === "smm" && isCombinedSmmDxe);
+
+        if (!matchesPhase) {
+          continue;
+        }
+
+        const modData = moduleDataByIdentity.get(cand.identityRelPath)!;
+        discoveredModules.push({
+          guid: cand.guid,
+          rawName: cand.rawName,
+          cleanName: cand.cleanName,
+          phase: cand.phase,
+          typeName: cand.typeName,
+          sourceRelPath: cand.identityRelPath,
+          sourcePath: cand.fullPath,
+          entry: cand.entry,
+          ...(modData.bytes !== undefined ? { bytes: modData.bytes } : {}),
+          expectedSha256: modData.sha256,
+          byteLength: cand.size,
+        });
+      }
+
+      return await this.#stageAndPublishModules(
+        request,
+        dirSha256,
+        discoveredModules,
+        limitations,
+        signal,
+        checkpoint,
+        "directory",
+        remainingTimeMs,
+        reader,
+      );
+    } catch (cause: unknown) {
+      establishedError = cause;
+      throw cause;
+    } finally {
+      const released = await this.#resources.release({
+        kind: "reader",
+        resource: input.path,
+        reader,
       });
+      if (released.kind === "failed" && establishedError === undefined) {
+        const cleanupError = new ProviderCleanupError(
+          UEFI_PROVIDER_IDENTITY.id,
+          released.lease.cleanupResources ?? [input.path],
+          { reason: errorMessage(released.cause) },
+          { cause: released.cause, operation: "decompile_uefi_firmware" },
+        );
+        new AnalysisCleanupLeaseGroup(cleanupError, [released.lease]);
+        throw cleanupError;
+      }
     }
-
-    const dirSha256 =
-      candidates.length === 0 && manifestSha256 === null
-        ? sha256Hex(Buffer.alloc(0))
-        : dirHash.digest("hex");
-
-    return this.#stageAndPublishModules(
-      request,
-      dirSha256,
-      discoveredModules,
-      limitations,
-      signal,
-      checkpoint,
-      "directory",
-      remainingTimeMs,
-    );
   }
 
   async #decodeStream(
