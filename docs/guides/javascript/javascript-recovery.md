@@ -49,6 +49,11 @@ Both give the same binary (SHA-256
 
 ## Recover and analyze
 
+The integrated `recover_javascript_sources` / `recover-javascript-sources` flow
+below is available only on supported hosts (Linux x64 with a configured Wakaru
+engine and `prlimit`). For other hosts, see
+[Unsupported hosts and manual recovery](#unsupported-hosts-and-manual-recovery-example-windows).
+
 ```sh
 rea recover-javascript-sources /tmp/web-scripts/app.js /tmp/recovered-app --json
 rea analyze-javascript-application /tmp/recovered-app/modules --json
@@ -151,4 +156,55 @@ operation and do not claim aggregate host containment across concurrent callers.
 
 See [source recovery verification](../../testing-lanes.md#javascript-source-recovery) for the focused real
 Wakaru CLI/MCP lane and its source-owned compiler fixtures. Other host platforms
-and Bun/Vue recovery are not claimed by this adapter.
+and Bun/Vue recovery are not claimed by this adapter; for an unsupported-host
+workflow, see
+[Unsupported hosts and manual recovery](#unsupported-hosts-and-manual-recovery-example-windows).
+
+## Unsupported hosts and manual recovery (example: Windows)
+
+REA's integrated recovery tool is **not available** on unsupported hosts. The
+`recover_javascript_sources` / `recover-javascript-sources` adapter currently
+requires:
+
+- **Linux x64**
+- an absolute `REA_WAKARU_COMMAND` pointing to a caller-supplied Wakaru
+  **^1.13.0** executable (verified with 1.14.0)
+- util-linux `prlimit` (or an absolute `REA_JAVASCRIPT_PRLIMIT_COMMAND`)
+
+On Windows and other unsupported hosts, you can use an **external/manual**
+recovery workflow and still analyze the recovered output with REA:
+
+1. **Recover outside REA.** Run Wakaru (or another recovery process you trust)
+   outside REA on the selected local UTF-8 JavaScript files/bundles, including
+   related runtime/shared/lazy chunks when they must be recovered together. Use
+   the Wakaru version, options, and output layout appropriate for that external
+   tool; REA does not install, launch, or constrain that external run.
+2. **Prepare a modules directory.** Collect the recovered readable `.js` modules
+   (and any emitted source maps, if present) into a directory. When possible,
+   align the layout with REA's integrated recovery `modules/` output so the
+   analyzed files are easy to identify; if the external tool uses a different
+   layout, point analysis at the directory that contains the recovered modules.
+3. **Analyze with REA.** Run static analysis on that directory; REA does not
+   execute the selected or recovered code:
+
+   ```sh
+   rea analyze-javascript-application C:\path\to\recovered\modules --json
+   ```
+
+   ```json
+   {
+     "tool": "analyze_javascript_application",
+     "arguments": {
+       "input_path": "C:\\path\\to\\recovered\\modules"
+     }
+   }
+   ```
+
+**Differences from integrated `recover_javascript_sources`:** external recovery
+does not produce REA's `analysis_input`, `manifest.json`, `reports/*`, or
+inline recovery result contract, and it does not provide REA-managed input
+snapshots, per-input provenance/extraction-range metadata, validated publication,
+or rollback semantics. Treat provenance, tool versions, and input/output
+mappings as operator-managed records, and verify on a sample that the external
+output layout is suitable for `analyze_javascript_application`. This manual path
+does not change the availability or guarantees of the integrated recovery tool.
