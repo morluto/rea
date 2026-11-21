@@ -1592,225 +1592,196 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
   });
 });
 
-it.each([
-  "defineProperty",
-  "getOwnPropertyDescriptor",
-  "getPrototypeOf",
-  "create",
-  "get",
-  "set",
-  "Set",
-  "Proxy",
-  "WeakMap.has",
-  "WeakMap.get",
-  "WeakMap.set",
-  "Set.has",
-  "Set.add",
-])(
-  "keeps listener registration and removal independent of late %s replacement",
-  async (method) => {
-    const root = await createTestTempDirectory(
-      "rea-electron-hook-late-intrinsic-",
-    );
-    await writeElectronFixture(root);
-    const script = join(root, "ipc-late-intrinsic.cjs");
-    await writeFile(
-      script,
-      `const { ipcMain } = require("electron");
+it("keeps listener registration and removal independent of late intrinsic replacement", async () => {
+  const intrinsics = [
+    "defineProperty",
+    "getOwnPropertyDescriptor",
+    "getPrototypeOf",
+    "get",
+    "set",
+    "Set",
+    "Proxy",
+    "WeakMap.has",
+    "WeakMap.get",
+    "WeakMap.set",
+    "Set.has",
+    "Set.add",
+  ];
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-late-intrinsic-",
+  );
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-late-intrinsic.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
 const { EventEmitter } = require("node:events");
-const specification = ${JSON.stringify(method)};
-const [constructor, member] = specification.split(".");
-const method = member ?? specification;
-const owner = member !== undefined ? globalThis[constructor].prototype
-  : method === "Set" || method === "Proxy" ? globalThis
-  : method === "get" || method === "set" ? Reflect : Object;
-const original = owner[method];
-const emitter = new EventEmitter();
-const scenario = (target) => {
-  const seen = [];
-  let failure = null;
+const row = (specification) => {
+  const [constructor, member] = specification.split(".");
+  const method = member ?? specification;
+  const owner = member !== undefined ? globalThis[constructor].prototype
+    : method === "Set" || method === "Proxy" ? globalThis
+    : method === "get" || method === "set" ? Reflect : Object;
+  const original = owner[method];
+  const onChannel = specification + ":on", onceChannel = specification + ":once";
+  const scenario = (target) => {
+    const seen = [];
+    let failure = null;
+    try {
+      const onListener = () => seen.push("on");
+      target.on(onChannel, onListener);
+      target.once(onceChannel, () => seen.push("once"));
+      target.on("removeListener", () => {});
+      target.emit(onChannel, null, 42);
+      target.emit(onceChannel, null, 43);
+      target.emit(onceChannel, null, 44);
+      target.removeAllListeners();
+    } catch (cause) { failure = cause.message; }
+    return { seen, failure, remaining: target.eventNames().length };
+  };
+  const emitter = new EventEmitter();
+  const replacement = function() { throw new Error("late application intrinsic replacement"); };
+  owner[method] = replacement;
+  let plain, hooked;
   try {
-    const onListener = () => seen.push("on");
-    target.on("ch", onListener);
-    target.once("one", () => seen.push("once"));
-    target.on("removeListener", () => {});
-    target.emit("ch", null, 42);
-    target.emit("one", null, 43);
-    target.emit("one", null, 44);
-    target.removeAllListeners();
-  } catch (cause) { failure = cause.message; }
-  return { seen, failure, remaining: target.eventNames().length };
+    if (owner[method] !== replacement) throw new Error("fixture did not replace " + specification);
+    plain = scenario(emitter);
+    hooked = scenario(ipcMain);
+  }
+  finally { owner[method] = original; }
+  const snapshot = globalThis.__reaElectronActiveSnapshot();
+  return { specification, plain, hooked,
+    invocations: snapshot.events.filter(e => e.kind === "main-event-invocation" && (e.channel === onChannel || e.channel === onceChannel)).length };
 };
-owner[method] = function() { throw new Error("late application intrinsic replacement"); };
-let plain, hooked;
-try { plain = scenario(emitter); hooked = scenario(ipcMain); }
-finally { owner[method] = original; }
-const snapshot = globalThis.__reaElectronActiveSnapshot();
-console.log(JSON.stringify({ plain, hooked,
-  invocations: snapshot.events.filter(e => e.kind === "main-event-invocation" && (e.channel === "ch" || e.channel === "one")).length }));
+console.log(JSON.stringify(${JSON.stringify(intrinsics)}.map(row)));
 `,
-    );
-    const execution = await runNode(script, root);
-    expect(execution.code, execution.stderr).toBe(0);
-    const { plain, hooked, invocations } = JSON.parse(execution.stdout);
-    expect(plain).toEqual({
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const rows = JSON.parse(execution.stdout) as {
+    specification: string;
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+    invocations: number;
+  }[];
+  expect(rows.map(({ specification }) => specification)).toEqual(intrinsics);
+  for (const { specification, plain, hooked, invocations } of rows) {
+    expect(plain, specification).toEqual({
       seen: ["on", "once"],
       failure: null,
       remaining: 0,
     });
-    expect(hooked).toEqual(plain);
-    expect(invocations).toBe(2);
-  },
-);
-
-it.each([
-  {
-    mode: "data",
-    depth: 16,
-    prototypeDepth: 0,
-    once: true,
-    gaps: 1,
-    remaining: 1,
-  },
-  {
-    mode: "data",
-    depth: 17,
-    prototypeDepth: 0,
-    once: true,
-    gaps: 1,
-    remaining: 1,
-  },
-  {
-    mode: "accessor",
-    depth: 1,
-    prototypeDepth: 0,
-    once: true,
-    gaps: 1,
-    remaining: 0,
-  },
-  {
-    mode: "proxy",
-    depth: 1,
-    prototypeDepth: 0,
-    once: true,
-    gaps: 1,
-    remaining: 0,
-  },
-  {
-    mode: "data",
-    depth: 17,
-    prototypeDepth: 0,
-    once: false,
-    gaps: 1,
-    remaining: 1,
-  },
-  {
-    mode: "inherited-data",
-    depth: 1,
-    prototypeDepth: 1,
-    once: true,
-    gaps: 1,
-    remaining: 0,
-  },
-  {
-    mode: "inherited-accessor",
-    depth: 1,
-    prototypeDepth: 1,
-    once: true,
-    gaps: 1,
-    remaining: 0,
-  },
-  {
-    mode: "inherited-proxy",
-    depth: 1,
-    prototypeDepth: 1,
-    once: true,
-    gaps: 1,
-    remaining: 0,
-  },
-  {
-    mode: "inherited-data",
-    depth: 1,
-    prototypeDepth: 16,
-    once: true,
-    gaps: 1,
-    remaining: 0,
-  },
-  {
-    mode: "inherited-data",
-    depth: 1,
-    prototypeDepth: 17,
-    once: true,
-    gaps: 1,
-    remaining: 0,
-  },
-])(
-  "preserves native dispatch for $mode chains (depth $depth, prototype $prototypeDepth, once $once)",
-  async ({ mode, depth, prototypeDepth, once, gaps, remaining }) => {
-    const root = await createTestTempDirectory(
-      "rea-electron-hook-chain-coverage-",
-    );
-    await writeElectronFixture(root);
-    const script = join(root, "ipc-chain-coverage.cjs");
-    await writeFile(
-      script,
-      `const { ipcMain } = require("electron");
-const { EventEmitter } = require("node:events");
-const mode = ${JSON.stringify(mode)}, once = ${JSON.stringify(once)};
-const scenario = (target) => {
-  let calls = 0, reads = 0;
-  for (let index = 0; index < ${depth}; index++) {
-    const previous = target.on;
-    target.on = function(channel, listener) {
-      let outer = function(...args) { return Reflect.apply(listener, this, args); };
-      if (mode.startsWith("inherited-")) {
-        let prototype = Object.create(Function.prototype);
-        Object.defineProperty(prototype, "listener", mode === "inherited-accessor"
-          ? { get() { reads++; return listener; } } : { value: listener });
-        if (mode === "inherited-proxy") prototype = new Proxy(prototype, {
-          getOwnPropertyDescriptor() { throw new Error("prototype metadata reflection"); },
-          getPrototypeOf() { throw new Error("prototype traversal reflection"); }
-        });
-        for (let index = 1; index < ${prototypeDepth}; index++) prototype = Object.create(prototype);
-        Object.setPrototypeOf(outer, prototype);
-      }
-      else if (mode === "accessor") Object.defineProperty(outer, "listener", { get() { reads++; return listener; } });
-      else outer.listener = listener;
-      if (mode === "proxy") outer = new Proxy(outer, {
-        getOwnPropertyDescriptor() { throw new Error("application metadata reflection"); }
-      });
-      return Reflect.apply(previous, this, [channel, outer]);
-    };
+    expect(hooked, specification).toEqual(plain);
+    expect(invocations, specification).toBe(2);
   }
-  target[once ? "once" : "on"]("ch", () => calls++);
-  target.emit("ch", null, 42); target.emit("ch", null, 43);
-  return { calls, reads, remaining: target.listenerCount("ch") };
+});
+
+it("preserves native dispatch across bounded listener and prototype chains", async () => {
+  const cases = [
+    { mode: "data", depth: 16, remaining: 1 },
+    { mode: "data", depth: 17, remaining: 1 },
+    { mode: "accessor" },
+    { mode: "proxy" },
+    { mode: "data", depth: 17, once: false, remaining: 1 },
+    { mode: "inherited-data", prototypeDepth: 1 },
+    { mode: "inherited-accessor", prototypeDepth: 1 },
+    { mode: "inherited-proxy", prototypeDepth: 1 },
+    { mode: "inherited-data", prototypeDepth: 16 },
+    { mode: "inherited-data", prototypeDepth: 17 },
+  ].map((entry) => ({
+    depth: 1,
+    prototypeDepth: 0,
+    once: true,
+    remaining: 0,
+    ...entry,
+  }));
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-chain-coverage-",
+  );
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-chain-coverage.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
+const { EventEmitter } = require("node:events");
+const scenario = (target, channel, { mode, once, depth, prototypeDepth }) => {
+  const prior = Object.getOwnPropertyDescriptor(target, "on");
+  let calls = 0, reads = 0;
+  try {
+    for (let index = 0; index < depth; index++) {
+      const previous = target.on;
+      target.on = function(channel, listener) {
+        let outer = function(...args) { return Reflect.apply(listener, this, args); };
+        if (mode.startsWith("inherited-")) {
+          let prototype = Object.create(Function.prototype);
+          Object.defineProperty(prototype, "listener", mode === "inherited-accessor"
+            ? { get() { reads++; return listener; } } : { value: listener });
+          if (mode === "inherited-proxy") prototype = new Proxy(prototype, {
+            getOwnPropertyDescriptor() { throw new Error("prototype metadata reflection"); },
+            getPrototypeOf() { throw new Error("prototype traversal reflection"); }
+          });
+          for (let index = 1; index < prototypeDepth; index++) prototype = Object.create(prototype);
+          Object.setPrototypeOf(outer, prototype);
+        }
+        else if (mode === "accessor") Object.defineProperty(outer, "listener", { get() { reads++; return listener; } });
+        else outer.listener = listener;
+        if (mode === "proxy") outer = new Proxy(outer, {
+          getOwnPropertyDescriptor() { throw new Error("application metadata reflection"); }
+        });
+        return Reflect.apply(previous, this, [channel, outer]);
+      };
+    }
+    target[once ? "once" : "on"](channel, () => calls++);
+    target.emit(channel, null, 42); target.emit(channel, null, 43);
+    return { calls, reads, remaining: target.listenerCount(channel) };
+  } finally {
+    if (prior) Object.defineProperty(target, "on", prior);
+    else delete target.on;
+  }
 };
-const plain = scenario(new EventEmitter()), hooked = scenario(ipcMain);
-const snapshot = globalThis.__reaElectronActiveSnapshot();
-console.log(JSON.stringify({ plain, hooked,
-  invocations: snapshot.events.filter(e => e.kind === "main-event-invocation").length,
-  gaps: snapshot.events.filter(e => e.kind === "ipc-observation-gap").map(e => ({event: e.event, channel: e.channel})) }));
+const rows = ${JSON.stringify(cases)}.map((entry, index) => {
+  const channel = "chain-" + index;
+  const priorCount = globalThis.__reaElectronActiveSnapshot().events.length;
+  const plain = scenario(new EventEmitter(), channel, entry);
+  const hooked = scenario(ipcMain, channel, entry);
+  const events = globalThis.__reaElectronActiveSnapshot().events.slice(priorCount);
+  return { plain, hooked, channel,
+    invocations: events.filter(e => e.kind === "main-event-invocation").length,
+    gaps: events.filter(e => e.kind === "ipc-observation-gap").map(e => ({event: e.event, channel: e.channel})) };
+});
+console.log(JSON.stringify(rows));
 `,
-    );
-    const execution = await runNode(script, root);
-    expect(execution.code, execution.stderr).toBe(0);
-    const result = JSON.parse(execution.stdout);
-    expect(result.plain).toEqual({
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const rows = JSON.parse(execution.stdout) as {
+    channel: string;
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+    invocations: number;
+    gaps: unknown[];
+  }[];
+  expect(rows).toHaveLength(cases.length);
+  for (const [
+    index,
+    { mode, depth, prototypeDepth, once, remaining },
+  ] of cases.entries()) {
+    const label = `${mode} depth ${String(depth)}, prototype ${String(prototypeDepth)}, once ${String(once)}`;
+    const plain = {
       calls: once ? 1 : 2,
       reads: mode.endsWith("accessor") ? 1 : 0,
       remaining,
+    };
+    const channel = `chain-${String(index)}`;
+    expect(rows[index], label).toEqual({
+      channel,
+      plain,
+      hooked: plain,
+      invocations: once ? 1 : 0,
+      gaps: [{ event: "listener-chain", channel }],
     });
-    expect(result.hooked).toEqual(result.plain);
-    expect(result.invocations).toBe(once ? 1 : 0);
-    expect(result.gaps).toEqual(
-      Array.from({ length: gaps }, () => ({
-        event: "listener-chain",
-        channel: "ch",
-      })),
-    );
-  },
-);
+  }
+});
 
 it.each(["array", "map"])(
   "snapshots retained state without application %s iterators",
