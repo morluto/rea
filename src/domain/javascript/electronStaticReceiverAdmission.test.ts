@@ -50,7 +50,7 @@ const inspect = (source: string, path?: string) => {
       resolveElectronBrowserWindowReceiver(node, site, suffix, context, index),
   };
   traverseJavaScriptAst(file, {
-    enter: (node) => inspectElectronIpcNode(node, context, index.bindings),
+    enter: (node) => inspectElectronIpcNode(node, context),
   });
   return { findings: context.accumulator.ipc, mutationIndexCalls };
 };

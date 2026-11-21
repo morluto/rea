@@ -11,17 +11,15 @@ import {
   electronCalleePath,
 } from "./electronStaticAnalysisValues.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
-import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Collect Electron-specific syntax during the shared inert AST traversal. */
 export const inspectElectronStaticNode = (
   node: t.Node,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   inspectElectronBrowserNode(node, context);
-  inspectElectronIpcNode(node, context, bindings);
+  inspectElectronIpcNode(node, context);
   inspectElectronNativeNode(node, context);
   deferElectronDynamicCode(node, context);
   const path =

@@ -23,16 +23,18 @@ import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import { compositeKey } from "../unicodeCodePointOrder.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
-import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
+import type {
+  JavaScriptAnalysisAccumulator,
+  JavaScriptFindingContext,
+} from "./javascriptStaticAnalysisState.js";
 
 /** Inspect Electron IPC operations and validation candidates. */
 export const inspectElectronIpcNode = (
   node: t.Node,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-    inspectIpcCall(node, context, bindings);
+    inspectIpcCall(node, context);
     inspectValidationCall(node, context);
   }
   if (t.isBinaryExpression(node)) inspectValidationComparison(node, context);
@@ -41,7 +43,6 @@ export const inspectElectronIpcNode = (
 const inspectIpcCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   const scoped = scopedIpcDescriptor(node, context);
   const descriptor =
@@ -50,30 +51,19 @@ const inspectIpcCall = (
   if (descriptor === undefined) return;
   const channelNode = argumentNode(node.arguments[0]);
   const literal = electronStaticValue(context.source, channelNode);
-  const resolved =
-    literal.status === "dynamic" && channelNode !== undefined
-      ? evaluateSemanticExpression(channelNode, bindings)
-      : undefined;
-  const value =
-    literal.status === "literal"
+  const channel =
+    literal.status === "literal" && typeof literal.value === "string"
       ? literal.value
-      : resolved?.status === "literal"
-        ? resolved.value
-        : undefined;
-  const channel = typeof value === "string" ? value : null;
+      : null;
   const channelReference =
     channel === null
       ? {
           channel: null,
           channel_expression: boundedExpression(context.source, channelNode),
         }
-      : {
-          channel,
-          channel_expression: null,
-          ...(literal.status === "literal"
-            ? {}
-            : { channel_basis: "static-value" as const }),
-        };
+      : { channel, channel_expression: null };
+  if (channel === null && channelNode !== undefined && node.start != null)
+    context.accumulator.pendingIpcChannels.set(node.start, channelNode);
   const handlerNode =
     descriptor.mode === "listen" || descriptor.mode === "handle"
       ? argumentNode(node.arguments[1])
@@ -119,6 +109,46 @@ const inspectIpcCall = (
     node,
     value: finding,
   });
+};
+
+/**
+ * Resolve lexical values for direct sites left to the syntax pass. Wrapper
+ * reconciliation owns replacements, guarded channels and per-invocation
+ * registrations, so a known channel never absorbs one of those registrations.
+ */
+export const finishElectronIpcChannels = (
+  accumulator: JavaScriptAnalysisAccumulator,
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  const wrapperSites = new Set(
+    accumulator.ipc
+      .filter(({ value }) => value.resolution_basis === "wrapper-substitution")
+      .map(({ offset }) => offset),
+  );
+  for (const [index, { offset, value }] of accumulator.ipc.entries()) {
+    if (
+      value.channel !== null ||
+      value.invocation_channels !== undefined ||
+      wrapperSites.has(offset)
+    )
+      continue;
+    const argument = accumulator.pendingIpcChannels.get(offset);
+    if (argument === undefined) continue;
+    const channel = evaluateSemanticExpression(argument, state);
+    if (channel.status !== "literal" || typeof channel.value !== "string")
+      continue;
+    accumulator.ipc[index] = {
+      offset,
+      value: {
+        ...value,
+        channel: channel.value,
+        channel_expression: null,
+        channel_basis: "static-value",
+      },
+    };
+    accumulator.unknownFindings -= 1;
+  }
+  accumulator.pendingIpcChannels.clear();
 };
 
 const scopedIpcDescriptor = (

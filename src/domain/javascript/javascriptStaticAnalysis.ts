@@ -30,6 +30,7 @@ import {
 } from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
 import { finishElectronDynamicCodeSteps } from "./electronStaticAnalysisDynamicCode.js";
+import { finishElectronIpcChannels } from "./electronStaticAnalysisIpc.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
   hasPossibleCommonJsDelegateWrite,
@@ -234,6 +235,10 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     electronIdentity,
     () => index.indexMemberMutationFactsSteps(),
   );
+  if (accumulator.pendingIpcChannels.size > 0) {
+    yield* index.indexMemberMutationFactsSteps();
+    finishElectronIpcChannels(accumulator, bindings);
+  }
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
 }
@@ -456,7 +461,7 @@ const inspectNode = (
   bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   const { source, accumulator } = findings;
-  inspectElectronStaticNode(node, findings, bindings);
+  inspectElectronStaticNode(node, findings);
   if (t.isCallExpression(node)) {
     inspectBundlerBootstrap(source, node, accumulator, bindings);
     inspectBundlerRegistration(source, node, accumulator, bindings);
