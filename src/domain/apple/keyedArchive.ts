@@ -57,6 +57,8 @@ export const keyedArchiveResultSchema = bundleResourceBoundResultSchema(
     archive_path: z.string(),
     archive_sha256: z.string(),
     archive_format: z.enum(["binary-plist", "xml-plist"]),
+    /** The `$archiver` the archive declares, such as `NSKeyedArchiver` or `SCNKeyedArchiver`. */
+    archiver: z.string(),
     roots: jsonObjectSchema,
     objects: z.array(
       z.strictObject({
@@ -110,19 +112,23 @@ const uid = (
 };
 
 /**
+ * The declared archiver of a keyed archive, or undefined for another plist.
  * Foundation decodes a keyed archive whatever its $archiver names; SceneKit
  * writes SCNKeyedArchiver. Another name is an archive only with an $objects
  * table and $top roots, so an ordinary plist keeps the workflow that reads it.
  */
-const isKeyedArchive = (
+const keyedArchiver = (
   archive: Record<string, JsonValue> | undefined,
   wrappedScalars: WeakSet<object>,
-): archive is Record<string, JsonValue> =>
-  archive !== undefined &&
-  (archive.$archiver === "NSKeyedArchiver" ||
-    (typeof archive.$archiver === "string" &&
-      Array.isArray(archive.$objects) &&
-      record(archive.$top, wrappedScalars) !== undefined));
+): string | undefined => {
+  const archiver = archive?.$archiver;
+  if (typeof archiver !== "string") return undefined;
+  return archiver === "NSKeyedArchiver" ||
+    (Array.isArray(archive?.$objects) &&
+      record(archive?.$top, wrappedScalars) !== undefined)
+    ? archiver
+    : undefined;
+};
 
 const archiverMismatch = (
   archive: Record<string, JsonValue> | undefined,
@@ -152,7 +158,8 @@ export const projectKeyedArchive = (
     wrappedScalars.add(scalar),
   );
   const archive = record(projected.value, wrappedScalars);
-  if (!isKeyedArchive(archive, wrappedScalars))
+  const archiver = keyedArchiver(archive, wrappedScalars);
+  if (archive === undefined || archiver === undefined)
     throw new KeyedArchiveKindError(
       `Selected property list is not a keyed archive: ${archiverMismatch(archive)}`,
       "property-list",
@@ -321,6 +328,7 @@ export const projectKeyedArchive = (
     negativeZeroRealCount: projected.negativeZeroRealCount,
     unknownDateCount: projected.unknownDateCount,
     unknownScalarCount: projected.unknownScalarCount,
+    archiver,
     roots,
     objects: page,
     references: references.filter(
