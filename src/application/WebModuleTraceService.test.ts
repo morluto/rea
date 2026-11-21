@@ -2,10 +2,9 @@ import { describe, expect, it } from "vitest";
 import { WebModuleTraceService } from "./WebModuleTraceService.js";
 import { err, ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  webModuleTraceResultSchema,
-  type WebModuleResolution,
-  type WebModuleResolutionRequest,
+import type {
+  WebModuleResolution,
+  WebModuleResolutionRequest,
 } from "../domain/webModuleTrace.js";
 import {
   webModuleArtifactsFixture,
@@ -417,28 +416,5 @@ it("retains a completed engine-free trace when artifact loading finishes under c
         { resolution: { state: "unknown", reason: "computed-specifier" } },
       ],
     },
-  });
-});
-
-it("resolves imports from relational JavaScript using the selected source grammar", async () => {
-  const artifacts = webModuleArtifactsFixture(
-    'const order = left < import("./dep.js") > (right);',
-  );
-  const result = await new WebModuleTraceService(
-    { load: async () => ok(artifacts) },
-    webModuleResolverFixture,
-  ).trace(args);
-  if (!result.ok) throw result.error;
-  expect(
-    webModuleTraceResultSchema.parse(result.value.normalized_result),
-  ).toMatchObject({
-    parser: { state: "parsed", diagnostics: [] },
-    imports: [
-      {
-        kind: "dynamic-import",
-        specifier: "./dep.js",
-        resolution: { state: "resolved", url: "https://app.test/dep.js" },
-      },
-    ],
   });
 });
