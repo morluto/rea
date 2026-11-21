@@ -323,6 +323,30 @@ describe("reachableAsarPaths", () => {
     expect(reachable.has("feature.js")).toBe(true);
   });
 
+  it("walks nested exports to the fixed depth and stops just beyond it", () => {
+    // The exports walk descends to MAX_EXPORTS_DEPTH (8) container levels: a
+    // leaf exactly at the limit stays reachable, while one container deeper is
+    // left unverified so a crafted manifest cannot drive the walk without bound.
+    const nest = (leaf: string, levels: number): unknown => {
+      let value: unknown = leaf;
+      for (let level = 0; level < levels; level += 1) value = { nested: value };
+      return value;
+    };
+    const atLimit = reachableAsarPaths(
+      Buffer.from(JSON.stringify({ exports: nest("./deep-ok.js", 8) }), "utf8"),
+    ).reachable;
+    const pastLimit = reachableAsarPaths(
+      Buffer.from(
+        JSON.stringify({ exports: nest("./too-deep.js", 9) }),
+        "utf8",
+      ),
+    ).reachable;
+    expect(atLimit.has("deep-ok.js")).toBe(true);
+    expect(pastLimit.has("too-deep.js")).toBe(false);
+    // The over-depth leaf leaves reachability unproven, never confabulated.
+    expect(pastLimit.has("package.json")).toBe(true);
+  });
+
   it("leaves reachability unproven on a malformed manifest", () => {
     const { reachable } = reachableAsarPaths(Buffer.from("{ not json", "utf8"));
     expect(reachable.has("package.json")).toBe(true);
