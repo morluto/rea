@@ -118,6 +118,20 @@ report path/digest disagreement as a mismatch and preserve ambiguity. Explicit
 path mappings are inference inputs and never broaden filesystem or CDP authority.
 A bundle observed at runtime does not prove every contained module executed.
 
+## Hidden or covered browser windows
+
+An existing browser keeps its own background scheduling. When its window is
+minimized or covered, Chromium can mark the page hidden, pause
+`requestAnimationFrame` and throttle timers. Passive captures and
+`capture_web_screenshot` still succeed and do not record page visibility, so
+animation positions, canvas frames and time-driven text can be stale. Two
+unchanged captures from a background window cannot tell throttling apart from a
+page that stopped updating. Before reporting time-dependent behavior, ask the
+user to bring the window to the front and capture again; until then, report
+unchanged time-driven content as possibly limited by observation. Launch-mode
+scenarios use Playwright's default Chromium switches, which disable this
+throttling.
+
 ## Fiddler Everywhere traffic debugging
 
 For large saved captures, request `detail: "summary"`, then page retained Evidence
