@@ -330,3 +330,51 @@ it.each([
     ),
   ).toMatchObject({ ok: true, value: { terminal } });
 });
+
+it.each([
+  ["1", true],
+  ["true", true],
+  ["True", false],
+  ["TRUE", false],
+  ["0", false],
+  ["false", false],
+  ["False", false],
+  ["FALSE", false],
+])("parses Terminal=%s as %s matching GLib's accepted spellings", (flag, expected) => {
+  const result = parseDesktopEntry(
+    `[Desktop Entry]\nType=Application\nName=App\nExec=app\nTerminal=${flag}\n`,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: { terminal: expected },
+  });
+});
+
+it("defaults terminal to false when the Terminal key is omitted", () => {
+  const result = parseDesktopEntry(
+    "[Desktop Entry]\nType=Application\nName=App\nExec=app\n",
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: { terminal: false },
+  });
+});
+
+it.each([
+  ["1", true],
+  ["true", true],
+  ["True", false],
+  ["TRUE", false],
+  ["0", false],
+  ["false", false],
+  ["False", false],
+  ["FALSE", false],
+])("parses Hidden=%s as %s matching GLib's accepted spellings", (flag, expected) => {
+  const result = parseDesktopEntry(
+    `[Desktop Entry]\nType=Application\nName=App\nExec=app\nHidden=${flag}\n`,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: { hidden: expected },
+  });
+});

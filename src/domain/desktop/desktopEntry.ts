@@ -44,7 +44,8 @@ const ENTRY = new RegExp(
   "su",
 );
 const valueEscape = new RegExp(DESKTOP_VALUE_ESCAPE, "gu");
-// GLib strips its ASCII whitespace from the raw boolean. LF ends the record.
+// GLib strips its ASCII whitespace from the raw boolean and accepts only
+// lowercase "true" or "1". LF ends the record.
 const BOOLEAN_TRUE = /^[ \t\f\r]*(?:true|1)[ \t\f\r]*$/u;
 
 /** Undo the escapes the desktop entry format allows in string values. */
