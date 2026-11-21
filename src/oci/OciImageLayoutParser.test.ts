@@ -570,6 +570,32 @@ it("refuses an index.json whose manifests is not an array and keeps the oci-layo
   }
 });
 
+it("bounds a long repeated member name in a referenced blob finding", async () => {
+  const root = await createTestTempDirectory("rea-oci-duplicate-member-");
+  await writeOciImageLayoutFixture(root);
+  const name = "n".repeat(8192);
+  const nestedJson = `{"schemaVersion":2,"manifests":[],"${name}":1,"${name}":2}\n`;
+  const nested = await putOciBlob(root, nestedJson);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: unknown[];
+  };
+  index.manifests.push({
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    digest: nested,
+    size: Buffer.byteLength(nestedJson),
+  });
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  const finding = report.findings.find(
+    (entry) => entry.kind === "malformed_blob_json" && entry.digest === nested,
+  );
+  expect(finding?.message).toContain(
+    "repeats object member (a 8192-character name)",
+  );
+  expect(finding?.message.length).toBeLessThan(512);
+});
+
 it("reports a nested index whose manifests is not an array", async () => {
   const root = await createTestTempDirectory("rea-oci-nested-manifests-type-");
   await writeOciImageLayoutFixture(root);

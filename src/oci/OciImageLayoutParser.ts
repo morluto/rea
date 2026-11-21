@@ -234,6 +234,15 @@ class BlobOversize extends Error {
   }
 }
 
+/**
+ * A bounded description of a repeated JSON member name. The name is untrusted
+ * and can be as long as the blob, so a long one is named by length only.
+ */
+const describeMemberName = (name: string): string =>
+  name.length <= 64
+    ? JSON.stringify(name)
+    : `(a ${String(name.length)}-character name)`;
+
 const readJsonDocument = async (
   reader: DirectoryArtifactReader,
   entry: DirectoryArtifactEntry,
@@ -280,7 +289,7 @@ const readJsonDocument = async (
           if (parsed.duplicate !== undefined)
             throw malformedInput(
               OCI_IMAGE_LAYOUT_FORMAT,
-              `${label} repeats object member ${JSON.stringify(parsed.duplicate.name)}.`,
+              `${label} repeats object member ${describeMemberName(parsed.duplicate.name)}.`,
             );
           throw malformedInput(
             OCI_IMAGE_LAYOUT_FORMAT,
