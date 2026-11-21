@@ -3,7 +3,6 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   describeSystemPs,
   PROCESS_INVENTORY_PS_ARGUMENTS,
-  freeBsdPsColumns,
   LINUX_SYSTEM_PS_LOCATIONS,
   resolveSystemPs,
   type SystemPs,
@@ -1182,97 +1181,6 @@ export const reobserveUnavailableTokenFacts = async (
   return current;
 };
 
-/** Observe visible FreeBSD processes. Omission from ps does not prove exit. */
-const readFreeBsdProcessIdentities = async (
-  ps: SystemPs,
-  processes: readonly { readonly pid: number }[],
-  hostEnvironment: NodeJS.ProcessEnv,
-  signal?: AbortSignal,
-): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
-  const identities = new Map<number, ProcessIdentityObservation>(
-    processes.map(({ pid }) => [
-      pid,
-      {
-        state: "unavailable",
-        reason: "process not visible in FreeBSD ps snapshot",
-      },
-    ]),
-  );
-  let stdout: string;
-  try {
-    ({ stdout } = await execFileOutput(
-      ps.command,
-      [
-        "-ww",
-        ...freeBsdPsColumns("pid", "ppid", "pgid", "uid", "stat", "lstart"),
-        "-p",
-        processes.map(({ pid }) => String(pid)).join(","),
-      ],
-      {
-        env: { ...hostEnvironment, LC_ALL: "C", TZ: "UTC0" },
-        stopSignal: "SIGTERM",
-        ...(signal === undefined ? {} : { signal }),
-      },
-    ));
-  } catch (cause: unknown) {
-    rethrowInspectionFailure(cause);
-    const failure = execFileOutputFailure(cause);
-    if (
-      failure?.code === 1 &&
-      failure.stdout.trim() === "" &&
-      failure.stderr.trim() === ""
-    )
-      return identities;
-    return new Map(
-      processes.map(({ pid }) => [
-        pid,
-        { state: "unavailable", reason: errorMessage(cause) },
-      ]),
-    );
-  }
-
-  const seen = new Set<number>();
-  for (const row of stdout.split("\n")) {
-    const match = /^[ \t]*(\d+)[ \t]+(.*)$/u.exec(row);
-    if (match === null) continue;
-    const pid = Number(match[1]);
-    if (!identities.has(pid)) continue;
-    // The C locale renders %c as weekday, month, day, time and year.
-    const fields =
-      /^(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+([DILRSTWZ][<>NXEVLCs+J]*)[ \t]+([A-Z][a-z]{2} [A-Z][a-z]{2} [ 0-9]\d \d{2}:\d{2}:\d{2} \d{4})[ \t]*$/u.exec(
-        match[2] ?? "",
-      );
-    if (seen.has(pid) || fields === null) {
-      identities.set(pid, {
-        state: "unavailable",
-        reason: "invalid FreeBSD ps identity row",
-      });
-    } else {
-      const state = fields[4] ?? "";
-      identities.set(pid, {
-        state: "readable",
-        identity: `freebsd-lstart:${fields[5]}`,
-        effectiveUid: Number(fields[3]),
-        lifecycle: {
-          state: "observed",
-          lifecycle: state.startsWith("Z")
-            ? "zombie"
-            : state.includes("E")
-              ? "exiting"
-              : "non-zombie",
-        },
-        relation: {
-          state: "observed",
-          parentPid: Number(fields[1]),
-          processGroupId: Number(fields[2]),
-        },
-      });
-    }
-    seen.add(pid);
-  }
-  return identities;
-};
-
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (
   platform: NodeJS.Platform,
@@ -1329,25 +1237,12 @@ export const createSystemProcessOwnershipHost = (
             : { compileTimeoutMs: options.compileTimeoutMs }),
         })
       : undefined;
-  const canCaptureBaseline = platform === "linux" || darwinTokens !== undefined;
   const listProcessesWith = async (ps: SystemPs, signal?: AbortSignal) => {
     let stdout: string;
     try {
       ({ stdout } = await execFileOutput(
         ps.command,
-        platform === "freebsd"
-          ? [
-              "-axww",
-              ...freeBsdPsColumns(
-                "pid",
-                "ppid",
-                "pgid",
-                "uid",
-                "stat",
-                "command",
-              ),
-            ]
-          : PROCESS_INVENTORY_PS_ARGUMENTS,
+        PROCESS_INVENTORY_PS_ARGUMENTS,
         {
           env: hostEnvironment,
           stopSignal: "SIGTERM",
@@ -1629,13 +1524,6 @@ export const createSystemProcessOwnershipHost = (
         );
       return observations;
     }
-    if (platform === "freebsd")
-      return readFreeBsdProcessIdentities(
-        await selectPs(),
-        processes,
-        hostEnvironment,
-        signal,
-      );
     if (darwinTokens === undefined) return new Map();
     try {
       return await darwinTokens.identities(processes, signal);
@@ -1698,7 +1586,7 @@ export const createSystemProcessOwnershipHost = (
   const captureBaseline = async (
     signal?: AbortSignal,
   ): Promise<ProcessOwnershipBaseline> => {
-    if (!canCaptureBaseline) return [];
+    if (platform !== "linux" && darwinTokens === undefined) return [];
     const processes = liveProcesses(await safeListProcesses(signal));
     let identities = await processIdentities(processes, signal);
     const unreadable = processes.filter(
@@ -1734,10 +1622,6 @@ export const createSystemProcessOwnershipHost = (
   return {
     platform,
     prepare: async (signal) => {
-      // ps lstart is inspection evidence only. Owned launches need a
-      // generation identity and run-token reader suitable for cleanup.
-      if (platform === "freebsd")
-        throw new ProcessAdmissionError("baseline_unavailable");
       await darwinTokens?.prepare(signal);
       if (platform === "linux") {
         const processes = await safeListProcesses(signal);
@@ -1750,12 +1634,6 @@ export const createSystemProcessOwnershipHost = (
     listProcesses,
     async environment(pid, signal) {
       assertProcessOwnershipInspectionActive(signal);
-      if (platform === "freebsd")
-        throw new ProcessRunTokenReadError(
-          pid,
-          "unavailable",
-          "FreeBSD ps merges command arguments and environment",
-        );
       if (platform === "linux")
         return parseProcessEnvironment(
           await readProcessInspectionFile(`/proc/${pid}/environ`, signal),
@@ -1820,11 +1698,13 @@ export const createSystemProcessOwnershipHost = (
         );
       }
     },
-    ...(canCaptureBaseline || platform === "freebsd"
-      ? { processIdentities }
-      : {}),
-    ...(canCaptureBaseline ? { captureBaseline } : {}),
-    ...(darwinTokens === undefined ? {} : { close: darwinTokens.close }),
+    ...(platform !== "linux" && darwinTokens === undefined
+      ? {}
+      : {
+          processIdentities,
+          captureBaseline,
+          ...(darwinTokens === undefined ? {} : { close: darwinTokens.close }),
+        }),
     signalGroup(processGroupId, signal) {
       process.kill(-processGroupId, signal);
     },

@@ -437,13 +437,12 @@ describe("Ghidra installation inspection", () => {
   );
 
   it.each([
-    ["darwin", "x64", "mac_x86_64", "Mac OS X"],
-    ["darwin", "arm64", "mac_arm_64", "Mac OS X"],
-    ["linux", "arm64", "linux_arm_64", "Linux"],
-    ["freebsd", "x64", "freebsd_x86_64", "FreeBSD"],
+    ["darwin", "x64", "mac_x86_64"],
+    ["darwin", "arm64", "mac_arm_64"],
+    ["linux", "arm64", "linux_arm_64"],
   ] as const)(
     "accepts %s/%s with the matching distribution or locally built native tool",
-    async (platform, architecture, nativeDirectory, osName) => {
+    async (platform, architecture, nativeDirectory) => {
       for (const location of ["os", "build/os"]) {
         const decompiler = `${INSTALL}/Ghidra/Features/Decompiler/${location}/${nativeDirectory}/decompile`;
         expect(
@@ -461,7 +460,7 @@ describe("Ghidra installation inspection", () => {
                 javaProbeOk<GhidraJavaObservation>({
                   ...JAVA,
                   osArch: architecture === "arm64" ? "aarch64" : "amd64",
-                  osName,
+                  osName: platform === "darwin" ? "Mac OS X" : "Linux",
                 }),
             }),
           ),
@@ -474,6 +473,41 @@ describe("Ghidra installation inspection", () => {
       }
     },
   );
+});
+
+it("inspects the FreeBSD package without admitting a JVM launch", async () => {
+  const decompiler = `${INSTALL}/Ghidra/Features/Decompiler/build/os/freebsd_x86_64/decompile`;
+  const probeJava = vi.fn(() => javaProbeOk<GhidraJavaObservation>(JAVA));
+  const inspection = await inspectGhidraInstallation(
+    {
+      resourceOwner: inspectionResources.owner,
+      environment: {},
+      installDir: INSTALL,
+      platform: "freebsd",
+      architecture: "x64",
+    },
+    host({
+      executable: (path) => path === HEADLESS || path === decompiler,
+      executableHeader: () => headerProbe(elf(2, 1, 62)),
+      probeJava,
+    }),
+  );
+
+  expect(probeJava).not.toHaveBeenCalled();
+  expect(inspection).toMatchObject({
+    status: "unavailable",
+    rejection: { code: "unsupported_host" },
+    nativeDecompilerPath: decompiler,
+    checks: expect.arrayContaining([
+      expect.objectContaining({ name: "platform", status: "failed" }),
+      expect.objectContaining({
+        name: "native_decompiler",
+        status: "passed",
+        detail: expect.stringContaining("reports elf x86_64"),
+      }),
+    ]),
+  });
+  expect(inspection.checks.map(({ name }) => name)).not.toContain("java");
 });
 
 describe("Ghidra Windows installation commitment", () => {

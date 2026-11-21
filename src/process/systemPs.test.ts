@@ -34,7 +34,7 @@ it.each([
 
 it.each([
   ["darwin", [], binPs, "system"],
-  ["freebsd", [], binPs, "system"],
+  ["freebsd", [binPs], "ps", "path"],
 ] as const)(
   "selects ps on %s",
   async (platform, executable, command, source) => {

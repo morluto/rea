@@ -22,11 +22,6 @@ export const PROCESS_INVENTORY_PS_ARGUMENTS = [
   "pid=,ppid=,pgid=,uid=,stat=,command=",
 ] as const;
 
-/** FreeBSD ps consumes a custom header through the end of each -o argument. */
-export const freeBsdPsColumns = (...columns: readonly string[]): string[] => [
-  ...columns.flatMap((column) => ["-o", `${column}=`]),
-];
-
 /** The `ps` REA runs to inspect the process table, and where it came from. */
 export type SystemPs =
   | { readonly command: string; readonly source: "system" }
@@ -50,7 +45,7 @@ const executableFile = async (path: string): Promise<boolean> => {
 /**
  * Select the `ps` for `platform`. macOS ships it at `/bin/ps` on the sealed
  * system volume. Linux uses the first executable fixed system location and
- * falls back to REA's PATH only when none exists. FreeBSD also ships /bin/ps. Other platforms keep PATH.
+ * falls back to REA's PATH only when none exists. Other platforms keep PATH.
  */
 export const resolveSystemPs = async (
   platform: NodeJS.Platform,
@@ -63,8 +58,7 @@ export const resolveSystemPs = async (
     readonly isExecutable?: (path: string) => Promise<boolean>;
   } = {},
 ): Promise<SystemPs> => {
-  if (platform === "darwin" || platform === "freebsd")
-    return { command: "/bin/ps", source: "system" };
+  if (platform === "darwin") return { command: "/bin/ps", source: "system" };
   if (platform === "linux")
     for (const command of linuxLocations)
       if (await isExecutable(command)) return { command, source: "system" };

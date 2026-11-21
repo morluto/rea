@@ -323,6 +323,7 @@ export interface GhidraInstallationHost {
 }
 
 interface GhidraInstallationCoordinates {
+  readonly platformCheck: GhidraInstallationCheck;
   readonly installDir: string | null;
   readonly applicationPropertiesPath: string | null;
   readonly analyzeHeadlessPath: string | null;
@@ -490,6 +491,19 @@ const installationCoordinates = async (
           `support/${platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless"}`,
           platform,
         );
+  // Recognize the FreeBSD package for inspection while owned execution is
+  // pending generation and run-token evidence suitable for cleanup.
+  const platformCheck = installationCheck({
+    name: "platform",
+    passed: platform !== "freebsd" && NATIVE_PLATFORMS[platform] !== undefined,
+    code: "unsupported_host",
+    detail:
+      platform === "freebsd"
+        ? "FreeBSD Ghidra execution requires verified process ownership and cleanup."
+        : platform,
+    remediation:
+      "Use Linux or macOS x64/arm64, or Windows x64 with matching native Ghidra tools.",
+  });
   const decompilerPlatform = NATIVE_PLATFORMS[platform]?.[architecture];
   const decompilerExecutable =
     platform === "win32" ? "decompile.exe" : "decompile";
@@ -590,10 +604,9 @@ const installationCoordinates = async (
       : { source: "homebrew", command: homebrew };
   })();
   let javaCommand = selectedJava.command;
-  // Java is a prerequisite of an existing installation. Missing application
-  // properties or a relative JAVA_HOME already refuse Ghidra before Java can
-  // matter, so callers such as setup and doctor must not execute a host JVM.
+  // Probe Java only after the host and installation prerequisites pass.
   let javaProbe =
+    platformCheck.status === "passed" &&
     installDir !== null &&
     properties !== undefined &&
     (options.javaHome === undefined || path.isAbsolute(options.javaHome))
@@ -661,6 +674,7 @@ const installationCoordinates = async (
     }
   }
   return {
+    platformCheck,
     installDir,
     applicationPropertiesPath,
     analyzeHeadlessPath,
@@ -687,14 +701,7 @@ const installationChecks = ({
   host,
 }: GhidraInstallationCheckContext): readonly GhidraInstallationCheck[] => [
   configurationCheck(coordinates.installDir, javaHome, platform),
-  installationCheck({
-    name: "platform",
-    passed: NATIVE_PLATFORMS[platform] !== undefined,
-    code: "unsupported_host",
-    detail: platform,
-    remediation:
-      "Use Linux or macOS x64/arm64, or Windows x64 with matching native Ghidra tools.",
-  }),
+  coordinates.platformCheck,
   installationCheck({
     name: "architecture",
     passed: NATIVE_PLATFORMS[platform]?.[architecture] !== undefined,
@@ -724,14 +731,18 @@ const installationChecks = ({
       "Restore support/analyzeHeadless or support/analyzeHeadless.bat from the official Ghidra release.",
   }),
   nativeDecompilerCheck({ coordinates, platform, architecture }),
-  javaCheck(
-    coordinates.java,
-    coordinates.javaCommand,
-    javaHome,
-    coordinates.properties,
-    platform,
-    coordinates.javaProbeFailure,
-  ),
+  ...(coordinates.platformCheck.status === "passed"
+    ? [
+        javaCheck(
+          coordinates.java,
+          coordinates.javaCommand,
+          javaHome,
+          coordinates.properties,
+          platform,
+          coordinates.javaProbeFailure,
+        ),
+      ]
+    : []),
 ];
 
 /**
@@ -1000,7 +1011,6 @@ const jvmOsNameMatchesPlatform = (
   if (platform === "darwin")
     return normalized.startsWith("mac") || normalized.startsWith("darwin");
   if (platform === "linux") return normalized.startsWith("linux");
-  if (platform === "freebsd") return normalized.startsWith("freebsd");
   return false;
 };
 

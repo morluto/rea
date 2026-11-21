@@ -1,5 +1,5 @@
 import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
-import { freeBsdPsColumns, resolveSystemPs } from "../systemPs.js";
+import { resolveSystemPs } from "../systemPs.js";
 import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
 import type { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import {
@@ -141,9 +141,7 @@ const readPsRowsRaw = async (
 ): Promise<readonly ProcessRow[]> => {
   const { stdout } = await execFileOutput(
     (await resolveSystemPs(platform)).command,
-    platform === "freebsd"
-      ? ["-axww", ...freeBsdPsColumns("pid", "ppid", "pgid", "sid", "command")]
-      : ["-axo", "pid=,ppid=,pgid=,sess=,command="],
+    ["-axo", "pid=,ppid=,pgid=,sess=,command="],
     { signal, stopSignal: "SIGTERM" },
   );
   return stdout
