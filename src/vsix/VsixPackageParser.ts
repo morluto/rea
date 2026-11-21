@@ -426,7 +426,7 @@ const directoryMainStopsLookup = (main: DirectoryManifestMain): boolean =>
 /**
  * `main` of a directory's own package.json, joined onto that directory with
  * its `/`-separated `.` and `..` segments resolved (`\` stays literal);
- * `none` when it names nothing or climbs out of the package, `malformed` when
+ * `none` when it names nothing, is absolute, or climbs out of the package, `malformed` when
  * the manifest is not a JSON object, `unread` when it holds more values than
  * the parse allowance.
  */
@@ -449,6 +449,9 @@ const directoryManifestMain = (
     return { kind: "malformed" };
   const main = (record as Record<string, unknown>).main;
   if (typeof main !== "string" || main === "") return { kind: "none" };
+  // Node resolves this `main` with path.resolve(directory, main), so an
+  // absolute path names a host file outside the package, never a member.
+  if (main.startsWith("/")) return { kind: "none" };
   const segments: string[] = [];
   const joined = `${directory}/${main}`;
   for (const segment of joined.split("/")) {
