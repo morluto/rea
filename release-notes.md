@@ -32,6 +32,7 @@
 * **browser:** name the inherited address-space limit on a decoder memory refusal ([92f3f28](https://github.com/morluto/rea/commit/92f3f28d2952508499668452adcdf285e43bf857))
 * **browser:** preserve malformed request-body coverage ([#13219](https://github.com/morluto/rea/issues/13219)) ([d41af19](https://github.com/morluto/rea/commit/d41af199f0958a81fe0c3ba113decdf804110753))
 * **browser:** preserve terminal verifier startup outcomes ([#13228](https://github.com/morluto/rea/issues/13228)) ([39ccb1d](https://github.com/morluto/rea/commit/39ccb1d3b8347cf5b34d33fa86c52d5b9d69c1ea))
+* **browser:** refuse partial HTTP source-map responses ([#13236](https://github.com/morluto/rea/issues/13236)) ([a7b195d](https://github.com/morluto/rea/commit/a7b195d0e1bd94908271d9216dd9bd257d8d0666))
 * **browser:** report only grammatical CORP and X-Content-Type-Options values ([1aa394d](https://github.com/morluto/rea/commit/1aa394d62d6f60809e9fbc1ca6cbfdb3341bc95f))
 * **browser:** retain passive coverage and failure identity ([#13231](https://github.com/morluto/rea/issues/13231)) ([eba41af](https://github.com/morluto/rea/commit/eba41afd6c873258f7c8bb4d9a7f2d9a707e6653))
 * **browser:** retire detached WebMCP frame descendants ([#13233](https://github.com/morluto/rea/issues/13233)) ([190395e](https://github.com/morluto/rea/commit/190395eade8c1164189b0e1ac4fb724f73e3bad0))
