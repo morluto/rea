@@ -503,7 +503,13 @@ describe("dyld resolution outcomes: checking candidate format and compatibility"
           status: "malformed",
           reason: "load command 0 has invalid cmdsize 0",
         },
-        "Contents/MacOS/c/lib.dylib": parsed(slice({ architecture: "x86_64" })),
+        "Contents/MacOS/c/lib.dylib": parsed(
+          slice({
+            architecture: "x86_64",
+            cpu_type: 0x01000007,
+            cpu_subtype: 3,
+          }),
+        ),
       }),
       { roots: [MAIN] },
     );
@@ -993,6 +999,72 @@ it.each([
     });
   },
 );
+
+it("grades an arm64 process's slices as dyld does with pointer-authentication keys off", async () => {
+  // On arm64e hardware dyld runs arm64 processes keys-off, loads arm64e-only
+  // libraries and prefers the arm64e slice of a fat one (observed on macOS
+  // 27 with an ad-hoc signed library). An unversioned arm64e subtype is not
+  // among the slices it accepts.
+  const arm64e = { architecture: "arm64e", cpu_subtype: 0x80000002 };
+  const trace = await traceDylibLoading(
+    memoryView({
+      [MAIN]: executable({
+        dependencies: [
+          dependency("@executable_path/libonly.dylib"),
+          dependency("@executable_path/libfat.dylib"),
+          dependency("@executable_path/libv1.dylib"),
+          dependency("@executable_path/libold.dylib"),
+        ],
+      }),
+      "Contents/MacOS/libonly.dylib": parsed(slice(arm64e)),
+      "Contents/MacOS/libfat.dylib": parsed(
+        slice({ dependencies: [dependency("@loader_path/libplain.dylib")] }),
+        slice({
+          ...arm64e,
+          dependencies: [dependency("@loader_path/libauth.dylib")],
+        }),
+      ),
+      "Contents/MacOS/libv1.dylib": parsed(
+        slice({ architecture: "arm64e", cpu_subtype: 0x81000002 }),
+      ),
+      "Contents/MacOS/libold.dylib": parsed(
+        slice({ architecture: "arm64e", cpu_subtype: 2 }),
+      ),
+      "Contents/MacOS/libauth.dylib": parsed(slice(arm64e)),
+      "Contents/MacOS/libplain.dylib": parsed(slice()),
+    }),
+    { roots: [MAIN] },
+  );
+  const outcome = (installName: string) => {
+    const edge = edgeFor(trace, MAIN, installName);
+    return [edge.candidates[0]?.outcome, edge.resolution.status];
+  };
+  expect(outcome("@executable_path/libonly.dylib")).toEqual([
+    "resolved",
+    "resolved",
+  ]);
+  expect(outcome("@executable_path/libfat.dylib")).toEqual([
+    "resolved",
+    "resolved",
+  ]);
+  expect(outcome("@executable_path/libv1.dylib")).toEqual([
+    "resolved",
+    "resolved",
+  ]);
+  expect(outcome("@executable_path/libold.dylib")).toEqual([
+    "architecture-missing",
+    "unresolved",
+  ]);
+  // Only the loaded arm64e slice's own dependency is traced.
+  expect(
+    trace.edges
+      .filter(({ loader }) => loader === "Contents/MacOS/libfat.dylib")
+      .map(({ install_name: name }) => name),
+  ).toEqual(["@loader_path/libauth.dylib"]);
+  expect(trace.findings.map(({ kind }) => kind)).toEqual([
+    "required-load-unresolved",
+  ]);
+});
 
 describe("dyld slice compatibility and coverage", () => {
   it("keeps an unmodeled ARM32 subtype uncertain when matching slices exist", async () => {

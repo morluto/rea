@@ -136,6 +136,20 @@ const COMPATIBLE_ARCHITECTURES: Readonly<Record<string, readonly string[]>> = {
   x86_64h: ["x86_64h", "x86_64"],
 };
 
+/**
+ * dyld runs as arm64e on arm64e hardware (Apple silicon Macs, A12 and later)
+ * and starts every arm64 process with pointer-authentication keys off
+ * (DyldProcessConfig getMainArchs), so it grades that process's slices by
+ * load_arm64e_keysOff: arm64e, arm64e ABI v1, arm64, then arm64 v8
+ * (mach_o/GradedArchitectures.cpp). An arm64 subtype matches only exactly,
+ * high byte included (Architecture::operator==), so an unversioned arm64e
+ * slice is not loadable there.
+ */
+const ARM64_CPU_TYPE = 0x0100000c;
+const ARM64_KEYS_OFF_SUBTYPES: readonly number[] = [
+  0x80000002, 0x81000002, 0, 1,
+];
+
 /** ARM32 subtype preference rows from dyld's CPU_SUBTYPE_ARM compatibility table. */
 const ARM32_CPU_TYPE = 12;
 const ARM32_SUBTYPE_PREFERENCES: Readonly<Record<number, readonly number[]>> = {
@@ -175,6 +189,17 @@ export const compatibleSlice = (
     return { kind: "missing" };
   }
   const processFamily = machoArchitectureFamily(process.architecture);
+  if (process.cpu_type === ARM64_CPU_TYPE && processFamily === "arm64") {
+    for (const subtype of ARM64_KEYS_OFF_SUBTYPES) {
+      const slice = slices.find(
+        (item) =>
+          item.cpu_type === ARM64_CPU_TYPE &&
+          item.cpu_subtype >>> 0 === subtype,
+      );
+      if (slice !== undefined) return { kind: "selected", slice };
+    }
+    return { kind: "missing" };
+  }
   for (const architecture of COMPATIBLE_ARCHITECTURES[processFamily] ?? [
     processFamily,
   ]) {
