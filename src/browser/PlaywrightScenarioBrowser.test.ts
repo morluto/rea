@@ -42,6 +42,48 @@ it("locks one attached browser for spellings that discover the same endpoint", (
   );
 });
 
+const launchScenario = browserScenarioSchema.parse({
+  browser: { mode: "launch", executable_path: process.execPath },
+  start_url: { url: "https://example.test" },
+  actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
+});
+
+const rejectedLaunch = async (
+  scenario = launchScenario,
+  {
+    environment = {},
+    platform,
+    cause = new Error("launch boundary reached"),
+  }: {
+    readonly environment?: Readonly<Record<string, string | undefined>>;
+    readonly platform?: NodeJS.Platform;
+    readonly cause?: Error;
+  } = {},
+) => {
+  const launchPersistentContext = vi
+    .fn<typeof import("playwright-core").chromium.launchPersistentContext>()
+    .mockRejectedValue(cause);
+  const result = await openPlaywrightScenarioBrowser(scenario, environment, {
+    launcher: {
+      launchPersistentContext,
+      connectOverCDP: async () => {
+        throw new Error("Unexpected connection");
+      },
+    },
+    ...(platform === undefined ? {} : { platform }),
+  }).then(
+    (opened) => ({ opened }),
+    (failure: unknown) => ({ failure }),
+  );
+  if ("opened" in result) {
+    await result.opened.cleanup.close();
+    throw new Error("Expected browser startup failure");
+  }
+  expect(launchPersistentContext).toHaveBeenCalledOnce();
+  const [profile, options] = launchPersistentContext.mock.calls[0]!;
+  return { failure: result.failure, profile, options };
+};
+
 it.each([
   { platform: "win32", systemRootKey: "SYSTEMROOT" },
   { platform: "linux", systemRootKey: "SystemRoot" },
@@ -58,31 +100,14 @@ it.each([
       },
       platform,
     );
-    let launchedEnvironment: unknown;
-    const scenario = browserScenarioSchema.parse({
-      browser: { mode: "launch", executable_path: process.execPath },
-      start_url: { url: "https://example.test" },
-      actions: [
-        { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-      ],
+    const { failure, options } = await rejectedLaunch(launchScenario, {
+      environment: selected,
+      platform,
     });
-    await expect(
-      openPlaywrightScenarioBrowser(scenario, selected, {
-        platform,
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (_profile, options) => {
-            launchedEnvironment = options?.env;
-            throw new Error("launch boundary reached");
-          },
-        },
-      }),
-    ).rejects.toMatchObject({
+    expect(failure).toMatchObject({
       diagnostics: { startup_error: "launch boundary reached" },
     });
-    expect(launchedEnvironment).toEqual({
+    expect(options?.env).toEqual({
       LANG: "selected-language",
       PATH: "/selected/bin",
       [systemRootKey]: "C:/WINDOWS",
@@ -98,37 +123,13 @@ it.skipIf(process.platform === "win32")(
       await mkdir(join(root, "real/inner"), { recursive: true });
       await symlink(join(root, "real/inner"), join(root, "link"));
       const selected = absoluteCallerPath("link/../browser", { cwd: root });
-      let launchedExecutable: string | undefined;
-      const scenario = browserScenarioSchema.parse({
-        browser: { mode: "launch", executable_path: selected },
-        start_url: { url: "https://example.test" },
-        actions: [
-          { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-        ],
-      });
-
-      await expect(
-        openPlaywrightScenarioBrowser(
-          scenario,
-          {},
-          {
-            launcher: {
-              connectOverCDP: async () => {
-                throw new Error("Unexpected connection");
-              },
-              launchPersistentContext: async (_profile, options) => {
-                launchedExecutable = options?.executablePath;
-                throw new Error("fake launch boundary reached");
-              },
-            },
-          },
-        ),
-      ).rejects.toMatchObject({
-        diagnostics: { startup_error: "fake launch boundary reached" },
-      });
-
-      expect(launchedExecutable).toBe(selected);
-      expect(selected).toBe(`${root}/link/../browser`);
+      const { options } = await rejectedLaunch(
+        browserScenarioSchema.parse({
+          ...launchScenario,
+          browser: { mode: "launch", executable_path: selected },
+        }),
+      );
+      expect(options?.executablePath).toBe(`${root}/link/../browser`);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -136,49 +137,21 @@ it.skipIf(process.platform === "win32")(
 );
 
 it("keeps Termux execution support when launching Chromium on Android", async () => {
-  vi.stubEnv("PREFIX", "/data/data/com.termux/files/usr");
-  const selected = { LANG: "selected-language", PREFIX: process.env.PREFIX };
-  let launchOptions: Parameters<
-    typeof import("playwright-core").chromium.launchPersistentContext
-  >[1];
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    actions: [
-      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-    ],
+  vi.stubEnv("PREFIX", "/ambient/termux");
+  const { options } = await rejectedLaunch(launchScenario, {
+    platform: "android",
+    environment: {
+      LANG: "selected-language",
+      PREFIX: "/data/data/com.termux/files/usr",
+    },
   });
-
-  await expect(
-    openPlaywrightScenarioBrowser(scenario, selected, {
-      platform: "android",
-      launcher: {
-        connectOverCDP: async () => {
-          throw new Error("Unexpected connection");
-        },
-        launchPersistentContext: async (_profile, options) => {
-          launchOptions = options;
-          throw new Error("launch boundary reached");
-        },
-      },
-    }),
-  ).rejects.toMatchObject({
-    diagnostics: { startup_error: "launch boundary reached" },
-  });
-
-  expect(launchOptions?.chromiumSandbox).toBe(false);
-  expect(launchOptions?.args).toEqual(["--single-process"]);
-  expect(launchOptions?.env).toEqual({
+  expect(options?.chromiumSandbox).toBe(false);
+  expect(options?.args).toEqual(["--single-process"]);
+  expect(options?.env).toEqual({
     LANG: "selected-language",
     LD_PRELOAD: "/data/data/com.termux/files/usr/lib/libtermux-exec.so",
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
   });
-});
-
-const launchScenario = browserScenarioSchema.parse({
-  browser: { mode: "launch", executable_path: process.execPath },
-  start_url: { url: "https://example.test" },
-  actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
 });
 
 it("does not launch a browser for an already-cancelled opening", async () => {
@@ -281,34 +254,20 @@ it.each([
 ])(
   "launches Chromium with sandbox $sandbox for $environment",
   async ({ environment, sandbox }) => {
-    let launchOptions: Parameters<
-      typeof import("playwright-core").chromium.launchPersistentContext
-    >[1];
-
-    await expect(
-      openPlaywrightScenarioBrowser(launchScenario, environment, {
-        platform: "linux",
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (_profile, options) => {
-            launchOptions = options;
-            throw new Error("launch boundary reached");
-          },
-        },
-      }),
-    ).rejects.toMatchObject({
+    const { failure, options } = await rejectedLaunch(launchScenario, {
+      platform: "linux",
+      environment,
+    });
+    expect(failure).toMatchObject({
       diagnostics: { startup_error: "launch boundary reached" },
       // Chromium's startup log, not REA, says whether the sandbox caused it.
       remediationAction: sandbox
         ? expect.stringContaining("REA_BROWSER_NO_SANDBOX=true")
         : "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
     });
-
-    expect(launchOptions?.chromiumSandbox).toBe(sandbox);
-    expect(launchOptions?.args).toEqual([]);
-    expect(launchOptions?.env).toEqual({});
+    expect(options?.chromiumSandbox).toBe(sandbox);
+    expect(options?.args).toEqual([]);
+    expect(options?.env).toEqual({});
   },
 );
 
@@ -1166,64 +1125,19 @@ const scenarioActions = [
   { step_id: "settle", action: "wait_for_timeout" as const, duration_ms: 1 },
 ];
 
-it("applies command_timeout_ms to launch startup", async () => {
-  let timeout: number | undefined;
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    command_timeout_ms: 4_321,
-    actions: scenarioActions,
-  });
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (_profile, options) => {
-            timeout = options?.timeout;
-            throw new Error("launch boundary reached");
-          },
-        },
-      },
-    ),
-  ).rejects.toMatchObject({
-    diagnostics: { startup_error: "launch boundary reached" },
-  });
-  expect(timeout).toBe(4_321);
-});
-
-it("uses the default command deadline for an omitted launch timeout", async () => {
-  let timeout: number | undefined;
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    actions: scenarioActions,
-  });
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (_profile, options) => {
-            timeout = options?.timeout;
-            throw new Error("launch boundary reached");
-          },
-        },
-      },
-    ),
-  ).rejects.toMatchObject({
-    diagnostics: { startup_error: "launch boundary reached" },
-  });
-  expect(timeout).toBe(DEFAULT_CDP_COMMAND_TIMEOUT_MS);
-});
+it.each([
+  { selected: undefined, effective: DEFAULT_CDP_COMMAND_TIMEOUT_MS },
+  { selected: 4_321, effective: 4_321 },
+])(
+  "passes the effective $effective ms command deadline to startup (selected: $selected)",
+  async ({ selected, effective }) => {
+    const { options } = await rejectedLaunch({
+      ...launchScenario,
+      ...(selected === undefined ? {} : { command_timeout_ms: selected }),
+    });
+    expect(options?.timeout).toBe(effective);
+  },
+);
 
 it("applies command_timeout_ms to the primary connect handshake when service workers are allowed", async () => {
   let timeout: number | undefined;
@@ -1542,83 +1456,33 @@ it.each([
   }),
 ])(
   "preserves a launch failure without inferring a Playwright deadline: %s",
-  async (failure) => {
-    const scenario = browserScenarioSchema.parse({
-      browser: {
-        mode: "launch",
-        executable_path: process.execPath,
-        headless: true,
-      },
-      start_url: { url: "https://example.test" },
-      command_timeout_ms: 4_321,
-      actions: scenarioActions,
+  async (cause) => {
+    const { failure, profile } = await rejectedLaunch(launchScenario, {
+      cause,
     });
-    let profilePath: string | undefined;
-    await expect(
-      openPlaywrightScenarioBrowser(
-        scenario,
-        {},
-        {
-          launcher: {
-            connectOverCDP: async () => {
-              throw new Error("Unexpected connection");
-            },
-            launchPersistentContext: async (profile) => {
-              profilePath = profile;
-              throw failure;
-            },
-          },
-        },
-      ),
-    ).rejects.toMatchObject({
+    expect(failure).toMatchObject({
       _tag: "ProviderAdapterError",
-      cause: failure,
       diagnostics: {
         executable_path: process.execPath,
-        startup_error: failure.message,
+        startup_error: cause.message,
       },
     });
-    expect(profilePath).toBeDefined();
-    await expect(access(profilePath!)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    expect(failure).toHaveProperty("cause", cause);
+    await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 
 it("normalizes a genuine Playwright launch timeout and releases its profile", async () => {
   const { errors } = await import("playwright-core");
-  const failure = new errors.TimeoutError("native launch deadline");
-  const scenario = browserScenarioSchema.parse({
-    browser: {
-      mode: "launch",
-      executable_path: process.execPath,
-      headless: true,
-    },
-    start_url: { url: "https://example.test" },
-    command_timeout_ms: 4_321,
-    actions: scenarioActions,
-  });
-  let profilePath: string | undefined;
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (profile) => {
-            profilePath = profile;
-            throw failure;
-          },
-        },
-      },
-    ),
-  ).rejects.toMatchObject({
+  const cause = new errors.TimeoutError("native launch deadline");
+  const { failure, profile } = await rejectedLaunch(
+    { ...launchScenario, command_timeout_ms: 4_321 },
+    { cause },
+  );
+  expect(failure).toMatchObject({
     reason: "timeout",
     userMessage: expect.stringContaining("4321 ms command_timeout_ms"),
-    cause: failure,
+    cause,
     diagnostics: {
       phase: "launch",
       command_timeout_ms: 4_321,
@@ -1626,8 +1490,7 @@ it("normalizes a genuine Playwright launch timeout and releases its profile", as
       producer_message: "native launch deadline",
     },
   });
-  expect(profilePath).toBeDefined();
-  await expect(access(profilePath!)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("keeps discovered transport credentials out of projected handshake timeouts", async () => {
