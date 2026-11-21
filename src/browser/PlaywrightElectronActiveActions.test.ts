@@ -304,35 +304,55 @@ it("runs an untargeted deep-link without requiring a BrowserWindow", async () =>
   ]);
 });
 
-it("honors a caller-selected Electron wait duration exactly", async () => {
-  const input = electronActiveObservationInputSchema.parse({
-    executable_path: "/opt/electron",
-    application_path: "/opt/app/main.js",
-    application_root: "/opt/app",
-    actions: [{ step_id: "wait-long", kind: "wait", duration_ms: 60_000 }],
-  });
-  let duration = 0;
-  const page = {
-    waitForTimeout: async (value: number) => {
-      duration = value;
-    },
-  };
-  const application = {
-    windows: () => [page],
-    browserWindow: fixtureBrowserWindow,
-    firstWindow: async () => page,
-  };
+it.each(["completed", "cancelled"] as const)(
+  "records a %s wait independently of the selected renderer",
+  async (status) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const input = electronActiveObservationInputSchema.parse({
+      executable_path: "/opt/electron",
+      application_path: "/opt/app/main.js",
+      actions: [
+        {
+          step_id: "settle",
+          kind: "wait",
+          window_index: 0,
+          duration_ms: 60_000,
+        },
+      ],
+    });
+    const page = {
+      waitForTimeout: async () => {
+        throw new Error("Page crashed");
+      },
+    };
+    const application = {
+      windows: () => [page],
+      browserWindow: fixtureBrowserWindow,
+    };
+    const observed = vi.fn();
+    const running = runElectronActions(
+      application as never,
+      input,
+      { signal: controller.signal },
+      new ArtifactResourceScope(),
+    ).then((value) => {
+      observed();
+      return value;
+    });
 
-  const { actions: result } = await runElectronActions(
-    application as never,
-    input,
-    {},
-    new ArtifactResourceScope(),
-  );
-
-  expect(result[0]).toMatchObject({ status: "completed" });
-  expect(duration).toBe(60_000);
-});
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(observed).not.toHaveBeenCalled();
+    if (status === "cancelled") controller.abort("stop waiting");
+    else await vi.advanceTimersByTimeAsync(1);
+    expect((await running).actions[0]).toMatchObject({
+      step_id: "settle",
+      target: "window:42",
+      status,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
 
 it("rejects action outcomes that disagree with their error state", () => {
   const result = createElectronActiveObservationFixtureResult("/opt/app");
@@ -501,18 +521,13 @@ const finalState = {
   },
 };
 
-/** An application whose four state reads settle only when `release` runs. */
+/** An application whose state read settles only when `release` runs. */
 const gatedStateApplication = () => {
   let release = (): void => undefined;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const evaluate = vi
-    .fn()
-    .mockImplementationOnce(() => gate.then(() => finalState.windows))
-    .mockImplementationOnce(() => gate.then(() => finalState.metrics))
-    .mockImplementationOnce(() => gate.then(() => finalState.electronVersion))
-    .mockImplementationOnce(() => gate.then(() => finalState.hookSnapshot));
+  const evaluate = () => gate.then(() => finalState);
   return {
     application: { evaluate } as unknown as ElectronApplication,
     release,
