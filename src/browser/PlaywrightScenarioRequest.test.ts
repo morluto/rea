@@ -862,19 +862,19 @@ describe("saved value credentials and limits", () => {
     vi.unstubAllGlobals();
   });
 
-  it("sends a JSON string that spells a placeholder percent-encoded as written", async () => {
+  it("sends percent-encoded JSON text unchanged without requiring its named binding", async () => {
     const calls = stubFetch(200, ['{"id":7}']);
     const parsed = scenario([
       requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
       requestStep({
         step_id: "note",
-        json: { note: "%7Bsaved:item%7D", id: "{saved:item}" },
+        json: { note: "%7Bsaved:unbound%7D", id: "{saved:item}" },
       }),
     ]);
     const secrets = resolved(parsed);
     for (const action of parsed.actions)
       await perform(fakePage({}), action, secrets);
-    expect(calls[1]!.init.body).toBe('{"note":"%7Bsaved:item%7D","id":7}');
+    expect(calls[1]!.init.body).toBe('{"note":"%7Bsaved:unbound%7D","id":7}');
   });
 
   it("fails a step whose response holds no value to save", async () => {
