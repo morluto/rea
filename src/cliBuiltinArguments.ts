@@ -389,7 +389,7 @@ const readMcpHttpOption = (argument: string, next: string | undefined) => {
 const readMcpHttpCommand = (
   arguments_: readonly string[],
 ): McpHttpCommand | undefined => {
-  let mode: "explicit" | "required" | undefined;
+  let transportFlag: string | undefined;
   const values = new Map<string, string>();
   const allowedHosts: string[] = [];
   let problem: McpHttpCommandProblem | undefined;
@@ -400,13 +400,13 @@ const readMcpHttpCommand = (
       continue;
     }
     if (argument === "--http") {
-      mode = "explicit";
+      transportFlag = "--http";
       continue;
     }
     const next = arguments_[index + 1];
     const { flag, inline, value } = readMcpHttpOption(argument, next);
     if (MCP_HTTP_VALUED_FLAGS.has(flag)) {
-      mode ??= "required";
+      transportFlag ??= flag;
       if (value === undefined) {
         problem ??= invalidMcpHttpCommand(`Missing value for ${flag}`);
       } else {
@@ -424,10 +424,10 @@ const readMcpHttpCommand = (
     if (!argument.startsWith("-") || argument === "--") break;
     if (!inline && spacedOutputValue(flag, next) !== undefined) index += 1;
   }
-  if (mode === undefined) return undefined;
+  if (transportFlag === undefined) return undefined;
   if (problem !== undefined) return problem;
-  if (mode === "required")
-    return invalidMcpHttpCommand("--host and --port require --http");
+  if (transportFlag !== "--http")
+    return invalidMcpHttpCommand(`${transportFlag} requires --http`);
   return {
     kind: "listen",
     host: values.get("--host"),
