@@ -330,6 +330,7 @@
 * **sourcemap:** consolidate point lookup and CLI parity ([#13067](https://github.com/morluto/rea/issues/13067)) ([07225b8](https://github.com/morluto/rea/commit/07225b8b3eaffa041494ba9f00094d77df378a62))
 * **sourcemap:** consolidate point lookup and original location cases ([07225b8](https://github.com/morluto/rea/commit/07225b8b3eaffa041494ba9f00094d77df378a62))
 * **sourcemap:** consolidate retained views and MCP delivery checks ([#13070](https://github.com/morluto/rea/issues/13070)) ([a9463bf](https://github.com/morluto/rea/commit/a9463bf1a938d7cba158c53a2d832250e96a953f))
+* **sourcemap:** isolate artifact identity and retain rejected reports ([#13069](https://github.com/morluto/rea/issues/13069)) ([eca10e8](https://github.com/morluto/rea/commit/eca10e848f7302a2c80ddf89dc6811f42c7f5e68))
 * **sourcemap:** observe late fetch cleanup ownership ([c340608](https://github.com/morluto/rea/commit/c3406087b72846b630d66d7ac13a462b26ec5fc7))
 * **sourcemap:** repair codec deadline verification ([#13057](https://github.com/morluto/rea/issues/13057)) ([dc16719](https://github.com/morluto/rea/commit/dc16719b04aebcace578996c8135946b6fffc905))
 * **sourcemap:** verify codec reply runtime budgets ([#13058](https://github.com/morluto/rea/issues/13058)) ([3388827](https://github.com/morluto/rea/commit/338882782e3b58cde3b03200af2ff4b638506029))
