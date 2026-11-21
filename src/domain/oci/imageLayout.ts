@@ -26,7 +26,7 @@ export const MAX_INSPECT_OCI_IMAGE_LAYOUT_ENTRIES = 65536;
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTORS = 1048576;
 /** Hard ceiling on config bytes expanded into image facts across one layout. */
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_CONFIG_BYTES = 512 * 1024 * 1024;
-/** Hard ceiling on index entry text retained in the report across one layout. */
+/** Hard ceiling on descriptor text retained in the report across one layout. */
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTOR_BYTES = 512 * 1024 * 1024;
 /** Hard ceiling on nested index depth. */
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_INDEX_DEPTH = 8;
@@ -193,7 +193,7 @@ export const inspectOciImageLayoutInputSchema = z.strictObject({
     .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTOR_BYTES)
     .default(67108864)
     .describe(
-      "Maximum UTF-8 bytes of index entry text (digests, media types, platforms and annotations) retained across all indexes in the layout (default 64 MiB); exceeding the budget fails without partial success",
+      "Maximum UTF-8 bytes of index entry text (digests, media types, platforms and annotations) retained across all indexes plus the digest text findings retain for rejected index entries, subjects, configs and layers (default 64 MiB); exceeding the budget fails without partial success",
     ),
   max_index_depth: z
     .number()

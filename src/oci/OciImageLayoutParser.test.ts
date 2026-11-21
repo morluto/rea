@@ -2111,6 +2111,8 @@ it("refuses index entry text that accumulates past max_descriptor_bytes", async 
       if (!(cause instanceof ParseFailureError)) return false;
       expect(cause.failure).toMatchObject({
         kind: "limit",
+        detail:
+          "OCI image layout descriptor text retained from index entries and rejected descriptors exceeds the 1024-byte budget.",
         limit: { name: "max_descriptor_bytes", maximum: 1024 },
       });
       return true;
@@ -2145,6 +2147,8 @@ it("refuses rejected descriptor text that accumulates past max_descriptor_bytes"
         if (!(cause instanceof ParseFailureError)) return false;
         expect(cause.failure).toMatchObject({
           kind: "limit",
+          detail:
+            "OCI image layout descriptor text retained from index entries and rejected descriptors exceeds the 1024-byte budget.",
           limit: { name: "max_descriptor_bytes", maximum: 1024 },
         });
         return true;

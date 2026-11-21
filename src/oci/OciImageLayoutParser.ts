@@ -1040,7 +1040,7 @@ const inventoryOciImageLayout = async (
     if (descriptorBytesRetained > input.max_descriptor_bytes)
       throw decodeLimit(
         OCI_IMAGE_LAYOUT_FORMAT,
-        `OCI image layout index entries exceed the ${String(input.max_descriptor_bytes)}-byte budget.`,
+        `OCI image layout descriptor text retained from index entries and rejected descriptors exceeds the ${String(input.max_descriptor_bytes)}-byte budget.`,
         {
           name: "max_descriptor_bytes",
           maximum: input.max_descriptor_bytes,
