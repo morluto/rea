@@ -196,6 +196,7 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 | Tệp mô hình                       | Siêu dữ liệu GGUF / safetensors, khai báo tensor và tổng suy ra                                                 | Kiểm tra header; tùy chọn băm toàn bộ tệp; [GGUF / safetensors](../model-artifacts.md)                                                                                   |
 | Siêu dữ liệu IL2CPP               | Ảnh assembly Unity global-metadata.dat, tên kiểu/phương thức và phạm vi chỉ mục                                 | Giải mã tĩnh phiên bản 24, 27, 29, 31, 39; không cần Unity                                                                                                               |
 | Godot PCK                         | Danh mục và trích xuất, header/thư mục gốc và định danh nội dung được chọn                                      | Định dạng tĩnh 2, 3, 4; không cần Godot                                                                                                                                  |
+| Gói NuGet                         | Định danh gói, nhóm phụ thuộc, giấy phép, kho mã và nội dung ZIP                                                | Kiểm tra tĩnh .nupkg tích hợp sẵn; [Gói NuGet](../guides/managed/nuget-nupkg.md)                                                                                         |
 | Hiện vật WASM                     | Xác thực, section, dạng WAT import/export chính xác và WAT đã giải mã                                           | Do người gọi cung cấp WABT 1.0.42; `inspect_wasm_artifact`                                                                                                               |
 | Chữ ký APK                        | Bên ký v1/v2/v3/v3.1, dấu vân tay chứng chỉ, xoay vòng khóa và tính nhất quán nội bộ của digest                 | Kiểm tra tĩnh tích hợp; `inspect_apk_signature`                                                                                                                          |
 
@@ -361,7 +362,6 @@ Bắt đầu với [hướng dẫn thực hành](https://rea.tools/vi/guides/) t
 - [CLI và Evidence](../getting-started/cli.md): lệnh, lựa chọn trình phân tích, ảnh chụp trạng thái, nhập/xuất và trạng thái thoát.
 - [Hợp đồng MCP](../reference/mcp-contracts.md) và [prompt cho tác nhân](../getting-started/mcp-prompts.md): kết quả công cụ, phiên làm việc và điều tra có hướng dẫn.
 - [Danh mục công cụ](../reference/mcp-contracts.md#generated-catalog): danh sách công cụ, trình phân tích và lệnh CLI được tạo khi dựng dự án.
-- [Lộ trình](../development/roadmap.md): công việc dự kiến và theo dõi các khả năng.
 
 Báo cáo lỗ hổng theo [SECURITY.md](../../SECURITY.md).
 
@@ -393,7 +393,7 @@ applicable licenses.
 
 Chúng tôi hoan nghênh bạn giúp phát triển REA! [Mở issue](https://github.com/morluto/rea/issues) để báo lỗi hoặc đề xuất tính năng, hoặc [gửi pull request](https://github.com/morluto/rea/pulls) để cải thiện mã hay tài liệu.
 
-Xem [CONTRIBUTING.md](../../CONTRIBUTING.md) về thiết lập môi trường phát triển và các bước kiểm tra, [hướng dẫn kiểm thử](../development/testing.md) về các luồng xác minh và [sơ đồ kiến trúc](../architecture/architecture.mermaid) về cấu trúc dự án.
+Xem [CONTRIBUTING.md](../../CONTRIBUTING.md) về thiết lập môi trường phát triển và các bước kiểm tra, [hướng dẫn kiểm thử](../development/testing.md) về các luồng xác minh.
 
 ## Giấy phép
 

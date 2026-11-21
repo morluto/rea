@@ -196,6 +196,7 @@ O REA requer Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ou 26+ (>=26.12.1), alé
 | Arquivos de modelos         | Metadados GGUF / safetensors, declarações de tensores e totais derivados                                                | Inspeção de cabeçalhos; hash completo opcional; [GGUF / safetensors](../model-artifacts.md)                                                                      |
 | Metadados IL2CPP            | Imagens de assemblies Unity global-metadata.dat, nomes de tipos/métodos e intervalos de índices                         | Decodificação estática das versões 24, 27, 29, 31, 39; sem Unity                                                                                                 |
 | Godot PCK                   | Inventário e extração, cabeçalhos/diretórios originais e identidade do conteúdo selecionado                             | Formatos estáticos 2, 3, 4; sem Godot                                                                                                                            |
+| Pacotes NuGet               | Identidade do pacote, grupos de dependências, licença, repositório e conteúdo do ZIP                                    | Inspeção estática integrada de .nupkg; [Pacotes NuGet](../guides/managed/nuget-nupkg.md)                                                                         |
 | Artefatos WASM              | Validação, seções, formas WAT exatas de importação/exportação e WAT decodificado                                        | Fornecido pelo usuário WABT 1.0.42; `inspect_wasm_artifact`                                                                                                      |
 | Assinaturas APK             | Signatários v1/v2/v3/v3.1, impressões digitais de certificados, rotação de chaves e consistência interna dos resumos    | Inspeção estática integrada; `inspect_apk_signature`                                                                                                             |
 
@@ -361,7 +362,6 @@ Comece pelos [guias práticos](https://rea.tools/pt-BR/guides/) do site. Para op
 - [CLI e Evidence](../getting-started/cli.md): comandos, seleção de provedores, snapshots, importação/exportação e status de saída.
 - [Contratos MCP](../reference/mcp-contracts.md) e [prompts para agentes](../getting-started/mcp-prompts.md): resultados das ferramentas, sessões e investigações guiadas.
 - [Catálogo de ferramentas](../reference/mcp-contracts.md#generated-catalog): inventário de ferramentas, provedores e comandos da CLI gerado durante o build.
-- [Roadmap](../development/roadmap.md): trabalho planejado e acompanhamento das capacidades.
 
 Relate vulnerabilidades conforme [SECURITY.md](../../SECURITY.md).
 
@@ -393,7 +393,7 @@ applicable licenses.
 
 Sua ajuda com o REA é bem-vinda! [Abra uma issue](https://github.com/morluto/rea/issues) para relatar um bug ou sugerir uma funcionalidade, ou [envie um pull request](https://github.com/morluto/rea/pulls) para melhorar o código ou a documentação.
 
-Consulte [CONTRIBUTING.md](../../CONTRIBUTING.md) para configurar o ambiente de desenvolvimento e as verificações, o [guia de testes](../development/testing.md) para os fluxos de verificação e o [mapa da arquitetura](../architecture/architecture.mermaid) para a estrutura do projeto.
+Consulte [CONTRIBUTING.md](../../CONTRIBUTING.md) para configurar o ambiente de desenvolvimento e as verificações, o [guia de testes](../development/testing.md) para os fluxos de verificação.
 
 ## Licença
 

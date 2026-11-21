@@ -40,9 +40,40 @@ describe("readOutput", () => {
     });
   });
 
+  it.each([
+    [
+      "invalid UTF-8",
+      Buffer.concat([
+        Buffer.from('{"code":"busy","message":"'),
+        Buffer.from([0xff]),
+        Buffer.from('"}'),
+      ]),
+    ],
+    ["invalid JSON", Buffer.from("incomplete output")],
+  ] as const)(
+    "refuses %s in guest command output without quoting the bytes",
+    async (_name, body) => {
+      const computer = {
+        homeFiles: () => Promise.resolve(new Map([["out.json", body]])),
+        redacted: (text: string) => text,
+        exec: () => Promise.reject(new Error("unused")),
+      };
+      await expect(
+        readOutput(
+          computer,
+          "out.json",
+          body.length,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow(
+        /^The build computer's REA output is not valid UTF-8 JSON\.$/u,
+      );
+    },
+  );
+
   it("reads a reported failure that fits the ceiling", async () => {
     const body = Buffer.from(
-      JSON.stringify({ code: "busy", message: "the app is busy" }),
+      JSON.stringify({ code: "busy", message: "the app is busy — 正在运行" }),
     );
     let reported = 0;
     const output = await readOutput(
@@ -63,7 +94,7 @@ describe("readOutput", () => {
     if (output.kind !== "failure") return;
     expect(output.failure).toMatchObject({
       code: "busy",
-      message: "the app is busy",
+      message: "the app is busy — 正在运行",
     });
   });
 });

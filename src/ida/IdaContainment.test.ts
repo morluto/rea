@@ -24,16 +24,13 @@ const segment = (name: string, start: string, end: string) => ({
   permissions: "r--",
 });
 
-/** Adjacent .text and .data, a gap, then a segment above 2^53. */
+/** Unsorted segments with an adjacent boundary, a gap, and a one-byte range above 2^53. */
 const SEGMENTS = [
-  segment(".text", "0x1000", "0x2000"),
+  segment(".huge", "0x20000000000001", "0x20000000000002"),
   segment(".data", "0x2000", "0x3000"),
   segment(".far", "0x5000", "0x6000"),
-  segment(".huge", "0x20000000000001", "0x20000000000002"),
+  segment(".text", "0x1000", "0x2000"),
 ];
-
-/** The same segments in descending order, which a scan may not rely on. */
-const UNSORTED = [...SEGMENTS].reverse();
 
 const survey = (segments: JsonValue = SEGMENTS) => ({
   metadata: { path: "/db/target.i64", module: "target", arch: "metapc" },
@@ -202,9 +199,10 @@ describe("IDA containment capabilities", () => {
 });
 
 describe("headless IDA containing procedure", () => {
-  it("returns the canonical entry for an interior address without reading segments", async () => {
+  it("returns the canonical entry for an interior address without an advertised survey", async () => {
     const { client, producer } = await session({
       lookup: (query) => found(query, function_),
+      tools: MODERN_WITHOUT_SURVEY,
     });
     try {
       const result = await containing(client, "1ffe");
@@ -267,7 +265,7 @@ describe("headless IDA containing procedure", () => {
       "outside_segments",
     ],
   ] as const)(
-    "reports an address that is not a function %s as %s",
+    "reports an address %s (%s) using an unsorted survey",
     async (_description, address, reason) => {
       const { client, producer } = await session();
       try {
@@ -371,20 +369,6 @@ describe("headless IDA containment failures", () => {
       expect((await client.close()).ok).toBe(true);
     }
   });
-
-  it("still answers a positive lookup when the server does not advertise the survey", async () => {
-    const { client } = await session({
-      lookup: (query) => found(query, function_),
-      tools: MODERN_WITHOUT_SURVEY,
-    });
-    try {
-      const result = await containing(client, "0x1010");
-
-      expect(result.ok).toBe(true);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
 });
 
 describe("headless IDA containment lookup failures", () => {
@@ -463,21 +447,6 @@ describe("headless IDA containment lookup failures", () => {
         producer.calls.some(({ name }) => name === "survey_binary"),
         "nothing is dispatched after cancellation",
       ).toBe(false);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("does not depend on the order of the surveyed segments", async () => {
-    const { client } = await session({ survey: survey(UNSORTED) });
-    try {
-      const inside = await containing(client, "0x1000");
-      const gap = await containing(client, "0x4000");
-
-      if (!inside.ok) throw inside.error;
-      if (!gap.ok) throw gap.error;
-      expect(inside.value.result).toMatchObject({ reason: "not_in_procedure" });
-      expect(gap.value.result).toMatchObject({ reason: "outside_segments" });
     } finally {
       expect((await client.close()).ok).toBe(true);
     }

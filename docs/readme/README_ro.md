@@ -209,6 +209,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Rapoarte Apple IPS de eroare fatală | Metadate .ips, fire de execuție, imagini binare, registre și clase documentate de erori fatale                                | Inspectare statică integrată a datelor JSON; [Apple IPS](../apple-ips.md)                                                                                         |
 | Module de kernel Linux              | Chei .modinfo, CRC-uri din __versions, prezența this_module și structura semnăturii de la sfârșitul fișierului                | Inspectare statică integrată a fișierelor ELF; [module de kernel](../kernel-modules.md)                                                                           |
 | Erlang BEAM                         | Blocuri IFF, atomi, exporturi, importuri, funcții lambda și antetul Code                                                      | Inspectare statică integrată a fișierelor BEAM; [Erlang BEAM](../erlang-beam.md)                                                                                  |
+| Pachete NuGet                       | Identitatea pachetului, grupuri de dependențe, licență, depozit și conținutul ZIP                                             | Inspecție statică integrată a .nupkg; [Pachete NuGet](../guides/managed/nuget-nupkg.md)                                                                           |
 | Fișiere WASM                        | Validare, secțiuni, forme WAT exacte ale importurilor și exporturilor și cod WAT decodat                                      | WABT 1.0.42 furnizat de utilizator; `inspect_wasm_artifact`                                                                                                       |
 | Bytecode EVM                        | Selectori de apel, poziții în octeți, argumente și mutabilitate deduse                                                        | Fișier local în format brut sau hexazecimal, pe Linux x64; [ghid EVM offline](../guides/evm/evm-bytecode.md)                                                      |
 | Baze de date SQLite                 | Tabele, coloane, indecși, vizualizări, declanșatoare și rânduri selectate din tabele obișnuite                                | Instantaneu local al bazei de date/WAL; Node.js 24.x >=24.15 sau 26+, cu limite SQLite native                                                                     |
@@ -438,7 +439,6 @@ Pentru opțiunile exacte, cerințele preliminare și contractele rezultatelor:
 - [CLI și Evidence](../getting-started/cli.md): comenzi, selectarea motorului, instantanee, import/export și coduri de ieșire.
 - [Contracte MCP](../reference/mcp-contracts.md) și [prompturi pentru agenți](../getting-started/mcp-prompts.md): rezultatele uneltelor, sesiuni și investigații ghidate.
 - [Catalogul uneltelor](../reference/mcp-contracts.md#generated-catalog): inventarul generat al uneltelor, motoarelor de analiză și comenzilor CLI.
-- [Plan de dezvoltare](../development/roadmap.md): lucrări planificate și urmărirea progresului funcționalităților.
 
 Raportează vulnerabilitățile conform [SECURITY.md](../../SECURITY.md).
 
@@ -477,9 +477,7 @@ pentru a raporta o eroare sau a propune o funcționalitate ori
 codul sau documentația.
 
 Consultă [CONTRIBUTING.md](../../CONTRIBUTING.md) pentru pregătirea mediului de dezvoltare
-și verificări, [ghidul de testare](../development/testing.md) pentru categoriile de verificări
-și [diagrama arhitecturii](../architecture/architecture.mermaid) pentru anumite straturi și
-relații de dependență.
+și verificări, [ghidul de testare](../development/testing.md) pentru categoriile de verificări.
 
 ## Licență
 

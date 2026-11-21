@@ -13,7 +13,7 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../tests/support/workspace/workspaceFixture.js";
-import { supportedClientRegistrationProfile } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 /** Keep a workspace child under its root before any filesystem call. */
 const pathInside = (root: string, ...parts: string[]): string => {

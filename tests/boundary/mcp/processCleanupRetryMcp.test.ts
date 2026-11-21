@@ -24,9 +24,10 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const createTemporaryRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "rea-mcp-process-cleanup-retry-"));
+  createTestTempDirectory("rea-mcp-process-cleanup-retry-");
 
 const cleanupOptions = (
   root: string,
@@ -166,9 +167,6 @@ it("projects the retained process root through close_binary and resolves its ret
     async () => {
       await closeSession(resources);
     },
-    async () => {
-      await rm(root, { recursive: true, force: true });
-    },
   ]);
 });
 
@@ -268,9 +266,6 @@ it.each(["returned", "thrown", "synchronous"] as const)(
       },
       async () => {
         await closeSession(resources);
-      },
-      async () => {
-        await rm(root, { recursive: true, force: true });
       },
     ]);
   },

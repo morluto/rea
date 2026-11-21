@@ -15,15 +15,15 @@ it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
 
     expect(() => readGoBinaryImage(goNamed)).toThrow(/build-info|mapped/i);
     expect(readGoBinaryImage(control).build_info).toBeNull();
-    expect(readBinaryContainer(goNamed).load_regions).toEqual(
-      readBinaryContainer(control).load_regions,
+    expect(readBinaryContainer(goNamed, "elf-directory").load_regions).toEqual(
+      readBinaryContainer(control, "elf-directory").load_regions,
     );
 
     const image = openImageSteps(goNamed).next();
     expect(image.done).toBe(true);
     if (!image.done)
       throw new Error("container admission unexpectedly yielded");
-    expect(image.value.bytes).toBe(goNamed);
+    expect(image.value.stored.bytes).toBe(goNamed);
     expect(image.value.container).toMatchObject({
       format: "macho",
       macho_chained_fixups: false,

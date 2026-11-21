@@ -209,6 +209,7 @@ Mazeed tools aur host support target par depend karte hain:
 | Binary hardening        | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                               | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
 | Linux kernel modules    | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                       | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
 | Erlang BEAM             | IFF chunks, atoms, exports, imports, lambdas aur Code header                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                |
+| NuGet packages          | Package identity, dependency groups, license, repository aur ZIP contents                         | Built-in static .nupkg inspection; [NuGet packages](../guides/managed/nuget-nupkg.md)                                                                            |
 | WASM artifact           | Validation, sections, exact import/export WAT forms aur decoded WAT                               | Aapka diya hua WABT 1.0.42; `inspect_wasm_artifact`                                                                                                              |
 | EVM bytecode            | Dispatch selectors, byte offsets, inferred arguments aur mutability                               | Linux x64 par local raw/hex carrier; [offline EVM guide](../guides/evm/evm-bytecode.md)                                                                          |
 | SQLite databases        | Tables, columns, indexes, views, triggers aur selected ordinary-table rows                        | Local database/WAL snapshot; native SQLite limits ke saath Node.js 24.x >=24.15 ya 26+                                                                           |
@@ -442,7 +443,6 @@ Exact options, prerequisites aur result contracts ke liye:
 - [CLI aur Evidence](../getting-started/cli.md): commands, provider selection, snapshots, import/export aur exit statuses.
 - [MCP contracts](../reference/mcp-contracts.md) aur [agent prompts](../getting-started/mcp-prompts.md): tool results, sessions aur guided investigations.
 - [Tool catalog](../reference/mcp-contracts.md#generated-catalog): tools, providers aur CLI commands ki generated inventory.
-- [Roadmap](../development/roadmap.md): planned work aur capability trackers.
 
 Security vulnerabilities [SECURITY.md](../../SECURITY.md) ke zariye report karein.
 
@@ -480,8 +480,7 @@ karne ke liye [issue kholein](https://github.com/morluto/rea/issues), ya code au
 docs behtar karne ke liye [pull request bhejein](https://github.com/morluto/rea/pulls).
 
 Development setup aur checks ke liye [CONTRIBUTING.md](../../CONTRIBUTING.md),
-verification lanes ke liye [testing](../development/testing.md) aur project structure ke
-liye [architecture map](../architecture/architecture.mermaid) dekhein.
+verification lanes ke liye [testing](../development/testing.md) dekhein.
 
 ## License
 

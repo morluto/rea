@@ -1,5 +1,5 @@
+import { DEFAULT_PWNTOOLS_MAX_INPUT_BYTES } from "../analysisResourceLimits.js";
 import {
-  BOUNDED_PRODUCER_LIMITS,
   producerResourceLimitsSchema,
   resolveProducerLimits,
 } from "../producerResourceLimits.js";
@@ -8,7 +8,7 @@ import { DEFAULT_PWNTOOLS_TIMEOUT_MS } from "./nativeDeadlines.js";
 
 /** Owned Python defaults; the bridge consumes these accepted values from its request. */
 export const PWNTOOLS_LIMITS = {
-  input_bytes: BOUNDED_PRODUCER_LIMITS.input_bytes,
+  input_bytes: DEFAULT_PWNTOOLS_MAX_INPUT_BYTES,
   output_bytes: 64 * 1024 * 1024,
   diagnostic_bytes: 1024 * 1024,
   command_timeout_ms: DEFAULT_PWNTOOLS_TIMEOUT_MS,

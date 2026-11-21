@@ -9,10 +9,10 @@ import { isAbsolute } from "node:path";
  * The fallback may be a thunk so a caller whose default needs the host account
  * never pays for that lookup when the variable already decides the folder.
  */
-export const xdgBase = (
+export const xdgBase = <Fallback extends string | undefined>(
   value: string | undefined,
-  fallback: string | (() => string),
-): string =>
+  fallback: Fallback | (() => Fallback),
+): string | Fallback =>
   value !== undefined && isAbsolute(value)
     ? value
     : typeof fallback === "function"

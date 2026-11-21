@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { crc32, deflateSync } from "node:zlib";
 import { afterEach, expect, it, vi } from "vitest";
 
 const zlib = vi.hoisted(() => ({ inflated: 0 }));
@@ -18,15 +18,12 @@ import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   inspectElfDebugLinkInputSchema,
 } from "../../domain/native/elfDebugLink.js";
-import {
-  gnuDebuglinkCrc32,
-  parseElfDebugLink,
-  verifyElfDebugCandidate,
-} from "./ElfDebugLink.js";
+import { parseElfDebugLink, verifyElfDebugCandidate } from "./ElfDebugLink.js";
 import {
   elfDebugCandidateFixture,
   elfDebugLinkFixture,
 } from "./ElfDebugLink.fixture.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const SHF_COMPRESSED = 0x800n;
@@ -102,6 +99,34 @@ it("refuses compressed image names above the selected budget before inflating th
   expect(zlib.inflated).toBe(0);
 });
 
+it.each(["unbacked", "wrong type"] as const)(
+  "validates a %s section-name table before charging its declared decoded size",
+  (fault) => {
+    const image = withCompressedNames(elfDebugLinkFixture());
+    const sectionTable = Number(image.readBigUInt64LE(40));
+    const namesHeader = sectionTable + (image.readUInt16LE(60) - 1) * 64;
+    if (fault === "unbacked")
+      image.writeBigUInt64LE(
+        image.readBigUInt64LE(namesHeader + 32) + 1n,
+        namesHeader + 32,
+      );
+    else image.writeUInt32LE(1, namesHeader + 4);
+
+    expect(() =>
+      parseElfDebugLink(
+        image,
+        {
+          path: "/artifacts/prog",
+          sha256: "ab".repeat(32),
+          bytes: image.length,
+        },
+        inputFor(image.length + 1),
+      ),
+    ).toThrow(BinaryFormatFailure);
+    expect(zlib.inflated).toBe(0);
+  },
+);
+
 it("leaves compressed candidate names above the selected budget undecoded", () => {
   const candidate = withCompressedNames(elfDebugCandidateFixture());
   const image = elfDebugLinkFixture();
@@ -117,7 +142,7 @@ it("leaves compressed candidate names above the selected budget undecoded", () =
       path: "/artifacts/prog.debug",
       sha256: "cd".repeat(32),
       bytes: candidate.length,
-      crc32: gnuDebuglinkCrc32(candidate),
+      crc32: crc32(candidate),
       prefix: candidate,
     },
     input,
@@ -169,7 +194,7 @@ it("keeps the build-id of a candidate whose names use an unsupported compression
       path: "/artifacts/prog.debug",
       sha256: "cd".repeat(32),
       bytes: candidate.length,
-      crc32: gnuDebuglinkCrc32(candidate),
+      crc32: crc32(candidate),
       prefix: candidate,
     },
     input,
@@ -215,7 +240,7 @@ it("leaves compressed candidate names undecoded when only section zero declares 
       path: "/artifacts/prog.debug",
       sha256: "cd".repeat(32),
       bytes: candidate.length,
-      crc32: gnuDebuglinkCrc32(candidate),
+      crc32: crc32(candidate),
       prefix: candidate,
     },
     input,

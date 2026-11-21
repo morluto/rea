@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  INITIAL_TRASH_ROWS,
   LATER_BULK_ROWS,
   LATER_FIELD_ROWS,
   OMITTED_FLAG_ROWS,
@@ -24,12 +23,6 @@ const names = (body: JsonValue | undefined): JsonValue[] => {
 };
 
 describe("served writes modelled on later reads", () => {
-  it("replays the recorded list when it includes a deleted row", () => {
-    const contacts = servedFrom(INITIAL_TRASH_ROWS);
-    expect(
-      contacts.answer("get_contacts", { maxSize: "20", offset: "0" }).body,
-    ).toEqual(INITIAL_TRASH_ROWS[0]![2]);
-  });
   it("keeps an initially deleted item readable without treating it as live", () => {
     const deleted = { id: 4, name: "Gone", deleted: true };
     const rows = [
@@ -80,18 +73,13 @@ describe("served writes modelled on later reads", () => {
       deleted,
     );
   });
-  it("removes a soft-deleted contact from the served state", () => {
+  it("removes a soft-deleted contact from lists and still answers its item read", () => {
     const contacts = servedFrom(SOFT_DELETED_ROWS);
     contacts.answer("delete_contacts_by_id", { id: "1" });
     expect(names(contacts.answer("get_contacts").body)).toEqual([
       "Mina Okafor",
       "Rui Castellanos",
     ]);
-  });
-
-  it("reads a served-deleted contact back marked deleted, as the application answers", () => {
-    const contacts = servedFrom(SOFT_DELETED_ROWS);
-    contacts.answer("delete_contacts_by_id", { id: "1" });
     expect(contacts.answer("get_contacts_by_id", { id: "1" }).body).toEqual({
       id: 1,
       name: "Ada Finch",
@@ -107,7 +95,8 @@ describe("served writes modelled on later reads", () => {
     // A removal that keeps nothing, as a delete of a type that hard-deletes is, leaves no read.
     contacts.store.removeAll(contacts.store.startedWith("/api/contacts"));
     expect(contacts.refusal("get_contacts_by_id", { id: "1" })).toMatchObject({
-      code: expect.any(String),
+      code: "invalid_request",
+      message: expect.stringContaining("holds no /api/contacts entity 1"),
     });
   });
 

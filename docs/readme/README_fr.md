@@ -161,6 +161,7 @@ REA nécessite Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ou 26+ (>=26.12.1), ai
 | PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
 | PE imports                   | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
 | Windows shortcuts            | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
+| Paquets NuGet                | Identité du paquet, groupes de dépendances, licence, dépôt et contenu ZIP                                   | Inspection statique intégrée des .nupkg ; [Paquets NuGet](../guides/managed/nuget-nupkg.md)                                                                      |
 | Artefact WASM                | Validation, sections, formes WAT exactes d'import/export et WAT décodé                                      | WABT 1.0.42 fourni par l'utilisateur ; `inspect_wasm_artifact`                                                                                                   |
 | Bytecode EVM                 | Sélecteurs de dispatch, offsets en octets, arguments inférés et mutabilité                                  | Fichier local brut ou hexadécimal sous Linux x64 ; [guide EVM hors ligne](../guides/evm/evm-bytecode.md)                                                         |
 | Rust binaries                | Embedded cargo-auditable dependency list                                                                    | [Rust binaries](../rust-binaries.md)                                                                                                                             |
@@ -358,7 +359,6 @@ Commencez par les [guides pas à pas](https://rea.tools/fr/guides/) du site web.
 - [CLI et Evidence](../getting-started/cli.md) : commandes, choix du fournisseur, snapshots, import/export et codes de sortie.
 - [Contrats MCP](../reference/mcp-contracts.md) et [prompts pour agents](../getting-started/mcp-prompts.md) : résultats des outils, sessions et investigations guidées.
 - [Catalogue des outils](../reference/mcp-contracts.md#generated-catalog) : inventaire des outils, fournisseurs et commandes CLI, généré lors du build.
-- [Feuille de route](../development/roadmap.md) : travaux prévus et suivi des capacités.
 
 Signalez les vulnérabilités via [SECURITY.md](../../SECURITY.md).
 
@@ -390,7 +390,7 @@ applicable licenses.
 
 Votre aide sur REA est la bienvenue ! [Ouvrez une issue](https://github.com/morluto/rea/issues) pour signaler un bug ou proposer une fonctionnalité, ou [envoyez une pull request](https://github.com/morluto/rea/pulls) pour améliorer le code ou la documentation.
 
-Consultez [CONTRIBUTING.md](../../CONTRIBUTING.md) pour l'environnement de développement et les vérifications, la page [tests](../development/testing.md) pour les procédures de vérification, et la [carte de l'architecture](../architecture/architecture.mermaid) pour la structure du projet.
+Consultez [CONTRIBUTING.md](../../CONTRIBUTING.md) pour l'environnement de développement et les vérifications, la page [tests](../development/testing.md) pour les procédures de vérification.
 
 ## Licence
 

@@ -161,8 +161,8 @@ export const dotnetBundleEntryMetadataSchema = z.strictObject({
 });
 
 /**
- * Node.js single-executable blob facts. Lengths follow the Node 24 64-bit
- * little-endian `size_t` reader. The fuse sentinel is a separate carrier scan.
+ * Node.js single-executable blob facts. Lengths use 64-bit little-endian
+ * `size_t`. The fuse sentinel is a separate carrier scan.
  */
 export const nodeSeaMetadataSchema = z.strictObject({
   kind: z.literal("node-sea"),
@@ -175,6 +175,7 @@ export const nodeSeaMetadataSchema = z.strictObject({
   include_exec_argv: z.boolean(),
   exec_argv_extension: z.enum(["none", "env", "cli"]),
   exec_argv: z.array(z.string()),
+  main_code_format: z.enum(["commonjs", "module"]).exactOptional(),
   code_path: z.string(),
   carrier: z.enum(["mach-o", "elf", "pe"]),
   blob_offset: offset,
@@ -184,6 +185,9 @@ export const nodeSeaMetadataSchema = z.strictObject({
   fuse_contradiction: z.string().nullable(),
 });
 export type NodeSeaMetadata = z.infer<typeof nodeSeaMetadataSchema>;
+export type NodeSeaMainCodeFormat = NonNullable<
+  NodeSeaMetadata["main_code_format"]
+>;
 
 /** One injected script, snapshot, code cache, or asset. Bytes stay opaque. */
 export const nodeSeaEntryMetadataSchema = z.strictObject({
@@ -697,6 +701,13 @@ export const espFlashImageMetadataSchema = z.strictObject({
         .string()
         .regex(/^[0-9a-f]{32}$/u)
         .nullable(),
+      /**
+       * Partition entries after the MD5 record, outside its digest. New
+       * inventories emit 0 when the record is absent or every partition
+       * entry precedes it. Omission is Evidence saved before this field
+       * and leaves the count unknown.
+       */
+      entries_after_checksum: uint8.exactOptional(),
     }),
   }),
   /**
@@ -790,6 +801,110 @@ export const uImageEntryMetadataSchema = z.strictObject({
   index: uint32,
 });
 export type UImageEntryMetadata = z.infer<typeof uImageEntryMetadataSchema>;
+
+const androidOtaHash = z
+  .string()
+  .regex(/^[0-9a-f]*$/u)
+  .nullable();
+
+const androidOtaPartitionInfoSchema = z.strictObject({
+  size: offset.nullable(),
+  hash_hex: androidOtaHash,
+});
+
+const androidOtaOperationCountSchema = z.strictObject({
+  type: z.string(),
+  type_code: z.number().int().min(0),
+  count: uint32,
+});
+
+/**
+ * CrAU v2 DeltaArchiveManifest facts. Signatures are counted, not verified.
+ * Partition images are reconstructed only from REPLACE, ZERO and REPLACE_ZSTD.
+ */
+export const androidOtaPayloadMetadataSchema = z.strictObject({
+  kind: z.literal("android-ota-payload"),
+  magic: z.literal("CrAU"),
+  major_version: z.literal(2),
+  manifest_size: offset,
+  metadata_signature_size: uint32,
+  manifest_offset: offset,
+  blob_offset: offset,
+  block_size: offset,
+  minor_version: uint32,
+  payload_kind: z.enum(["full", "delta"]),
+  max_timestamp: z.number().int().nullable(),
+  partial_update: z.boolean().nullable(),
+  security_patch_level: z.string().nullable(),
+  signatures_offset: offset.nullable(),
+  signatures_size: offset.nullable(),
+  metadata_signature_blob_size: uint32,
+  metadata_signature_count: uint32.nullable(),
+  payload_signature_blob_size: offset.nullable(),
+  payload_signature_count: uint32.nullable(),
+  signatures_verified: z.literal(false),
+  snapshot_enabled: z.boolean().nullable(),
+  vabc_enabled: z.boolean().nullable(),
+  vabc_compression_param: z.string().nullable(),
+  blob_truncated: z.boolean(),
+  partitions: z.array(
+    z.strictObject({
+      index: uint32,
+      name: z.string(),
+      path: z.string(),
+      new_partition_info: androidOtaPartitionInfoSchema,
+      old_partition_info: androidOtaPartitionInfoSchema.nullable(),
+      version: z.string().nullable(),
+      run_postinstall: z.boolean().nullable(),
+      postinstall_path: z.string().nullable(),
+      filesystem_type: z.string().nullable(),
+      operation_counts: z.array(androidOtaOperationCountSchema),
+      total_data_length: offset,
+      merge_operation_count: uint32,
+      estimate_cow_size: offset.nullable(),
+      extractable: z.boolean(),
+    }),
+  ),
+  dynamic_partition_groups: z.array(
+    z.strictObject({
+      name: z.string(),
+      size: offset.nullable(),
+      partition_names: z.array(z.string()),
+    }),
+  ),
+  apex_info: z.array(
+    z.strictObject({
+      package_name: z.string().nullable(),
+      version: z.number().int().nullable(),
+      is_compressed: z.boolean().nullable(),
+      decompressed_size: z.number().int().nullable(),
+    }),
+  ),
+});
+export type AndroidOtaPayloadMetadata = z.infer<
+  typeof androidOtaPayloadMetadataSchema
+>;
+
+/** One partition the payload writes; reconstructed bytes are not a file range. */
+export const androidOtaPartitionMetadataSchema = z.strictObject({
+  kind: z.literal("android-ota-partition"),
+  index: uint32,
+  name: z.string(),
+  extractable: z.boolean(),
+  new_partition_info: androidOtaPartitionInfoSchema,
+  old_partition_info: androidOtaPartitionInfoSchema.nullable(),
+  version: z.string().nullable(),
+  run_postinstall: z.boolean().nullable(),
+  postinstall_path: z.string().nullable(),
+  filesystem_type: z.string().nullable(),
+  operation_counts: z.array(androidOtaOperationCountSchema),
+  total_data_length: offset,
+  merge_operation_count: uint32,
+  estimate_cow_size: offset.nullable(),
+});
+export type AndroidOtaPartitionMetadata = z.infer<
+  typeof androidOtaPartitionMetadataSchema
+>;
 
 const bunHex = z
   .string()
@@ -1047,6 +1162,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   hexRecordRegionMetadataSchema,
   uImageMetadataSchema,
   uImageEntryMetadataSchema,
+  androidOtaPayloadMetadataSchema,
+  androidOtaPartitionMetadataSchema,
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
@@ -1186,6 +1303,14 @@ const declarationsByKind: {
   "android-boot-image-entry": {
     notCompared:
       "role and index restate the entry's path, compression is observed from its bytes, and load addresses, names and board IDs come from the image header or vendor ramdisk table, which the image's content comparison covers.",
+  },
+  "android-ota-payload": {
+    notCompared:
+      "Its header and manifest facts come from the payload's own bytes, which content comparison covers. Signatures are counted, not verified.",
+  },
+  "android-ota-partition": {
+    notCompared:
+      "name and index restate the entry's path; reconstructed partition bytes are compared by content when they are extractable.",
   },
   "esp-image": {
     notCompared:

@@ -158,6 +158,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                   | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../guides/native/native-investigation.md)                                                                 |
 | 離線 ELF 佈局         | 節、段、原始符號/重定位資訊及靜態防護機制候選項                              | Linux x64 上由呼叫方提供的 pwntools；[二進位診斷](../guides/native/binary-diagnostics.md)                                                         |
 | Go 二進位檔案         | 內嵌編譯器版本、模組、替換項和建置設定                                       | 內建靜態 ELF/PE/thin Mach-O 檢查；無需安裝 Go                                                                                                     |
+| NuGet 套件            | 套件識別、相依性群組、授權、儲存庫及 ZIP 內容                                | 內建靜態 .nupkg 檢查；[NuGet 套件](../guides/managed/nuget-nupkg.md)                                                                              |
 | WASM 工件             | 驗證、節、精確的匯入/匯出 WAT 形式及解碼後的 WAT                             | 呼叫方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                                                 |
 | EVM 位元組碼          | 分派選擇器、位元組偏移、推斷的參數和狀態可變性                               | Linux x64 上的本地原始位元組/十六進位輸入載體；[離線 EVM 指南](../guides/evm/evm-bytecode.md)                                                     |
 | Rust binaries         | Embedded cargo-auditable dependency list                                     | [Rust binaries](../rust-binaries.md)                                                                                                              |
@@ -361,7 +362,6 @@ npx rea-agents@latest setup
 - [CLI 與 Evidence](../getting-started/cli.md)：命令、提供者選擇、快照、匯入/匯出和退出狀態。
 - [MCP 契約](../reference/mcp-contracts.md)和[AI 代理提示詞](../getting-started/mcp-prompts.md)：工具結果、會話和引導式調查。
 - [工具目錄](../reference/mcp-contracts.md#generated-catalog)：建置時生成的工具、提供者和 CLI 命令清單。
-- [路線圖](../development/roadmap.md)：計劃中的工作和能力跟蹤。
 
 請按照 [SECURITY.md](../../SECURITY.md) 報告漏洞。
 
@@ -392,7 +392,7 @@ REA 用於合法的研究、教育、互通性、軟體保存，以及分析你�
 
 歡迎幫助改進 REA！你可以[提交 issue](https://github.com/morluto/rea/issues) 報告錯誤或建議功能，也可以[提交 pull request](https://github.com/morluto/rea/pulls) 改進程式碼或文件。
 
-開發設定和檢查見 [CONTRIBUTING.md](../../CONTRIBUTING.md)，驗證流程見[測試指南](../development/testing.md)，專案結構見[架構圖](../architecture/architecture.mermaid)。
+開發設定和檢查見 [CONTRIBUTING.md](../../CONTRIBUTING.md)，驗證流程見[測試指南](../development/testing.md)。
 
 ## 授權條款
 

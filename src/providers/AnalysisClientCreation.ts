@@ -258,6 +258,7 @@ export class AnalysisClientCreation {
       await this.#clientLease.release();
       return ok(null);
     } catch (cause: unknown) {
+      const clientLease = this.#clientLease;
       const failure = new ProviderCleanupError(
         this.providerId,
         cause instanceof AnalysisError && cause.cleanupResources.length > 0
@@ -272,8 +273,23 @@ export class AnalysisClientCreation {
         },
         { cause, operation: "create_analysis_client" },
       );
-      failure.bindCleanupResourceOwner(this.#clientLease);
-      this.#clientLease.bindCleanupError(failure);
+      if (cause instanceof AnalysisError && cause.hasCleanupOwner) {
+        failure.bindCleanupResourceOwner({
+          get cleanupResources() {
+            return clientLease.released || !cause.cleanupIncomplete
+              ? []
+              : cause.cleanupResources;
+          },
+        });
+        failure.bindCleanupReleaseClaim({
+          get cleanupReleased() {
+            return !cause.cleanupIncomplete;
+          },
+        });
+      } else {
+        failure.bindCleanupResourceOwner(clientLease);
+      }
+      clientLease.bindCleanupError(failure);
       return err(failure);
     }
   }

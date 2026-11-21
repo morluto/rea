@@ -2,11 +2,9 @@
  * Lifecycle regression coverage for every provider id in
  * `CAPABILITY_DECLARATIONS`.
  *
- * Each stage either names real regression tests (file and literal test title),
- * is not applicable for a stated reason, or is an explicit gap. Gaps are also
- * listed in `PROVIDER_LIFECYCLE_GAPS`; that list may only shrink, so closing a
- * gap means naming its tests here and removing the gap entry. A newly
- * registered provider must add its own entry.
+ * Each stage names a regression by file and title at its registration site,
+ * or states why the stage does not apply. The coverage check reports any
+ * applicable stage still marked as a gap.
  *
  * Stages: `launch` starts the owned process (including launch failure and
  * refusal at the launch boundary); `handshake` is the first readiness or
@@ -34,7 +32,7 @@ export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
 export interface LifecycleRegression {
   /** Repository-relative test file. */
   readonly path: string;
-  /** Literal title of a test in that file. */
+  /** Title at the test registration site, before any parameter expansion. */
   readonly title: string;
 }
 
@@ -65,7 +63,6 @@ const notApplicable = (reason: string): StageCoverage => ({
   kind: "not_applicable",
   reason,
 });
-const gap = (reason: string): StageCoverage => ({ kind: "gap", reason });
 
 const ONE_SHOT = notApplicable(
   "One-shot command per request: there is no handshake after launch.",
@@ -134,6 +131,7 @@ const historicalCapture = (
   },
 });
 
+const UEFI_PROVIDER = "src/uefi/UefiAnalysisProvider.test.ts";
 const FIRMWARE_INTEGRATION =
   "tests/boundary/firmware/firmwareIntegration.test.ts";
 const REVERSE_LAUNCH_ERRORS =
@@ -484,7 +482,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
-          "cancels queued work and stops active provider work on cancellation",
+          "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
         ),
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
@@ -677,13 +675,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/ida/IdaSessionClient.test.ts",
-          "retains the private workspace and reports cleanup failure when worker release is unverified",
+          "retries failed worker release through the retained connection",
         ),
       ),
       retry: covered(
         test(
-          "src/ida/IdaSessionClient.test.ts",
-          "retries failed worker release through the retained connection before removing its workspace",
+          "tests/boundary/providers/ida/retainedConnectionRetry.test.ts",
+          "retries cleanup through the detached stdio connection",
         ),
       ),
     },
@@ -754,7 +752,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "tests/boundary/providers/jebMcpCatalog.test.ts",
-          "reads every JEB catalog page and refreshes the connected engine catalog",
+          "uses the selected discovery budget across handshake and catalog pages",
         ),
         test(
           "tests/boundary/providers/jebMcpConnection.test.ts",
@@ -1345,7 +1343,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/erlangBeamCli.test.ts",
-        "reports BEAM tables and code through the public CLI",
+        "reports BEAM tables and code for a path relative to the CLI working directory",
       ),
     ),
     typedFailures("tests/boundary/filesystem/erlangBeam.test.ts"),
@@ -1460,6 +1458,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/kernelModule.test.ts"),
   ),
+  "rea-maven-gradle-metadata": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/mavenGradleMetadataMcp.test.ts",
+        "advertises inspect_maven_gradle_metadata and reports a real POM",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/java/MavenGradleMetadataService.test.ts",
+        "retains completed Evidence and selected parameters on late cancellation",
+      ),
+    ),
+  ),
   "rea-native-exports": inProcess(
     covered(
       test(
@@ -1534,7 +1546,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         ),
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "passes the selected environment to the actual browser launch boundary",
+          "passes the selected environment to the $platform browser launch boundary",
         ),
       ),
       handshake: covered(
@@ -1597,13 +1609,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "cancels a windowless wait action and cleans up the owned application",
+          "cancels a windowless wait action and cleans up the owned application (%s)",
         ),
       ),
       cleanup: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "keeps cleanup failure precedence over cancellation observed during cleanup",
+          "retains cancellation first observed during failed %s cleanup through retry",
         ),
       ),
       retry: covered(
@@ -1614,6 +1626,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-nuget-nupkg": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/nugetNupkgMcp.test.ts",
+        "advertises inspect_nuget_nupkg and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/nuget/NugetNupkgService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-python-pyc": inProcess(
     covered(
       test(
@@ -1636,7 +1662,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/v8CodeCacheCli.test.ts",
-        "reports the observed header and payload through the public CLI",
+        "reports wide and synthetic narrow header extents through the public CLI",
       ),
     ),
     covered(
@@ -2001,6 +2027,42 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-uefi": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          UEFI_PROVIDER,
+          "decodes an LZMA-custom section through the owned worker and derives it",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "tests/acceptance/uefiFirmware.test.ts",
+          "maps a flash image end to end through CLI inspection and MCP session inventory",
+        ),
+      ),
+      cancel: covered(
+        test(
+          UEFI_PROVIDER,
+          "waits for committed output finalization during late cancellation and retries retained cleanup",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          UEFI_PROVIDER,
+          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+        ),
+      ),
+      retry: covered(
+        test(
+          UEFI_PROVIDER,
+          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+        ),
+      ),
+    },
+  },
   unblob: {
     ownership: "process",
     stages: {
@@ -2110,9 +2172,3 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
 };
-
-/**
- * Every stage marked as a gap above, as `providerId:stage`. This list may only
- * shrink: close a gap by naming its regression tests and removing the entry.
- */
-export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [];

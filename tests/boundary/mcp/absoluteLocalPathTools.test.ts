@@ -6,10 +6,12 @@ import { expect, it } from "vitest";
 import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "../../../src/contracts/javascript/javascriptRecoveryToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { V8_CODE_CACHE_TOOL_CONTRACTS } from "../../../src/contracts/v8/v8CodeCacheToolContracts.js";
+import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../../../src/contracts/java/mavenGradleMetadataToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "../../../src/contracts/webScriptToolContracts.js";
 import { API_CONTRACT_TOOL_CONTRACTS } from "../../../src/contracts/apiContractToolContracts.js";
 import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "../../../src/contracts/playwrightTraceToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "../../../src/contracts/python/pythonPycToolContracts.js";
+import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../../src/contracts/nuget/nupkgToolContracts.js";
 import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -21,7 +23,9 @@ const CONTRACTS = [
   ...API_CONTRACT_TOOL_CONTRACTS,
   ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
   ...PYTHON_PYC_TOOL_CONTRACTS,
+  ...NUGET_NUPKG_TOOL_CONTRACTS,
   ...V8_CODE_CACHE_TOOL_CONTRACTS,
+  ...MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
 ];
 
 const PATH_FIELDS = {
@@ -35,7 +39,9 @@ const PATH_FIELDS = {
   inspect_devicetree: ["path"],
   inspect_playwright_trace: ["path"],
   inspect_python_pyc: ["path"],
+  inspect_nuget_nupkg: ["path"],
   inspect_v8_code_cache: ["path"],
+  inspect_maven_gradle_metadata: ["path"],
   export_web_scripts: ["capture_path", "output_directory"],
   recover_javascript_sources: ["path", "output_directory", "additional_paths"],
 } as const;
@@ -141,7 +147,9 @@ it("rejects one relative path field at a time on tools/list", async () => {
     "inspect_devicetree.path",
     "inspect_playwright_trace.path",
     "inspect_python_pyc.path",
+    "inspect_nuget_nupkg.path",
     "inspect_v8_code_cache.path",
+    "inspect_maven_gradle_metadata.path",
     "export_web_scripts.capture_path",
     "export_web_scripts.output_directory",
     "recover_javascript_sources.path",

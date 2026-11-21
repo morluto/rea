@@ -93,11 +93,13 @@ const RESTART_UNREACHABLE_HOPPER = `${RESTART_OWNED_PROVIDER} close_binary prese
 const RERUN_HOPPER_INVOCATION =
   "Review the reported Hopper state and resolve any incomplete cleanup before rerunning the command.";
 
-const HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE =
-  "macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission.";
+/** Hardened-runtime entitlement macOS requires before an Apple Events prompt. */
+const HOPPER_APPLE_EVENTS_ENTITLEMENT_ID =
+  "com.apple.security.automation.apple-events" as const;
 
-const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION =
-  "Allow the application that starts REA under System Settings > Privacy & Security > Automation. If the client lacks the com.apple.security.automation.apple-events entitlement, ask the client developer to add it or start REA from a client macOS can authorize, such as Terminal. Retrying from the same unauthorized client will not succeed until authorization changes.";
+const HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE = `macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the ${HOPPER_APPLE_EVENTS_ENTITLEMENT_ID} entitlement before macOS will prompt for permission.`;
+
+const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION = `Allow the application that macOS identifies as responsible for REA under System Settings > Privacy & Security > Automation. Some MCP clients, including Claude Desktop, disclaim responsibility so macOS attributes the request to the REA runtime (such as node), which cannot be authorized by changing the client's Automation setting. In that case start REA from a client macOS can authorize, such as Claude Code or Terminal. If the responsible client lacks the ${HOPPER_APPLE_EVENTS_ENTITLEMENT_ID} entitlement, ask its developer to add it. Retrying from the same unauthorized client will not succeed until authorization changes.`;
 
 export class HopperTimeoutError extends HopperError {
   readonly _tag = providerErrorTag("HopperTimeoutError");
@@ -487,13 +489,43 @@ export type HopperLaunchRejection =
   | {
       /**
        * macOS refused the launcher's Apple Event. The helper's stderr does not
-       * show whether the responsible client lacks an Automation grant or the
-       * hardened-runtime Apple Events entitlement. Another launch from that
-       * same client cannot succeed until authorization changes.
+       * show whether the responsible client lacks an Automation grant, lacks
+       * the hardened-runtime Apple Events entitlement, or disclaimed TCC
+       * responsibility so macOS attributed the event to the REA runtime.
+       * Another launch from that same client cannot succeed until
+       * authorization changes.
        */
       readonly boundary: "apple_events_authorization";
       readonly reason: "not_authorized";
+      /**
+       * The helper did not observe which process is responsible. Recovery
+       * covers an authorizable client and a client that disclaims TCC
+       * responsibility.
+       */
+      readonly responsibility: "client_or_disclaimed_runtime";
+      /** System Settings > Privacy & Security > Automation. */
+      readonly settings_pane: "privacy_security_automation";
+      /**
+       * Entitlement a hardened-runtime responsible process needs before macOS
+       * prompts.
+       */
+      readonly entitlement_id: typeof HOPPER_APPLE_EVENTS_ENTITLEMENT_ID;
     };
+
+/**
+ * The one Apple Events denial REA can recognize. The helper does not identify
+ * the responsible process, so these facts stay constant for that denial.
+ */
+export const hopperAppleEventsAuthorizationRejection = {
+  boundary: "apple_events_authorization",
+  reason: "not_authorized",
+  responsibility: "client_or_disclaimed_runtime",
+  settings_pane: "privacy_security_automation",
+  entitlement_id: HOPPER_APPLE_EVENTS_ENTITLEMENT_ID,
+} as const satisfies Extract<
+  HopperLaunchRejection,
+  { readonly boundary: "apple_events_authorization" }
+>;
 
 /** Recognize the Apple Events refusal that the same client cannot retry. */
 export const hopperAppleEventsAuthorizationDenied = (

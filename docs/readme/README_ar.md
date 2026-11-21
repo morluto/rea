@@ -196,6 +196,7 @@ npx rea-agents@latest setup
 | ملفات النماذج                   | بيانات GGUF / safetensors الوصفية وتصريحات الموترات والمجاميع المشتقة                                      | فحص الترويسات؛ بصمة الملف الكامل اختيارية; [GGUF / safetensors](../model-artifacts.md)                                                                       |
 | بيانات IL2CPP الوصفية           | صور التجميعات وأسماء الأنواع والدوال ونطاقات الفهارس في Unity global-metadata.dat                           | فك ثابت للإصدارات 24 و27 و29 و31 و39؛ لا يتطلب Unity                                                                                                           |
 | Godot PCK                       | جرد الأرشيف واستخراجه وحقائق الترويسات والأدلة الأصلية وهوية المحتوى المختار                                  | الصيغ الثابتة 2 و3 و4؛ لا يتطلب Godot                                                                                                                         |
+| حزم NuGet                       | هوية الحزمة ومجموعات التبعيات والترخيص والمستودع ومحتويات ZIP                                              | فحص ثابت مدمج لملفات .nupkg؛ [حزم NuGet](../guides/managed/nuget-nupkg.md)                                                                                   |
 | ملفات WASM                      | التحقق والأقسام وأشكال WAT الدقيقة للاستيراد والتصدير وWAT المفكوك                                           | يوفّره المستخدم WABT 1.0.42; `inspect_wasm_artifact`                                                                                                          |
 | توقيعات APK                     | الموقّعون v1/v2/v3/v3.1 وبصمات الشهادات وتدوير المفاتيح واتساق الملخصات داخليًا                              | فحص ثابت مدمج; `inspect_apk_signature`                                                                                                                       |
 
@@ -361,7 +362,6 @@ npx rea-agents@latest setup
 - [CLI وEvidence](../getting-started/cli.md): الأوامر، واختيار الموفّر، واللقطات، والاستيراد/التصدير، وحالات الخروج.
 - [عقود MCP](../reference/mcp-contracts.md) و[تعليمات الوكلاء](../getting-started/mcp-prompts.md): نتائج الأدوات، والجلسات، والاستقصاءات الموجّهة.
 - [كتالوج الأدوات](../reference/mcp-contracts.md#generated-catalog): قائمة الأدوات والموفّرين وأوامر CLI المولّدة أثناء البناء.
-- [خطة العمل](../development/roadmap.md): الأعمال المخطط لها ومتابعة القدرات.
 
 أبلغ عن الثغرات وفق [SECURITY.md](../../SECURITY.md).
 
@@ -393,7 +393,7 @@ applicable licenses.
 
 نرحّب بمساعدتك في تطوير REA! [افتح issue](https://github.com/morluto/rea/issues) للإبلاغ عن خطأ أو اقتراح ميزة، أو [أرسل pull request](https://github.com/morluto/rea/pulls) لتحسين الشيفرة أو التوثيق.
 
-راجع [CONTRIBUTING.md](../../CONTRIBUTING.md) لإعداد بيئة التطوير والفحوص، و[دليل الاختبار](../development/testing.md) لمسارات التحقق، و[خريطة البنية](../architecture/architecture.mermaid) لهيكل المشروع.
+راجع [CONTRIBUTING.md](../../CONTRIBUTING.md) لإعداد بيئة التطوير والفحوص، و[دليل الاختبار](../development/testing.md) لمسارات التحقق.
 
 ## الترخيص
 

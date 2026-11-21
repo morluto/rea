@@ -13,6 +13,7 @@ import {
   fatImage,
   machoImage,
   rpathCommand,
+  versionMinCommand,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { dylibResolutionResultSchema } from "../../../src/domain/apple/dylibResolution.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -714,6 +715,46 @@ cliTest(
 );
 
 cliTest(
+  "rejects oversized legacy minimum-version commands before admitting platform",
+  async ({ cli }) => {
+    const app = await fixtureApp();
+    const exact = versionMinCommand(LC.VERSION_MIN_IPHONEOS);
+    const oversized = Buffer.concat([exact, Buffer.alloc(8)]);
+    oversized.writeUInt32LE(oversized.length, 4);
+    const validPath = "Contents/Helpers/minimum-version";
+    const invalidPath = "Contents/Helpers/oversized-minimum-version";
+    await writeFiles(app, {
+      [validPath]: machoImage({ commands: [exact] }),
+      [invalidPath]: machoImage({ commands: [oversized] }),
+    });
+
+    const result = await cli.run({
+      arguments: ["trace-dylib-resolution", app, "--json"],
+      environment: ENVIRONMENT,
+    });
+    expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+    const trace = dylibResolutionResultSchema.parse(
+      (result.json as { normalized_result: unknown }).normalized_result,
+    );
+    expect(trace.images.find(({ path }) => path === validPath)).toMatchObject({
+      parse_status: "parsed",
+      slices: [{ platforms: [2] }],
+    });
+    expect(trace.images.find(({ path }) => path === invalidPath)).toMatchObject(
+      {
+        parse_status: "malformed",
+        reason: expect.stringContaining("version-min"),
+        slices: [],
+      },
+    );
+    expect(trace.coverage).toMatchObject({
+      status: "partial",
+      unparsed_images: expect.arrayContaining([invalidPath]),
+    });
+  },
+);
+
+cliTest(
   "retains directory requirements when resolving dylib install names",
   async ({ cli }) => {
     const directory = await createTestTempDirectory("rea-dylib-path-cli-");
@@ -938,6 +979,70 @@ cliTest(
           expected.filter((setting) => explanation.includes(setting)),
         );
       expect(environments).toEqual(expected.map((setting) => [setting]));
+    }
+  },
+);
+
+cliTest(
+  "preserves the architecture of a thin trace subject",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-dylib-thin-subject-");
+    await writeFiles(directory, {
+      tool: machoImage({ cpu: CPU.arm64 }),
+    });
+    const result = await cli.run({
+      arguments: ["trace-dylib-resolution", join(directory, "tool"), "--json"],
+      environment: ENVIRONMENT,
+    });
+    expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+    expect(parseEvidence(result.json).subject?.identity).toMatchObject({
+      format: "mach-o",
+      architecture: "arm64",
+      selection: null,
+    });
+  },
+);
+
+cliTest(
+  "names a universal image without the opened slice as the trace subject",
+  async ({ cli }) => {
+    // Opening the file selects one host slice; a trace covers the slices its
+    // own parameters select, so its subject must not inherit that selection.
+    const directory = await createTestTempDirectory(
+      "rea-dylib-universal-subject-",
+    );
+    await writeFiles(directory, {
+      tool: fatImage([
+        { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+        { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+      ]),
+    });
+    for (const [narrowing, architectures] of [
+      [[], ["arm64", "x86_64"]],
+      [["--architecture", "x86_64"], ["x86_64"]],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "trace-dylib-resolution",
+          join(directory, "tool"),
+          ...narrowing,
+          "--json",
+        ],
+        environment: ENVIRONMENT,
+      });
+      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+      const evidence = parseEvidence(result.json);
+      expect(
+        dylibResolutionResultSchema
+          .parse(evidence.normalized_result)
+          .roots.map(({ architecture }) => architecture)
+          .sort(),
+      ).toEqual(architectures);
+      expect(evidence.subject?.identity).toMatchObject({
+        format: "mach-o-universal",
+        architecture: null,
+        selection: null,
+      });
     }
   },
 );

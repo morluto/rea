@@ -335,8 +335,19 @@ it("fails closed when the combined entry budget is exhausted", () => {
 });
 
 it("examines the first of two .modinfo sections and records the duplicate", () => {
-  const report = parse(kernelModuleFixture({ repeatModinfo: true }));
-  expect(report.modinfo?.entries).toHaveLength(6);
+  const report = parse(
+    kernelModuleFixture({
+      modinfo: Buffer.from("name=first\0"),
+      sharedNameSections: {
+        name: ".modinfo",
+        count: 1,
+        body: Buffer.from("name=second\0"),
+      },
+    }),
+  );
+  expect(report.modinfo?.entries.map(({ key, value }) => [key, value])).toEqual(
+    [["name", "first"]],
+  );
   expect(report.limitations).toContainEqual(
     expect.stringMatching(/multiple.*\.modinfo.*first.*examined/iu),
   );
@@ -467,3 +478,20 @@ it("charges many sections sharing one huge __ksymtab name to the entry budget", 
   expect(report.coverage.examined_entries).toBe(6 + 2 + 1 + 8192);
   expect(JSON.stringify(report).length).toBeLessThan(2 * 1024 * 1024);
 });
+
+it.each([true, false])(
+  "keeps the upper CRC word of each ELF64 version record (little=%s)",
+  (little) => {
+    const versions = Buffer.concat([
+      modversionEntry(0xfedcba9876543210n, "first", 64, little),
+      modversionEntry(0x0100000000000002n, "second", 64, little),
+    ]);
+    const report = parse(kernelModuleFixture({ bits: 64, little, versions }));
+    expect(
+      report.versions?.entries.map(({ crc_hex, name }) => [crc_hex, name]),
+    ).toEqual([
+      ["fedcba9876543210", "first"],
+      ["0100000000000002", "second"],
+    ]);
+  },
+);

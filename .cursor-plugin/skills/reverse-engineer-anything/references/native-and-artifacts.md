@@ -125,19 +125,35 @@ See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metad
 
 ## Rust dependency metadata
 
-Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal
-files need `architecture`) when
-the question concerns the cargo-auditable crate list embedded in `.dep-v0`
-(Mach-O: `__DATA,.dep-v0`). No `open_binary`, Rust installation, or target
-execution is required. The CLI equivalent is `inspect-rust-binary PATH`.
-Preserve artifact SHA-256, package order, dependency indices, and the section
-file range. A missing section is null metadata, not proof the binary has no
-dependencies. An omitted package kind stays null. A rustc commit hash is
-inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
-identify the compiler. Project the retained parent with `inspect_analysis_view`
+Use `inspect_rust_binary` for an explicit local ELF, PE, Mach-O (universal
+files need `architecture`), or WebAssembly core module when the question
+concerns the cargo-auditable crate list embedded in `.dep-v0` (Mach-O:
+`__DATA,.dep-v0`; WebAssembly: a custom section). No `open_binary`, Rust
+installation, or target execution is required. The CLI equivalent is
+`inspect-rust-binary PATH`. Preserve artifact SHA-256, package order,
+dependency indices, and the section file range. A missing section is null
+metadata, not proof the binary has no dependencies. An omitted package kind
+stays null. WebAssembly reports `bits: null` on a `32 | 64 | null` word size;
+null means the container declares no word size and must not be coerced to a
+number. ELF, PE and Mach-O stay 32 or 64. Components such as
+`wasm32-wasip2` output are unsupported. A rustc commit hash is inferred from a
+`/rustc/<40-hex>/` path in read-only data or a WebAssembly data section and
+does not by itself identify the compiler. Project the retained parent with `inspect_analysis_view`
 kind `cyclonedx` for one CycloneDX 1.6 document. Build-kind packages are
 `scope: excluded`. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md)
 and [CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
+
+## Maven POM and Gradle module metadata
+
+Use `inspect_maven_gradle_metadata` for an explicit local Maven `pom.xml` or
+Gradle `.module` file when the question concerns declared coordinates,
+dependency scopes and exclusions, BOM or platform constraints, or unresolved
+property and parent references. No `open_binary`, Maven, Gradle, or repository
+access is required. The CLI equivalent is `inspect-maven-gradle-metadata PATH`.
+Preserve artifact SHA-256, versions as spelled, and `unresolved` entries.
+Interpolation and inheritance are not performed. A missing version is not a
+resolved BOM selection. See
+[Maven POM and Gradle module metadata](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md).
 
 ## PE Authenticode certificate tables
 
@@ -208,8 +224,8 @@ Authenticode and Mach-O code-signature rows report presence, not validity.
 ## ELF note tables
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
-question concerns PT_NOTE/SHT_NOTE owners, GNU build-id, or GNU ABI-tag
-fields. No `open_binary` or target execution is required. The CLI equivalent
+question concerns PT_NOTE/SHT_NOTE owners or supported note metadata. Treat
+FDO package and dlopen fields as producer declarations. No `open_binary` or target execution is required. The CLI equivalent
 is `inspect-elf-notes PATH`. Preserve artifact SHA-256, table file ranges,
 descriptor hashes, and original owner spellings. A missing table is observed
 absence of those declarations, not proof the image never carried notes in
@@ -370,6 +386,19 @@ pages from `parent_evidence_id` or the complete Evidence bundle. Same-name
 exports retain every arity and original atom index. CLI summary delivery requires
 `--evidence_output`. Null table counts remain distinct from decoded empty tables. See
 [Erlang BEAM files](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
+
+## NuGet packages
+
+Use `inspect_nuget_nupkg` for an explicit local `.nupkg` when the question
+concerns package identity, license, repository, dependency groups, or the ZIP
+contents inventory. No `open_binary`, restore, feed access, or target execution
+is required. The CLI equivalent is `inspect-nuget-nupkg PATH`. Preserve artifact
+SHA-256, `.nuspec` fields as present, dependency version ranges as spelled, and
+path-derived member roles (`lib`, `ref`, `runtimes`, and the other NuGet folder
+conventions). Missing, ambiguous, or malformed `.nuspec` members succeed with
+inventory and limitations. Encrypted members are listed and not extracted.
+Roles are folder conventions, not restore-time asset selection. See
+[NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
 ## SQLite snapshots
 
@@ -709,7 +738,8 @@ for one selected type. For questions about a selected type, select
 names), coverage and per-collection counts. Page rows with
 `view: {kind: "managed-members", collection: "call_edges", offset: 0, limit: 64}`
 over `types`, `exported_types`, `fields`, `methods`, `member_refs`, `call_edges`,
-`field_accesses` or `user_strings`.
+`field_accesses`, `user_strings` or `unresolved_definitions`. The last collection
+pages checked TypeDef and MethodDef coordinates with failed name columns.
 Use exact `names` and `declaring_types` filters before paging supported
 collections. For a compact method lookup, request `fields: ["name",
 "declaring_type", "signature"]`; omit `body` to avoid anchors. Identity tokens,
@@ -772,14 +802,16 @@ REA. Symlinks and encrypted entries are inventory facts, not extractable files.
 The result reports the materialized directory; callers do not choose the
 destination. No separate permission grant is needed.
 
-For classic iNES cartridges, `open_binary` recognizes the byte signature without
-an executable architecture. `inspect_artifact` retains header facts and each
-PRG/CHR file unit's offset, length and SHA-256; its nested inventory's
+For iNES and NES 2.0 cartridges, `open_binary` recognizes the byte signature
+without an executable architecture. `inspect_artifact` retains header facts and
+each PRG/CHR file unit's offset, length and SHA-256; its nested inventory's
 `ines.reconstruction` verifies the actual ordered region bytes against the
-whole-file digest. Extraction includes the original header, optional trainer
-and uninterpreted trailing bytes. These file units are not mapper/CPU bank
-maps. NES 2.0, UNIF, dirty legacy headers and truncated payloads are explicitly
-refused. No emulator or 6502 analysis is performed. See the
+whole-file digest. Extraction includes the original header, optional trainer,
+NES 2.0 miscellaneous ROM bytes and uninterpreted trailing bytes. These file
+units are not mapper/CPU bank maps; NES 2.0 RAM, timing and console values are
+header declarations. UNIF, dirty legacy headers, malformed NES 2.0 declarations
+and truncated payloads are explicitly refused. No emulator or 6502 analysis is
+performed. See the
 [iNES guide](https://github.com/morluto/rea/blob/main/docs/ines-containers.md).
 
 Native DMG traversal automatically uses a read-only mount on supported macOS
@@ -792,9 +824,13 @@ and detach the mount you created when finished. REA's inspection mount is
 temporary, not a retained export of the image's contents.
 
 For headerless DOS COM, explicitly open with `format: "dos-com"` (CLI
-`--target-format dos-com`). Inspect the load image before trusting function
-analysis: the entry is `0x10100`, file offset zero, with imposed real-mode segment
-context. PSP/stack/device state remains unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
+`--target-format dos-com`). Do not pass a loader or base. Inspect the load
+image before trusting function analysis. A Ghidra ComLoader import records
+`loader: "ComLoader"` and `load_address: "0000:0100"` (linear entry `0x100`,
+file offset zero) plus a zero-filled PSP placeholder at `0000:0000`. An image
+ComLoader rejects records `loader: "BinaryLoader"`, `load_address: "1000:0100"`
+(linear `0x10100`), and `loader_fallback.reason`. Segment context is imposed for
+analysis. PSP contents, stack, and device state remain unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
 
 Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction.
 
@@ -918,6 +954,13 @@ Command lines and names are target-derived. gzip, lz4, and zstd payloads stay
 stored. The v4 signature and any AVB footer are reported with sizes and are
 not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
 [Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
+
+Android A/B OTA `payload.bin` files (CrAU v2) use the same
+inspection/extraction workflows. Prefer a retained summary for header,
+partition table, dynamic groups and signature counts. Signatures are not
+verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
+operations stay inventoried with unavailable content. See
+[Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
 
 ## ESP images
 

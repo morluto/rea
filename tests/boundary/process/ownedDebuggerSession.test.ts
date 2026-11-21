@@ -1,14 +1,14 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn as spawnPty } from "@lydell/node-pty";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   OwnedDebuggerCleanupError,
   retainedDebuggerProcessIds,
@@ -1304,8 +1304,8 @@ it("disposes supervision when the debugger exits after SIGKILL", async () => {
 it.skipIf(process.platform === "win32")(
   "retains the debugger owner while an unknown descendant holds output pipes open",
   async () => {
-    const releaseDirectory = await mkdtemp(
-      join(tmpdir(), "rea-debugger-output-writer-"),
+    const releaseDirectory = await createTestTempDirectory(
+      "rea-debugger-output-writer-",
     );
     const releaseFile = join(releaseDirectory, "release-writer");
     const writerSource = `const{watch}=require("node:fs");const watcher=watch(${JSON.stringify(releaseDirectory)},(_event,name)=>{if(name==="release-writer"){watcher.close();process.exit(0)}});process.stdout.write("writer-ready\\n");`;
@@ -1379,7 +1379,6 @@ it.skipIf(process.platform === "win32")(
           probeExit,
           new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
         ]);
-      await rm(releaseDirectory, { recursive: true, force: true });
     }
   },
 );

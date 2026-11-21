@@ -130,6 +130,20 @@ describe("UTF-8 NDJSON line buffer", () => {
     });
   });
 
+  it("releases a drained large frame when only a partial next frame remains", () => {
+    const bytes = 1024 * 1024;
+    const lines = new Utf8NdjsonLineBuffer(() => bytes);
+    expect(texts(lines.push(Buffer.alloc(bytes, 0x78)))).toEqual([]);
+
+    const [first] = texts(lines.push(Buffer.from("\npartial")));
+    expect(first?.length).toBe(bytes);
+    expect(lines.retainedTail()).toEqual({
+      pendingBytes: 7,
+      backingBytes: 7,
+    });
+    expect(texts(lines.push(Buffer.from(" line\n")))).toEqual(["partial line"]);
+  });
+
   it("discards an unterminated tail once it passes the ceiling", () => {
     const lines = new Utf8NdjsonLineBuffer(() => 16);
     expect([...lines.push(Buffer.alloc(16, 0x78))]).toEqual([]);
@@ -137,7 +151,7 @@ describe("UTF-8 NDJSON line buffer", () => {
     const refused = [...lines.push(Buffer.from("y"))];
     expect(refused).toHaveLength(1);
     const refusal = refused[0]?.ok ? undefined : refused[0]?.error;
-    expect(refusal).toEqual(new Utf8NdjsonOversizeError(16, 17));
+    expect(refusal).toEqual(new Utf8NdjsonOversizeError(16, 17, "tail"));
     // The refusal is the shared limit parse failure, with the observed bytes.
     expect(refusal).toBeInstanceOf(ParseFailureError);
     expect(refusal?.failure).toMatchObject({

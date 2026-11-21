@@ -188,6 +188,7 @@ REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به
 | فایل‌های مدل            | فرادادهٔ GGUF / safetensors، اعلان تانسورها و مجموع‌های مشتق‌شده                        | بررسی هدر؛ هش کل فایل اختیاری است; [GGUF / safetensors](../model-artifacts.md)                                                                             |
 | فرادادهٔ IL2CPP         | تصاویر اسمبلی، نام نوع‌ها/متدها و بازهٔ ایندکس‌ها در Unity global-metadata.dat         | رمزگشایی ایستای نسخه‌های 24، 27، 29، 31 و 39؛ بدون نیاز به Unity                                                                                            |
 | Godot PCK              | فهرست و استخراج آرشیو، اطلاعات اصلی هدر/دایرکتوری و هویت محتوای انتخاب‌شده            | قالب‌های ایستای 2، 3 و 4؛ بدون نیاز به Godot                                                                                                                |
+| بسته‌های NuGet          | هویت بسته، گروه‌های وابستگی، مجوز، مخزن و محتوای ZIP                                 | بازرسی ایستای داخلی .nupkg؛ [بسته‌های NuGet](../guides/managed/nuget-nupkg.md)                                                                              |
 | مصنوعات WASM           | اعتبارسنجی، بخش‌ها، فرم دقیق WAT ورودی/خروجی و WAT رمزگشایی‌شده                       | تهیه‌شده توسط کاربر WABT 1.0.42; `inspect_wasm_artifact`                                                                                                    |
 | امضاهای APK            | امضاکنندگان v1/v2/v3/v3.1، اثر انگشت گواهی، چرخش کلید و سازگاری داخلی digest        | بررسی ایستای داخلی; `inspect_apk_signature`                                                                                                                |
 
@@ -346,7 +347,6 @@ npx rea-agents@latest setup
 - [CLI و شواهد](../getting-started/cli.md): دستورات، انتخاب ارائه‌دهنده، snapshotها، ورود/خروج داده و وضعیت‌های خروج.
 - [قراردادهای MCP](../reference/mcp-contracts.md) و [پرامپت‌های ایجنت](../getting-started/mcp-prompts.md): نتایج ابزارها، نشست‌ها و بررسی‌های هدایت‌شده.
 - [فهرست ابزارها](../reference/mcp-contracts.md#generated-catalog): فهرست تولیدشده هنگام build از ابزارها، ارائه‌دهندگان و دستورات CLI.
-- [نقشهٔ راه](../development/roadmap.md): برنامه‌های آینده و پیگیری قابلیت‌ها.
 
 آسیب‌پذیری‌ها را از طریق [SECURITY.md](../../SECURITY.md) گزارش کنید.
 
@@ -372,7 +372,7 @@ applicable licenses.
 
 از کمک شما به REA استقبال می‌کنیم! برای گزارش خطا یا پیشنهاد قابلیت، یک [issue باز کنید](https://github.com/morluto/rea/issues) یا برای بهبود کد و مستندات [pull request بفرستید](https://github.com/morluto/rea/pulls).
 
-برای راه‌اندازی محیط توسعه و بررسی‌ها، [CONTRIBUTING.md](../../CONTRIBUTING.md)، برای مراحل اعتبارسنجی [آزمایش‌ها](../development/testing.md) و برای ساختار پروژه [نقشهٔ معماری](../architecture/architecture.mermaid) را ببینید.
+برای راه‌اندازی محیط توسعه و بررسی‌ها، [CONTRIBUTING.md](../../CONTRIBUTING.md)، برای مراحل اعتبارسنجی [آزمایش‌ها](../development/testing.md) را ببینید.
 
 ## مجوز
 

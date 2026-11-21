@@ -77,6 +77,7 @@ import {
   pythonPycViewItemsSchema,
   pythonPycSummarySchema,
 } from "./pythonPycView.js";
+import { nugetNupkgSummarySchema } from "./nugetNupkgView.js";
 import {
   nativeExportsViewRequestSchema,
   nativeExportsViewItemsSchema,
@@ -375,6 +376,7 @@ const viewResultBase = {
   parent_operation: z.enum([
     "trace_web_source_location",
     "inspect_python_pyc",
+    "inspect_nuget_nupkg",
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_byte_entropy",
@@ -587,6 +589,12 @@ export const pythonPycSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_python_pyc"),
   summary: pythonPycSummarySchema,
+});
+
+export const nugetNupkgSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_nuget_nupkg"),
+  summary: nugetNupkgSummarySchema,
 });
 
 export const pythonPycCodeObjectsViewResultSchema = z.strictObject({
@@ -1117,6 +1125,7 @@ export const nativeFunctionSummarySchema = z.strictObject({
     referenced_names: declaredFacetCountSchema,
     swift_string_literals: recordedFacetCountSchema,
     swift_string_literal_omissions: recordedFacetCountSchema,
+    prototype_conflicts: recordedFacetCountSchema.optional(),
     value_flow_operations: valueFlowFacetCountSchema,
     value_flow_def_use: valueFlowFacetCountSchema,
     value_flow_effects: valueFlowFacetCountSchema,
@@ -1443,6 +1452,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
+    nugetNupkgSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,

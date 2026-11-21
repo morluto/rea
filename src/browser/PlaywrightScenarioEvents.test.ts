@@ -463,18 +463,21 @@ it("caps live descendant listeners and reuses capacity after closure", () => {
   expect(sockets[2048]?.on).toHaveBeenCalledTimes(3);
 });
 
+interface SourceTransactionCaptureOptions {
+  fail?: boolean;
+  followup?: boolean;
+  metadataOnly?: boolean;
+  learnDirect?: boolean;
+  latePageValue?: string;
+  value?: string;
+  padding?: number;
+  metadataLimit?: number;
+  requestContent?: { mediaType: string; body: string; typeSecret: string };
+}
+
 /** Emit the request before attaching the source policy, matching Playwright listener order. */
 const sourceTransactionCapture = async (
-  options: {
-    fail?: boolean;
-    followup?: boolean;
-    metadataOnly?: boolean;
-    learnDirect?: boolean;
-    latePageValue?: string;
-    value?: string;
-    padding?: number;
-    metadataLimit?: number;
-  } = {},
+  options: SourceTransactionCaptureOptions = {},
 ) => {
   const listeners = new Map<string, (value: unknown) => void>();
   const context = {
@@ -517,6 +520,14 @@ const sourceTransactionCapture = async (
     },
   });
   const secrets = resolveScenarioSecrets(parsed, {});
+  if (options.requestContent !== undefined)
+    secrets.save(
+      "earlier.media",
+      "media",
+      options.requestContent.typeSecret,
+      true,
+    );
+  const mediaType = options.requestContent?.mediaType ?? "application/json";
   const capture = new PlaywrightScenarioEvents({
     page,
     context,
@@ -531,15 +542,15 @@ const sourceTransactionCapture = async (
     url: () => url,
     resourceType: () => "fetch",
     redirectedFrom: () => null,
-    postDataBuffer: () => Buffer.from(body),
+    postDataBuffer: () => Buffer.from(options.requestContent?.body ?? body),
     failure: () => null,
     sizes: async () => ({ responseBodySize: Buffer.byteLength(body) }),
     headers: () => ({
-      "content-type": "application/json",
+      "content-type": mediaType,
       "x-source-token": value,
     }),
     headersArray: async () => [
-      { name: "Content-Type", value: "application/json" },
+      { name: "Content-Type", value: mediaType },
       { name: "X-Source-Token", value },
     ],
   };
@@ -609,6 +620,34 @@ const sourceTransactionCapture = async (
   await capture.finish();
   return { capture, sourceId, value, url };
 };
+
+it("keeps byte redaction for a hidden binary declaration during the final privacy pass", async () => {
+  const typeSecret = "marked-media-parameter";
+  const { capture, sourceId } = await sourceTransactionCapture({
+    learnDirect: true,
+    value: "1000",
+    requestContent: {
+      mediaType: 'application/octet-stream; note="' + typeSecret + '"',
+      typeSecret,
+      body: '{"code":1e3,"literal":"1000"}',
+    },
+  });
+  const request = capture
+    .result()
+    .items.find(
+      (event) =>
+        event.kind === "network-content" &&
+        event.phase === "request" &&
+        event.transaction_id === sourceId,
+    );
+  if (request?.kind !== "network-content" || request.body.state !== "captured")
+    throw new Error("Expected captured request bytes");
+  expect(request.body.media_type).toBeNull();
+  expect(request.body.redacted).toBe(true);
+  const text = Buffer.from(request.body.content, "base64").toString("utf8");
+  expect(text).toContain('"code":1e3');
+  expect(text).not.toContain("1000");
+});
 
 it("redacts earlier source transaction metadata and request content before publishing", async () => {
   const { capture, sourceId, value } = await sourceTransactionCapture();
