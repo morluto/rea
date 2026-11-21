@@ -316,6 +316,9 @@ context capacity declared by its default DeepSeek Flash model; it does not
 establish live DeepSeek API or native Windows coverage. Receipts include
 request artifacts, result digests and owned-process lineage.
 
+Passing native verifier receipts require verified lineage with no live
+descendants.
+
 The DSH acceptance journey also exercises public setup, approval, doctor,
 generated-launcher MCP startup and uninstall without an installed Harness.
 That journey proves REA workflow behavior, not native Cordis expression
