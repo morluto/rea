@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import {
   dearmorPublicKeys,
   isArmoredKey,
@@ -14,6 +15,7 @@ import { verifyingKey } from "../domain/desktop/openPgpKeys.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { readHostFile } from "./HostFileRead.js";
 import type { QueryRunner } from "./HostQuery.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const FILE_MAX_BYTES = 1024 * 1024;
 
@@ -110,7 +112,7 @@ class GpgvKeyCheck {
     return {
       path: key.path,
       ...kept.value,
-      sha256: createHash("sha256").update(kept.value.bytes).digest("hex"),
+      sha256: sha256Hex(kept.value.bytes),
       fingerprint: signature.primary,
     };
   }

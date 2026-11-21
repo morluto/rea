@@ -58,7 +58,7 @@ it("records the selected shortcut as a file subject", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "file" },
+    subject: { identity: { format: "file" } },
     normalized_result: report,
   });
 });

@@ -1,12 +1,8 @@
 import {
   inspectSignalDecodersInputSchema,
   signalDecodersSchema,
-  type InspectSignalDecodersInput,
 } from "../../domain/signals/signalDecoders.js";
-import type {
-  AnalysisExecution,
-  ExecutionOptions,
-} from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
@@ -14,24 +10,11 @@ import type { Evidence } from "../../domain/evidence.js";
 import {
   decodeSignalRecordingInputSchema,
   signalRecordingSchema,
-  type DecodeSignalRecordingInput,
 } from "../../domain/signals/signalRecording.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
-
-export interface SignalRecordingPort {
-  /** Release per-call resources before returning, or retain failed cleanup for close/retry. */
-  decode(
-    input: DecodeSignalRecordingInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  inspectDecoders(
-    input: InspectSignalDecodersInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  close(): Promise<void>;
-}
+import type { SignalRecordingPort } from "../../ports/signals/SignalRecordingPort.js";
 
 /** One shared validation and Evidence owner for CLI and MCP. */
 export class SignalRecordingService {

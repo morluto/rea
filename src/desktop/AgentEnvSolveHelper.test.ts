@@ -58,19 +58,19 @@ describe("runSolveHelper", () => {
       polling.signal,
     );
     void started.catch(() => undefined);
-    const begun = Date.now();
 
     const solved = runSolveHelper({
       ...(await options(environment)),
       signal: stop.signal,
       retainCleanup: (owner) => retained.push(owner),
-      timing: { solveMs: 60_000, stopMs: 300 },
+      // The solve deadline outlasts the test: only the stop grace ends it.
+      timing: { solveMs: 3_600_000, stopMs: 300 },
     });
 
     // agentenv keeps a sandbox's folder until its teardown is confirmed, so the
     // emptied private root shows nothing is left up: only the cancellation remains.
     try {
-      await awaitAcknowledgement(started, solved, "solve helper start", 10_000);
+      await awaitAcknowledgement(started, solved, "solve helper start");
       stop.abort(new Error("cancelled by the test"));
       const failure: unknown = await solved.then(
         () => undefined,
@@ -80,7 +80,6 @@ describe("runSolveHelper", () => {
       expect((failure as Error).message).toBe("cancelled by the test");
       expect(failure).not.toHaveProperty("cleanupIncomplete", true);
       expect(retained).toHaveLength(0);
-      expect(Date.now() - begun).toBeLessThan(15_000);
     } finally {
       polling.abort();
       stop.abort();

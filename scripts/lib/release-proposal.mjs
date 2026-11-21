@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, relative, sep } from "node:path";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { requireCompleteReleaseHistory } from "./release-notes.mjs";
@@ -9,15 +9,18 @@ import { readMergedReleasePullRequest } from "./release-pull-request.mjs";
 
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
-const project = fileURLToPath(new URL("../../", import.meta.url));
 const patch = fileURLToPath(
   new URL("../../patches/release-please+17.3.0.patch", import.meta.url),
 );
 
 export function describeReleaseProposalError(error) {
   if (!(error instanceof Error)) return String(error);
-  const description = error.message || error.name || "Unknown error";
   const status = error.status;
+  const description = /^\s*<(?:!doctype\s+html\b|html[\s>])/iu.test(
+    error.message,
+  )
+    ? "GitHub returned an HTML error response"
+    : error.message || error.name || "Unknown error";
   return Number.isInteger(status) && status >= 400 && status <= 599
     ? `${description} (HTTP ${status})`
     : description;
@@ -34,20 +37,13 @@ export async function applyReleasePleasePatch(
       "The release proposal patch requires release-please 17.3.0",
     );
   }
-  // Git prefixes patch filenames with a slash-separated path, even on Windows.
-  // Split only native separators so POSIX backslashes remain filename bytes.
-  const args = [
-    "--directory",
-    relative(project, directory).split(sep).join("/"),
-    patch,
-  ];
+  // The patch names files relative to the dependency, which may resolve
+  // outside the checkout or to another drive.
+  const gitApply = (...args) =>
+    execute("git", ["apply", ...args, patch], { cwd: directory });
   const check = async (reverse) => {
     try {
-      await execute(
-        "git",
-        ["apply", "--check", ...(reverse ? ["--reverse"] : []), ...args],
-        { cwd: project },
-      );
+      await gitApply("--check", ...(reverse ? ["--reverse"] : []));
       return true;
     } catch (error) {
       if (error.code === 1) return false;
@@ -55,7 +51,7 @@ export async function applyReleasePleasePatch(
     }
   };
   if (await check(false)) {
-    await execute("git", ["apply", ...args], { cwd: project });
+    await gitApply();
   } else if (!(await check(true))) {
     throw new Error(
       "The release proposal dependency patch does not match the installed source",

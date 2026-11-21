@@ -7,14 +7,15 @@ import { join } from "node:path";
 import {
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
   PWNTOOLS_MEMORY_FAILURE_EXIT,
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Actual limits reported by the owned bridge after lowering inherited soft limits. */
 export const pwntoolsResourceLimitsSchema = z.strictObject({
@@ -76,27 +77,22 @@ export const readPwntoolsFailureEvidence = async (
       ).catch((cause: unknown) => {
         const completed = completedStableArtifact(cause);
         if (completed === undefined) throw cause;
-        finalizationFailures["resource.failure"] =
-          cause instanceof Error ? cause.message : String(cause);
+        finalizationFailures["resource.failure"] = errorMessage(cause);
         return completed;
       });
       const expected =
         cause.snapshot.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT ? "M" : "F";
-      if (!reported.bytes.equals(Buffer.from(expected, "ascii")))
-        throw new Error(
-          "Private bridge failure marker does not match the observed exit status.",
-        );
-      marker = {
-        resource: expected === "M" ? "memory" : "file-size",
-        failure: null,
-      };
+      marker = reported.bytes.equals(Buffer.from(expected, "ascii"))
+        ? { resource: expected === "M" ? "memory" : "file-size", failure: null }
+        : {
+            resource: null,
+            failure:
+              "Private bridge failure marker does not match the observed exit status.",
+          };
     } catch (markerFailure: unknown) {
       marker = {
         resource: null,
-        failure:
-          markerFailure instanceof Error
-            ? markerFailure.message
-            : String(markerFailure),
+        failure: errorMessage(markerFailure),
       };
     }
   }
@@ -119,8 +115,7 @@ export const readPwntoolsFailureEvidence = async (
       ).catch((cause: unknown) => {
         const completed = completedStableArtifact(cause);
         if (completed === undefined) throw cause;
-        finalizationFailures["limits.json"] =
-          cause instanceof Error ? cause.message : String(cause);
+        finalizationFailures["limits.json"] = errorMessage(cause);
         return completed;
       });
       const decoded = safeParseUtf8Json(reported.bytes);
@@ -134,10 +129,7 @@ export const readPwntoolsFailureEvidence = async (
     } catch (reportFailure: unknown) {
       limitReport = {
         limits: null,
-        failure:
-          reportFailure instanceof Error
-            ? reportFailure.message
-            : String(reportFailure),
+        failure: errorMessage(reportFailure),
       };
     }
   }

@@ -14,6 +14,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const exec = promisify(execFile);
 const capture = async (
@@ -41,7 +42,10 @@ const capture = async (
     throw new Error("Capture must not launch a binary provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "truncation-coverage", version: "1" });
+  const client = new Client(
+    { name: "truncation-coverage", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

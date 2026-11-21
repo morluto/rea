@@ -85,9 +85,9 @@ it("does not claim a native re-export from a candidate wrapper with a proven fac
       specifier: "./addon.node",
     }),
   );
-  expect(
-    analysis.analysis_coverage?.semantics.unknown_findings,
-  ).toBeGreaterThan(0);
+  expect(analysis.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 
 describe("native addon loader provenance", () => {

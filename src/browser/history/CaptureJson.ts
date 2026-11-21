@@ -3,7 +3,8 @@ import { captureBudgets } from "./CaptureBudgets.js";
 import { visit } from "jsonc-parser";
 import { LosslessNumber } from "lossless-json";
 import { CaptureFormatError } from "./CaptureFormatError.js";
-import { TextDecoder } from "node:util";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 
 type Frame =
   | {
@@ -21,7 +22,7 @@ const captureNodeAdmission = (maximumNodes: number | undefined) => {
     nodes++;
     if (maximumNodes !== undefined && nodes > maximumNodes)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "parser-nodes", maximum: maximumNodes },
         "JSON exceeds its parser node representation allowance.",
       );
   };
@@ -37,7 +38,7 @@ const selectCaptureObjectProperty = (
     throw new TypeError("JSON visitor emitted a property outside an object.");
   if (frame.members.has(key))
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       `${format} JSON contains duplicate object members.`,
     );
   frame.pendingKey = key;
@@ -51,6 +52,10 @@ export const parseCaptureJson = (
 ): unknown => {
   const frames: Frame[] = [];
   const admitNode = captureNodeAdmission(maximumNodes);
+  const fixedDepth = format === "Playwright trace";
+  const maximumDepth = fixedDepth
+    ? WEB_NETWORK_CAPTURE_LIMITS.depth
+    : captureBudgets().depth;
   let result: unknown;
   const valuePointer = (): string => {
     const parent = frames.at(-1);
@@ -66,10 +71,10 @@ export const parseCaptureJson = (
   // container add no level, so empty and scalar-bearing containers agree.
   const admitContainer = (): void => {
     admitNode();
-    if (frames.length >= captureBudgets().depth)
+    if (frames.length >= maximumDepth)
       throw new CaptureFormatError(
-        "input-limit",
-        `${format} exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
+        { name: "nesting-depth", maximum: maximumDepth },
+        `${format} exceeds ${fixedDepth ? "its fixed JSON nesting allowance" : "max_nesting_depth"} (${String(maximumDepth)} levels).`,
         valuePointer(),
       );
   };
@@ -129,7 +134,10 @@ export const parseCaptureJson = (
           throw new TypeError("JSON visitor emitted an unsupported literal.");
       },
       onError: () => {
-        throw new CaptureFormatError("format", `${format} is malformed JSON.`);
+        throw new CaptureFormatError(
+          "malformed",
+          `${format} is malformed JSON.`,
+        );
       },
     },
     {
@@ -147,10 +155,11 @@ export const decodeCaptureText = (
   format: "HAR" | "qlog",
 ): string => {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // Exported HAR and qlog files may carry a BOM signature (RFC 8259 8.1).
+    return decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       `${format} is not valid UTF-8 JSON.`,
     );
   }

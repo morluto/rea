@@ -1,15 +1,13 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
-import { reaCacheDirectory } from "../config/kunaCacheDirectory.js";
+import { reaCacheDirectory } from "../filesystem/cacheDirectory.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { windowsPathCandidates } from "../process/executableSearch.js";
 import { BUILD_COMPUTER_SETTINGS } from "../domain/desktop/buildComputerSettings.js";
 import { resolveProgram } from "./ProgramLookup.js";
-
-/** The settings a build computer reads where the REA server starts. */
-export { BUILD_COMPUTER_SETTINGS };
 
 /** One of the build computer's settings. */
 export type BuildComputerSetting = (typeof BUILD_COMPUTER_SETTINGS)[number];
@@ -17,19 +15,13 @@ export type BuildComputerSetting = (typeof BUILD_COMPUTER_SETTINGS)[number];
 /** The REA-owned folder `rea setup --desktop-build` packs runtime archives into. */
 export const buildComputerArchiveDirectory = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
-): string =>
-  reaCacheDirectory(
-    homeDirectoryFromEnvironment(environment, platform),
-    environment,
-    platform,
-    "build-computer",
-  );
+  platform: NodeJS.Platform,
+): string => reaCacheDirectory(environment, platform, "build-computer");
 
 /** The runtime archive packed for this REA version, named by that version. */
 export const defaultBuildComputerArchive = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   directory = buildComputerArchiveDirectory(environment, platform),
 ): string =>
   appendCallerPath(
@@ -42,11 +34,23 @@ export const defaultBuildComputerArchive = (
 export const agentEnvReportedVersion = (stdout: string): string | undefined =>
   /^agent-env (\S+)\s*$/u.exec(stdout.trim())?.[1];
 
-/** An absolute program on PATH, never one a relative PATH entry found. */
+/**
+ * An absolute program on this host's PATH, never one a relative PATH entry
+ * found. Windows searches PATH and PATHEXT as its launcher does; other hosts
+ * search POSIX PATH.
+ */
 export const programOnPath = async (
   program: string,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<string | undefined> => {
+  if (HOST_PLATFORM.platform === "win32") {
+    const candidates = windowsPathCandidates(program, environment);
+    if (!candidates.ok) return undefined;
+    for (const candidate of candidates.value)
+      if (!candidate.relativeEntry && (await isFile(candidate.path)))
+        return candidate.path;
+    return undefined;
+  }
   const found = await resolveProgram(program, environment, process.cwd());
   return found === undefined || found.fromRelativeEntry
     ? undefined
@@ -83,7 +87,7 @@ export interface BuildComputerDefaults {
  */
 export const resolveBuildComputerEnvironment = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   sources: BuildComputerDefaults = {},
 ): Promise<Readonly<NodeJS.ProcessEnv>> => {
   const defaults: Record<string, string> = {};

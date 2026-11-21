@@ -8,18 +8,22 @@ import type {
   UImageEntryMetadata,
   UImageMetadata,
 } from "../domain/artifactFormatMetadata.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { ownArtifactStream } from "./OwnedArtifactStream.js";
+  ArtifactResourceScope,
+  ArtifactFileSource,
+} from "../resources/index.js";
+import {
+  ArtifactStreamLifecycle,
+  ownArtifactStream,
+  type ArtifactMemberLifecycle,
+} from "./OwnedArtifactStream.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
@@ -27,7 +31,6 @@ import {
   parseMultiImageTable,
   parseUImageHeaderFields,
   UIMAGE_HEADER_SIZE,
-  UIMAGE_MAGIC,
   UIMAGE_MULTI_TABLE_WINDOW,
   type UImageHeaderFields,
   type UImageParseError,
@@ -47,11 +50,10 @@ export class UImageArtifactReader implements ArtifactReader {
   readonly format = "uimage" as const;
   readonly #scope = new ArtifactResourceScope();
   readonly #entries = new Map<string, UImageEntry>();
-  readonly #streams = new Set<Readable>();
+  readonly #lifecycle = new ArtifactStreamLifecycle("uImage");
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
   #header: UImageMetadata | undefined;
-  #closing = false;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
     this.#source = new ArtifactFileSource(path, "U-Boot uImage", admitted);
@@ -108,31 +110,28 @@ export class UImageArtifactReader implements ArtifactReader {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "uImage entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        "uImage entry does not match its owning inventory",
+      );
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
-      const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
-        new ArtifactReaderFailure("cancelled", "uImage read cancelled", {
-          cause: reason,
-        });
+      const lifecycle = this.#lifecycle.member(signal);
+      const { signal: streamSignal, cancellationFailure } = lifecycle;
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
           : readFileHandleChunks(handle, {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
-              signal,
+              signal: streamSignal,
               cancellationFailure,
             });
-      const output = this.#memberStream(stored, signal);
+      const output = this.#memberStream(stored, lifecycle);
       ownArtifactStream(source, output, {
         scope: this.#scope,
-        streams: this.#streams,
-        signal,
+        signal: streamSignal,
         cancellationFailure,
         label: "uImage",
       });
@@ -141,11 +140,7 @@ export class UImageArtifactReader implements ArtifactReader {
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    for (const stream of this.#streams)
-      stream.destroy(
-        new ArtifactReaderFailure("unavailable", "uImage reader closed"),
-      );
+    this.#lifecycle.close();
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
@@ -157,7 +152,7 @@ export class UImageArtifactReader implements ArtifactReader {
 
   #assertOpen(signal?: AbortSignal): void {
     assertArtifactReadActive(signal);
-    if (this.#closing)
+    if (this.#lifecycle.closed)
       throw new ArtifactReaderFailure("unavailable", "uImage reader closed");
   }
 
@@ -224,12 +219,15 @@ export class UImageArtifactReader implements ArtifactReader {
     }
   }
 
-  #memberStream(entry: UImageEntry, signal?: AbortSignal): Transform {
+  #memberStream(
+    entry: UImageEntry,
+    lifecycle: ArtifactMemberLifecycle,
+  ): Transform {
     let bytes = 0;
     const check = async (): Promise<void> => {
       if (bytes !== entry.declaredSize)
         throw formatFailure(`member ended early: ${entry.path}`);
-      await this.#source.read(signal);
+      await lifecycle.verify((signal) => this.#source.read(signal));
     };
     return new Transform({
       transform(chunk: Buffer, _encoding, callback) {
@@ -301,7 +299,7 @@ const toMetadata = (
   subImageCount: number,
 ): UImageMetadata => ({
   kind: "uimage",
-  magic: UIMAGE_MAGIC,
+  magic: facts.magic,
   timestamp: facts.timestamp,
   timestamp_iso: facts.timestampIso,
   payload_size: facts.payloadSize,

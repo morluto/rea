@@ -835,13 +835,29 @@ it("enforces the 32 sentinel boundary with typed and public limit details", asyn
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.slices[0]?.sentinel_count).toBe(32);
     } else {
+      await expect(readElectronFuseImage(path)).rejects.toMatchObject({
+        limit: { name: "maximum_sentinels_per_slice", maximum: 32 },
+        failure: {
+          kind: "limit",
+          format: "electron-fuses",
+          limit: { name: "maximum_sentinels_per_slice", maximum: 32 },
+        },
+      });
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisResourceConstraintError");
         expect(projectAnalysisError(result.error)).toMatchObject({
           code: "resource_constraint",
           retryable: false,
-          details: { reported_limits: { maximum_sentinels_per_slice: 32 } },
+          details: {
+            reported_limits: { maximum_sentinels_per_slice: 32 },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance_kind: "count",
+              limit: 32,
+              unit: "sentinels per slice",
+            },
+          },
           remediation: {
             action: expect.stringContaining("sentinel inventory"),
           },
@@ -859,6 +875,18 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
   const path = join(root, "large");
   await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
   await truncate(path, 1024 * 1024 * 1024 + 1);
+  await expect(readElectronFuseImage(path)).rejects.toMatchObject({
+    limit: { name: "maximum_input_bytes", maximum: 1024 * 1024 * 1024 },
+    failure: {
+      kind: "limit",
+      format: "electron-fuses",
+      limit: {
+        name: "maximum_input_bytes",
+        maximum: 1024 * 1024 * 1024,
+        required: 1_073_741_825n,
+      },
+    },
+  });
   const result = await provider.inspect({ path });
   expect(result.ok).toBe(false);
   if (!result.ok) {
@@ -866,9 +894,14 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      details: { reported_limits: { maximum_input_bytes: 1024 * 1024 * 1024 } },
-      remediation: {
-        action: expect.stringContaining("does not admit this input"),
+      details: {
+        reported_limits: { maximum_input_bytes: 1024 * 1024 * 1024 },
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "input",
+          limit: 1024 * 1024 * 1024,
+          unit: "bytes",
+        },
       },
     });
   }

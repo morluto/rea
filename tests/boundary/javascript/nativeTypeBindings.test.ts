@@ -1,9 +1,10 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { javascriptSourceAnalysis } from "../../../src/composition/javascriptSourceAnalysis.js";
 
 import { expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { buildJavaScriptNativeHandoffs } from "../../../src/domain/javascript/javascriptNativeHandoff.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
@@ -18,6 +19,7 @@ const analyzeFixture = async (source: string, addonPath = "addon.node") => {
     const result = await analyzeJavaScriptApplication(
       { input_path: fixture, format: "directory" },
       scope,
+      { sourceAnalysis: javascriptSourceAnalysis },
     );
     if (!result.ok) throw result.error;
     return javascriptApplicationAnalysisResultSchema.parse(

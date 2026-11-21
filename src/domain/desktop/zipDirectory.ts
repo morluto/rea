@@ -1,23 +1,27 @@
 import { crc32 } from "node:zlib";
 
+import { BinaryReader } from "../binaryContainer.js";
 import {
+  ZIP_CLASSIC_DIRECTORY_LIMITS,
+  ZIP64_END,
+  ZIP64_LOCATOR,
   ZIP_EOCD_BYTES,
-  ZIP_MAX_COMMENT_BYTES,
+  readZip64DirectoryRecord,
+  readZip64Locator,
+  zip64EndUsesSingleVolume,
+  zip64LocatorUsesSingleVolume,
   zipEndOfCentralDirectoryCandidates,
+  zipEndUsesSingleVolume,
 } from "../zipEndOfCentralDirectory.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
+import { readZipCentralExtent } from "../zip/zipCentralHeader.js";
+import { ZIP_EXTRA_FIELD, lastZipExtraField } from "../zip/zipExtraFields.js";
 
-const CENTRAL_HEADER = 0x02014b50;
-const CENTRAL_HEADER_BYTES = 46;
-const ZIP64_LOCATOR = 0x07064b50;
-const ZIP64_LOCATOR_BYTES = 20;
-const ZIP64_END = 0x06064b50;
-const ZIP64_END_BYTES = 56;
 const UTF8_NAME = 0x800;
-const UNICODE_PATH = 0x7075;
 const UNIX_TYPE = 0o170000;
 const UNIX_DIRECTORY = 0o040000;
 const MSDOS_DIRECTORY = 0x10;
-const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const STRICT_UTF8 = strictUtf8Decoder("preserve");
 
 /** An archive's central directory read a record at a time, bounded to the records it keeps. */
 export interface ZipDirectory {
@@ -32,41 +36,54 @@ export interface ZipDirectory {
 }
 
 /** Where the directory ends, how long it is and the offset it declares, from the end record and any Zip64 one. */
-const directoryEnd = (view: DataView) => {
-  const window = Math.max(
-    0,
-    view.byteLength - ZIP_EOCD_BYTES - ZIP_MAX_COMMENT_BYTES,
-  );
-  const found = zipEndOfCentralDirectoryCandidates(
-    new Uint8Array(
-      view.buffer,
-      view.byteOffset + window,
-      view.byteLength - window,
-    ),
-  ).next();
+const directoryEnd = (reader: BinaryReader) => {
+  const found = zipEndOfCentralDirectoryCandidates(reader.bytes).next();
   if (found.done === true) return undefined;
-  const end = window + found.value.offset;
-  const { totalEntries, directorySize, directoryOffset } = found.value;
-  const classic = { end, size: directorySize, declaredOffset: directoryOffset };
-  const record = end - ZIP64_LOCATOR_BYTES - ZIP64_END_BYTES;
-  // Like Python's zipfile, a Zip64 locator is followed whether or not the classic record defers to it.
-  if (
-    record < 0 ||
-    view.getUint32(end - ZIP64_LOCATOR_BYTES, true) !== ZIP64_LOCATOR
-  )
-    return classic;
-  // Read just before its locator, where zipfile and zip.js look when the locator's own offset holds no Zip64 record.
-  if (view.getUint32(record, true) === ZIP64_END)
+  const eocd = found.value;
+  const end = eocd.offset;
+  const { totalEntries, directorySize, directoryOffset } = eocd;
+  const classic =
+    zipEndUsesSingleVolume(eocd) && eocd.entriesOnDisk === totalEntries
+      ? {
+          end,
+          size: directorySize,
+          declaredOffset: directoryOffset,
+          entries: BigInt(totalEntries),
+        }
+      : undefined;
+  const locatorOffset = end - ZIP64_LOCATOR.bytes;
+  // Like Python's zipfile, follow a locator whether or not the classic record defers to it.
+  const locator = readZip64Locator(reader, locatorOffset);
+  if (locator === undefined) return classic;
+  const declared = locator.recordOffset;
+  const fallback = locatorOffset - ZIP64_END.fixedBytes;
+  // Keep the fixed-record fallback for archives with an unadjusted prepended offset.
+  for (const at of [
+    declared <= BigInt(fallback) ? Number(declared) : -1,
+    fallback,
+  ]) {
+    const record = readZip64DirectoryRecord(reader, at, locatorOffset);
+    if (!record.ok || record.value.end !== locatorOffset) continue;
+    if (
+      !zipEndUsesSingleVolume(eocd, "zip64Classic") ||
+      !zip64LocatorUsesSingleVolume(locator) ||
+      !zip64EndUsesSingleVolume(record.value) ||
+      record.value.entriesOnDisk !== record.value.totalEntries
+    )
+      return undefined;
     return {
-      end: record,
-      size: Number(view.getBigUint64(record + 40, true)),
-      declaredOffset: Number(view.getBigUint64(record + 48, true)),
+      end: at,
+      size: Number(record.value.directorySize),
+      declaredOffset: Number(record.value.directoryOffset),
+      entries: record.value.totalEntries,
     };
-  // Without one the classic values stand, as zip.js reads them, unless they are sentinels deferring to it.
+  }
+  // Keep the classic values for a stray locator when the classic record is complete.
+  const limits = ZIP_CLASSIC_DIRECTORY_LIMITS;
   const deferred =
-    totalEntries === 0xffff ||
-    directorySize === 0xffffffff ||
-    directoryOffset === 0xffffffff;
+    totalEntries === limits.count ||
+    directorySize === limits.size ||
+    directoryOffset === limits.offset;
   return deferred ? undefined : classic;
 };
 
@@ -78,41 +95,44 @@ interface RecordName {
   readonly flags: number;
 }
 
-/** An Info-ZIP Unicode Path when zip.js uses it: version 1, no UTF-8 flag, and the CRC-32 of the stored name. */
+/** The usable last Unicode Path, or null when the extra block is malformed. */
 const unicodePath = (
-  bytes: Uint8Array,
-  view: DataView,
+  reader: BinaryReader,
   { name, extra, comment, flags }: RecordName,
-): Uint8Array | undefined => {
-  for (let at = extra; at + 4 <= comment;) {
-    const length = view.getUint16(at + 2, true);
-    if (view.getUint16(at, true) === UNICODE_PATH)
-      return length >= 5 &&
-        at + 4 + length <= comment &&
-        bytes[at + 4] === 1 &&
-        (flags & UTF8_NAME) === 0 &&
-        view.getUint32(at + 5, true) === crc32(bytes.subarray(name, extra))
-        ? bytes.subarray(at + 9, at + 4 + length)
-        : undefined;
-    at += 4 + length;
-  }
-  return undefined;
+): Uint8Array | undefined | null => {
+  // zip.js indexes extra fields by ID with Map.set: the last occurrence
+  // replaces earlier ones, even when that last claim fails validation.
+  const selected = lastZipExtraField(
+    reader,
+    extra,
+    comment,
+    ZIP_EXTRA_FIELD.unicodePath,
+  );
+  if (!selected.ok) return null;
+  if (selected.value === undefined) return undefined;
+  const { start, end } = selected.value;
+  const { bytes } = reader;
+  return end - start >= 5 &&
+    bytes[start] === 1 &&
+    (flags & UTF8_NAME) === 0 &&
+    reader.u32(start + 1) === crc32(bytes.subarray(name, extra))
+    ? bytes.subarray(start + 5, end)
+    : undefined;
 };
 
 /**
  * Whether an entry's name, as REA decodes it, ends in a slash; undefined when
- * it must be UTF-8 and is not. A plain CP437 name is judged by its last byte,
- * so most records are read without allocating.
+ * its extra block is malformed or its name must be UTF-8 and is not. A plain
+ * CP437 name is judged by its last byte, so most records are read without allocating.
  */
 const endsInSlash = (
-  bytes: Uint8Array,
-  view: DataView,
+  reader: BinaryReader,
   record: RecordName,
 ): boolean | undefined => {
   const unicode =
-    record.comment > record.extra
-      ? unicodePath(bytes, view, record)
-      : undefined;
+    record.comment > record.extra ? unicodePath(reader, record) : undefined;
+  if (unicode === null) return undefined;
+  const { bytes } = reader;
   const utf8 =
     unicode ??
     ((record.flags & UTF8_NAME) === 0
@@ -138,43 +158,42 @@ export const scanZipDirectory = (
   bytes: Uint8Array,
   keep: number,
 ): ZipDirectory | undefined => {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const located = directoryEnd(view);
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
+  const located = directoryEnd(reader);
   if (located === undefined) return undefined;
   const start = located.end - located.size;
   if (start < 0) return undefined;
   const records: Uint8Array[] = [];
   let count = 0;
+  let seen = 0;
   for (let at = start; at < located.end;) {
-    if (
-      at + CENTRAL_HEADER_BYTES > located.end ||
-      view.getUint32(at, true) !== CENTRAL_HEADER
-    )
-      return undefined;
-    const name = at + CENTRAL_HEADER_BYTES;
-    const extra = name + view.getUint16(at + 28, true);
-    const comment = extra + view.getUint16(at + 30, true);
-    const next = comment + view.getUint16(at + 32, true);
-    if (next > located.end) return undefined;
-    const slash = endsInSlash(bytes, view, {
+    const extent = readZipCentralExtent(reader, at, located.end);
+    if (!extent.ok) return undefined;
+    const { name, extra, comment, next } = extent.value;
+    const slash = endsInSlash(reader, {
       name,
       extra,
       comment,
-      flags: view.getUint16(at + 8, true),
+      flags: reader.u16(at + 8),
     });
     if (slash === undefined) return undefined;
-    const external = view.getUint32(at + 38, true);
+    const external = reader.u32(at + 38);
     const directory =
       slash ||
       ((external >>> 16) & UNIX_TYPE) === UNIX_DIRECTORY ||
-      (view.getUint16(at + 4, true) >> 8 === 0 &&
-        (external & MSDOS_DIRECTORY) !== 0);
+      (reader.u16(at + 4) >> 8 === 0 && (external & MSDOS_DIRECTORY) !== 0);
     if (!directory) {
       count += 1;
       if (records.length < keep) records.push(bytes.subarray(at, next));
     }
+    seen += 1;
     at = next;
   }
+  if (BigInt(seen) !== located.entries) return undefined;
   return { start, declaredOffset: located.declaredOffset, records, count };
 };
 
@@ -184,24 +203,57 @@ export const boundedDirectoryTail = (directory: ZipDirectory): Uint8Array => {
     (total, record) => total + record.length,
     0,
   );
-  const tail = new Uint8Array(size + ZIP_EOCD_BYTES);
+  const {
+    count: maxCount,
+    size: maxSize,
+    offset: maxOffset,
+  } = ZIP_CLASSIC_DIRECTORY_LIMITS;
+  const count = directory.records.length;
+  // A declared offset past 32 bits cannot be right for a view-sized archive.
+  const offset =
+    directory.declaredOffset <= maxOffset
+      ? directory.declaredOffset
+      : directory.start;
+  const wide = count >= maxCount || size >= maxSize || offset >= maxOffset;
+  const wideBytes = wide ? ZIP64_END.fixedBytes + ZIP64_LOCATOR.bytes : 0;
+  const tail = new Uint8Array(size + wideBytes + ZIP_EOCD_BYTES);
   let at = 0;
   for (const record of directory.records) {
     tail.set(record, at);
     at += record.length;
   }
-  const end = new DataView(tail.buffer, size);
+  if (wide) {
+    const record = new DataView(tail.buffer, size, ZIP64_END.fixedBytes);
+    record.setUint32(0, ZIP64_END.signature, true);
+    record.setBigUint64(
+      ZIP64_END.sizeOffset,
+      BigInt(ZIP64_END.fixedBytes - ZIP64_END.sizePrefixBytes),
+      true,
+    );
+    record.setUint16(12, 45, true);
+    record.setUint16(14, 45, true);
+    record.setBigUint64(ZIP64_END.entriesOnDiskOffset, BigInt(count), true);
+    record.setBigUint64(ZIP64_END.totalEntriesOffset, BigInt(count), true);
+    record.setBigUint64(ZIP64_END.directorySizeOffset, BigInt(size), true);
+    record.setBigUint64(ZIP64_END.directoryOffset, BigInt(offset), true);
+    const locator = new DataView(
+      tail.buffer,
+      size + ZIP64_END.fixedBytes,
+      ZIP64_LOCATOR.bytes,
+    );
+    locator.setUint32(0, ZIP64_LOCATOR.signature, true);
+    locator.setBigUint64(
+      ZIP64_LOCATOR.recordOffset,
+      BigInt(offset) + BigInt(size),
+      true,
+    );
+    locator.setUint32(ZIP64_LOCATOR.totalDisksOffset, 1, true);
+  }
+  const end = new DataView(tail.buffer, size + wideBytes, ZIP_EOCD_BYTES);
   end.setUint32(0, 0x06054b50, true);
-  end.setUint16(8, directory.records.length, true);
-  end.setUint16(10, directory.records.length, true);
-  end.setUint32(12, size, true);
-  // A declared offset past 32 bits cannot be right for a view-sized archive; the start stands in for it.
-  end.setUint32(
-    16,
-    directory.declaredOffset <= 0xffffffff
-      ? directory.declaredOffset
-      : directory.start,
-    true,
-  );
+  end.setUint16(8, Math.min(count, maxCount), true);
+  end.setUint16(10, Math.min(count, maxCount), true);
+  end.setUint32(12, Math.min(size, maxSize), true);
+  end.setUint32(16, Math.min(offset, maxOffset), true);
   return tail;
 };

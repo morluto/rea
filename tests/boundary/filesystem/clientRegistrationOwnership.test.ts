@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -80,6 +81,7 @@ it.each([
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(configPath, sample.source);
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment,
     });
     expect(
@@ -131,6 +133,7 @@ it("removes the owned OpenCode launcher despite invalid transport", async () => 
   await mkdir(dirname(configPath), { recursive: true });
   await writeFile(configPath, source);
   const statuses = await readClientRegistrationStatuses(home, undefined, {
+    platform: HOST_PLATFORM.platform,
     environment,
   });
   expect(statuses.find(({ client }) => client === "opencode")).toMatchObject({

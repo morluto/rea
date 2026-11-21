@@ -319,6 +319,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
               DoubleDataType.dataType, FloatDataType.dataType, DoubleDataType.dataType,
               IntegerDataType.dataType, pair, Float16DataType.dataType
             },
+            false,
             false);
     VariableStorage quad = storage[storage.length - 1];
     if (quad.size() != currentProgram.getDefaultPointerSize() || quad.getRegister() == null)
@@ -338,6 +339,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
                 tagged, FloatDataType.dataType, DoubleDataType.dataType, pair, tagged,
                 IntegerDataType.dataType, FloatDataType.dataType
               },
+              false,
               false))
         placed.add(item.toString());
       List<String> expected =
@@ -502,6 +504,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
         model.getStorageLocations(
             currentProgram,
             returned ? new DataType[] {type} : new DataType[] {VoidDataType.dataType, type},
+            false,
             false);
     VariableStorage item = storage[returned ? 0 : 1];
     if (item.isForcedIndirect()) return Kind.REFERENCE;

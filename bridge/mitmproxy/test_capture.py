@@ -1,24 +1,40 @@
 """Source-owned tests for the mitmproxy adapter's record projection."""
 
+import base64
 import importlib.util
+import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest import mock
 
 
-def load_capture():
+def load_capture(resource_module=None):
     """Load the adapter with fresh mitmproxy stand-ins scoped to its import."""
     fake_mitmproxy = types.ModuleType("mitmproxy")
     fake_mitmproxy.ctx = types.SimpleNamespace()
     fake_mitmproxy.version = types.SimpleNamespace(VERSION="12.2.3")
     fake_io = types.ModuleType("mitmproxy.io")
     fake_io.tnetstring = types.ModuleType("mitmproxy.io.tnetstring")
+    if resource_module is None:
+        try:
+            import resource as resource_module
+        except ImportError:
+            resource_module = types.ModuleType("resource")
+            resource_module.RLIM_INFINITY = -1
+            resource_module.RLIMIT_AS = 9
+            resource_module.RLIMIT_CPU = 0
+            resource_module.RLIMIT_CORE = 4
+            resource_module.RLIMIT_FSIZE = 1
+            resource_module.getrlimit = lambda kind: (resource_module.RLIM_INFINITY, resource_module.RLIM_INFINITY)
+            resource_module.setrlimit = lambda kind, limits: None
     stand_ins = {
         "mitmproxy": fake_mitmproxy,
         "mitmproxy.io": fake_io,
         "mitmproxy.io.tnetstring": fake_io.tnetstring,
+        "resource": resource_module,
     }
     spec = importlib.util.spec_from_file_location(
         "rea_mitmproxy_capture", os.path.join(os.path.dirname(__file__), "capture.py")
@@ -44,6 +60,29 @@ def location(value, scheme=None):
 
 
 class TransportUserinfoTests(unittest.TestCase):
+    def assert_location_redacted(self, value, expected, scheme=None):
+        text, sidecar, redactions = location(value, scheme)
+        self.assertEqual(text, expected)
+        self.assertEqual(sidecar, {
+            "pointer": "/response/headers/0/1",
+            "representation": "producer-bytes",
+            "state": "redacted",
+            "content_base64": None,
+            "bytes": None,
+            "sha256": None,
+        })
+        self.assertEqual(
+            redactions,
+            [{"pointer": "/response/headers/0/1", "reason": "transport-credential"}],
+        )
+
+    def assert_location_retained(self, value, scheme=None):
+        text, sidecar, redactions = location(value, scheme)
+        self.assertEqual(text, value.decode("utf-8"))
+        self.assertEqual(sidecar["state"], "retained")
+        self.assertEqual(base64.b64decode(sidecar["content_base64"]), value)
+        self.assertEqual(redactions, [])
+
     def test_ignorable_controls_cannot_hide_authority_credentials(self):
         for control in [b"\t", b"\n", b"\r"]:
             for value in [b"https://" + control + b"/user:pass@host/path", b"ht" + control + b"tps://user:" + control + b"pass@host/path"]:
@@ -57,10 +96,9 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_mixed_network_separators_remove_credentials(self):
         for prefix in [b"\\\\", b"/\\", b"\\/"]:
             with self.subTest(prefix=prefix):
-                text, sidecar, redactions = location(prefix + b"user:pass@host/path", b"https")
-                self.assertEqual(text, prefix.decode("ascii") + "host/path")
-                self.assertEqual(sidecar["state"], "redacted")
-                self.assertEqual(len(redactions), 1)
+                self.assert_location_redacted(
+                    prefix + b"user:pass@host/path", prefix.decode("ascii") + "host/path", b"https"
+                )
 
     def test_non_special_base_keeps_backslashes_inside_network_authorities(self):
         text, sidecar, redactions = location(b"//user\\name:pass@host/x", b"foo")
@@ -86,10 +124,7 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_same_scheme_locations_preserve_relative_path_text_and_bytes(self):
         for value in [b"https:invoice@customer", b"https:/invoice@customer", b"https:\\invoice@customer"]:
             with self.subTest(value=value):
-                text, sidecar, redactions = location(value, b"https")
-                self.assertEqual(text, value.decode("ascii"))
-                self.assertEqual(sidecar["state"], "retained")
-                self.assertEqual(redactions, [])
+                self.assert_location_retained(value, b"https")
 
     def test_location_authorities_still_remove_credentials_with_a_base_scheme(self):
         for value, scheme, expected in [
@@ -98,10 +133,7 @@ class TransportUserinfoTests(unittest.TestCase):
             (b"https:user:pass@host/path", b"http", "https:host/path"),
         ]:
             with self.subTest(value=value, scheme=scheme):
-                text, sidecar, redactions = location(value, scheme)
-                self.assertEqual(text, expected)
-                self.assertEqual(sidecar["state"], "redacted")
-                self.assertEqual(len(redactions), 1)
+                self.assert_location_redacted(value, expected, scheme)
 
     def test_backup_location_uses_its_own_request_scheme(self):
         record = capture.project_record({
@@ -114,25 +146,14 @@ class TransportUserinfoTests(unittest.TestCase):
         self.assertEqual(record["reported"]["backup"]["response"]["headers"][0][1], "https:invoice@customer")
         self.assertEqual(record["redactions"], [])
 
-    def test_backslash_ends_a_special_scheme_authority(self):
-        text, sidecar, redactions = location(b"https://example.test\\part@tail")
-        self.assertEqual(text, "https://example.test\\part@tail")
-        self.assertEqual(sidecar["state"], "retained")
-        self.assertIsNotNone(sidecar["content_base64"])
-        self.assertEqual(redactions, [])
-
-    def test_userinfo_before_a_backslash_is_still_removed(self):
-        text, sidecar, redactions = location(b"https://user:pw@example.test\\path")
-        self.assertEqual(text, "https://example.test\\path")
-        self.assertEqual(sidecar["state"], "redacted")
-        self.assertEqual(
-            redactions,
-            [{"pointer": "/response/headers/0/1", "reason": "transport-credential"}],
+    def test_where_a_special_scheme_authority_ends(self):
+        self.assert_location_retained(b"https://example.test\\part@tail")
+        self.assert_location_redacted(
+            b"https://user:pw@example.test\\path", "https://example.test\\path"
         )
-
-    def test_ordinary_userinfo_is_removed(self):
-        text, _sidecar, _redactions = location(b"https://user:pw@example.test/a@b")
-        self.assertEqual(text, "https://example.test/a@b")
+        self.assert_location_redacted(
+            b"https://user:pw@example.test/a@b", "https://example.test/a@b"
+        )
 
     def test_empty_userinfo_marker_is_removed(self):
         self.assertEqual(
@@ -156,11 +177,7 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_file_base_keeps_paths_after_the_fixed_network_boundary(self):
         for value in [b"///u@h", b"////u@h"]:
             with self.subTest(value=value):
-                text, sidecar, redactions = location(value, b"file")
-                self.assertEqual(text, value.decode("ascii"))
-                self.assertEqual(sidecar["state"], "retained")
-                self.assertIsNotNone(sidecar["content_base64"])
-                self.assertEqual(redactions, [])
+                self.assert_location_retained(value, b"file")
 
     def test_file_urls_keep_path_text(self):
         self.assertEqual(capture.without_userinfo("file:///a@b"), "file:///a@b")
@@ -172,10 +189,7 @@ class TransportUserinfoTests(unittest.TestCase):
         )
         for value in [b"\\\\user:pass@host/x", b"/\\user:pass@host/x", b"//user:pass@host/x"]:
             with self.subTest(value=value):
-                text, sidecar, redactions = location(value, b"file")
-                self.assertEqual(text, value.decode("ascii"))
-                self.assertEqual(sidecar["state"], "retained")
-                self.assertEqual(redactions, [])
+                self.assert_location_retained(value, b"file")
 
     def test_rejected_special_hosts_keep_their_source(self):
         # A rejected host or port fails the whole URL, so it has no userinfo.
@@ -190,10 +204,7 @@ class TransportUserinfoTests(unittest.TestCase):
         ]:
             with self.subTest(value=value):
                 self.assertEqual(capture.without_userinfo(value), value)
-        text, sidecar, redactions = location(b"https://user:pass@h^st/x", b"https")
-        self.assertEqual(text, "https://user:pass@h^st/x")
-        self.assertEqual(sidecar["state"], "retained")
-        self.assertEqual(redactions, [])
+        self.assert_location_retained(b"https://user:pass@h^st/x", b"https")
 
     def test_accepted_special_hosts_still_remove_userinfo(self):
         for value, expected in [
@@ -217,10 +228,9 @@ class TransportUserinfoTests(unittest.TestCase):
                 self.assertEqual(
                     capture.without_userinfo(f"https://user:pw@{host}/"), f"https://{host}/"
                 )
-        text, sidecar, redactions = location(b"https://user:pw@%EF%BC%91.2.3.4/", b"https")
-        self.assertEqual(text, "https://%EF%BC%91.2.3.4/")
-        self.assertEqual(sidecar["state"], "redacted")
-        self.assertEqual(len(redactions), 1)
+        self.assert_location_redacted(
+            b"https://user:pw@%EF%BC%91.2.3.4/", "https://%EF%BC%91.2.3.4/", b"https"
+        )
         # ASCII rejections still hold for non-ASCII hosts.
         self.assertEqual(capture.without_userinfo("https://user@１^/"), "https://user@１^/")
 
@@ -229,10 +239,9 @@ class TransportUserinfoTests(unittest.TestCase):
         for suffix in [b" ", b"\x01", b"\x00 \x1f"]:
             with self.subTest(suffix=suffix):
                 value = b"https://user:pw@example.test" + suffix
-                text, sidecar, redactions = location(value, b"https")
-                self.assertEqual(text, "https://example.test" + suffix.decode("latin-1"))
-                self.assertEqual(sidecar["state"], "redacted")
-                self.assertEqual(len(redactions), 1)
+                self.assert_location_redacted(
+                    value, "https://example.test" + suffix.decode("latin-1"), b"https"
+                )
 
     def test_rejected_ip_literals_keep_their_source(self):
         for value in [
@@ -259,6 +268,270 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_non_special_schemes_keep_backslashes_in_the_authority(self):
         self.assertEqual(capture.without_userinfo("foo://a\\b@host/x"), "foo://host/x")
         self.assertEqual(capture.without_userinfo(b"//a\\b@host"), b"//a\\b@host")
+
+
+class OfflineLimitTests(unittest.TestCase):
+    def load_limited(self, limits, setrlimit):
+        resource = types.ModuleType("resource")
+        resource.RLIM_INFINITY = 2 ** 62
+        resource.RLIMIT_AS = 1
+        resource.RLIMIT_CPU = 2
+        resource.RLIMIT_CORE = 3
+        resource.RLIMIT_FSIZE = 4
+        resource.getrlimit = lambda kind: limits[kind]
+        resource.setrlimit = setrlimit
+        return load_capture(resource)
+
+    def test_tighter_hard_limits_are_kept_and_shutdown_still_runs(self):
+        infinity = 2 ** 62
+        # Linux never reports a soft limit above its hard limit. Start at that ceiling.
+        limits = {
+            1: (1024, 1024),
+            2: (5, 5),
+            3: (infinity, infinity),
+            4: (512, 512),
+        }
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 1000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(reply_path, encoding="ascii") as handle:
+                reply = json.loads(handle.read())
+        self.assertEqual(
+            calls,
+            [(1, (1024, 1024)), (2, (5, 5)), (3, (0, 0)), (4, (512, 512))],
+        )
+        self.assertEqual(shutdowns, ["down"])
+        self.assertFalse(reply["ok"])
+
+    def test_inherited_hard_limit_stays_above_the_new_soft_limit(self):
+        infinity = 2 ** 62
+        address_limit = 768 * 1024 * 1024
+        output_bytes = 1000
+        # Unlimited CPU, and finite soft limits strictly below their hard limits.
+        # Writing the new soft value into the hard limit fails these pairs.
+        limits = {
+            1: (address_limit * 2, address_limit * 4),
+            2: (infinity, infinity),
+            3: (infinity, infinity),
+            4: (5000, 9000),
+        }
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": output_bytes, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(os.path.join(parent, "effective-cpu.json"), encoding="ascii") as handle:
+                cpu_record = json.load(handle)
+        self.assertEqual(cpu_record, {"requested_seconds": 30, "seconds": 30})
+        self.assertEqual(
+            calls,
+            [
+                (1, (address_limit, address_limit * 4)),
+                (2, (30, infinity)),
+                (3, (0, 0)),
+                (4, (output_bytes, 9000)),
+            ],
+        )
+        self.assertEqual(shutdowns, ["down"])
+
+    def test_tighter_inherited_cpu_limit_is_recorded(self):
+        infinity = 2 ** 62
+        limits = {kind: (infinity, infinity) for kind in (1, 3, 4)}
+        limits[2] = (1, 100)
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 1000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(os.path.join(parent, "effective-cpu.json"), encoding="ascii") as handle:
+                cpu_record = json.load(handle)
+        self.assertEqual(calls[1], (2, (1, 100)))
+        self.assertEqual(cpu_record, {"requested_seconds": 30, "seconds": 1})
+        self.assertFalse(os.path.exists(os.path.join(parent, "effective-cpu.json.tmp")))
+        self.assertEqual(shutdowns, ["down"])
+
+    def test_tighter_inherited_file_limit_bounds_the_reply(self):
+        infinity = 2 ** 62
+        file_limit = 4096
+        limits = {kind: (infinity, infinity) for kind in (1, 2, 3)}
+        limits[4] = (file_limit, 8192)
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        module.decode = lambda _request: {"pad": "x" * 5000}
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 10000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(reply_path, "rb") as handle:
+                reply_bytes = handle.read()
+        reply = json.loads(reply_bytes.decode("ascii"))
+        self.assertLessEqual(len(reply_bytes), file_limit)
+        self.assertEqual(reply["reason"], "fixed-limit")
+        self.assertEqual(reply["boundary"], "file-size")
+        self.assertEqual(reply["ceiling"]["limit"], file_limit)
+        self.assertEqual(calls[-1], (4, (file_limit, 8192)))
+        self.assertEqual(shutdowns, ["down"])
+
+    def _memory_failure(self, address_soft, address_hard):
+        infinity = 2 ** 62
+        limits = {kind: (infinity, infinity) for kind in (2, 3, 4)}
+        limits[1] = (address_soft, address_hard)
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+
+        def exhausted(_request):
+            raise MemoryError("payload must not enter diagnostics")
+
+        module.decode = exhausted
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 10000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(reply_path, "rb") as handle:
+                reply_bytes = handle.read()
+        return json.loads(reply_bytes.decode("ascii")), reply_bytes, calls, shutdowns, module
+
+    def test_tighter_inherited_address_limit_names_the_memory_ceiling(self):
+        soft = 512 * 1024 * 1024
+        hard = 1024 * 1024 * 1024
+        reply, reply_bytes, calls, shutdowns, _module = self._memory_failure(soft, hard)
+        self.assertNotIn(b"payload must not enter diagnostics", reply_bytes)
+        self.assertEqual(reply["reason"], "fixed-limit")
+        self.assertEqual(reply["boundary"], "memory")
+        self.assertEqual(reply["ceiling"]["limit"], soft)
+        self.assertEqual(reply["ceiling"]["kind"], "bytes")
+        self.assertIn(str(soft), reply["message"])
+        self.assertNotIn("exhausted its 768 MiB", reply["message"])
+        self.assertEqual(calls[0], (1, (soft, hard)))
+        self.assertEqual(shutdowns, ["down"])
+
+    def test_requested_address_budget_stays_a_resource_limit(self):
+        budget = 768 * 1024 * 1024
+        reply, reply_bytes, calls, shutdowns, module = self._memory_failure(budget * 2, budget * 4)
+        self.assertNotIn(b"payload must not enter diagnostics", reply_bytes)
+        self.assertEqual(reply["reason"], "resource-limit")
+        self.assertEqual(reply["message"], "Native decoder exhausted its 768 MiB address-space budget.")
+        self.assertNotIn("ceiling", reply)
+        self.assertEqual(calls[0], (1, (budget, budget * 4)))
+        self.assertEqual(shutdowns, ["down"])
+        direct = module.failure_reply(MemoryError("payload must not enter diagnostics"))
+        self.assertEqual(direct["reason"], "resource-limit")
+        self.assertNotIn("payload must not enter diagnostics", json.dumps(direct))
+
+    def test_limit_setup_failure_still_shuts_down(self):
+        infinity = 2 ** 62
+        limits = {kind: (infinity, infinity) for kind in (1, 2, 3, 4)}
+
+        def setrlimit(_kind, _pair):
+            raise ValueError("not allowed to raise maximum limit")
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        module.ctx.options = types.SimpleNamespace(rea_request_path="")
+        with self.assertRaisesRegex(ValueError, "not allowed to raise maximum limit"):
+            module.addons[0].running()
+        self.assertEqual(shutdowns, ["down"])
 
 
 if __name__ == "__main__":

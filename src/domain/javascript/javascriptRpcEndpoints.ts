@@ -14,8 +14,6 @@ import type {
   JavaScriptRpcScan,
 } from "./javascriptRpcEndpoint.js";
 
-export type { JavaScriptRpcScan } from "./javascriptRpcEndpoint.js";
-
 // tRPC proxies preserve router and procedure names as property names, so they
 // survive identifier minification. Method names follow @trpc/react-query and
 // @trpc/tanstack-react-query 11.19 documentation; cache-key helpers such as

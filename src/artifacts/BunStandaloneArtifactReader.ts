@@ -3,11 +3,10 @@ import {
   DEFAULT_BUN_READER_LIMITS,
   type BunReaderLimits,
 } from "../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { setImmediate } from "node:timers/promises";
-import { Readable, Transform } from "node:stream";
+import { Readable } from "node:stream";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type {
   BunStandaloneEntryMetadata,
@@ -16,22 +15,25 @@ import type {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
-  normalizeArtifactPath,
-  ArtifactPathRegistry,
-} from "./ArtifactPaths.js";
-import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { ownArtifactStream } from "./OwnedArtifactStream.js";
+  ArtifactResourceScope,
+  normalizeArtifactPath,
+  ArtifactPathRegistry,
+  ArtifactFileSource,
+  artifactReaderLimitFailure,
+} from "../resources/index.js";
+import {
+  ArtifactStreamLifecycle,
+  checkedArtifactMemberStream,
+  ownArtifactStream,
+} from "./OwnedArtifactStream.js";
 import {
   bunFormatFailure,
   bunMetadataBytesLimit,
@@ -57,12 +59,11 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
   readonly format = "bun-standalone" as const;
   readonly #scope = new ArtifactResourceScope();
   #entries = new Map<string, ArtifactEntry>();
-  readonly #streams = new Set<Readable>();
+  readonly #lifecycle = new ArtifactStreamLifecycle("Bun standalone");
   readonly #source: ArtifactFileSource;
   #admission: BunStandaloneAdmission | undefined;
   readonly #preparation = new ArtifactPreparation();
   #header: BunStandaloneMetadata | undefined;
-  #closing = false;
 
   constructor(
     path: string,
@@ -97,7 +98,7 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
 
   async *entries(
     signal?: AbortSignal,
-    _options?: ArtifactTraversalOptions,
+    options?: ArtifactTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
@@ -116,43 +117,44 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
       yield copyArtifactEntry(entry);
     }
     this.#assertOpen(signal);
+    // Every present module region is listed; absent regions are not members.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "Bun standalone entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        "Bun standalone entry does not match its owning inventory",
+      );
       const { handle } = await this.#source.readSelectedPath(signal);
       this.#assertOpen(signal);
       if (stored.byteOffset === null || stored.declaredSize === null)
         throw bunFormatFailure("member has no physical byte range");
-      const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
-        new ArtifactReaderFailure(
-          "cancelled",
-          "Bun standalone read cancelled",
-          {
-            cause: reason,
-          },
-        );
+      const lifecycle = this.#lifecycle.member(signal);
+      const { signal: streamSignal, cancellationFailure } = lifecycle;
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
           : readFileHandleChunks(handle, {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
-              signal,
+              signal: streamSignal,
               cancellationFailure,
             });
-      const output = memberStream(stored);
+      const output = checkedArtifactMemberStream(
+        stored,
+        "Bun standalone",
+        bunFormatFailure,
+        () =>
+          lifecycle.verify((signal) => this.#source.readSelectedPath(signal)),
+      );
       ownArtifactStream(source, output, {
         scope: this.#scope,
-        streams: this.#streams,
-        signal,
+        signal: streamSignal,
         cancellationFailure,
         label: "Bun standalone",
       });
@@ -161,14 +163,7 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    for (const stream of this.#streams)
-      stream.destroy(
-        new ArtifactReaderFailure(
-          "unavailable",
-          "Bun standalone reader closed",
-        ),
-      );
+    this.#lifecycle.close();
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
@@ -183,7 +178,7 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
 
   #assertOpen(signal?: AbortSignal): void {
     assertArtifactReadActive(signal);
-    if (this.#closing)
+    if (this.#lifecycle.closed)
       throw new ArtifactReaderFailure(
         "unavailable",
         "Bun standalone reader is closed",
@@ -405,23 +400,6 @@ const logicalModulePath = (
       throw cause;
     return { path: fallback, sourcePath: text };
   }
-};
-
-const memberStream = (entry: ArtifactEntry): Transform => {
-  let bytes = 0;
-  return new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      bytes += chunk.length;
-      callback(null, chunk);
-    },
-    flush(callback) {
-      callback(
-        bytes === entry.declaredSize
-          ? null
-          : bunFormatFailure(`member ended early: ${entry.path}`),
-      );
-    },
-  });
 };
 
 const entryMetadataJson = (entry: ArtifactEntry): JsonValue =>

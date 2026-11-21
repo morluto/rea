@@ -7,8 +7,15 @@ import { registerHooks } from "node:module";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { PrivateRuntimeRoot } from "../../dist/process/PrivateRuntimeRoot.js";
 import { createVerifierCommands } from "../../scripts/lib/verify-commands.mjs";
+import { importVerifierSource } from "../../scripts/lib/verifier-source-loader.mjs";
+
+// VerifierFixture loads its root through the verifier source loader, so the
+// close observer patches that same module instance.
+const { PrivateRuntimeRoot } = await importVerifierSource(
+  new URL("../../src/process/PrivateRuntimeRoot.ts", import.meta.url).href,
+  import.meta.url,
+);
 
 const scenario = process.argv[2];
 const directory = process.argv[3];

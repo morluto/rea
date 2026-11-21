@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -5,15 +7,11 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { peResourcesSchema } from "../../../src/domain/native/peResources.js";
-import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import {
-  cliTest,
-  runFileCli,
-  type TestCli,
-} from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 type PeResourceCall = (
   arguments_: Record<string, unknown>,
@@ -26,7 +24,7 @@ const expectPeInputFailureAcrossAdapters = async (input: {
   readonly reason: "invalid_format" | "invalid_value";
 }) => {
   const { cli, call, path, reason } = input;
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-pe-resources", path, "--json"],
   });
   expect(result.exitCode).toBe(1);
@@ -98,6 +96,78 @@ const expectPeInputFailuresAcrossAdapters = async (input: {
 
 const contract = toolContract("inspect_pe_resources");
 
+const expectPeResourceNameExtentsAcrossAdapters = async (
+  cli: TestCli,
+  call: PeResourceCall,
+  root: string,
+): Promise<void> => {
+  const payload = Buffer.from("text");
+  const retainedName = "Evidence".repeat(5_000);
+  for (const [priorLeaves, backed] of [
+    [36, false],
+    [38, false],
+    [38, true],
+  ] as const) {
+    const fixture = peResourceFixture(
+      false,
+      [
+        ...Array.from({ length: priorLeaves }, (_, index) => ({
+          type: 10,
+          name: retainedName,
+          language: index + 1,
+          payload,
+        })),
+        {
+          type: 11,
+          name: backed ? "S".repeat(65_535) : "SECOND",
+          language: 1033,
+          payload,
+        },
+      ],
+      256 * 1024,
+    );
+    if (!backed) {
+      const resourceRoot = fixture.directoryOffsets[0];
+      const nameDirectory = fixture.directoryOffsets.at(-2);
+      if (resourceRoot === undefined || nameDirectory === undefined)
+        throw new Error("Missing fixture resource directory");
+      const nameOffset =
+        fixture.bytes.readUInt32LE(nameDirectory + 16) & 0x7fff_ffff;
+      // Only the length changes. The declared name cannot fit in the resource interval.
+      fixture.bytes.writeUInt16LE(65_535, resourceRoot + nameOffset);
+    }
+    const path = join(root, `resource-name-${priorLeaves}-${backed}.exe`);
+    await writeFile(path, fixture.bytes);
+    if (!backed) {
+      await expectPeInputFailureAcrossAdapters({
+        cli,
+        call,
+        path,
+        reason: "invalid_format",
+      });
+      continue;
+    }
+    const result = await cli.run({
+      arguments: ["inspect-pe-resources", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        reported_limits: {
+          boundary: "pe_resource_metadata_bytes",
+          maximum: 8 * 1024 * 1024,
+          maximum_metadata_bytes: 8 * 1024 * 1024,
+        },
+      },
+    });
+    const response = await call({ path });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response)).toEqual({ error: result.json });
+  }
+};
+
 const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
   readonly cli: TestCli;
   readonly call: PeResourceCall;
@@ -117,7 +187,7 @@ const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
       );
       const path = join(root, `word-aligned-${plus}-${index}.exe`);
       await writeFile(path, fixture.bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-pe-resources", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -208,7 +278,7 @@ const expectPeMappingOwnershipAcrossAdapters = async (
       });
       continue;
     }
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-resources", path, "--json"],
     });
     expect(result.exitCode, name).toBe(0);
@@ -266,16 +336,16 @@ const expectPeInventoriesAcrossAdapters = async (
     };
     // Keep an independent public-wrapper process for both PE32 and PE32+.
     // The empty-payload variants reuse only compiled-command startup.
-    const result = await (empty
-      ? runFileCli(cli, invocation)
-      : cli.run(invocation));
+    const result = await (empty ? cli.run(invocation) : cli.run(invocation));
     expect(result.exitCode).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
     const report = peResourcesSchema.parse(evidence.normalized_result);
-    expect(evidence.subject?.digest).toMatchObject({
+    expect(evidence.subject?.identity).toMatchObject({
       sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
     });
-    expect(evidence.subject?.architecture).toBe(plus ? "x86_64" : "x86");
+    expect(fileIdentity(evidence.subject).architecture).toBe(
+      plus ? "x86_64" : "x86",
+    );
     expect(report.coverage).toMatchObject({
       status: "complete",
       resources: 5,
@@ -348,7 +418,7 @@ const expectPeEmptyBranchesAcrossAdapters = async (
       shared ? "shared-empty64.exe" : "empty-branches32.exe",
     );
     await writeFile(path, fixture.bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-pe-resources", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -411,7 +481,7 @@ const expectPeEmptyBranchesAcrossAdapters = async (
         entry_locations: resource.entry_locations.slice(0, 2),
       });
     }
-    expect(evidence.subject?.digest?.sha256).toBe(
+    expect(fileIdentity(evidence.subject).sha256).toBe(
       createHash("sha256").update(fixture.bytes).digest("hex"),
     );
     expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
@@ -441,7 +511,7 @@ cliTest(
     const call: PeResourceCall = (arguments_) =>
       client.callTool(
         { name: definition.name, arguments: arguments_ },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
     const sessionDefinition = inventory.tools.find(
       ({ name }) => name === "binary_session",
@@ -450,7 +520,7 @@ cliTest(
       throw new Error("Missing binary_session tool contract");
     const session = await client.callTool(
       { name: sessionDefinition.name, arguments: {} },
-      { toolDefinition: sessionDefinition },
+      { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
     );
     expect(session.isError, JSON.stringify(session)).not.toBe(true);
     const status = toolContract("binary_session").outputSchema.parse(
@@ -469,6 +539,7 @@ cliTest(
       root,
     });
     await expectPeMappingOwnershipAcrossAdapters(cli, call, root);
+    await expectPeResourceNameExtentsAcrossAdapters(cli, call, root);
     await expectPePaddingFailureAcrossAdapters({
       cli,
       call,

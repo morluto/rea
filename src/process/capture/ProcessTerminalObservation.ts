@@ -8,6 +8,7 @@ import type {
   TerminalCaptureRetention,
 } from "./ProcessCaptureLifecycle.js";
 import type { RenderedTerminalFrame } from "../../domain/process/processCapture.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 interface ProcessTerminalObservation {
   readonly retention: TerminalCaptureRetention;
@@ -18,7 +19,7 @@ const terminalFailure = (cause: unknown): AnalysisError =>
   cause instanceof AnalysisError
     ? cause
     : new ProcessCaptureError(
-        `Terminal observation failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Terminal observation failed: ${errorMessage(cause)}`,
         { cause },
       );
 

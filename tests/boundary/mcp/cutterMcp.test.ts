@@ -13,6 +13,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const assertUncertainEvidence = async (
   client: Client,
@@ -47,8 +48,16 @@ const assertUncertainEvidence = async (
     execution_state: "unknown",
     error: "transport-response-missing",
     message: expect.stringContaining("do not retry automatically"),
-    document_generation: 3,
+    // No reply was read, so the generation after the command is unknown.
+    document_generation: null,
+    output_truncated: null,
   });
+  expect(uncertainEvidence.limitations).toContainEqual(
+    expect.stringMatching(/did not report the document generation/u),
+  );
+  expect(uncertainEvidence.limitations).toContainEqual(
+    expect.stringMatching(/did not declare whether output was omitted/u),
+  );
   expect(uncertainEvidence.limitations).toContainEqual(
     expect.stringMatching(
       /completion.*could not be confirmed.*not retry.*effects/iu,
@@ -148,7 +157,9 @@ const createMcpBridge = async (
                     execution_state: "not_started",
                     error: "session-poisoned-after-ui-timeout",
                   }
-                : {}),
+                : status
+                  ? {}
+                  : { execution_state: "complete" }),
               session_id: request.session_id,
               output: status ? undefined : "synthetic Cutter command output",
               current_file: "/fixtures/sample.bin",
@@ -212,7 +223,10 @@ it("preserves live Cutter command Evidence and parity through the MCP boundary",
       providerEnvironment: { ...process.env, REA_CUTTER_BRIDGE_DIR: directory },
     },
   );
-  const client = new Client({ name: "cutter-mcp-boundary", version: "1" });
+  const client = new Client(
+    { name: "cutter-mcp-boundary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -231,6 +245,7 @@ it("preserves live Cutter command Evidence and parity through the MCP boundary",
   expect(discovery.structuredContent).toMatchObject({
     discovery_status: "sessions_found",
     sessions: [{ session_id: sessionId, document_generation: 3 }],
+    limitations: [],
   });
 
   const command = await client.callTool({

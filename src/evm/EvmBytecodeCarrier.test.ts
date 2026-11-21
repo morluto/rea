@@ -34,7 +34,8 @@ it("rejects a long interior separator run without pathological backtracking", as
   `;
   await promisify(execFile)(
     process.execPath,
-    ["--input-type=module", "-e", source],
+    // tsx resolves the module's own `.js` imports to their TypeScript sources.
+    ["--import", "tsx", "--input-type=module", "-e", source],
     {
       timeout: 15_000,
       killSignal: "SIGKILL",

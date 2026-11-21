@@ -58,7 +58,6 @@ describe("Swift demangling CLI with line-terminator characters", () => {
         "--json",
       ],
       environment,
-      timeoutMs: 20_000,
     });
     expect(result.signal).toBeNull();
     expect(result.exitCode).toBe(1);
@@ -76,7 +75,6 @@ describe("Swift demangling CLI with line-terminator characters", () => {
       const result = await cli.run({
         arguments: ["demangle-swift", "--json"],
         environment,
-        timeoutMs: 20_000,
       });
       expect(result.signal).toBeNull();
       expect(result.exitCode).toBe(1);

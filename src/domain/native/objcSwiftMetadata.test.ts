@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   inspectNativeDispatchMetadata,
-  objcImplementationClassName,
+  swiftConformanceSchema,
 } from "./objcSwiftMetadata.js";
 
 describe("symbol-only Objective-C implementation identity", () => {
   it.each([" ", "  ", "\t"])(
-    "interprets legacy symbol ownership with separator %j without rewriting retained facts",
+    "separates category ownership with separator %j",
     (separator) => {
       const metadata = inspectNativeDispatchMetadata(
         [
@@ -18,37 +18,13 @@ describe("symbol-only Objective-C implementation identity", () => {
         ],
         1,
       );
-      const current = metadata.objc_dispatch_implementations[0]!;
-      const { category: _category, ...record } = current;
-      const legacy = { ...record, class_name: "StoreController(Actions)" };
-      expect(objcImplementationClassName(legacy)).toBe("StoreController");
-      expect(legacy.class_name).toBe("StoreController(Actions)");
-      expect(legacy.evidence).toBe(current.evidence);
-      expect(objcImplementationClassName({ ...legacy, evidence: [] })).toBe(
-        legacy.class_name,
-      );
-      expect(
-        objcImplementationClassName({
-          ...legacy,
-          evidence: [
-            ...legacy.evidence,
-            {
-              ...legacy.evidence[0]!,
-              description:
-                "Provider symbol -[OtherController(Actions) buildTapped:]",
-            },
-          ],
-        }),
-      ).toBe(legacy.class_name);
-      expect(objcImplementationClassName({ ...legacy, category: null })).toBe(
-        legacy.class_name,
-      );
-      expect(
-        objcImplementationClassName({
-          ...legacy,
-          decode: { status: "decoded", reason: null },
-        }),
-      ).toBe(legacy.class_name);
+      expect(metadata.objc_dispatch_implementations).toMatchObject([
+        {
+          class_name: "StoreController",
+          category: "Actions",
+          selector: "buildTapped:",
+        },
+      ]);
     },
   );
 
@@ -369,4 +345,10 @@ it("derives classes only from complete class symbol leaves", () => {
       reason: "provider_name_inventory_has_no_supported_objc_method_symbols",
     }),
   );
+});
+
+it("requires the Swift ABI type-reference kind on every conformance", () => {
+  const field = swiftConformanceSchema.shape.type_reference_kind;
+  expect(field.safeParse(0).success).toBe(true);
+  expect(field.safeParse(undefined).success).toBe(false);
 });

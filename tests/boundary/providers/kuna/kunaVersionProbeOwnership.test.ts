@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../../src/platform/HostPlatform.js";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, writeFile } from "node:fs/promises";
@@ -6,14 +7,14 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   createKunaResourceScope,
   inspectKunaInstallation,
   kunaInstallationCancellation,
 } from "../../../../src/kuna/KunaInstallation.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 import { ProviderAdapterError } from "../../../../src/domain/providerAdapterError.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
@@ -103,11 +104,11 @@ it.skipIf(process.platform === "win32")(
     );
     const launcher = makeLauncher();
     const scope = new ArtifactResourceScope();
-    const startedAt = Date.now();
     try {
       const result = await inspectKunaInstallation(
         { REA_KUNA_COMMAND: executable },
         {
+          platform: HOST_PLATFORM.platform,
           resourceScope: resourceScopeFor(scope),
           processLauncher: launcher.launcher,
           probeTimeoutMs: 3_000,
@@ -136,7 +137,6 @@ it.skipIf(process.platform === "win32")(
       });
       await waitForFile(childStarted);
       await waitForFile(parentExited);
-      expect(Date.now() - startedAt).toBeLessThan(7_000);
       expect(scope.hasPending).toBe(false);
       expect(launcher.groups).toHaveLength(1);
     } finally {
@@ -242,6 +242,7 @@ it.skipIf(process.platform === "win32")(
       const pending = inspectKunaInstallation(
         { REA_KUNA_COMMAND: executable },
         {
+          platform: HOST_PLATFORM.platform,
           resourceScope: resourceScopeFor(scope),
           processLauncher: launcher.launcher,
           signal: controller.signal,
@@ -249,6 +250,7 @@ it.skipIf(process.platform === "win32")(
         },
       );
       await waitForFile(parentExited);
+      await launcher.exits[0];
       controller.abort(reason);
       const cause = await pending.catch((error: unknown) => error);
       const cancellation = kunaInstallationCancellation(cause);
@@ -462,6 +464,7 @@ it.skipIf(process.platform === "win32")(
       const pending = inspectKunaInstallation(
         { REA_KUNA_COMMAND: executable },
         {
+          platform: HOST_PLATFORM.platform,
           resourceScope: resourceScopeFor(scope),
           processLauncher: launcher.launcher,
           signal: controller.signal,

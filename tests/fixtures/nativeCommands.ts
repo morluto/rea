@@ -11,7 +11,7 @@ import type {
   NativeCommandOptions,
   NativeCommandRunner,
   ResolvedTool,
-} from "../../src/native/CommandRunner.js";
+} from "../../src/providers/NativeCommandRunner.js";
 
 /** Resolver seam for fixtures with identical invocation and physical paths. */
 export const nativeResolvedToolFixture = (
@@ -154,6 +154,13 @@ export const signatureInspectionFixture = (): InspectSignature => ({
   entitlements: null,
   timestamp: null,
   hardened_runtime: null,
+  slices: {
+    described: "arm64",
+    architectures: [],
+    unmapped: false,
+    checked: [],
+    unsigned: [],
+  },
   provenance: [],
   limitations: ["Controlled parsed facts; no native signing tool invoked."],
 });

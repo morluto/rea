@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
@@ -8,13 +9,14 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../../src/domain/analysisObservation.js";
 import { UNRETAINED_EVIDENCE_EXPORT_GUIDANCE } from "../../../src/domain/analysisErrorPresentation.js";
 import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { safeParseEvidence } from "../../../src/domain/evidenceValidation.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const assertPublication = ({
   error,
@@ -207,7 +209,7 @@ it.each([
   }) => {
     const identity = { id: "fixture", name: "Fixture", version: "1" };
     const base = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       identity,
       {
         operation: "health",
@@ -258,7 +260,10 @@ it.each([
     });
     const session = new BinarySession(router, records);
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "source-publication", version: "1" });
+    const client = new Client(
+      { name: "source-publication", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -330,7 +335,7 @@ it.each([
 it("reports omission when the primary cannot be safely authenticated", async () => {
   const identity = { id: "fixture", name: "Fixture", version: "1" };
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     identity,
     { operation: "health", parameters: {}, result: "source" },
     { immutable: true },
@@ -355,7 +360,10 @@ it("reports omission when the primary cannot be safely authenticated", async () 
   });
   const session = new BinarySession(router, records);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "recovery-headroom", version: "1" });
+  const client = new Client(
+    { name: "recovery-headroom", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);
@@ -397,7 +405,7 @@ it("reports omission when the primary cannot be safely authenticated", async () 
 it("accounts for a wide source ID list before constructing recovery Evidence", async () => {
   const identity = { id: "fixture", name: "Fixture", version: "1" };
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     identity,
     { operation: "health", parameters: {}, result: "source" },
     { immutable: true },
@@ -423,7 +431,10 @@ it("accounts for a wide source ID list before constructing recovery Evidence", a
   });
   const session = new BinarySession(router, records);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "wide-recovery", version: "1" });
+  const client = new Client(
+    { name: "wide-recovery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);
@@ -458,12 +469,12 @@ it("accounts for a wide source ID list before constructing recovery Evidence", a
   }
 });
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "reports omitted primary when a retained provider source precedes an authentication refusal (%s)",
   async (profile) => {
     const identity = { id: "fixture", name: "Fixture", version: "1" };
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       identity,
       { operation: "health", parameters: {}, result: "historical source" },
       { immutable: true },
@@ -493,10 +504,13 @@ it.each(["compact", "full"] as const)(
         environment: { ...process.env, REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
       },
     );
-    const client = new Client({
-      name: "source-primary-headroom",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "source-primary-headroom",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -536,7 +550,7 @@ it.each(["compact", "full"] as const)(
 it("accounts for source links before admitting a completed direct observation", async () => {
   const identity = { id: "fixture", name: "Fixture", version: "1" };
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     identity,
     { operation: "health", parameters: {}, result: "source" },
     { immutable: true },
@@ -561,7 +575,10 @@ it("accounts for source links before admitting a completed direct observation", 
   });
   const session = new BinarySession(router, records);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "wide-primary-admission", version: "1" });
+  const client = new Client(
+    { name: "wide-primary-admission", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);

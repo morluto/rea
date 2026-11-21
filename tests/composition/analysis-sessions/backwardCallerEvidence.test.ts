@@ -1,5 +1,5 @@
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import type { AnalysisProvider } from "../../../src/ports/AnalysisProvider.js";
 import {
   executeComposedWorkflow,
   createWorkflowEvidence,
@@ -92,9 +92,9 @@ it("links backward caller observations into workflow Evidence without a document
     const opened = await session.open(target);
     if (!opened.ok) throw opened.error;
     const composed = await executeComposedWorkflow(session, (observed) =>
-      new EnhancedTools(observed).execute("get_call_graph", {
-        address: "0x1000",
-        direction: "backward",
+      new EnhancedTools(observed).executeValidated({
+        name: "get_call_graph",
+        input: { address: "0x1000", direction: "backward" },
       }),
     );
     if (!composed.ok) throw composed.error;
@@ -116,24 +116,11 @@ it("links backward caller observations into workflow Evidence without a document
           evidence?.operation === "procedure_callers" &&
           evidence.parameters.procedure === "0x1000",
       );
-    expect(caller).toMatchObject({
-      parameters: { procedure: "0x1000" },
-      raw_result: forward,
-    });
-    expect(caller?.raw_result).toMatchObject({
-      forward_observations: {
-        call_references: [
-          {
-            caller_address: "0x2000",
-            source_address: "0x2004",
-            target_address: "0x1000",
-          },
-        ],
-      },
-    });
-    expect(caller?.raw_result).not.toHaveProperty("native_result.instructions");
-    expect(caller?.parameters).not.toHaveProperty("document");
-    expect(workflow.evidence_links).toContain(caller?.evidence_id);
+    if (caller === undefined)
+      throw new Error("Missing linked caller observation");
+    expect(caller.raw_result).toEqual(forward);
+    expect(caller.parameters).not.toHaveProperty("document");
+    expect(workflow.evidence_links).toContain(caller.evidence_id);
   } finally {
     await session.close();
   }

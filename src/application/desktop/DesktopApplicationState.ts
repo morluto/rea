@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   desktopViewPolicy,
   desktopViewPolicyInputSchema,
@@ -7,23 +8,30 @@ import {
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceScope,
+  artifactPrimaryCleanupLeases,
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
+  isAborted,
 } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   desktopApplicationCaptureSchema,
   type DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import type {
+  DconfViewFailure,
   DesktopApplicationState,
   DesktopStatePath,
 } from "../../domain/desktop/desktopState.js";
+import type { DconfDump } from "../../desktop/DconfDatabaseReader.js";
 import { openStateDocument } from "../../domain/desktop/gzipDocument.js";
 import { diffStateViews } from "../../domain/desktop/stateChanges.js";
 import {
@@ -41,7 +49,11 @@ import {
   stateRole,
 } from "../../domain/desktop/stateRoles.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseEvidence,
+  unsupportedEvidenceFormatError,
+} from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
@@ -64,6 +76,7 @@ import {
   DESKTOP_PROVIDER,
   desktopOperationFailure,
 } from "./DesktopCaptureRefusals.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const OPERATION = "inspect_desktop_application_state";
 
@@ -74,6 +87,8 @@ const OPERATION = "inspect_desktop_application_state";
  * AnalysisCancelledError or ArtifactReaderFailure; cleanup failures retain their owner.
  */
 export interface DesktopStateReaders {
+  /** Command owner for staged inputs whose descriptor or directory cleanup failed. */
+  readonly resources?: ArtifactResourceScope;
   readonly sqlite: (
     database: string,
     signal?: AbortSignal,
@@ -82,7 +97,7 @@ export interface DesktopStateReaders {
   readonly dconf: (
     database: string,
     signal?: AbortSignal,
-  ) => Promise<{ ok: true; text: string } | { ok: false; error: string }>;
+  ) => Promise<DconfDump>;
 }
 
 type Version = DesktopStatePath["versions"][number];
@@ -115,6 +130,10 @@ export const readDesktopCapture = async (
         );
       }
       const evidence = safeParseEvidence(loaded.value);
+      // A capture from another format revision is refused with the recreate
+      // guidance, not reported as some other kind of file.
+      if (!evidence.ok && isUnsupportedEvidenceFormat(evidence.error))
+        throw unsupportedEvidenceFormatError(evidence.error);
       if (
         !evidence.ok ||
         evidence.value.operation !== DESKTOP_OPERATION ||
@@ -146,12 +165,14 @@ export const readDesktopCapture = async (
       OPERATION,
       "Desktop capture input",
     );
-    if (outcome.ok && !signal?.aborted)
+    if (outcome.ok && !isAborted(signal))
       throw cleanup.retainPartialObservation(outcome.value.evidence);
     const primary = outcome.ok
-      ? new AnalysisCancelledError(OPERATION, {
-          cause: signal?.reason,
-        }).retainPartialObservation(outcome.value.evidence)
+      ? cancelledBy(
+          OPERATION,
+          // A completed outcome reaches here only after the caller aborted.
+          carriedReason(signal?.reason),
+        ).retainPartialObservation(outcome.value.evidence)
       : desktopOperationFailure(
           outcome.error,
           undefined,
@@ -159,15 +180,8 @@ export const readDesktopCapture = async (
           "Desktop capture input",
         );
     if (!outcome.ok && signal?.aborted)
-      analysisErrorWithCancellation(
-        primary,
-        new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-      );
-    throw analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      OPERATION,
-    ).bindCleanupDependencies([primary, cleanup]);
+      analysisErrorWithCancellation(primary, cancelledBy(OPERATION, signal));
+    throw analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION);
   }
   if (!outcome.ok) {
     if (!signal?.aborted) throw outcome.error;
@@ -178,13 +192,13 @@ export const readDesktopCapture = async (
         OPERATION,
         "Desktop capture input",
       ),
-      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+      cancelledBy(OPERATION, signal),
     );
   }
   if (signal?.aborted)
-    throw new AnalysisCancelledError(OPERATION, {
-      cause: signal.reason,
-    }).retainPartialObservation(outcome.value.evidence);
+    throw cancelledBy(OPERATION, signal).retainPartialObservation(
+      outcome.value.evidence,
+    );
   return outcome.value;
 };
 
@@ -214,6 +228,7 @@ const dconfGroups = (text: string, names: ReadonlySet<string>) => {
 const withStaged = async <Value>(
   files: readonly { readonly name: string; readonly bytes: Uint8Array }[],
   read: (paths: readonly string[]) => Promise<Value>,
+  resources = new ArtifactResourceScope(),
 ): Promise<Value> => {
   const root = await PrivateRuntimeRoot.create({
     prefix: "rea-desktop-state-",
@@ -232,11 +247,22 @@ const withStaged = async <Value>(
   } catch (cause: unknown) {
     outcome = { kind: "failed", cause };
   }
-  const resources = new ArtifactResourceScope();
+  const leases =
+    outcome.kind === "failed"
+      ? artifactPrimaryCleanupLeases(outcome.cause)
+      : [];
   const removed = await resources.release({
     kind: "private-runtime-root",
     resource: root.path,
-    root,
+    root: {
+      path: root.path,
+      close: async () => {
+        // Descriptor retirement precedes removal. Keep this dependency with the
+        // staged owner so a command close retries both, in the same order.
+        for (const lease of leases ?? []) await lease.release();
+        await root.close();
+      },
+    },
   });
   if (removed.kind === "failed")
     throw resources.cleanupFailure(outcome, [removed]);
@@ -246,9 +272,27 @@ const withStaged = async <Value>(
 
 type ViewOutcome =
   | { readonly view: JsonValue; readonly error: null }
-  | { readonly view: null; readonly error: string };
+  | {
+      readonly view: null;
+      readonly error: string;
+      readonly failure: DconfViewFailure | null;
+    };
 
-const failed = (error: string): ViewOutcome => ({ view: null, error });
+const failed = (error: string): ViewOutcome => ({
+  view: null,
+  error,
+  failure: null,
+});
+
+const dconfViewFailure = (
+  dump: Extract<DconfDump, { ok: false }>,
+): DconfViewFailure => ({
+  kind: dump.kind,
+  code: dump.code,
+  exit_code: dump.exitCode,
+  command: dump.command,
+  stderr: dump.stderr,
+});
 
 /** One retained version's verified document, a gzip file's decompressed, with its format already detected. */
 interface ReadInput {
@@ -306,26 +350,38 @@ const sqliteView = async (
     if (bytes.value !== undefined)
       staged.push({ name: `state.db${sidecar.suffix}`, bytes: bytes.value });
   }
-  return withStaged(staged, async ([database]) => {
-    const read = await context.readers.sqlite(
-      database ?? "",
-      context.signal,
-      context.policy,
-    );
-    return read.ok ? { view: read.view, error: null } : failed(read.error);
-  });
+  return withStaged(
+    staged,
+    async ([database]) => {
+      const read = await context.readers.sqlite(
+        database ?? "",
+        context.signal,
+        context.policy,
+      );
+      return read.ok ? { view: read.view, error: null } : failed(read.error);
+    },
+    context.readers.resources,
+  );
 };
 
 const dconfView = async (
   { bytes }: ReadInput,
   context: ViewContext,
 ): Promise<ViewOutcome> =>
-  withStaged([{ name: "user", bytes }], async ([database]) => {
-    const dump = await context.readers.dconf(database ?? "", context.signal);
-    return dump.ok
-      ? { view: dconfGroups(dump.text, context.names), error: null }
-      : failed(dump.error);
-  });
+  withStaged(
+    [{ name: "user", bytes }],
+    async ([database]) => {
+      const dump = await context.readers.dconf(database ?? "", context.signal);
+      return dump.ok
+        ? { view: dconfGroups(dump.text, context.names), error: null }
+        : {
+            view: null,
+            error: dump.error,
+            failure: dconfViewFailure(dump),
+          };
+    },
+    context.readers.resources,
+  );
 
 /** A reader's result as a version's view or view_error. */
 const outcomeOf = (read: Result<JsonValue, string>): ViewOutcome =>
@@ -402,9 +458,7 @@ const readVersion = async (
   context: ViewContext,
 ): Promise<void> => {
   if (context.signal?.aborted === true)
-    throw new AnalysisCancelledError(OPERATION, {
-      cause: context.signal.reason,
-    });
+    throw cancelledBy(OPERATION, context.signal);
   if (!version.present) return;
   if (version.sha256 === null) {
     version.view_error = "content not retained";
@@ -425,15 +479,15 @@ const readVersion = async (
       : await viewOf({ path, bytes: document.bytes, version }, context);
   version.view = outcome.view;
   version.view_error = outcome.error;
+  if (outcome.error !== null && outcome.failure !== null)
+    version.view_failure = outcome.failure;
 };
 
 const hasDconfGroups = (version: Version): boolean => {
   const view = version.view;
   return (
     version.format === "dconf" &&
-    typeof view === "object" &&
-    view !== null &&
-    !Array.isArray(view) &&
+    isRecord(view) &&
     typeof view.groups === "object" &&
     view.groups !== null &&
     Object.keys(view.groups).length > 0
@@ -555,9 +609,8 @@ const inspectState = async (
     paths,
     limitations,
   };
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
-  return createEvidence(undefined, DESKTOP_PROVIDER, {
+  if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
+  return createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,
     parameters: {
