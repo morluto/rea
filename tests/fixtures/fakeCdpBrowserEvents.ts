@@ -154,13 +154,12 @@ const emitSessionTimeline = (
       timestamp: 10,
     });
     event(socket, "Page.frameNavigated", command.sessionId, {
+      type: "Navigation",
       frame: {
         id: "frame-main",
         loaderId: "loader-reload",
         url: allowed,
-        transitionType: "reload",
       },
-      timestamp: 11,
     });
     event(socket, "Page.navigatedWithinDocument", command.sessionId, {
       frameId: "frame-main",

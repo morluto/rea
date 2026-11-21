@@ -272,6 +272,10 @@ describe("CdpBrowserProvider: cancellation and session events", () => {
     expect(result.value.timeline).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          type: "same_origin_reload",
+          detail: "navigation",
+        }),
+        expect.objectContaining({
           type: "same_document_navigation",
           url: `${browser.allowedOrigin}/reloaded?token=session-secret#spa-secret`,
         }),
