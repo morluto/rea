@@ -14,6 +14,7 @@ import {
 } from "../../../src/application/SetupClientConfiguration.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
@@ -956,51 +957,81 @@ describe("Pi project-scoped launcher provenance and fallback", () => {
   );
 });
 
-describe("Pi project-scoped disabled launcher package update", () => {
-  it("includes activation repair alongside package update when project-scoped registration has outdated package and is disabled", async () => {
-    const { home } = await piClient();
-    const projectDir = await createTestTempDirectory(
-      "rea-pi-disabled-project-launcher-cwd-",
-    );
-    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-    await trustPiProject(home, projectDir);
+describe("Pi project-scoped package launcher repair", () => {
+  it.each([
+    { version: "1.0.0", enabled: true },
+    { version: PRODUCT_IDENTITY.packageVersion, enabled: true },
+    { version: "1.0.0", enabled: false },
+  ])(
+    "advises migrating a package runner at version $version with enabled=$enabled",
+    async ({ version, enabled }) => {
+      const { home } = await piClient();
+      const projectDir = await createTestTempDirectory(
+        "rea-pi-disabled-project-launcher-cwd-",
+      );
+      vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+      await trustPiProject(home, projectDir);
 
-    const staleCommand = ["npx", "-y", "rea-agents@1.0.0", "mcp"];
+      const reference = `rea-agents@${version}`;
+      const staleCommand = ["npx", "-y", reference, "mcp"];
 
-    const projectConfigDir = join(projectDir, ".pi");
-    await mkdir(projectConfigDir, { recursive: true });
-    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
-    await writeFile(
-      projectConfigPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: {
-            command: staleCommand[0],
-            args: staleCommand.slice(1),
-            enabled: false,
+      const projectConfigDir = join(projectDir, ".pi");
+      await mkdir(projectConfigDir, { recursive: true });
+      const projectConfigPath = resolve(projectConfigDir, "mcp.json");
+      await writeFile(
+        projectConfigPath,
+        JSON.stringify({
+          mcpServers: {
+            rea: {
+              command: staleCommand[0],
+              args: staleCommand.slice(1),
+              enabled,
+            },
           },
-        },
-      }),
-    );
+        }),
+      );
 
-    const statuses = await readClientRegistrationStatuses(home, undefined, {
-      platform: HOST_PLATFORM.platform,
-      environment: {},
-    });
-    const piStatus = statuses.find(({ client }) => client === "pi");
-    expect(piStatus).toMatchObject({
-      client: "pi",
-      state: "stale",
-      scope: "project",
-      config_path: projectConfigPath,
-    });
-    expect(piStatus?.remediation).toContain(
-      `update the package version in ${projectConfigPath}`,
-    );
-    expect(piStatus?.remediation).toContain(
-      `Update or remove the rea registration in ${projectConfigPath}`,
-    );
-  });
+      const statuses = await readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
+        environment: {},
+      });
+      const piStatus = statuses.find(({ client }) => client === "pi");
+      expect(piStatus).toMatchObject({
+        client: "pi",
+        state: "stale",
+        scope: "project",
+        config_path: projectConfigPath,
+      });
+      expect(piStatus?.remediation).toContain(
+        `Replace the launcher in ${projectConfigPath} with the installed JavaScript runtime and REA entry script`,
+      );
+      expect(piStatus?.remediation).toContain(reference);
+      expect(piStatus?.remediation).toContain("rea setup --client pi");
+      if (!enabled)
+        expect(piStatus?.remediation).toContain(
+          `Update or remove the rea registration in ${projectConfigPath}`,
+        );
+      else {
+        await writeFile(
+          projectConfigPath,
+          JSON.stringify({
+            mcpServers: {
+              rea: { command: command[0], args: command.slice(1), enabled },
+            },
+          }),
+        );
+        const migrated = await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
+          environment: {},
+        });
+        expect(migrated.find(({ client }) => client === "pi")).toMatchObject({
+          state: "aligned",
+          scope: "project",
+          remediation: null,
+        });
+      }
+    },
+  );
 });
 
 describe("Pi project-scoped fallback on sibling servers", () => {

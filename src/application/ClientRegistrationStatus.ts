@@ -500,12 +500,14 @@ export const readClientRegistrationInspections = async (
             ? nativeApplicability.error.cause.message
             : undefined) ??
           policyBlock ??
-          (packageVersionDrift
-            ? packageVersionRemediation(
-                packageReference ?? "",
+          (packageReference !== undefined &&
+          (packageVersionDrift || launcherRegistrationScope === "project")
+            ? packageLauncherRemediation(
+                packageReference,
                 client,
                 launcherPath,
                 launcherRegistrationScope,
+                packageVersionDrift,
               )
             : alignment === "unknown"
               ? unknownEntryPointRemediation()
@@ -837,15 +839,19 @@ const timeoutAdvisory = (
     : `${recommendation} ${batchScope}`;
 };
 
-const packageVersionRemediation = (
+const packageLauncherRemediation = (
   packageReference: string,
   client: SetupClient,
   launcherTarget: string,
   scope: ClientRegistrationScope | undefined,
+  versionDrift: boolean,
 ): string => {
+  const packageDetail = versionDrift
+    ? `requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}`
+    : `uses the package runner ${packageReference}`;
   return scope === "project"
-    ? `This project-scoped registration in ${launcherTarget} requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA setup writes only user-level configuration; update the package version in ${launcherTarget}, then restart the client.`
-    : `This registration requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA does not resolve package-runner requests during doctor; update the registration with rea setup --client ${client.name}, then restart the client.`;
+    ? `This project-scoped registration in ${launcherTarget} ${packageDetail}. Replace the launcher in ${launcherTarget} with the installed JavaScript runtime and REA entry script, or remove the project override and run rea setup --client ${client.name} to configure REA at user scope. Restart the client after making the change.`
+    : `This registration ${packageDetail}. REA does not resolve package-runner requests during doctor; update the registration with rea setup --client ${client.name}, then restart the client.`;
 };
 
 const unavailableStatus = (
