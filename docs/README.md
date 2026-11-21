@@ -171,6 +171,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Contracts and evidence
 
 - [MCP runtime contracts](reference/mcp-contracts.md)
+- [Typed analysis-run comparison foundation](reference/analysis-run-comparison.md)
 - [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md)
 - [Reconstruction coverage](reconstruction-coverage.md)
 
