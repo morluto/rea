@@ -205,62 +205,61 @@ afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
 });
 
-describe("web capture diff", () => {
-  it.each([
-    { missing: "before", changed: false, expected: "unknown" },
-    { missing: "after", changed: false, expected: "unknown" },
-    { missing: "before", changed: true, expected: "changed" },
-    { missing: "after", changed: true, expected: "changed" },
-    { missing: "neither", changed: false, expected: "changed" },
-  ] as const)(
-    "preserves consequential uncertainty: $missing, other change $changed",
-    async ({ missing, changed, expected }) => {
-      const browser = await startFakeCdpBrowser({ webMcpTools: true });
-      browsers.push(browser);
-      const provider = new CdpBrowserProvider();
-      const request = {
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      };
-      const inspection = await provider.inspectPage(
-        inspectWebPageInputSchema.parse(request),
-      );
-      const discovery = await provider.discoverWebMcpTools(
-        discoverWebMcpToolsInputSchema.parse(request),
-      );
-      if (!inspection.ok) throw inspection.error;
-      if (!discovery.ok) throw discovery.error;
-      const before = structuredClone(discovery.value);
-      const after = structuredClone(discovery.value);
-      markSectionsComplete(before, ["webmcp_tools"]);
-      markSectionsComplete(after, ["webmcp_tools"]);
-      const left = before.tools.items[0];
-      const right = after.tools.items[0];
-      if (left === undefined || right === undefined)
-        throw new Error("missing WebMCP registration fixture");
-      left.annotations.consequential = true;
-      right.annotations.consequential = false;
-      if (missing === "before") delete left.annotations.consequential;
-      if (missing === "after") delete right.annotations.consequential;
-      if (changed) right.description += " changed";
-      const result = compareWebCaptures(
-        compareWebCapturesInputSchema.parse({
-          before: { inspection: inspection.value, webmcp: before },
-          after: { inspection: inspection.value, webmcp: after },
-        }),
-      );
-      expect(result.dimensions.webmcp).toMatchObject({
-        status: expected,
-        total_changes: expected === "changed" ? 1 : 0,
-      });
-      if (expected === "changed")
-        expect(result.dimensions.webmcp.changes[0]).toMatchObject({
-          change: "modified",
-        });
-    },
+it("compares consequential annotations only when both values are retained", async () => {
+  const browser = await startFakeCdpBrowser({ webMcpTools: true });
+  browsers.push(browser);
+  const provider = new CdpBrowserProvider();
+  const request = {
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+  };
+  const inspection = await provider.inspectPage(
+    inspectWebPageInputSchema.parse(request),
   );
+  if (!inspection.ok) throw inspection.error;
+  const discovery = await provider.discoverWebMcpTools(
+    discoverWebMcpToolsInputSchema.parse(request),
+  );
+  if (!discovery.ok) throw discovery.error;
+  markSectionsComplete(discovery.value, ["webmcp_tools"]);
+
+  for (const [left, right, editDescription, status] of [
+    [undefined, false, false, "unknown"],
+    [true, undefined, false, "unknown"],
+    [undefined, false, true, "changed"],
+    [true, undefined, true, "changed"],
+    [true, false, false, "changed"],
+    [null, false, false, "changed"],
+  ] as const) {
+    const before = structuredClone(discovery.value);
+    const after = structuredClone(discovery.value);
+    const beforeTool = before.tools.items[0];
+    const afterTool = after.tools.items[0];
+    if (beforeTool === undefined || afterTool === undefined)
+      throw new Error("Expected a discovered WebMCP tool");
+    if (left === undefined) delete beforeTool.annotations.consequential;
+    else beforeTool.annotations.consequential = left;
+    if (right === undefined) delete afterTool.annotations.consequential;
+    else afterTool.annotations.consequential = right;
+    if (editDescription) afterTool.description += " changed";
+
+    const dimension = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: inspection.value, webmcp: before },
+        after: { inspection: inspection.value, webmcp: after },
+      }),
+    ).dimensions.webmcp;
+    expect(dimension).toMatchObject({
+      status,
+      total_changes: status === "changed" ? 1 : 0,
+      changes:
+        status === "changed"
+          ? [expect.objectContaining({ change: "modified" })]
+          : [],
+    });
+  }
 });
 
 describe("web capture dimension uncertainty", () => {
@@ -276,7 +275,7 @@ describe("web capture dimension uncertainty", () => {
       }),
     );
     if (!captured.ok) throw captured.error;
-    markSectionsComplete(captured.value, ["scripts"]);
+    markSectionsComplete(captured.value, ["scripts", "dom", "frames"]);
     const after = structuredClone(captured.value);
     after.scripts.items = [];
     const request = after.network.requests[0];
@@ -297,12 +296,28 @@ describe("web capture dimension uncertainty", () => {
       ];
     }
 
-    const result = compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: captured.value },
-        after: { inspection: after },
-      }),
-    );
+    const compareAfter = () =>
+      compareWebCaptures(
+        compareWebCapturesInputSchema.parse({
+          before: { inspection: captured.value },
+          after: { inspection: after },
+        }),
+      );
+    const node = after.dom.nodes[0];
+    if (node === undefined) throw new Error("Expected a retained DOM node");
+    node.node_name = "MAIN";
+    expect(compareAfter().dimensions.dom_structure).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+      changes: [{ identity: "document", change: "modified" }],
+    });
+    after.completeness.truncated_sections.push("dom");
+    const result = compareAfter();
+    expect(result.dimensions.dom_structure).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+    });
 
     expect(result.overall_status).toBe("changed");
     expect(result.dimensions.scripts).toMatchObject({
@@ -342,32 +357,6 @@ describe("web capture dimension uncertainty", () => {
     });
     const { storage: _storage, ...missingStorage } = result.dimensions;
     expectInvalidDiff({ ...result, dimensions: missingStorage });
-  });
-
-  it("does not claim unchanged when a relevant section is incomplete", async () => {
-    const browser = await startFakeCdpBrowser();
-    browsers.push(browser);
-    const captured = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!captured.ok) throw captured.error;
-    const incomplete = structuredClone(captured.value);
-    incomplete.completeness.truncated_sections.push("dom");
-
-    const result = compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: incomplete },
-        after: { inspection: captured.value },
-      }),
-    );
-
-    expect(result.dimensions.dom_structure.status).toBe("unknown");
-    expect(result.dimensions.dom_structure.reason).toContain("incomplete");
   });
 });
 
