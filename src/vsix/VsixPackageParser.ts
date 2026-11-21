@@ -26,6 +26,7 @@ import {
 import { countXmlNodes, parseXmlDocument } from "../domain/xmlDocument.js";
 import { countJsonValues } from "../domain/jsonValue.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { Budget } from "../domain/budget.js";
@@ -1240,9 +1241,12 @@ export const parseVsixPackage = async (
       }
       if (decoded !== undefined) {
         examined += decoded.length;
+        // Node reads a directory package.json as UTF-8 only: a UTF-8 BOM is
+        // dropped, while UTF-16 or other invalid bytes fail with
+        // ERR_INVALID_PACKAGE_CONFIG, so they stay malformed here too.
         let text: string | undefined;
         try {
-          text = decodeXmlPlistText(decoded);
+          text = decodeStrictUtf8(decoded, "strip-signature");
         } catch {
           text = undefined;
         }

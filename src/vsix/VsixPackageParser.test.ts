@@ -1193,6 +1193,92 @@ it.each(["{not json", "[]", "null"])(
   },
 );
 
+const utf16Manifest = (text: string, bigEndian: boolean): Uint8Array => {
+  const bytes = new Uint8Array(2 + text.length * 2);
+  bytes.set(bigEndian ? [0xfe, 0xff] : [0xff, 0xfe]);
+  for (let index = 0; index < text.length; index += 1) {
+    const unit = text.charCodeAt(index);
+    const high = unit >> 8;
+    const low = unit & 0xff;
+    bytes[2 + index * 2] = bigEndian ? high : low;
+    bytes[3 + index * 2] = bigEndian ? low : high;
+  }
+  return bytes;
+};
+
+it.each([
+  ["UTF-16LE", utf16Manifest('{"main":"./start.js"}', false)],
+  ["UTF-16BE", utf16Manifest('{"main":"./start.js"}', true)],
+  [
+    "invalid UTF-8",
+    Uint8Array.from([
+      ...new TextEncoder().encode('{"main":"./start.js","x":"'),
+      0xff,
+      ...new TextEncoder().encode('"}'),
+    ]),
+  ],
+])(
+  "reports a %s directory package.json malformed as Node does",
+  async (_encoding, manifest) => {
+    const bytes = await vsixPackageFixture({
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        engines: { vscode: "^1.74.0" },
+        main: "./out",
+      }),
+      extraMembers: {
+        "extension/out/start.js": "exports.activate = () => {};",
+        "extension/out/index.js": "exports.activate = () => {};",
+      },
+      extraBinaryMembers: { "extension/out/package.json": manifest },
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.entry_points.main).toEqual({
+      path: "extension/out",
+      present: false,
+    });
+    expect(report.limitations).toContain(
+      VSIX_LIMITATIONS.malformedMainDirectoryPackageJson(
+        "extension/out/package.json",
+      ),
+    );
+  },
+);
+
+it("reads a UTF-8 BOM directory package.json main as Node does", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+    }),
+    extraMembers: {
+      "extension/out/start.js": "exports.activate = () => {};",
+    },
+    extraBinaryMembers: {
+      "extension/out/package.json": Uint8Array.from([
+        0xef,
+        0xbb,
+        0xbf,
+        ...new TextEncoder().encode('{"main":"./start.js"}'),
+      ]),
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out/start.js",
+    present: true,
+  });
+});
+
 it("does not use index files when the directory package.json is duplicated", async () => {
   const packageJson = JSON.stringify({
     name: "hello",
