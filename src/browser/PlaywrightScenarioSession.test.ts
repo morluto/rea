@@ -338,70 +338,46 @@ beforeEach(() => {
   mocks.policyTransportClose.mockResolvedValue(undefined);
 });
 
-it("stops attached navigation without storage and retries rejected policy cleanup", async () => {
-  const { cleanup } = fixture();
-  mocks.storage = undefined;
-  const attached = browserScenarioSchema.parse({
-    ...scenario,
-    browser: {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "target",
-    },
-    environment: { service_workers: "block" },
-    storage: {},
-  });
-  const session = await PlaywrightScenarioSession.open(attached, {}, {});
-  const failure = new Error("stopLoading rejected");
-  mocks.policySend.mockRejectedValueOnce(failure);
-  await expect(session.close(true)).rejects.toMatchObject({
-    cause: failure,
-    cleanupIncomplete: true,
-  });
-  expect(cleanup.close).not.toHaveBeenCalled();
-  await expect(session.close(true)).resolves.toBe("disconnected-external");
-  expect(
-    mocks.policySend.mock.calls.filter(
-      ([method]) => method === "Page.stopLoading",
-    ),
-  ).toHaveLength(2);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-});
+it.each(["abort signal", "explicit stop"])(
+  "confirms attached navigation stop requested by %s before disconnecting",
+  async (request) => {
+    const { cleanup, page } = fixture();
+    mocks.storage = undefined;
+    const cancellation = new AbortController();
+    const attached = browserScenarioSchema.parse({
+      ...connectedScenario("block"),
+      storage: {},
+    });
+    const session = await PlaywrightScenarioSession.open(
+      attached,
+      {},
+      { signal: cancellation.signal },
+    );
 
-it("stops attached navigation when cancellation precedes the first close", async () => {
-  const { cleanup, page } = fixture();
-  mocks.storage = undefined;
-  const cancellation = new AbortController();
-  const attached = browserScenarioSchema.parse({
-    ...scenario,
-    browser: {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "target",
-    },
-    environment: { service_workers: "block" },
-    storage: {},
-  });
-  const session = await PlaywrightScenarioSession.open(
-    attached,
-    {},
-    { signal: cancellation.signal },
-  );
-  cancellation.abort();
+    const close = () =>
+      session.close(request === "explicit stop" ? true : undefined);
+    if (request === "abort signal") {
+      cancellation.abort();
+    } else {
+      const failure = new Error("stopLoading rejected");
+      mocks.policySend.mockRejectedValueOnce(failure);
+      await expect(close()).rejects.toMatchObject({
+        cause: failure,
+        cleanupIncomplete: true,
+      });
+      expect(cleanup.close).not.toHaveBeenCalled();
+    }
 
-  await expect(session.close()).resolves.toBe("disconnected-external");
-  expect(
-    mocks.policySend.mock.calls.filter(
-      ([method]) => method === "Page.stopLoading",
-    ),
-  ).toHaveLength(1);
-  expect(
-    page.evaluate.mock.calls.filter(
-      ([script]) => script === "globalThis.stop()",
-    ),
-  ).toHaveLength(0);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-});
+    await expect(close()).resolves.toBe("disconnected-external");
+    expect(
+      mocks.policySend.mock.calls.filter(
+        ([method]) => method === "Page.stopLoading",
+      ),
+    ).toHaveLength(request === "abort signal" ? 1 : 2);
+    expect(page.evaluate).not.toHaveBeenCalledWith("globalThis.stop()");
+    expect(cleanup.close).toHaveBeenCalledTimes(1);
+  },
+);
 
 it("assigns attached navigation stopping to the storage owner once", async () => {
   const { cleanup, storage } = fixture();
@@ -626,85 +602,75 @@ it.each([
   },
 );
 
-it("stops a connected page without storage or a service-worker policy owner", async () => {
-  const { cleanup, page } = fixture();
-  mocks.storage = undefined;
-  const cancellation = new AbortController();
-  const attached = connectedScenario("allow");
-  const session = await PlaywrightScenarioSession.open(
-    attached,
-    {},
-    { signal: cancellation.signal },
-  );
-  const { promise: heldEvents, resolve: finishEvents } = deferred();
-  const { promise: eventsStarted, resolve: finishStarted } = deferred();
-  mocks.finishEvents.mockImplementation(async () => {
-    finishStarted();
-    await heldEvents;
-  });
+it.each([false, true])(
+  "stops an allowed-worker page during event finalization (failed first stop: %s)",
+  async (failFirst) => {
+    const { cleanup, page, storage } = fixture();
+    if (!failFirst) mocks.storage = undefined;
+    storage.close.mockResolvedValue({ loadingStopped: false });
+    const cancellation = new AbortController();
+    const session = await PlaywrightScenarioSession.open(
+      connectedScenario("allow"),
+      {},
+      { signal: cancellation.signal },
+    );
+    const events = phaseGate();
+    mocks.finishEvents.mockImplementation(() => events.hold());
 
-  const firstClose = session.close(false);
-  await eventsStarted;
-  cancellation.abort();
-  const retry = session.close();
-  finishEvents();
-  await expect(Promise.all([firstClose, retry])).resolves.toEqual([
-    "disconnected-external",
-    "disconnected-external",
-  ]);
+    const failure = new Error("main frame stop failed");
+    const failedStop = vi.fn(async () => {
+      throw failure;
+    });
+    const stop = vi.fn(async () => undefined);
+    const mainFrame = vi.spyOn(page, "mainFrame").mockReturnValue({
+      isDetached: () => false,
+      evaluate: stop,
+    } as unknown as typeof page);
+    if (failFirst)
+      mainFrame.mockReturnValueOnce({
+        isDetached: () => false,
+        evaluate: failedStop,
+      } as unknown as typeof page);
 
-  expect(page.evaluate).toHaveBeenCalledWith("globalThis.stop()");
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-});
-
-it("retries a failed connected-page stop when service workers are allowed", async () => {
-  const { cleanup, page, storage } = fixture();
-  const cancellation = new AbortController();
-  storage?.close.mockResolvedValue({ loadingStopped: false });
-  const attached = connectedScenario("allow");
-  const session = await PlaywrightScenarioSession.open(
-    attached,
-    {},
-    { signal: cancellation.signal },
-  );
-  const { promise: heldEvents, resolve: finishEvents } = deferred();
-  const { promise: eventsStarted, resolve: finishStarted } = deferred();
-  mocks.finishEvents.mockImplementation(async () => {
-    finishStarted();
-    await heldEvents;
-  });
-  const failedFrame = {
-    isDetached: () => false,
-    evaluate: vi.fn(async () => {
-      throw new Error("main frame stop failed");
-    }),
-  } as unknown as ReturnType<typeof page.mainFrame>;
-  const freshFrame = {
-    isDetached: () => false,
-    evaluate: vi.fn(async () => undefined),
-  } as unknown as ReturnType<typeof page.mainFrame>;
-  vi.spyOn(page, "mainFrame")
-    .mockReturnValueOnce(failedFrame)
-    .mockReturnValue(freshFrame);
-
-  const firstClose = session.close(false);
-  await eventsStarted;
-  cancellation.abort();
-  const concurrentClose = session.close();
-  finishEvents();
-  const outcomes = await Promise.allSettled([firstClose, concurrentClose]);
-  expect(outcomes.map(({ status }) => status)).toEqual([
-    "rejected",
-    "rejected",
-  ]);
-
-  expect(cleanup.browserClosed).toBe(false);
-  await expect(session.close()).resolves.toBe("disconnected-external");
-  expect(failedFrame.evaluate).toHaveBeenCalledTimes(1);
-  expect(freshFrame.evaluate).toHaveBeenCalledTimes(1);
-  expect(storage?.close).toHaveBeenCalledTimes(1);
-  expect(cleanup.close).toHaveBeenCalledTimes(2);
-});
+    const firstClose = session.close(false);
+    try {
+      await events.reached(firstClose, "final event cleanup");
+      cancellation.abort();
+      const concurrentClose = session.close(false);
+      events.release();
+      if (failFirst) {
+        const outcomes = await Promise.allSettled([
+          firstClose,
+          concurrentClose,
+        ]);
+        const rejected = expect.objectContaining({
+          status: "rejected",
+          reason: expect.objectContaining({
+            cause: failure,
+            cleanupIncomplete: true,
+          }),
+        });
+        expect(outcomes).toEqual([rejected, rejected]);
+        expect(cleanup.browserClosed).toBe(false);
+        await expect(session.close()).resolves.toBe("disconnected-external");
+      } else {
+        await expect(
+          Promise.all([firstClose, concurrentClose]),
+        ).resolves.toEqual(["disconnected-external", "disconnected-external"]);
+      }
+    } finally {
+      events.release();
+      await firstClose.catch(() => undefined);
+    }
+    expect(mocks.policySend).not.toHaveBeenCalled();
+    expect(failedStop.mock.calls).toEqual(
+      failFirst ? [["globalThis.stop()"]] : [],
+    );
+    expect(stop).toHaveBeenCalledExactlyOnceWith("globalThis.stop()");
+    expect(storage.close.mock.calls).toEqual(failFirst ? [[false]] : []);
+    expect(cleanup.close).toHaveBeenCalledTimes(failFirst ? 2 : 1);
+  },
+);
 
 it("retains a late fallback stop failure for retry", async () => {
   const { page, session, transitions } = await prepareLateStopRetry();
