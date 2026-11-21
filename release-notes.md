@@ -35,6 +35,7 @@
 * **verify:** require confirmed DeepSeek process cleanup ([#13043](https://github.com/morluto/rea/issues/13043)) ([4aed56e](https://github.com/morluto/rea/commit/4aed56eccb68e49f411e472134feafd6b2a7996f))
 * **verify:** require DeepSeek Harness terminal JSON ([#13034](https://github.com/morluto/rea/issues/13034)) ([9b1631a](https://github.com/morluto/rea/commit/9b1631a1d73e44156b5347838198da358341fc34))
 * **website:** improve page loading, image labels, and legacy redirects ([e1c37d6](https://github.com/morluto/rea/commit/e1c37d68a4e44fa2cd3311e49e3980692bc65c00))
+* **website:** match social preview accents to REA blue ([753321d](https://github.com/morluto/rea/commit/753321dda66d840c58008119a9e6852cd7c64f25))
 * **website:** restore shared theme script formatting ([#13117](https://github.com/morluto/rea/issues/13117)) ([a1c8f67](https://github.com/morluto/rea/commit/a1c8f67e9934efc0153b3bc2864c13370389b5d3))
 * **website:** use the blue REA wordmark for site icons ([2c4776d](https://github.com/morluto/rea/commit/2c4776d9aa9c1167da96f75a27645a23ef3a348e))
 
