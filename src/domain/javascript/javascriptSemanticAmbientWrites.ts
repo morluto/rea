@@ -1526,7 +1526,10 @@ export function* indexJavaScriptAmbientWritesSteps(
   );
   for (const node of state.escapingThrows)
     escapes.push({ node, target: node.argument, browserReceiver: false });
+  // Keep publication ordered and allow the worker to observe cancellation
+  // between sites even after the reference-store worklist has settled.
   for (const source of storedReferences) {
+    yield;
     if (source.target === undefined) continue;
     const receiver = ambientWrites(
       source.target.object,
@@ -1549,6 +1552,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
   }
   for (const { node, path } of writes) {
+    yield;
     const target =
       path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
     if (target === undefined) {
@@ -1585,6 +1589,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   // invocation; ambiguous execution order remains conservative.
   const resolverReceivers: typeof escapes = [];
   for (const effect of escapes) {
+    yield;
     const { node, target } = effect;
     const callee =
       t.isCallExpression(node) || t.isOptionalCallExpression(node)
@@ -1603,6 +1608,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     retainEscapeEffect(effect);
   }
   for (const effect of resolverReceivers) {
+    yield;
     const { node } = effect;
     const selected = ["global", "require", "resolve"];
     const mayAffectResolver = (
@@ -1639,31 +1645,34 @@ export function* indexJavaScriptAmbientWritesSteps(
   // that may replace the method before this call makes it user code, which
   // receives the constructor. (Its prototype chain is not consulted: the
   // method is an own property.)
-  for (const { node, target, method } of staticReceivers)
+  for (const { node, target, method } of staticReceivers) {
+    yield;
     if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
       retainEscapeEffect({ node, target, browserReceiver: false });
     else state.retainedGlobalCallReceivers.add(target);
+  }
   // Validate the normalized dispatch at its intrinsic captures. A rejected
   // call can expose a helper used by an earlier textual call in a deferred
   // activation. Recheck provisional reads once after publishing those escapes.
   // If that pass adds another relevant effect, conservatively retain the
   // remaining escapes instead of rescanning the whole source to a fixed point.
   const firstInspectionPass =
-    retainOpaquePrototypeInspections(prototypeInspections);
+    yield* retainOpaquePrototypeInspections(prototypeInspections);
   if (firstInspectionPass.changed) {
-    const secondInspectionPass = retainOpaquePrototypeInspections(
+    const secondInspectionPass = yield* retainOpaquePrototypeInspections(
       firstInspectionPass.provisional,
     );
     if (secondInspectionPass.changed)
       for (const inspection of secondInspectionPass.provisional)
-        retainPrototypeInspectionArguments(inspection);
+        yield* retainPrototypeInspectionArguments(inspection);
   }
-  function retainOpaquePrototypeInspections(
+  function* retainOpaquePrototypeInspections(
     inspections: typeof prototypeInspections,
   ) {
     const provisional: typeof prototypeInspections = [];
     let changed = false;
     for (const inspection of inspections) {
+      yield;
       const invocation = interop.intrinsicInvocation(
         inspection.node,
         undefined,
@@ -1677,19 +1686,23 @@ export function* indexJavaScriptAmbientWritesSteps(
       );
       if (isReadOnlyPrototypeInspection(invocation))
         provisional.push(inspection);
-      else changed = retainPrototypeInspectionArguments(inspection) || changed;
+      else
+        changed =
+          (yield* retainPrototypeInspectionArguments(inspection)) || changed;
     }
     return { provisional, changed };
   }
-  function retainPrototypeInspectionArguments({
+  function* retainPrototypeInspectionArguments({
     node,
     arguments: argumentValues,
-  }: (typeof prototypeInspections)[number]): boolean {
+  }: (typeof prototypeInspections)[number]): Generator<void, boolean> {
     let changed = false;
-    for (const target of argumentValues)
+    for (const target of argumentValues) {
+      yield;
       changed =
         retainEscapeEffect({ node, target, browserReceiver: false }, true) ||
         changed;
+    }
     return changed;
   }
   function retainEscapeEffect(
