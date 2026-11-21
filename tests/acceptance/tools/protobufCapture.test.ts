@@ -524,9 +524,6 @@ captureTest(
     const { call, args, capture, descriptor } = await prepareMcpCapture(
       mcp.call,
     );
-    const complete = await call("inspect_web_network_capture", args);
-    expect(complete.isError, JSON.stringify(complete)).not.toBe(true);
-    const parent = parseEvidence(complete.structuredContent);
     const cliResult = await cli.run({
       arguments: [
         "inspect-web-network-capture",
@@ -542,7 +539,6 @@ captureTest(
       ],
     });
     expect(cliResult.exitCode, cliResult.stdout + cliResult.stderr).toBe(0);
-    expect(parseEvidence(cliResult.json).evidence_id).toBe(parent.evidence_id);
     const redacted = await call("inspect_web_network_capture", {
       ...args,
       sensitive_values: ["hello"],
@@ -558,28 +554,31 @@ captureTest(
       inspected_records: 1,
     });
     expect(JSON.stringify(redacted)).not.toContain("hello");
-    const summary = await call("inspect_web_network_capture", {
-      ...args,
-      detail: "summary",
-    });
-    expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
-    const result = analysisViewResultSchema.parse(
-      parseEvidence(summary.structuredContent).normalized_result,
-    );
-    expect(result).toMatchObject({
-      kind: "summary",
-      parent_evidence_id: parent.evidence_id,
-    });
     const invalid = await call("inspect_web_network_capture", {
       ...args,
       record_ordinals: undefined,
     });
     expect(invalid.isError).toBe(true);
     expect(parseMcpToolError(invalid).error.code).toBe("invalid_request");
+    const summary = await call("inspect_web_network_capture", {
+      ...args,
+      detail: "summary",
+    });
+    expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
+    const view = analysisViewResultSchema.parse(
+      parseEvidence(summary.structuredContent).normalized_result,
+    );
+    if (view.kind !== "summary") throw new Error("Expected capture summary");
+    expect(view.parent_evidence_id).toBe(
+      parseEvidence(cliResult.json).evidence_id,
+    );
     await unlink(capture);
     await unlink(descriptor);
     const viewed = await call("inspect_analysis_view", {
-      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      source: {
+        kind: "retained-evidence",
+        evidence_id: view.parent_evidence_id,
+      },
       view: {
         kind: "protobuf",
         collection: "fields",
