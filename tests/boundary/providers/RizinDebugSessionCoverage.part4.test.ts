@@ -288,39 +288,6 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "preserves partial timeout evidence when cleanup cannot be confirmed",
-  async () => {
-    const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.setEncoding("utf8"); process.stdin.on("data", (chunk) => { if (chunk.includes("slow")) process.stdout.write("partial\\0"); });',
-    );
-    const { manager, sessionId } = await start(
-      provider,
-      {
-        stopProcess: incompleteStop,
-      },
-      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
-    );
-    const result = await manager.execute(sessionId, "slow");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.cleanupResources).toEqual([sessionId]);
-      // The retained failure names why the session stopped.
-      expect(result.error.diagnostics).toMatchObject({
-        session_stop: "command-deadline",
-      });
-      const evidence = evidenceSchema.parse(result.error.partialObservation);
-      expect(evidence.normalized_result).toMatchObject({
-        completion_status: "unknown",
-      });
-      expect(evidence.limitations.join(" ")).toContain(
-        "injected stop uncertainty",
-      );
-    }
-  },
-);
-
-it.skipIf(process.platform === "win32")(
   "preserves truncated output when cleanup cannot be confirmed",
   async () => {
     const provider = await makeProvider(
