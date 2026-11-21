@@ -133,20 +133,24 @@ it("retries only the failed transport and does not repeat successful child clean
     .mockImplementationOnce(() => {
       throw new Error("controlled close failure");
     });
+  const forced = phaseArrival();
   const terminate = vi
     .spyOn(WebSocket.prototype, "terminate")
-    .mockImplementation(() => undefined);
+    .mockImplementation(() => forced.arrive());
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
-    const failure = await owner.finish(failed).then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
+    const finished = owner.finish(failed);
+    const outcome = finished.catch((cause: unknown) => cause);
+    await forced.reached(finished, "forced close attempt");
+    await vi.advanceTimersByTimeAsync(1_000);
+    const failure = await outcome;
     expect(failure).toBeInstanceOf(ProviderCleanupError);
     expect(failure).toMatchObject({
       cleanupIncomplete: true,
       cleanupResources: ["failed-session"],
     });
   } finally {
+    vi.useRealTimers();
     close.mockRestore();
     terminate.mockRestore();
   }
@@ -171,8 +175,8 @@ it("accepts asynchronous terminate success only after the close event", async ()
   const browser = await startFakeCdpBrowser();
   const owner = new CdpTargetSessionOwner();
   onTestFinished(async () => {
-    await owner.close();
     await browser.close();
+    await owner.close();
   });
   const connection = await owner.connect(
     browser.browserWebSocketUrl,
@@ -181,19 +185,38 @@ it("accepts asynchronous terminate success only after the close event", async ()
     "forced-close",
   );
   const originalTerminate = WebSocket.prototype.terminate;
+  let forcedSocket: WebSocket | undefined;
   const close = vi
     .spyOn(WebSocket.prototype, "close")
     .mockImplementation(() => undefined);
   const terminate = vi
     .spyOn(WebSocket.prototype, "terminate")
     .mockImplementation(function (this: WebSocket) {
-      return originalTerminate.call(this);
+      forcedSocket = this;
     });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  let finished = false;
+  const finishing = owner.finish(connection).finally(() => {
+    finished = true;
+  });
   try {
-    await owner.finish(connection);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const socket = forcedSocket;
+    if (socket === undefined)
+      throw new Error("Expected a forced close attempt");
+    expect(finished).toBe(false);
+    let observedClose = false;
+    socket.once("close", () => {
+      observedClose = true;
+    });
+    originalTerminate.call(socket);
+    await finishing;
+    expect(observedClose).toBe(true);
   } finally {
+    vi.useRealTimers();
     close.mockRestore();
     terminate.mockRestore();
+    if (forcedSocket !== undefined) originalTerminate.call(forcedSocket);
   }
   await owner.close();
   await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
