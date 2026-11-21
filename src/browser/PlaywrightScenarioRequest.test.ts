@@ -1248,60 +1248,37 @@ describe("values a URL path or Basic header cannot carry", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it.each([".", ".."])(
-    "fails a step whose saved %s fills a whole path segment, which the URL would drop",
-    async (dots) => {
-      const parsed = scenario([
-        requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
-        {
-          step_id: "open",
-          action: "goto",
-          destination: { url: `${ORIGIN}/items/{saved:item}/edit` },
-          wait_until: "load",
-        },
-        requestStep({ step_id: "edit", path: "/api/items/{saved:item}" }),
-      ]);
-      const secrets = resolved(parsed);
-      secrets.save("create.item", "item", dots, false);
-      const goto = vi.fn(async () => null);
-      await expect(
-        perform({ goto } as unknown as Page, parsed.actions[1]!, secrets),
-      ).rejects.toThrow("dot segment");
-      expect(goto).not.toHaveBeenCalled();
-      await expect(
-        perform(fakePage({}), parsed.actions[2]!, secrets),
-      ).rejects.toThrow("dot segment");
-    },
-  );
-
   it.each([
-    ["/api/items/{saved:item}.", `${ORIGIN}/items/{saved:item}.`],
-    ["/api/items/%2e{saved:item}", `${ORIGIN}/items/%2E{saved:item}`],
-    ["/safe\\{saved:item}.", `${ORIGIN}/safe\\{saved:item}.`],
-    ["/safe\\%2e{saved:item}", `${ORIGIN}/safe\\%2e{saved:item}`],
+    ["/items/{saved:item}/edit", "."],
+    ["/items/{saved:item}/edit", ".."],
+    ["/items/{saved:item}.", "."],
+    ["/items/%2e{saved:item}", "."],
+    ["/safe\\{saved:item}.", "."],
+    ["/safe\\%2e{saved:item}", "."],
   ])(
-    "fails a step whose saved . and the text beside it make a dot segment (%s)",
-    async (path, url) => {
+    "rejects %s with saved %s before navigation or request dispatch",
+    async (path, saved) => {
       const parsed = scenario([
         requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
         {
           step_id: "open",
           action: "goto",
-          destination: { url },
+          destination: { url: ORIGIN + path },
           wait_until: "load",
         },
         requestStep({ step_id: "edit", path }),
       ]);
       const secrets = resolved(parsed);
-      secrets.save("create.item", "item", ".", false);
-      const goto = vi.fn(async () => null);
-      await expect(
-        perform({ goto } as unknown as Page, parsed.actions[1]!, secrets),
-      ).rejects.toThrow("dot segment");
+      secrets.save("create.item", "item", saved, false);
+      const goto = vi.fn();
+      const evaluate = vi.fn();
+      const page = { ...fakePage({}), goto, evaluate } as unknown as Page;
+      for (const action of parsed.actions.slice(1))
+        await expect(perform(page, action, secrets)).rejects.toThrow(
+          "dot segment",
+        );
       expect(goto).not.toHaveBeenCalled();
-      await expect(
-        perform(fakePage({}), parsed.actions[2]!, secrets),
-      ).rejects.toThrow("dot segment");
+      expect(evaluate).not.toHaveBeenCalled();
     },
   );
 
@@ -2097,56 +2074,33 @@ it("refuses repeated saved URL expansion before browser navigation", async () =>
 });
 
 it.each([
-  "/api\\items/{*}",
-  "/api/unused/../items/{*}",
-  "/api/unused/%2e%2e/items/{*}",
-])(
-  "normalizes the entire observed response path %s before matching",
-  async (path) => {
-    const parsed = clickSaving(path);
-    const { page } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items/42`,
-        status: 201,
-        body: '{"id":"42"}',
-      },
+  ["/api\\items/{*}", "/api/items/42"],
+  ["/api/unused/../items/{*}", "/api/items/42"],
+  ["/api/unused/%2e%2e/items/{*}", "/api/items/42"],
+  ["/api/%7B*%7D", "/api/%7B*%7D", "/api/other"],
+  ["/~rea-wildcard~/items/{*}", "/~rea-wildcard~/items/42", "/other/items/42"],
+] as const)(
+  "binds only the response named by normalized path %s",
+  async (pattern, selected, excluded?: string) => {
+    const parsed = clickSaving(pattern);
+    const matching = {
+      method: "POST",
+      url: ORIGIN + selected,
+      status: 201,
+      body: '{"id":"42"}',
+    };
+    const { page, reads } = uiPage([
+      ...(excluded === undefined
+        ? []
+        : [{ ...matching, url: ORIGIN + excluded, body: '{"id":"other"}' }]),
+      matching,
     ]);
     const secrets = resolved(parsed);
     await perform(page, parsed.actions[0]!, secrets);
     expect(secrets.savedValue("item")).toBe("42");
+    expect(reads.count).toBe(1);
   },
 );
-
-it("keeps literal encoded wildcard text distinct from observed-response wildcard segments", async () => {
-  const parsed = clickSaving("/api/%7B*%7D");
-  const { page } = uiPage([
-    {
-      method: "POST",
-      url: `${ORIGIN}/api/other`,
-      status: 201,
-      body: '{"id":"42"}',
-    },
-  ]);
-  await expect(
-    perform(page, parsed.actions[0]!, resolved(parsed)),
-  ).rejects.toThrow("no POST");
-});
-
-it("normalizes wildcard paths without colliding with literal marker-like segments", async () => {
-  const parsed = clickSaving("/~rea-wildcard~/items/{*}");
-  const { page } = uiPage([
-    {
-      method: "POST",
-      url: `${ORIGIN}/~rea-wildcard~/items/42`,
-      status: 201,
-      body: '{"id":"42"}',
-    },
-  ]);
-  const secrets = resolved(parsed);
-  await perform(page, parsed.actions[0]!, secrets);
-  expect(secrets.savedValue("item")).toBe("42");
-});
 
 it("redacts a saved secret as a parsed URL query spells it", () => {
   const secrets = resolved(scenario([requestStep({})]));
