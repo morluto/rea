@@ -3,16 +3,16 @@
 Run REA, connect your selected agents, and check the tools needed for your task.
 Setup previews configuration changes and asks for approval before applying them.
 
-| Task                                  | Section                                                                                                             |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Connect an agent                      | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
-| Install a Claude Code/Codex plugin    | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
-| Install the Cursor Marketplace plugin | [Cursor Marketplace](#cursor-marketplace)                                                                           |
-| Run unreleased code                   | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
-| Diagnose one task                     | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
-| Configure an analysis engine          | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
-| Update or remove REA                  | [Maintenance](#diagnose-update-and-remove)                                                                          |
-| Resolve a client-specific problem     | [Client configuration](client-configuration.md)                                                                     |
+| Task                                  | Section                                                                                                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Connect an agent                      | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                                                                          |
+| Install a Claude Code/Codex plugin    | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                                                                  |
+| Install the Cursor Marketplace plugin | [Cursor Marketplace](#cursor-marketplace)                                                                                                                          |
+| Run unreleased code                   | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                                                                |
+| Diagnose one task                     | [Scoped readiness checks](#check-readiness-for-your-task)                                                                                                          |
+| Configure an analysis engine          | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), the [JEB guide](../providers/jeb-analysis.md), or [Kuna](../kuna-provider.md) |
+| Update or remove REA                  | [Maintenance](#diagnose-update-and-remove)                                                                                                                         |
+| Resolve a client-specific problem     | [Client configuration](client-configuration.md)                                                                                                                    |
 
 ## Start setup
 
@@ -48,7 +48,8 @@ with those integrations by default; use `--skill=false` to omit it. If no agent
 is selected, setup offers the workflow separately for CLI use, with No as the
 default. Hopper is a separate optional choice: setup shows its proposed
 installation or connection and requires its own explicit approval. It can also
-save verified paths for an existing Ghidra installation.
+save verified paths for an existing Ghidra installation and the endpoint of
+a running JEB client (`REA_JEB_MCP_URL`).
 
 After selection, review the plan's exact paths and changes and approve before
 REA writes files or installs Hopper. The approval view also shows known manual
@@ -390,6 +391,7 @@ Select the part you want to check:
 | ----------------------------------- | -------------------------------------------------------------------------- |
 | Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.             |
 | One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`) |
+| JEB registration syntax             | `rea doctor --provider jeb --json`                                         |
 | One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents))   |
 | Installed workflow instructions     | `rea doctor --skill --json`                                                |
 | Desktop app environment builds      | `rea doctor --provider desktop_build --client claude_code --json`          |
@@ -399,7 +401,19 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
-With one selected client, Ghidra, IDA, JADX and Kuna provider checks use the
+JEB's doctor inspection is syntax-only and makes no network request. A valid
+registration still reports availability as `unknown` and does not pass the JEB
+readiness scope or enter setup's ready-provider list. For a live service query,
+include `jeb` in the selected client's current tool-family selection and restart
+after any scope change, then call MCP `inspect_jeb_client` through that client.
+With a `hot-cold` catalog, first call `discover_tools` with
+`{"names":["inspect_jeb_client"]}` and refresh `tools/list`.
+Alternatively, use `rea inspect-jeb-client`
+from a terminal with the same JEB settings; the CLI does not read the client's
+saved registration. A later syntax-only doctor run
+does not inherit that probe's readiness result.
+
+With one selected client, JEB, Ghidra, IDA, JADX and Kuna provider checks use the
 client's recorded environment over the terminal it inherits. If that registration
 cannot be read or a setting a provider needs cannot be resolved, its available
 value is `null` and its check is `unknown`; its configured value is also `null`

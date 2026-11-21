@@ -51,6 +51,10 @@ import {
   linuxHopperPythonUnavailable,
 } from "./application/LinuxHopperPython.js";
 import { settleConcurrent } from "./application/settleConcurrent.js";
+import {
+  inspectJebRegistration,
+  JEB_DOCTOR_SETTINGS,
+} from "./jeb/JebDoctor.js";
 
 /**
  * A selected client's own environment, when its registration records one.
@@ -148,7 +152,12 @@ const readSelectedRegistration = async (
   // caller's scope so `close()` retries it instead of losing it.
   const configuration = await resourceScope
     .run(() =>
-      readEffectiveClientRegistrationConfiguration(client, undefined, platform),
+      readEffectiveClientRegistrationConfiguration(
+        client,
+        undefined,
+        platform,
+        "diagnostic",
+      ),
     )
     .catch((cause: unknown) => {
       if (cause instanceof RegularFileCleanupFailure) {
@@ -172,7 +181,7 @@ const readSelectedRegistration = async (
     client,
     platform,
     {},
-    "effective",
+    "diagnostic",
   );
   return details.ok
     ? {
@@ -184,6 +193,7 @@ const readSelectedRegistration = async (
 
 /** Registration settings read by each provider's readiness probe. */
 const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
+  jeb: JEB_DOCTOR_SETTINGS,
   ghidra: GHIDRA_DOCTOR_SETTINGS,
   ida: IDA_DOCTOR_SETTINGS,
   jadx: JADX_DOCTOR_SETTINGS,
@@ -209,9 +219,8 @@ export const settingAffectsProbe = (
       // Java comes from JAVA_HOME when it is explicit; only then is PATH unused.
       return name !== "PATH" || read("JAVA_HOME") === undefined;
     case "ghidra":
-      // An existing project changes admission only on Windows, which cannot
-      // open one. Both the install directory and the JDK fall back to PATH.
-      if (name === "REA_GHIDRA_PROJECT_PATH") return platform === "win32";
+      // Project syntax affects readiness on every host; Windows additionally
+      // refuses existing projects. Installation and JDK selection fall back to PATH.
       return (
         name !== "PATH" ||
         read("GHIDRA_INSTALL_DIR") === undefined ||
@@ -259,6 +268,11 @@ const unresolvedProvider = (
       settingAffectsProbe(id, normalize(name), environment, platform),
   );
   if (selected.unknown !== true && unresolved.length === 0) return undefined;
+  if (id === "jeb" && selected.unknown !== true)
+    return inspectJebRegistration(
+      environment,
+      new Set(unresolved.map(normalize)),
+    );
   const configurationKeys: Readonly<Record<string, string>> = {
     ghidra: "GHIDRA_INSTALL_DIR",
     ida: "REA_IDA_MCP_CONFIG",
@@ -436,6 +450,14 @@ export const createSystemDoctorHost = (
         platform,
       );
       return await settleConcurrent([
+        Promise.resolve(
+          unresolvedProvider(
+            "jeb",
+            selected,
+            inspectionEnvironment,
+            platform,
+          ) ?? inspectJebRegistration(inspectionEnvironment),
+        ),
         ghidraUnresolved !== undefined
           ? Promise.resolve(ghidraUnresolved)
           : withProbeResourceScope(

@@ -33,6 +33,7 @@ import {
 } from "./GhidraReleasePolicy.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { silentLogger } from "../logger.js";
+import * as ghidraInstallation from "./GhidraInstallation.js";
 
 let inspectionResources = createInspectionResources();
 afterEach(async () => {
@@ -111,6 +112,73 @@ const doctorHost = (
     providerInspections: () =>
       Promise.resolve([projectGhidraDoctorInspection(ghidra)]),
   });
+
+describe("Ghidra doctor selection admission", () => {
+  it.each([
+    {
+      environment: { REA_GHIDRA_PROJECT_PATH: "relative.gpr" },
+      available: false,
+    },
+    {
+      environment: { REA_GHIDRA_PROJECT_PATH: "/work/project.grez" },
+      available: false,
+    },
+    {
+      environment: { REA_GHIDRA_PROJECT_PATH: "/work/project.gzf" },
+      available: false,
+    },
+    {
+      environment: { REA_GHIDRA_PROJECT_PATH: "/work/project.gpr" },
+      available: true,
+    },
+    {
+      environment: {
+        REA_GHIDRA_PROJECT_PATH: "/work/project.gpr",
+        REA_GHIDRA_SEED_FILE: "/work/seeds.json",
+      },
+      available: false,
+    },
+    {
+      environment: {
+        REA_GHIDRA_PROJECT_PATH: "/work/project.gpr",
+        REA_GHIDRA_PROGRAM_NAME: "module",
+      },
+      available: true,
+    },
+    { environment: { REA_GHIDRA_PROGRAM_NAME: "module" }, available: false },
+    {
+      environment: {
+        REA_GHIDRA_PROJECT_PATH: "/work/project.gpr",
+        REA_GHIDRA_CHECKPOINT_DIR: "/work/checkpoints",
+      },
+      available: false,
+    },
+    { environment: { REA_GHIDRA_COMPILER_SPEC_ID: "gcc" }, available: false },
+  ])(
+    "preserves installation facts but validates the full selection $environment",
+    async ({ environment, available }) => {
+      const installed = await inspection();
+      const inspect = vi
+        .spyOn(ghidraInstallation, "inspectGhidraInstallation")
+        .mockResolvedValue(installed);
+      onTestFinished(() => inspect.mockRestore());
+      const result = await inspectSystemGhidraProvider(
+        environment,
+        inspectionResources.owner,
+        undefined,
+        "linux",
+      );
+      expect(result).toMatchObject({
+        available,
+        providerVersion: SUPPORTED_GHIDRA_VERSION,
+        registrationEnvironment: { GHIDRA_INSTALL_DIR: INSTALL },
+      });
+      expect(
+        result.checks.some((check) => check.code === "invalid_configuration"),
+      ).toBe(!available);
+    },
+  );
+});
 
 describe("Ghidra doctor integration", async () => {
   it("accepts a valid BYO Ghidra engine when Hopper is absent", async () => {

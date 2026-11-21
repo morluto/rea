@@ -84,6 +84,8 @@ type ClientConfigurationLocation = Pick<
 > & { readonly format?: ClientConfigurationFormat };
 
 interface ClientConfigurationReadOptions {
+  /** Doctor retains readable launch settings for each setting owner to diagnose. */
+  readonly environmentValidation?: "strict" | "diagnostic";
   readonly writeOverrides?: Readonly<Record<string, string>>;
   /** The writer's verified snapshot of the selected path, which must not be reopened here. */
   readonly targetDocument?: ClientConfigurationDocument;
@@ -165,12 +167,16 @@ export const readConfigurationFile = async (
   }
 };
 
-/** Read each layer; setup may validate its writable layer with proposed overrides. */
+/** Read each layer; setup validates admission, while doctor can observe invalid settings. */
 export const readClientConfigurationFiles = async (
   client: ClientConfigurationLocation,
   resources: ArtifactResourceScope | undefined,
   platform: NodeJS.Platform,
-  { writeOverrides, targetDocument }: ClientConfigurationReadOptions = {},
+  {
+    writeOverrides,
+    targetDocument,
+    environmentValidation = "strict",
+  }: ClientConfigurationReadOptions = {},
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -202,7 +208,10 @@ export const readClientConfigurationFiles = async (
     if (document.value === undefined) continue;
     // A read-only lower layer's environment can be replaced as a whole map
     // by a later layer (Goose), so only the effective view is validated.
-    if (isTarget || client.readOnlyLowerLayers !== true) {
+    if (
+      environmentValidation === "strict" &&
+      (isTarget || client.readOnlyLowerLayers !== true)
+    ) {
       const failure = configurationEnvironmentFailure(client, platform, {
         path,
         document: document.value,
@@ -220,6 +229,7 @@ export const readClientConfigurationFiles = async (
       ...client.inlineConfiguration.parsed,
       inlineOrigin: client.inlineConfiguration.origin,
     });
+  if (environmentValidation === "diagnostic") return ok(documents);
   const failure = configurationEnvironmentFailure(client, platform, {
     path: client.configPath,
     document: mergeClientConfigurationDocuments(documents, platform),
@@ -503,6 +513,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
   client: SetupClient,
   resources: ArtifactResourceScope | undefined,
   platform: NodeJS.Platform,
+  environmentValidation: "strict" | "diagnostic" = "strict",
 ): Promise<
   Result<
     {
@@ -516,6 +527,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
     client,
     resources,
     platform,
+    { environmentValidation },
   );
   if (!nativeSources.ok) return nativeSources;
   const nativeDocument = effectiveClientConfiguration(
@@ -542,6 +554,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
     fallbackClient,
     resources,
     platform,
+    { environmentValidation },
   );
   if (!fallbackSources.ok) return fallbackSources;
   const fallbackDocument = effectiveClientConfiguration(

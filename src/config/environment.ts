@@ -37,6 +37,33 @@ import { parseLoaderArgs, parseStringArray } from "./parsers.js";
 import { processStartConfigurationSchema } from "./processStart.js";
 import { parseJebMcpEndpoint } from "./jebMcpEndpoint.js";
 
+/** One owner for fields participating in Ghidra's cross-field selection rules. */
+export const ghidraSelectionEnvironmentShape = {
+  REA_GHIDRA_NATIVEAOT_JAR: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_GHIDRA_NATIVEAOT_JAR must be absolute")
+    .optional(),
+  REA_GHIDRA_PROJECT_PATH: ghidraProjectPathSchema.optional(),
+  REA_GHIDRA_CHECKPOINT_DIR: z
+    .string()
+    .min(1)
+    .refine(
+      (value) => value.startsWith("/") && !value.includes("\0"),
+      "must be an absolute POSIX directory path",
+    )
+    .optional(),
+  REA_GHIDRA_PROGRAM_NAME: ghidraProgramNameSchema.optional(),
+  REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
+  REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
+  REA_GHIDRA_DISABLED_ANALYZERS: ghidraDisabledAnalyzersSchema.optional(),
+  REA_GHIDRA_SEED_FILE: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_GHIDRA_SEED_FILE must be absolute")
+    .optional(),
+};
+
 const environmentSchema = z.object({
   ...debuggerSessionLimitEnvironmentShape,
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
@@ -79,32 +106,10 @@ const environmentSchema = z.object({
     .min(1)
     .refine(isAbsolute, "JAVA_HOME must be absolute")
     .optional(),
-  REA_GHIDRA_NATIVEAOT_JAR: z
-    .string()
-    .min(1)
-    .refine(isAbsolute, "REA_GHIDRA_NATIVEAOT_JAR must be absolute")
-    .optional(),
+  ...ghidraSelectionEnvironmentShape,
   REA_SWIFTC_COMPILE_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   ),
-  REA_GHIDRA_PROJECT_PATH: ghidraProjectPathSchema.optional(),
-  REA_GHIDRA_CHECKPOINT_DIR: z
-    .string()
-    .min(1)
-    .refine(
-      (value) => value.startsWith("/") && !value.includes("\0"),
-      "must be an absolute POSIX directory path",
-    )
-    .optional(),
-  REA_GHIDRA_PROGRAM_NAME: ghidraProgramNameSchema.optional(),
-  REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
-  REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
-  REA_GHIDRA_DISABLED_ANALYZERS: ghidraDisabledAnalyzersSchema.optional(),
-  REA_GHIDRA_SEED_FILE: z
-    .string()
-    .min(1)
-    .refine(isAbsolute, "REA_GHIDRA_SEED_FILE must be absolute")
-    .optional(),
   REA_ILSPY_CMD_PATH: z
     .string()
     .min(1)
@@ -172,11 +177,12 @@ export type Environment = Omit<
   readonly referenceSecretPatterns: readonly string[];
 };
 
-/** Parse individual settings before layered registration fragments are merged. */
-export const parseEnvironmentValues = (
+/** Check OS environment representability before semantic parsing or diagnostics.
+ * Rejected values must never reach a child-process error message. */
+export const validateEnvironmentEntries = (
   environment: Readonly<Record<string, string | undefined>>,
   unresolvedSettings: ReadonlySet<string> = new Set(),
-): Result<Environment, ConfigurationError> => {
+): Result<null, ConfigurationError> => {
   // Unknown client-specific entries are preserved by registration owners and
   // still cross the child-process boundary. Check names and byte admission before
   // the known-setting schema strips them; never include rejected values.
@@ -201,6 +207,16 @@ export const parseEnvironmentValues = (
         settings: invalidEntries,
       }),
     );
+  return ok(null);
+};
+
+/** Parse individual settings before layered registration fragments are merged. */
+export const parseEnvironmentValues = (
+  environment: Readonly<Record<string, string | undefined>>,
+  unresolvedSettings: ReadonlySet<string> = new Set(),
+): Result<Environment, ConfigurationError> => {
+  const entries = validateEnvironmentEntries(environment, unresolvedSettings);
+  if (!entries.ok) return entries;
   // An expression has no known runtime value to validate or default. Its
   // original text was checked for invalid bytes above and remains with its owner.
   const literals = Object.fromEntries(

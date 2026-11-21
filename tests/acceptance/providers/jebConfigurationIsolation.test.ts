@@ -3,9 +3,11 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { resolve } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { afterAll, expect } from "vitest";
+import { z } from "zod";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { workspaceCliTest as test } from "../../support/cli/workspaceCliFixture.js";
@@ -32,6 +34,7 @@ const isolatedEnvironment = (workspace: TestWorkspace) => ({
     : {}),
   HOPPER_LAUNCHER_PATH: workspace.path("missing-hopper"),
   REA_LOG_LEVEL: "silent",
+  REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp/",
   REA_JEB_MCP_TIMEOUT_MS: "1.5",
 });
 
@@ -139,44 +142,340 @@ test("keeps compiled CLI discovery usable while JEB rejects its malformed timeou
     code: "configuration_invalid",
     details: { settings: [{ setting: "REA_JEB_MCP_TIMEOUT_MS" }] },
   });
+  const doctor = await cli.run({
+    arguments: ["doctor", "--provider", "jeb", "--json"],
+    environment,
+  });
+  expect(doctor.exitCode, doctor.stderr).toBe(1);
+  expect(doctor.json).toMatchObject({
+    healthy: false,
+    providerInspections: expect.arrayContaining([
+      expect.objectContaining({
+        id: "jeb",
+        configured: true,
+        available: false,
+        registrationEnvironment: {
+          REA_JEB_MCP_URL: environment.REA_JEB_MCP_URL,
+        },
+      }),
+    ]),
+    checks: expect.arrayContaining([
+      expect.objectContaining({
+        name: "jeb-request-timeout",
+        ok: false,
+        classification: "config_drift",
+        detail: "REA_JEB_MCP_TIMEOUT_MS: must be a positive decimal integer",
+      }),
+    ]),
+  });
+  const validDoctor = await cli.run({
+    arguments: ["doctor", "--provider", "jeb", "--json"],
+    environment: { ...environment, REA_JEB_MCP_TIMEOUT_MS: "900000" },
+  });
+  expect(validDoctor.exitCode, validDoctor.stderr).toBe(1);
+  expect(validDoctor.json).toMatchObject({
+    healthy: false,
+    providerInspections: expect.arrayContaining([
+      expect.objectContaining({
+        id: "jeb",
+        configured: true,
+        available: null,
+      }),
+    ]),
+    scope_checks: expect.arrayContaining([
+      expect.objectContaining({
+        name: "jeb-availability",
+        ok: false,
+        classification: "unknown",
+      }),
+    ]),
+  });
 });
 
-test("starts production stdio MCP and retains peer requests around a JEB configuration refusal", async ({
+test("registers an unprobed JEB endpoint without advertising service readiness or contacting it", async ({
+  cli,
   workspace,
 }) => {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [resolve("scripts/rea.mjs"), "mcp"],
-    cwd: workspace.root,
-    env: isolatedEnvironment(workspace),
-    stderr: "pipe",
+  let requests = 0;
+  const server = createServer((_request, response) => {
+    requests += 1;
+    response.writeHead(503);
+    response.end("Not a compatible JEB service");
   });
-  const client = new Client(
-    { name: "jeb-isolation-acceptance", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  let stderr = "";
-  transport.stderr?.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
-  });
-  await withVerifierCleanup(async () => {
-    await client.connect(transport);
-    await client.ping();
-    const definition = (await client.listTools()).tools.find(
-      ({ name }) => name === "inspect_jeb_client",
-    );
-    if (definition === undefined)
-      throw new Error(`Production MCP omitted inspect_jeb_client: ${stderr}`);
-    const refusal = parseMcpToolError(
-      await client.callTool(
-        { name: "inspect_jeb_client", arguments: {} },
-        { toolDefinition: withCanonicalOutputSchema(definition) },
-      ),
-    );
-    expect(refusal.error).toMatchObject({
-      code: "configuration_invalid",
-      details: { settings: [{ setting: "REA_JEB_MCP_TIMEOUT_MS" }] },
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new Error("Expected a bound loopback endpoint");
+    const endpoint = `http://127.0.0.1:${address.port}/mcp/`;
+    const environment = {
+      ...isolatedEnvironment(workspace),
+      CODEX_HOME: workspace.path("codex"),
+      REA_JEB_MCP_URL: endpoint,
+      REA_JEB_MCP_TIMEOUT_MS: "900000",
+    };
+    const doctor = await cli.run({
+      arguments: ["doctor", "--provider", "jeb", "--json"],
+      environment,
     });
-    await client.ping();
-  }, [() => client.close(), () => transport.close()]);
+    expect(doctor.exitCode, doctor.stderr).toBe(1);
+    expect(doctor.json).toMatchObject({
+      healthy: false,
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "jeb-availability",
+          ok: false,
+          classification: "unknown",
+        }),
+      ]),
+    });
+    expect(requests).toBe(0);
+    const result = await cli.run({
+      arguments: [
+        "setup",
+        "--client",
+        "codex",
+        "--skill=false",
+        "--yes",
+        "--json",
+      ],
+      environment,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      status: "ready",
+      doctor: {
+        providerInspections: expect.arrayContaining([
+          expect.objectContaining({
+            id: "jeb",
+            configured: true,
+            available: null,
+            registrationEnvironment: { REA_JEB_MCP_URL: endpoint },
+            checks: expect.arrayContaining([
+              expect.objectContaining({
+                name: "availability",
+                ok: false,
+                classification: "unknown",
+              }),
+            ]),
+          }),
+        ]),
+      },
+    });
+    const summary = z
+      .object({ doctor: z.object({ availableProviders: z.array(z.string()) }) })
+      .parse(result.json);
+    expect(summary.doctor.availableProviders).not.toContain("jeb");
+    expect(
+      await readFile(workspace.path("codex/config.toml"), "utf8"),
+    ).toContain(endpoint);
+    const selected = await cli.run({
+      arguments: ["doctor", "--client", "codex", "--provider", "jeb", "--json"],
+      environment: {
+        ...environment,
+        REA_JEB_MCP_URL: "invalid terminal endpoint",
+        REA_JEB_MCP_TIMEOUT_MS: "invalid",
+      },
+    });
+    expect(selected.exitCode, selected.stderr).toBe(1);
+    expect(selected.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "jeb",
+          configured: true,
+          available: null,
+          registrationEnvironment: { REA_JEB_MCP_URL: endpoint },
+          checks: [
+            expect.objectContaining({ name: "registration", ok: true }),
+            expect.objectContaining({
+              name: "availability",
+              code: "not_probed",
+            }),
+          ],
+        }),
+      ]),
+    });
+    const registration = workspace.path("codex/config.toml");
+    await writeFile(
+      registration,
+      (await readFile(registration, "utf8")).replace("900000", "1.5"),
+    );
+    const invalidSelected = await cli.run({
+      arguments: ["doctor", "--client", "codex", "--provider", "jeb", "--json"],
+      environment,
+    });
+    expect(invalidSelected.exitCode, invalidSelected.stderr).toBe(1);
+    expect(invalidSelected.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "jeb",
+          configured: true,
+          available: false,
+          registrationEnvironment: { REA_JEB_MCP_URL: endpoint },
+          checks: expect.arrayContaining([
+            expect.objectContaining({
+              name: "request-timeout",
+              code: "invalid_configuration",
+            }),
+          ]),
+        }),
+      ]),
+    });
+    expect(requests).toBe(0);
+  } finally {
+    if (server.listening)
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) =>
+          error === undefined ? resolve() : reject(error),
+        ),
+      );
+  }
 });
+
+test.for([
+  {
+    name: "omitted",
+    endpoint: undefined,
+    timeout: undefined,
+    configured: false,
+  },
+  { name: "empty", endpoint: "", timeout: undefined, configured: false },
+  {
+    name: "timeout-only",
+    endpoint: undefined,
+    timeout: "900000",
+    configured: true,
+  },
+])(
+  "diagnoses the default JEB endpoint without persisting an implicit override: $name",
+  async ({ endpoint, timeout, configured }, { cli, workspace }) => {
+    const environment = {
+      ...isolatedEnvironment(workspace),
+      CODEX_HOME: workspace.path("codex"),
+      REA_JEB_MCP_URL: endpoint,
+      REA_JEB_MCP_TIMEOUT_MS: timeout,
+    };
+    const doctor = await cli.run({
+      arguments: ["doctor", "--provider", "jeb", "--json"],
+      environment,
+    });
+    expect(doctor.exitCode, doctor.stderr).toBe(1);
+    expect(doctor.json).toMatchObject({
+      healthy: false,
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "jeb",
+          configured,
+          available: null,
+          registrationEnvironment: {},
+          checks: expect.arrayContaining([
+            expect.objectContaining({
+              name: "registration",
+              ok: true,
+              code: null,
+              detail: expect.stringContaining("http://127.0.0.1:8425/mcp"),
+            }),
+            expect.objectContaining({
+              name: "availability",
+              code: "not_probed",
+              classification: "unknown",
+            }),
+          ]),
+        }),
+      ]),
+    });
+    const setup = await cli.run({
+      arguments: [
+        "setup",
+        "--client",
+        "codex",
+        "--skill=false",
+        "--yes",
+        "--json",
+      ],
+      environment,
+    });
+    expect(setup.exitCode, setup.stderr).toBe(0);
+    expect(setup.json).toMatchObject({ status: "ready" });
+    const saved = await readFile(workspace.path("codex/config.toml"), "utf8");
+    if (endpoint === undefined) expect(saved).not.toContain("REA_JEB_MCP_URL");
+    else expect(saved).toContain('REA_JEB_MCP_URL = ""');
+    if (timeout !== undefined) {
+      expect(saved).toContain("REA_JEB_MCP_TIMEOUT_MS");
+      expect(saved).toContain(timeout);
+    }
+  },
+);
+
+test.for([
+  { families: undefined, profile: "full" },
+  { families: "jeb", profile: "full" },
+  { families: "artifact", profile: "full" },
+  { families: undefined, profile: "hot-cold" },
+  { families: "jeb", profile: "hot-cold" },
+])(
+  "preserves JEB diagnostics in production MCP (families: $families, profile: $profile)",
+  async ({ families, profile }, { workspace }) => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [resolve("scripts/rea.mjs"), "mcp"],
+      cwd: workspace.root,
+      env: {
+        ...isolatedEnvironment(workspace),
+        REA_MCP_TOOL_CATALOG_PROFILE: profile,
+        ...(families === undefined ? {} : { REA_MCP_TOOL_FAMILIES: families }),
+      },
+      stderr: "pipe",
+    });
+    const client = new Client(
+      { name: "jeb-isolation-acceptance", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
+    let stderr = "";
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    await withVerifierCleanup(async () => {
+      await client.connect(transport);
+      await client.ping();
+      let tools = (await client.listTools()).tools;
+      if (profile === "hot-cold") {
+        expect(tools.some(({ name }) => name === "inspect_jeb_client")).toBe(
+          false,
+        );
+        const discovery = await client.callTool({
+          name: "discover_tools",
+          arguments: { names: ["inspect_jeb_client"] },
+        });
+        expect(discovery.isError).not.toBe(true);
+        tools = (await client.listTools()).tools;
+      }
+      if (families === "artifact") {
+        expect(tools.some(({ name }) => name === "inspect_jeb_client")).toBe(
+          false,
+        );
+        await client.ping();
+        return;
+      }
+      if (families === "jeb")
+        expect(tools.some(({ name }) => name === "binary_session")).toBe(false);
+      const definition = tools.find(
+        ({ name }) => name === "inspect_jeb_client",
+      );
+      if (definition === undefined)
+        throw new Error(`Production MCP omitted inspect_jeb_client: ${stderr}`);
+      const refusal = parseMcpToolError(
+        await client.callTool(
+          { name: "inspect_jeb_client", arguments: {} },
+          { toolDefinition: withCanonicalOutputSchema(definition) },
+        ),
+      );
+      expect(refusal.error).toMatchObject({
+        code: "configuration_invalid",
+        details: { settings: [{ setting: "REA_JEB_MCP_TIMEOUT_MS" }] },
+      });
+      await client.ping();
+    }, [() => client.close(), () => transport.close()]);
+  },
+);

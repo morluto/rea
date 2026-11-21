@@ -229,6 +229,30 @@ export class DshCordisDocument {
     },
     ConfigurationError
   > {
+    const observed = this.environmentValues(overrides, platform);
+    if (!observed.ok) return observed;
+    const validated = validateRegistrationEnvironment(
+      observed.value.values,
+      observed.value.unresolvedSettings,
+      validation,
+      platform,
+    );
+    return validated.ok
+      ? ok({ values: observed.value.values, ...validated.value })
+      : validated;
+  }
+
+  /** Read literal settings and expression identities without admitting launch configuration. */
+  environmentValues(
+    overrides: Readonly<Record<string, string>>,
+    platform: NodeJS.Platform,
+  ): Result<
+    {
+      readonly values: Readonly<Record<string, string>>;
+      readonly unresolvedSettings: ReadonlySet<string>;
+    },
+    ConfigurationError
+  > {
     const config = this.#field("config");
     if (config instanceof CordisExpression)
       return err(
@@ -284,15 +308,7 @@ export class DshCordisDocument {
         );
       literals[key] = value;
     }
-    const validated = validateRegistrationEnvironment(
-      literals,
-      unresolvedSettings,
-      validation,
-      platform,
-    );
-    return validated.ok
-      ? ok({ values: literals, ...validated.value })
-      : validated;
+    return ok({ values: literals, unresolvedSettings });
   }
 
   desired(

@@ -1,5 +1,5 @@
 import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { expect, it as test, vi } from "vitest";
 import { withVerifierCleanup } from "../scripts/lib/verifier-cleanup.mjs";
@@ -572,14 +572,168 @@ test("probes the selected client's registration environment instead of the termi
   await opencodeRegistration(home, {
     GHIDRA_INSTALL_DIR: "/opt/ghidra",
     REA_JADX_MCP_JAR: "/opt/jadx.jar",
+    REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp",
+    REA_JEB_MCP_TIMEOUT_MS: "900000",
   });
-  const host = createSystemDoctorHost({ HOME: home });
+  const host = createSystemDoctorHost({
+    HOME: home,
+    REA_JEB_MCP_URL: "invalid",
+    REA_JEB_MCP_TIMEOUT_MS: "invalid",
+  });
   try {
     const inspections = await host.providerInspections?.(["opencode"]);
     expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(
       true,
     );
     expect(inspections?.find(({ id }) => id === "jadx")?.configured).toBe(true);
+    expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
+      configured: true,
+      available: null,
+      registrationEnvironment: { REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp" },
+      checks: [
+        expect.objectContaining({ name: "registration", ok: true }),
+        expect.objectContaining({ name: "availability", code: "not_probed" }),
+      ],
+    });
+  } finally {
+    await host.close?.();
+  }
+});
+
+it.each([
+  { setting: "REA_JEB_MCP_URL", timeout: "900000", configured: true },
+  { setting: "REA_JEB_MCP_URL", timeout: undefined, configured: null },
+  { setting: "REA_JEB_MCP_TIMEOUT_MS", timeout: "900000", configured: true },
+])(
+  "preserves selected JEB facts for unresolved $setting with timeout $timeout",
+  async ({ setting, timeout, configured }) => {
+    const home = await createTestTempDirectory("rea-qwen-jeb-setting-");
+    await mkdir(join(home, ".qwen"), { recursive: true });
+    await writeFile(
+      join(home, ".qwen/settings.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "node",
+            args: ["rea"],
+            env: { [setting]: "${SELECTED_JEB_VALUE}" },
+          },
+        },
+      }),
+    );
+    const host = createSystemDoctorHost({
+      HOME: home,
+      REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp",
+      REA_JEB_MCP_TIMEOUT_MS: timeout,
+    });
+    try {
+      const inspections = await host.providerInspections?.(["qwen_code"]);
+      expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
+        configured,
+        available: null,
+        registrationEnvironment:
+          setting === "REA_JEB_MCP_TIMEOUT_MS"
+            ? { REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp" }
+            : {},
+        checks: expect.arrayContaining([
+          expect.objectContaining({
+            code: "registration_environment_unknown",
+            classification: "unknown",
+          }),
+        ]),
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+it.each([
+  {
+    settings: { REA_JEB_MCP_URL: "invalid" },
+    available: false,
+    failedCheck: "registration",
+  },
+  {
+    settings: { REA_JEB_MCP_TIMEOUT_MS: "1.5" },
+    available: false,
+    failedCheck: "request-timeout",
+  },
+  {
+    settings: { REA_ANALYSIS_PROVIDER: "invalid" },
+    available: null,
+    failedCheck: "availability",
+  },
+])(
+  "retains readable JEB facts when selected registration settings fail validation: $settings",
+  async ({ settings, available, failedCheck }) => {
+    const home = await createTestTempDirectory("rea-jeb-invalid-registration-");
+    const endpoint = "http://127.0.0.1:9999/mcp";
+    await opencodeRegistration(home, {
+      REA_JEB_MCP_URL: endpoint,
+      ...settings,
+    });
+    const host = createSystemDoctorHost({ HOME: home });
+    try {
+      const inspections = await host.providerInspections?.(["opencode"]);
+      const jeb = inspections?.find(({ id }) => id === "jeb");
+      expect(jeb).toMatchObject({
+        configured: true,
+        available,
+        registrationEnvironment:
+          settings.REA_JEB_MCP_URL === "invalid"
+            ? {}
+            : { REA_JEB_MCP_URL: endpoint },
+        checks: expect.arrayContaining([
+          expect.objectContaining({
+            name: failedCheck,
+            code:
+              failedCheck === "availability"
+                ? "not_probed"
+                : "invalid_configuration",
+          }),
+        ]),
+      });
+      expect(jeb?.checks).not.toContainEqual(
+        expect.objectContaining({ code: "registration_environment_unknown" }),
+      );
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+test("refuses a selected client's relative IDA path without losing its valid JEB endpoint", async () => {
+  const home = await createTestTempDirectory("rea-doctor-relative-ida-");
+  const path = join(home, "ida.json");
+  const endpoint = "http://127.0.0.1:9999/mcp";
+  await writeFile(
+    path,
+    JSON.stringify({ command: "fixture", protocol: "native" }),
+  );
+  await opencodeRegistration(home, {
+    REA_IDA_MCP_CONFIG: relative(process.cwd(), path),
+    REA_JEB_MCP_URL: endpoint,
+  });
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    const inspections = await host.providerInspections?.(["opencode"]);
+    expect(inspections?.find(({ id }) => id === "ida")).toMatchObject({
+      configured: true,
+      available: false,
+      registrationEnvironment: {},
+      checks: [
+        expect.objectContaining({
+          name: "registration",
+          code: "invalid_configuration",
+        }),
+      ],
+    });
+    expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
+      configured: true,
+      available: null,
+      registrationEnvironment: { REA_JEB_MCP_URL: endpoint },
+    });
   } finally {
     await host.close?.();
   }
@@ -598,6 +752,50 @@ test("keeps reading this terminal when no client is selected", async () => {
     await host.close?.();
   }
 });
+
+it.each([
+  "REA_GHIDRA_SEED_FILE",
+  "REA_GHIDRA_LANGUAGE_ID",
+  "REA_GHIDRA_PROGRAM_NAME",
+])(
+  "keeps unresolved Ghidra selection field %s unknown before probing",
+  async (setting) => {
+    const home = await createTestTempDirectory("rea-qwen-ghidra-selection-");
+    await mkdir(join(home, ".qwen"), { recursive: true });
+    await writeFile(
+      join(home, ".qwen/settings.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "node",
+            args: ["rea"],
+            env: {
+              GHIDRA_INSTALL_DIR: "/opt/ghidra",
+              REA_GHIDRA_PROJECT_PATH: "/work/project.gpr",
+              [setting]: "${SELECTED_GHIDRA_VALUE}",
+            },
+          },
+        },
+      }),
+    );
+    const host = createSystemDoctorHost({ HOME: home });
+    try {
+      const inspections = await host.providerInspections?.(["qwen_code"]);
+      expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
+        configured: true,
+        available: null,
+        checks: [
+          expect.objectContaining({
+            code: "registration_environment_unknown",
+            classification: "unknown",
+          }),
+        ],
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
 
 test("keeps a selected client without a registration on the setup's settings", async () => {
   const home = await createTestTempDirectory(
@@ -624,10 +822,10 @@ test("decides whether an unresolved setting is one the probe actually reads", ()
     settingAffectsProbe("jadx", "PATH", { JAVA_HOME: "/opt/java" }, "linux"),
   ).toBe(false);
   expect(settingAffectsProbe("jadx", "PATH", {}, "linux")).toBe(true);
-  // Only Windows refuses an existing Ghidra project.
+  // Every host validates project syntax; Windows also refuses existing projects.
   expect(
     settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "darwin"),
-  ).toBe(false);
+  ).toBe(true);
   expect(
     settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "win32"),
   ).toBe(true);
@@ -908,6 +1106,17 @@ test("does not use terminal readiness when a selected registration is malformed"
       configured: null,
       available: null,
       checks: [expect.objectContaining({ classification: "unknown" })],
+    });
+    expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
+      configured: null,
+      available: null,
+      registrationEnvironment: {},
+      checks: [
+        expect.objectContaining({
+          code: "registration_environment_unknown",
+          classification: "unknown",
+        }),
+      ],
     });
     const report = await runDoctor(undefined, host, {
       clients: ["opencode"],

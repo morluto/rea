@@ -1,4 +1,8 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  ghidraSelectionEnvironmentShape,
+  parseEnvironment,
+} from "../config/environment.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
@@ -26,7 +30,7 @@ export const GHIDRA_DOCTOR_SETTINGS = [
   "GHIDRA_INSTALL_DIR",
   "JAVA_HOME",
   "PATH",
-  "REA_GHIDRA_PROJECT_PATH",
+  ...Object.keys(ghidraSelectionEnvironmentShape),
 ] as const;
 
 /** Project installation and runtime-authority facts into the doctor contract. */
@@ -159,9 +163,40 @@ export const inspectSystemGhidraProvider = async (
       installation.status === "available" && installation.platform === "win32"
         ? await probeGhidraTemporaryDirectory(resourceOwner)
         : undefined;
-    return projectGhidraDoctorInspection(installation, temporaryDirectory, {
-      existingProject: environment.REA_GHIDRA_PROJECT_PATH !== undefined,
-    });
+    const inspection = projectGhidraDoctorInspection(
+      installation,
+      temporaryDirectory,
+      {
+        existingProject: environment.REA_GHIDRA_PROJECT_PATH !== undefined,
+      },
+    );
+    const project = parseEnvironment(
+      Object.fromEntries(
+        Object.keys(ghidraSelectionEnvironmentShape).map((key) => [
+          key,
+          environment[key],
+        ]),
+      ),
+    );
+    if (project.ok) return inspection;
+    const constraint = project.error.settings
+      .map(({ setting, constraint }) => `${setting}: ${constraint}`)
+      .join("; ");
+    return {
+      ...inspection,
+      available: false,
+      checks: [
+        ...inspection.checks,
+        {
+          name: "existing_project_configuration",
+          ok: false,
+          code: "invalid_configuration",
+          classification: "config_drift",
+          detail: constraint,
+          remediation: `Fix the selected Ghidra settings before analysis. ${constraint}`,
+        },
+      ],
+    };
   } catch (cause: unknown) {
     throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
   }

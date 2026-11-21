@@ -1,8 +1,9 @@
 import * as fs from "node:fs/promises";
 import { appendFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { join, relative } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
 import {
   LEGACY_PROTOCOL_REMOVED,
   readIdaConfiguration,
@@ -25,6 +26,28 @@ const ATTACHED_REGISTRATION = JSON.stringify({
 const read = (path: string) => readIdaConfiguration(path, { resourceScope });
 
 describe("IDA registration and MCP result boundaries", () => {
+  it("refuses a readable relative registration path before opening it", async () => {
+    const root = await createTestTempDirectory(
+      "rea-ida-relative-registration-",
+    );
+    const path = join(root, "mcp.json");
+    await writeFile(path, ATTACHED_REGISTRATION);
+    const opened = vi.mocked(fs.open).mock.calls.length;
+    const result = await read(relative(process.cwd(), path));
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        settings: [
+          {
+            setting: "REA_IDA_MCP_CONFIG",
+            constraint: "REA_IDA_MCP_CONFIG must be absolute",
+          },
+        ],
+      },
+    });
+    expect(vi.mocked(fs.open).mock.calls).toHaveLength(opened);
+    expect((await read(path)).ok).toBe(true);
+  });
   it("reuses a direct or upstream mcpServers registration with no installation", async () => {
     const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
