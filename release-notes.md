@@ -207,6 +207,7 @@
 * **browser:** verify loopback lease order without a timing race ([#12786](https://github.com/morluto/rea/issues/12786)) ([6bb47ed](https://github.com/morluto/rea/commit/6bb47ed777d6ccddea8e458e78273cf9c1b13a0b))
 * **browser:** verify result budgets and memory attribution structurally ([#12886](https://github.com/morluto/rea/issues/12886)) ([70eb0b6](https://github.com/morluto/rea/commit/70eb0b67226eefe5088a70cdbc51facd71a1be8a))
 * **browser:** witness CDP observation before cancelling ([#12866](https://github.com/morluto/rea/issues/12866)) ([4d81b0d](https://github.com/morluto/rea/commit/4d81b0d07bb81bff034e671114d40e1f118183e4))
+* **capture:** consolidate historical worker lifecycle checks ([#13216](https://github.com/morluto/rea/issues/13216)) ([e5850af](https://github.com/morluto/rea/commit/e5850aff15178098fa8ae26a3b70b946654af454))
 * **capture:** consolidate Playwright trace contracts ([#13207](https://github.com/morluto/rea/issues/13207)) ([339f0ac](https://github.com/morluto/rea/commit/339f0ace57b2c365972c261b228ff23bcbe6586b))
 * **capture:** consolidate Protobuf descriptor identity checks ([#13214](https://github.com/morluto/rea/issues/13214)) ([1e89bcc](https://github.com/morluto/rea/commit/1e89bcc2163ff2f081b6d0f011572c0389dfaeb6))
 * **capture:** prove retained summaries survive source deletion ([#13206](https://github.com/morluto/rea/issues/13206)) ([a2faf4c](https://github.com/morluto/rea/commit/a2faf4cc343608862c4c7d496c3b1c6520e299fb))
