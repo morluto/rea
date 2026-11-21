@@ -136,45 +136,36 @@ describe("compiled CLI JSON document omissions", () => {
       expect(result.exitCode).toBe(1);
     });
 
-  // Delivery is chosen by options beside the document; a delivery field in
-  // the document names its option instead of being dropped or misread.
-  for (const [command, operation, field, message] of [
-    [
-      "compare-static-and-observed-endpoints",
-      "compare_static_and_observed_endpoints",
-      "detail",
-      "pass --detail beside it",
-    ],
-    [
-      "compare-static-and-observed-endpoints",
-      "compare_static_and_observed_endpoints",
-      "view",
-      "pass --view beside it",
-    ],
-    [
-      "capture-browser-scenario",
-      "capture_browser_scenario",
-      "detail",
-      "pass --detail beside it",
-    ],
-    [
-      "validate-browser-scenario",
-      "capture_browser_scenario",
-      "detail",
-      "pass --detail to capture-browser-scenario",
-    ],
-  ] as const)
+  // Delivery fields belong beside the document. The endpoints command
+  // reports both misplacements together, while validation points to capture.
+  for (const { command, operation, document, hints } of [
+    {
+      command: "compare-static-and-observed-endpoints",
+      operation: "compare_static_and_observed_endpoints",
+      document: { detail: "summary", view: { collection: "matches" } },
+      hints: {
+        detail: "pass --detail beside it",
+        view: "pass --view beside it",
+      },
+    },
+    {
+      command: "capture-browser-scenario",
+      operation: "capture_browser_scenario",
+      document: { detail: "summary" },
+      hints: { detail: "pass --detail beside it" },
+    },
+    {
+      command: "validate-browser-scenario",
+      operation: "capture_browser_scenario",
+      document: { detail: "summary" },
+      hints: { detail: "pass --detail to capture-browser-scenario" },
+    },
+  ])
     cliTest(
-      `${command} refuses ${field} inside the document`,
+      `${command} reports each misplaced delivery field`,
       async ({ cli }) => {
         const result = await cli.run({
-          arguments: [
-            command,
-            JSON.stringify({
-              [field]: field === "view" ? { collection: "matches" } : "summary",
-            }),
-            "--json",
-          ],
+          arguments: [command, JSON.stringify(document), "--json"],
           environment: isolatedHomeEnvironment,
         });
         expect(result.json).toMatchObject({
@@ -182,9 +173,10 @@ describe("compiled CLI JSON document omissions", () => {
           category: "invalid_input",
           details: {
             operation,
-            issues: [
-              { path: [field], message: expect.stringContaining(message) },
-            ],
+            issues: Object.entries(hints).map(([field, message]) => ({
+              path: [field],
+              message: expect.stringContaining(message),
+            })),
           },
         });
         expect(result.exitCode).toBe(1);
