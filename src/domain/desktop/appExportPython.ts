@@ -29,6 +29,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 from array import array
+from builtins import EOFError, Exception, FileExistsError, NotImplementedError, OSError, RecursionError, UnicodeDecodeError, ValueError
 import binascii
 import contextlib
 import copy
