@@ -31,123 +31,95 @@ it("splits link relations only on HTML ASCII whitespace", () => {
   ]);
 });
 
-it("uses the captured base for relative destinations and falls back to the document URL", () => {
-  const elements: SnapshotElement[] = [
-    { name: "BASE", parent: 0, attributes: [["href", "assets/"]] },
-    { name: "A", parent: 0, attributes: [["href", "guide"]] },
+it("resolves HTML destinations before applying the allowed-origin policy", () => {
+  const assets = `${origin}/screens/assets/`;
+  const foreign = "https://cdn.example.test/assets/";
+  const scenarios = [
     {
-      name: "LINK",
-      parent: 0,
-      attributes: [
-        ["href", "agent"],
-        ["rel", "mcp"],
-      ],
+      label: "captured",
+      base: assets,
+      href: "assets/",
+      baseDestination: assets,
+      relativeTo: assets,
     },
-    { name: "FORM", parent: 0, attributes: [["action", "submit"]] },
+    {
+      label: "omitted",
+      base: null,
+      href: "assets/",
+      baseDestination: assets,
+      relativeTo: `${origin}/screens/`,
+    },
+    {
+      label: "empty",
+      base: "",
+      href: "assets/",
+      baseDestination: assets,
+      relativeTo: `${origin}/screens/`,
+    },
+    {
+      label: "foreign",
+      base: foreign,
+      href: foreign,
+      baseDestination: null,
+      relativeTo: null,
+    },
   ];
-  for (const [base, resolved] of [
-    [`${origin}/screens/assets/`, `${origin}/screens/assets/`],
-    [null, `${origin}/screens/`],
-  ] as const) {
-    const result = captureSnapshot(domSnapshot(elements, base));
-    expect(result.urls).toEqual([
-      approvedHref(1, `${origin}/screens/assets/`),
-      approvedHref(2, `${resolved}guide`),
-      approvedHref(3, `${resolved}agent`),
-      {
-        node_index: 4,
-        attribute: "action",
-        url: `${resolved}submit`,
-        destination_scope: "approved",
-      },
+  const absolute = `${origin}/absolute`;
+  const destination = (
+    node_index: number,
+    attribute: string,
+    url: string | null,
+  ) => ({
+    node_index,
+    attribute,
+    url,
+    destination_scope: url === null ? "outside_policy" : "approved",
+  });
+
+  for (const { label, base, href, baseDestination, relativeTo } of scenarios) {
+    const result = captureSnapshot(
+      domSnapshot(
+        [
+          { name: "BASE", parent: 0, attributes: [["href", href]] },
+          { name: "A", parent: 0, attributes: [["href", "guide"]] },
+          {
+            name: "LINK",
+            parent: 0,
+            attributes: [
+              ["href", "agent"],
+              ["rel", "mcp"],
+            ],
+          },
+          { name: "FORM", parent: 0, attributes: [["action", "submit"]] },
+          { name: "A", parent: 0, attributes: [["href", absolute]] },
+          { name: "FORM", parent: 0, attributes: [["action", ""]] },
+        ],
+        base,
+      ),
+    );
+    const relative = (name: string) =>
+      relativeTo === null ? null : `${relativeTo}${name}`;
+    expect(result.urls, label).toEqual([
+      destination(1, "href", baseDestination),
+      destination(2, "href", relative("guide")),
+      destination(3, "href", relative("agent")),
+      destination(4, "action", relative("submit")),
+      approvedHref(5, absolute),
+      destination(6, "action", documentUrl),
     ]);
-    expect(result.agentHints).toEqual([
+    expect(result.agentHints, label).toEqual([
       {
         mechanism: "dom_link_rel",
         declaration: "mcp",
-        url: `${resolved}agent`,
+        url: relative("agent"),
         trust: "page-declared-untrusted",
       },
     ]);
+    expect(
+      result.nodes.map(({ node_name }) => node_name),
+      label,
+    ).toEqual(["#document", "BASE", "A", "LINK", "FORM", "A", "FORM"]);
   }
-});
-
-it("applies destination policy after resolution against a foreign base", () => {
-  const foreign = "https://cdn.example.test/assets/";
-  const result = captureSnapshot(
-    domSnapshot(
-      [
-        { name: "BASE", parent: 0, attributes: [["href", foreign]] },
-        { name: "A", parent: 0, attributes: [["href", "guide"]] },
-        {
-          name: "LINK",
-          parent: 0,
-          attributes: [
-            ["href", "agent"],
-            ["rel", "mcp"],
-          ],
-        },
-        { name: "FORM", parent: 0, attributes: [["action", "submit"]] },
-        {
-          name: "A",
-          parent: 0,
-          attributes: [["href", `${origin}/absolute`]],
-        },
-        { name: "FORM", parent: 0, attributes: [["action", ""]] },
-      ],
-      foreign,
-    ),
-  );
-  expect(result.urls).toEqual([
-    {
-      node_index: 1,
-      attribute: "href",
-      url: null,
-      destination_scope: "outside_policy",
-    },
-    {
-      node_index: 2,
-      attribute: "href",
-      url: null,
-      destination_scope: "outside_policy",
-    },
-    {
-      node_index: 3,
-      attribute: "href",
-      url: null,
-      destination_scope: "outside_policy",
-    },
-    {
-      node_index: 4,
-      attribute: "action",
-      url: null,
-      destination_scope: "outside_policy",
-    },
-    approvedHref(5, `${origin}/absolute`),
-    {
-      node_index: 6,
-      attribute: "action",
-      url: documentUrl,
-      destination_scope: "approved",
-    },
-  ]);
-  expect(result.agentHints).toEqual([
-    {
-      mechanism: "dom_link_rel",
-      declaration: "mcp",
-      url: null,
-      trust: "page-declared-untrusted",
-    },
-  ]);
-  expect(result.nodes.map(({ node_name }) => node_name)).toEqual([
-    "#document",
-    "BASE",
-    "A",
-    "LINK",
-    "FORM",
-    "A",
-    "FORM",
-  ]);
 });
 
 it("retains unsupported URL evidence and redacts credentials on approved links", () => {
