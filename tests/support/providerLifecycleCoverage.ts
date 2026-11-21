@@ -1552,10 +1552,6 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "applies command_timeout_ms to the primary connect handshake when service workers are allowed",
-        ),
-        test(
-          "src/browser/PlaywrightScenarioBrowser.test.ts",
           "closes a browser that connects after its deadline without waiting to report the timeout",
         ),
       ),
