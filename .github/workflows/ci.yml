@@ -727,12 +727,6 @@ jobs:
       - run: npm run verify:windows-native:artifact
       - if: steps.windows-native-cache.outputs.cache-hit != 'true'
         run: node scripts/build-windows-native.mjs --inspection-fixture
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: windows-native-inspection-fixture
-          path: .cache/windows-native-inspection-fixture/
-          if-no-files-found: error
-          overwrite: true
       # The process boundary observations are independent of the addon: they
       # report the caller's and child's own token, environment and breakaway
       # results from a separate executable. Cross-build it in the lane that
@@ -762,6 +756,12 @@ jobs:
             .cache/windows-native-inspection-fixture/
             .cache/windows-process-boundary/
           key: ${{ steps.windows-native-cache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-native-inspection-fixture
+          path: .cache/windows-native-inspection-fixture/
+          if-no-files-found: error
+          overwrite: true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-process-boundary-fixture

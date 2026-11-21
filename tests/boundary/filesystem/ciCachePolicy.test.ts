@@ -704,9 +704,17 @@ it("replaces Windows cross-build artifacts on retries under their consumer names
   const ci = (await readWorkflows()).find(({ file }) => file === "ci.yml");
   const jobs = ci?.workflow.jobs;
   const producer = jobs?.["windows-native-build"]?.steps ?? [];
-  const uploads = producer
-    .filter((step) => step.uses?.startsWith("actions/upload-artifact@"))
-    .map((step) => step.with);
+  const verifiedAt = producer.findIndex(
+    (step) => step.name === "Verify cross-built Windows test fixtures",
+  );
+  const uploadPositions = producer.flatMap((step, index) =>
+    step.uses?.startsWith("actions/upload-artifact@") ? [index] : [],
+  );
+  expect(verifiedAt).toBeGreaterThanOrEqual(0);
+  expect(uploadPositions).toHaveLength(3);
+  for (const index of uploadPositions)
+    expect(index).toBeGreaterThan(verifiedAt);
+  const uploads = uploadPositions.map((index) => producer[index]?.with);
   expect(uploads).toMatchObject([
     {
       name: "windows-native-inspection-fixture",
