@@ -4,6 +4,7 @@ import { readRegularFileText } from "../process/RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
+  parseGgcodeLegacyConfiguration,
   clientConfigurationValuesEqual,
   type ClientConfigurationDocument,
   type ClientConfigurationFormat,
@@ -81,6 +82,7 @@ type ClientConfigurationLocation = Pick<
   | "configPathError"
   | "readOnlyLowerLayers"
   | "inlineConfiguration"
+  | "fallbackConfigPath"
 > & { readonly format?: ClientConfigurationFormat };
 
 interface ClientConfigurationReadOptions {
@@ -212,6 +214,53 @@ export const readClientConfigurationFiles = async (
       if (failure !== undefined) return err(failure);
     }
     documents.push({ ...document.value, sourcePath: path });
+  }
+  // ggcode honors its legacy in-main section only while the standalone file
+  // is absent, so the fallback joins as the lowest-precedence layer only then.
+  if (
+    client.format === "ggcode" &&
+    client.fallbackConfigPath !== undefined &&
+    !documents.some(({ sourcePath }) => sourcePath === client.configPath)
+  ) {
+    const fallbackText = await readConfigurationText(
+      client.fallbackConfigPath,
+      resources,
+    );
+    if (!fallbackText.ok) return fallbackText;
+    if (fallbackText.value !== undefined) {
+      try {
+        const document = parseGgcodeLegacyConfiguration(fallbackText.value);
+        // The fallback becomes the writable source while the standalone file
+        // is absent, so proposed overrides must repair invalid saved settings
+        // here exactly as they do on the standalone path.
+        const environment = clientRegistrationEnvironment(
+          document,
+          undefined,
+          platform,
+          writeOverrides,
+          "fragment",
+        );
+        if (!environment.ok)
+          return err(
+            invalidEnvironment(
+              client.fallbackConfigPath,
+              environment.error,
+              writeOverrides,
+              platform,
+            ),
+          );
+        documents.unshift({
+          ...document,
+          sourcePath: client.fallbackConfigPath,
+        });
+      } catch (cause: unknown) {
+        return err({
+          kind: "malformed",
+          path: client.fallbackConfigPath,
+          detail: `Configuration ${client.fallbackConfigPath} is malformed: ${errorMessage(cause)}`,
+        });
+      }
+    }
   }
   // The inline layer is read-only and may replace a lower environment map,
   // so like a read-only lower layer only the effective view is validated.
@@ -525,12 +574,17 @@ export const readEffectiveClientRegistrationConfiguration = async (
   );
   const fallbackPath =
     client.format === "zcode" ? client.zcodeFallbackPath : undefined;
+  // A fallback-layer client reports the file its registration was read from.
+  const effectivePath =
+    client.fallbackConfigPath === undefined
+      ? client.configPath
+      : (nativeSources.value.at(-1)?.sourcePath ?? client.configPath);
   if (
     fallbackPath === undefined ||
     (nativeDocument !== undefined &&
       Object.keys(nativeDocument.servers).length > 0)
   )
-    return ok({ document: nativeDocument, configPath: client.configPath });
+    return ok({ document: nativeDocument, configPath: effectivePath });
 
   const fallbackClient: SetupClient = {
     ...client,

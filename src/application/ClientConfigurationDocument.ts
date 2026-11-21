@@ -18,6 +18,11 @@ import {
   stringifyHermesConfigurationYaml,
 } from "./HermesConfigurationYaml.js";
 import {
+  editGgcodeConfigurationYaml,
+  parseGgcodeConfigurationYaml,
+  stringifyGgcodeConfigurationYaml,
+} from "./GgcodeConfigurationYaml.js";
+import {
   applyEdits,
   createScanner,
   format as formatJson,
@@ -123,6 +128,7 @@ export const clientConfigurationServersKey = (
     case "toml":
     case "grok":
     case "hermes":
+    case "ggcode":
       return "mcp_servers";
     case "opencode":
     case "zcode":
@@ -255,6 +261,12 @@ const CLIENT_CONFIGURATION_READERS = {
   goose: { syntax: "yaml", parse: parseGooseConfigurationYaml },
   // Hermes stores MCP servers in `mcp_servers` inside a YAML document.
   hermes: { syntax: "yaml", parse: parseHermesConfigurationYaml },
+  // ggcode stores MCP servers as a top-level YAML sequence in
+  // mcp_servers.yaml; its parser owns the synthetic mapping shape. The
+  // legacy in-main ggcode.yaml section is a mapping whose `mcp_servers`
+  // member holds the same entries; standalone reads reject the mapping
+  // layout because ggcode cannot load it there.
+  ggcode: { syntax: "yaml", parse: parseGgcodeConfigurationYaml },
   // DeepSeek Harness reads a Cordis patch list; its own parser owns the shape.
   dsh: { syntax: "yaml" },
 } as const satisfies Record<
@@ -347,6 +359,29 @@ export const parseZcodeFallbackConfiguration = (
         : requireObject(document.mcpServers, "ZCode fallback mcpServers"),
     serversPath: ["mcpServers"],
     dialect: "zcode_fallback",
+    environmentKey: "env",
+    legacyServers: {},
+  };
+};
+
+/**
+ * The legacy ggcode.yaml main config: a mapping root whose `mcp_servers`
+ * member holds legacy entries. Only the read-only fallback layer, superseded
+ * seeding, and uninstall read this layout; the standalone file uses the strict
+ * sequence parser.
+ */
+export const parseGgcodeLegacyConfiguration = (
+  text: string,
+): ClientConfigurationDocument => {
+  const document = parseGgcodeConfigurationYaml(text, "legacy");
+  return {
+    document,
+    servers:
+      document.mcp_servers === undefined
+        ? {}
+        : requireObject(document.mcp_servers, '"mcp_servers"'),
+    serversPath: ["mcp_servers"],
+    dialect: "ggcode",
     environmentKey: "env",
     legacyServers: {},
   };
@@ -1986,6 +2021,8 @@ export const serializeClientConfiguration = (
     return ok(serializeGrokConfiguration(document, originalText));
   if (format === "hermes")
     return ok(serializeHermesConfiguration(document, originalText));
+  if (format === "ggcode")
+    return ok(serializeGgcodeConfiguration(document, originalText));
   if (format === "goose") {
     if (originalText === undefined || editedPaths === undefined)
       return ok(stringifyGooseConfigurationYaml(document));
@@ -2073,6 +2110,35 @@ const serializeHermesConfiguration = (
   );
 };
 
+/**
+ * Keep an existing ggcode `mcp_servers.yaml` intact aside from the REA entry.
+ * The file carries user comments and unrelated servers, so the rea entry is
+ * upserted into the parsed YAML sequence (which retains formatting and
+ * comments) rather than re-serializing the whole document. A fresh file is
+ * created from the seeded server table.
+ */
+const serializeGgcodeConfiguration = (
+  document: Record<string, unknown>,
+  originalText: string | undefined,
+): string => {
+  if (
+    originalText === undefined ||
+    isEmptyClientConfigurationText(originalText)
+  )
+    return stringifyGgcodeConfigurationYaml(document);
+  const serversKey = clientConfigurationServersKey("ggcode");
+  const servers = document[serversKey];
+  const entry =
+    typeof servers === "object" && servers !== null
+      ? (servers as Record<string, unknown>)[PRODUCT_IDENTITY.mcpServerKey]
+      : undefined;
+  return editGgcodeConfigurationYaml(
+    originalText,
+    PRODUCT_IDENTITY.mcpServerKey,
+    entry,
+  );
+};
+
 /** Build the stdio entry shape expected by one client's configuration dialect. */
 /** Native launcher fields shared by setup and explicit MCP registration. */
 export const clientRegistrationLauncherEntry = (
@@ -2093,6 +2159,9 @@ export const clientRegistrationLauncherEntry = (
     case "pi":
     case "copilot_cli":
     case "copilot_cli_project":
+    case "ggcode":
+      // ggcode defaults an empty `type` to stdio; the entry states it so a
+      // hand edit toward another transport is reported stale.
       return { type: "stdio", command: executable, args };
     case "commandcode":
       return { transport: "stdio", command: executable, args };

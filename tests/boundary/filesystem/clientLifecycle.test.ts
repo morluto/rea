@@ -68,6 +68,7 @@ const DETECTED_CLIENT_ORDER = [
   "hermes",
   "qoder",
   "droid",
+  "ggcode",
   "zcode",
   "dsh",
   "freebuff",
