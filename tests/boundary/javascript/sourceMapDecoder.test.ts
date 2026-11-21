@@ -5,6 +5,7 @@ import { expect, it, vi } from "vitest";
 import { PrivateRuntimeRootUnavailableError } from "../../../src/domain/privateRuntimeRootUnavailableError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import type { WebSourceMapReport } from "../../../src/domain/webSourceLocation.js";
 import { SourceMapDecoder } from "../../../src/javascript/sourceMaps/SourceMapDecoder.js";
 import type { SourceMapDecoderDependencies } from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
@@ -570,63 +571,63 @@ it("returns all point matches when they fit and reports output exhaustion otherw
   });
   expect(limited.error.partialObservation).toBeUndefined();
 });
-it("rejects a malformed actual subprocess reply", async () => {
-  const response = await realDecoder({
-    launcher: (options) =>
-      spawnOwnedProviderProcess({
-        ...options,
-        arguments: ["-e", 'process.stdout.write("not JSON")'],
-      }),
-  }).trace(input);
-  if (response.ok) throw new Error("expected malformed reply");
-  expect(response.error._tag).toBe("AnalysisOutputError");
-  expect(response.error.partialObservation).toBeUndefined();
-});
-it("rejects a codec report from a runtime other than the launching one", async () => {
+it("admits a codec reply only from the selected runtime and memory envelope", async () => {
   const actual = await realDecoder().trace(input);
   if (!actual.ok) throw actual.error;
-  const replay = (report: unknown) =>
+  const reply = (text: string) =>
     realDecoder({
       launcher: (options) =>
         spawnOwnedProviderProcess({
           ...options,
-          arguments: [
-            "-e",
-            `process.stdout.write(${JSON.stringify(JSON.stringify({ state: "success", report }))})`,
-          ],
+          arguments: ["-e", `process.stdout.write(${JSON.stringify(text)})`],
         }),
     }).trace(input);
-  const unchanged = await replay(actual.value);
+  const { runtime } = actual.value;
+  const replay = (runtime: WebSourceMapReport["runtime"]) =>
+    reply(
+      JSON.stringify({
+        state: "success",
+        report: { ...actual.value, runtime },
+      }),
+    );
+  const unchanged = await replay(runtime);
   if (!unchanged.ok) throw unchanged.error;
   expect(unchanged.value).toEqual(actual.value);
-  const response = await replay({
-    ...actual.value,
-    runtime:
-      actual.value.runtime.id === "bun"
-        ? { id: "node-v8", version: "v24.18.0", v8_heap_limit_bytes: 1 }
-        : {
-            id: "bun",
-            version: "1.4.2",
-            node_compatibility_version: "24.18.0",
-            v8_heap_limit_bytes: null,
-            process_memory_limit_bytes: null,
-          },
-  });
-  if (response.ok) throw new Error("expected runtime mismatch");
-  expect(response.error._tag).toBe("AnalysisOutputError");
-  expect(response.error.partialObservation).toBeUndefined();
-  if (actual.value.runtime.id !== "bun") return;
-  // A Bun codec must report exactly the process limit its launcher enforced.
-  const limit = await replay({
-    ...actual.value,
-    runtime: {
-      ...actual.value.runtime,
-      process_memory_limit_bytes:
-        expectedProcessMemoryLimitBytes === null ? 4096 : null,
-    },
-  });
-  if (limit.ok) throw new Error("expected process limit mismatch");
-  expect(limit.error.message).toContain("process memory limit");
+
+  const wrongRuntime =
+    runtime.id === "bun"
+      ? { id: "node-v8" as const, version: "v24.18.0", v8_heap_limit_bytes: 1 }
+      : {
+          id: "bun" as const,
+          version: "1.4.2",
+          node_compatibility_version: "24.18.0",
+          v8_heap_limit_bytes: null,
+          process_memory_limit_bytes: null,
+        };
+  const wrongBudget =
+    runtime.id === "bun"
+      ? {
+          ...runtime,
+          process_memory_limit_bytes:
+            expectedProcessMemoryLimitBytes === null ? 4096 : null,
+        }
+      : { ...runtime, v8_heap_limit_bytes: (192 + 64) * 1024 * 1024 + 1 };
+  for (const [outcome, detail] of [
+    [await reply("not JSON"), "Malformed codec JSON reply"],
+    [await replay(wrongRuntime), "not the runtime that launched it"],
+    [
+      await replay(wrongBudget),
+      runtime.id === "bun" ? "process memory limit" : "V8 heap limit",
+    ],
+  ] as const)
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        reason: expect.stringContaining(detail),
+        partialObservation: undefined,
+      },
+    });
 });
 it.each([true, false])(
   "classifies a codec exit by the job memory notification (reached: %s)",
