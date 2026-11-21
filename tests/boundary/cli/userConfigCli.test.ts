@@ -45,6 +45,16 @@ cliTest(
       source: "env",
     });
 
+    const emptyOverride = { ...environment, JAVA_HOME: "" };
+    const effective = { value: "", source: "env" };
+    expect.soft((await run(get, emptyOverride)).json).toMatchObject(effective);
+    expect
+      .soft((await run(["config", "--json"], emptyOverride)).json)
+      .toMatchObject({ settings: { JAVA_HOME: effective } });
+    const invalidJava = await run(["mcp"], emptyOverride);
+    expect(invalidJava.exitCode).toBe(1);
+    expect(invalidJava.stderr).toContain("JAVA_HOME");
+
     if (process.platform === "darwin" || process.platform === "linux") {
       const hopper = await run([
         "config",
