@@ -874,6 +874,56 @@ it.each(["missing", "observation"] as const)(
   },
 );
 
+it.each([
+  {
+    versions: [
+      { runningStatus: "running" },
+      { runningStatus: "stopped", controlledClients: [] },
+    ],
+    complete: false,
+  },
+  {
+    versions: [
+      { runningStatus: "running", controlledClients: [] },
+      { runningStatus: "stopped" },
+    ],
+    complete: true,
+  },
+])(
+  "preserves anonymous worker discovery history: $versions",
+  async ({ versions, complete }) => {
+    const { provider, input } = await fixture({
+      commandResult: (command) =>
+        command.method === "Target.getTargets"
+          ? { targetInfos: [] }
+          : undefined,
+      eventsBeforeReply: ["ServiceWorker.enable"],
+      commandEvents: (command) =>
+        command.method === "ServiceWorker.enable"
+          ? versions.map((version) => ({
+              method: "ServiceWorker.workerVersionUpdated",
+              sessionId: "session-1",
+              params: { versions: [version] },
+            }))
+          : undefined,
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    expect(
+      captured.value.completeness.unavailable_sections.includes("workers"),
+    ).toBe(!complete);
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      captured.value,
+      provider.identity(),
+    );
+    expect(
+      parseRuntimeCaptures([evidence])[0]?.scriptsCompleteWithinScope,
+    ).toBe(complete);
+  },
+);
+
 it.each(
   [null, [42], "malformed", [""], ["allowed-page", ""]].flatMap(
     (controlledClients) =>

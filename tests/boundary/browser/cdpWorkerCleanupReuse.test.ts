@@ -16,9 +16,15 @@ it.each([
   ["worker", "rejected"],
   ["shared_worker", "timeout"],
   ["worker", "timeout"],
+  ["shared_worker", "attach-cancel"],
+  ["worker", "attach-timeout"],
 ] as const)(
   "reuses a browser socket only after confirmed explicit %s cleanup: %s",
   async (type, outcome) => {
+    const controller = new AbortController();
+    const attaching = phaseArrival();
+    const interrupted =
+      outcome === "attach-cancel" || outcome === "attach-timeout";
     const workerSessionId = "explicit-worker-session";
     const browser = await startFakeCdpBrowser({
       commandResult(command, origin) {
@@ -71,6 +77,17 @@ it.each([
           return { code: -32_000, message: "Detach rejected" };
         return undefined;
       },
+      commandDelayMs: ({ method, params }) => {
+        if (
+          interrupted &&
+          method === "Target.attachToTarget" &&
+          params.targetId === "explicit-worker"
+        ) {
+          attaching.arrive();
+          return 250;
+        }
+        return undefined;
+      },
       hangOnCommand: ({ method, params }) =>
         outcome === "timeout" &&
         method === "Target.detachFromTarget" &&
@@ -79,31 +96,40 @@ it.each([
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
     try {
-      const result = await provider.inspectPage(
+      const inspecting = provider.inspectPage(
         inspectWebPageInputSchema.parse({
           cdp_endpoint: browser.browserWebSocketUrl,
           target_id: "allowed-page",
           worker_target_ids: ["explicit-worker"],
           observation_ms: 0,
+          ...(outcome === "attach-timeout" ? { command_timeout_ms: 100 } : {}),
         }),
+        { signal: controller.signal },
       );
-      if (!result.ok) throw result.error;
+      if (interrupted) {
+        await attaching.reached(inspecting, "explicit worker attachment");
+        if (outcome === "attach-cancel") controller.abort();
+      }
+      const result = await inspecting;
+      if (interrupted) expect(result.ok).toBe(false);
+      else if (!result.ok) throw result.error;
       expect(
         browser.commands.some(
           ({ method, sessionId }) =>
             method === "Runtime.enable" && sessionId === workerSessionId,
         ),
-      ).toBe(true);
+      ).toBe(!interrupted);
       const detachments = browser.commands.filter(
         ({ method }) => method === "Target.detachFromTarget",
       );
-      expect(detachments.map(({ params }) => params.sessionId)).toContain(
-        workerSessionId,
-      );
+      expect(
+        detachments.some(({ params }) => params.sessionId === workerSessionId),
+      ).toBe(!interrupted);
       expect(
         detachments.some(({ params }) => params.sessionId !== workerSessionId),
       ).toBe(true);
-      const mustClose = outcome === "rejected" || outcome === "timeout";
+      const mustClose =
+        interrupted || outcome === "rejected" || outcome === "timeout";
       await waitFor(() =>
         expect(browser.activeConnectionCount()).toBe(mustClose ? 0 : 1),
       );

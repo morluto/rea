@@ -178,19 +178,25 @@ export class CdpWorkerCapture {
         this.context.sessionId === undefined
       )
         continue;
-      const result = recordValue(
-        await this.#command(
-          "Target.attachToTarget",
-          { targetId: id, flatten: true },
-          undefined,
-        ),
-      );
-      const sessionId = cdpStringValue(result?.sessionId);
-      if (sessionId === undefined)
-        throw new BrowserObservationError(
-          this.context.operation,
-          "protocol_error",
+      let sessionId: string | undefined;
+      try {
+        const result = recordValue(
+          await this.#command(
+            "Target.attachToTarget",
+            { targetId: id, flatten: true },
+            undefined,
+          ),
         );
+        sessionId = cdpStringValue(result?.sessionId);
+        if (sessionId === undefined)
+          throw new BrowserObservationError(
+            this.context.operation,
+            "protocol_error",
+          );
+      } finally {
+        // A browser-level attach can succeed after its reply stops being observed.
+        if (sessionId === undefined) this.requireTransportClose();
+      }
       this.#attach(worker, sessionId);
     }
     await this.#settle(this.#pendingLifecycle);
@@ -848,8 +854,8 @@ export class CdpWorkerCapture {
       }
       if (version.targetId === undefined) {
         // A running controlled worker without a target cannot be reconciled with inventory.
-        if (version.runningStatus === "running" && clients !== null) {
-          if (this.#controlsPage(clients) === true)
+        if (version.runningStatus === "running") {
+          if (clients === null || this.#controlsPage(clients) === true)
             this.pageEvents.completeness.unavailable("workers");
           else
             for (const client of clients)
