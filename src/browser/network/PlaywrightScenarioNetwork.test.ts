@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { browserScenarioSchema } from "../../domain/browserScenario.js";
 import {
-  type BrowserScenarioEventAdmission,
   browserScenarioEventSchema,
   type BrowserScenarioEvent,
 } from "../../domain/browserScenarioCaptureValues.js";
@@ -394,42 +393,49 @@ it.each([
   },
 );
 
-it("keeps observed completion independent of rejected completion metadata", async () => {
-  const { secrets, limits } = harness();
-  let omit = false;
-  const omitted: string[] = [];
+it("records phase omissions without reading blocked content or misreporting completion", async () => {
+  const { limits, secrets } = harness();
+  const reason = "max-total-event-allocation-bytes";
+  let omit = true;
+  const emit = vi.fn(() => ({ status: "retained", sequence: 1 }) as const);
+  const omitNetwork = vi.fn();
+  const redact = vi.spyOn(secrets, "redact");
   const collector = new PlaywrightScenarioNetwork({
-    selection: {
-      request_body: false,
-      response_body: false,
-      header_values: false,
-    },
+    selection,
     limits,
     secrets,
     admitText: () =>
       omit
-        ? {
-            status: "omitted",
-            sequence: 1,
-            reason: "max-total-event-allocation-bytes",
-          }
+        ? { status: "omitted", sequence: 1, reason }
         : { status: "retained", sequence: 1 },
-    emit: () => ({ status: "retained", sequence: 1 }),
+    emit,
     admitContentBody: () => ({ status: "retained", sequence: 1 }),
-    omitNetwork: (_id, kind) => {
-      omitted.push(kind);
-    },
-    omitEvent: (kind) => {
-      omitted.push(kind);
-    },
+    omitNetwork,
+    omitEvent: () => undefined,
   });
-  const request = new RequestFixture("ordinary");
-  collector.request(request);
+  const blocked = new RequestFixture("blocked");
+  collector.request(blocked);
+  expect(redact).not.toHaveBeenCalled();
+  expect(emit).not.toHaveBeenCalled();
+
+  omit = false;
+  const completed = new RequestFixture("admitted");
+  const response = new ResponseFixture(completed, "body");
+  collector.request(completed);
+  collector.response(response);
   omit = true;
-  collector.finished(request);
+  collector.finished(completed);
   await collector.finish();
-  expect(omitted).toContain("request-finished");
-  expect(omitted).not.toContain("request-unfinished");
+
+  expect(blocked.bodyReads + blocked.headerReads + response.bodyReads).toBe(0);
+  expect(omitNetwork.mock.calls).toEqual([
+    ["request-1", "request", reason],
+    ["request-2", "request-finished", reason],
+    ["request-1", "request-unfinished", reason],
+  ]);
+  expect(collector.limitations().join(" ")).toContain(
+    "network coverage is incomplete",
+  );
 });
 
 it("redacts declared secrets in browser-produced form and JSON encodings", async () => {
@@ -452,19 +458,31 @@ it("redacts declared secrets in browser-produced form and JSON encodings", async
   }
 });
 
-it("associates out-of-order same-URL responses by request identity", async () => {
+it("binds out-of-order same-URL content to its originating event", async () => {
   const { collector, events } = harness();
   const slow = new RequestFixture("slow");
   const fast = new RequestFixture("fast");
+  const slowResponse = new ResponseFixture(slow, "reply:slow");
+  const fastResponse = new ResponseFixture(fast, "reply:fast");
+  slowResponse.status = () => 201;
+  fastResponse.status = () => 202;
   collector.request(slow);
   collector.request(fast);
-  collector.response(new ResponseFixture(fast, "reply:fast"));
-  collector.response(new ResponseFixture(slow, "reply:slow"));
+  collector.response(fastResponse);
+  collector.response(slowResponse);
   collector.finished(fast);
   collector.finished(slow);
   await collector.finish();
+
   const content = events.filter((event) => event.kind === "network-content");
-  for (const marker of ["slow", "fast"]) {
+  const starts = events.filter((event) => event.kind === "request");
+  expect(content).toHaveLength(4);
+  expect(starts).toHaveLength(2);
+  for (const [index, marker, status] of [
+    [0, "slow", 201],
+    [1, "fast", 202],
+  ] as const) {
+    const start = starts[index]!;
     const request = content.find(
       (event) => event.phase === "request" && bodyText(event) === marker,
     );
@@ -472,15 +490,20 @@ it("associates out-of-order same-URL responses by request identity", async () =>
       (event) =>
         event.phase === "response" && bodyText(event) === `reply:${marker}`,
     );
+    expect(request).toMatchObject({
+      transaction_id: start.transaction_id,
+      source_event_sequence: start.sequence,
+    });
+    const reported = events.find(
+      (event) => event.kind === "response" && event.status === status,
+    );
+    expect(reported).toMatchObject({ transaction_id: start.transaction_id });
     expect(response).toMatchObject({
+      transaction_id: start.transaction_id,
+      source_event_sequence: reported?.sequence,
       body: { representation: "playwright-response-body-bytes" },
     });
-    expect(request?.transaction_id).toBe(response?.transaction_id);
-    expect(request?.source_event_sequence).not.toBe(
-      response?.source_event_sequence,
-    );
   }
-  expect(new Set(content.map((event) => event.transaction_id)).size).toBe(2);
 });
 
 it("records completed and unfinished metadata without reading content", async () => {
@@ -1091,37 +1114,6 @@ it("reserves redaction expansion before creating replacement copies", async () =
   expect(redact.mock.calls.every(([value]) => value.length < 64 * 1024)).toBe(
     true,
   );
-});
-
-it("does not read content when phase metadata was omitted", async () => {
-  const { secrets, limits } = harness();
-  const redact = vi.spyOn(secrets, "redact");
-  const collector = new PlaywrightScenarioNetwork({
-    selection,
-    limits,
-    secrets,
-    admitText: () => ({
-      status: "omitted",
-      sequence: 1,
-      reason: "max-total-event-allocation-bytes",
-    }),
-    emit: (): BrowserScenarioEventAdmission => ({
-      status: "retained",
-      sequence: 1,
-    }),
-    admitContentBody: () => ({ status: "retained", sequence: 1 }),
-    omitNetwork: () => undefined,
-    omitEvent: () => undefined,
-  });
-  const request = new RequestFixture("ordinary");
-  collector.request(request);
-  await collector.finish();
-  expect(redact).not.toHaveBeenCalled();
-  expect(request.bodyReads + request.headerReads).toBe(0);
-  expect(collector.limitations().join(" ")).toContain(
-    "max-total-event-allocation-bytes",
-  );
-  expect(collector.limitations().join(" ")).toContain("incomplete");
 });
 
 it("stamps when each request was observed, and the browser's own start and duration once it ends", async () => {
