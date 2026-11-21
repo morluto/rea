@@ -63,21 +63,6 @@ describe("Electron identity through Webpack externals", () => {
     },
   );
 
-  it.each([
-    ["45841", 1],
-    ["45840", 0],
-  ] as const)(
-    "scopes writes to cache slots when one key is %s",
-    (key, expected) => {
-      const source = bootstrap(
-        EXTERNAL,
-        CONSUMER,
-        `n.c=c;const key=flag?${key}:"45842";n.c[key]={exports:local};n(100);`,
-      );
-      expect(electronOf(source).browser_windows).toHaveLength(expected);
-    },
-  );
-
   it("follows the default-export getter produced by webpack n.n", () => {
     const source = bootstrap(
       EXTERNAL,
@@ -212,6 +197,21 @@ describe("Electron identity through Webpack externals", () => {
     expectUnresolved(source);
   });
 });
+
+it.each([
+  ["45841", 1],
+  ["45840", 0],
+] as const)(
+  "scopes writes to cache slots when one key is %s",
+  (key, expected) => {
+    const source = bootstrap(
+      EXTERNAL,
+      CONSUMER,
+      `n.c=c;const key=flag?${key}:"45842";n.c[key]={exports:local};n(100);`,
+    );
+    expect(electronOf(source).browser_windows).toHaveLength(expected);
+  },
+);
 
 describe("Webpack loader alias bounds", () => {
   const getterSource = (initializers: readonly string[], selection = "") =>
