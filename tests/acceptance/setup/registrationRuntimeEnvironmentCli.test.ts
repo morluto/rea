@@ -792,6 +792,99 @@ cliTest(
 );
 
 cliTest(
+  "Harness resolves only the home settings needed for its IDA budget",
+  async ({ cli }) => {
+    const cordis = join(home, ".dsh", "cordis.patch.yml");
+    await mkdir(dirname(cordis), { recursive: true });
+    const idaConfig = join(home, "ida.json");
+    await writeFile(
+      idaConfig,
+      JSON.stringify({
+        url: "http://127.0.0.1:12345/mcp",
+        protocol: "native",
+        timeoutMs: 900_000,
+      }),
+    );
+    const homeSetting = process.platform === "win32" ? "USERPROFILE" : "HOME";
+    const expression = `${homeSetting}: !!js process.env.${homeSetting}`;
+    const registration = (lookup: string = "") => `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: rea
+        args: [mcp]
+        env:
+          REA_ANALYSIS_PROVIDER: ida
+          ${expression}
+${lookup}`;
+    const run = (arguments_: string[]) =>
+      cli.run({
+        arguments: [
+          ...arguments_,
+          "--client",
+          "dsh",
+          "--skill=false",
+          "--json",
+        ],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          XDG_CONFIG_HOME: undefined,
+          DSH_HOME: dirname(cordis),
+          ...missingHopperAndGhidraEnvironment(home),
+        },
+        freshProcess: true,
+      });
+    const configRoot = join(home, "rea-settings");
+    const config = join(configRoot, "rea", "rea.json");
+    await mkdir(dirname(config), { recursive: true });
+    await writeFile(config, JSON.stringify({ REA_IDA_MCP_CONFIG: idaConfig }));
+    for (const setting of [
+      `REA_IDA_MCP_CONFIG: ${JSON.stringify(idaConfig)}`,
+      `XDG_CONFIG_HOME: ${JSON.stringify(configRoot)}`,
+    ]) {
+      await writeFile(cordis, registration(`          ${setting}\n`));
+      const setup = await run(["setup", "--yes"]);
+      expect(setup.exitCode, setup.stdout).toBe(0);
+      const configured = await readFile(cordis, "utf8");
+      expect(configured).toContain(expression);
+      expect(configured).toContain("toolCallTimeoutMs: 1020000");
+      const doctor = await run(["doctor"]);
+      expect(doctor.exitCode, doctor.stdout).toBe(0);
+      expect(doctor.json).toMatchObject({
+        identity: { registrations: [{ client: "dsh", state: "aligned" }] },
+      });
+    }
+
+    // With no explicit IDA file or config root, the saved lookup needs the home setting.
+    const unknown = registration();
+    await writeFile(cordis, unknown);
+    const blocked = await run(["doctor"]);
+    expect(blocked.exitCode).toBe(1);
+    expect(blocked.json).toMatchObject({
+      identity: {
+        registrations: [
+          {
+            client: "dsh",
+            state: "invalid",
+            remediation: expect.stringContaining("expression-backed settings"),
+          },
+        ],
+      },
+    });
+    const refused = await run(["setup", "--yes"]);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      remediation: expect.stringContaining(homeSetting),
+    });
+    expect(await readFile(cordis, "utf8")).toBe(unknown);
+  },
+);
+
+cliTest(
   "setup budgets for saved IDA settings and gives the registered server its config locator",
   async ({ cli, processes }) => {
     const configHome = join(home, "selected-config");

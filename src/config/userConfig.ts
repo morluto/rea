@@ -14,7 +14,10 @@ import { dirname, isAbsolute, join } from "node:path";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { homeDirectoryFromEnvironment } from "./homeDirectory.js";
+import {
+  homeDirectoryFromEnvironment,
+  selectedHomeDirectory,
+} from "./homeDirectory.js";
 import { parseEnvironmentValues } from "./environment.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
@@ -63,6 +66,20 @@ export const userConfigFilePath = (
   configFileAt(
     selectedConfigHome(environment) ?? defaultConfigHome(environment, platform),
   );
+
+/** Settings needed to select the saved file with the current literal values. */
+export const userConfigLocationSettings = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): ReadonlySet<string> => {
+  const names = new Set(["XDG_CONFIG_HOME"]);
+  if (selectedConfigHome(environment) === undefined)
+    selectedHomeDirectory(platform, (name) => {
+      names.add(name);
+      return environment[name];
+    });
+  return names;
+};
 
 /** A session-independent locator for clients that rely on saved defaults. */
 export const userConfigRegistrationEnvironment = (

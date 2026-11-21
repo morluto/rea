@@ -1477,7 +1477,7 @@ describe("DeepSeek Harness entry ownership", () => {
 describe("DeepSeek Harness budget resolver expressions", () => {
   const budgetResolver = (budgetMs: number) =>
     Object.assign(async () => ok(budgetMs), {
-      budgetSettings: new Set(["REA_IDA_MCP_CONFIG"]),
+      budgetSettings: () => new Set(["REA_IDA_MCP_CONFIG"]),
     });
 
   it("keeps an environment expression while a budget resolver is supplied", async () => {

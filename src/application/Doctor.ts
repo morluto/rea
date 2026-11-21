@@ -669,7 +669,7 @@ export interface RetainedProviderRequestBudgetResolver {
     signal: AbortSignal,
   ): ReturnType<ProviderRequestBudgetResolver>;
   /** Environment settings this resolver may read; see the base contract. */
-  readonly budgetSettings?: ReadonlySet<string>;
+  readonly budgetSettings?: ProviderRequestBudgetResolver["budgetSettings"];
 }
 
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */

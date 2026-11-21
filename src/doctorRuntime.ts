@@ -50,6 +50,7 @@ import { homeDirectoryFromEnvironment } from "./config/homeDirectory.js";
 import {
   loadUserConfiguration,
   userConfigFilePath,
+  userConfigLocationSettings,
 } from "./config/userConfig.js";
 import {
   inspectLinuxHopperPythonRuntime,
@@ -343,14 +344,27 @@ export const createSystemDoctorHost = (
     string,
     Promise<Result<string | undefined, ConfigurationError>>
   >();
-  const savedIdaConfig = async (
-    registration: Readonly<Record<string, string>>,
+  const idaBudgetLookup = (
+    analysisProvider: Parameters<RetainedProviderRequestBudgetResolver>[0],
+    registration: Parameters<RetainedProviderRequestBudgetResolver>[1],
   ) => {
-    const configEnvironment = {
-      ...environment,
-      ...registration,
-      REA_IDA_MCP_CONFIG: undefined,
-    };
+    if (analysisProvider !== "ida" && analysisProvider !== "auto")
+      return { kind: "none" } as const;
+    const path = registration.REA_IDA_MCP_CONFIG;
+    return path === undefined
+      ? ({
+          kind: "saved",
+          environment: {
+            ...environment,
+            ...registration,
+            REA_IDA_MCP_CONFIG: undefined,
+          },
+        } as const)
+      : ({ kind: "explicit", path } as const);
+  };
+  const savedIdaConfig = async (
+    configEnvironment: Readonly<NodeJS.ProcessEnv>,
+  ) => {
     const path = userConfigFilePath(configEnvironment, platform);
     // Reuse the invocation's validated snapshot when it establishes presence
     // or absence. An explicit terminal override can hide the saved value.
@@ -408,13 +422,15 @@ export const createSystemDoctorHost = (
         resourceScope: Parameters<RetainedProviderRequestBudgetResolver>[2],
         inspectionSignal: Parameters<RetainedProviderRequestBudgetResolver>[3],
       ) => {
-        if (analysisProvider !== "ida" && analysisProvider !== "auto")
-          return ok(undefined);
-        const explicit = registrationEnvironment.REA_IDA_MCP_CONFIG;
+        const lookup = idaBudgetLookup(
+          analysisProvider,
+          registrationEnvironment,
+        );
+        if (lookup.kind === "none") return ok(undefined);
         const path =
-          explicit === undefined
-            ? await savedIdaConfig(registrationEnvironment)
-            : ok(explicit);
+          lookup.kind === "explicit"
+            ? ok(lookup.path)
+            : await savedIdaConfig(lookup.environment);
         if (!path.ok) return path;
         if (path.value === undefined) return ok(undefined);
         const registration = await readRegistration(
@@ -428,16 +444,23 @@ export const createSystemDoctorHost = (
         // parser-owned error when IDA itself was explicitly selected.
         return analysisProvider === "ida" ? registration : ok(undefined);
       },
-      // A registration may locate saved settings through its own config home.
       {
-        budgetSettings: new Set([
-          "REA_IDA_MCP_CONFIG",
-          "XDG_CONFIG_HOME",
-          "HOME",
-          "USERPROFILE",
-          "HOMEDRIVE",
-          "HOMEPATH",
-        ]),
+        budgetSettings: (
+          analysisProvider: Parameters<RetainedProviderRequestBudgetResolver>[0],
+          registrationEnvironment: Parameters<RetainedProviderRequestBudgetResolver>[1],
+        ) => {
+          const lookup = idaBudgetLookup(
+            analysisProvider,
+            registrationEnvironment,
+          );
+          if (lookup.kind === "none") return new Set<string>();
+          return new Set([
+            "REA_IDA_MCP_CONFIG",
+            ...(lookup.kind === "saved"
+              ? userConfigLocationSettings(lookup.environment, platform)
+              : []),
+          ]);
+        },
       },
     ),
     providerInspections: async (
