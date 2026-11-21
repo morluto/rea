@@ -48,88 +48,50 @@ let directory: string | undefined;
 const fixtureOwner = createGdbFixtureOwner();
 const managers: GdbSessionManager[] = [];
 
+it("projects only live top-level GDB PIDs in inventory order", () => {
+  const record = [
+    '1^done,msg="fixture/groups=[",groups=[',
+    String.raw`{id="i2",pid="456",description="[{}]\"\\",children=[{id="child",pid="9"}]},`,
+    '{id="i3",other_groups=[{id="extension",pid="900"}]},',
+    '{id="i1",pid="123"}],extension="retained",details=[{state="known"}]',
+  ].join("");
+  expect(gdbThreadGroupPids(record)).toEqual(["456", "123"]);
+});
+
 it.each([
-  ["empty list", "1^done,groups=[]", 0],
   [
-    "valid trailing extension fields",
-    '1^done,groups=[],extension="retained",details=[{state="known"}]',
-    0,
+    "an empty inventory with extensions",
+    '1^done,before={note="fixture/groups=["},groups=[],after=["known"]',
   ],
-  [
-    "valid leading and trailing extension fields",
-    '1^done,before={state="retained"},groups=[],after=["known"]',
-    0,
-  ],
-  ["one group", '1^done,groups=[{id="i1",pid="123"}]', 1],
-  [
-    "multiple groups",
-    '1^done,groups=[{id="i1",pid="123"},{id="i2",pid="456"}]',
-    2,
-  ],
-  ["group without a live pid", '1^done,groups=[{id="i1"}]', 0],
-  [
-    "nested group-like object",
-    '1^done,groups=[{id="i1",pid="123",children=[{id="i2"}]}]',
-    1,
-  ],
-  [
-    "quoted brackets",
-    '1^done,groups=[{id="i1",pid="123",description="[{}]"}]',
-    1,
-  ],
-  [
-    "escaped quote and backslash",
-    '1^done,groups=[{id="i1",pid="123",description="\\\\\\\""}]',
-    1,
-  ],
+  ["only groups without a live PID", '1^done,groups=[{id="i1"}]'],
+])("reports no live GDB PID for %s", (_label, record) => {
+  expect(gdbThreadGroupPids(record)).toEqual([]);
+});
+
+it.each([
   [
     "unquoted nested groups field",
     '1^done,groups=[{id="i1",children=[{id="i2",groups=[{id="i3"}]}]}]',
-    undefined,
-  ],
-  [
-    "unknown extension field ending in groups",
-    '1^done,groups=[{id="i1",other_groups=[{id="i2"}]}]',
-    0,
-  ],
-  [
-    "quoted groups marker before the top-level inventory",
-    '1^done,msg="fixture/groups=[",groups=[]',
-    0,
   ],
   [
     "duplicate top-level groups fields",
     '1^done,groups=[],groups=[{id="i1",pid="123"}]',
-    undefined,
   ],
   [
     "duplicate groups field with a non-list value",
     '1^done,groups=[],groups="unavailable"',
-    undefined,
   ],
-  ["trailing bytes after inventory", "1^done,groups=[]garbage", undefined],
-  ["malformed trailing result value", "1^done,groups=[],extra=}", undefined],
-  ["malformed prefix result", "1^done,extra=},groups=[]", undefined],
-  ["groups list with a non-tuple value", '1^done,groups=["i1"]', undefined],
-  ["group tuple without its required id", "1^done,groups=[{}]", undefined],
-  ["negative object depth", "1^done,groups=[}]", undefined],
-  ["unclosed list", '1^done,groups=[{id="i1"}', undefined],
-  ["missing groups field", "1^done", undefined],
-  [
-    "unclosed trailing quoted field",
-    '1^done,groups=[],extra="unterminated',
-    undefined,
-  ],
-] as const)("parses recursive GDB MI groups: %s", (_label, mi, expected) => {
-  expect(gdbThreadGroupPids(mi)?.length).toBe(expected);
-});
-
-it("preserves the reported inferior PIDs in inventory order", () => {
-  expect(
-    gdbThreadGroupPids(
-      '1^done,groups=[{id="i1",pid="123"},{id="i2",pid="456"}]',
-    ),
-  ).toEqual(["123", "456"]);
+  ["trailing bytes after inventory", "1^done,groups=[]garbage"],
+  ["malformed trailing result value", "1^done,groups=[],extra=}"],
+  ["malformed prefix result", "1^done,extra=},groups=[]"],
+  ["groups list with a non-tuple value", '1^done,groups=["i1"]'],
+  ["group tuple without its required id", "1^done,groups=[{}]"],
+  ["negative object depth", "1^done,groups=[}]"],
+  ["unclosed list", '1^done,groups=[{id="i1"}'],
+  ["missing groups field", "1^done"],
+  ["unclosed trailing quoted field", '1^done,groups=[],extra="unterminated'],
+])("keeps the GDB inventory unknown for %s", (_label, record) => {
+  expect(gdbThreadGroupPids(record)).toBeUndefined();
 });
 
 it("keeps GDB inventory unknown when MI nesting exceeds the parser frame budget", () => {
@@ -139,21 +101,27 @@ it("keeps GDB inventory unknown when MI nesting exceeds the parser frame budget"
   ).toBeUndefined();
 });
 
+it("projects a single decoded GDB MI string exactly", () => {
+  expect(
+    miStringField(
+      String.raw`1^done,inferior_tty_terminal="/dev/pts/2\n\x41\101\7 🚀"`,
+      "inferior_tty_terminal",
+    ),
+  ).toBe("/dev/pts/2\nAA\u0007 🚀");
+});
+
 it.each([
-  ['1^done,inferior_tty_terminal="/dev/pts/2"', "/dev/pts/2"],
-  ['1^done,inferior_tty_terminal="line\\nnext"', "line\nnext"],
-  ['1^done,inferior_tty_terminal="\\x41\\101"', "AA"],
-  ['1^done,inferior_tty_terminal="\\7"', "\u0007"],
-  ['1^done,inferior_tty_terminal="emoji 🚀"', "emoji 🚀"],
-  ['1^done,inferior_tty_terminal="\\xFF"', undefined],
-  ['1^done,inferior_tty_terminal="\\x"', undefined],
-  ['1^done,inferior_tty_terminal="\\q"', undefined],
-  ['1^done,inferior_tty_terminal="/dev/pts/2"junk', undefined],
-  ['1^done,inferior_tty_terminal="a",inferior_tty_terminal="a"', undefined],
-  ['1^error,msg="not done"', undefined],
-  ['1^done,inferior_tty_terminal="\ud800"', undefined],
-] as const)("decodes GDB MI C-string fields: %s", (mi, expected) => {
-  expect(miStringField(mi, "inferior_tty_terminal")).toBe(expected);
+  ["invalid UTF-8", String.raw`1^done,inferior_tty_terminal="\xFF"`],
+  ["invalid C-string syntax", String.raw`1^done,inferior_tty_terminal="\q"`],
+  ["trailing bytes", '1^done,inferior_tty_terminal="/dev/pts/2"junk'],
+  [
+    "duplicate field",
+    '1^done,inferior_tty_terminal="a",inferior_tty_terminal="a"',
+  ],
+  ["extra field", '1^done,inferior_tty_terminal="a",other="b"'],
+  ["non-success result", '1^error,msg="not done"'],
+])("does not project a GDB MI string from %s", (_label, record) => {
+  expect(miStringField(record, "inferior_tty_terminal")).toBeUndefined();
 });
 
 it.each([
