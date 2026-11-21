@@ -24,6 +24,7 @@ import {
 } from "../config/mcpStartupPolicy.js";
 import {
   inspectClientRegistrationCommand,
+  managedClientLauncher,
   transientClientLauncherPaths,
   type ClientRegistrationCommandFacts,
   type ClientRegistrationCommandIdentity,
@@ -165,6 +166,12 @@ export const readClientRegistrationInspections = async (
   options: ClientRegistrationReadOptions,
 ): Promise<readonly ClientRegistrationInspection[]> => {
   const inspections: ClientRegistrationInspection[] = [];
+  const preferManaged =
+    managedClientLauncher(
+      currentCommandPath,
+      options.environment ?? process.env,
+      options.platform,
+    ) !== undefined;
   for (const client of await resolveSupportedClients(
     home,
     options.platform,
@@ -415,6 +422,7 @@ export const readClientRegistrationInspections = async (
             registration,
             client: effectiveClient,
             commandFacts,
+            preferManaged,
           });
       const status = configuredStatus(
         effectiveClient,
@@ -551,10 +559,12 @@ const registrationAligned = ({
   registration,
   client,
   commandFacts,
+  preferManaged,
 }: {
   readonly registration: ClientRegistration;
   readonly client: SetupClient;
   readonly commandFacts: ClientRegistrationCommandFacts;
+  readonly preferManaged: boolean;
 }): "aligned" | "stale" | "unknown" => {
   const { identity } = commandFacts;
   if (identity === "unknown") return "unknown";
@@ -587,7 +597,11 @@ const registrationAligned = ({
   if (commandFacts.package !== undefined) return "stale";
   // Owning the script does not establish how its shebang interpreter resolves
   // in the client. Setup migrates these launchers without losing ownership.
-  return commandFacts.launch === "runtime_script" ? "aligned" : "stale";
+  if (commandFacts.launch === "managed_shim")
+    return commandFacts.independentFallback === true ? "aligned" : "stale";
+  return commandFacts.launch === "runtime_script" && !preferManaged
+    ? "aligned"
+    : "stale";
 };
 
 /** A client that rewrites its file from memory must be quit before setup. */
