@@ -5,11 +5,40 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 import { executeWorkflowFixture } from "../../support/workflowGit.js";
 
 const batchScript = fileURLToPath(
   new URL("../../../scripts/ci/job-timings-batch.mjs", import.meta.url),
 );
+
+it("loads the timing batch from a tree with no installed dependencies", async () => {
+  const root = await createTestTempDirectory("rea-ci-job-timings-clean-");
+  const files = await copyScriptsWithImports(
+    ["scripts/ci/job-timings-batch.mjs"],
+    root,
+  );
+  expect(files).toEqual([
+    "scripts/ci/job-timings-batch.mjs",
+    "scripts/ci/job-timings.mjs",
+    "scripts/ci/static-evidence-attempt.mjs",
+  ]);
+  const imported = await executeWorkflowFixture(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+      const { collectJobTimingsBatch } = await import(${JSON.stringify(pathToFileURL(join(root, "scripts/ci/job-timings-batch.mjs")).href)});
+      process.stdout.write(JSON.stringify({
+        started: typeof collectJobTimingsBatch === "function",
+      }));
+      `,
+    ],
+    { cwd: root, env: { PATH: process.env.PATH ?? "" } },
+  );
+  expect(JSON.parse(imported.stdout)).toEqual({ started: true });
+});
 
 it("collects the latest attempt for recent completed CI and Release runs into a bounded manifest", async () => {
   const recent = new Date().toISOString();
@@ -127,6 +156,239 @@ it("collects the latest attempt for recent completed CI and Release runs into a 
   expect(failedReport.jobs[0].execution.seconds).toBe(55);
 });
 
+it("collects failed default-branch pushes before a saturated PR sample", async () => {
+  const createdAt = new Date().toISOString();
+  const mainFailure = {
+    id: 200,
+    run_attempt: 1,
+    status: "completed",
+    event: "push",
+    head_branch: "main",
+    conclusion: "failure",
+    created_at: createdAt,
+  };
+  const fixture = await createFixture([
+    {
+      total_count: 1238,
+      workflow_runs: [
+        ...Array.from({ length: 99 }, (_, index) => ({
+          id: index + 1,
+          run_attempt: 1,
+          status: "completed",
+          event: "pull_request",
+          conclusion: "success",
+          created_at: createdAt,
+        })),
+        mainFailure,
+      ],
+    },
+    { workflow_runs: [] },
+    {
+      total_count: 6,
+      workflow_runs: [mainFailure, { ...mainFailure, id: 201 }],
+    },
+  ]);
+
+  await collectDefaultBranchSample(fixture, { advanceAfterRunId: "201" });
+
+  const manifest = await readBatchManifest(fixture);
+  expect(manifest.coverage).toMatchObject({
+    selectedRuns: 101,
+    collectedRuns: 2,
+  });
+  expect(manifest.runs).toMatchObject([
+    { id: 200, status: "collected", headBranch: "main", event: "push" },
+    { id: 201, status: "collected", headBranch: "main", event: "push" },
+  ]);
+  expect(manifest.selection.defaultBranchFailureSample).toEqual({
+    branch: "main",
+    event: "push",
+    conclusion: "failure",
+    attempt: 1,
+    limit: 5,
+    scanLimit: 100,
+    omittedRunIds: [],
+  });
+  expect(manifest.truncation).toContainEqual(
+    expect.objectContaining({ code: "default-branch-failure-sample-limit" }),
+  );
+  expect(manifest.errors).toEqual([]);
+  const calls = JSON.parse(await readFile(fixture.calls, "utf8"));
+  expect(ghApiRequest(calls[2])).toEqual({
+    path: "repos/example/rea/actions/workflows/ci.yml/runs",
+    params: {
+      status: "failure",
+      event: "push",
+      branch: "main",
+      created: `>=${manifest.selection.createdAfter}`,
+      per_page: "100",
+    },
+  });
+});
+
+it("keeps an attempt-1 default-branch failure when newer reruns fill the sample page", async () => {
+  const createdAt = new Date().toISOString();
+  const rerun = {
+    id: 301,
+    run_attempt: 2,
+    status: "completed",
+    event: "push",
+    head_branch: "main",
+    conclusion: "failure",
+    created_at: createdAt,
+  };
+  const attemptOne = { ...rerun, id: 310, run_attempt: 1 };
+  const fixture = await createFixture([
+    {
+      workflow_runs: Array.from({ length: 100 }, (_, index) => ({
+        id: index + 1,
+        run_attempt: 1,
+        status: "completed",
+        event: "pull_request",
+        conclusion: "success",
+        created_at: createdAt,
+      })),
+    },
+    {
+      workflow_runs: [
+        {
+          id: 500,
+          run_attempt: 1,
+          status: "completed",
+          conclusion: "success",
+          created_at: createdAt,
+        },
+      ],
+    },
+    {
+      total_count: 6,
+      workflow_runs: [
+        rerun,
+        { ...rerun, id: 302 },
+        { ...rerun, id: 303 },
+        { ...rerun, id: 304 },
+        { ...rerun, id: 305 },
+        attemptOne,
+      ],
+    },
+  ]);
+
+  await collectDefaultBranchSample(fixture);
+
+  const manifest = await readBatchManifest(fixture);
+  expect(manifest.selection.defaultBranchFailureSample).toMatchObject({
+    attempt: 1,
+    limit: 5,
+    omittedRunIds: [301, 302, 303, 304, 305],
+  });
+  expect(manifest.errors).toEqual([]);
+  expect(manifest.coverage).toMatchObject({
+    workflowsQueried: ["CI", "Release"],
+    selectedRuns: 102,
+    collectedRuns: 102,
+  });
+  expect(manifest.runs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: 310,
+        runAttempt: 1,
+        workflow: "CI",
+        status: "collected",
+        headBranch: "main",
+        event: "push",
+      }),
+      expect.objectContaining({ id: 1, workflow: "CI", status: "collected" }),
+      expect.objectContaining({
+        id: 500,
+        workflow: "Release",
+        status: "collected",
+      }),
+    ]),
+  );
+  const collectedIds = manifest.runs.map((run: { id: number }) => run.id);
+  for (const id of [301, 302, 303, 304, 305])
+    expect(collectedIds).not.toContain(id);
+});
+
+it.each(["request error", "mismatched runs"])(
+  "keeps the original CI and Release samples after supplemental %s",
+  async (mode) => {
+    const createdAt = new Date().toISOString();
+    const failedPush = {
+      id: 201,
+      run_attempt: 1,
+      status: "completed",
+      event: "push",
+      head_branch: "main",
+      conclusion: "failure",
+      created_at: createdAt,
+    };
+    const fixture = await createFixture([
+      {
+        workflow_runs: Array.from({ length: 100 }, (_, index) => ({
+          ...failedPush,
+          id: index + 1,
+          event: "pull_request",
+          head_branch: "feature",
+        })),
+      },
+      { workflow_runs: [{ ...failedPush, id: 101 }] },
+      mode === "request error"
+        ? { error: true }
+        : {
+            workflow_runs: [
+              { ...failedPush, head_branch: "feature" },
+              { ...failedPush, id: 202, created_at: "2000-01-01T00:00:00Z" },
+            ],
+          },
+    ]);
+    await executeWorkflowFixture(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+        const { collectJobTimingsBatch } = await import(${JSON.stringify(pathToFileURL(batchScript).href)});
+        await collectJobTimingsBatch({
+          repository: "example/rea",
+          defaultBranch: "main",
+          outputDirectory: process.env.CI_JOB_TIMINGS_DIRECTORY,
+          collect: async () => ({ rawPath: "jobs.json", reportPath: "report.json" }),
+        });
+      `,
+      ],
+      { cwd: fixture.directory, env: fixtureEnvironment(fixture) },
+    );
+    const manifest = JSON.parse(
+      await readFile(
+        join(fixture.outputDirectory, "batch-manifest.json"),
+        "utf8",
+      ),
+    );
+    expect(manifest.coverage).toMatchObject({
+      selectedRuns: 101,
+      collectedRuns: 101,
+    });
+    expect(manifest.runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 1, workflow: "CI", status: "collected" }),
+        expect.objectContaining({
+          id: 101,
+          workflow: "Release",
+          status: "collected",
+        }),
+      ]),
+    );
+    expect(manifest.errors).toHaveLength(mode === "request error" ? 1 : 2);
+    for (const error of manifest.errors)
+      expect(error.scope).toBe("workflow:CI default-branch failures");
+    if (mode === "mismatched runs")
+      expect(
+        manifest.errors.map(({ runId }: { runId: number }) => runId),
+      ).toEqual([201, 202]);
+  },
+);
+
 it("records listing and per-run errors without claiming complete coverage", async () => {
   const recent = new Date().toISOString();
   const fixture = await createFixture([
@@ -208,8 +470,71 @@ it("retains a partial manifest when its collection budget is exhausted", async (
   });
   expect(manifest.runs).toHaveLength(1);
   expect(manifest.runs[0]).toMatchObject({ status: "error" });
-  expect(manifest.truncation.join(" ")).toContain("Time budget");
+  expect(
+    manifest.truncation.map((entry: { code: string }) => entry.code),
+  ).toEqual(["time-budget-before-collection", "time-budget-unattempted"]);
 });
+
+async function readBatchManifest(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+) {
+  return JSON.parse(
+    await readFile(
+      join(fixture.outputDirectory, "batch-manifest.json"),
+      "utf8",
+    ),
+  );
+}
+
+async function collectDefaultBranchSample(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  options?: { advanceAfterRunId?: string },
+) {
+  const advance = options?.advanceAfterRunId;
+  await executeWorkflowFixture(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    const { collectJobTimingsBatch } = await import(${JSON.stringify(pathToFileURL(batchScript).href)});
+    let clock = Date.now();
+    await collectJobTimingsBatch({
+      repository: "example/rea",
+      defaultBranch: "main",
+      outputDirectory: process.env.CI_JOB_TIMINGS_DIRECTORY,
+      now: () => clock,
+      collect: async ({ runId }) => {
+        ${
+          advance === undefined
+            ? ""
+            : `if (runId === ${JSON.stringify(advance)}) clock += 240001;`
+        }
+        return { rawPath: "jobs.json", reportPath: "report.json" };
+      },
+    });
+  `,
+    ],
+    { cwd: fixture.directory, env: fixtureEnvironment(fixture) },
+  );
+}
+
+function ghApiRequest(call: unknown): {
+  path: string;
+  params: Record<string, string>;
+} {
+  expect(call).toEqual(["api", expect.any(String)]);
+  const endpoint = (call as [string, string])[1];
+  const separator = endpoint.indexOf("?");
+  return {
+    path: separator === -1 ? endpoint : endpoint.slice(0, separator),
+    params: Object.fromEntries(
+      new URLSearchParams(
+        separator === -1 ? "" : endpoint.slice(separator + 1),
+      ),
+    ),
+  };
+}
 
 function completedJobs(
   name: string,

@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { collectJobTimings } from "./job-timings.mjs";
+import { isStaticEvidenceAttempt } from "./static-evidence-attempt.mjs";
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_DIRECTORY = join(".cache", "ci-job-timings");
@@ -16,11 +17,19 @@ const WORKFLOWS = [
 ];
 const LOOKBACK_MS = 24 * 60 * 60 * 1_000;
 const MAX_RUNS_PER_WORKFLOW = 100;
+const MAX_DEFAULT_BRANCH_FAILURES = 5;
 const TIME_BUDGET_MS = 240_000;
+const TIME_BUDGET_TRUNCATION_CODES = new Set([
+  "time-budget-while-listing",
+  "time-budget-before-collection",
+  "time-budget-unattempted",
+  "time-budget",
+]);
 
 /** Collect a bounded recent sample of completed CI and Release attempts. */
 export async function collectJobTimingsBatch({
   repository,
+  defaultBranch,
   outputDirectory = OUTPUT_DIRECTORY,
   observedAt = new Date().toISOString(),
   env = process.env,
@@ -41,7 +50,7 @@ export async function collectJobTimingsBatch({
       lookbackHours: 24,
       overlap: "Each scheduled run re-reads the preceding 24 hours.",
       pagination:
-        "Run listings use the first 100; jobs are paginated within the remaining time and 16 MiB response limits.",
+        "Each run listing uses a single page; jobs are paginated within the remaining time and 16 MiB response limits.",
       maxRunsPerWorkflow: MAX_RUNS_PER_WORKFLOW,
       timeBudgetMs: TIME_BUDGET_MS,
       exhaustive: false,
@@ -60,9 +69,15 @@ export async function collectJobTimingsBatch({
   const budgetExpired = () => now() - started >= TIME_BUDGET_MS;
 
   const selected = [];
+  let ciListingCapped = false;
   for (const workflow of WORKFLOWS) {
     if (budgetExpired()) {
-      manifest.truncation.push("Time budget reached while listing workflows.");
+      manifest.truncation.push(
+        truncation(
+          "time-budget-while-listing",
+          "Time budget reached while listing workflows.",
+        ),
+      );
       break;
     }
     try {
@@ -76,10 +91,15 @@ export async function collectJobTimingsBatch({
         throw new Error("run listing must contain a workflow_runs array");
       manifest.coverage.workflowsQueried.push(workflow.name);
       manifest.coverage.runsListed += response.workflow_runs.length;
-      if (response.workflow_runs.length >= MAX_RUNS_PER_WORKFLOW)
+      if (response.workflow_runs.length >= MAX_RUNS_PER_WORKFLOW) {
+        if (workflow.id === "ci.yml") ciListingCapped = true;
         manifest.truncation.push(
-          `${workflow.name} run listing reached the 100-run first-page limit.`,
+          truncation(
+            "workflow-page-limit",
+            `${workflow.name} run listing reached the 100-run first-page limit.`,
+          ),
         );
+      }
       for (const run of response.workflow_runs.slice(
         0,
         MAX_RUNS_PER_WORKFLOW,
@@ -99,16 +119,7 @@ export async function collectJobTimingsBatch({
         }
         if (run.created_at && Date.parse(run.created_at) < Date.parse(cutoff))
           continue;
-        selected.push({
-          id: run.id,
-          runAttempt: run.run_attempt,
-          workflow: workflow.name,
-          event: typeof run.event === "string" ? run.event : null,
-          headBranch:
-            typeof run.head_branch === "string" ? run.head_branch : null,
-          conclusion: run.conclusion ?? null,
-          createdAt: run.created_at ?? null,
-        });
+        selected.push(timingRun(run, workflow.name));
       }
     } catch (cause) {
       manifest.errors.push({
@@ -123,11 +134,96 @@ export async function collectJobTimingsBatch({
       (Date.parse(right.createdAt ?? "") || 0) -
       (Date.parse(left.createdAt ?? "") || 0),
   );
+  if (ciListingCapped && defaultBranch && !budgetExpired()) {
+    const params = new URLSearchParams({
+      status: "failure",
+      event: "push",
+      branch: defaultBranch,
+      created: `>=${cutoff}`,
+      per_page: String(MAX_RUNS_PER_WORKFLOW),
+    });
+    const failureSample = {
+      branch: defaultBranch,
+      event: "push",
+      conclusion: "failure",
+      attempt: 1,
+      limit: MAX_DEFAULT_BRANCH_FAILURES,
+      scanLimit: MAX_RUNS_PER_WORKFLOW,
+      omittedRunIds: [],
+    };
+    manifest.selection.defaultBranchFailureSample = failureSample;
+    try {
+      const response = await apiJson(
+        `repos/${identity}/actions/workflows/ci.yml/runs?${params}`,
+        env,
+        started,
+        now,
+      );
+      if (!Array.isArray(response.workflow_runs))
+        throw new Error("run listing must contain a workflow_runs array");
+      manifest.coverage.runsListed += response.workflow_runs.length;
+      if (response.total_count > MAX_DEFAULT_BRANCH_FAILURES)
+        manifest.truncation.push(
+          truncation(
+            "default-branch-failure-sample-limit",
+            "Default-branch CI failures exceeded the supplemental sample limit.",
+          ),
+        );
+      const failures = [];
+      for (const run of response.workflow_runs.slice(
+        0,
+        MAX_RUNS_PER_WORKFLOW,
+      )) {
+        if (
+          run?.status !== "completed" ||
+          run.event !== "push" ||
+          run.head_branch !== defaultBranch ||
+          run.conclusion !== "failure" ||
+          !Number.isSafeInteger(run.id) ||
+          run.id <= 0 ||
+          !Number.isSafeInteger(run.run_attempt) ||
+          run.run_attempt <= 0 ||
+          !(Date.parse(run.created_at) >= Date.parse(cutoff))
+        ) {
+          manifest.errors.push({
+            scope: "workflow:CI default-branch failures",
+            runId: run?.id ?? null,
+            message: "Run record did not match the supplemental failure query.",
+          });
+          continue;
+        }
+        // A rerun has no static-check artifact, so it must not consume a sample slot.
+        if (!isStaticEvidenceAttempt(run.run_attempt)) {
+          failureSample.omittedRunIds.push(run.id);
+          continue;
+        }
+        if (failures.some(({ id }) => id === run.id)) continue;
+        failures.push(timingRun(run, "CI"));
+        if (failures.length === MAX_DEFAULT_BRANCH_FAILURES) break;
+      }
+      // Reserve collection time for attribution evidence even when newer PRs fill the sample.
+      const failureIds = new Set(failures.map(({ id }) => id));
+      selected.splice(
+        0,
+        selected.length,
+        ...failures,
+        ...selected.filter(({ id }) => !failureIds.has(id)),
+      );
+    } catch (cause) {
+      manifest.errors.push({
+        scope: "workflow:CI default-branch failures",
+        message: errorMessage(cause),
+      });
+    }
+  }
   manifest.coverage.selectedRuns = selected.length;
   for (const run of selected) {
     if (budgetExpired()) {
       manifest.truncation.push(
-        "Time budget reached before all selected runs were collected.",
+        truncation(
+          "time-budget-before-collection",
+          "Time budget reached before all selected runs were collected.",
+        ),
       );
       break;
     }
@@ -173,9 +269,28 @@ export async function collectJobTimingsBatch({
   }
   if (budgetExpired() && manifest.runs.length < manifest.coverage.selectedRuns)
     manifest.truncation.push(
-      "Time budget reached; selected runs remain unattempted.",
+      truncation(
+        "time-budget-unattempted",
+        "Time budget reached; selected runs remain unattempted.",
+      ),
     );
   return await writeManifest(outputDirectory, manifest, started, now, env);
+}
+
+function truncation(code, message) {
+  return { code, message };
+}
+
+function timingRun(run, workflow) {
+  return {
+    id: run.id,
+    runAttempt: run.run_attempt,
+    workflow,
+    event: typeof run.event === "string" ? run.event : null,
+    headBranch: typeof run.head_branch === "string" ? run.head_branch : null,
+    conclusion: run.conclusion ?? null,
+    createdAt: run.created_at ?? null,
+  };
 }
 
 function validateRepository(repository) {
@@ -211,9 +326,11 @@ async function writeManifest(outputDirectory, manifest, started, now, env) {
   manifest.elapsedMs = Math.max(0, now() - started);
   if (
     manifest.elapsedMs >= TIME_BUDGET_MS &&
-    !manifest.truncation.some((item) => item.includes("Time budget"))
+    !manifest.truncation.some((entry) =>
+      TIME_BUDGET_TRUNCATION_CODES.has(entry.code),
+    )
   )
-    manifest.truncation.push("Time budget reached.");
+    manifest.truncation.push(truncation("time-budget", "Time budget reached."));
   await mkdir(outputDirectory, { recursive: true });
   const manifestPath = join(outputDirectory, "batch-manifest.json");
   await writeFile(
@@ -238,8 +355,13 @@ async function appendBatchSummary(summaryPath, manifest, manifestPath) {
     "",
     `Observed ${manifest.observedAt}; collected ${String(collected)} of ${String(manifest.coverage.selectedRuns)} selected recent completed runs (${String(failed)} run errors).`,
     `Coverage uses the first ${String(MAX_RUNS_PER_WORKFLOW)} runs per workflow created in the preceding 24 hours and a ${String(TIME_BUDGET_MS / 1_000)} second total budget. This sample is bounded and is not exhaustive.`,
+    ...(manifest.selection.defaultBranchFailureSample
+      ? [
+          `The capped CI sample also prioritizes up to ${String(MAX_DEFAULT_BRANCH_FAILURES)} failed first-attempt pushes to the default branch for failure attribution.`,
+        ]
+      : []),
     `Manifest: \`${manifestPath}\`.`,
-    ...manifest.truncation.map((message) => `- Truncated: ${message}`),
+    ...manifest.truncation.map((entry) => `- Truncated: ${entry.message}`),
     ...manifest.errors.map(
       ({ scope, message }) => `- Error (${scope}): ${message}`,
     ),
@@ -259,6 +381,7 @@ if (
   try {
     const result = await collectJobTimingsBatch({
       repository: process.env.CI_REPOSITORY,
+      defaultBranch: process.env.CI_DEFAULT_BRANCH,
       outputDirectory: process.env.CI_JOB_TIMINGS_DIRECTORY ?? OUTPUT_DIRECTORY,
     });
     process.stdout.write(

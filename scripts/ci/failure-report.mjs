@@ -15,6 +15,7 @@ import {
   validRepoPath,
 } from "./artifacts.mjs";
 import { createGhApiRequest } from "./github-api.mjs";
+import { isStaticEvidenceAttempt } from "./static-evidence-attempt.mjs";
 import { normalizeWorkflowRun } from "./workflow-run.mjs";
 
 const OUTPUT_DIRECTORY = join(".cache", "ci-failures");
@@ -367,7 +368,7 @@ export function createGitHubApi({
     async getStaticEvidence(repository, run, job) {
       const artifactName = STATIC_EVIDENCE_ARTIFACTS[job.name];
       if (!artifactName) return null;
-      if (run.run_attempt !== 1) return null;
+      if (!isStaticEvidenceAttempt(run.run_attempt)) return null;
       const page = await request(
         `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=100&page=1`,
       );

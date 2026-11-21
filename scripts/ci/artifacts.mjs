@@ -5,6 +5,7 @@ import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 
 import { parseStaticTaskContext } from "./static-task-context.mjs";
+import { isStaticEvidenceAttempt } from "./static-evidence-attempt.mjs";
 
 const execute = promisify(execFile);
 /** Job display name owns the artifact that contains that gate's diagnostics. */
@@ -144,13 +145,14 @@ export function safeSha(value) {
     ? value.toLowerCase()
     : null;
 }
+
 export function selectStaticCheckArtifact(
   page,
   run,
   runAttempt,
   name = STATIC_EVIDENCE_ARTIFACTS["Static checks"],
 ) {
-  if (runAttempt !== 1) return null;
+  if (!isStaticEvidenceAttempt(runAttempt)) return null;
   if (
     !Array.isArray(page?.artifacts) ||
     !Number.isSafeInteger(page.total_count) ||
