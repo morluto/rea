@@ -88,6 +88,7 @@
         "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "docs/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "docs/reference/rea-limit-inventory.md",
         ".github/actions/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "website/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "src/**/*.{json,md,py,yaml,yml}",

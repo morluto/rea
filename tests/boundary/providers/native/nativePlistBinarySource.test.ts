@@ -96,7 +96,7 @@ it("reports a binary source-size refusal as a typed resource limit", async () =>
       },
     }),
   );
-  expect(runner.tools).toEqual(["file"]);
+  expect(runner.tools).toEqual([]);
 });
 
 const nested = (depth: number): PlistValue =>

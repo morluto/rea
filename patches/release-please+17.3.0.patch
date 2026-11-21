@@ -1,17 +1,25 @@
 --- a/build/src/github.js
 +++ b/build/src/github.js
+@@ -31,6 +31,7 @@
+ const https_proxy_agent_1 = require("https-proxy-agent");
+ const http_proxy_agent_1 = require("http-proxy-agent");
+ const composite_1 = require("./updaters/composite");
++class IncompleteGitBlobError extends Error {}
+ class GitHub {
+     constructor(options) {
+         var _a;
 @@ -78,14 +78,20 @@
                      this.logger.trace('no GraphQL response, retrying');
                  }
                  catch (err) {
 -                    if (err.status !== 502) {
-+                    // Only commit-history reads opt in to transient HTTP-200 errors.
-+                    const retryInternalError = options?.retryInternalErrors &&
++                    // Only commit-history reads opt in to gateway timeouts and transient HTTP-200 errors.
++                    const retryHistoryError = options?.retryHistoryErrors && (err.status === 504 ||
 +                        err instanceof graphql_1.GraphqlResponseError &&
 +                        err.errors.length > 0 &&
 +                        err.errors.every(error => typeof error.message === 'string' &&
-+                            error.message.startsWith('Something went wrong while executing your query'));
-+                    if (err.status !== 502 && !retryInternalError) {
++                            error.message.startsWith('Something went wrong while executing your query')));
++                    if (err.status !== 502 && !retryHistoryError) {
                          throw err;
                      }
                      if (maxRetries === 0) {
@@ -19,10 +27,27 @@
                          throw err;
                      }
 -                    this.logger.info(`received 502 error, ${maxRetries} attempts remaining`);
-+                    this.logger.info(`received ${err.status === 502 ? '502' : 'internal GraphQL'} error, ${maxRetries} attempts remaining`);
++                    this.logger.info(`received ${err.status === 502 || err.status === 504 ? err.status : 'internal GraphQL'} error, ${maxRetries} attempts remaining`);
                  }
                  maxRetries -= 1;
                  if (maxRetries >= 0) {
+@@ -389,6 +395,16 @@
+         this.octokit = options.octokitAPIs.octokit;
+         this.request = options.octokitAPIs.request;
+         this.graphql = options.octokitAPIs.graphql;
++        // Check the parsed response before git-file-utils decodes or caches it.
++        this.octokit.hook.after('request', (response, request) => {
++            if (request.method === 'GET' &&
++                request.url === '/repos/{owner}/{repo}/git/blobs/{file_sha}' &&
++                (response.data?.encoding !== 'base64' ||
++                    typeof response.data?.content !== 'string' ||
++                    (response.data.size > 0 && response.data.content.length === 0))) {
++                throw new IncompleteGitBlobError('GitHub Git blob did not include a base64 payload');
++            }
++        });
+         this.fileCache = new git_file_utils_1.RepositoryFileCache(this.octokit, this.repository);
+         this.logger = (_a = options.logger) !== null && _a !== void 0 ? _a : logger_1.logger;
+     }
 @@ -535,8 +541,9 @@
      async mergeCommitsGraphQL(targetBranch, cursor, options = {}) {
          var _a, _b, _c, _d, _e, _f, _g, _h, _j;
@@ -53,7 +78,7 @@
              query,
              ...params,
 -        });
-+        }, { retryInternalErrors: true });
++        }, { retryHistoryErrors: true });
          if (!response) {
              this.logger.warn(`Did not receive a response for query: ${query}`, params);
              return null;
@@ -81,7 +106,7 @@
                  // In this case, there is no squashed merge commit. This could be a simple
                  // merge commit, a rebase merge commit, or a direct commit to the branch.
                  // Fallback to fetching the list of commits from the REST API. In the future
-@@ -995,14 +995,21 @@
+@@ -995,14 +995,27 @@
       */
      async getFileContentsOnBranch(path, branch) {
          this.logger.debug(`Fetching ${path} from branch ${branch}`);
@@ -102,10 +127,16 @@
 +                    throw new errors_1.FileNotFoundError(path);
 +                }
 +                // Retrying this read is safe even when a release proposal is being updated.
-+                if (e?.status !== 504 || attempt >= 2) {
++                const incompleteBlob = e instanceof IncompleteGitBlobError;
++                if (incompleteBlob && attempt >= 2) {
++                    throw new Error(`GitHub returned an incomplete Git blob for ${path} on ${branch}`, { cause: e });
++                }
++                if ((!incompleteBlob && e?.status !== 504) || attempt >= 2) {
 +                    throw e;
 +                }
-+                this.logger.info('Received HTTP 504 reading a repository file, retrying');
++                this.logger.info(incompleteBlob
++                    ? 'Received an incomplete Git blob reading a repository file, retrying'
++                    : 'Received HTTP 504 reading a repository file, retrying');
 +                await (0, exports.sleepInMs)(1000 * (attempt + 1));
 +            }
          }

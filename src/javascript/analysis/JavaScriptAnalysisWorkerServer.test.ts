@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS,
   javaScriptWorkerAdmissionSchema,
@@ -23,7 +23,7 @@ const admission = (id: string) =>
   });
 
 const startServer = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-js-server-framing-"));
+  const root = await createTestTempDirectory("rea-js-server-framing-");
   const serverUrl = new URL(
     "./JavaScriptAnalysisWorkerServer.ts",
     import.meta.url,
@@ -90,7 +90,6 @@ const startServer = async () => {
       if (child.exitCode === null && child.signalCode === null) child.kill();
       await closed;
       lines.close();
-      await rm(root, { recursive: true, force: true });
     },
   };
 };

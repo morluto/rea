@@ -11,7 +11,8 @@ import {
 const SUMMARY_BUDGET = NATIVE_AOT_MAX_REPORT_BYTES;
 
 const linkedTableFixture = (shape: "deep" | "wide" | "interfaces") => {
-  const count = shape === "interfaces" ? 4 : 24;
+  // Deep and wide graphs cross the initial 128-row index allocation.
+  const count = shape === "interfaces" ? 4 : 130;
   const bytes = Buffer.alloc(0xa00 + count * 64);
   nativeAotPeFixture().copy(bytes);
   const data = 0x98 + 0xf0 + 40;
@@ -33,8 +34,10 @@ const linkedTableFixture = (shape: "deep" | "wide" | "interfaces") => {
           : 0x140002200n;
     bytes.writeBigUInt64LE(parent, offset + 8);
     if (shape === "interfaces" && index < 2) {
+      bytes.writeUInt16LE(1, offset + 16);
       bytes.writeUInt16LE(1, offset + 18);
-      bytes.writeBigUInt64LE(address(2), offset + 24);
+      bytes.writeBigUInt64LE(0x140001040n, offset + 24);
+      bytes.writeBigUInt64LE(address(2), offset + 32);
     }
   }
   return {
@@ -64,6 +67,24 @@ describe("NativeAOT indexed MethodTable closure", () => {
         "0x1400022c0",
         ...expected,
       ]);
+      if (shape === "interfaces") {
+        expect(
+          parsed.readTypeDetail("0x140002400", SUMMARY_BUDGET),
+        ).toMatchObject({
+          interfaces: [{ address: "0x140002480", type: null }],
+          virtual_slots: [
+            {
+              slot: 0,
+              slot_address: "0x140002418",
+              target_address: "0x140001040",
+            },
+          ],
+          derived_memory: {
+            size_bytes: 40,
+            sha256: nativeAotPeDigest(bytes.subarray(0xa00, 0xa28)),
+          },
+        });
+      }
       expect(Buffer.compare(bytes, before)).toBe(0);
     },
   );

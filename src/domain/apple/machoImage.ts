@@ -3,6 +3,7 @@ import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
 import { decodeMachoFixedName } from "./appleMachoNames.js";
 import {
   machoSectionBacking,
+  machoSectionHeaderSize,
   readMachoSectionHeader,
   type MachoSectionHeader,
 } from "./machoSectionHeader.js";
@@ -20,6 +21,7 @@ import {
 } from "../binaryContainer.js";
 import {
   MachoLoadCommandCursor,
+  machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
 
@@ -32,6 +34,17 @@ export const readMachoImage = (
   if (parsed.value === null)
     throw new BinaryFormatFailure("malformed", "Unrecognized Mach-O header");
   const table = parsed.value;
+  const issue = machoCommandTableIssue(table, bytes.length);
+  if (issue !== null)
+    throw new BinaryFormatFailure(
+      issue.kind === "extent" ? "truncated" : "malformed",
+      issue.message,
+      {
+        format: "macho",
+        field: "Mach-O load commands",
+        offset: table.headerSize,
+      },
+    );
   const { headerSize, commandBytes, littleEndian: little } = table;
   const bits = table.wide ? 64 : 32;
   const reader = new BinaryReader(bytes, little, "macho");
@@ -61,7 +74,7 @@ export const readMachoImage = (
           "malformed",
           "Mach-O segment command does not match the header width",
         );
-      const sectionWidth = wide ? 80 : 68;
+      const sectionWidth = machoSectionHeaderSize(wide);
       const parsedSegment = readMachoSegmentHeader(
         bytes.subarray(offset, offset + size),
         wide,
@@ -74,7 +87,6 @@ export const readMachoImage = (
         );
       const {
         headerSize: segmentHeader,
-        address,
         memorySize,
         fileOffset,
         fileSize,
@@ -94,7 +106,7 @@ export const readMachoImage = (
           admitted.error.kind,
           admitted.error.message,
         );
-      const { unmapped } = admitted.value;
+      const { unmapped, fileAddress, zeroFill } = admitted.value;
       const fileRange =
         fileSize === 0n
           ? undefined
@@ -102,7 +114,7 @@ export const readMachoImage = (
       const mapping =
         unmapped || fileRange === undefined
           ? undefined
-          : { ...fileRange, address };
+          : { ...fileRange, address: fileAddress };
       const name = decodeMachoFixedName(nameBytes);
       if (mapping !== undefined && name !== "__PAGEZERO") {
         mappings.push(mapping);
@@ -119,11 +131,7 @@ export const readMachoImage = (
         });
         if ((protection & 4) !== 0) executableMappings.push(mapping);
       }
-      if (memorySize > fileSize && name !== "__PAGEZERO")
-        zeroFills.push({
-          address: address + fileSize,
-          size: memorySize - fileSize,
-        });
+      if (zeroFill !== null && name !== "__PAGEZERO") zeroFills.push(zeroFill);
       for (let sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
         const section = offset + segmentHeader + sectionIndex * sectionWidth;
         const parsedSection = readMachoSectionHeader(

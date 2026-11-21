@@ -4,11 +4,10 @@ import {
   withoutPackageRunnerIdentity,
 } from "./application/ClientRegistrationIdentity.js";
 import { UpdateCommandRunner } from "./application/UpdateCommandRunner.js";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import * as macHopperInstaller from "./application/MacHopper.js";
@@ -47,7 +46,7 @@ it.each([undefined, "/caller/tools with spaces/ilspycmd"])(
 );
 
 it("plans setup and uninstall against selected home and client overrides", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-selected-setup-"));
+  const root = await createTestTempDirectory("rea-selected-setup-");
   const environment = {
     HOME: join(root, "selected-home"),
     USERPROFILE: join(root, "selected-home"),
@@ -57,57 +56,53 @@ it("plans setup and uninstall against selected home and client overrides", async
   vi.stubEnv("HOME", join(root, "ambient-home"));
   vi.stubEnv("CODEX_HOME", join(root, "ambient-codex"));
   vi.stubEnv("npm_command", "other");
-  try {
-    const doctor = createDoctorHostFixture({
-      homeDirectory: environment.HOME,
-      platform: process.platform,
-    });
-    const host = systemSetupHost(doctor, environment);
-    const result = await runSetup(
-      {
-        ...options(false),
-        dryRun: true,
-        clientIds: ["codex"],
-        installSkill: true,
-      },
-      host,
-    );
-    expect(result.status).toBe("planned");
-    expect(result.plannedActions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "configure_client:codex",
-          target: join(environment.CODEX_HOME, "config.toml"),
-        }),
-        expect.objectContaining({
-          id: "install_skill",
-          target: join(
-            environment.HOME,
-            ".agents/skills",
-            PRODUCT_IDENTITY.skillName,
-          ),
-        }),
-      ]),
-    );
-    expect(host.registrationCommand).toEqual(
-      currentClientRegistrationCommand({
-        platform: process.platform,
-        environment,
+  const doctor = createDoctorHostFixture({
+    homeDirectory: environment.HOME,
+    platform: process.platform,
+  });
+  const host = systemSetupHost(doctor, environment);
+  const result = await runSetup(
+    {
+      ...options(false),
+      dryRun: true,
+      clientIds: ["codex"],
+      installSkill: true,
+    },
+    host,
+  );
+  expect(result.status).toBe("planned");
+  expect(result.plannedActions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "configure_client:codex",
+        target: join(environment.CODEX_HOME, "config.toml"),
       }),
-    );
-    const clients = await systemUninstallHost(
-      environment.HOME,
-      undefined,
+      expect.objectContaining({
+        id: "install_skill",
+        target: join(
+          environment.HOME,
+          ".agents/skills",
+          PRODUCT_IDENTITY.skillName,
+        ),
+      }),
+    ]),
+  );
+  expect(host.registrationCommand).toEqual(
+    currentClientRegistrationCommand({
+      platform: process.platform,
       environment,
-      doctor.platform,
-    ).clients();
-    expect(clients.find(({ name }) => name === "codex")?.configPath).toBe(
-      join(environment.CODEX_HOME, "config.toml"),
-    );
-    expect(JSON.stringify(result)).not.toContain("ambient-");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    }),
+  );
+  const clients = await systemUninstallHost(
+    environment.HOME,
+    undefined,
+    environment,
+    doctor.platform,
+  ).clients();
+  expect(clients.find(({ name }) => name === "codex")?.configPath).toBe(
+    join(environment.CODEX_HOME, "config.toml"),
+  );
+  expect(JSON.stringify(result)).not.toContain("ambient-");
 });
 
 it("composes provider diagnostics from selected configuration rather than ambient configuration", async () => {
@@ -157,7 +152,7 @@ it("includes the macOS Hopper installer diagnostic in setup remediation", async 
 });
 
 it("preserves a validated selected JEB endpoint in setup registrations without claiming live readiness", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-jeb-setup-"));
+  const root = await createTestTempDirectory("rea-jeb-setup-");
   const endpoint = "http://127.0.0.1:8425/mcp/";
   const ambientEndpoint = "http://127.0.0.1:8426/mcp";
   vi.stubEnv("REA_JEB_MCP_URL", ambientEndpoint);
@@ -192,7 +187,6 @@ it("preserves a validated selected JEB endpoint in setup registrations without c
     );
   } finally {
     vi.unstubAllEnvs();
-    await rm(root, { recursive: true, force: true });
   }
 });
 

@@ -14,6 +14,8 @@ import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
+import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { trackBrowser, waitFor } from "./cdpBrowserProvider.support.js";
 
 describe("CdpBrowserProvider: cancellation during cleanup", () => {
@@ -506,87 +508,73 @@ describe("CdpBrowserProvider: protocol failures and cancellation cleanup", () =>
         });
     }
 
-    const malformed = await startFakeCdpBrowser({
-      malformedMessageOnMethod: "Page.getFrameTree",
-    });
-    trackBrowser(malformed);
-    const protocol = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: malformed.endpoint,
-        allowed_origins: [malformed.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    expect(protocol).toMatchObject({
-      ok: false,
-      error: { _tag: "BrowserObservationError", reason: "protocol_error" },
-    });
-
-    const malformedEvent = await startFakeCdpBrowser({
-      malformedEventOnMethod: "Debugger.enable",
-    });
-    trackBrowser(malformedEvent);
-    const eventProtocol = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: malformedEvent.endpoint,
-        allowed_origins: [malformedEvent.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    expect(eventProtocol).toMatchObject({
-      ok: false,
-      error: { _tag: "BrowserObservationError", reason: "protocol_error" },
-    });
-
-    const malformedEventShape = await startFakeCdpBrowser({
-      malformedEventShapeOnMethod: "Debugger.enable",
-    });
-    trackBrowser(malformedEventShape);
-    const eventShapeProtocol = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: malformedEventShape.endpoint,
-        allowed_origins: [malformedEventShape.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    expect(eventShapeProtocol).toMatchObject({
-      ok: false,
-      error: { _tag: "BrowserObservationError", reason: "protocol_error" },
-    });
+    for (const options of [
+      { malformedMessageOnMethod: "Page.getFrameTree" },
+      { malformedEventOnMethod: "Debugger.enable" },
+      { malformedEventShapeOnMethod: "Debugger.enable" },
+    ]) {
+      const browser = await startFakeCdpBrowser(options);
+      trackBrowser(browser);
+      const result = await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+      expect(result, JSON.stringify(options)).toMatchObject({
+        ok: false,
+        error: { _tag: "BrowserObservationError", reason: "protocol_error" },
+      });
+    }
   });
 
   it("cancels observation and still detaches without closing the page", async () => {
     const browser = await startFakeCdpBrowser();
     trackBrowser(browser);
     const controller = new AbortController();
+    const started = createDeferred<void>();
+    const reason = { caller: "stop page observation" };
     const pending = new CdpBrowserProvider().inspectPage(
       inspectWebPageInputSchema.parse({
         cdp_endpoint: browser.endpoint,
         allowed_origins: [browser.allowedOrigin],
         target_id: "allowed-page",
-        observation_ms: 1_000,
+        observation_ms: 5_000,
       }),
-      { signal: controller.signal },
+      {
+        signal: controller.signal,
+        progress: {
+          report: async ({ phase, completed }) => {
+            if (phase === "browser_observation" && completed === 2)
+              setImmediate(started.resolve);
+          },
+        },
+      },
     );
-    // Wait until the attach response has been consumed and capture has begun.
-    // Seeing the attach request alone races its response under worker load.
-    await waitForCommand(browser, "Page.getFrameTree");
-    controller.abort();
-    const result = await pending;
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
+    try {
+      await awaitAcknowledgement(
+        started.promise,
+        pending,
+        "page observation window",
+      );
+      controller.abort(reason);
+      const result = await pending;
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error).toMatchObject({
         _tag: "AnalysisCancelledError",
         operation: "inspect_web_page",
-      },
-    });
-    const methods = browser.commands.map(({ method }) => method);
-    expect(methods).toContain("Target.detachFromTarget");
-    expect(methods).not.toContain("Target.closeTarget");
-    expect(methods).not.toContain("Browser.close");
+      });
+      expect(result.error.cause).toBe(reason);
+      const methods = browser.commands.map(({ method }) => method);
+      expect(methods).toContain("Target.detachFromTarget");
+      expect(methods).not.toContain("Target.closeTarget");
+      expect(methods).not.toContain("Browser.close");
+    } finally {
+      controller.abort(reason);
+      await pending;
+    }
   });
 });
 
@@ -675,14 +663,3 @@ describe("CdpBrowserProvider: navigation commit and target identity", () => {
     });
   });
 });
-
-const waitForCommand = async (
-  browser: FakeCdpBrowser,
-  method: string,
-): Promise<void> => {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (browser.commands.some((command) => command.method === method)) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error(`Timed out waiting for fake CDP command ${method}`);
-};

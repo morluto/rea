@@ -114,6 +114,27 @@ const expectFailure = (
   }
 };
 
+it("classifies a Maven qualifier with parentheses as a literal version", () => {
+  const report = parse(`
+    <project><modelVersion>4.0.0</modelVersion>
+      <groupId>example</groupId><artifactId>consumer</artifactId><version>1</version>
+      <dependencies>
+        <dependency><groupId>example</groupId><artifactId>literal</artifactId><version>1.0-release(build)</version></dependency>
+        <dependency><groupId>example</groupId><artifactId>range</artifactId><version>(,2.0]</version></dependency>
+      </dependencies>
+    </project>
+  `);
+  expect(
+    report.dependencies.map(({ version, version_kind }) => [
+      version,
+      version_kind,
+    ]),
+  ).toEqual([
+    ["1.0-release(build)", "literal"],
+    ["(,2.0]", "range"],
+  ]);
+});
+
 it("reads Maven coordinates, parent, BOM import, exclusions, ranges and unresolved properties", () => {
   const report = parse(mavenPomFixture);
   expect(report.format).toBe("maven-pom");
@@ -428,6 +449,31 @@ it("applies XML end-of-line handling to POM text", () => {
   ]);
 });
 
+it.each([
+  ["&#xA0;", "\u00a0"],
+  ["&#xFEFF;", "\ufeff"],
+  ["&#x20;", ""],
+])(
+  "preserves declared POM version characters at a %s boundary",
+  (reference, retained) => {
+    const report = parse(`<project>
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>example</groupId>
+    <artifactId>demo</artifactId>
+    <version>  ${reference}1.0${reference}  </version>
+    <dependencies>
+      <dependency>
+        <groupId>example</groupId>
+        <artifactId>library</artifactId>
+        <version>  ${reference}2.0${reference}  </version>
+      </dependency>
+    </dependencies>
+  </project>`);
+    expect(report.coordinates.version).toBe(`${retained}1.0${retained}`);
+    expect(report.dependencies[0]?.version).toBe(`${retained}2.0${retained}`);
+  },
+);
+
 it("lists properties in packaging, scope, type and classifier", () => {
   const report = parse(`<project>
   <groupId>com.example</groupId>
@@ -602,11 +648,11 @@ it("refuses a document type declaration", () => {
   );
 });
 
-it("refuses XML that is not a Maven project", () => {
-  expectFailure(
-    "<module><artifactId>demo</artifactId></module>",
-    "unsupported",
-  );
+it.each([
+  "<module><artifactId>demo</artifactId></module>",
+  '<project xmlns:ext="urn:example"><ext:artifactId>demo</ext:artifactId></project>',
+])("refuses XML that is not a Maven project: %s", (source) => {
+  expectFailure(source, "unsupported");
 });
 
 it("refuses a POM with two top-level dependencies blocks", () => {
@@ -802,8 +848,8 @@ it("reports the repeated variant-name refusal as a fixed report allowance", asyn
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      remediation: {
-        action: expect.stringContaining("fixed report allowance"),
+      details: {
+        refusal: { kind: "fixed_ceiling", allowance_kind: "report" },
       },
     });
   } finally {
