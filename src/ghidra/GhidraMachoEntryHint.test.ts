@@ -13,6 +13,7 @@ import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
   mainCommand,
   mappedSegment,
+  paddedTo,
   strippedMachoWithMain,
   TEXT_SEGMENT,
 } from "./GhidraMachoEntryHint.fixture.js";
@@ -37,6 +38,100 @@ const recordingReader = (bytes: Uint8Array) => {
 
 const hintFor = (bytes: Uint8Array) =>
   ghidraMachoMainEntryHint(recordingReader(bytes).read, bytes.byteLength);
+
+const NO_HINT_IMAGES: readonly {
+  readonly name: string;
+  readonly image: Uint8Array;
+}[] = [
+  {
+    name: "a dylib without LC_MAIN",
+    image: machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [TEXT_SEGMENT],
+    }),
+  },
+  {
+    name: "an executable without LC_MAIN",
+    image: machoImage({ commands: [TEXT_SEGMENT] }),
+  },
+  {
+    name: "a non-executable that declares LC_MAIN",
+    image: machoImage({
+      fileType: FILE_TYPE.bundle,
+      commands: [TEXT_SEGMENT, mainCommand(0x460n)],
+    }),
+  },
+  {
+    name: "an entry outside every mapped file range",
+    image: paddedTo(
+      machoImage({ commands: [TEXT_SEGMENT, mainCommand(0x8000n)] }),
+      0x9000,
+    ),
+  },
+  {
+    name: "an entry past the end of the file inside a declared segment",
+    image: machoImage({ commands: [TEXT_SEGMENT, mainCommand(0x460n)] }),
+  },
+  {
+    name: "a containing segment whose file range exceeds the file",
+    image: paddedTo(
+      machoImage({ commands: [TEXT_SEGMENT, mainCommand(0x460n)] }),
+      0x1000,
+    ),
+  },
+  {
+    name: "a containing segment whose file range overflows",
+    image: paddedTo(
+      machoImage({
+        commands: [
+          mappedSegment({
+            name: "__TEXT",
+            vmaddr: 0x100000000n,
+            fileoff: 0x400n,
+            filesize: 0xffff_ffff_ffff_fc00n,
+            vmsize: 0xffff_ffff_ffff_fc00n,
+          }),
+          mainCommand(0x460n),
+        ],
+      }),
+      0x1000,
+    ),
+  },
+  {
+    name: "a containing segment with more file bytes than memory",
+    image: paddedTo(
+      machoImage({
+        commands: [
+          mappedSegment({
+            name: "__TEXT",
+            vmaddr: 0x100000000n,
+            fileoff: 0n,
+            filesize: 0x1000n,
+            vmsize: 0x800n,
+          }),
+          mainCommand(0x460n),
+        ],
+      }),
+      0x1000,
+    ),
+  },
+  {
+    name: "two LC_MAIN commands",
+    image: machoImage({
+      commands: [TEXT_SEGMENT, mainCommand(0x460n), mainCommand(0x480n)],
+    }),
+  },
+  { name: "an ELF image", image: elf(2, 1, 0xb7) },
+  { name: "an empty file", image: new Uint8Array(0) },
+  {
+    name: "a file shorter than a Mach-O header",
+    image: strippedMachoWithMain().subarray(0, 20),
+  },
+  {
+    name: "load commands cut short by the end of the file",
+    image: strippedMachoWithMain().subarray(0, 64),
+  },
+];
 
 describe("isGhidraMainSelector", () => {
   it.each(["main", "_main", "MAIN", "_Main", "  main\t"])(
@@ -68,18 +163,21 @@ describe("ghidraMachoMainEntryHint", () => {
   });
 
   it("maps the entry through the segment whose file range contains it", async () => {
-    const image = machoImage({
-      commands: [
-        TEXT_SEGMENT,
-        mappedSegment({
-          name: "__CODE",
-          vmaddr: 0x200000000n,
-          fileoff: 0x4000n,
-          filesize: 0x1000n,
-        }),
-        mainCommand(0x4010n),
-      ],
-    });
+    const image = paddedTo(
+      machoImage({
+        commands: [
+          TEXT_SEGMENT,
+          mappedSegment({
+            name: "__CODE",
+            vmaddr: 0x200000000n,
+            fileoff: 0x4000n,
+            filesize: 0x1000n,
+          }),
+          mainCommand(0x4010n),
+        ],
+      }),
+      0x5000,
+    );
     await expect(hintFor(image)).resolves.toContain(
       "file offset 0x4010, analysis address 0x200000010;",
     );
@@ -113,46 +211,7 @@ describe("ghidraMachoMainEntryHint", () => {
     expect(bytesRead).toBeLessThan(1024);
   });
 
-  it.each([
-    {
-      name: "a dylib without LC_MAIN",
-      image: machoImage({
-        fileType: FILE_TYPE.dylib,
-        commands: [TEXT_SEGMENT],
-      }),
-    },
-    {
-      name: "an executable without LC_MAIN",
-      image: machoImage({ commands: [TEXT_SEGMENT] }),
-    },
-    {
-      name: "a non-executable that declares LC_MAIN",
-      image: machoImage({
-        fileType: FILE_TYPE.bundle,
-        commands: [TEXT_SEGMENT, mainCommand(0x460n)],
-      }),
-    },
-    {
-      name: "an entry outside every mapped file range",
-      image: machoImage({ commands: [TEXT_SEGMENT, mainCommand(0x8000n)] }),
-    },
-    {
-      name: "two LC_MAIN commands",
-      image: machoImage({
-        commands: [TEXT_SEGMENT, mainCommand(0x460n), mainCommand(0x480n)],
-      }),
-    },
-    { name: "an ELF image", image: elf(2, 1, 0xb7) },
-    { name: "an empty file", image: new Uint8Array(0) },
-    {
-      name: "a file shorter than a Mach-O header",
-      image: strippedMachoWithMain().subarray(0, 20),
-    },
-    {
-      name: "load commands cut short by the end of the file",
-      image: strippedMachoWithMain().subarray(0, 64),
-    },
-  ])("returns no hint for $name", async ({ image }) => {
+  it.each(NO_HINT_IMAGES)("returns no hint for $name", async ({ image }) => {
     await expect(hintFor(image)).resolves.toBeUndefined();
   });
 });

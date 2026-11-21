@@ -10,11 +10,12 @@ export const mappedSegment = (options: {
   readonly vmaddr: bigint;
   readonly fileoff: bigint;
   readonly filesize: bigint;
+  readonly vmsize?: bigint;
 }): Uint8Array => {
   const bytes = segmentCommand({
     name: options.name,
     vmaddr: options.vmaddr,
-    vmsize: options.filesize,
+    vmsize: options.vmsize ?? options.filesize,
   });
   const view = new DataView(bytes.buffer);
   view.setBigUint64(40, options.fileoff, true);
@@ -39,12 +40,29 @@ export const TEXT_SEGMENT = mappedSegment({
   filesize: 0x4000n,
 });
 
-/** A stripped arm64 executable shape: __PAGEZERO, __TEXT, LC_MAIN at 0x460. */
+/** Zero-pad an image so its file holds every byte its segments declare. */
+export const paddedTo = (image: Uint8Array, size: number): Uint8Array => {
+  const bytes = new Uint8Array(size);
+  bytes.set(image);
+  return bytes;
+};
+
+/**
+ * A stripped arm64 executable shape: __PAGEZERO, __TEXT, LC_MAIN at 0x460,
+ * in a file as long as its __TEXT file range.
+ */
 export const strippedMachoWithMain = (): Uint8Array =>
-  machoImage({
-    commands: [
-      segmentCommand({ name: "__PAGEZERO", vmaddr: 0n, vmsize: 0x100000000n }),
-      TEXT_SEGMENT,
-      mainCommand(0x460n),
-    ],
-  });
+  paddedTo(
+    machoImage({
+      commands: [
+        segmentCommand({
+          name: "__PAGEZERO",
+          vmaddr: 0n,
+          vmsize: 0x100000000n,
+        }),
+        TEXT_SEGMENT,
+        mainCommand(0x460n),
+      ],
+    }),
+    0x4000,
+  );

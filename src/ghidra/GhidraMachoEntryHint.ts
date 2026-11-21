@@ -1,6 +1,10 @@
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { MAX_LOAD_COMMAND_BYTES } from "../domain/apple/machoLoadCommandReader.js";
 import { readMachoLoadCommandTableHeader } from "../domain/apple/machoLoadCommands.js";
+import {
+  admitMachoSegmentCommand,
+  machoSegmentHeaderSize,
+} from "../domain/apple/machoSegmentHeader.js";
 import { parseFailureFromCause } from "../domain/parseFailure.js";
 
 const MH_EXECUTE = 2;
@@ -80,17 +84,39 @@ export const ghidraMachoMainEntryHint = async (
     entrypoint === undefined ? [] : [entrypoint.offset],
   );
   const [entryOffset] = entrypoints;
-  if (entrypoints.length !== 1 || entryOffset === undefined) return undefined;
-  const containing = parsed.commands.flatMap(({ segment }) =>
-    segment !== undefined &&
-    segment.fileSize > 0n &&
-    segment.fileOffset <= entryOffset &&
-    entryOffset - segment.fileOffset < segment.fileSize
-      ? [segment.address + (entryOffset - segment.fileOffset)]
-      : [],
+  if (
+    entrypoints.length !== 1 ||
+    entryOffset === undefined ||
+    entryOffset >= BigInt(fileSize)
+  )
+    return undefined;
+  const containing = parsed.commands.filter(
+    ({ segment }) =>
+      segment !== undefined &&
+      segment.fileSize > 0n &&
+      segment.fileOffset <= entryOffset &&
+      entryOffset - segment.fileOffset < segment.fileSize,
   );
-  const [mapped] = containing;
-  if (containing.length !== 1 || mapped === undefined) return undefined;
+  const [command] = containing;
+  if (
+    containing.length !== 1 ||
+    command?.segment === undefined ||
+    command.sections === undefined
+  )
+    return undefined;
+  const admitted = admitMachoSegmentCommand(
+    {
+      ...command.segment,
+      headerSize: machoSegmentHeaderSize(parsed.header.wide),
+      sectionCount: command.sections.length,
+    },
+    command.size,
+    parsed.header.wide ? 64 : 32,
+    fileSize,
+  );
+  if (!admitted.ok) return undefined;
+  const mapped =
+    admitted.value.fileAddress + (entryOffset - command.segment.fileOffset);
   const address = hex(mapped);
   return `This Mach-O declares its entry point with LC_MAIN at file offset ${hex(entryOffset)}, analysis address ${address}; stripped binaries often have no main symbol, and Ghidra often names that function entry. Request ${address} explicitly to read it.`;
 };
