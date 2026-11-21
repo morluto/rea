@@ -15186,15 +15186,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "Βρείτε έναν συνεισφέροντα"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "Από τη {ph0}λίστα συνεισφερόντων του GitHub{ph1} · Ενημερώθηκε {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -16903,3 +16894,8 @@ msgstr ""
 #~ "PE και DLL εγγενούς κώδικα x86 και x64 σε σταθερούς τοπικούς δίσκους NTFS. "
 #~ "Χρησιμοποιήστε μια υπάρχουσα εγκατάσταση Ghidra 12.1.x και JDK 21 ή νεότερο,"
 #~ " 64 bit:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "Από τη {ph0}λίστα συνεισφερόντων του GitHub{ph1} · Ενημερώθηκε {ph2}."

@@ -13917,15 +13917,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "貢献者を探す"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "{ph0}GitHub の貢献者一覧{ph1}より · 更新日：{ph2}。"
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -16393,3 +16384,8 @@ msgstr ""
 #~ msgstr ""
 #~ "Windows x64では、固定ローカルNTFSドライブ上のネイティブx86/x64 "
 #~ "PEアプリとDLLに実験的な読み取り専用対応があります。既存のGhidra 12.1.xと64ビットのJDK 21以降を使ってください。"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "{ph0}GitHub の貢献者一覧{ph1}より · 更新日：{ph2}。"

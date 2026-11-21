@@ -14673,15 +14673,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "ค้นหาผู้มีส่วนร่วม"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "จาก {ph0}รายชื่อผู้มีส่วนร่วมบน GitHub{ph1} · อัปเดตเมื่อ {ph2}"
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -17245,3 +17236,8 @@ msgstr ""
 #~ "Windows x64 รองรับการวิเคราะห์แบบทดลองและอ่านอย่างเดียวสำหรับแอป PE และ DLL "
 #~ "เนทีฟ x86 และ x64 บนไดรฟ์ NTFS ภายในเครื่องแบบคงที่ ใช้ Ghidra 12.1.x "
 #~ "ที่ติดตั้งไว้แล้วและ JDK 21 ขึ้นไปแบบ 64 บิต:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "จาก {ph0}รายชื่อผู้มีส่วนร่วมบน GitHub{ph1} · อัปเดตเมื่อ {ph2}"

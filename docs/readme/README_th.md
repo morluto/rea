@@ -273,7 +273,7 @@ npx rea-agents@latest setup
 ขอบคุณทุกคนที่ใช้ REA รายงานบั๊ก เสนอฟีเจอร์ ทดสอบบิลด์ และช่วยแก้ไข
 
 <a href="https://rea.tools/th/contributors/">
-  <img src="https://contrib.rocks/image?repo=morluto/rea&amp;max=500&amp;columns=30" alt="ผู้ร่วมพัฒนา REA" />
+  <img src="../../website/public/contributors/avatars.png" alt="ผู้ร่วมพัฒนา REA" />
 </a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">

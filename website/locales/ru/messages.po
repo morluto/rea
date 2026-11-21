@@ -15069,15 +15069,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "Найти участника"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "По {ph0}списку участников на GitHub{ph1} · Обновлено: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -17703,3 +17694,8 @@ msgstr ""
 #~ "приложений x86 и x64 PE и библиотек DLL на фиксированных локальных дисках "
 #~ "NTFS. Используйте существующую установку Ghidra 12.1.x и 64-разрядную версию"
 #~ " JDK 21 или новее:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "По {ph0}списку участников на GitHub{ph1} · Обновлено: {ph2}."

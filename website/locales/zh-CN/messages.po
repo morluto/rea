@@ -13604,15 +13604,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "查找贡献者"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "来自 {ph0}GitHub 贡献者列表{ph1} · 更新于 {ph2}。"
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -16078,3 +16069,8 @@ msgstr ""
 #~ msgstr ""
 #~ "Windows x64 提供实验性的只读支持：分析固定本地 NTFS 驱动器上的原生 x86、x64 PE 应用和 DLL。使用已有的 Ghidra "
 #~ "12.1.x 和 64 位 JDK 21 或更新版本："
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "来自 {ph0}GitHub 贡献者列表{ph1} · 更新于 {ph2}。"

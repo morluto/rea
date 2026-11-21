@@ -15115,16 +15115,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "Buscar colaboradores"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr ""
-"De la {ph0}lista de colaboradores de GitHub{ph1} · Actualizada el {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -17875,3 +17865,9 @@ msgstr ""
 #~ "Windows x64 tiene soporte experimental de solo lectura para aplicaciones y "
 #~ "DLL nativas x86 y x64 PE en unidades NTFS locales fijas. Usa una instalación"
 #~ " existente de Ghidra 12.1.x y un JDK de 64 bits, versión 21 o posterior:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr ""
+#~ "De la {ph0}lista de colaboradores de GitHub{ph1} · Actualizada el {ph2}."

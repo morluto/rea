@@ -275,7 +275,7 @@ npx rea-agents@latest setup
 Ευχαριστούμε όλους όσοι χρησιμοποιούν το REA, αναφέρουν σφάλματα, ζητούν νέες λειτουργίες, δοκιμάζουν builds και συνεισφέρουν διορθώσεις.
 
 <a href="https://rea.tools/el/contributors/">
-  <img src="https://contrib.rocks/image?repo=morluto/rea&amp;max=500&amp;columns=30" alt="Όσοι συνεισφέρουν στο REA" />
+  <img src="../../website/public/contributors/avatars.png" alt="Όσοι συνεισφέρουν στο REA" />
 </a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">

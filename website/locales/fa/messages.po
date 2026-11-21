@@ -14771,15 +14771,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "جستجوی مشارکت‌کننده"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "از {ph0}فهرست مشارکت‌کنندگان GitHub{ph1} · به‌روزرسانی: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -17369,3 +17360,8 @@ msgstr ""
 #~ "Windows x64 پشتیبانی آزمایشی و فقط‌خواندنی از برنامه‌ها و DLLهای بومی x86 "
 #~ "وx64 با قالب PE روی درایوهای ثابت محلی NTFS دارد. از نصب موجود Ghidra 12.1.x"
 #~ " وJDK ‏64 بیتی نسخهٔ 21 یا جدیدتر استفاده کنید:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "از {ph0}فهرست مشارکت‌کنندگان GitHub{ph1} · به‌روزرسانی: {ph2}."

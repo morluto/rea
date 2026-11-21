@@ -14908,15 +14908,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "Tìm người đóng góp"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "Từ {ph0}danh sách người đóng góp trên GitHub{ph1} · Cập nhật: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -17517,3 +17508,8 @@ msgstr ""
 #~ "Windows x64 có hỗ trợ thử nghiệm, chỉ đọc cho các ứng dụng VÀ Dll X86 và x64"
 #~ " pe gốc trên các ổ đĩa ntfs cục bộ cố định. Sử DỤNG Ghidra 12.1 hiện có.x "
 #~ "cài đặt VÀ 64-bit JDK 21 hoặc mới hơn:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "Từ {ph0}danh sách người đóng góp trên GitHub{ph1} · Cập nhật: {ph2}."

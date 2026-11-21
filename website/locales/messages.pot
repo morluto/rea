@@ -165,7 +165,7 @@ msgstr ""
 #: website/public/blog/index.html:246
 #: website/public/blog/reverse-engineering-models/index.html:885
 #: website/public/blog/touhou-reconstruction/index.html:1082
-#: website/public/contributors/index.html:1133
+#: website/public/contributors/index.html:2250
 #: website/public/examples/dino-lab/index.html:477 website/public/faq/index.html:575
 #: website/public/first-investigation/index.html:536
 #: website/public/get-started/index.html:1853
@@ -185,7 +185,7 @@ msgstr ""
 #: website/public/blog/index.html:247
 #: website/public/blog/reverse-engineering-models/index.html:886
 #: website/public/blog/touhou-reconstruction/index.html:1083
-#: website/public/contributors/index.html:1134
+#: website/public/contributors/index.html:2251
 #: website/public/examples/dino-lab/index.html:478 website/public/faq/index.html:576
 #: website/public/first-investigation/index.html:537
 #: website/public/get-started/index.html:1854
@@ -205,7 +205,7 @@ msgstr ""
 #: website/public/blog/index.html:248
 #: website/public/blog/reverse-engineering-models/index.html:887
 #: website/public/blog/touhou-reconstruction/index.html:1084
-#: website/public/contributors/index.html:1135
+#: website/public/contributors/index.html:2252
 #: website/public/examples/dino-lab/index.html:479 website/public/faq/index.html:577
 #: website/public/first-investigation/index.html:538
 #: website/public/get-started/index.html:1855
@@ -225,7 +225,7 @@ msgstr ""
 #: website/public/blog/index.html:249
 #: website/public/blog/reverse-engineering-models/index.html:888
 #: website/public/blog/touhou-reconstruction/index.html:1085
-#: website/public/contributors/index.html:1136
+#: website/public/contributors/index.html:2253
 #: website/public/examples/dino-lab/index.html:480 website/public/faq/index.html:578
 #: website/public/first-investigation/index.html:539
 #: website/public/get-started/index.html:1856
@@ -245,7 +245,7 @@ msgstr ""
 #: website/public/blog/index.html:250
 #: website/public/blog/reverse-engineering-models/index.html:889
 #: website/public/blog/touhou-reconstruction/index.html:1086
-#: website/public/contributors/index.html:1137
+#: website/public/contributors/index.html:2254
 #: website/public/examples/dino-lab/index.html:481 website/public/faq/index.html:579
 #: website/public/first-investigation/index.html:540
 #: website/public/get-started/index.html:1857
@@ -267,7 +267,7 @@ msgstr ""
 #: website/public/blog/index.html:255
 #: website/public/blog/reverse-engineering-models/index.html:894
 #: website/public/blog/touhou-reconstruction/index.html:1091
-#: website/public/contributors/index.html:1142
+#: website/public/contributors/index.html:2259
 #: website/public/examples/dino-lab/index.html:486 website/public/faq/index.html:584
 #: website/public/first-investigation/index.html:545
 #: website/public/get-started/index.html:1862
@@ -2703,16 +2703,7 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1116
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr ""
-
-#: website/public/contributors/index.html:1121
+#: website/public/contributors/index.html:2238
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
 msgstr ""
@@ -2732,7 +2723,7 @@ msgctxt "page:contributors/index.html"
 msgid "GitHub username"
 msgstr ""
 
-#: website/public/contributors/index.html:1142
+#: website/public/contributors/index.html:2259
 msgctxt "page:contributors/index.html"
 msgid "Back to top"
 msgstr ""
