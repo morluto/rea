@@ -1174,6 +1174,55 @@ describe("OpenCode inherited environment error provenance", () => {
   });
 });
 
+describe("OpenCode invalid registration source", () => {
+  it.each([
+    {
+      label: "project row replaces the entire entry",
+      user: { type: "local", command: ["rea", "mcp"] },
+      project: null,
+      expected: "project",
+    },
+    {
+      label: "nested command error belongs to the contributing user file",
+      user: { type: "local", command: ["rea", 1] },
+      project: { type: "local" },
+      expected: "user",
+    },
+  ])(
+    "uses the correct repair file when $label",
+    async ({ user, project, expected }) => {
+      const home = await createTestTempDirectory(
+        "rea-opencode-row-source-home-",
+      );
+      const cwd = await createTestTempDirectory(
+        "rea-opencode-row-source-project-",
+      );
+      vi.spyOn(process, "cwd").mockReturnValue(cwd);
+      const userPath = join(home, ".config", "opencode", "opencode.json");
+      const projectPath = join(cwd, "opencode.json");
+      await mkdir(join(home, ".config", "opencode"), { recursive: true });
+      await writeFile(
+        userPath,
+        JSON.stringify({ mcp: { servers: { rea: user } } }),
+      );
+      await writeFile(
+        projectPath,
+        JSON.stringify({ mcp: { servers: { rea: project } } }),
+      );
+      const statuses = await readClientRegistrationStatuses(home, undefined, {
+        environment: {},
+      });
+      const status = statuses.find(({ client }) => client === "opencode");
+      expect(status).toMatchObject({
+        state: "invalid",
+        config_path: expected === "project" ? projectPath : userPath,
+      });
+      if (expected === "project")
+        expect(status?.remediation).toContain(projectPath);
+    },
+  );
+});
+
 describe("OpenCode inherited registration schema error provenance", () => {
   it("reports user-scoped invalid status when OpenCode project inherits invalid user registration schema", async () => {
     const home = await createTestTempDirectory(
@@ -1224,7 +1273,9 @@ describe("OpenCode inherited registration schema error provenance", () => {
       config_path: userConfigPath,
     });
     expect(status?.scope).toBeUndefined();
-    expect(status?.remediation).toContain(userConfigPath);
+    expect(status?.remediation).toContain(
+      "Invalid client registration settings",
+    );
     expect(status?.remediation).not.toContain(projectConfigPath);
     expect(status?.remediation).not.toContain(
       "REA setup writes only user-level configuration",

@@ -396,7 +396,7 @@ export const readClientRegistrationInspections = async (
               : "stale",
           (parsed.dialect !== "dsh" && commandFacts.identity !== "owned"
             ? clientRegistrationOwnershipRemediation(commandFacts.identity, [
-                configPath,
+                launcherConfigPath ?? configPath,
               ])
             : undefined) ??
             policyBlock ??
@@ -408,8 +408,6 @@ export const readClientRegistrationInspections = async (
                   selectedScope,
                   launcherScope,
                   launcherConfigPath,
-                  activation,
-                  activationConfigPath,
                 )
               : alignment === "unknown"
                 ? unknownEntryPointRemediation()
@@ -437,7 +435,7 @@ export const readClientRegistrationInspections = async (
           selectedScope,
           launcherScope,
           launcherConfigPath,
-          alignment === "stale" && activation === "enabled",
+          alignment === "stale",
           options.providerSettings === undefined
             ? undefined
             : recordedProviderSettings(
@@ -600,16 +598,33 @@ const configuredStatus = (
   activationConfigPath?: string,
   activationDisabled = false,
 ): ClientRegistrationStatus => {
-  const remediationScope = alignmentStale
-    ? (launcherScope ?? scope)
-    : activationDisabled
-      ? (activationScope ?? scope)
-      : scope;
-  const remediationPath = alignmentStale
-    ? (launcherConfigPath ?? configPath)
-    : activationDisabled
-      ? (activationConfigPath ?? configPath)
-      : configPath;
+  const launcherRepair =
+    policyRemediation ??
+    (alignmentStale
+      ? remediation(
+          client,
+          launcherConfigPath ?? configPath,
+          launcherScope ?? scope,
+        )
+      : undefined);
+  const activationRepair =
+    activationDisabled &&
+    (scope === "project" ||
+      launcherScope === "project" ||
+      activationScope === "project")
+      ? remediation(
+          client,
+          activationConfigPath ?? configPath,
+          activationScope ?? scope,
+        )
+      : undefined;
+  const repairs = [
+    ...new Set(
+      [launcherRepair, activationRepair].filter(
+        (message): message is string => message !== undefined,
+      ),
+    ),
+  ];
   return state === "aligned"
     ? {
         client: client.name,
@@ -642,8 +657,9 @@ const configuredStatus = (
           : { package_reference: packageReference }),
         state,
         remediation:
-          policyRemediation ??
-          remediation(client, remediationPath, remediationScope),
+          repairs.length > 0
+            ? repairs.join(" ")
+            : remediation(client, configPath, scope),
         ...(providerSettings === undefined
           ? {}
           : { provider_settings: providerSettings }),
@@ -696,22 +712,11 @@ const packageVersionRemediation = (
   scope?: ClientRegistrationScope,
   launcherScope?: ClientRegistrationScope,
   launcherConfigPath?: string,
-  activation?: "enabled" | "disabled" | "unknown",
-  activationConfigPath?: string,
 ): string => {
   const launcherTarget = launcherConfigPath ?? configPath ?? client.configPath;
-  const base =
-    launcherScope === "project"
-      ? `This project-scoped registration in ${launcherTarget} requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA setup writes only user-level configuration; update the package version in ${launcherTarget}, then restart the client.`
-      : `This registration requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA does not resolve package-runner requests during doctor; update the registration with rea setup --client ${client.name}, then restart the client.`;
-  if (
-    (scope === "project" || launcherScope === "project") &&
-    activation === "disabled"
-  ) {
-    const target = activationConfigPath ?? configPath ?? client.configPath;
-    return `${base} REA setup writes only user-level client configuration and does not modify project-scoped configuration at ${target}. Update or remove the rea registration in ${target}, then restart the client.`;
-  }
-  return base;
+  return (launcherScope ?? scope) === "project"
+    ? `This project-scoped registration in ${launcherTarget} requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA setup writes only user-level configuration; update the package version in ${launcherTarget}, then restart the client.`
+    : `This registration requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA does not resolve package-runner requests during doctor; update the registration with rea setup --client ${client.name}, then restart the client.`;
 };
 
 const unavailableStatus = (

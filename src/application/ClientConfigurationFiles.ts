@@ -332,31 +332,34 @@ export const contributingRegistrationSource = (
   sources: readonly ClientConfigurationSource[],
   error: ConfigurationError,
 ): ClientConfigurationSource | undefined => {
-  const rejectedSettings = new Set(
-    error.settings.map(({ setting }) => setting),
+  const declarations = sources.flatMap((source) => {
+    const entry = effectiveClientServer(source, PRODUCT_IDENTITY.mcpServerKey);
+    return entry === undefined ? [] : [{ source, entry }];
+  });
+  const replacement = declarations.findLastIndex(
+    ({ entry }) => !isObject(entry),
   );
-  const explicit = [...sources].reverse().find((doc) => {
-    const server = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
-    if (!isObject(server)) return false;
-    return Object.keys(server).some((key) => rejectedSettings.has(key));
-  });
-  if (explicit !== undefined) return explicit;
-  const launcherDoc = [...sources].reverse().find((doc) => {
-    const server = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
-    if (!isObject(server)) return false;
-    return (
-      Object.hasOwn(server, "command") ||
-      Object.hasOwn(server, "args") ||
-      Object.hasOwn(server, "type") ||
-      Object.hasOwn(server, "transport")
-    );
-  });
-  if (launcherDoc !== undefined) return launcherDoc;
-  return [...sources].reverse().find((doc) => {
-    return (
-      effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey) !== undefined
-    );
-  });
+  if (replacement >= 0 && replacement === declarations.length - 1)
+    return declarations[replacement]?.source;
+  const effectiveLayers = declarations.slice(replacement + 1);
+  const rejectedFields = new Set(
+    error.settings.map(({ setting }) => setting.split(".", 1)[0]),
+  );
+  return (
+    effectiveLayers.findLast(
+      ({ entry }) =>
+        isObject(entry) &&
+        Object.keys(entry).some((key) => rejectedFields.has(key)),
+    ) ??
+    effectiveLayers.findLast(
+      ({ entry }) =>
+        isObject(entry) &&
+        ["command", "args", "type", "transport"].some((key) =>
+          Object.hasOwn(entry, key),
+        ),
+    ) ??
+    effectiveLayers.at(-1)
+  )?.source;
 };
 
 const isPiPartialServerOverride = (
