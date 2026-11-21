@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { analysisStringSchema } from "../native/nativeString.js";
 import { inventoryDiscoveryCoverageSchema } from "../native/inventoryCoverage.js";
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
+import { jsonValueByteLength } from "../jsonValueByteLength.js";
+import { fixedCeilingConstraint } from "../analysisErrorCore.js";
+import { Budget } from "../budget.js";
 import {
   addressedValueSchema,
   isNativeInventoryOperation,
@@ -21,7 +24,10 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  INSPECT_ANALYSIS_VIEW_OPERATION,
+  analysisViewInputError,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -52,6 +58,23 @@ export const nativeInventoryViewRequestSchema = z.strictObject({
       "Select record fields; address and source_index preserve identity. Selecting value also retains its string and decoding qualifications. Omit for every recorded field. Search tools filter before retention.",
     ),
 });
+
+export const nativeInventoryAliasViewRequestSchema = z.strictObject({
+  kind: z.literal("native-inventory-aliases"),
+  source_index: z.int().nonnegative().describe("Original procedure row index."),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(32),
+});
+
+export const nativeInventoryAliasItemsSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("recorded"),
+    aliases: z.array(
+      z.strictObject({ alias_index: z.int().nonnegative(), name: z.string() }),
+    ),
+  }),
+  z.strictObject({ state: z.literal("not-recorded"), aliases: z.null() }),
+]);
 
 /** Parent Evidence ID plus source_index identifies even same-address alternatives. */
 export const nativeInventoryViewRowSchema = z.strictObject({
@@ -84,7 +107,9 @@ export const projectNativeInventoryView = (
 ) => {
   if (
     !isNativeInventoryOperation(parent.operation) ||
-    (view.kind !== "summary" && view.kind !== "native-inventory")
+    (view.kind !== "summary" &&
+      view.kind !== "native-inventory" &&
+      view.kind !== "native-inventory-aliases")
   )
     return err(
       analysisViewInputError([
@@ -92,13 +117,28 @@ export const projectNativeInventoryView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Native inventory Evidence supports summary and native-inventory views.",
+            "Use summary or native-inventory for inventory Evidence, or native-inventory-aliases for search_procedures Evidence.",
         },
       ]),
     );
   assertOwnedView<
-    SummaryAnalysisView | z.output<typeof nativeInventoryViewRequestSchema>
-  >(view, "summary", "native-inventory");
+    | SummaryAnalysisView
+    | z.output<typeof nativeInventoryViewRequestSchema>
+    | z.output<typeof nativeInventoryAliasViewRequestSchema>
+  >(view, "summary", "native-inventory", "native-inventory-aliases");
+  if (
+    view.kind === "native-inventory-aliases" &&
+    parent.operation !== "search_procedures"
+  )
+    return err(
+      analysisViewInputError([
+        {
+          path: ["view", "kind"],
+          reason: "invalid_value",
+          message: "Alias pages require search_procedures Evidence.",
+        },
+      ]),
+    );
   const strings =
     parent.operation === "list_strings" ||
     parent.operation === "search_strings";
@@ -142,6 +182,80 @@ export const projectNativeInventoryView = (
       },
       coverage: completeWithinViewCoverage(rows.length),
     });
+  if (view.kind === "native-inventory-aliases") {
+    const row = rows[view.source_index];
+    if (row === undefined)
+      return err(
+        analysisViewInputError([
+          {
+            path: ["view", "source_index"],
+            reason: "out_of_range",
+            message: `Select an original row index from the ${rows.length} retained procedure rows.`,
+          },
+        ]),
+      );
+    const { matched_aliases: names } = row;
+    const items: z.output<typeof nativeInventoryAliasItemsSchema> =
+      names === undefined
+        ? { state: "not-recorded", aliases: null }
+        : { state: "recorded", aliases: [] };
+    const count = Math.max(
+      0,
+      Math.min(view.limit, (names?.length ?? 0) - view.offset),
+    );
+    const result = {
+      ...shared,
+      kind: view.kind,
+      parent_operation: "search_procedures" as const,
+      view,
+      procedure: {
+        address: row.address,
+        value: row.value,
+        source_index: view.source_index,
+      },
+      items,
+      coverage:
+        names === undefined
+          ? null
+          : pageViewCoverage(view.offset, count, names.length),
+    };
+    const budget = new Budget(1024 * 1024);
+    const tooLarge = () =>
+      err(
+        fixedCeilingConstraint(
+          INSPECT_ANALYSIS_VIEW_OPERATION,
+          "transport",
+          "The procedure alias page cannot fit the analysis-view byte allowance.",
+          {
+            name: "The analysis-view page allowance",
+            kind: "bytes",
+            limit: budget.maximum,
+            unit: "bytes",
+            narrowing:
+              "Select fewer aliases or read the complete retained parent Evidence.",
+          },
+          { diagnostics: { parent_evidence_id: parent.evidenceId } },
+        ),
+      );
+    // Charge the result header, including the future digest and empty alias
+    // array, before adding any alias entries.
+    const headerBytes = jsonValueByteLength(
+      { ...result, view_digest: "0".repeat(64) } as JsonValue,
+      budget.remaining,
+    );
+    if (!budget.tryCharge(headerBytes)) return tooLarge();
+    if (names !== undefined && items.state === "recorded") {
+      for (let index = 0; index < count; index++) {
+        const aliasIndex = view.offset + index;
+        const alias = { alias_index: aliasIndex, name: names[aliasIndex]! };
+        const entryBytes =
+          jsonValueByteLength(alias, budget.remaining) + (index === 0 ? 0 : 1);
+        if (!budget.tryCharge(entryBytes)) return tooLarge();
+        items.aliases.push(alias);
+      }
+    }
+    return ok(result);
+  }
   // Normalize the selection once: repeated caller fields must not multiply
   // work or temporary entries for every retained row. Keep the original view.
   const fields =
