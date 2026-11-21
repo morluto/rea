@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
 import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
+import { retainSemanticAmbientEffect } from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
@@ -223,3 +224,59 @@ it("retains both finite class-prototype callable selections", () => {
       .sort(),
   ).toEqual(["firstResult", "secondResult"]);
 });
+
+it("does not traverse lexical aliases again as independent ambient writes accumulate", () => {
+  const length = 48;
+  const { parsed, state } = indexed(
+    "function f0(){return output;}" +
+      Array.from(
+        { length },
+        (_, index) => `const f${index + 1}=f${index};`,
+      ).join("") +
+      `f${length}();`,
+  );
+  const [read] = callReads(parsed.program, `f${length}`);
+  if (read === undefined) throw new Error("Missing lexical call");
+  const expected = returnedExpression(parsed.program, "f0");
+  const returned = createSemanticReturnedReferences(state);
+  const observed = returned(read);
+  expect(observed.references).toEqual([{ node: expected, projection: [] }]);
+
+  // Returning the retained result witnesses that no new alias walk ran.
+  for (let index = 0; index < length; index++) {
+    retainSemanticAmbientEffect(
+      state,
+      "write",
+      ["global", `property${index}`],
+      undefined,
+    );
+    expect(returned(read)).toBe(observed);
+  }
+});
+
+it.each([
+  ["const [callback=g]=[f];callback();", "callback", ["before"]],
+  ["const callback=[...[f],g];callback[1]();", "callback", ["after"]],
+] as const)(
+  "revisits a live iterator proof after an ambient effect: %s",
+  (source, name, first) => {
+    const { parsed, state } = indexed(
+      "function f(){return before;}function g(){return after;}" + source,
+    );
+    const [read] = callCallees(parsed.program, name);
+    if (read === undefined) throw new Error("Missing iterator-dependent call");
+    const returned = createSemanticReturnedReferences(state);
+    const names = () =>
+      returned(read)
+        .references.map(({ node }) => (t.isIdentifier(node) ? node.name : null))
+        .sort();
+    expect(names()).toEqual(first);
+    retainSemanticAmbientEffect(
+      state,
+      "write",
+      ["array-iterator-prototype", "next"],
+      undefined,
+    );
+    expect(names()).toEqual(["after", "before"]);
+  },
+);
