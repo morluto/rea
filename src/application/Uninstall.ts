@@ -59,7 +59,10 @@ import {
   skillDestinationSelection,
 } from "./SetupSkill.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
+import {
+  isAbsentClientConfigPath,
+  resolveClientConfigTransactionPath,
+} from "./ClientConfigPath.js";
 import {
   preserveCurrentRecoveryBackup,
   type RecoveryBackupPreservationOptions,
@@ -1325,7 +1328,7 @@ const resolveProjectUninstallClients = async (
           await lstat(path);
           return true;
         } catch (cause: unknown) {
-          return !isMissing(cause);
+          return !isAbsentClientConfigPath(cause);
         }
       }),
     );

@@ -100,6 +100,46 @@ cliTest(
   },
 );
 
+cliTest(
+  "uninstall skips a project candidate beneath a regular file before reading unrelated user data",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-project-absent-uninstall-");
+    const home = join(root, "home");
+    const project = join(root, "selected");
+    const piUser = join(home, ".pi", "agent", "mcp.json");
+    const blocker = join(project, ".pi");
+    const openCode = join(project, "opencode.json");
+    const environment = await registrationEnvironment(home);
+    const userOriginal = await put(piUser, "{ malformed");
+    const blockerOriginal = await put(blocker, "ordinary file");
+    const original = await put(openCode, {
+      mcp: { servers: { rea: openCodeRegistration, peer: openCodePeer } },
+    });
+
+    const result = await cli.run({
+      arguments: ["uninstall", "--project", project, "--json"],
+      environment,
+      cwd: root,
+    });
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(result.json).toMatchObject({
+      status: "complete",
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "opencode", status: "removed" }),
+      ]),
+    });
+    expect(result.json).not.toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ name: "pi" })]),
+    });
+    expect(JSON.parse(await readFile(openCode, "utf8"))).toEqual({
+      mcp: { servers: { peer: openCodePeer } },
+    });
+    expect(await readFile(`${openCode}.rea.backup`, "utf8")).toBe(original);
+    expect(await readFile(piUser, "utf8")).toBe(userOriginal);
+    expect(await readFile(blocker, "utf8")).toBe(blockerOriginal);
+  },
+);
+
 for (const [scenario, trusted, fallback, status = "failed"] of [
   ["Pi trust is denied", false, undefined],
   ["a user fallback would become active", true, { command: "unrelated" }],
