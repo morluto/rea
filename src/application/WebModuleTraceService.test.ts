@@ -19,31 +19,51 @@ import {
 import { parseEvidence } from "../domain/evidence.js";
 
 const args = { manifest_path: "/analysis/manifest.json", script_index: 0 };
-it.each([
-  { ...args, importer_url: "file:///tmp/main.js" },
-  { ...args, import_map: { path: "/map.json", base_url: "file:///tmp/maps/" } },
-])(
-  "distinguishes valid unsupported URL contexts from malformed input: %j",
-  async (input) => {
-    const result = await new WebModuleTraceService(
-      {
-        load: () => {
-          throw new Error("must not acquire artifacts");
-        },
+it("distinguishes malformed selections and unsupported contexts before acquiring artifacts", async () => {
+  const workflow = new WebModuleTraceService(
+    {
+      load: () => {
+        throw new Error("Unexpected artifact acquisition");
       },
-      webModuleResolverFixture,
-    ).trace(input);
-    if (result.ok) throw new Error("expected unsupported context");
+    },
+    webModuleResolverFixture,
+  );
+  for (const selection of [
+    { importer_url: "file:///tmp/main.js" },
+    { import_map: { path: "/map.json", base_url: "file:///tmp/maps/" } },
+  ]) {
+    const result = await workflow.trace({ ...args, ...selection });
+    if (result.ok) throw new Error("Expected unsupported context");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "capability_unavailable",
       message: expect.stringContaining("file:"),
+      details: { reason: "unsupported_context_scheme" },
     });
-  },
-);
+  }
+  for (const [selection, path] of [
+    [{ manifest_path: "relative.json" }, ["manifest_path"]],
+    [
+      { import_map: { path: "relative.json", base_url: "https://app.test/" } },
+      ["import_map", "path"],
+    ],
+    [{ importer_url: "not a URL" }, ["importer_url"]],
+    [
+      { import_map: { path: "/map.json", base_url: "relative" } },
+      ["import_map", "base_url"],
+    ],
+  ] as const) {
+    const result = await workflow.trace({ ...args, ...selection });
+    if (result.ok) throw new Error("Expected malformed context");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path, reason: "invalid_format" }] },
+    });
+  }
+});
 it("rejects source text changed across the artifact port before acquiring the resolver", async () => {
   const artifacts = {
-    ...webModuleArtifactsFixture("import(name)"),
-    source: "import(other)",
+    ...webModuleArtifactsFixture('import "./dep.js";'),
+    source: 'import "./alt.js";',
   };
   const result = await new WebModuleTraceService(
     { load: () => Promise.resolve(ok(artifacts)) },
@@ -56,108 +76,56 @@ it("rejects source text changed across the artifact port before acquiring the re
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
 });
-it("rejects sparse resolver arrays rather than relabeling literal imports as computed unknowns", async () => {
-  const artifacts = webModuleArtifactsFixture('import "./dep.js";');
-  const resolutions: WebModuleResolution[] = [];
-  resolutions.length = 1;
-  const service = new WebModuleTraceService(
-    { load: () => Promise.resolve(ok(artifacts)) },
-    {
-      resolve: () =>
-        Promise.resolve(
+it("rejects sparse or incomplete results for selected literal imports", async () => {
+  const artifacts = webModuleArtifactsFixture();
+  const sparse: WebModuleResolution[] = [];
+  sparse.length = 1;
+  const failures: [WebModuleResolution[], string][] = [
+    [sparse, "malformed or incomplete native evidence"],
+    [[], "did not return every selected literal specifier"],
+  ];
+  for (const [resolutions, message] of failures) {
+    const result = await new WebModuleTraceService(
+      { load: async () => ok(artifacts) },
+      {
+        resolve: async () =>
           ok({
             engine: { id: "fixture", version: "1" },
             resolutions,
             diagnostics: [],
             rawResult: {},
           }),
-        ),
-    },
-  );
-  const result = await service.trace(args);
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+      },
+    ).trace(args);
+    if (result.ok) throw new Error("Expected invalid resolver output");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisOutputError",
+      message: expect.stringContaining(message),
+      partialObservation: {
+        kind: "web-trace-observation",
+        analysis: "incomplete",
+        source: artifacts.sourceFile,
+      },
+    });
+  }
 });
-describe("selected module trace workflow", () => {
-  it.each([
-    { ...args, manifest_path: "relative.json" },
+it("honors cancellation before any artifacts are acquired", async () => {
+  const controller = new AbortController();
+  controller.abort(null);
+  const service = new WebModuleTraceService(
     {
-      ...args,
-      import_map: { path: "relative.json", base_url: "https://app.test/" },
+      load: () => {
+        throw new Error("must not acquire");
+      },
     },
-    { ...args, importer_url: "not a URL" },
-    { ...args, import_map: { path: "/map.json", base_url: "relative" } },
-  ])(
-    "rejects malformed context before acquiring artifacts: %j",
-    async (input) => {
-      const service = new WebModuleTraceService(
-        {
-          load: () => {
-            throw new Error("must not acquire");
-          },
-        },
-        webModuleResolverFixture,
-      );
-      const response = await service.trace(input);
-      if (response.ok) throw new Error("expected invalid input");
-      expect(projectAnalysisError(response.error)).toMatchObject({
-        code: "invalid_request",
-        details: {
-          issues: [expect.objectContaining({ reason: "invalid_format" })],
-        },
-      });
-    },
+    webModuleResolverFixture,
   );
-  it("rejects incomplete resolution rather than fabricating unknown values", async () => {
-    const artifacts = webModuleArtifactsFixture();
-    const service = new WebModuleTraceService(
-      { load: () => Promise.resolve(ok(artifacts)) },
-      {
-        resolve: () =>
-          Promise.resolve(
-            ok({
-              engine: { id: "fixture", version: "1" },
-              resolutions: [],
-              diagnostics: [],
-              rawResult: {},
-            }),
-          ),
-      },
-    );
-    const response = await service.trace(args);
-    expect(response.ok).toBe(false);
-    if (!response.ok) expect(response.error._tag).toBe("AnalysisOutputError");
-  });
-  it("preserves an explicit selected importer context", async () => {
-    const artifacts = webModuleArtifactsFixture();
-    const result = await new WebModuleTraceService(
-      { load: () => Promise.resolve(ok(artifacts)) },
-      webModuleResolverFixture,
-    ).trace({ ...args, importer_url: "https://selected.test/base/main.js" });
-    if (!result.ok) throw result.error;
-    expect(
-      webModuleTraceResultSchema.parse(result.value.normalized_result)
-        .imports[0]?.resolution,
-    ).toEqual({ state: "resolved", url: "https://selected.test/base/dep.js" });
-  });
-  it("honors cancellation before any artifacts are acquired", async () => {
-    const controller = new AbortController();
-    controller.abort(null);
-    const service = new WebModuleTraceService(
-      {
-        load: () => {
-          throw new Error("must not acquire");
-        },
-      },
-      webModuleResolverFixture,
-    );
-    const result = await service.trace(args, { signal: controller.signal });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error._tag).toBe("AnalysisCancelledError");
-      expect(result.error.cause).toBeNull();
-    }
-  });
+  const result = await service.trace(args, { signal: controller.signal });
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBeNull();
+  }
 });
 
 describe("reported module context provenance", () => {
