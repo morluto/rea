@@ -66,8 +66,8 @@ let artifactDigest;
 let mainRequests = 0;
 const lifecycle = [];
 const patterns = new Set();
-const commands = await createVerifierCommands();
-const interruption = bindVerifierCommandInterruption(commands);
+const commandOwner = await createVerifierCommands();
+const commands = bindVerifierCommandInterruption(commandOwner);
 await withVerifierCleanup(async () => {
   await withVerifierCleanup(async () => {
     await Promise.all([
@@ -84,7 +84,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     // A temporary directory under the checkout must not inherit its project skills or AGENTS.md.
-    await interruption.exec(
+    await commands.exec(
       "git",
       ["-c", "init.defaultBranch=main", "init", "--quiet", workspace],
       {
@@ -95,7 +95,7 @@ await withVerifierCleanup(async () => {
     );
     await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     clientVersion = (
-      await interruption.exec(command, ["--version"], {
+      await commands.exec(command, ["--version"], {
         env: environment,
         cwd: workspace,
         timeout: 30_000,
@@ -103,7 +103,7 @@ await withVerifierCleanup(async () => {
       })
     ).stdout.trim();
     const runRea = async (args, artifact) => {
-      const result = await interruption.exec(
+      const result = await commands.exec(
         process.execPath,
         [cli, ...args, "--json"],
         {
@@ -335,7 +335,7 @@ await withVerifierCleanup(async () => {
     lifecycle.push("doctor");
     const result = await saveVerifierCommandOutput(
       () =>
-        interruption.exec(
+        commands.exec(
           command,
           [
             "--profile",
@@ -376,17 +376,17 @@ await withVerifierCleanup(async () => {
     assert.equal(await pathExists(skillPath), false);
     lifecycle.push("uninstall");
   }, [
-    () => commands.close(),
+    () => commandOwner.close(),
     async () => {
       await fixture?.close();
     },
   ]);
-  interruption.throwIfInterrupted();
+  commands.throwIfInterrupted();
   passed = true;
 }, [
   async () => {
     const completed = await completeVerifierRun(verifier);
-    const reason = interruption.finish();
+    const reason = commands.finish();
     const receipt = {
       client: "deepseek-harness",
       clientVersion,
@@ -428,5 +428,5 @@ await withVerifierCleanup(async () => {
     );
     if (passed && reason !== undefined) throw reason;
   },
-  () => interruption.finish(),
+  () => commands.finish(),
 ]);
