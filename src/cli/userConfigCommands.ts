@@ -5,12 +5,14 @@ import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
-  loadUserConfiguration,
   PERSISTED_SETTINGS,
-  updateUserConfig,
-  userConfigFilePath,
   type PersistedSetting,
 } from "../config/userConfig.js";
+import {
+  loadUserConfiguration,
+  updateUserConfig,
+} from "../application/UserConfigurationStore.js";
+import { userConfigFilePath } from "../application/UserConfigurationLocation.js";
 import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 

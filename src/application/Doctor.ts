@@ -72,7 +72,10 @@ import {
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
-import { registrationSpelledSettings } from "./SetupRegistrationEnvironment.js";
+import {
+  copyableProviderRegistrationSettings,
+  registrationSpelledSettings,
+} from "./SetupRegistrationEnvironment.js";
 import {
   collectDoctorDiagnostics,
   doctorHealthy,
@@ -340,9 +343,11 @@ const providerSettingSelections = (
 ): readonly ProviderSettingSelection[] => [
   ...(inspections ?? [])
     .filter(({ available }) => available)
-    .map(({ id, registrationEnvironment }) => ({
-      provider: id,
-      settings: registrationEnvironment,
+    .map((inspection) => ({
+      provider: inspection.id,
+      settings: Object.fromEntries(
+        copyableProviderRegistrationSettings(inspection),
+      ),
     })),
   // Startup probes the fixed and renamed locations on its own, so only an
   // explicit path is something this terminal selected for the server.

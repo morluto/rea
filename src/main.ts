@@ -131,7 +131,8 @@ export const run = async (
 const runWithUserConfiguration = async (
   dependencies: RuntimeDependencies,
 ): Promise<number> => {
-  const { loadUserConfiguration } = await import("./config/userConfig.js");
+  const { loadUserConfiguration } =
+    await import("./application/UserConfigurationStore.js");
   const configuration = await loadUserConfiguration(
     snapshotEnvironment(dependencies.env, HOST_PLATFORM.platform),
   );

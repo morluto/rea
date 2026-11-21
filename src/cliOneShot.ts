@@ -136,7 +136,8 @@ export const runOneShotCli = async (
     !global.flags.has("--version") &&
     !global.flags.has("-v")
   ) {
-    const { loadUserConfiguration } = await import("./config/userConfig.js");
+    const { loadUserConfiguration } =
+      await import("./application/UserConfigurationStore.js");
     const configuration = await loadUserConfiguration(
       snapshotEnvironment(environment, HOST_PLATFORM.platform),
     );

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect } from "vitest";
 
@@ -139,5 +139,177 @@ cliTest(
     expect((await setup()).mcpServers.rea.env).toMatchObject({
       REA_IDA_MCP_CONFIG: clientOverride,
     });
+  },
+);
+
+cliTest(
+  "doctor resolves selected client settings from the same file as MCP startup",
+  async ({ cli, processes }) => {
+    const home = await createTestTempDirectory("rea-client-settings-origin-");
+    const terminalConfigHome = join(home, "terminal-config");
+    const clientConfigHome = join(home, "client-config");
+    const clientConfig = join(clientConfigHome, "rea", "rea.json");
+    const codexHome = join(home, ".codex");
+    const codexConfig = join(codexHome, "config.toml");
+    const terminalIda = join(home, "terminal-ida.json");
+    const clientIda = join(home, "client-ida.json");
+    const explicitIda = join(home, "explicit-ida.json");
+    const environment: NodeJS.ProcessEnv = {
+      HOME: home,
+      USERPROFILE: home,
+      CODEX_HOME: codexHome,
+      XDG_CONFIG_HOME: terminalConfigHome,
+      REA_IDA_MCP_CONFIG: undefined,
+    };
+    const save = async (configHome: string, providerConfig: string) => {
+      const path = join(configHome, "rea", "rea.json");
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(
+        path,
+        JSON.stringify({ REA_IDA_MCP_CONFIG: providerConfig }),
+      );
+    };
+    await save(terminalConfigHome, terminalIda);
+    await save(clientConfigHome, clientIda);
+    await mkdir(codexHome);
+    const cliPath = join(process.cwd(), "scripts", "rea.mjs");
+    const writeRegistration = (explicit?: string) =>
+      writeFile(
+        codexConfig,
+        [
+          "[mcp_servers.rea]",
+          `command = ${JSON.stringify(process.execPath)}`,
+          `args = ${JSON.stringify([cliPath, "mcp"])}`,
+          "startup_timeout_sec = 30",
+          "tool_timeout_sec = 450",
+          "[mcp_servers.rea.env]",
+          `XDG_CONFIG_HOME = ${JSON.stringify(clientConfigHome)}`,
+          ...(explicit === undefined
+            ? []
+            : [`REA_IDA_MCP_CONFIG = ${JSON.stringify(explicit)}`]),
+        ].join("\n"),
+      );
+    const doctor = () =>
+      cli.run({
+        arguments: [
+          "doctor",
+          "--client",
+          "codex",
+          "--provider",
+          "ida",
+          "--skill=false",
+          "--json",
+        ],
+        cwd: home,
+        environment,
+        freshProcess: true,
+      });
+    const expectInspection = async (
+      setting: string,
+      source: "config" | "env",
+    ) => {
+      const result = await doctor();
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        providerInspections: expect.arrayContaining([
+          expect.objectContaining({
+            id: "ida",
+            configured: true,
+            checks: expect.arrayContaining([
+              expect.objectContaining({
+                code: "invalid_configuration",
+                detail: expect.stringContaining(setting),
+              }),
+            ]),
+            providerSettings: {
+              REA_IDA_MCP_CONFIG: { value: setting, source },
+            },
+          }),
+        ]),
+      });
+    };
+
+    await writeRegistration();
+    await expectInspection(clientIda, "config");
+    await writeFile(
+      clientIda,
+      JSON.stringify({ url: "http://127.0.0.1:12345/mcp", protocol: "native" }),
+    );
+    const setup = await cli.run({
+      arguments: [
+        "setup",
+        "--client",
+        "codex",
+        "--skill=false",
+        "--yes",
+        "--json",
+      ],
+      cwd: home,
+      environment: { ...environment, XDG_CONFIG_HOME: undefined },
+      freshProcess: true,
+    });
+    expect(setup.json, setup.stderr).toMatchObject({ status: "ready" });
+    const configured = await readFile(codexConfig, "utf8");
+    expect(configured).toContain("XDG_CONFIG_HOME");
+    expect(configured).not.toContain("REA_IDA_MCP_CONFIG");
+
+    await writeRegistration(explicitIda);
+    await expectInspection(explicitIda, "env");
+
+    await writeFile(clientConfig, "{");
+    const invalid = await doctor();
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "ida",
+          checks: expect.arrayContaining([
+            expect.objectContaining({
+              code: "invalid_configuration",
+              detail: expect.stringContaining(clientConfig),
+            }),
+          ]),
+        }),
+      ]),
+    });
+    const launch = await processes.run(process.execPath, [cliPath, "mcp"], {
+      cwd: home,
+      env: { ...environment, XDG_CONFIG_HOME: clientConfigHome },
+    });
+    expect(launch.exitCode).toBe(1);
+    expect(launch.stderr).toContain(clientConfig);
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "refuses a saved configuration FIFO during reads and edits without waiting for a writer",
+  async ({ cli, processes }) => {
+    const home = await createTestTempDirectory("rea-user-config-fifo-");
+    const xdg = join(home, "xdg");
+    const config = join(xdg, "rea", "rea.json");
+    await mkdir(dirname(config), { recursive: true });
+    const created = await processes.run("mkfifo", [config], {
+      timeoutMs: 5_000,
+    });
+    expect(created.exitCode, created.stderr).toBe(0);
+    for (const arguments_ of [
+      ["doctor", "--json"],
+      ["mcp"],
+      ["config", "--set", `JAVA_HOME=${join(home, "java")}`, "--json"],
+    ]) {
+      const result = await cli.run({
+        arguments: arguments_,
+        cwd: home,
+        environment: { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: xdg },
+        freshProcess: true,
+        timeoutMs: 5_000,
+      });
+      expect(result.exitCode, JSON.stringify(arguments_)).toBe(1);
+      const diagnostic = [result.stdout, result.stderr].join("\n");
+      expect(diagnostic).toContain(config);
+      expect(diagnostic).toContain("regular JSON file");
+    }
+    expect((await lstat(config)).isFIFO()).toBe(true);
+    expect(await readdir(dirname(config))).toEqual(["rea.json"]);
   },
 );

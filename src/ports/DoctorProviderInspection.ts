@@ -40,5 +40,12 @@ export interface DoctorProviderInspection {
   /** Validated discoveries used as registration defaults. Setup preserves
    * caller-selected configuration separately from these readiness facts. */
   readonly registrationEnvironment: Readonly<Record<string, string>>;
+  /** Effective literal or discovered values with the source that supplied them. */
+  readonly providerSettings?: Readonly<
+    Record<
+      string,
+      { readonly value: string; readonly source: "env" | "config" | "auto" }
+    >
+  >;
   readonly checks: readonly DoctorProviderCheck[];
 }

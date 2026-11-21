@@ -1,16 +1,27 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  mergeUserConfig,
+  applyUserConfigurationDefaults,
   parseUserConfig,
-  readUserConfig,
-  userConfigFilePath,
 } from "../../src/config/userConfig.js";
+import { userConfigFilePath } from "../../src/application/UserConfigurationLocation.js";
+import {
+  loadUserConfiguration,
+  loadUserConfigurationDefaults,
+  updateUserConfig,
+} from "../../src/application/UserConfigurationStore.js";
 
 const roots: string[] = [];
 
@@ -26,23 +37,23 @@ describe("userConfigFilePath", () => {
       { XDG_CONFIG_HOME: "/custom/xdg" },
       "darwin",
     );
-    expect(path).toBe(join("/custom/xdg", "rea", "rea.json"));
+    expect(path).toBe("/custom/xdg/rea/rea.json");
   });
 
   it("falls back to ~/.config when XDG_CONFIG_HOME is relative or empty", () => {
-    const home = tempHome();
+    const home = "/home/custom";
     expect(
       userConfigFilePath({ HOME: home, XDG_CONFIG_HOME: "relative" }, "linux"),
-    ).toBe(join(home, ".config", "rea", "rea.json"));
+    ).toBe(posix.join(home, ".config", "rea", "rea.json"));
     expect(
       userConfigFilePath({ HOME: home, XDG_CONFIG_HOME: "" }, "linux"),
-    ).toBe(join(home, ".config", "rea", "rea.json"));
+    ).toBe(posix.join(home, ".config", "rea", "rea.json"));
   });
 
   it("resolves under USERPROFILE on Windows", () => {
-    const home = tempHome();
+    const home = "C:\\Users\\custom";
     expect(userConfigFilePath({ USERPROFILE: home }, "win32")).toBe(
-      join(home, ".config", "rea", "rea.json"),
+      win32.join(home, ".config", "rea", "rea.json"),
     );
   });
 });
@@ -81,84 +92,122 @@ describe("parseUserConfig", () => {
   });
 });
 
-describe("mergeUserConfig", () => {
-  it("keeps ambient env values winning over the config file", () => {
-    const merged = mergeUserConfig(
-      { GHIDRA_INSTALL_DIR: "/from-env" },
-      JSON.stringify({ GHIDRA_INSTALL_DIR: "/from-config" }),
-    );
-    expect(merged.ok && merged.value.environment.GHIDRA_INSTALL_DIR).toBe(
-      "/from-env",
-    );
-    expect(merged.ok && merged.value.savedDefaults.size).toBe(0);
-  });
-
-  it("fills unset values from the config file", () => {
-    const merged = mergeUserConfig(
-      { HOME: "/home/user" },
-      JSON.stringify({ GHIDRA_INSTALL_DIR: "/from-config" }),
-    );
-    expect(merged.ok && merged.value.environment.GHIDRA_INSTALL_DIR).toBe(
-      "/from-config",
-    );
-    expect(merged.ok && merged.value.environment.HOME).toBe("/home/user");
-    expect(merged.ok && [...merged.value.savedDefaults]).toEqual([
-      "GHIDRA_INSTALL_DIR",
-    ]);
-  });
-
-  it("treats a missing config as absent rather than an error", () => {
-    const merged = mergeUserConfig({ HOME: "/home/user" }, undefined);
-    expect(merged.ok).toBe(true);
-  });
-
-  it("reports malformed JSON as a configuration error", () => {
-    const merged = mergeUserConfig({}, "{ not json");
-    expect(merged.ok).toBe(false);
-  });
-
-  it("freezes the merged environment", () => {
-    const merged = mergeUserConfig(
-      {},
-      JSON.stringify({ GHIDRA_INSTALL_DIR: "/opt/ghidra" }),
-    );
-    expect(Object.isFrozen(merged.ok && merged.value.environment)).toBe(true);
+describe("applyUserConfigurationDefaults", () => {
+  it("keeps explicit values and records only the defaults that filled a gap", () => {
+    const environment = { HOME: "/home/user", JAVA_HOME: "/from-env" };
+    const merged = applyUserConfigurationDefaults(environment, {
+      GHIDRA_INSTALL_DIR: "/from-config",
+      JAVA_HOME: "/from-config",
+    });
+    expect(merged.environment).toEqual({
+      ...environment,
+      GHIDRA_INSTALL_DIR: "/from-config",
+    });
+    expect([...merged.savedDefaults]).toEqual(["GHIDRA_INSTALL_DIR"]);
+    expect(Object.isFrozen(merged.environment)).toBe(true);
   });
 });
 
-describe("readUserConfig end to end", () => {
-  it("reads and merges a real file from the computed XDG path", async () => {
+describe("loadUserConfigurationDefaults", () => {
+  it("loads validated defaults from the selected config file", async () => {
     const root = tempHome();
-    const configDir = join(root, ".config", "rea");
-    await mkdir(configDir, { recursive: true });
+    const path = userConfigFilePath({ HOME: root }, "darwin");
+    await mkdir(join(root, ".config", "rea"), { recursive: true });
     await writeFile(
-      join(configDir, "rea.json"),
+      path,
       JSON.stringify({ GHIDRA_INSTALL_DIR: "/opt/ghidra" }),
-      "utf8",
     );
-    const contents = await readUserConfig({ HOME: root }, "darwin");
-    expect(contents).toEqual({
+    expect(
+      await loadUserConfigurationDefaults({ HOME: root }, "darwin"),
+    ).toEqual({
       ok: true,
-      value: JSON.stringify({ GHIDRA_INSTALL_DIR: "/opt/ghidra" }),
+      value: { GHIDRA_INSTALL_DIR: "/opt/ghidra" },
     });
   });
 
-  it("returns undefined when no config file exists", async () => {
-    const contents = await readUserConfig({ HOME: tempHome() }, "darwin");
-    expect(contents).toEqual({ ok: true, value: undefined });
+  it("loads no defaults when the file is missing", async () => {
+    expect(
+      await loadUserConfigurationDefaults({ HOME: tempHome() }, "darwin"),
+    ).toEqual({
+      ok: true,
+      value: {},
+    });
   });
+
+  it.skipIf(process.platform === "win32")(
+    "follows a regular config symlink for startup and refuses to edit the link",
+    async () => {
+      const root = tempHome();
+      const path = userConfigFilePath({ HOME: root }, "darwin");
+      const target = join(root, "selected.json");
+      const text = '{ "JAVA_HOME": "/linked" }\n';
+      await mkdir(join(root, ".config", "rea"), { recursive: true });
+      await writeFile(target, text);
+      await symlink(target, path);
+      expect(
+        await loadUserConfigurationDefaults({ HOME: root }, "darwin"),
+      ).toEqual({
+        ok: true,
+        value: { JAVA_HOME: "/linked" },
+      });
+      await expect(
+        updateUserConfig({ HOME: root }, { JAVA_HOME: "/other" }, [], "darwin"),
+      ).rejects.toThrow("regular JSON file");
+      expect(await readFile(target, "utf8")).toBe(text);
+      expect(await readdir(join(root, ".config", "rea"))).toEqual(["rea.json"]);
+    },
+  );
 });
 
-describe("writeUserConfig / unsetUserConfig", () => {
+it.skipIf(process.platform === "win32")(
+  "edits and backs up the config selected through native symlink and parent traversal",
+  async () => {
+    const home = tempHome();
+    const lexical = join(home, "lexical");
+    const physical = join(home, "physical");
+    await mkdir(join(lexical, "rea"), { recursive: true });
+    await mkdir(join(physical, "child"), { recursive: true });
+    await mkdir(join(physical, "rea"), { recursive: true });
+    await symlink(join(physical, "child"), join(lexical, "alias"));
+    const selectedConfigHome = `${lexical}/alias/..`;
+    const selected = join(physical, "rea", "rea.json");
+    const decoy = join(lexical, "rea", "rea.json");
+    const selectedBytes = '{ "JAVA_HOME": "/selected-java" }\n';
+    const decoyBytes = '{ "JAVA_HOME": "/decoy-java" }\n';
+    await writeFile(selected, selectedBytes);
+    await writeFile(decoy, decoyBytes);
+
+    const environment = { HOME: home, XDG_CONFIG_HOME: selectedConfigHome };
+    expect(await loadUserConfigurationDefaults(environment)).toEqual({
+      ok: true,
+      value: { JAVA_HOME: "/selected-java" },
+    });
+    await updateUserConfig(environment, { JAVA_HOME: "/updated-java" }, []);
+    expect(JSON.parse(await readFile(selected, "utf8"))).toEqual({
+      JAVA_HOME: "/updated-java",
+    });
+    expect(await readFile(`${selected}.rea.backup`, "utf8")).toBe(
+      selectedBytes,
+    );
+    expect(await readFile(decoy, "utf8")).toBe(decoyBytes);
+    expect(await readdir(join(lexical, "rea"))).toEqual(["rea.json"]);
+    expect((await readdir(join(physical, "rea"))).sort()).toEqual([
+      "rea.json",
+      "rea.json.rea.backup",
+    ]);
+  },
+);
+
+describe("updateUserConfig", () => {
   it("creates the config file with sorted settings and a trailing newline", async () => {
-    const { writeUserConfig } = await import("../../src/config/userConfig.js");
     const root = tempHome();
-    const saved = await writeUserConfig(
+    const saved = await updateUserConfig(
       { HOME: root },
       { JAVA_HOME: "/usr/lib/jvm", GHIDRA_INSTALL_DIR: "/opt/ghidra" },
+      [],
       "darwin",
     );
-    expect(saved).toEqual({
+    expect(saved.settings).toEqual({
       GHIDRA_INSTALL_DIR: "/opt/ghidra",
       JAVA_HOME: "/usr/lib/jvm",
     });
@@ -172,35 +221,36 @@ describe("writeUserConfig / unsetUserConfig", () => {
   });
 
   it("merges into an existing config without dropping other keys", async () => {
-    const { writeUserConfig } = await import("../../src/config/userConfig.js");
     const root = tempHome();
-    await writeUserConfig(
+    await updateUserConfig(
       { HOME: root },
       { GHIDRA_INSTALL_DIR: "/opt/ghidra" },
+      [],
       "darwin",
     );
-    const saved = await writeUserConfig(
+    const saved = await updateUserConfig(
       { HOME: root },
       { JAVA_HOME: "/usr/lib/jvm" },
+      [],
       "darwin",
     );
-    expect(saved).toEqual({
+    expect(saved.settings).toEqual({
       GHIDRA_INSTALL_DIR: "/opt/ghidra",
       JAVA_HOME: "/usr/lib/jvm",
     });
   });
 
   it("unset removes only the named keys and reports what was removed", async () => {
-    const { writeUserConfig, unsetUserConfig } =
-      await import("../../src/config/userConfig.js");
     const root = tempHome();
-    await writeUserConfig(
+    await updateUserConfig(
       { HOME: root },
       { GHIDRA_INSTALL_DIR: "/opt/ghidra", JAVA_HOME: "/usr/lib/jvm" },
+      [],
       "darwin",
     );
-    const removed = await unsetUserConfig(
+    const { removed } = await updateUserConfig(
       { HOME: root },
+      {},
       ["GHIDRA_INSTALL_DIR"],
       "darwin",
     );
@@ -212,50 +262,62 @@ describe("writeUserConfig / unsetUserConfig", () => {
   });
 
   it("unset on a missing file is a no-op", async () => {
-    const { unsetUserConfig } = await import("../../src/config/userConfig.js");
-    const removed = await unsetUserConfig(
+    const { removed } = await updateUserConfig(
       { HOME: tempHome() },
+      {},
       ["JAVA_HOME"],
       "darwin",
     );
     expect(removed).toEqual([]);
   });
 
-  it("replaces the file atomically without leaving staging files behind", async () => {
-    const { writeUserConfig, unsetUserConfig } =
-      await import("../../src/config/userConfig.js");
+  it("keeps the exact first snapshot and leaves no lock or staging entries", async () => {
     const root = tempHome();
+    const path = userConfigFilePath({ HOME: root }, "darwin");
     const configDir = join(root, ".config", "rea");
-    await writeUserConfig(
+    const original = Buffer.from(
+      '{ \t"GHIDRA_INSTALL_DIR": "/opt/ghidra" }\r\n',
+    );
+    await mkdir(configDir, { recursive: true });
+    await writeFile(path, original);
+    await updateUserConfig(
       { HOME: root },
-      { GHIDRA_INSTALL_DIR: "/opt/ghidra" },
+      {},
+      ["GHIDRA_INSTALL_DIR"],
       "darwin",
     );
-    await unsetUserConfig({ HOME: root }, ["GHIDRA_INSTALL_DIR"], "darwin");
-    const entries = await readdir(configDir);
-    expect(entries.sort()).toEqual(["rea.json", "rea.json.rea.backup"]);
-    expect(
-      JSON.parse(
-        await readFile(join(configDir, "rea.json.rea.backup"), "utf8"),
-      ),
-    ).toEqual({ GHIDRA_INSTALL_DIR: "/opt/ghidra" });
-    expect(
-      JSON.parse(await readFile(join(configDir, "rea.json"), "utf8")),
-    ).toEqual({});
+    await updateUserConfig(
+      { HOME: root },
+      { JAVA_HOME: "/other" },
+      [],
+      "darwin",
+    );
+    expect((await readdir(configDir)).sort()).toEqual([
+      "rea.json",
+      "rea.json.rea.backup",
+    ]);
+    expect((await readFile(`${path}.rea.backup`)).equals(original)).toBe(true);
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      JAVA_HOME: "/other",
+    });
   });
   it("rejects a native-invalid value and a second writer without changing the current file", async () => {
-    const { writeUserConfig } = await import("../../src/config/userConfig.js");
     const root = tempHome();
     const environment = { HOME: root };
     const path = userConfigFilePath(environment, "darwin");
-    await writeUserConfig(environment, { JAVA_HOME: "/original" }, "darwin");
+    await updateUserConfig(
+      environment,
+      { JAVA_HOME: "/original" },
+      [],
+      "darwin",
+    );
     const original = await readFile(path, "utf8");
     await expect(
-      writeUserConfig(environment, { JAVA_HOME: "relative" }, "darwin"),
+      updateUserConfig(environment, { JAVA_HOME: "relative" }, [], "darwin"),
     ).rejects.toMatchObject({ _tag: "ConfigurationError" });
     await mkdir(`${path}.lock`);
     await expect(
-      writeUserConfig(environment, { JAVA_HOME: "/other" }, "darwin"),
+      updateUserConfig(environment, { JAVA_HOME: "/other" }, [], "darwin"),
     ).rejects.toMatchObject({ _tag: "ConfigurationError" });
     expect(await readFile(path, "utf8")).toBe(original);
     await expect(readFile(`${path}.rea.backup`, "utf8")).rejects.toMatchObject({
@@ -266,8 +328,6 @@ describe("writeUserConfig / unsetUserConfig", () => {
 
 describe("loadUserConfiguration", () => {
   it("reports an unreadable config file as a configuration error, not a crash", async () => {
-    const { loadUserConfiguration } =
-      await import("../../src/config/userConfig.js");
     const root = tempHome();
     await mkdir(join(root, ".config", "rea", "rea.json"), { recursive: true });
     const result = await loadUserConfiguration({ HOME: root });

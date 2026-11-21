@@ -1,5 +1,5 @@
 import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
-import { userConfigRegistrationEnvironment } from "../config/userConfig.js";
+import { userConfigRegistrationEnvironment } from "./UserConfigurationLocation.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
