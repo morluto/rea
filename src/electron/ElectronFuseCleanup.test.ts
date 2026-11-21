@@ -5,6 +5,9 @@ import { syncBuiltinESMExports } from "node:module";
 import * as fileSystem from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 import { thinFuseImage } from "../../tests/fixtures/electron/fuseImage.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -14,7 +17,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ElectronFuseProvider } from "./ElectronFuseProvider.js";
 import { PlaywrightElectronActiveProvider } from "../browser/PlaywrightElectronActiveProvider.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { assertNodeCliInspectArgumentsSupported } from "../browser/PlaywrightElectronActiveFuses.js";
 
 afterEach(() => {
@@ -47,7 +50,6 @@ it("retains the exact rejected fuse descriptor until its owner can close it", as
   const provider = new ElectronFuseProvider();
   try {
     const result = await provider.inspect({ path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected incomplete descriptor cleanup");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([path]);
@@ -336,14 +338,7 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
   const physical = Object.assign(new Error("preflight read failed"), {
     code: "EIO",
   });
-  let releaseClose!: () => void;
-  const closeGate = new Promise<void>((resolve) => {
-    releaseClose = resolve;
-  });
-  let markClose!: () => void;
-  const closeEntered = new Promise<void>((resolve) => {
-    markClose = resolve;
-  });
+  const preflightClose = phaseGate();
   let denied = true;
   const fixture = await faultyFuse({
     read: async () => {
@@ -351,8 +346,7 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
       throw physical;
     },
     close: async () => {
-      markClose();
-      await closeGate;
+      await preflightClose.hold();
       if (denied) throw new Error("preflight close denied");
     },
   });
@@ -375,11 +369,11 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
       settled = true;
       return result;
     });
-  try {
-    await closeEntered;
+  await withVerifierCleanup(async () => {
+    await preflightClose.reached(running, "preflight close");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
-    releaseClose();
+    preflightClose.release();
     const result = await running;
     if (result.ok) throw new Error("Expected preflight failure");
     expect(result.error.cleanupIncomplete).toBe(true);
@@ -396,13 +390,17 @@ it("awaits an admitted preflight's final close before projecting cancellation", 
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(retry.error.cleanupIncomplete).toBe(false);
-  } finally {
-    releaseClose();
-    denied = false;
-    await running;
-    await provider.close();
-    await fixture.release();
-  }
+  }, [
+    () => {
+      preflightClose.release();
+      denied = false;
+    },
+    async () => {
+      await running;
+    },
+    () => provider.close(),
+    () => fixture.release(),
+  ]);
 });
 
 it.each(["admission", "close"] as const)(
@@ -509,12 +507,13 @@ it("joins shutdown during preflight and refuses any later launch or capture", as
     application_root: root,
   };
   const running = provider.capture(input);
-  await entered.promise;
   let closed = false;
-  const closing = provider.close().then(() => {
-    closed = true;
-  });
+  let closing: Promise<void> | undefined;
   try {
+    await awaitAcknowledgement(entered.promise, running, "preflight read");
+    closing = provider.close().then(() => {
+      closed = true;
+    });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
     release.resolve();
@@ -526,7 +525,8 @@ it("joins shutdown during preflight and refuses any later launch or capture", as
   } finally {
     release.resolve();
     await running;
-    await closing;
+    if (closing !== undefined) await closing;
+    else await provider.close();
   }
 });
 

@@ -1,5 +1,6 @@
 import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import { javaScriptSemanticNodeId } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type {
   JavaScriptSemanticIr,
@@ -45,6 +46,7 @@ export const projectSemanticResultBindings = (
   context: Pick<SemanticFlowProjectionContext, "state" | "bindingNodes">,
   source: JavaScriptSemanticGraphNode | undefined,
   bindings: readonly JavaScriptSemanticProjectedResultBinding[],
+  candidateEvidence?: ApplicationGraphEvidence,
 ): void => {
   for (const projected of bindings)
     addSemanticGraphRelation(context.state, {
@@ -52,7 +54,12 @@ export const projectSemanticResultBindings = (
       target: context.bindingNodes.get(projected.bindingId),
       relation: "destructures",
       resolution:
-        projected.resolution === "complete" ? "resolved" : "candidate",
+        candidateEvidence === undefined && projected.resolution === "complete"
+          ? "resolved"
+          : "candidate",
+      ...(candidateEvidence === undefined
+        ? {}
+        : { evidence: candidateEvidence }),
       properties: {
         projection_path: [...projected.projectionPath],
         projection_resolution: projected.resolution,
@@ -269,10 +276,24 @@ export const semanticObjectReadOccurrence = (
 export const projectSemanticReturnValues = (
   context: SemanticFlowProjectionContext,
 ): void => {
+  const expressions = new Set(
+    context.ir.expressionFlows.map((flow) =>
+      javascriptSourceRangeKey(flow.location),
+    ),
+  );
   for (const callable of context.ir.callables)
     for (const site of callable.returnSites) {
       const returnNode = context.returnSiteNodes.get(site.returnSiteId);
-      const references = context.referenceNodesWithin(site.location);
+      const references =
+        site.valueExpressionLocation !== null &&
+        expressions.has(javascriptSourceRangeKey(site.valueExpressionLocation))
+          ? []
+          : context
+              .referenceNodesWithin(site.location)
+              .filter(
+                (reference) =>
+                  reference.function_node_id === returnNode?.function_node_id,
+              );
       for (const reference of references)
         addSemanticGraphRelation(context.state, {
           source: reference,

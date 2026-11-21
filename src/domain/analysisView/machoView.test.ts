@@ -1,9 +1,82 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { describe, expect, it } from "vitest";
+import { inspectMachoSchema } from "../native/nativeInspection.js";
 
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { evidenceSubject } from "../evidence.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
+
+it("binds every Mach-O facet to its rows, including empty pages", () => {
+  for (const facet of [
+    "entrypoints",
+    "architectures",
+    "build_metadata",
+    "load_commands",
+    "dependencies",
+    "imports",
+    "exports",
+    "segments",
+    "provenance",
+  ] as const) {
+    for (const offset of [0, 999]) {
+      const projected = projectAnalysisView(parent(), {
+        kind: "macho",
+        facet,
+        offset,
+        limit: 64,
+      });
+      if (!projected.ok) throw projected.error;
+      expect(analysisViewResultSchema.safeParse(projected.value).success).toBe(
+        true,
+      );
+      if (offset === 0)
+        expect(
+          analysisViewResultSchema.safeParse({
+            ...projected.value,
+            view: {
+              kind: "macho",
+              facet: facet === "entrypoints" ? "exports" : "entrypoints",
+              offset,
+              limit: 64,
+            },
+          }).success,
+        ).toBe(false);
+    }
+  }
+});
+
+it("refuses symbols and encryption rows missing fields every producer writes", () => {
+  const { runtime_name: _runtimeName, ...withoutRuntimeName } =
+    symbol("_malloc");
+  const current = inspectMachoSchema.parse(report);
+  const { malformed_kind: _malformedKind, ...withoutCause } =
+    current.encryption.items[0]!;
+  for (const [source, path] of [
+    [
+      { ...report, exports: coverage([withoutRuntimeName]) },
+      ["exports", "items", 0, "runtime_name"],
+    ],
+    [
+      { ...report, encryption: coverage([withoutCause]) },
+      ["encryption", "items", 0, "malformed_kind"],
+    ],
+    [{ ...report, encryption: undefined }, ["encryption"]],
+  ] as const) {
+    const parsed = inspectMachoSchema.safeParse(source);
+    expect(parsed.error?.issues.map((issue) => issue.path)).toContainEqual(
+      path,
+    );
+    expect(
+      projectAnalysisView(parent(source), {
+        kind: "macho",
+        facet: "encryption",
+        offset: 0,
+        limit: 10,
+      }).ok,
+    ).toBe(false);
+  }
+});
 
 const symbol = (name: string) => ({
   name,
@@ -12,6 +85,12 @@ const symbol = (name: string) => ({
   weak: null,
   reexport: null,
   source: "libSystem",
+});
+const importSymbol = (name: string) => ({
+  ...symbol(name),
+  raw_name: null,
+  name_status: "exact" as const,
+  addend: null,
 });
 const coverage = <T>(items: T[], exhaustive = true) => ({
   items,
@@ -51,7 +130,7 @@ const report = {
     },
   ]),
   imports: coverage(
-    ["_malloc", "_free", "_open"].map((name) => symbol(name)),
+    ["_malloc", "_free", "_open"].map((name) => importSymbol(name)),
     false,
   ),
   exports: coverage([symbol("__mh_execute_header")]),
@@ -77,6 +156,37 @@ const report = {
       sections: coverage([]),
     },
   ]),
+  encryption: coverage([
+    {
+      architecture: "arm64",
+      cpu_type: 16777228,
+      cpu_subtype: 0,
+      container_file_offset: 0,
+      size: 4096,
+      status: "not-encrypted",
+      malformed_kind: null,
+      reason: null,
+      commands: [
+        {
+          kind: "LC_ENCRYPTION_INFO_64",
+          index: 1,
+          cmdsize: 24,
+          cryptoff: 16384,
+          cryptsize: 0,
+          cryptid: 0,
+          pad: 0,
+        },
+      ],
+      range: {
+        content: "plaintext",
+        slice_start: 16384,
+        slice_end: 16384,
+        container_start: 16384,
+        container_end: 16384,
+        mapping: { status: "mapped", fragments: [], sections: [] },
+      },
+    },
+  ]),
   provenance: [
     {
       tool: "nm",
@@ -93,19 +203,105 @@ const report = {
 };
 const parent = (
   normalizedResult: unknown = report,
-  subject: AnalysisViewParent["subject"] = {
+  subject: AnalysisViewParent["subject"] = evidenceSubject({
     name: "tool",
-    digest: { sha256: "b".repeat(64) },
+    sha256: "b".repeat(64),
     format: "mach-o",
     architecture: "arm64",
-    local_path: "/bin/tool",
-  },
+    path: "/bin/tool",
+  }),
 ): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"c".repeat(64)}`,
   operation: "inspect_macho",
   normalizedResult,
   subject,
   limitations: ["Parent limitation."],
+});
+
+it("retains binary names and exact numbers alongside partial command fields", () => {
+  const segment = {
+    ...report.segments.items[0]!,
+    name: null,
+    name_bytes_hex: "ff",
+    vm_size: null,
+    vm_size_hex: "0x20000000000000",
+    file_offset: null,
+    file_offset_hex: "0x20000000000001",
+    file_size: null,
+    file_size_hex: "0x20000000000002",
+    sections: coverage([
+      {
+        segment: null,
+        segment_bytes_hex: "ff",
+        name: null,
+        name_bytes_hex: "fe",
+        address: "0x1",
+        size: null,
+        size_hex: "0x20000000000000",
+        file_offset: 0,
+        alignment: null,
+        alignment_exponent: 53,
+        flags: [],
+      },
+    ]),
+  };
+  const dependency = {
+    path: null,
+    path_bytes_hex: "fd",
+    kind: "LC_LOAD_DYLIB",
+    current_version: null,
+    compatibility_version: null,
+  };
+  const command = {
+    index: 0,
+    kind: "LC_UNKNOWN_0x7fff",
+    fields: {
+      command_code: 32767,
+      command_offset: 184,
+      cmdsize: 8,
+      command_sha256: "a".repeat(64),
+    },
+  };
+  const observed = {
+    ...report,
+    segments: coverage([segment], false),
+    dependencies: coverage([dependency], false),
+    load_commands: {
+      items: [command],
+      total: 1,
+      exhaustive: true,
+      limitations: ["Some binary command fields are not decoded."],
+    },
+  };
+  expect(inspectMachoSchema.safeParse(observed).success).toBe(true);
+  for (const [facet, expected] of [
+    ["segments", segment],
+    ["dependencies", dependency],
+    ["load_commands", command],
+  ] as const) {
+    const projected = projectAnalysisView(parent(observed), {
+      kind: "macho",
+      facet,
+      offset: 0,
+      limit: 64,
+    });
+    if (!projected.ok || projected.value.kind !== "macho")
+      throw new Error("Expected Mach-O page");
+    expect(projected.value.item).toEqual([expected]);
+    expect(projected.value.source_exhaustive).toBe(facet === "load_commands");
+    if (facet === "load_commands")
+      expect(projected.value.limitations).toContain(
+        "Some binary command fields are not decoded.",
+      );
+    expect(projected.value.unknowns).not.toEqual([]);
+    expect(analysisViewResultSchema.safeParse(projected.value).success).toBe(
+      true,
+    );
+  }
+  // Names that decode as UTF-8 carry no exact-byte fields.
+  expect(inspectMachoSchema.safeParse(report).success).toBe(true);
+  expect(report.segments.items[0]).not.toHaveProperty("name_bytes_hex");
 });
 
 it("preserves ambiguous import facts without adding import fields to exports", () => {
@@ -147,11 +343,12 @@ describe("Mach-O analysis views", () => {
           imports: { returned: 3, total: null, exhaustive: false },
           exports: { returned: 1, total: 1, exhaustive: true },
           segments: { returned: 1, total: 1, exhaustive: true },
+          encryption: { returned: 1, total: 1, exhaustive: true },
         },
         provenance_count: 1,
         limitation_count: 3,
       },
-      coverage: { status: "complete-within-view", examined: 10, total: 10 },
+      coverage: { status: "complete-within-view", examined: 11, total: 11 },
       limitations: [
         "Imports and exports combine dyld_info and nm.",
         "Parent limitation.",
@@ -172,7 +369,7 @@ describe("Mach-O analysis views", () => {
     if (!first.ok) throw first.error;
     expect(first.value).toMatchObject({
       kind: "macho",
-      item: [symbol("_free")],
+      item: [importSymbol("_free")],
       source_total: null,
       source_exhaustive: false,
       coverage: { status: "page", examined: 1, total: 3, next_offset: 2 },
@@ -181,7 +378,7 @@ describe("Mach-O analysis views", () => {
       "nm output may omit stripped symbols.",
     );
     // Rows whose keys include an earlier row shape's keys stay whole.
-    for (const facet of ["architectures", "segments"] as const) {
+    for (const facet of ["architectures", "segments", "encryption"] as const) {
       const page = projectAnalysisView(parent(), {
         kind: "macho",
         facet,
@@ -218,11 +415,16 @@ describe("Mach-O analysis views", () => {
       exhausted: true,
     });
   });
+});
 
+describe("Mach-O view uncertainty", () => {
   it("keeps a missing subject unknown instead of inventing identity", () => {
-    const projected = projectAnalysisView(parent(report, null), {
-      kind: "summary",
-    });
+    const projected = projectAnalysisView(
+      parent(report, UNKNOWN_EVIDENCE_SUBJECT),
+      {
+        kind: "summary",
+      },
+    );
     if (!projected.ok) throw projected.error;
     expect(projected.value.artifact).toEqual({ path: "", sha256: null });
     expect(projected.value.unknowns).toContain(
@@ -243,18 +445,20 @@ describe("Mach-O analysis views", () => {
       issues: [
         {
           path: ["view"],
-          message: "Mach-O inspection supports summary and macho views.",
+          message: expect.stringMatching(/summary and macho views/iu),
         },
       ],
     });
     const contradictory = projectAnalysisView(
-      parent(report, {
-        name: "tool",
-        digest: { sha256: "b".repeat(64) },
-        format: "elf",
-        architecture: null,
-        local_path: "/bin/tool",
-      }),
+      parent(
+        report,
+        evidenceSubject({
+          name: "tool",
+          sha256: "b".repeat(64),
+          format: "elf",
+          path: "/bin/tool",
+        }),
+      ),
       { kind: "summary" },
     );
     if (contradictory.ok) throw new Error("expected a subject refusal");
@@ -268,4 +472,17 @@ describe("Mach-O analysis views", () => {
     expect(malformed.ok).toBe(false);
     if (!malformed.ok) expect(malformed.error._tag).toBe("AnalysisInputError");
   });
+});
+
+it("validates a prototype-named command field rather than dropping an invalid value", () => {
+  const fields =
+    inspectMachoSchema.shape.load_commands.shape.items.element.shape.fields;
+  const parsed = fields.safeParse(
+    Object.fromEntries([["__proto__", { invalid: true }]]),
+  );
+  expect(parsed.success).toBe(false);
+  if (parsed.success) throw new Error("Expected an invalid command field");
+  expect(parsed.error.issues).toContainEqual(
+    expect.objectContaining({ path: ["__proto__"] }),
+  );
 });

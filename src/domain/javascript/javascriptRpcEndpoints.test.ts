@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { runInNewContext } from "node:vm";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const endpoints = (source: string) =>
   analyzeJavaScriptStaticSource(source).endpoints.map(
@@ -34,6 +35,9 @@ describe("RPC object property ownership", () => {
     ['url: "/trpc/live", [0x1n]: {}', "/trpc/live"],
     ['url: "/trpc/live", [0b1n]: {}', "/trpc/live"],
     ['url: "/trpc/live", [-1n]: {}', "/trpc/live"],
+    ["url: `/trpc/\\u006cive`", "/trpc/live"],
+    ['url: "/trpc/old", url: `/trpc/live`', "/trpc/live"],
+    ['url: "/trpc/old", url: `/trpc/${runtimeUrl}`', null],
   ] as const)(
     "reads only the final known link URL from {%s}",
     (options, value) => {
@@ -47,6 +51,11 @@ describe("RPC object property ownership", () => {
 
   it.each([
     ['operation: "mutation"', "Old", "graphql:mutation"],
+    [
+      "kind: `OperationDefinition`, operation: `mutation`, name: { kind: `Name`, value: `Current` }",
+      "Current",
+      "graphql:mutation",
+    ],
     ['name: { kind: "Name", value: "Current" }', "Current", "graphql:query"],
     ['kind: "FragmentDefinition"', null, null],
     ["name: runtimeName", null, null],
@@ -316,7 +325,7 @@ describe("tRPC binding identity and bundled syntax", () => {
       c.users.query();
       const p = (t.createTRPCProxyClient as any)({});
       p.posts.query();
-      (0, t.httpLink)({ url: "/api/other" });
+      (0, t.httpLink)({ url: \`/api/other\` });
     `),
     ).toEqual([
       {
@@ -330,7 +339,7 @@ describe("tRPC binding identity and bundled syntax", () => {
     ]);
   });
 
-  it("preserves procedure paths beyond the former nesting cutoff", () => {
+  it("preserves a procedure path of 64 segments", () => {
     const path = Array.from({ length: 64 }, (_, i) => `router${i}`).join(".");
     expect(rpcEndpoints(`root.${path}.useQuery();`)).toEqual([
       { kind: "network", value: path, mechanism: "trpc:procedure:useQuery" },
@@ -414,7 +423,10 @@ describe("GraphQL operation recognition", () => {
     "query GetUser # prose\nparameters",
     "query Get# split name\nUser { user }",
     "query GetUser @ # missing directive name",
-    "query GetUser { # fragment\n...UserFields }",
+    "query GetUser { # missing fragment name\n... }",
+    "query GetUser { ... on }",
+    "query GetUser { ... @ }",
+    "query GetUser { ....UserFields }",
     "query\u00a0GetUser { user }",
     "query\vGetUser { user }",
   ])("keeps incomplete or unsupported header text unknown: %s", (text) => {
@@ -787,14 +799,32 @@ it("keeps named spreads unknown without proving nullish aliases", () => {
   ).toEqual([]);
 });
 
-it("skips propertyless literal spreads while retaining string and unknown spreads", () => {
-  expect(
-    rpcEndpoints(`
+it("preserves named fields across primitive and string spreads while retaining unknown overrides", () => {
+  const source = `
       httpLink({url:"/primitives",...false,...42,...1n,[void effect()]:0});
       httpLink({url:"/string",..."ab"});
+      httpLink({url:"/array",...[1]});
       httpLink({url:"/unknown",...options});
-    `),
-  ).toEqual([
+    `;
+  const observed: string[] = [];
+  runInNewContext(
+    source,
+    {
+      httpLink: (options: { url: string }) => observed.push(options.url),
+      effect: () => {},
+      options: { url: "/overwritten" },
+    },
+    { timeout: 1_000 },
+  );
+  expect(observed).toEqual([
+    "/primitives",
+    "/string",
+    "/array",
+    "/overwritten",
+  ]);
+  expect(rpcEndpoints(source)).toEqual([
     { kind: "network", value: "/primitives", mechanism: "trpc:link:httpLink" },
+    { kind: "network", value: "/string", mechanism: "trpc:link:httpLink" },
+    { kind: "network", value: "/array", mechanism: "trpc:link:httpLink" },
   ]);
 });

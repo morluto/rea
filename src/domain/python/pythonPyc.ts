@@ -1,10 +1,28 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
 
 export const PYTHON_PYC_HEADER_BYTES = 16;
-export const PYTHON_PYC_HASH_BASED = 0x1;
-export const PYTHON_PYC_CHECK_SOURCE = 0x2;
+const PYTHON_PYC_HASH_BASED = 0x1;
+const PYTHON_PYC_CHECK_SOURCE = 0x2;
+/** CPython 3.14a1 magic 3608 added TYPE_SLICE to marshal (gh-125063). */
+export const PYTHON_PYC_SLICE_MAGIC = 3608;
+
+/** PEP 552 stores the check-source bit even where hash validation is inapplicable. */
+export const interpretPythonPycHeaderFlags = (flags: number) => {
+  const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
+  const checkSource = (flags & PYTHON_PYC_CHECK_SOURCE) !== 0;
+  return {
+    hashBased,
+    checkSource,
+    inactiveCheckSource: checkSource && !hashBased,
+    hasUnknownFlags:
+      (flags & ~(PYTHON_PYC_HASH_BASED | PYTHON_PYC_CHECK_SOURCE)) !== 0,
+  };
+};
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const index = z.number().int().nonnegative();
@@ -16,66 +34,57 @@ const nonNegativeInt32 = z.number().int().min(0).max(0x7fffffff);
 export const PYTHON_PYC_CODE_LAYOUTS = ["py37", "py38", "py311"] as const;
 export type PythonPycCodeLayout = (typeof PYTHON_PYC_CODE_LAYOUTS)[number];
 
-type MagicEntry = {
-  readonly python_version: string;
+interface PythonPycMarshalProfile {
   readonly code_layout: PythonPycCodeLayout;
-  readonly header_bytes: 12 | 16;
   /** CPython constructor policy for negative co_stacksize/co_flags fields. */
   readonly negative_code_fields: "accepted" | "revision-dependent" | "rejected";
-};
+}
 
-const magics = (
+const profiles = (
   values: readonly number[],
-  python_version: string,
   code_layout: PythonPycCodeLayout,
-  header_bytes: 12 | 16 = PYTHON_PYC_HEADER_BYTES,
-  negative_code_fields: MagicEntry["negative_code_fields"] = "rejected",
-): ReadonlyArray<readonly [number, MagicEntry]> =>
-  values.map((magic) => [
-    magic,
-    { python_version, code_layout, header_bytes, negative_code_fields },
-  ]);
+  negative_code_fields: PythonPycMarshalProfile["negative_code_fields"] = "rejected",
+): ReadonlyArray<readonly [number, PythonPycMarshalProfile]> =>
+  values.map((magic) => [magic, { code_layout, negative_code_fields }]);
 
-const consecutive = (
+const consecutiveProfiles = (
   start: number,
   end: number,
-  python_version: string,
   code_layout: PythonPycCodeLayout,
-): ReadonlyArray<readonly [number, MagicEntry]> =>
-  magics(
+): ReadonlyArray<readonly [number, PythonPycMarshalProfile]> =>
+  profiles(
     Array.from({ length: end - start + 1 }, (_, offset) => start + offset),
-    python_version,
     code_layout,
   );
 
-/**
- * Pinned CPython pyc magics for 3.7–3.13. Identity is the 16-bit little-endian
- * field; `\r\n` is required separately. Layout follows marshal TYPE_CODE, not
- * bytecode opcode tables.
- */
-export const PYTHON_PYC_MAGIC_TABLE: ReadonlyMap<number, MagicEntry> = new Map([
-  ...magics([3390, 3391], "3.7", "py37", 12, "accepted"),
-  ...magics([3392, 3393, 3394], "3.7", "py37", 16, "accepted"),
-  ...magics([3400, 3401], "3.8", "py37", 16, "accepted"),
+/** Standalone marshal coverage; source identity and header shape have a separate owner. */
+export const PYTHON_PYC_MARSHAL_PROFILES: ReadonlyMap<
+  number,
+  PythonPycMarshalProfile
+> = new Map([
+  ...profiles([3390, 3391, 3392, 3393, 3394], "py37", "accepted"),
+  ...profiles([3400, 3401], "py37", "accepted"),
   // 3410 spans 3.8.0a4 and b1; a9f05d69 added constructor sign checks between.
-  ...magics([3410], "3.8", "py38", 16, "revision-dependent"),
-  ...magics([3411, 3412, 3413], "3.8", "py38", 16, "rejected"),
-  ...magics([3420, 3421, 3422, 3423, 3424, 3425], "3.9", "py38"),
-  ...magics(
-    [3430, 3431, 3432, 3433, 3434, 3435, 3436, 3437, 3438, 3439],
-    "3.10",
-    "py38",
-  ),
+  ...profiles([3410], "py38", "revision-dependent"),
+  ...profiles([3411, 3412, 3413], "py38"),
+  ...consecutiveProfiles(3420, 3425, "py38"),
+  ...consecutiveProfiles(3430, 3439, "py38"),
   // 3.11 alphas before 3494 marshal other code layouts: no co_qualname
   // before 3460, and PEP 657 end-line and column tables until 3494.
-  ...consecutive(3494, 3495, "3.11", "py311"),
-  ...consecutive(3500, 3531, "3.12", "py311"),
-  ...consecutive(3550, 3571, "3.13", "py311"),
+  ...consecutiveProfiles(3494, 3495, "py311"),
+  ...consecutiveProfiles(3500, 3531, "py311"),
+  ...consecutiveProfiles(3550, 3571, "py311"),
+  // 3.14 and 3.15 keep the 3.11 code layout; 3.14a1 magic 3608 adds slice
+  // constants to marshal, which the reader gates by magic. Only magics checked
+  // against a real interpreter are pinned: 3627 (CPython 3.14.6) and 3666
+  // (CPython 3.15.0b3). Other pre-release magics stay unpinned.
+  ...profiles([3627, 3666], "py311"),
 ]);
 
-/** Map a pyc magic integer to its pinned CPython family, or null when unknown. */
-export const pythonPycMagicEntry = (magic: number): MagicEntry | null =>
-  PYTHON_PYC_MAGIC_TABLE.get(magic) ?? null;
+export const pythonPycMarshalProfile = (
+  magic: number,
+): PythonPycMarshalProfile | null =>
+  PYTHON_PYC_MARSHAL_PROFILES.get(magic) ?? null;
 
 export const PYTHON_PYC_LIMIT_MAXIMA = {
   max_file_bytes: 64 * 1024 * 1024,
@@ -84,10 +93,7 @@ export const PYTHON_PYC_LIMIT_MAXIMA = {
   max_string_bytes: 8 * 1024 * 1024,
 } as const;
 
-export const inspectPythonPycInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
-    "Absolute filesystem path to the selected CPython .pyc file",
-  ),
+export const pythonPycLimitsSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
@@ -124,6 +130,13 @@ export const inspectPythonPycInputSchema = z.strictObject({
     .describe(
       "Maximum bytes retained for one marshal string or byte string; exceeding the budget fails without partial success",
     ),
+});
+
+export type PythonPycLimits = z.infer<typeof pythonPycLimitsSchema>;
+export const inspectPythonPycInputSchema = pythonPycLimitsSchema.extend({
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute filesystem path to the selected CPython .pyc file",
+  ),
 });
 
 export const PYTHON_PYC_CONST_PREVIEW_LIMIT = 80;
@@ -167,6 +180,7 @@ const pythonConstSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("frozenset"), length: uint }),
   z.strictObject({ kind: z.literal("dict"), length: uint }),
   z.strictObject({ kind: z.literal("ellipsis") }),
+  z.strictObject({ kind: z.literal("slice") }),
   z.strictObject({
     kind: z.literal("complex"),
     real: pythonFloatSchema,
@@ -212,19 +226,62 @@ const pythonCodeObjectSchema = z.strictObject({
 });
 export type PythonPycCodeObject = z.infer<typeof pythonCodeObjectSchema>;
 
-export const pythonPycHeaderSchema = z.strictObject({
-  magic: z.number().int().min(0).max(0xffff),
-  python_version: z.string().min(1),
-  code_layout: z.enum(PYTHON_PYC_CODE_LAYOUTS),
-  flags: uint,
-  hash_based: z.boolean(),
-  check_source: z.boolean(),
-  source_hash_hex: z.string().nullable(),
-  source_mtime: uint.nullable(),
-  source_size: uint.nullable(),
-});
+export const pythonPycHeaderSchema = z
+  .strictObject({
+    magic: z.number().int().min(0).max(0xffff),
+    python_version: z.string().min(1),
+    code_layout: z.enum(PYTHON_PYC_CODE_LAYOUTS),
+    flags: uint,
+    hash_based: z.boolean(),
+    check_source: z
+      .boolean()
+      .describe(
+        "Stored PEP 552 check-source bit. It applies only when hash_based is true.",
+      ),
+    source_hash_hex: z
+      .string()
+      .regex(/^[0-9a-f]{16}$/u)
+      .nullable(),
+    source_mtime: uint.nullable(),
+    source_size: uint.nullable(),
+  })
+  .superRefine((header, context) => {
+    const { hashBased, checkSource } = interpretPythonPycHeaderFlags(
+      header.flags,
+    );
+    for (const [field, value] of [
+      ["hash_based", hashBased],
+      ["check_source", checkSource],
+    ] as const)
+      if (header[field] !== value)
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} disagrees with its recorded header flag.`,
+        });
+    if (hashBased === (header.source_hash_hex === null))
+      context.addIssue({
+        code: "custom",
+        path: ["source_hash_hex"],
+        message:
+          "Hash-based pycs require an 8-byte source hash; others must omit it.",
+      });
+    if (hashBased === (header.source_mtime !== null))
+      context.addIssue({
+        code: "custom",
+        path: ["source_mtime"],
+        message: "Timestamp pycs require mtime; hash-based pycs must omit it.",
+      });
+    if (hashBased === (header.source_size !== null))
+      context.addIssue({
+        code: "custom",
+        path: ["source_size"],
+        message:
+          "Timestamp pycs require source_size; hash-based pycs must omit it.",
+      });
+  });
 
-/** Bounded CPython 3.7–3.13 pyc observation; marshal is walked, bytecode is not decompiled. */
+/** Bounded CPython 3.7–3.15 pyc observation; marshal is walked, bytecode is not decompiled. */
 export const pythonPycSchema = z
   .strictObject({
     artifact: z.strictObject({
@@ -258,29 +315,6 @@ export const pythonPycSchema = z
         code: "custom",
         path: ["coverage", "marshal_bytes"],
         message: "Marshal byte count disagrees with the header-stripped file.",
-      });
-    }
-    if (report.header.hash_based === (report.header.source_hash_hex === null)) {
-      context.addIssue({
-        code: "custom",
-        path: ["header", "source_hash_hex"],
-        message:
-          "Hash-based pycs require an 8-byte source hash; others must omit it.",
-      });
-    }
-    if (report.header.hash_based === (report.header.source_mtime !== null)) {
-      context.addIssue({
-        code: "custom",
-        path: ["header", "source_mtime"],
-        message: "Timestamp pycs require mtime; hash-based pycs must omit it.",
-      });
-    }
-    if (report.header.hash_based === (report.header.source_size !== null)) {
-      context.addIssue({
-        code: "custom",
-        path: ["header", "source_size"],
-        message:
-          "Timestamp pycs require source_size; hash-based pycs must omit it.",
       });
     }
     if (report.coverage.code_objects !== report.code_objects.length) {

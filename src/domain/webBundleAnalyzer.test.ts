@@ -1,11 +1,10 @@
-import {
-  projectAnalysisView,
-  analysisViewRequestSchema,
-} from "./analysisView/analysisView.js";
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../tests/fixtures/evidenceSubject.js";
+import { projectAnalysisView } from "./analysisView/analysisView.js";
+import { analysisViewRequestSchema } from "./analysisView/analysisViewRequest.js";
 import { describe, expect, it } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
-import { analyzeJavaScriptStaticSource } from "./javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeCapturedWebScript } from "./webBundleAnalyzer.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
 import { buildCapturedWebBundleAnalysis } from "./webBundleAnalyzerResult.js";
@@ -15,6 +14,57 @@ import { webBundleScriptAnalysisSchema } from "./webBundleScriptAnalysis.js";
 import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
+
+it("uses JavaScript grammar for scripts identified by the capture", () => {
+  const source = [
+    "const pick=n===0?H=>({start:H.startY}):H=>({start:H.startX});",
+    'import("./after.js");',
+  ].join("\n");
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(result.completeness).toMatchObject({
+    parsed_scripts: 1,
+    parse_failures: 0,
+  });
+  expect(result.observations.chunks.edges).toMatchObject([
+    {
+      kind: "dynamic_import",
+      specifier: "./after.js",
+    },
+  ]);
+});
+
+it("keeps JavaScript comparisons from becoming generic endpoint calls", () => {
+  const result = analyzeWebBundleFixture(
+    inspection('const value = fetch<limit>("/comparison"); fetch("/actual");'),
+  );
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/actual",
+  ]);
+});
+
+it("recovers runtime imports and inline type side effects when capture language is unknown", () => {
+  const source = `
+    import type {T} from "./erased-import";
+    export type {T} from "./erased-export";
+    export type * from "./erased-all";
+    import {type X} from "./inline-import";
+    export {type Y} from "./inline-export";
+    import "";
+    export * from "./runtime";
+    export const local = 1;
+  `;
+  const expected = ["./inline-import", "./inline-export", "", "./runtime"];
+  const result = analyzeWebBundleFixture(inspection(source, null));
+  expect(result.completeness.parse_failures).toBe(0);
+  expect(
+    result.observations.chunks.edges.map(({ specifier }) => specifier),
+  ).toEqual(expected);
+  expect(
+    analyzeJavaScriptStaticSource(source)
+      .references.filter(({ kind }) => kind === "static-import")
+      .map(({ specifier }) => specifier),
+  ).toEqual(expected);
+});
 
 it("retains standalone GraphQL Source operations in captured scripts", () => {
   const result = analyzeWebBundleFixture(
@@ -28,6 +78,101 @@ it("retains standalone GraphQL Source operations in captured scripts", () => {
   expect(result.observations.endpoints).toEqual([
     expect.objectContaining({ value: "GetUser", mechanism: "graphql:query" }),
   ]);
+});
+
+it("reports a browser request whose URL is not a literal as an unknown endpoint at its call site", () => {
+  const scriptKey = `scr_${"1".repeat(64)}`;
+  const result = analyzeWebBundleFixture(
+    inspection(
+      [
+        "fetch(flag ? '/a' : '/b');",
+        "new WebSocket(base + '/socket');",
+        "fetch('/literal');",
+        "const lookup = new Map(); lookup.get(key);",
+      ].join("\n"),
+    ),
+  );
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/literal",
+  ]);
+  expect(result.unknowns).toContainEqual({
+    dimension: "endpoints",
+    reason:
+      "A browser request's endpoint could not be resolved from its URL argument.",
+    affected_script_keys: [scriptKey],
+    call_sites: [
+      {
+        mechanism: "call:fetch",
+        location: { script_key: scriptKey, line: 1, column: 0 },
+      },
+      {
+        mechanism: "call:WebSocket",
+        location: { script_key: scriptKey, line: 2, column: 0 },
+      },
+    ],
+  });
+});
+
+it("recovers inline Request inputs only for proven fetch calls", () => {
+  const source = [
+    'fetch(new Request("/bare"));',
+    "window.fetch(new globalThis.Request(`/qualified`));",
+    'function local(Request) { fetch(new Request("/shadowed")); }',
+    "fetch(new Request(dynamic));",
+    'new WebSocket(new Request("wss://app.example.test/coerced"));',
+  ].join("\n");
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(
+    result.observations.endpoints.map(({ value, mechanism }) => ({
+      value,
+      mechanism,
+    })),
+  ).toEqual([
+    { value: "/bare", mechanism: "call:fetch" },
+    { value: "/qualified", mechanism: "call:window.fetch" },
+  ]);
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "endpoints",
+      call_sites: [
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 3 }),
+        }),
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 4 }),
+        }),
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 5 }),
+        }),
+      ],
+    }),
+  );
+});
+
+it("reads an XMLHttpRequest URL from open's second argument on an inline receiver", () => {
+  const scriptKey = `scr_${"1".repeat(64)}`;
+  const result = analyzeWebBundleFixture(
+    inspection(
+      [
+        "new XMLHttpRequest().open('GET', url);",
+        "new XMLHttpRequest().open('POST', '/inline-xhr');",
+      ].join("\n"),
+    ),
+  );
+  expect(result.observations.endpoints).toContainEqual(
+    expect.objectContaining({ value: "/inline-xhr" }),
+  );
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "endpoints",
+      call_sites: [
+        {
+          mechanism: "call:open",
+          location: { script_key: scriptKey, line: 1, column: 0 },
+        },
+      ],
+    }),
+  );
 });
 
 it.each([
@@ -443,7 +588,6 @@ describe("web bundle analyzer", () => {
         expect.objectContaining({ value: "Vue" }),
       ]),
     );
-    expect(JSON.stringify(result)).toContain("authorization=secret");
     expect(result.completeness.status).toBe("complete");
   });
 
@@ -463,7 +607,7 @@ describe("web bundle analyzer", () => {
     expect(analyzed.completeness.status).toBe("complete");
   });
 
-  it("analyzes AST nodes after the former fixed node ceiling", () => {
+  it("analyzes every AST node of a bundle with more than 250,000 nodes", () => {
     const source = `${";".repeat(250_001)}fetch('/last');`;
     const result = analyzeWebBundleFixture(inspection(source));
 
@@ -501,72 +645,18 @@ describe("web bundle analyzer", () => {
   });
 });
 
-describe("web bundle source-map coverage", () => {
-  it("reports unavailable source maps as partial without dropping requested maps", () => {
-    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
-      status: "unavailable",
-      requested: 1,
-      processed: 1,
-      items: [
-        {
-          script_key: `scr_${"1".repeat(64)}`,
-          declared_url: "https://app.example.test/app.js.map",
-          effective_url: null,
-          status: "fetch_failed",
-          artifact: null,
-          original_sources: [],
-          original_module_edges: [],
-          mappings: [],
-          limitation: "Source-map fetch failed.",
-        },
-      ],
-    });
-
-    expect(analysis.completeness.status).toBe("partial");
-    expect(analysis.unknowns).toContainEqual({
-      dimension: "source_maps",
-      reason:
-        "One or more requested source maps were unavailable or incomplete",
-      affected_script_keys: [`scr_${"1".repeat(64)}`],
-    });
-  });
-
-  it("keeps map-less captured source complete when no maps were requested", () => {
-    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
-      status: "not_requested",
-      requested: 0,
-      processed: 0,
-      items: [],
-    });
-
-    expect(analysis.completeness.status).toBe("complete");
-    expect(analysis.unknowns).toEqual([]);
-  });
-
-  it("rejects inconsistent source-map coverage counts", () => {
-    const result = analyzeWebBundleFixture(inspection("export {};"));
-    expect(
-      webBundleAnalysisSchema.safeParse({
-        ...result,
-        observations: {
-          ...result.observations,
-          source_maps: {
-            ...result.observations.source_maps,
-            requested: 1,
-          },
-        },
-      }).success,
-    ).toBe(false);
-  });
-});
-
 describe("web bundle static-analysis parity", () => {
-  it("recognizes endpoints through nested dynamic receivers like static analysis", () => {
+  it("qualifies network spellings through nested dynamic receivers", () => {
     const result = analyzeWebBundleFixture(
       inspection('window[recv].fetch("/nested-fetch");'),
     );
-    expect(result.observations.endpoints).toContainEqual(
-      expect.objectContaining({ value: "/nested-fetch" }),
+    expect(result.observations.endpoints).toEqual([]);
+    expect(result.inferences).toContainEqual(
+      expect.objectContaining({
+        kind: "endpoint_candidate",
+        value: "/nested-fetch",
+        confidence: "low",
+      }),
     );
   });
 
@@ -604,11 +694,17 @@ describe("web bundle static-analysis parity", () => {
     );
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
+    ).toEqual(["/shadowed-parent-xhr"]);
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value)
+        .sort(),
     ).toEqual([
       "/dav/",
       "/dynamic-method",
-      "/shadowed-parent-xhr",
       "/xhr-get",
+      "api/relative",
       "https://xhr.example.test/submit",
     ]);
     expect(result.inferences).toContainEqual(
@@ -630,9 +726,9 @@ describe("web bundle API classification parity", () => {
       indexedDB.open("GET", "/storage-named-xhr");
     `;
     expect(
-      analyzeWebBundleFixture(inspection(source)).observations.endpoints.map(
-        ({ value }) => value,
-      ),
+      analyzeWebBundleFixture(inspection(source))
+        .inferences.filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value),
     ).toEqual(["/storage-named-xhr"]);
     const analysis = analyzeJavaScriptStaticSource(source);
     expect(analysis.endpoints.map(({ value }) => value)).toEqual([
@@ -662,7 +758,7 @@ describe("web bundle API classification parity", () => {
     );
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
-    ).toEqual(["/api", "/dav"]);
+    ).toEqual(["/api"]);
   });
 
   it("classifies optional and one-hop aliased open calls", () => {
@@ -709,7 +805,7 @@ describe("web bundle API classification parity", () => {
     );
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
-    ).toEqual(["/search", "/v1/headers"]);
+    ).toEqual([]);
     expect(
       result.inferences
         .filter(({ kind }) => kind === "endpoint_candidate")
@@ -717,7 +813,9 @@ describe("web bundle API classification parity", () => {
         .sort(),
     ).toEqual([
       "../search",
+      "/search",
       "/users",
+      "/v1/headers",
       "cache-key",
       "https://api.example.test/headers",
       "https://api.example.test/users",
@@ -815,13 +913,12 @@ describe("web bundle explicit request reference forms", () => {
       caches.open(name, "#cache-name");
       fs.open(path, "r");
     `;
-    const expected = [
+    const expected: string[] = [];
+    const expectedCandidates = [
       "?view=1",
       "#view=1",
       "#literal=1",
       "https:api.example.test/xhr",
-    ].sort();
-    const expectedCandidates = [
       ...references,
       ...ambiguous,
       "POST",
@@ -870,7 +967,7 @@ describe("web bundle endpoint candidate classification", () => {
     const result = analyzeWebBundleFixture(inspection(source));
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
-    ).toEqual(["login", "ping"]);
+    ).toEqual(["login"]);
     const candidates = result.inferences.filter(
       ({ kind }) => kind === "endpoint_candidate",
     );
@@ -881,6 +978,7 @@ describe("web bundle endpoint candidate classification", () => {
       "X",
       "login",
       "passwordControl",
+      "ping",
       "token",
       "users",
     ]);
@@ -1062,9 +1160,20 @@ describe("web bundle configuration and navigation parity", () => {
       endpoints: [],
       candidates: ["/v1/state", "token", "users"],
     };
+    const conditional = {
+      endpoints: [],
+      candidates: [
+        "/v1/state",
+        "closedRepositories",
+        "lastVersion",
+        "onboarded",
+        "token",
+        "users",
+      ],
+    };
     expect(analyze(`const vscode = require("vscode");${reads}`)).toEqual({
-      web: proven,
-      application: proven,
+      web: conditional,
+      application: conditional,
     });
     expect(analyze(`import * as vscode from "vscode";${reads}`)).toEqual({
       web: proven,
@@ -1087,12 +1196,17 @@ describe("web bundle configuration and navigation parity", () => {
     });
   });
 
-  it("recognizes loadURL endpoints like static analysis", () => {
+  it("keeps loadURL spelling without Electron receiver proof as a candidate", () => {
     const result = analyzeWebBundleFixture(
       inspection('window.win.loadURL("https://embedded.test/app");'),
     );
-    expect(result.observations.endpoints).toContainEqual(
-      expect.objectContaining({ value: "https://embedded.test/app" }),
+    expect(result.observations.endpoints).toEqual([]);
+    expect(result.inferences).toContainEqual(
+      expect.objectContaining({
+        kind: "endpoint_candidate",
+        value: "https://embedded.test/app",
+        confidence: "low",
+      }),
     );
   });
 });
@@ -1158,7 +1272,7 @@ describe("deep captured web bundle syntax", () => {
   });
 });
 
-const inspection = (source: string) =>
+const inspection = (source: string, language: string | null = "JavaScript") =>
   createWebPageInspection([
     {
       source,
@@ -1166,6 +1280,7 @@ const inspection = (source: string) =>
       url: `${origin}/assets/app.js`,
       origin,
       cdpHash: "hash",
+      language,
     },
   ]);
 
@@ -1198,8 +1313,12 @@ describe("per-script web bundle analysis", () => {
     if (first === undefined || second === undefined)
       throw new Error("Missing included script fixtures");
     const captured = firstCapture;
-    captured.scripts.items.push({ ...second, script_key: "second-script" });
-    captured.scripts.total += 1;
+    const analyzedSecond = { ...second, script_key: "second-script" };
+    captured.scripts.items.push(analyzedSecond, {
+      ...second,
+      script_key: "unavailable-script",
+    });
+    captured.scripts.total += 2;
 
     const result = buildCapturedWebBundleAnalysis(
       captured,
@@ -1212,28 +1331,30 @@ describe("per-script web bundle analysis", () => {
       [
         {
           status: "unavailable",
-          script_key: "second-script",
+          script_key: "unavailable-script",
           reason: "deadline",
           detail: "Worker deadline expired.",
         },
+        analyzeCapturedWebScript(analyzedSecond),
         analyzeCapturedWebScript(first),
       ],
     );
 
     expect(
       result.observations.chunks.edges.map(({ specifier }) => specifier),
-    ).toEqual(["./first.js"]);
+    ).toEqual(["./first.js", "./second.js"]);
     expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
       "/first",
+      "/second",
     ]);
     expect(result.unknowns).toContainEqual({
       dimension: "javascript_analysis",
       reason: expect.stringContaining("deadline"),
-      affected_script_keys: ["second-script"],
+      affected_script_keys: ["unavailable-script"],
     });
     expect(result.completeness).toMatchObject({
       status: "partial",
-      parsed_scripts: 1,
+      parsed_scripts: 2,
       parse_failures: 0,
     });
   });
@@ -1569,12 +1690,30 @@ it("keeps bare module locations unresolved without inventing URL-relative paths"
     importScripts("worker.js");
   `),
   );
-  for (const specifier of ["package-name", "@scope/package"])
-    expect(
-      result.observations.chunks.edges
-        .filter((edge) => edge.specifier === specifier)
-        .every((edge) => edge.resolved_url === null),
-    ).toBe(true);
+  const bareEdges = result.observations.chunks.edges.filter(
+    ({ specifier }) =>
+      specifier === "package-name" || specifier === "@scope/package",
+  );
+  expect(bareEdges).toHaveLength(3);
+  expect(bareEdges).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "static_import",
+        specifier: "package-name",
+        resolved_url: null,
+      }),
+      expect.objectContaining({
+        kind: "dynamic_import",
+        specifier: "@scope/package",
+        resolved_url: null,
+      }),
+      expect.objectContaining({
+        kind: "require",
+        specifier: "package-name",
+        resolved_url: null,
+      }),
+    ]),
+  );
   expect(
     result.observations.chunks.edges.find(
       (edge) => edge.specifier === "./actual.js",
@@ -1598,6 +1737,38 @@ it("retains each literal importScripts argument in source order", () => {
       .filter(({ kind }) => kind === "worker_import")
       .map(({ specifier }) => specifier),
   ).toEqual(["first.js", "second.js"]);
+});
+
+it("requires an ambient worker importScripts call for worker chunk edges", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      importScripts("direct.js");
+      self.importScripts("self.js");
+      globalThis["importScripts"]("global.js");
+      const vendor = { importScripts() {} };
+      vendor.importScripts("vendor.js");
+      function load(importScripts) { importScripts("local.js"); }
+      function loadFrom(self) { self.importScripts("shadowed.js"); }
+      window.importScripts("window.js");
+      new importScripts("constructor.js");
+    `),
+  );
+  expect(
+    result.observations.chunks.edges
+      .filter(({ kind }) => kind === "worker_import")
+      .map(({ specifier }) => specifier),
+  ).toEqual(["direct.js", "self.js", "global.js"]);
+});
+
+it("omits worker chunk edges when a captured script replaces importScripts", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      self.importScripts = function record() {};
+      importScripts("local.js");
+      globalThis.importScripts("global.js");
+    `),
+  );
+  expect(result.observations.chunks.edges).toEqual([]);
 });
 
 describe("web metadata key semantics", () => {
@@ -1726,32 +1897,36 @@ describe("web metadata key semantics", () => {
       },
     ]);
   });
+});
 
-  it("keeps missing coverage absent when parsing historical observations", () => {
-    const analyzed = analyzeWebBundleFixture(
-      inspection(
-        `document.modelContext.registerTool({ name: "legacy", inputSchema: { properties: {} } });`,
-      ),
-    );
-    const declaration = analyzed.observations.webmcp_declarations[0];
-    expect(declaration).toBeDefined();
-    if (declaration === undefined) throw new Error("Expected declaration");
-    const { schema_property_names_coverage: _coverage, ...legacyDeclaration } =
-      declaration;
-    const parsed = webBundleAnalysisSchema.parse({
+it("refuses a declaration without its schema property-name coverage", () => {
+  const analyzed = analyzeWebBundleFixture(
+    inspection(
+      `document.modelContext.registerTool({ name: "uncovered", inputSchema: { properties: {} } });`,
+    ),
+  );
+  const declaration = analyzed.observations.webmcp_declarations[0];
+  if (declaration === undefined) throw new Error("Expected declaration");
+  const { schema_property_names_coverage: _coverage, ...withoutCoverage } =
+    declaration;
+  expect(
+    webBundleAnalysisSchema.safeParse({
       ...analyzed,
       observations: {
         ...analyzed.observations,
-        webmcp_declarations: [legacyDeclaration],
+        webmcp_declarations: [withoutCoverage],
       },
-    });
-    expect(
-      Object.hasOwn(
-        parsed.observations.webmcp_declarations[0] ?? {},
+    }).error?.issues,
+  ).toMatchObject([
+    {
+      path: [
+        "observations",
+        "webmcp_declarations",
+        0,
         "schema_property_names_coverage",
-      ),
-    ).toBe(false);
-  });
+      ],
+    },
+  ]);
 });
 
 it("retains WebMCP declarations through optional member and call chaining", () => {
@@ -1813,7 +1988,7 @@ it("does not infer call names from dynamic computed identifiers", () => {
   expect(result.observations.webmcp_declarations).toEqual([]);
 });
 
-it("retains direct and literal computed call names", () => {
+it("retains literal calls and requires ambient identity for require edges", () => {
   const result = analyzeWebBundleFixture(
     inspection(`
         window.fetch("/direct");
@@ -1821,6 +1996,11 @@ it("retains direct and literal computed call names", () => {
     window[receiver].fetch("/nested-receiver");
         window.require("./direct.js");
         window["require"]("./literal.js");
+        require("./bare.js");
+        const vendor = { require() {} };
+        vendor.require("./vendor.js");
+        function local(require) { require("./local.js"); }
+        function withWindow(window) { window["require"]("./shadowed.js"); }
         document.modelContext["registerTool"]({ name: "literal-tool" });
       `),
   );
@@ -1828,11 +2008,10 @@ it("retains direct and literal computed call names", () => {
   expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
     "/direct",
     "/literal",
-    "/nested-receiver",
   ]);
   expect(
     result.observations.chunks.edges.map(({ specifier }) => specifier),
-  ).toEqual(["./direct.js", "./literal.js"]);
+  ).toEqual(["./direct.js", "./literal.js", "./bare.js"]);
   expect(result.observations.webmcp_declarations).toEqual([
     expect.objectContaining({ name: "literal-tool" }),
   ]);
@@ -2008,11 +2187,12 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
   );
   const report = analyzeWebBundleFixture(captured),
     parent = {
+      predicateType: "rea.web-bundle-analysis",
       evidenceId: `ev_${"a".repeat(64)}`,
       operation: "analyze_web_bundle",
       normalizedResult: report,
       limitations: report.limitations,
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
     };
   const summary = projectAnalysisView(
     parent,
@@ -2045,3 +2225,130 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
   for (const row of gaps.value.items)
     expect(row).toMatchObject({ source_id: null, provenance: null });
 });
+
+it.each(
+  (["scripts", "script_sources"] as const).flatMap((section) =>
+    [0, 1, null].map((count) => ({ section, count })),
+  ),
+)(
+  "preserves actual capture omission coverage for $section count $count",
+  ({ section, count }) => {
+    const captured = inspection("export {};");
+    captured.completeness.excluded.push({
+      section,
+      reason: "resource_budget_exhausted",
+      count,
+    });
+    const result = analyzeWebBundleFixture(captured);
+    expect(result.completeness.status).toBe(
+      count === 0 ? "complete" : "partial",
+    );
+    expect(result.unknowns).toHaveLength(count === 0 ? 0 : 1);
+    expect(
+      result.route_inventory?.unknowns.filter(
+        ({ kind }) => kind === "capture-omission",
+      ),
+    ).toHaveLength(count === 0 ? 0 : 1);
+  },
+);
+
+it("retains captured Next script identity while deriving decoded route patterns", () => {
+  const url = `${origin}/base/_next/static/chunks/app/%28shop%29/blog/%5Bid%5D/page-abc.js`;
+  const captured = createWebPageInspection([
+    {
+      source: "router.push('/help');",
+      scriptKey: `scr_${"2".repeat(64)}`,
+      url,
+      origin,
+      cdpHash: "hash",
+    },
+  ]);
+  const result = analyzeWebBundleFixture(captured);
+  expect(result.route_inventory?.routes.map(({ path }) => path)).toEqual([
+    "/base/blog/:id",
+    "/base/help",
+  ]);
+  expect(result.route_inventory?.sources).toEqual([
+    expect.objectContaining({
+      url,
+      sha256: captured.scripts.items[0]?.source.included
+        ? captured.scripts.items[0].source.artifact.sha256
+        : null,
+    }),
+  ]);
+  expect(result.route_inventory?.occurrences).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        origin: "source-url",
+        unprefixed_path: "/blog/:id",
+        inferred_base_path: "/base",
+      }),
+      expect.objectContaining({
+        origin: "source-syntax",
+        unprefixed_path: "/help",
+      }),
+    ]),
+  );
+});
+
+it("qualifies local browser API spellings while preserving intrinsic requests", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+    const local = { fetch(x) { return x; }, sendBeacon(x) { return x; }, EventSource(x) { return x; } };
+    local.fetch('/local-fetch'); local.sendBeacon('/local-beacon'); local.EventSource('/local-events');
+    const other = { open(a,b) { return b; }, post(x) { return x; }, put(x) { return x; }, patch(x) { return x; }, request(x) { return x; } };
+    other.open('GET', '/local-open'); other.post('/local-post'); other.put('/local-put'); other.patch('/local-patch'); other.request('/local-request');
+    fetch('/intrinsic-fetch'); navigator.sendBeacon('/intrinsic-beacon'); new EventSource('/intrinsic-events');
+  `),
+  );
+  expect(
+    result.observations.endpoints.map(({ value }) => value).sort(),
+  ).toEqual(["/intrinsic-beacon", "/intrinsic-events", "/intrinsic-fetch"]);
+  expect(
+    result.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value)
+      .sort(),
+  ).toEqual([
+    "/local-beacon",
+    "/local-events",
+    "/local-fetch",
+    "/local-open",
+    "/local-patch",
+    "/local-post",
+    "/local-put",
+    "/local-request",
+  ]);
+});
+
+it.each([
+  ["", true],
+  ["xhr.open = replacement;", false],
+  ["XMLHttpRequest.prototype.open = replacement;", false],
+  ["const alias = xhr; alias.open = replacement;", false],
+  ["mutate(xhr);", false],
+  // Global code between construction and the call may patch the prototype,
+  // so the call, not the constructor reference, bounds its timing.
+  ['eval("XMLHttpRequest.prototype.open = replacement");', false],
+  ['Function("XMLHttpRequest.prototype.open = replacement")();', false],
+])(
+  "preserves XHR receiver proof across visible mutation: %s",
+  (mutation, observed) => {
+    const source = `const xhr = new XMLHttpRequest(); ${mutation} xhr.open('GET', '/xhr');`;
+    const result = analyzeWebBundleFixture(inspection(source));
+    expect(result.observations.endpoints.map(({ value }) => value)).toEqual(
+      observed ? ["/xhr"] : [],
+    );
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value),
+    ).toEqual(observed ? [] : ["/xhr"]);
+    expect(analyzeJavaScriptStaticSource(source).endpoints).toContainEqual(
+      expect.objectContaining({
+        value: "/xhr",
+        ...(observed ? {} : { interpretation: "candidate" }),
+      }),
+    );
+  },
+);

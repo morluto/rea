@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import {
   analysisSearchPredicate,
   literalSubstringPredicate,
+  matchProcedureNames,
 } from "./analysisSearch.js";
 
 it("uses Unicode simple case folding for literal substrings", () => {
@@ -51,3 +52,52 @@ it.each([
     ).toBe(true);
   },
 );
+
+it.each([
+  ["[\u03a3]+", "prefix [\u03c2]+ suffix", true],
+  ["a+b", "AAAB", false],
+  ["a+b", "prefix A+B suffix", true],
+  ["\\", "path\\file", true],
+  ["", "anything", true],
+  ["𐐀", "prefix 𐐨 suffix", true],
+] as const)(
+  "keeps insensitive literal syntax for %s in %s",
+  (pattern, value, expected) => {
+    const common = { pattern, document: undefined, mode: "literal" as const };
+    expect(
+      analysisSearchPredicate({ ...common, case_sensitive: false })(value),
+    ).toBe(expected);
+    expect(
+      analysisSearchPredicate({ ...common, case_sensitive: true })(value),
+    ).toBe(value.includes(pattern));
+  },
+);
+
+it("keeps explicit regex semantics and invalid-pattern input errors", () => {
+  const common = {
+    document: undefined,
+    mode: "regex" as const,
+    case_sensitive: false,
+  };
+  expect(
+    analysisSearchPredicate({ ...common, pattern: "^\u03c3$" })("\u03c2"),
+  ).toBe(true);
+  expect(() => analysisSearchPredicate({ ...common, pattern: "[" })).toThrow(
+    "search",
+  );
+});
+
+it("preserves single-alias matches, primary fallback and duplicate ordering", () => {
+  const row = { value: "qualified::name" };
+  const matches = (name: string) => name.includes("name");
+  expect(matchProcedureNames(row, ["other"], matches)).toBe(row);
+  expect(matchProcedureNames(row, [row.value], matches)).toBe(row);
+  expect(matchProcedureNames(row, ["name"], matches)).toEqual({
+    value: row.value,
+    matched_aliases: ["name"],
+  });
+  expect(matchProcedureNames(row, ["name", "name2", "name"], matches)).toEqual({
+    value: row.value,
+    matched_aliases: ["name", "name2"],
+  });
+});

@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type {
-  ReferenceSourceEntry,
-  TraversalState,
-} from "./ReferenceSourceReaderTypes.js";
-import { reconcileUnobservedSymlinkTargets } from "./ReferenceSourceReader.js";
+import type { ReferenceSourceEntry } from "./ReferenceSourceReaderTypes.js";
+import type { TraversalState } from "./ReferenceSourceReaderTraversal.js";
+import { reconcileUnobservedSymlinkTargets } from "./ReferenceSourceSymlinkTargets.js";
 
 const failedDirectory = (
   path: string,
@@ -57,9 +55,10 @@ describe("unobserved internal symlink reconciliation", () => {
     ]);
   });
 
-  it("retains unreadable targets below the nearest failed directory", () => {
+  it("retains unreadable targets below a failed directory unless the exact target is excluded", () => {
     const entries: ReferenceSourceEntry[] = [
       internalLink("alias.txt", "hidden/target.txt"),
+      internalLink("excluded-alias.txt", "hidden/excluded.txt"),
       failedDirectory("hidden", "io"),
       {
         status: "read",
@@ -70,7 +69,10 @@ describe("unobserved internal symlink reconciliation", () => {
       },
     ];
 
-    reconcileUnobservedSymlinkTargets(entries);
+    reconcileUnobservedSymlinkTargets(
+      entries,
+      exclusions({ path: "hidden/excluded.txt", kind: "file" }),
+    );
 
     expect(entries[0]).toMatchObject({
       status: "failed",
@@ -78,7 +80,10 @@ describe("unobserved internal symlink reconciliation", () => {
       code: "io",
       message: expect.stringContaining("directory failure io"),
     });
-    expect(entries[2]).toMatchObject({ status: "read", path: "visible.txt" });
+    expect(entries[1]).toEqual(
+      internalLink("excluded-alias.txt", "hidden/excluded.txt"),
+    );
+    expect(entries[3]).toMatchObject({ status: "read", path: "visible.txt" });
   });
 
   it("matches Unicode-equivalent failed ancestor identities", () => {
@@ -120,14 +125,7 @@ describe("unobserved internal symlink reconciliation", () => {
     });
   });
 
-  it("keeps exact exclusions and leaves observations untouched after cancellation", () => {
-    const entries = [internalLink("alias.txt", "hidden/target.txt")];
-    reconcileUnobservedSymlinkTargets(
-      entries,
-      exclusions({ path: "hidden/target.txt", kind: "file" }),
-    );
-    expect(entries[0]).toMatchObject({ targetState: "internal" });
-
+  it("leaves a link observation untouched after cancellation", () => {
     const cancelledEntries: ReferenceSourceEntry[] = [
       internalLink("alias.txt", "hidden/target.txt"),
       failedDirectory("hidden", "io"),

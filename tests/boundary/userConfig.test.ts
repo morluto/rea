@@ -129,14 +129,15 @@ describe("readUserConfig end to end", () => {
       "utf8",
     );
     const contents = await readUserConfig({ HOME: root }, "darwin");
-    expect(contents).toBe(
-      JSON.stringify({ GHIDRA_INSTALL_DIR: "/opt/ghidra" }),
-    );
+    expect(contents).toEqual({
+      ok: true,
+      value: JSON.stringify({ GHIDRA_INSTALL_DIR: "/opt/ghidra" }),
+    });
   });
 
   it("returns undefined when no config file exists", async () => {
     const contents = await readUserConfig({ HOME: tempHome() }, "darwin");
-    expect(contents).toBeUndefined();
+    expect(contents).toEqual({ ok: true, value: undefined });
   });
 });
 
@@ -224,23 +225,48 @@ describe("writeUserConfig / unsetUserConfig", () => {
     );
     await unsetUserConfig({ HOME: root }, ["GHIDRA_INSTALL_DIR"], "darwin");
     const entries = await readdir(configDir);
-    expect(entries).toEqual(["rea.json"]);
+    expect(entries.sort()).toEqual(["rea.json", "rea.json.rea.backup"]);
+    expect(
+      JSON.parse(
+        await readFile(join(configDir, "rea.json.rea.backup"), "utf8"),
+      ),
+    ).toEqual({ GHIDRA_INSTALL_DIR: "/opt/ghidra" });
     expect(
       JSON.parse(await readFile(join(configDir, "rea.json"), "utf8")),
     ).toEqual({});
   });
+  it("rejects a native-invalid value and a second writer without changing the current file", async () => {
+    const { writeUserConfig } = await import("../../src/config/userConfig.js");
+    const root = tempHome();
+    const environment = { HOME: root };
+    const path = userConfigFilePath(environment, "darwin");
+    await writeUserConfig(environment, { JAVA_HOME: "/original" }, "darwin");
+    const original = await readFile(path, "utf8");
+    await expect(
+      writeUserConfig(environment, { JAVA_HOME: "relative" }, "darwin"),
+    ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+    await mkdir(`${path}.lock`);
+    await expect(
+      writeUserConfig(environment, { JAVA_HOME: "/other" }, "darwin"),
+    ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+    expect(await readFile(path, "utf8")).toBe(original);
+    await expect(readFile(`${path}.rea.backup`, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });
 
-describe("environmentWithUserConfig", () => {
+describe("loadUserConfiguration", () => {
   it("reports an unreadable config file as a configuration error, not a crash", async () => {
-    const { environmentWithUserConfig } = await import("../../src/cli.js");
+    const { loadUserConfiguration } =
+      await import("../../src/config/userConfig.js");
     const root = tempHome();
     await mkdir(join(root, ".config", "rea", "rea.json"), { recursive: true });
-    const result = await environmentWithUserConfig({ HOME: root });
+    const result = await loadUserConfiguration({ HOME: root });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("rea.json");
-      expect(result.error).toContain("could not be read");
+      expect(result.error.message).toContain("rea.json");
+      expect(result.error.message).toContain("could not be read");
     }
   });
 });

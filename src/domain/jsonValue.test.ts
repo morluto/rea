@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  equalJsonValues,
   jsonObjectSchema,
+  ownedJsonObjectSchema,
   jsonValueSchema,
   jsonValueValidationIssue,
   jsonValueValidationSteps,
@@ -40,6 +42,40 @@ it("still parses only JSON values at runtime", () => {
     expect(jsonValueSchema.safeParse(value).success).toBe(true);
   for (const value of [undefined, Number.NaN, Infinity, () => 0, [undefined]])
     expect(jsonValueSchema.safeParse(value).success).toBe(false);
+});
+
+it("compares admitted values by JSON meaning and distinguishes an absent root", () => {
+  const left = ownedJsonObjectSchema.parse(
+    JSON.parse('{"__proto__":{"q":1},"value":[-0,"𐐷"],"nested":{"b":2,"a":1}}'),
+  );
+  const right = ownedJsonObjectSchema.parse(
+    JSON.parse('{"nested":{"a":1,"b":2},"value":[0,"𐐷"],"__proto__":{"q":1}}'),
+  );
+  expect(equalJsonValues(left, right)).toBe(true);
+  expect(equalJsonValues(left, { ...right, value: ["𐐷", 0] })).toBe(false);
+  expect(equalJsonValues({ value: null }, { other: null })).toBe(false);
+  expect(equalJsonValues(undefined, undefined)).toBe(true);
+  expect(equalJsonValues(undefined, null)).toBe(false);
+  expect(equalJsonValues({ value: true }, { value: 1 })).toBe(false);
+  expect(equalJsonValues([0], { "0": 0 })).toBe(false);
+  expect(equalJsonValues({ constructor: 1 }, { constructor: 2 })).toBe(false);
+});
+
+it("retains owned object identity while caller objects remain isolated", () => {
+  const source = JSON.parse('{"__proto__":{"name":"recorded"},"items":[1]}');
+  const owned = ownedJsonObjectSchema.parse(source);
+  const copied = jsonObjectSchema.parse(source);
+  expect(owned).toBe(source);
+  expect(copied).not.toBe(source);
+  expect(copied["__proto__"]).not.toBe(source["__proto__"]);
+  expect(Object.hasOwn(owned, "__proto__")).toBe(true);
+  expect(JSON.stringify(owned)).toBe(JSON.stringify(copied));
+  for (const input of [null, [], { value: undefined }, { value: Infinity }])
+    expect(ownedJsonObjectSchema.safeParse(input).success).toBe(false);
+  for (const io of ["input", "output"] as const)
+    expect(z.toJSONSchema(ownedJsonObjectSchema, { io })).toEqual(
+      z.toJSONSchema(jsonObjectSchema, { io }),
+    );
 });
 
 it("rejects sparse arrays and enumerable symbol-keyed object members", () => {

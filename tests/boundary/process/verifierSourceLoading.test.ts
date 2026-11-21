@@ -14,6 +14,54 @@ import {
 const scriptUrl = (path: string) =>
   JSON.stringify(pathToFileURL(resolve("scripts/lib", path)).href);
 
+for (const missing of ["registerHooks", "stripTypeScriptTypes"]) {
+  processTest(
+    `explains the development runtime requirement when ${missing} is unavailable`,
+    async ({ processes }) => {
+      const source = `
+import module from "node:module";
+module[${JSON.stringify(missing)}] = undefined;
+module.syncBuiltinESMExports();
+const { importVerifierSource } = await import(${scriptUrl("verifier-source-loader.mjs")});
+await importVerifierSource(new URL("./src/domain/skillManifest.ts", import.meta.url));
+`;
+      const result = await processes.run(process.execPath, [
+        "--input-type=module",
+        "--eval",
+        source,
+      ]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Node.js version pinned in .nvmrc");
+      expect(result.stderr).toContain("source build and verifier scripts");
+    },
+  );
+}
+
+processTest(
+  "explains the development runtime requirement when TypeScript transform mode is unavailable",
+  async ({ processes }) => {
+    // Node.js 26 removed `mode: "transform"`; owned source needs it.
+    const source = `
+import module from "node:module";
+const strip = module.stripTypeScriptTypes;
+module.stripTypeScriptTypes = (code, options) => {
+  if (options?.mode === "transform") throw new TypeError("transform mode was removed");
+  return strip(code, options);
+};
+module.syncBuiltinESMExports();
+const { importVerifierSource } = await import(${scriptUrl("verifier-source-loader.mjs")});
+await importVerifierSource(new URL("./src/domain/skillManifest.ts", import.meta.url));
+`;
+    const result = await processes.run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      source,
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Node.js version pinned in .nvmrc");
+  },
+);
+
 // Windows' root lineage observer explicitly reports unavailable; its command
 // owners and source loading are covered by the native Windows boundary lane.
 processTest.skipIf(process.platform === "win32")(
@@ -63,7 +111,7 @@ console.log(JSON.stringify({
     const result = await processes.run(
       process.execPath,
       ["--input-type=module", "--eval", source],
-      { env: { ...process.env, TSX_DISABLE_CACHE: "1" }, timeoutMs: 20_000 },
+      { env: { ...process.env, TSX_DISABLE_CACHE: "1" } },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     const observation = z
@@ -128,7 +176,7 @@ await withVerifierCleanup(async () => {
     const result = await processes.run(
       process.execPath,
       ["--input-type=module", "--eval", source],
-      { timeoutMs: 20_000, env: { ...process.env, TSX_DISABLE_CACHE: "1" } },
+      { env: { ...process.env, TSX_DISABLE_CACHE: "1" } },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
@@ -210,7 +258,7 @@ console.log(JSON.stringify({
     const result = await processes.run(
       process.execPath,
       [workspace.path("probe.mjs")],
-      { cwd: workspace.root, timeoutMs: 20_000 },
+      { cwd: workspace.root },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({

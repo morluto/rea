@@ -318,3 +318,59 @@ it("applies the same unknown admission in direct and transferred construction", 
     transferred.finish(digest, application),
   );
 });
+
+it("bounds reads within unmodeled nested operator operands", () => {
+  const body = `const base = "token"; const value = ${"wrap(".repeat(30)}base${")".repeat(30)} + "/x";`;
+  const bounded = fileProjection(source("app.js", body), 200, 1);
+  expect(bounded.unknowns.length).toBeLessThanOrEqual(1);
+  expect(bounded.omittedUnknownOccurrences?.length).toBeGreaterThan(0);
+  const projection = createJavaScriptSemanticGraphProjection({
+    totalUnknowns: 1,
+    fileUnknowns: 1,
+  });
+  projection.adoptFileProjection(bounded);
+  const graph = projection.finish(digest, application);
+  expect(graph.coverage.truncated).toBe(true);
+  const trace = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "literal", value: "token" },
+      direction: "forward-influence",
+    }),
+  );
+  expect(trace.status).not.toBe("found");
+});
+
+it.each([1, 2])(
+  "reports unavailable-module node omission only when total capacity %s rejects it",
+  (totalNodes) => {
+    const projection = createJavaScriptSemanticGraphProjection({
+      totalNodes,
+      fileNodes: 10,
+    });
+    const retained = source("retained.js", "");
+    projection.projectFile(retained, analyzeJavaScriptSemantics(""));
+    projection.recordUnavailableFile(
+      source("unavailable.js"),
+      "Source unavailable",
+      null,
+      "incomplete-module",
+    );
+    const graph = projection.finish(digest, application);
+    expect(graph.nodes).toHaveLength(totalNodes);
+    expect(graph.unknowns).toHaveLength(12);
+    expect(graph.coverage).toMatchObject({
+      status: "partial",
+      truncated: totalNodes === 1,
+      omitted_nodes: null,
+    });
+    if (totalNodes === 1) {
+      expect(graph.coverage.limits).toContainEqual({
+        name: "max_semantic_nodes",
+        value: 1,
+        unit: "items",
+      });
+      expect(graph.limitations.join("\n")).toContain("max_semantic_nodes is 1");
+    } else expect(graph.coverage.limits).toEqual([]);
+  },
+);

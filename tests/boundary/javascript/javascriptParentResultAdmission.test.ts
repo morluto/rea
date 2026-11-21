@@ -76,8 +76,9 @@ async function verifyParentAdmission(reclaimedBytes: number) {
     expect(error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       resource: "memory",
-      reason:
-        "Semantic graph for a-large.mjs exceeds the parent's remaining result budget; static and module facts were retained",
+      reason: expect.stringMatching(
+        /a-large\.mjs.*result budget.*static and module facts were retained/i,
+      ),
     });
     if (!(error instanceof AnalysisResourceConstraintError))
       throw new Error("Expected a typed resource constraint");

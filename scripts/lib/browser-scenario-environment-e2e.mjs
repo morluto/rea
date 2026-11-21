@@ -140,9 +140,54 @@ export async function verifyScenarioEnvironment(endpoint, targetId, origin) {
     return JSON.parse(value.result.value);
   };
   const provider = createBrowserScenarioProvider(process.env);
+  let unselected;
+  let unselectedTarget;
   return withVerifierCleanup(async () => {
+    // The fixture owns this extra page. A scenario selecting targetId must not
+    // initialize Playwright defaults on another caller-owned page.
+    const created = await connection.send("Target.createTarget", {
+      url: "about:blank",
+    });
+    unselectedTarget = created.targetId;
+    const pages = await (await fetch(`${endpoint}/json/list`)).json();
+    const other = pages.find(({ id }) => id === unselectedTarget);
+    assert.ok(other, "Owned unselected fixture page is missing");
+    unselected = await CdpConnection.connect(
+      other.webSocketDebuggerUrl,
+      "capture_browser_scenario",
+    );
+    const pageIds = pages
+      .filter(({ type }) => type === "page")
+      .map(({ id }) => id)
+      .sort();
+    await unselected.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-color-scheme", value: "dark" }],
+    });
+    const assertUnselectedState = async () => {
+      const observed = await unselected.send("Runtime.evaluate", {
+        expression: "matchMedia('(prefers-color-scheme: dark)').matches",
+        returnByValue: true,
+      });
+      assert.equal(
+        observed.result.value,
+        true,
+        "Scenario attachment changed media on an unselected page",
+      );
+    };
+    await assertUnselectedState();
+    // Settle the selected tab's actual layout before taking the restoration
+    // baseline, then leave it in the background for the scenario's actions.
+    await connection.send("Target.activateTarget", { targetId });
+    await connection.send("Runtime.evaluate", {
+      expression:
+        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+      awaitPromise: true,
+    });
     const baseline = await readEnvironment();
     const callerLanguage = await readEnvironment(languageExpression);
+    await connection.send("Target.activateTarget", {
+      targetId: unselectedTarget,
+    });
     const scenario = environmentScenario({
       endpoint,
       targetId,
@@ -157,6 +202,14 @@ export async function verifyScenarioEnvironment(endpoint, targetId, origin) {
       );
       const remaining = await (await fetch(`${endpoint}/json/list`)).json();
       assert.ok(remaining.some(({ id }) => id === targetId));
+      assert.deepEqual(
+        remaining
+          .filter(({ type }) => type === "page")
+          .map(({ id }) => id)
+          .sort(),
+        pageIds,
+        "Scenario attachment changed the caller's page inventory",
+      );
     };
     const cliCapture = (await runScenarioCli(scenario)).normalized_result;
     assertCapture(cliCapture);
@@ -195,6 +248,7 @@ export async function verifyScenarioEnvironment(endpoint, targetId, origin) {
         targetId,
         origin,
         assertRestored,
+        assertUnselectedState,
       });
     }, [() => client.close(), () => transport.close()]);
     await assertRestored();
@@ -235,8 +289,25 @@ export async function verifyScenarioEnvironment(endpoint, targetId, origin) {
       action_failure_cleanup: true,
       cancellation_cleanup: true,
       external_target_preserved: true,
+      unselected_page_media_preserved: true,
     };
-  }, [() => provider.close(), () => connection.close()]);
+  }, [
+    () => provider.close(),
+    () => unselected?.close(),
+    async () => {
+      if (unselectedTarget !== undefined)
+        assert.equal(
+          (
+            await connection.send("Target.closeTarget", {
+              targetId: unselectedTarget,
+            })
+          ).success,
+          true,
+          "Owned unselected fixture page was not released",
+        );
+    },
+    () => connection.close(),
+  ]);
 }
 
 const verifyConcurrentMcpCapture = async ({
@@ -247,6 +318,7 @@ const verifyConcurrentMcpCapture = async ({
   targetId,
   origin,
   assertRestored,
+  assertUnselectedState,
 }) => {
   const firstScenario = environmentScenario({
     endpoint,
@@ -279,6 +351,7 @@ const verifyConcurrentMcpCapture = async ({
   try {
     const first = callTool(firstScenario, firstCancellation.signal);
     await waitForEnvironment(connection, expected, "A");
+    await assertUnselectedState();
 
     const second = callTool(secondScenario, secondCancellation.signal);
     await client.ping();

@@ -1,13 +1,8 @@
+import { closeAgentEvaluation } from "./lib/agent-evaluation-cleanup.mjs";
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+
 import { createHash } from "node:crypto";
-import {
-  chmod,
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,12 +10,14 @@ import { tsImport } from "tsx/esm/api";
 
 import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import { createAgentEvaluationCommands } from "./lib/agent-evaluation-commands.mjs";
-import { assertAgentEvaluationReportPassed } from "./lib/agent-evaluation-report-gate.mjs";
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+
+const { parseSkillManifestMetadata } = await importVerifierSource(
+  new URL("../src/domain/skillManifest.ts", import.meta.url).href,
+  import.meta.url,
+);
 
 const { evaluateCodexEvents } = await tsImport(
   new URL("../tests/evaluation/model-evals/CodexAgentEval.ts", import.meta.url)
@@ -45,13 +42,14 @@ const {
   ).href,
   import.meta.url,
 );
-const { summarizeFactualCorrectness } = await tsImport(
-  new URL(
-    "../tests/evaluation/model-evals/AgentEvaluationReport.ts",
+const { assertAgentEvaluationReportPassed, summarizeFactualCorrectness } =
+  await tsImport(
+    new URL(
+      "../tests/evaluation/model-evals/AgentEvaluationReport.ts",
+      import.meta.url,
+    ).href,
     import.meta.url,
-  ).href,
-  import.meta.url,
-);
+  );
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const verifierRun = createVerifierRun();
@@ -62,13 +60,19 @@ const optionalModel = process.env.REA_AGENT_EVAL_MODEL;
 if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10_000)
   throw new Error("REA_AGENT_EVAL_TIMEOUT_MS must be an integer >= 10000");
 // Codex refuses helper aliases when CODEX_HOME is under the OS temp directory.
-// Keep the disposable account in a private cache, then remove the owned run.
+// Keep the disposable account in a private cache, then release the owned run.
 const evaluationParent = resolve(
   process.env.REA_AGENT_EVAL_ROOT ??
     join(homedir(), ".cache", "rea-agent-evaluations"),
 );
 await mkdir(evaluationParent, { recursive: true, mode: 0o700 });
-const evaluationRoot = await mkdtemp(join(evaluationParent, "run-"));
+// Codex and its tools create files beneath the run, so it is a plain directory.
+const evaluation = await VerifierFixture.open({
+  prefix: "run-",
+  parent: evaluationParent,
+  private: false,
+});
+const evaluationRoot = evaluation.path;
 const fixtureRoot = join(evaluationRoot, "targets");
 const account = join(evaluationRoot, "account");
 const codexHome = join(evaluationRoot, "codex");
@@ -148,8 +152,10 @@ await withVerifierCleanup(
       join(skillDestination, "SKILL.md"),
       "utf8",
     );
+    const skillMetadata = parseSkillManifestMetadata(installedSkill);
     if (
-      !installedSkill.includes(`  version: "${PRODUCT_IDENTITY.skillVersion}"`)
+      !skillMetadata.ok ||
+      skillMetadata.value.version !== PRODUCT_IDENTITY.skillVersion
     )
       throw new Error("Setup did not install the current packaged REA skill");
     const requestedScenarioIds = new Set(
@@ -418,16 +424,13 @@ await withVerifierCleanup(
   },
   // Even a deliberately retained fixture directory must never retain auth.
   [
-    async () => {
-      // A failed process cleanup retains both its exact owner and its files.
-      await commands.close();
-      await closeVerifierResources([
-        () => rm(authPath, { force: true }),
-        ...(process.env.REA_AGENT_EVAL_KEEP_FIXTURES === "true"
-          ? []
-          : [() => rm(evaluationRoot, { recursive: true, force: true })]),
-      ]);
-    },
+    () =>
+      closeAgentEvaluation({
+        fixture: evaluation,
+        commands,
+        authPath,
+        keepFixtures: process.env.REA_AGENT_EVAL_KEEP_FIXTURES === "true",
+      }),
   ],
 );
 

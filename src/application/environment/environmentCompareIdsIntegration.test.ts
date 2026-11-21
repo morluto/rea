@@ -26,6 +26,25 @@ const compareRows = (
   return report.value.probes[0]!;
 };
 
+describe("environment comparison collection matching", () => {
+  it("does not match two live object keys to one environment entry", () => {
+    const probe = compareRows(
+      [
+        ["GET", "/api/items", [{ id: 1, name: "A" }]],
+        ["GET", "/api/counts", { counts: { "1": 5 } }],
+      ],
+      [
+        ["GET", "/api/items", [{ id: 101, name: "A" }]],
+        ["GET", "/api/counts", { counts: { "1": 5, "101": 5 } }],
+      ],
+    );
+    expect(probe.results.map((step) => step.equal)).toEqual([true, false]);
+    expect(probe.results[1]?.differences).toMatchObject([
+      { category: "missing-field", pointer: "/counts/101" },
+    ]);
+  });
+});
+
 describe("environment comparison identifier semantics", () => {
   it("reports changed business tokens and numeric arrays through the application comparison boundary", () => {
     const probe = compareRows(

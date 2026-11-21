@@ -12,6 +12,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const appWithClassNameArchive = async (): Promise<string> => {
   const app = join(
@@ -80,7 +81,10 @@ cliTest(
       },
       stderr: "pipe",
     });
-    const client = new Client({ name: "ib-class-name-identity", version: "1" });
+    const client = new Client(
+      { name: "ib-class-name-identity", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const opened = await client.callTool({
@@ -142,5 +146,4 @@ cliTest(
     });
     expect(withoutAuthoredField?.attributes).not.toHaveProperty("className");
   },
-  60_000,
 );

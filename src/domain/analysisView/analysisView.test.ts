@@ -5,7 +5,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { expect, it } from "vitest";
 
-import { functionDossierSchema } from "../hopperValues.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../contracts/artifactComparisonExample.js";
@@ -23,21 +23,19 @@ import {
 } from "../javascript/javascriptApplicationGraph.js";
 import {
   createJavaScriptSemanticGraph,
-  createImmutableJavaScriptSemanticGraphSteps,
+  sealTransferredJavaScriptSemanticGraphSteps,
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
-import { javascriptModulePaths } from "./javascriptApplicationView.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { inspectAnalysisViewInputSchema } from "./analysisViewRequest.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const layoutParent = (): AnalysisViewParent => {
   const evidence = analysisViewLayoutEvidence();
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     normalizedResult: evidence.normalized_result,
@@ -48,6 +46,7 @@ const layoutParent = (): AnalysisViewParent => {
 const javascriptParent = (
   analysis = analysisViewJavaScriptAnalysis(),
 ): AnalysisViewParent => ({
+  predicateType: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.predicate_type,
   evidenceId: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.evidence_id,
   operation: "analyze_javascript_application",
   normalizedResult: analysis,
@@ -57,11 +56,25 @@ const javascriptParent = (
 const nativeParent = (
   result: unknown = ghidraFunctionDossier(),
 ): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: "ev_" + "b".repeat(64),
   operation: "analyze_function",
   normalizedResult: result,
   limitations: ["Retained provider limitation"],
   artifact: { path: "/fixtures/example.exe", sha256: "a".repeat(64) },
+});
+
+it("returns input errors for malformed parent Evidence identifiers before projection", () => {
+  for (const evidenceId of [`xx_${"a".repeat(64)}`, "ev_bad"])
+    expect(
+      projectAnalysisView(
+        { ...nativeParent(), evidenceId },
+        { kind: "summary" },
+      ),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+  expect(projectAnalysisView(nativeParent(), { kind: "summary" }).ok).toBe(
+    true,
+  );
 });
 
 it("projects native procedure and bounded assembly and high-pcode with exact parent identity", () => {
@@ -187,7 +200,7 @@ it("keeps value-flow counts unknown when value flow is unrecorded or unavailable
   if (!unrecorded.ok) throw unrecorded.error;
   expect(analysisViewResultSchema.parse(unrecorded.value)).toMatchObject({
     summary: {
-      value_flow: { available: false, truncated: false },
+      value_flow: { available: false, truncated: null },
       counts: flowCounts,
     },
     unknowns: expect.arrayContaining(["native_value_flow was not recorded"]),
@@ -363,6 +376,7 @@ it("rejects artifact summary views when inspection substep coverage count disagr
   const source = ARTIFACT_COMPARISON_EXAMPLE.left;
   const inspection = createArtifactInspection(source);
   const parent: AnalysisViewParent = {
+    predicateType: "rea.analysis",
     evidenceId: `ev_${"a".repeat(64)}`,
     operation: "inspect_artifact",
     normalizedResult: {
@@ -428,6 +442,7 @@ it("pages every retained dossier collection and the native API record", () => {
     page("swift_string_literals", {
       ...original,
       swift_string_literals: [literal],
+      swift_string_literal_omissions: [],
     }),
   ).toMatchObject({ item: [literal], coverage: { total: 1 } });
   expect(page("swift_string_literals")).toMatchObject({
@@ -564,7 +579,7 @@ it("projects layout summary, facet, item, and stable pages", () => {
       format: "elf",
       counts: { sections: 3, symbols: 3, segments: 0, relocations: 0 },
     },
-    coverage: completeWithinViewCoverage(6, 6),
+    coverage: completeWithinViewCoverage(6),
   });
   const mitigations = projectAnalysisView(parent, {
     kind: "facet",
@@ -624,6 +639,69 @@ it("projects layout summary, facet, item, and stable pages", () => {
     coverage: pageViewCoverage(3, 0, 3),
   });
 });
+
+it.each(["sections", "symbols"] as const)(
+  "selects %s by exact source bytes and preserves opaque names by index",
+  (collection) => {
+    const layout = analysisViewLayoutFixture();
+    const rows = layout[collection];
+    const original = rows[0];
+    if (original === undefined) throw new Error("missing layout row");
+    const opaque = {
+      ...original,
+      name: {
+        ...original.name,
+        display: "�name",
+        bytes_base64: Buffer.from([0xff, ...Buffer.from("name")]).toString(
+          "base64",
+        ),
+      },
+    };
+    const valid = {
+      ...rows[1],
+      name: {
+        ...original.name,
+        display: "provider-formatted-name",
+        bytes_base64: Buffer.from("�name").toString("base64"),
+      },
+    };
+    const parent = {
+      ...layoutParent(),
+      normalizedResult: {
+        ...layout,
+        [collection]: [opaque, valid],
+      },
+    };
+    const selected = projectAnalysisView(parent, {
+      kind: "item",
+      collection,
+      selector: { name: "�name" },
+    });
+    expect(selected).toMatchObject({ ok: true, value: { item: valid } });
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name: "\ud800name" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name: "provider-formatted-name" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { index: 0 },
+      }),
+    ).toMatchObject({ ok: true, value: { item: opaque } });
+    expect(parent.normalizedResult[collection]).toEqual([opaque, valid]);
+  },
+);
 
 it("rejects ambiguous layout names with candidate indexes", () => {
   const parent = layoutParent();
@@ -712,16 +790,19 @@ it("projects JavaScript summary and preserves selected module observations", () 
     selector: { path: "renderer.js" },
   });
   if (!item.ok) throw item.error;
-  const moduleNode = analysis.graph.nodes[0];
-  if (moduleNode === undefined) throw new Error("missing module");
-  expect(javascriptModulePaths(moduleNode)).toEqual(["renderer.js"]);
   if (item.value.kind !== "item") throw new Error("expected item view");
   expect(item.value.item).toMatchObject({
     path: "renderer.js",
     kind: "javascript-asset",
+    observations: expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          source: "export const secret = 1;\n",
+          text: "should not leak",
+        }),
+      }),
+    ]),
   });
-  expect(JSON.stringify(item.value.item)).toContain("export const secret = 1;");
-  expect(JSON.stringify(item.value.item)).toContain("should not leak");
   const page = projectAnalysisView(parent, {
     kind: "page",
     collection: "modules",
@@ -810,7 +891,9 @@ it("projects typed module facts without source bodies and keeps source coverage 
 
 it("counts retained range observations including repeats and skips unavailable locations", () => {
   const analysis = analysisViewJavaScriptAnalysis();
-  const original = analysis.graph.nodes[0];
+  const original = analysis.graph.nodes.find(
+    ({ kind }) => kind === "javascript-asset",
+  );
   const observed = original?.observations[0];
   if (!original || !observed) throw new Error("missing module observation");
   const range = {
@@ -856,6 +939,7 @@ it("counts retained range observations including repeats and skips unavailable l
     ...application,
     nodes: [node],
     root_node_ids: [node.node_id],
+    edges: [],
   });
   const parent = javascriptParent(
     analysisViewBindJavaScriptGraphs(analysis, graph),
@@ -924,7 +1008,9 @@ it("validates typed module selectors without coercing null or empty paths", () =
 
 it("keeps mixed observation support distinct instead of promoting a module to observed", () => {
   const analysis = analysisViewJavaScriptAnalysis();
-  const original = analysis.graph.nodes[0];
+  const original = analysis.graph.nodes.find(
+    ({ kind }) => kind === "javascript-asset",
+  );
   const observed = original?.observations[0];
   if (!original || !observed) throw new Error("missing module observation");
   const inferred = {
@@ -952,6 +1038,7 @@ it("keeps mixed observation support distinct instead of promoting a module to ob
     ...application,
     nodes: [node],
     root_node_ids: [node.node_id],
+    edges: [],
   });
   const result = projectAnalysisView(
     javascriptParent(analysisViewBindJavaScriptGraphs(analysis, graph)),
@@ -1020,7 +1107,6 @@ it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
     collection: "modules",
     selector: { path: "renderer.js" },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected ambiguous path");
   expect(result.error).toMatchObject({
     _tag: "AnalysisInputError",
@@ -1056,6 +1142,84 @@ it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
     });
   }
   expect(ids).toEqual(graph.nodes.map(({ node_id }) => node_id));
+});
+
+it("keeps export bindings out of module pages and path selection", () => {
+  const analysis = analysisViewJavaScriptAnalysis();
+  const original = analysis.graph.nodes[0];
+  const observation = original?.observations[0];
+  if (original === undefined || observation === undefined)
+    throw new Error("missing module observation");
+  const exportBinding = createJavaScriptApplicationNode({
+    kind: "javascript-module",
+    identity: {
+      strategy: "artifact-local-key",
+      stability: "artifact-version",
+      artifact_sha256: "c".repeat(64),
+      namespace: "module-export",
+      key: "renderer.js:alpha",
+    },
+    observations: [
+      {
+        label: "renderer.js:alpha",
+        properties: {
+          semantic_role: "export-binding",
+          module_path: "renderer.js",
+          exported_name: "alpha",
+        },
+        evidence: {
+          ...observation.evidence,
+          artifact: {
+            ...observation.evidence.artifact,
+            sha256: "c".repeat(64),
+            artifact_id: `art_${"c".repeat(64)}`,
+          },
+        },
+      },
+    ],
+  });
+  const graph = createJavaScriptApplicationGraph({
+    schema: "JavaScriptApplicationGraph",
+    root_node_ids: [original.node_id, exportBinding.node_id],
+    nodes: [original, exportBinding],
+    edges: [],
+    coverage: analysis.graph.coverage,
+    limitations: analysis.graph.limitations,
+  });
+  const parent = javascriptParent(
+    analysisViewBindJavaScriptGraphs(analysis, graph),
+  );
+  const page = projectAnalysisView(parent, {
+    kind: "page",
+    collection: "modules",
+    offset: 0,
+    limit: 10,
+  });
+  if (!page.ok) throw page.error;
+  if (page.value.kind !== "page") throw new Error("expected page");
+  expect(page.value.items).toEqual([
+    {
+      node_id: original.node_id,
+      kind: original.kind,
+      path: "renderer.js",
+    },
+  ]);
+  expect(page.value.coverage).toMatchObject({
+    total: 1,
+    examined: 1,
+    exhausted: true,
+  });
+  const item = projectAnalysisView(parent, {
+    kind: "item",
+    collection: "modules",
+    selector: { path: "renderer.js" },
+  });
+  if (!item.ok) throw item.error;
+  if (item.value.kind !== "item") throw new Error("expected item view");
+  expect(item.value.item).toMatchObject({ node_id: original.node_id });
+  const summary = projectAnalysisView(parent, { kind: "summary" });
+  if (!summary.ok) throw summary.error;
+  expect(summary.value.coverage).toMatchObject({ total: 1, examined: 1 });
 });
 
 it("pages actual modules, including unknown and empty paths, without unrelated roles", () => {
@@ -1209,7 +1373,7 @@ it("reuses authenticated graphs while rejecting malformed metadata and imported 
   );
   const { graph_id: _semanticId, ...semantic } = analysis.semantic_graph;
   const semanticGraph = complete(
-    createImmutableJavaScriptSemanticGraphSteps({
+    sealTransferredJavaScriptSemanticGraphSteps({
       ...semantic,
       application_graph_id: graph.graph_id,
     }),
@@ -1446,6 +1610,8 @@ it.each(["partial", "unknown"] as const)(
     ] as const) {
       const result = projectAnalysisView(parent, view);
       if (!result.ok) throw result.error;
+      if (result.value.coverage === null)
+        throw new Error("Expected known coverage");
       expect(result.value.coverage.exhausted).toBe(true);
       if (result.value.kind === "javascript")
         expect(result.value.source_coverage).toMatchObject({
@@ -1508,6 +1674,7 @@ it("rejects unsupported parent operations and incompatible collections", () => {
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const unsupported = projectAnalysisView(
     {
+      predicateType: "rea.analysis",
       evidenceId: `ev_${"d".repeat(64)}`,
       operation: "inspect_recorded_crash",
       normalizedResult: { path: "/artifacts/crash.core" },
@@ -1637,4 +1804,48 @@ it("selects a unique content-deduplicated module by any retained path", () => {
       item: { node_id: node.node_id, path },
     });
   }
+});
+
+it("ranks only the longest byte entropy runs with stable offset ties", () => {
+  const runs = Array.from({ length: 1024 }, (_, index) => ({
+    offset: Math.floor((1023 - index) / 2) * 256,
+    length: ((index % 19) + 1) * 256,
+    classification: index % 2 === 0 ? "high" : "low",
+  }));
+  runs.push({ offset: 0, length: 8192, classification: "high" });
+  runs.push({ offset: 0, length: 8192, classification: "low" });
+  const result = projectAnalysisView(
+    {
+      predicateType: "rea.byte-entropy",
+      evidenceId: `ev_${"1".repeat(64)}`,
+      operation: "inspect_byte_entropy",
+      limitations: [],
+      normalizedResult: {
+        artifact: {
+          path: "/tmp/fixture",
+          bytes: 262144,
+          sha256: "2".repeat(64),
+        },
+        block_size: 256,
+        window: { offset: 0, length: 262144 },
+        file_entropy: 4,
+        thresholds: { high: 7.5, low: 0.5 },
+        blocks: [],
+        runs,
+        limitations: [],
+      },
+    },
+    { kind: "summary" },
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      summary: {
+        run_count: runs.length,
+        top_runs: runs
+          .toSorted((a, b) => b.length - a.length || a.offset - b.offset)
+          .slice(0, 10),
+      },
+    },
+  });
 });

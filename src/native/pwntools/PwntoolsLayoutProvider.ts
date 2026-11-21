@@ -1,3 +1,4 @@
+import type { HostPlatform } from "../../platform/HostPlatform.js";
 import {
   binaryLayoutPayloadSchema,
   binaryLayoutSchema,
@@ -6,9 +7,9 @@ import {
 } from "../../domain/native/binaryLayout.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import type { BinaryLayoutPort } from "../../application/binaryDiagnostics/BinaryLayoutPort.js";
+import type { BinaryLayoutPort } from "../../ports/binaryDiagnostics/BinaryLayoutPort.js";
 import type { z } from "zod";
 
 /** ELF-specific projection around the shared owned pwntools decoder boundary. */
@@ -26,6 +27,7 @@ export class PwntoolsLayoutProvider
     createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-elf-layout-" }),
+    host?: HostPlatform,
   ) {
     super(
       {
@@ -69,6 +71,7 @@ export class PwntoolsLayoutProvider
       environment,
       launcher,
       createRuntime,
+      host,
     );
   }
 }

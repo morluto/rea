@@ -1,35 +1,9 @@
+import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import {
   HOST_RESTRICTED_FEATURES,
-  type AvailabilityPolicy,
   type HostRestrictedFeature,
-} from "../application/CapabilityInventory.js";
-import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
-import { platform } from "node:process";
-
-export interface SessionAvailabilityDefaults {
-  readonly optionalProviderLoadFailures?:
-    | OptionalProviderLoadFailures
-    | undefined;
-  readonly hostUnsupported?: AvailabilityPolicy["hostUnsupported"];
-  readonly optionalFeatures?: Pick<
-    AvailabilityPolicy,
-    | "packetCaptureEnabled"
-    | "signalRecordingEnabled"
-    | "wasmArtifactEnabled"
-    | "evmInterfaceEnabled"
-    | "browserObservationEnabled"
-    | "browserScenarioEnabled"
-    | "electronObservationEnabled"
-    | "electronAutomationEnabled"
-    | "v8InspectorObservationEnabled"
-    | "javascriptRecoveryEnabled"
-    | "webModuleResolutionEnabled"
-    | "binaryLayoutEnabled"
-    | "recordedCrashEnabled"
-    | "firmwareInspectionEnabled"
-    | "firmwareExtractionEnabled"
-  >;
-}
+} from "../contracts/toolAvailability.js";
+import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
 
 /** Either the caller or the observed host can mark an integration unsupported. */
 const combineHostUnsupported = (
@@ -46,7 +20,9 @@ const combineHostUnsupported = (
 /** Select configured availability reporting or the target-free defaults. */
 export const sessionAvailabilityPolicy = (
   configured: (() => AvailabilityPolicy) | undefined,
-  defaults: SessionAvailabilityDefaults,
+  defaults: CapabilityAvailabilityFacts,
+  /** The host process capture plans for and runs on. */
+  platform: NodeJS.Platform,
 ): (() => AvailabilityPolicy) => {
   const policy =
     configured ??
@@ -93,6 +69,11 @@ export const sessionAvailabilityPolicy = (
         ? {}
         : {
             optionalProviderLoadFailures: defaults.optionalProviderLoadFailures,
+          }),
+      ...(defaults.commandProviderFailures === undefined
+        ? {}
+        : {
+            commandProviderFailures: defaults.commandProviderFailures,
           }),
       ...(defaults.hostUnsupported === undefined
         ? {}

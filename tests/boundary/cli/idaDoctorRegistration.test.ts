@@ -15,7 +15,6 @@ cliTest.skipIf(process.platform === "win32")(
     const result = await cli.run({
       arguments: ["doctor", "--provider", "ida", "--json"],
       environment: { HOME: root, REA_IDA_MCP_CONFIG: registration },
-      timeoutMs: 10_000,
     });
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.json).toMatchObject({
@@ -60,11 +59,10 @@ cliTest.skipIf(process.platform !== "darwin").for([true, false])(
       }),
     );
     const registrationBytes = await readFile(registration);
-    const before = await readdir(physical);
+    const before = (await readdir(physical)).sort();
     const result = await cli.run({
       arguments: ["doctor", "--provider", "ida", "--json"],
       environment: { HOME: root, REA_IDA_MCP_CONFIG: registration },
-      timeoutMs: 10_000,
     });
     expect(result.exitCode, result.stderr).toBe(usable ? 0 : 1);
     expect(result.json).toMatchObject({
@@ -85,7 +83,7 @@ cliTest.skipIf(process.platform !== "darwin").for([true, false])(
     expect(
       Buffer.compare(await readFile(registration), registrationBytes),
     ).toBe(0);
-    expect(await readdir(physical)).toEqual(before);
+    expect((await readdir(physical)).sort()).toEqual(before);
     if (usable) {
       expect(await readdir(parent)).toEqual([]);
       expect(await readFile(lexical, "utf8")).toBe("lexical parent is a file");
@@ -119,9 +117,28 @@ cliTest.for([
     },
     constraint: "workspaceRoot must be absolute",
   },
+  ...[0, 2_147_483_648, 1.5, "registration-secret"].map((timeoutMs) => ({
+    name: `invalid timeout ${String(timeoutMs)}`,
+    registration: { command: "provider-must-not-launch", timeoutMs },
+    constraint:
+      "timeoutMs must be an integer from 1 to 2147483647 milliseconds",
+  })),
+  ...[1, 2_147_483_647].map((timeoutMs) => ({
+    name: `valid timeout ${String(timeoutMs)}`,
+    registration: {
+      command: "provider-must-not-launch",
+      protocol: "native",
+      timeoutMs,
+    },
+    constraint: undefined,
+  })),
   {
     name: "valid registration",
-    registration: { command: "provider-must-not-launch", args: [] },
+    registration: {
+      command: "provider-must-not-launch",
+      args: [],
+      protocol: "native",
+    },
     constraint: undefined,
   },
 ] as const)(
@@ -133,7 +150,6 @@ cliTest.for([
     const result = await cli.run({
       arguments: ["doctor", "--provider", "ida", "--json"],
       environment: { HOME: root, REA_IDA_MCP_CONFIG: path },
-      timeoutMs: 10_000,
     });
     expect(result.exitCode, result.stderr).toBe(
       constraint === undefined ? 0 : 1,
@@ -156,5 +172,35 @@ cliTest.for([
       ]),
     });
     expect(result.stdout).not.toContain("registration-secret");
+    if (constraint?.startsWith("timeoutMs") === true) {
+      const providers = await cli.run({
+        arguments: ["providers", "--json"],
+        environment: { HOME: root, REA_IDA_MCP_CONFIG: path },
+      });
+      expect(providers.exitCode, providers.stderr).toBe(0);
+      expect(providers.json).toMatchObject({
+        analysis_provider_candidates: expect.arrayContaining([
+          expect.objectContaining({
+            provider: expect.objectContaining({ id: "ida" }),
+            availability: expect.objectContaining({
+              status: "unavailable",
+              code: "open_options_invalid",
+              reason: expect.stringContaining(constraint),
+              diagnostics: expect.objectContaining({
+                configuration_details: expect.objectContaining({
+                  settings: expect.arrayContaining([
+                    expect.objectContaining({
+                      setting: "REA_IDA_MCP_CONFIG",
+                      constraint: expect.stringContaining(constraint),
+                    }),
+                  ]),
+                }),
+              }),
+            }),
+          }),
+        ]),
+      });
+      expect(providers.stdout).not.toContain("registration-secret");
+    }
   },
 );

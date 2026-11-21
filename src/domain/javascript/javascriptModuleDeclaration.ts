@@ -16,6 +16,10 @@ export const isErasedJavaScriptDeclaration = (node: t.Node): boolean =>
 export const isUnmodeledJavaScriptRuntimeScope = (node: t.Node): boolean =>
   t.isTSModuleDeclaration(node) || t.isTSEnumDeclaration(node);
 
+/** Compiler options determine whether an inline type-only declaration retains a side effect. */
+export const TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION =
+  "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.";
+
 /** Whether TypeScript explicitly erases this entire import declaration. */
 export const isTypeOnlyImportDeclaration = (
   node: t.ImportDeclaration,
@@ -29,6 +33,17 @@ export const isTypeOnlyExportDeclaration = (
   (t.isExportNamedDeclaration(node) &&
     node.declaration != null &&
     isErasedJavaScriptDeclaration(node.declaration));
+
+/** Runtime static module source, shared by source and captured-script consumers. */
+export const semanticStaticModuleSource = (
+  node: t.Node,
+): t.StringLiteral | null => {
+  if (t.isImportDeclaration(node))
+    return isTypeOnlyImportDeclaration(node) ? null : node.source;
+  if (t.isExportAllDeclaration(node) || t.isExportNamedDeclaration(node))
+    return isTypeOnlyExportDeclaration(node) ? null : (node.source ?? null);
+  return null;
+};
 
 /**
  * Runtime external-module target for a value import-equals declaration;
@@ -68,7 +83,8 @@ export const semanticRuntimeExportValueSources = (
   const values: t.Node[] = [];
   if (t.isVariableDeclaration(node.declaration))
     for (const declaration of node.declaration.declarations)
-      values.push(...semanticWriteTargets(declaration.id));
+      for (const target of semanticWriteTargets(declaration.id))
+        values.push(target);
   else if (
     (t.isFunctionDeclaration(node.declaration) ||
       t.isClassDeclaration(node.declaration)) &&

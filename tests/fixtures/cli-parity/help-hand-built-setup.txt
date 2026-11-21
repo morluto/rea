@@ -1,0 +1,38 @@
+$ rea setup --help
+exit: 0
+--- stdout
+rea setup — Configure agent integrations and optional analysis providers
+
+Usage: rea setup [options]
+
+Options:
+  --yes, -y                               Approve user-owned setup actions without prompting
+  --install-hopper                        Also approve Hopper installation with --yes
+  --desktop-build                         Prepare this host for desktop builds: pack REA's build-computer runtime and record the build settings in the selected registrations
+  --install-agentenv                      With --desktop-build, also install the agentenv-framework release bundles target with uv
+  --client <array>                        Agent integration to configure; repeat for multiple agents
+  --skill-client <array>                  Existing client skill destination to update; repeatable
+  --tool-families <string>                Comma-separated tool families this registration advertises; omit to preserve the saved selection, or advertise every tool if none is saved. To restore every tool, remove REA_MCP_TOOL_FAMILIES from the client's registration and restart the client.
+  --tool-catalog-profile <full|hot-cold>  MCP catalog: full advertises every in-scope tool; hot-cold loads tools on demand and requires client catalog refresh. Omit to preserve the saved profile, or use full if none is saved. Restart the client after changing it.
+  --all-detected                          Configure every detected supported agent
+  --skill                                 Override the bundled skill included with agent integrations
+  --dry-run                               Print the resolved plan without applying it
+  --accessible                            Use sequential accessible setup prompts
+
+Custom Global Options:
+  --timings  Write measured command timing to stderr.
+
+Global Options:
+  --filter-output <keys>                      Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format
+  --full-output                               Show full output envelope
+  --help                                      Show help
+  --json                                      Shorthand for --format json
+  --llms, --llms-full                         Print LLM-readable manifest
+  --schema                                    Show JSON Schema for command
+  --token-count                               Print token count of output (instead of output)
+  --token-limit <n>                           Limit output to n tokens
+  --token-offset <n>                          Skip first n tokens of output
+<end>
+--- stderr
+<end>

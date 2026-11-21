@@ -1,19 +1,21 @@
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
+import * as analysisViewService from "../../src/application/analysisView/AnalysisViewService.js";
 import * as evidenceInputResolver from "../../src/application/EvidenceInputResolver.js";
 import { WasmArtifactService } from "../../src/application/wasm/WasmArtifactService.js";
 import { registerAnalysisViewCommands } from "../../src/cli/analysisViewCommands.js";
 import { registerCutterCommands } from "../../src/cli/cutterCommands.js";
 import { registerWasmCommands } from "../../src/cli/wasmCommands.js";
 import { wasmArtifactModule } from "../../src/composition/wasm.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { CutterBridgeService } from "../../src/cutter/CutterBridgeService.js";
 import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
+import { cutterDiscoveryLimitations } from "../../src/domain/cutterDiscovery.js";
 import * as analysisView from "../../src/domain/analysisView/analysisView.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
@@ -72,6 +74,7 @@ const cutterDiscoveryFixture = () =>
         current_file: "C:\\Caller files\\token=literal%2F.bin",
         cutter_version: "2.3.4",
         identity_status: "partial",
+        bridge_source: "unknown",
       },
       {
         session_id: "00000000-0000-4000-8000-000000000002",
@@ -80,11 +83,13 @@ const cutterDiscoveryFixture = () =>
         current_file: null,
         cutter_version: null,
         identity_status: "partial",
+        bridge_source: "unknown",
       },
     ],
     bridge_directory: "/caller/Cutter bridge/token=literal%2F/证据",
     discovery_status: "sessions_found",
     bridge_directory_security: "unverified_platform_acl",
+    limitations: cutterDiscoveryLimitations("sessions_found"),
   });
 
 const finalCloseGate = () => {
@@ -155,9 +160,7 @@ it.each([
         closed = true;
         if (failsCleanup) throw cleanup;
       });
-    const cli = Cli.create("cutter-discovery-finalization-test", {
-      sync: false,
-    });
+    const cli = createCommandCli();
     registerCutterCommands(cli, silentLogger, {});
     let output = "";
     let settled = false;
@@ -281,7 +284,7 @@ it.each([
       },
     });
     vi.spyOn(wasmArtifactModule, "create").mockReturnValue(service);
-    const cli = Cli.create("finalization-test", { sync: false });
+    const cli = createCommandCli();
     registerWasmCommands(cli, silentLogger, {});
     let output = "";
     const previousExitCode = process.exitCode;
@@ -330,6 +333,43 @@ it.each([
     }
   },
 );
+
+const referenceViewEvidence = async (
+  request: Parameters<typeof analysisViewService.inspectAnalysisView>[0],
+  evidenceBundlePath: string,
+  phase: string,
+) => {
+  if (phase !== "projection") return undefined;
+  const result = await analysisViewService.inspectAnalysisView(
+    request,
+    undefined,
+    { evidenceBundlePath },
+  );
+  if (!result.ok) throw new Error("Expected completed reference Evidence");
+  return result.value;
+};
+
+type PreparedView = ReturnType<
+  typeof analysisView.prepareAnalysisViewProjection
+>;
+
+const expectRetainedProjection = (
+  observation: unknown,
+  reference: Awaited<ReturnType<typeof referenceViewEvidence>>,
+  projected: ReturnType<PreparedView["project"]> | undefined,
+  parent: ReturnType<typeof analysisViewLayoutEvidence>,
+) => {
+  if (!projected?.ok || reference === undefined)
+    throw new Error("Expected a completed page and reference Evidence");
+  const partial = parseEvidence(observation);
+  expect(partial).toEqual(reference);
+  expect(partial.normalized_result).toEqual(projected.value);
+  expect(partial).toMatchObject({
+    operation: "inspect_analysis_view",
+    evidence_links: [parent.evidence_id],
+    subject: parent.subject,
+  });
+};
 
 it.each([
   ["bundle", "control", "close"],
@@ -399,13 +439,17 @@ it.each([
         });
       });
     };
+    const expectedProjection = await referenceViewEvidence(
+      request,
+      path,
+      phase,
+    );
     // Intercept the prepared owner, whose project method keeps its admission
     // budget and calls the domain projector lexically rather than by export.
     const originalPrepare = analysisView.prepareAnalysisViewProjection;
-    type Projection = ReturnType<typeof originalPrepare>;
-    let projected: ReturnType<Projection["project"]> | undefined;
+    let projected: ReturnType<PreparedView["project"]> | undefined;
     const project = vi
-      .fn<(parent: Parameters<Projection["project"]>[0]) => void>()
+      .fn<(parent: Parameters<PreparedView["project"]>[0]) => void>()
       .mockName("preparedProjection.project");
     vi.spyOn(analysisView, "prepareAnalysisViewProjection").mockImplementation(
       (...args) => {
@@ -421,13 +465,13 @@ it.each([
       },
     );
     const originalResolve = evidenceInputResolver.resolveEvidenceInput;
-    vi.spyOn(evidenceInputResolver, "resolveEvidenceInput").mockImplementation(
-      (...args) => {
+    const resolve = vi
+      .spyOn(evidenceInputResolver, "resolveEvidenceInput")
+      .mockImplementation((...args) => {
         const resolved = originalResolve(...args);
         if (phase === "source-resolution-failure") queueInterrupt();
         return resolved;
-      },
-    );
+      });
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
@@ -437,7 +481,7 @@ it.each([
         if (signal !== "control" && phase === "close") interrupt();
         if (phase.startsWith("authentication")) queueInterrupt();
       });
-    const cli = Cli.create("analysis-view-finalization-test", { sync: false });
+    const cli = createCommandCli();
     registerAnalysisViewCommands(cli, silentLogger);
     let output = "";
     const previousExitCode = process.exitCode;
@@ -477,15 +521,17 @@ it.each([
       expect(project).toHaveBeenCalledTimes(
         Number(signal === "control" || phase === "projection"),
       );
+      if (phase.startsWith("authentication"))
+        expect(resolve).not.toHaveBeenCalled();
+      if (phase === "projection" || phase === "source-resolution-failure")
+        expect(resolve).toHaveBeenCalledOnce();
       if (phase === "projection") {
-        if (!projected?.ok) throw new Error("Expected a completed page");
-        const partial = parseEvidence(result.details.partial_observation);
-        expect(partial.normalized_result).toEqual(projected.value);
-        expect(partial).toMatchObject({
-          operation: "inspect_analysis_view",
-          evidence_links: [parent.evidence_id],
-          subject: parent.subject,
-        });
+        expectRetainedProjection(
+          result.details.partial_observation,
+          expectedProjection,
+          projected,
+          parent,
+        );
       }
     } finally {
       await pendingInterrupt;

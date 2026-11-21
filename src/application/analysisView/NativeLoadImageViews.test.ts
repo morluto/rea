@@ -1,9 +1,7 @@
 import { expect, it } from "vitest";
 import { createEvidence } from "../../domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import { projectNativeLoadImageView } from "../../domain/analysisView/nativeLoadImageView.js";
 import type { NativeLoadImage } from "../../domain/native/nativeLoadImage.js";
 import {
@@ -26,6 +24,7 @@ const source = (): Extract<NativeLoadImage, { status: "unsupported" }> => ({
         offset: null,
         status: "APPLIED",
         type: 8,
+        symbol: null,
         values: [16],
         original_bytes_hex: "0000",
         memory_bytes_hex: "1000",
@@ -36,6 +35,7 @@ const source = (): Extract<NativeLoadImage, { status: "unsupported" }> => ({
         offset: null,
         status: "UNSUPPORTED",
         type: 9,
+        symbol: null,
         values: [],
         original_bytes_hex: null,
         memory_bytes_hex: null,
@@ -66,6 +66,33 @@ const view = async (report: NativeLoadImage, request: unknown) => {
   if (!result.ok) throw result.error;
   return analysisViewResultSchema.parse(result.value.normalized_result);
 };
+
+it("pages recorded and absent relocation symbols", async () => {
+  const report = source();
+  report.observations.relocations[0]!.symbol = "external_symbol";
+  report.observations.relocations[1]!.symbol = null;
+  const request = { kind: "native-load-image", collection: "relocations" };
+  const current = await view(report, request);
+  if (current.kind !== "native-load-image") throw new Error("Expected page");
+  if (current.items.collection !== "relocations")
+    throw new Error("Expected relocations");
+  expect(current.items.rows).toMatchObject([
+    { record: { symbol: "external_symbol" } },
+    { record: { symbol: null } },
+  ]);
+
+  report.observations.relocations[1]!.symbol = "";
+  const emptyName = await view(report, request);
+  if (emptyName.kind !== "native-load-image") throw new Error("Expected page");
+  if (emptyName.items.collection !== "relocations")
+    throw new Error("Expected relocations");
+  expect(emptyName.items.rows?.[1]?.record).toMatchObject({ symbol: "" });
+
+  delete (report.observations.relocations[0] as { symbol?: unknown }).symbol;
+  await expect(view(report, request)).rejects.toMatchObject({
+    _tag: "AnalysisInputError",
+  });
+});
 
 it("summarizes measured ELF facts without upgrading unsupported verification", async () => {
   const report = source();
@@ -112,6 +139,7 @@ it("preserves same-address alternatives, padding, nulls and byte facts over page
         "offset",
         "status",
         "type",
+        "symbol",
         "values",
         "original_bytes_hex",
         "memory_bytes_hex",
@@ -176,6 +204,13 @@ it.each(["checks", "sections"])(
       await view(source(), { kind: "native-load-image", collection }),
     ).toMatchObject({
       items: { collection, rows: null },
+      coverage: {
+        status: "unavailable",
+        examined: 0,
+        total: null,
+        next_offset: null,
+        exhausted: false,
+      },
       unknowns: expect.arrayContaining([
         "Null collection counts or rows mean not recorded or not applicable, not observed absence.",
       ]),
@@ -261,6 +296,7 @@ it("keeps byte and potentially large comparison payloads opt-in while retaining 
     offset: null,
     status: "APPLIED",
     type: 8,
+    symbol: null,
     values: [16],
   });
   const report = nativeDosLoadImageFixture();
@@ -302,6 +338,7 @@ it("rejects collection-inapplicable fields and malformed sibling facts even for 
   ).toBe(false);
   const report = source();
   const parent = {
+    predicateType: "rea.analysis",
     evidenceId: "ev_" + "b".repeat(64),
     operation: "inspect_native_load_image",
     normalizedResult: report,

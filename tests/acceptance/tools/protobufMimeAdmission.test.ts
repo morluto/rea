@@ -30,7 +30,7 @@ cliTest(
       const path = join(root, `${index}.har`);
       const original = protobufHar(body, mime);
       await writeFile(path, original);
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
           path,
@@ -109,7 +109,7 @@ cliTest(
     await writeFile(path, original);
     const call = await cli.sharedMcpCall!();
     for (const framing of ["auto", "raw"] as const) {
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
           path,
@@ -233,7 +233,7 @@ cliTest(
     const mime = 'application/protobuf;encoding="binary';
     const original = protobufHar(body, mime);
     await writeFile(path, original);
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
         path,

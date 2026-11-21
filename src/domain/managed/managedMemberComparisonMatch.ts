@@ -12,10 +12,7 @@ import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
 } from "./managedMemberComparison.js";
-import {
-  comparableSides,
-  signatureIdentity,
-} from "./managedMemberSignatureIdentity.js";
+import { signatureIdentity } from "./managedMemberSignatureIdentity.js";
 type Method = ManagedMemberInspection["methods"][number];
 type Field = ManagedMemberInspection["fields"][number];
 
@@ -49,14 +46,34 @@ interface Ambiguous<Item> {
   readonly basis: ConcreteMatchBasis;
 }
 
-/** A declared type: a historical bare name or a tagged observed nominal digest. */
-type DeclaredName = string | string[] | null;
-type DeclaredNameOf = (item: Method | Field) => DeclaredName;
-const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
+/** A declared type's tagged observed nominal digest; null when unresolved. */
+type DeclaredName = readonly ["nominal-name-sha256", string] | null;
+const keyIdentity = (
+  item: Method | Field,
+  declaringType: DeclaredName,
+  kind: "method" | "field",
+) => {
+  const signatureId = signatureIdentity(item.signature);
+  return {
+    identity: digestCanonicalValue(
+      [declaringType, item.name],
+      "Managed comparison",
+    ),
+    identityUnavailable: declaringType === null,
+    signatureId,
+    signatureKey:
+      declaringType === null
+        ? null
+        : digestCanonicalValue(
+            [`${kind}-signature`, declaringType, item.name, signatureId],
+            "Managed comparison",
+          ),
+  };
+};
+
+const keyMethod = (item: Method, declared: DeclaredName): Keyed<Method> => ({
   item,
-  identity: identityOf({ declaring_type: declared(item), name: item.name }),
-  identityUnavailable: declared(item) === null,
-  signatureId: signatureIdentity(item.signature),
+  ...keyIdentity(item, declared, "method"),
   exactKey:
     item.body.status === "present" &&
     item.body.il_sha256 !== null &&
@@ -71,20 +88,6 @@ const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
           "Managed comparison",
         )
       : null,
-  // The blob, with type operands named, is the exact signature; decoding
-  // only gates the shape keys.
-  signatureKey:
-    declared(item) === null
-      ? null
-      : digestCanonicalValue(
-          [
-            "method-signature",
-            declared(item),
-            item.name,
-            signatureIdentity(item.signature),
-          ],
-          "Managed comparison",
-        ),
   structuralKey:
     item.signature.parse_status === "decoded" && item.body.status === "present"
       ? digestCanonicalValue(
@@ -116,11 +119,9 @@ const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
       : null,
 });
 
-const keyField = (item: Field, declared: DeclaredNameOf): Keyed<Field> => ({
+const keyField = (item: Field, declared: DeclaredName): Keyed<Field> => ({
   item,
-  identity: identityOf({ declaring_type: declared(item), name: item.name }),
-  identityUnavailable: declared(item) === null,
-  signatureId: signatureIdentity(item.signature),
+  ...keyIdentity(item, declared, "field"),
   exactKey:
     item.signature.parse_status === "decoded"
       ? digestCanonicalValue(
@@ -128,29 +129,9 @@ const keyField = (item: Field, declared: DeclaredNameOf): Keyed<Field> => ({
           "Managed comparison",
         )
       : null,
-  // Only an undecoded field reaches this round: a decoded field with the
-  // same signature already met its counterpart in the exact round.
-  signatureKey:
-    declared(item) === null
-      ? null
-      : digestCanonicalValue(
-          [
-            "field-signature",
-            declared(item),
-            item.name,
-            signatureIdentity(item.signature),
-          ],
-          "Managed comparison",
-        ),
-  structuralKey: digestCanonicalValue(
-    [
-      "field-structural",
-      item.signature.kind,
-      item.signature.field_type,
-      item.flags,
-    ],
-    "Managed comparison",
-  ),
+  // Field matching has no structural round: flags/type display strings do
+  // not establish a field signature identity.
+  structuralKey: null,
 });
 
 const matchMethods = (
@@ -242,15 +223,6 @@ interface MatchByKeysInput<Item> {
   readonly right: readonly Keyed<Item>[];
   readonly rounds: readonly MatchRound<Item>[];
 }
-
-export const identityOf = ({
-  declaring_type,
-  name,
-}: {
-  readonly declaring_type: DeclaredName;
-  readonly name: string;
-}): string =>
-  digestCanonicalValue([declaring_type, name], "Managed comparison");
 
 /** Narrow a key to members of one declared type and name. */
 const declaredAs =
@@ -529,62 +501,61 @@ const matchObserved = <Item extends Declared>(
 };
 
 export const keyMembers = (
-  observedLeft: ManagedMemberComparisonSide,
-  observedRight: ManagedMemberComparisonSide,
+  left: ManagedMemberComparisonSide,
+  right: ManagedMemberComparisonSide,
   scope: ManagedComparisonScope,
 ): {
   readonly methodMatches: ReturnType<typeof matchMethods>;
   readonly fieldMatches: ReturnType<typeof matchFields>;
 } => {
-  const [left, right] = comparableSides(observedLeft, observedRight);
-  const modern =
-    left.result.nesting_read !== null && right.result.nesting_read !== null;
   const declared = (
     inspection: ManagedMemberInspection,
-    names: ReadonlyMap<string, string | null>,
-  ): DeclaredNameOf => {
+    side: ManagedComparisonScope["left"],
+  ): ((item: Method | Field) => DeclaredName) => {
     return (item) => {
-      if (inspection.nesting_read === false) return null;
-      const digest = names.get(item.declaring_type_token ?? "");
-      // A historical counterpart cannot repair an observed current name gap.
-      if (inspection.nesting_read !== null && digest == null) return null;
-      // Historical observations retain their explicitly limited bare-name mode.
-      if (!modern) return item.declaring_type;
+      if (!inspection.nesting_read || side.emptyMemberNames.has(item))
+        return null;
+      const digest = side.names.get(item.declaring_type_token ?? "");
       return digest == null ? null : ["nominal-name-sha256", digest];
     };
   };
-  const declaredLeft = declared(left.result, scope.left.names);
-  const declaredRight = declared(right.result, scope.right.names);
+  const declaredLeft = declared(left.result, scope.left);
+  const declaredRight = declared(right.result, scope.right);
+  const matchable = {
+    inLeft: (item: Method | Field) =>
+      !scope.right.emptyMemberNames.has(item) && scope.inLeft(item),
+    inRight: (item: Method | Field) =>
+      !scope.left.emptyMemberNames.has(item) && scope.inRight(item),
+  };
   return {
     methodMatches: matchObserved(
       left.result.methods,
       right.result.methods,
-      scope,
+      matchable,
       (a, b) =>
         matchMethods(
           a,
           b,
-          left.result.metadata.status === "complete" &&
-            right.result.metadata.status === "complete" &&
+          scope.left.metadataComplete &&
+            scope.right.metadataComplete &&
             hasCompleteMethodRows(left.result) &&
             hasCompleteMethodRows(right.result),
         ),
-      (item) => keyMethod(item, declaredLeft),
-      (item) => keyMethod(item, declaredRight),
+      (item) => keyMethod(item, declaredLeft(item)),
+      (item) => keyMethod(item, declaredRight(item)),
     ),
     fieldMatches: matchObserved(
       left.result.fields,
       right.result.fields,
-      scope,
+      matchable,
       (a, b) =>
         matchFields(
           a,
           b,
-          left.result.metadata.status === "complete" &&
-            right.result.metadata.status === "complete",
+          scope.left.metadataComplete && scope.right.metadataComplete,
         ),
-      (item) => keyField(item, declaredLeft),
-      (item) => keyField(item, declaredRight),
+      (item) => keyField(item, declaredLeft(item)),
+      (item) => keyField(item, declaredRight(item)),
     ),
   };
 };

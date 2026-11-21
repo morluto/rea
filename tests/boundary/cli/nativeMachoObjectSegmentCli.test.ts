@@ -20,11 +20,13 @@ describe.skipIf(process.platform !== "darwin")(
         const source = join(directory, "qa.c");
         const object = join(directory, "qa.o");
         await writeFile(source, "int qa(void) { return 7; }\n");
-        const compiled = await processes.run(
-          "/usr/bin/xcrun",
-          ["clang", "-c", source, "-o", object],
-          { timeoutMs: 30_000 },
-        );
+        const compiled = await processes.run("/usr/bin/xcrun", [
+          "clang",
+          "-c",
+          source,
+          "-o",
+          object,
+        ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         const result = await cli.run({
           arguments: ["inspect-macho", object, "--json"],
@@ -32,7 +34,10 @@ describe.skipIf(process.platform !== "darwin")(
         });
         expect(result.exitCode, result.stdout + result.stderr).toBe(0);
         const inspected = evidenceSchema.parse(result.json).normalized_result;
-        expect(inspected.load_commands.items[0]?.fields.segname).toBe("");
+        const segment = inspected.load_commands.items.find(
+          ({ kind }) => kind === "LC_SEGMENT_64" || kind === "LC_SEGMENT",
+        );
+        expect(segment?.fields["segname #1"]).toBe("");
         expect(inspected.segments).toMatchObject({
           items: [
             {

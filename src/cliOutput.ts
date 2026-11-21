@@ -1,14 +1,17 @@
-export {
-  normalizeCliArguments,
-  splitIncurBuiltinArguments,
-  type IncurBuiltinArgumentSplit,
-} from "./cliBuiltinArguments.js";
 import {
   declaredSensitiveValues,
-  splitIncurBuiltinArguments,
+  parseCliGlobalArguments,
+  VALUED_OUTPUT_FLAGS,
+  type CliGlobalArguments,
 } from "./cliBuiltinArguments.js";
 import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
 import { formatCliOutput } from "./cli/cliOutputFormatter.js";
+import {
+  parseOutputFilter,
+  type OutputFilterPath,
+  type OutputFilterError,
+} from "./cli/outputFilter.js";
+import type { Result } from "./domain/result.js";
 
 import { jsonOutputParts } from "./cli/jsonOutput.js";
 import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
@@ -24,19 +27,25 @@ const UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE =
   "Token windows cannot preserve structured output. Remove --token-limit/--token-offset and use --filter-output or command pagination.";
 
 type StructuredOutputFormat = "json" | "jsonl" | "yaml";
-/** Output formats Incur renders, in its documented order. */
-export const CLI_OUTPUT_FORMATS = [
+/** Formats that render a complete document, including target-free commands. */
+export const CLI_DOCUMENT_OUTPUT_FORMATS = [
   "toon",
   "json",
   "yaml",
   "md",
   "jsonl",
 ] as const;
+/** Delimited formats require an explicitly selected row collection. */
+export const CLI_OUTPUT_FORMATS = [
+  ...CLI_DOCUMENT_OUTPUT_FORMATS,
+  "csv",
+  "tsv",
+] as const;
 export type CliOutputFormat = (typeof CLI_OUTPUT_FORMATS)[number];
-const INCUR_OUTPUT_FORMATS: ReadonlySet<string> = new Set(CLI_OUTPUT_FORMATS);
+const CLI_OUTPUT_FORMAT_SET: ReadonlySet<string> = new Set(CLI_OUTPUT_FORMATS);
 
 const isCliOutputFormat = (value: string): value is CliOutputFormat =>
-  INCUR_OUTPUT_FORMATS.has(value);
+  CLI_OUTPUT_FORMAT_SET.has(value);
 
 /**
  * Render a document REA writes outside Incur's command pipeline. JSON follows
@@ -59,14 +68,20 @@ export const cliOutputValueRejection = (
   value: string,
 ): string | undefined => {
   if (flag === "--format")
-    return INCUR_OUTPUT_FORMATS.has(value)
+    return CLI_OUTPUT_FORMAT_SET.has(value)
       ? undefined
-      : `Invalid format: "${value}". Expected one of: ${[...INCUR_OUTPUT_FORMATS].join(", ")}`;
+      : `Invalid format: "${value}". Expected one of: ${[...CLI_OUTPUT_FORMAT_SET].join(", ")}`;
+  if (flag === "--columns") {
+    const columns = value.split(",").map((column) => column.trim());
+    return columns.length > 0 &&
+      columns.every((column) => column.length > 0) &&
+      new Set(columns).size === columns.length
+      ? undefined
+      : `Invalid value for --columns: "${value}". Expected unique, nonempty comma-separated column names.`;
+  }
   if (
     (flag === "--token-limit" || flag === "--token-offset") &&
-    (!Number.isSafeInteger(Number(value)) ||
-      Number(value) < 0 ||
-      value.trim() === "")
+    (!/^[0-9]+$/u.test(value) || !Number.isSafeInteger(Number(value)))
   )
     return `Invalid value for ${flag}: "${value}". Expected a nonnegative safe integer.`;
   return undefined;
@@ -87,7 +102,12 @@ export type CliOutputArgumentValidation =
 
 interface CliOutputControls {
   readonly filterOutput: string | undefined;
-  readonly format: string;
+  /** `--filter-output` parsed once; a parse failure fails validation. */
+  readonly filterPaths:
+    | Result<readonly OutputFilterPath[], OutputFilterError>
+    | undefined;
+  readonly columns: readonly string[] | undefined;
+  readonly format: CliOutputFormat;
   /** Whether `--json` or `--format` selected the format, rather than the default. */
   readonly formatExplicit: boolean;
   readonly fullOutput: boolean;
@@ -106,142 +126,146 @@ export interface ParsedCliOutputArguments extends CliOutputControls {
   readonly versionReportFormat: CliOutputFormat | undefined;
 }
 
-/** Read effective Incur output controls at the executable boundary. */
+/** Read effective output controls from the caller's argv. */
 export const parseCliOutputArguments = (
   arguments_: readonly string[],
+): ParsedCliOutputArguments =>
+  readCliOutputArguments(parseCliGlobalArguments(arguments_));
+
+/**
+ * Read effective output controls from one invocation's global arguments. The
+ * global split decides which tokens are flag values; this reader interprets
+ * them, and a valued flag left among the command tokens is missing its value.
+ */
+export const readCliOutputArguments = (
+  global: CliGlobalArguments,
 ): ParsedCliOutputArguments => {
-  let format: string = "toon";
-  let rootVersion = false;
+  const tokens = global.arguments;
+  const values = new Set(global.outputValues.map(({ index }) => index));
+  const timing = new Set(global.timingIndices);
+  const rootVersion = global.flags.has("--version");
+  let format: CliOutputFormat = "toon";
   let versionEligible = true;
   let formatExplicit = false;
   let filterOutput: string | undefined;
+  let columns: readonly string[] | undefined;
   let fullOutput = false;
   let missingValue: string | undefined;
   let invalidValue: string | undefined;
   let tokenCount = false;
   let tokenLimit: number | undefined;
   let tokenOffset: number | undefined;
-  const parsed = (): ParsedCliOutputArguments => {
-    const parseError = invalidValue !== undefined;
-    const controls: CliOutputControls = {
-      filterOutput,
-      format,
-      formatExplicit,
-      fullOutput,
-      missingValue,
-      invalidValue:
-        invalidValue === undefined
-          ? undefined
-          : redactExplicitText(
-              invalidValue,
-              declaredSensitiveValues(
-                splitIncurBuiltinArguments(arguments_).command,
-              ),
-            ),
-      tokenCount,
-      tokenWindow:
-        !parseError && (tokenLimit !== undefined || tokenOffset !== undefined),
-      tokenLimit: parseError ? undefined : tokenLimit,
-      tokenOffset: parseError ? undefined : tokenOffset,
-    };
-    return {
-      ...controls,
-      validation: validateCliOutputControls(controls),
-      versionReportFormat:
-        rootVersion &&
-        versionEligible &&
-        formatExplicit &&
-        !parseError &&
-        missingValue === undefined &&
-        isCliOutputFormat(format)
-          ? format
-          : undefined,
-    };
-  };
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const argument = tokens[index]!;
+    // The global split has already consumed output values and timing flags.
+    if (values.has(index) || timing.has(index)) continue;
     // Only these flags can accompany a formatted root version request.
-    // Valued output flags consume their data below before the next iteration.
-    if (argument === "--version") {
-      const next = arguments_[index + 1];
-      if (next === undefined || next.startsWith("-")) rootVersion = true;
-      else versionEligible = false;
-    } else if (argument !== "--json" && argument !== "--format")
+    if (
+      argument !== "--version" &&
+      argument !== "--json" &&
+      argument !== "--format"
+    )
       versionEligible = false;
-    // Incur scans builtins across `--` and reads spaced value forms, which
-    // normalizeCliArguments has produced. Mirror those effective values.
     if (argument === "--json") {
       format = "json";
       formatExplicit = true;
       continue;
     }
-    if (argument === "--format") {
-      const value = arguments_[index + 1];
-      if (value) {
-        const rejection = cliOutputValueRejection(argument, value);
-        if (rejection !== undefined) invalidValue ??= rejection;
-        else {
-          format = value;
-          formatExplicit = true;
-        }
-        index += 1;
-      } else missingValue ??= argument;
-      continue;
-    }
-    if (argument === "--filter-output") {
-      if (arguments_[index + 1]) {
-        filterOutput = arguments_[index + 1];
-        index += 1;
-      } else missingValue ??= argument;
-      continue;
-    }
-    if (argument === "--token-limit" || argument === "--token-offset") {
-      const value = arguments_[index + 1];
-      if (value) {
-        const rejection = cliOutputValueRejection(argument, value);
-        if (rejection !== undefined) invalidValue ??= rejection;
-        else if (argument === "--token-limit") tokenLimit = Number(value);
-        else tokenOffset = Number(value);
-        index += 1;
-      } else missingValue ??= argument;
-      continue;
-    }
     if (argument === "--full-output") fullOutput = true;
     if (argument === "--token-count") tokenCount = true;
+    if (!VALUED_OUTPUT_FLAGS.has(argument)) continue;
+    const value = values.has(index + 1) ? tokens[index + 1]! : undefined;
+    if (value === undefined) {
+      missingValue ??= argument;
+      continue;
+    }
+    const rejection = cliOutputValueRejection(argument, value);
+    if (rejection !== undefined) {
+      invalidValue ??= rejection;
+      continue;
+    }
+    if (argument === "--format" && isCliOutputFormat(value)) {
+      format = value;
+      formatExplicit = true;
+    } else if (argument === "--filter-output") filterOutput = value;
+    else if (argument === "--columns")
+      columns = value.split(",").map((column) => column.trim());
+    else if (argument === "--token-limit") tokenLimit = Number(value);
+    else if (argument === "--token-offset") tokenOffset = Number(value);
   }
-  return parsed();
-};
-
-/** Reject slices that cannot advance within Incur's comma-delimited paths. */
-const hasUnclosedFilterSlice = (expression: string): boolean => {
-  let depth = 0;
-  let unclosed = false;
-  for (const character of expression) {
-    if (character === "[") {
-      depth += 1;
-      unclosed = true;
-    } else if (character === "]") {
-      depth -= 1;
-      // Incur consumes everything through the next closing bracket, including
-      // nested opening brackets. Do not impose a different filter grammar.
-      unclosed = false;
-    } else if (character === "," && depth === 0 && unclosed) return true;
-  }
-  return unclosed;
+  const parseError = invalidValue !== undefined;
+  const controls: CliOutputControls = {
+    filterOutput,
+    filterPaths:
+      filterOutput === undefined ? undefined : parseOutputFilter(filterOutput),
+    columns,
+    format,
+    formatExplicit,
+    fullOutput,
+    missingValue,
+    invalidValue:
+      invalidValue === undefined
+        ? undefined
+        : redactExplicitText(
+            invalidValue,
+            declaredSensitiveValues(global.command),
+          ),
+    tokenCount,
+    tokenWindow:
+      !parseError && (tokenLimit !== undefined || tokenOffset !== undefined),
+    tokenLimit: parseError ? undefined : tokenLimit,
+    tokenOffset: parseError ? undefined : tokenOffset,
+  };
+  return {
+    ...controls,
+    validation: validateCliOutputControls(controls, rootVersion, global),
+    versionReportFormat:
+      rootVersion &&
+      versionEligible &&
+      formatExplicit &&
+      !parseError &&
+      missingValue === undefined &&
+      format !== "csv" &&
+      format !== "tsv" &&
+      isCliOutputFormat(format)
+        ? format
+        : undefined,
+  };
 };
 
 /** Name a valued output flag that was given without a value. */
 export const missingCliOutputValueMessage = (flag: string): string =>
   `${flag} requires a value, as in ${flag} <value> or ${flag}=<value>.`;
 
+const discoveryRowFormatFlag = (
+  global: CliGlobalArguments,
+): "--llms" | "--llms-full" | "--schema" | undefined => {
+  const { command, flags } = global;
+  const help = flags.has("--help") || flags.has("-h");
+  if ((flags.has("--update") && !help) || flags.has("--mcp")) return undefined;
+  if (flags.has("--llms-full")) return "--llms-full";
+  if (flags.has("--llms")) return "--llms";
+  if (flags.has("--version") && !help) return undefined;
+  if (command.length === 0 || help) return undefined;
+  if (flags.has("--schema")) return "--schema";
+  return undefined;
+};
+
 /** Reject output controls that cannot safely produce a complete result. */
-const validateCliOutputControls = ({
-  filterOutput,
-  format,
-  missingValue,
-  invalidValue,
-  tokenWindow,
-}: CliOutputControls): CliOutputArgumentValidation => {
+const validateCliOutputControls = (
+  {
+    filterOutput,
+    filterPaths,
+    columns,
+    format,
+    missingValue,
+    invalidValue,
+    tokenWindow,
+    tokenCount,
+  }: CliOutputControls,
+  rootVersion: boolean,
+  global: CliGlobalArguments,
+): CliOutputArgumentValidation => {
   if (invalidValue !== undefined)
     return {
       ok: false,
@@ -249,13 +273,64 @@ const validateCliOutputControls = ({
       code: "INVALID_OUTPUT_VALUE",
       message: invalidValue,
     };
-  if (filterOutput !== undefined && hasUnclosedFilterSlice(filterOutput))
+  if (filterPaths?.ok === false)
     return {
       ok: false,
       format: format === "yaml" || format === "jsonl" ? format : "json",
       code: "INVALID_OUTPUT_FILTER",
       message:
-        "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output.",
+        filterPaths.error.kind === "unclosed_slice"
+          ? "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output."
+          : "The --filter-output expression has a slice with more than two bounds. Use [start,end].",
+    };
+  const delimited = format === "csv" || format === "tsv";
+  // Name missing delimited controls before their combination checks; preserve
+  // existing precedence for Incur's other output flags.
+  if (missingValue !== undefined && (delimited || missingValue === "--columns"))
+    return {
+      ok: false,
+      format: format === "yaml" || format === "jsonl" ? format : "json",
+      code: "MISSING_OUTPUT_VALUE",
+      message: missingCliOutputValueMessage(missingValue),
+    };
+  const discoveryFlag = delimited ? discoveryRowFormatFlag(global) : undefined;
+  if (delimited && discoveryFlag !== undefined)
+    return {
+      ok: false,
+      format: "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message: `${discoveryFlag} returns a complete document and does not support --format ${format}. Use --format json, yaml, md, toon, or jsonl; CSV/TSV output is available only for selected row collections.`,
+    };
+  if (delimited && rootVersion)
+    return {
+      ok: false,
+      format: "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message:
+        "CSV/TSV output is available only for selected row collections, not --version.",
+    };
+  if (delimited && (filterOutput === undefined || columns === undefined))
+    return {
+      ok: false,
+      format: "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message:
+        "CSV/TSV output requires --filter-output <row-array-path> and --columns <column,...>; nested Evidence is not flattened.",
+    };
+  if (!delimited && columns !== undefined)
+    return {
+      ok: false,
+      format: format === "yaml" || format === "jsonl" ? format : "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message: "--columns is available only with --format csv or --format tsv.",
+    };
+  if (delimited && (tokenWindow || tokenCount))
+    return {
+      ok: false,
+      format: "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message:
+        "Token counting and token windows cannot preserve CSV/TSV records or metadata. Remove --token-count/--token-limit/--token-offset.",
     };
   if (
     tokenWindow &&
@@ -294,9 +369,19 @@ export const renderEmptyFilteredCliOutput = ({
   return undefined;
 };
 
+/** A refusal reported as a structured document before any command runs. */
+export interface CliPreExecutionError {
+  readonly format: StructuredOutputFormat;
+  readonly code:
+    | Exclude<CliOutputArgumentValidation, { readonly ok: true }>["code"]
+    | "AMP_PROJECT_SCOPE_UNSUPPORTED"
+    | "CONFIGURATION_INVALID";
+  readonly message: string;
+}
+
 /** Render one complete structured error before command execution. */
 export const renderCliOutputArgumentError = (
-  error: Exclude<CliOutputArgumentValidation, { readonly ok: true }>,
+  error: CliPreExecutionError,
 ): string => {
   const value = {
     ok: false,

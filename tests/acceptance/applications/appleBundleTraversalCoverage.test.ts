@@ -53,6 +53,47 @@ const interfaceBuilderReports = async (cli: TestCli, app: string) => {
   }));
 };
 
+cliTest(
+  "discloses omitted malformed-archive diagnostics through CLI and MCP",
+  async ({ cli }) => {
+    const fixture = await bundle();
+    for (let index = 0; index < 17; index += 1)
+      await writeFile(
+        join(fixture.resources, `bad-${String(index).padStart(2, "0")}.nib`),
+        "not a plist",
+      );
+    for (const { evidence, report } of await interfaceBuilderReports(
+      cli,
+      fixture.app,
+    )) {
+      expect(report.documents).toHaveLength(1);
+      expect(report.graph.coverage).toContainEqual(
+        expect.objectContaining({
+          facet: "archive_decode",
+          status: "partial",
+          reason: "one_or_more_archives_invalid",
+          examined: 18,
+          omitted: 0,
+        }),
+      );
+      const omission = report.limitations.find((value) =>
+        value.includes("additional archive decode failure diagnostic(s)"),
+      );
+      expect(omission).toMatch(/\b1 additional\b/u);
+      expect(omission).toMatch(/\b16 paths\b/u);
+      expect(evidence.limitations).toContain(omission);
+      for (const limitations of [report.limitations, evidence.limitations]) {
+        const failures = limitations.find((value) =>
+          value.startsWith(
+            "Some Interface Builder archives could not be decoded:",
+          ),
+        );
+        expect(failures?.match(/bad-\d{2}\.nib/gu)).toHaveLength(16);
+      }
+    }
+  },
+);
+
 cliTest.skipIf(process.platform === "win32")(
   "reports symlinked nibs as unexamined while preserving healthy UI documents through CLI and MCP",
   async ({ cli }) => {

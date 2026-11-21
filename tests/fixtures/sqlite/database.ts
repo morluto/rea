@@ -12,7 +12,7 @@ export const SQLITE_NATIVE_LIMITS_AVAILABLE = (() => {
 })();
 
 /** Exact selected SQLite fixture with committed rows and optional live WAL. */
-export interface SqliteDatabaseFixture {
+interface SqliteDatabaseFixture {
   readonly path: string;
   readonly walPath: string;
   readonly quotedTable: string;

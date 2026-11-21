@@ -22,11 +22,57 @@ export const pckU64 = (value: bigint | number): Buffer => {
 const pad4 = (bytes: Buffer): Buffer =>
   Buffer.concat([bytes, Buffer.alloc((4 - (bytes.length % 4)) % 4)]);
 
+/** Godot 3.5 exporter layout: 84-byte header, no flags, absolute member offsets. */
+export const buildGodotPck1 = (
+  members: readonly GodotPckMember[],
+  options: { carrierBytes?: number; fileCount?: number } = {},
+): Buffer => {
+  const header = Buffer.alloc(84);
+  header.write("GDPC");
+  header.writeUInt32LE(1, 4);
+  header.writeUInt32LE(3, 8);
+  header.writeUInt32LE(5, 12);
+  const paths = members.map((member) => pad4(Buffer.from(member.path)));
+  const directoryEnd =
+    header.length +
+    4 +
+    paths.reduce((bytes, path) => bytes + 36 + path.length, 0);
+  const directoryFileEnd = (options.carrierBytes ?? 0) + directoryEnd;
+  const padding = (16 - (directoryFileEnd % 16)) % 16;
+  let dataOffset = directoryFileEnd + padding;
+  const data: Buffer[] = [];
+  const directory = members.flatMap((member, index) => {
+    const bytes = Buffer.from(member.data);
+    const path = paths[index]!;
+    const row = [
+      pckU32(path.length),
+      path,
+      pckU64(member.offset ?? BigInt(dataOffset)),
+      pckU64(member.size ?? BigInt(bytes.length)),
+      member.md5 ?? createHash("md5").update(bytes).digest(),
+    ];
+    const stored = Buffer.concat([
+      bytes,
+      Buffer.alloc((16 - (bytes.length % 16)) % 16),
+    ]);
+    data.push(stored);
+    dataOffset += stored.length;
+    return row;
+  });
+  return Buffer.concat([
+    header,
+    pckU32(options.fileCount ?? members.length),
+    ...directory,
+    Buffer.alloc(padding),
+    ...data,
+  ]);
+};
+
 /**
  * Build a pack with the layout Godot's exporter writes (and GDRE Tools
  * reproduces): format 2 places the directory after a 96-byte header and
- * members after it; format 3 stores members first and a pack-relative
- * directory offset.
+ * members after it. Formats 3 and 4 add an eight-byte directory offset to
+ * the header and store members before the directory.
  */
 export const buildGodotPck = (
   version: 2 | 3 | 4,
@@ -61,7 +107,7 @@ export const buildGodotPck = (
       ];
     }),
   ]);
-  const headerBytes = 96;
+  const headerBytes = version === 2 ? 96 : 104;
   const fileBase = version === 2 ? headerBytes + directory.length : headerBytes;
   const header = Buffer.concat([
     Buffer.from("GDPC"),
@@ -71,7 +117,7 @@ export const buildGodotPck = (
     pckU32(1),
     pckU32(options.packFlags ?? (version >= 3 ? 2 : 0)),
     pckU64(fileBase),
-    pckU64(version >= 3 ? headerBytes + dataBytes : 0),
+    ...(version >= 3 ? [pckU64(headerBytes + dataBytes)] : []),
   ]);
   const paddedHeader = Buffer.concat([
     header,

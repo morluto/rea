@@ -1,5 +1,6 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -8,10 +9,8 @@ import { ok } from "../../../src/domain/result.js";
 import { z } from "zod";
 import { afterAll, expect, it } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS } from "../../../src/domain/native/nativeObservation.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -28,19 +27,12 @@ it("delivers native primitive and graph summaries with exact retained parents an
     );
     const call = async (name: string, input: Record<string, unknown>) => {
       const tool = definitions.get(name);
-      if (!tool?.outputSchema) throw new Error("Missing named contract");
+      if (tool === undefined) throw new Error("Missing named contract");
       const result = await harness.mcp.callTool(
         { name, arguments: input },
-        { toolDefinition: tool },
+        { toolDefinition: withCanonicalOutputSchema(tool) },
       );
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
-      expect(
-        validation.assertions.validate(
-          tool.outputSchema,
-          result.structuredContent,
-        ),
-        JSON.stringify(validation.assertions.errors),
-      ).toBe(true);
       return parseEvidence(result.structuredContent);
     };
     const viewSchemas = await advertisedMcpToolSchemas(
@@ -119,10 +111,46 @@ it("delivers native primitive and graph summaries with exact retained parents an
       );
       expect(rejected.isError).toBe(true);
     }
+    const references = await call("xrefs", { address: "0x401000" });
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: references.evidence_id,
+    };
+    const before = harness.calls.length;
+    const page = await call("inspect_analysis_view", {
+      source,
+      view: { kind: "native-observation", offset: 0, limit: 1 },
+    });
+    expect(page.normalized_result).toMatchObject({
+      parent_evidence_id: references.evidence_id,
+      parent_operation: "xrefs",
+      items: {
+        type: "addresses",
+        rows: [{ source_index: 0, address: "0x401001" }],
+      },
+      coverage: { total: 1, exhausted: true },
+    });
+    expect(
+      analysisViewResultSchema.parse(page.normalized_result).unknowns,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /source addresses only.*reference kinds or provenance.*complete parent Evidence/iu,
+        ),
+      ]),
+    );
+    const caveats = await call("inspect_analysis_view", {
+      source,
+      view: { kind: "native-context", facet: "limitations" },
+    });
+    expect(caveats.normalized_result).toMatchObject({
+      parent_operation: "xrefs",
+    });
+    expect(harness.calls).toHaveLength(before);
   } finally {
     await harness.close();
   }
-}, 90_000);
+});
 
 it("follows native overflow continuations through MCP without repeating provider work", async () => {
   let reads = 0;
@@ -148,6 +176,12 @@ it("follows native overflow continuations through MCP without repeating provider
             relationshipCoverage: {
               status: "partial",
               limitations: ["Indirect edges unknown"],
+              discovery: {
+                callees: {
+                  status: "partial",
+                  reason: "Body was classified as data.",
+                },
+              },
             },
           },
         ),
@@ -160,10 +194,13 @@ it("follows native overflow continuations through MCP without repeating provider
     { kind: "session", session },
     { delivery: createToolResultDelivery(32 * 1024) },
   );
-  const client = new Client({
-    name: "native-observation-capacity",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "native-observation-capacity",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -177,9 +214,12 @@ it("follows native overflow continuations through MCP without repeating provider
     for (const name of [
       ...NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS,
       "get_call_graph",
+      "xrefs",
     ] as const) {
       const input =
-        name === "get_call_graph" || name === "resolve_containing_procedure"
+        name === "get_call_graph" ||
+        name === "resolve_containing_procedure" ||
+        name === "xrefs"
           ? { address: "0x1000" }
           : { procedure: "fixture_main" };
       const complete = await client.callTool({ name, arguments: input });
@@ -204,6 +244,24 @@ it("follows native overflow continuations through MCP without repeating provider
         kind: "native-observation",
         parent_operation: name,
       });
+      if (name === "get_call_graph")
+        expect(evidence.normalized_result).toMatchObject({
+          items: {
+            type: "graph-nodes",
+            rows: [
+              {
+                relationship_coverage: {
+                  discovery: {
+                    callees: {
+                      status: "partial",
+                      reason: "Body was classified as data.",
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        });
       expect(reads).toBe(before);
     }
   } finally {
@@ -211,4 +269,4 @@ it("follows native overflow continuations through MCP without repeating provider
     const closed = await session.close();
     if (!closed.ok) throw closed.error;
   }
-}, 90_000);
+});

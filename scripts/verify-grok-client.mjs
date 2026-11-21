@@ -1,20 +1,22 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
-import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../dist/contracts/toolContracts.js";
+import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
+import {
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
   process.platform !== "win32",
@@ -29,7 +31,9 @@ assert(
   "Usage: verify-grok-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(tmpdir(), "rea-grok-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-grok-client-",
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
@@ -51,6 +55,13 @@ let diagnosticsVerified = false;
 let lastTool;
 let catalogChecked = false;
 let catalogSize = null;
+// The native keyword search limit is uint8. Keep each query through partial
+// replies, then query missing canonical names and verify the complete union.
+const searchLimit = 255;
+const discovered = new Map();
+const searchedQueries = new Set();
+const discoveryPages = [];
+let pendingQuery = "rea";
 let schemasChecked = 0;
 let analysisRequested = false;
 let evidenceSeen = false;
@@ -95,17 +106,13 @@ await withVerifierCleanup(async () => {
     await mkdir(target);
     await writeFile(
       join(target, "app.js"),
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n' +
+      CLIENT_JAVASCRIPT_FIXTURE_SOURCE +
         // A real analysis result large enough to exercise native MCP offloading.
         Array.from(
           { length: 60 },
           (_, index) =>
             `export function extra${index}() { return { index: ${index}, tag: "GROK_LARGE_FIXTURE" }; }`,
         ).join("\n"),
-    );
-    assert(
-      expectedNames.length <= 255,
-      "Native search_tool limit is uint8; this full-catalog query cannot cover more than 255 tools",
     );
     const schemaValidator = new Ajv2020({
       strict: false,
@@ -135,42 +142,9 @@ await withVerifierCleanup(async () => {
       };
     };
     const verifyEvidence = async (bytes) => {
-      const evidence = toolContract(
-        "analyze_javascript_application",
-      ).outputSchema.parse(JSON.parse(bytes.toString("utf8")));
-      await assertJavaScriptApplicationInputPaths(evidence, target);
-      const shapes = evidence.normalized_result.graph.nodes
-        .flatMap((node) => node.observations)
-        .map((observation) => observation.properties)
-        .filter(
-          (properties) =>
-            properties.semantic_role === "export-return-shapes" &&
-            properties.exported_name === "result",
-        );
-      assert(
-        shapes.length > 0 &&
-          shapes.every(
-            (shape) => shape.return_shape_coverage?.projection_complete,
-          ),
-      );
-      const fields = shapes.flatMap((shape) =>
-        shape.static_return_shapes.flatMap((item) => item.fields),
-      );
-      assert(
-        fields.some(
-          (field) =>
-            field.path === "/clientCompatibility" &&
-            field.state === "literal" &&
-            field.value === "REA_CLIENT_FIXTURE",
-        ),
-      );
-      assert(
-        fields.some(
-          (field) =>
-            field.path === "/count" &&
-            field.state === "literal" &&
-            field.value === 7,
-        ),
+      const { evidence, shapes } = await assertClientJavaScriptFixtureEvidence(
+        JSON.parse(bytes.toString("utf8")),
+        target,
       );
       artifactDigest = createHash("sha256").update(bytes).digest("hex");
       artifactBytes = bytes.length;
@@ -282,10 +256,34 @@ await withVerifierCleanup(async () => {
             diagnosticsVerified = true;
           }
           if (discovery?.status !== "ready")
-            return call("search_tool", { query: "rea", limit: 255 });
-          const inventory = discovery.results
+            return call("search_tool", {
+              query: pendingQuery,
+              limit: searchLimit,
+            });
+          discoveryPages.push({ query: pendingQuery, response: discovery });
+          searchedQueries.add(pendingQuery);
+          for (const tool of discovery.results
             .filter((result) => result.server === "rea")
-            .flatMap((result) => result.tools);
+            .flatMap((result) => result.tools)) {
+            const previous = discovered.get(tool.tool_name);
+            if (previous !== undefined)
+              assert.deepEqual(
+                previous.input_schema,
+                tool.input_schema,
+                `${tool.tool_name}: native input schema changed between queries`,
+              );
+            discovered.set(tool.tool_name, tool);
+          }
+          const missing = expectedNames.filter((name) => !discovered.has(name));
+          const nextQuery = missing.find((name) => !searchedQueries.has(name));
+          if (nextQuery !== undefined) {
+            pendingQuery = nextQuery;
+            return call("search_tool", {
+              query: pendingQuery,
+              limit: searchLimit,
+            });
+          }
+          const inventory = [...discovered.values()];
           catalogSize = inventory.length;
           assert.deepEqual(
             inventory.map((tool) => tool.tool_name).sort(),
@@ -303,7 +301,10 @@ await withVerifierCleanup(async () => {
             );
             schemasChecked++;
           }
-          await writeFile(join(lab, "native-discovery.json"), last);
+          await writeFile(
+            join(lab, "native-discovery.json"),
+            JSON.stringify(discoveryPages),
+          );
           catalogChecked = true;
           analysisRequested = true;
           return call("use_tool", {
@@ -435,8 +436,8 @@ enabled = false
             parsed.plannedActions.every(
               (action) =>
                 action.target === configPath ||
-                action.target === skillDirectory ||
-                action.target.startsWith(skillDirectory + "/"),
+                (isAbsolute(action.target) &&
+                  isPathWithinRoot(skillDirectory, action.target)),
             ),
             "Refuse writes outside the owned profile/skill",
           );
@@ -553,9 +554,10 @@ enabled = false
       discovery:
         "native GROK_HOME, isolated additional skill directory, disabled foreign compatibility sources; default OS-home skill discovery and Windows unverified",
       interface:
-        "default native search_tool/use_tool with a complete explicit inventory query; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
+        "default native search_tool/use_tool with bounded keyword queries checked against the complete catalog; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
       catalogChecked,
       catalogSize,
+      discoveryQueries: discoveryPages.map((page) => page.query),
       schemasChecked,
       skillLoaded,
       diagnosticsRequested,

@@ -1,30 +1,70 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parse as parseYaml } from "yaml";
-import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../dist/contracts/toolContracts.js";
+import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
+import {
+  findClientResult,
+  isClientJavaScriptEvidence,
+} from "./verify/clients/result-discovery.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+
+const expectedFinal = "REA_CLIENT_COMPATIBILITY_OK";
+
+// The headless --json producer emits newline-delimited events and ends
+// the projection with exactly one final event carrying the full answer.
+function hasExpectedHeadlessFinal(stdout) {
+  let start = 0;
+  while (start < stdout.length) {
+    const end = stdout.indexOf("\n", start);
+    if (end === -1) return false;
+    let event;
+    try {
+      event = JSON.parse(stdout.slice(start, end));
+    } catch {
+      return false;
+    }
+    if (typeof event?.type !== "string") return false;
+    if (event.type === "final")
+      return end + 1 === stdout.length && event.text === expectedFinal;
+    start = end + 1;
+  }
+  return false;
+}
 
 const mode = process.argv[2] ?? "call";
 assert(["chat", "call"].includes(mode), "Select chat or call.");
 assert(process.platform !== "win32", "Native Windows coverage is unverified.");
+const { assertClientSchemaPatterns } = await importVerifierSource(
+  new URL("./lib/client-schema-patterns.mts", import.meta.url).href,
+  import.meta.url,
+);
+
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_DEEPSEEK_COMMAND ?? "dsh";
-const lab = await mkdtemp(join(tmpdir(), "rea-deepseek-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-deepseek-client-",
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
@@ -46,13 +86,16 @@ let catalog;
 let patternCount = 0;
 let skillRequested = false;
 let skillLoaded = false;
+let expectedSkillBody;
 let evidenceSeen = false;
 let finalSeen = false;
+let clientFinalSeen = false;
 let artifactDigest;
 let mainRequests = 0;
 const lifecycle = [];
 const patterns = new Set();
-const commands = await createVerifierCommands();
+const commandOwner = await createVerifierCommands();
+const commands = bindVerifierCommandInterruption(commandOwner);
 await withVerifierCleanup(async () => {
   await withVerifierCleanup(async () => {
     await Promise.all([
@@ -78,10 +121,7 @@ await withVerifierCleanup(async () => {
         stdin: "pipe",
       },
     );
-    await writeFile(
-      join(target, "app.js"),
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
+    await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     clientVersion = (
       await commands.exec(command, ["--version"], {
         env: environment,
@@ -122,37 +162,6 @@ await withVerifierCleanup(async () => {
       });
 
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const validatePatterns = (value) => {
-      if (!value || typeof value !== "object") return;
-      for (const [key, child] of Object.entries(value)) {
-        if (key === "pattern" && typeof child === "string") {
-          // Check the representation the native client actually forwards to its model adapter.
-          for (const flags of ["", "u", "v"]) new RegExp(child, flags);
-          patterns.add(child);
-          patternCount++;
-        } else validatePatterns(child);
-      }
-    };
-    const extractEvidence = (value) => {
-      if (typeof value === "string") {
-        try {
-          return extractEvidence(JSON.parse(value));
-        } catch {
-          return undefined;
-        }
-      }
-      if (value && typeof value === "object") {
-        if (
-          typeof value.evidence_id === "string" &&
-          value.normalized_result?.graph?.nodes
-        )
-          return value;
-        for (const child of Object.values(value)) {
-          const found = extractEvidence(child);
-          if (found) return found;
-        }
-      }
-    };
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: `deepseek-${mode}`,
@@ -179,7 +188,11 @@ await withVerifierCleanup(async () => {
               ajv.validateSchema(tool.parameters),
               `${tool.name}: ${ajv.errorsText(ajv.errors)}`,
             );
-            validatePatterns(tool.parameters);
+            const forwardedPatterns = assertClientSchemaPatterns(
+              tool.parameters,
+            );
+            for (const pattern of forwardedPatterns) patterns.add(pattern);
+            patternCount += forwardedPatterns.length;
           }
           assert(
             patternCount > 0,
@@ -189,45 +202,43 @@ await withVerifierCleanup(async () => {
         const toolMessages = (body.messages ?? []).filter(
           (message) => message.role === "tool",
         );
-        const serialized = JSON.stringify(toolMessages);
-        skillLoaded ||=
-          serialized.includes(
-            '<skill_content name=\\"reverse-engineer-anything\\">',
-          ) && serialized.includes(dirname(skillPath));
+        skillLoaded ||= toolMessages.some((message) => {
+          if (
+            typeof message.content !== "string" ||
+            expectedSkillBody === undefined
+          )
+            return false;
+          const open =
+            '<skill_content name="reverse-engineer-anything">\n<skill_resources>\n';
+          const start = message.content.indexOf(open);
+          if (start < 0) return false;
+          const resourcesStart = start + open.length;
+          const instructions = `\n</skill_resources>\n\n<skill_instructions>\n${expectedSkillBody}\n</skill_instructions>\n</skill_content>`;
+          const resourcesEnd = message.content.indexOf(
+            instructions,
+            resourcesStart,
+          );
+          if (resourcesEnd < 0) return false;
+          const expectedPath = dirname(skillPath)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;");
+          const resources = message.content.slice(resourcesStart, resourcesEnd);
+          return (
+            !resources.includes("</skill_content>") &&
+            !resources.includes("</skill_resources>") &&
+            resources.includes(expectedPath)
+          );
+        });
         for (const message of toolMessages) {
-          const found = extractEvidence(message.content);
+          const found = findClientResult(
+            message.content,
+            isClientJavaScriptEvidence,
+          );
           if (found === undefined) continue;
-          const evidence = toolContract(
-            "analyze_javascript_application",
-          ).outputSchema.parse(found);
-          await assertJavaScriptApplicationInputPaths(evidence, target);
-          const shape = evidence.normalized_result.graph.nodes
-            .flatMap((node) => node.observations)
-            .map((observation) => observation.properties)
-            .find(
-              (properties) =>
-                properties.semantic_role === "export-return-shapes" &&
-                properties.exported_name === "result",
-            );
-          assert(shape?.return_shape_coverage?.projection_complete);
-          const fields = shape.static_return_shapes.flatMap(
-            (entry) => entry.fields,
-          );
-          assert(
-            fields.some(
-              (field) =>
-                field.path === "/clientCompatibility" &&
-                field.state === "literal" &&
-                field.value === "REA_CLIENT_FIXTURE",
-            ),
-          );
-          assert(
-            fields.some(
-              (field) =>
-                field.path === "/count" &&
-                field.state === "literal" &&
-                field.value === 7,
-            ),
+          const { evidence } = await assertClientJavaScriptFixtureEvidence(
+            found,
+            target,
           );
           const text = JSON.stringify(evidence);
           await writeFile(join(lab, "evidence.json"), text);
@@ -236,7 +247,7 @@ await withVerifierCleanup(async () => {
         }
         if (mode === "chat" || evidenceSeen) {
           finalSeen = true;
-          return { role: "assistant", content: "REA_CLIENT_COMPATIBILITY_OK" };
+          return { role: "assistant", content: expectedFinal };
         }
         const call = (name, args) => ({
           role: "assistant",
@@ -326,11 +337,15 @@ await withVerifierCleanup(async () => {
     const configured = await readFile(configPath, "utf8");
     assert.deepEqual(withoutRea(configured), withoutRea(original));
     assert(configured.includes("!!js process.cwd()"));
-    assert(
-      (await readFile(skillPath, "utf8")).includes(
-        "name: reverse-engineer-anything",
-      ),
+    const installedSkill = await readFile(skillPath, "utf8");
+    assert(installedSkill.includes("name: reverse-engineer-anything"));
+    const frontmatter = /^---\r?\n[\s\S]*?^---(?:\r?\n|$)/mu.exec(
+      installedSkill,
     );
+    assert(frontmatter, "Installed skill must have its authored frontmatter");
+    expectedSkillBody = installedSkill.slice(frontmatter[0].length).trim();
+    assert(expectedSkillBody.length > 0);
+
     lifecycle.push("setup");
     const repeated = await runRea(
       ["setup", "--client", "dsh", "--yes"],
@@ -346,33 +361,47 @@ await withVerifierCleanup(async () => {
     );
     assert.equal(doctor.healthy, true);
     lifecycle.push("doctor");
-    const result = await saveVerifierCommandOutput(
-      () =>
-        commands.exec(
-          command,
-          [
-            "--profile",
-            "headless",
-            "--json",
-            mode === "chat"
-              ? "Say hello briefly."
-              : `Use REA to analyze ${target}.`,
-          ],
-          {
-            env: environment,
-            cwd: workspace,
-            timeout: 120_000,
-            stdin: "closed-pipe",
-            maxBuffer: 10 * 1024 * 1024,
-          },
-        ),
+    await saveVerifierCommandOutput(
+      async () => {
+        const result = await commands
+          .exec(
+            command,
+            [
+              "--profile",
+              "headless",
+              "--json",
+              mode === "chat"
+                ? "Say hello briefly."
+                : `Use REA to analyze ${target}.`,
+            ],
+            {
+              env: environment,
+              cwd: workspace,
+              timeout: 120_000,
+              stdin: "closed-pipe",
+              maxBuffer: 10 * 1024 * 1024,
+            },
+          )
+          .catch((cause) => {
+            const stdout = cause?.snapshot?.stdout;
+            if (stdout !== undefined && stdout.bytes === stdout.observedBytes)
+              clientFinalSeen = hasExpectedHeadlessFinal(stdout.text);
+            throw cause;
+          });
+        clientFinalSeen = hasExpectedHeadlessFinal(result.stdout);
+        return result;
+      },
       {
         stdout: join(lab, "client.stdout"),
         stderr: join(lab, "client.stderr"),
       },
     );
     assert.equal(fixture.failure, undefined);
-    assert(finalSeen && result.stdout.includes("REA_CLIENT_COMPATIBILITY_OK"));
+    assert(finalSeen, "The loopback model did not supply the expected answer");
+    assert(
+      clientFinalSeen,
+      "Harness did not emit the expected terminal final event",
+    );
     if (mode === "call") assert(evidenceSeen && skillLoaded);
     lifecycle.push(mode === "call" ? "native-tool-invocation" : "native-chat");
     const uninstall = await runRea(["uninstall"], "uninstall");
@@ -389,20 +418,24 @@ await withVerifierCleanup(async () => {
     assert.equal(await pathExists(skillPath), false);
     lifecycle.push("uninstall");
   }, [
-    () => commands.close(),
+    () => commandOwner.close(),
     async () => {
       await fixture?.close();
     },
   ]);
+  commands.throwIfInterrupted();
   passed = true;
 }, [
   async () => {
+    const completed = await completeVerifierRun(verifier);
+    const reason = commands.finish();
     const receipt = {
       client: "deepseek-harness",
       clientVersion,
       mode,
       lifecycle,
-      passed,
+      passed: passed && reason === undefined,
+      interruption: reason?.message,
       artifacts: lab,
       runtimeRoot,
       host: {
@@ -422,18 +455,32 @@ await withVerifierCleanup(async () => {
       evidenceSeen,
       artifactDigest,
       finalSeen,
+      clientFinalSeen,
       requests: fixture?.requests,
       fixtureFailure: fixture?.failure,
-      verifier: await completeVerifierRun(verifier),
+      verifier: completed,
     };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    const publishReceipt = () =>
+      withVerifierCleanup(
+        () =>
+          writeFile(
+            join(lab, "receipt.json"),
+            JSON.stringify(receipt, null, 2),
+          ),
+        [() => console.log(JSON.stringify(receipt))],
+      );
+    await withVerifierCleanup(() => {
+      if (!receipt.passed) return;
+      try {
+        assertVerifierCleanupComplete(receipt.verifier.process_lineage);
+      } catch (cause) {
+        receipt.passed = false;
+        throw cause;
+      }
+    }, [publishReceipt]);
+  },
+  () => {
+    const reason = commands.finish();
+    if (passed && reason !== undefined) throw reason;
   },
 ]);

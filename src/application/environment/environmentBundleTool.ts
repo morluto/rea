@@ -1,6 +1,8 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
+import {
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+} from "../../resources/index.js";
 import type {
   EnvironmentBuildReport,
   ExportEnvironmentBundleInput,
@@ -33,6 +35,7 @@ const captureFile = async (
       "evidence",
       source.path,
       EXPORT_ENVIRONMENT_BUNDLE_OPERATION,
+      ["source", "path"],
     );
   const retained = resolveEvidenceInput(source, lookup);
   if (!retained.ok) return retained;

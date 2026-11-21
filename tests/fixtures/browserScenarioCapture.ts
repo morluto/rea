@@ -1,4 +1,5 @@
-import { analysisViewRequestSchema } from "../../src/domain/analysisView/analysisView.js";
+import { jsonValueSchema } from "../../src/domain/jsonValue.js";
+import { analysisViewRequestSchema } from "../../src/domain/analysisView/analysisViewRequest.js";
 import { createHash } from "node:crypto";
 
 import { inspectAnalysisViewValidated } from "../../src/application/analysisView/AnalysisViewService.js";
@@ -27,12 +28,16 @@ export interface ScenarioExchange {
   readonly body?: string | Buffer;
   readonly requestMediaType?: string;
   readonly requestBody?: string;
+  /** A request body Playwright did not expose. */
+  readonly requestBodyHidden?: true;
+  /** The request event's header names. */
+  readonly requestHeaderNames?: readonly string[];
   /** Header values as `header_values` retains them; a null value is one the capture excluded. */
   readonly requestHeaders?: readonly ScenarioHeader[];
   readonly responseHeaders?: readonly ScenarioHeader[];
 }
 
-export interface ScenarioHeader {
+interface ScenarioHeader {
   readonly name: string;
   readonly value: string | null;
 }
@@ -145,13 +150,15 @@ const exchangeEvents = (
     method: exchange.method,
     url: exchange.redactedUrl === true ? { ...url, redacted: true } : url,
     resource_type: exchange.resourceType ?? "fetch",
-    header_names: [],
+    header_names: [...(exchange.requestHeaderNames ?? [])],
   };
   const content = (
     sequence: number,
     source: number,
     phase: "request" | "response",
-    body: ReturnType<typeof capturedBody> | { readonly state: "not_requested" },
+    body:
+      | ReturnType<typeof capturedBody>
+      | { readonly state: "not_requested" | "not_exposed" },
   ) => ({
     sequence,
     step_index: 1,
@@ -176,6 +183,7 @@ const exchangeEvents = (
   let next = first + 1;
   if (
     exchange.requestBody !== undefined ||
+    exchange.requestBodyHidden === true ||
     exchange.requestHeaders !== undefined
   ) {
     events.push(
@@ -183,13 +191,15 @@ const exchangeEvents = (
         next,
         first,
         "request",
-        exchange.requestBody === undefined
-          ? { state: "not_requested" }
-          : capturedBody(
-              exchange.requestBody,
-              "browser-exposed-request-bytes",
-              exchange.requestMediaType ?? null,
-            ),
+        exchange.requestBodyHidden === true
+          ? { state: "not_exposed" }
+          : exchange.requestBody === undefined
+            ? { state: "not_requested" }
+            : capturedBody(
+                exchange.requestBody,
+                "browser-exposed-request-bytes",
+                exchange.requestMediaType ?? null,
+              ),
       ),
     );
     next += 1;
@@ -326,7 +336,7 @@ export const scenarioCaptureEvidence = (
         { step_id: "browse", action: "wait_for_timeout", duration_ms: 1 },
       ],
     }),
-    capture,
+    { source: jsonValueSchema.parse(capture), facts: capture },
     { id: "fixture", name: "fixture", version: "1" },
   );
 

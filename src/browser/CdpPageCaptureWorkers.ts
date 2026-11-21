@@ -1,15 +1,13 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
-import {
-  admitRecords,
-  allowedSanitizedUrl,
-  isHttpUrl,
-  recordValue,
-  cdpStringValue,
-} from "./CdpCaptureValues.js";
+import { allowedSanitizedUrl } from "./CdpCaptureValues.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
-import { workerTargetOwnership } from "./CdpWorkerTargetOwnership.js";
+import {
+  parseCdpWorkerTarget,
+  workerTargetOwnership,
+} from "./CdpWorkerTarget.js";
+import { exclusionReasonForUrl } from "./CdpCaptureEventHelpers.js";
 
 interface CaptureWorkersInput {
   readonly context: CaptureContext;
@@ -34,74 +32,48 @@ export const captureWorkers = async (
     limitations,
   );
   const items: WebPageInspection["workers"] = [];
-  if (result === undefined) completeness.unavailable("workers");
-  const targets = admitRecords(recordValue(result)?.targetInfos);
-  if (result !== undefined && targets === undefined) {
-    completeness.exclude("workers", "invalid_protocol_value", null);
+  if (!result.ok) {
+    // A malformed target list is unreadable, not empty.
+    if (result.error._tag === "CdpMalformedReply")
+      completeness.exclude("workers", "invalid_protocol_value", null);
+    else completeness.unavailable("workers");
     return items;
   }
+  const targets = result.value.targetInfos;
   let malformedEntries = 0;
-  for (const entry of targets ?? []) {
-    const target = recordValue(entry);
-    if (target === undefined) {
+  for (const entry of targets) {
+    const parsed = parseCdpWorkerTarget(entry);
+    if (!parsed.ok) {
       malformedEntries += 1;
       continue;
     }
-    const type = cdpStringValue(target.type);
-    if (type === undefined || type.length === 0) {
-      malformedEntries += 1;
-      continue;
-    }
-    if (!type.includes("worker")) continue;
-    const targetId = cdpStringValue(target.targetId);
-    if (
-      targetId === undefined ||
-      targetId.length === 0 ||
-      typeof target.attached !== "boolean" ||
-      typeof target.url !== "string"
-    ) {
-      malformedEntries += 1;
-      continue;
-    }
+    const target = parsed.value;
+    if (target.kind === "non_worker") continue;
     const ownership = workerTargetOwnership(
       target,
       context.target.id,
       frameIds,
     );
-    if (!ownership.ok) {
-      malformedEntries += 1;
-      continue;
-    }
-    if (ownership.value.scope !== "selected") {
+    if (ownership !== "selected") {
       completeness.exclude(
         "workers",
-        ownership.value.scope === "unknown"
-          ? "unattributed_target"
-          : "out_of_target_scope",
+        ownership === "unknown" ? "unattributed_target" : "out_of_target_scope",
       );
       continue;
     }
     const url = allowedSanitizedUrl(target.url, allowedOrigins);
     if (url === undefined) {
-      const rawUrl = cdpStringValue(target.url);
-      completeness.exclude(
-        "workers",
-        rawUrl === undefined || rawUrl === ""
-          ? "unattributed_origin"
-          : isHttpUrl(rawUrl)
-            ? "disallowed_origin"
-            : "unsupported_url",
-      );
+      completeness.exclude("workers", exclusionReasonForUrl(target.url));
       continue;
     }
     items.push({
-      target_id: targetId,
-      type,
+      target_id: target.targetId,
+      type: target.type,
       url: url.url,
       origin: url.origin,
       attached: target.attached,
-      opener_target_id: ownership.value.openerTargetId,
-      parent_frame_id: ownership.value.parentFrameId,
+      opener_target_id: target.openerTargetId,
+      parent_frame_id: target.parentFrameId,
     });
   }
   if (malformedEntries > 0)

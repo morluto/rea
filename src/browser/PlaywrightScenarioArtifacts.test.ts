@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { BrowserContext, Page } from "playwright-core";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
@@ -15,11 +15,10 @@ const scenario = browserScenarioSchema.parse({
 });
 const secrets = resolveScenarioSecrets(scenario, {});
 
-it("returns a complete requested text artifact beyond the former inline ceiling", async () => {
-  const page = {
-    url: () => "https://app.example.test/",
-    content: () => Promise.resolve("x".repeat(16 * 1_024 * 1_024 + 1)),
-  } as unknown as Page;
+// Text artifacts have no inline size ceiling; the content is returned whole.
+it("returns a large requested text artifact complete", async () => {
+  const text = `${"x".repeat(16 * 1_024 * 1_024)}!`;
+  const page = { content: async () => text } as unknown as Page;
 
   const result = await capturePlaywrightStepArtifacts({
     context: {} as BrowserContext,
@@ -27,16 +26,16 @@ it("returns a complete requested text artifact beyond the former inline ceiling"
     secrets,
     requested: new Set(["dom"]),
   });
-  expect(result.dom).toMatchObject({
-    state: "captured",
-    value: { bytes: 16 * 1_024 * 1_024 + 1 },
-  });
+  if (result.dom.state !== "captured") throw new Error("Expected captured DOM");
+  expect(result.dom.value.bytes).toBe(16 * 1_024 * 1_024 + 1);
+  expect(result.dom.value.text.length).toBe(text.length);
+  expect(result.dom.value.text.at(-1)).toBe("!");
 });
 
 it("redacts declared secrets from current and historical URL artifacts", async () => {
   const secretValue = "rea browser+verifier";
   const scenarioWithSecretUrl = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: "/opt/chromium" },
+    ...scenario,
     start_url: {
       url: "https://app.example.test/",
       query: [
@@ -46,7 +45,6 @@ it("redacts declared secrets from current and historical URL artifacts", async (
         },
       ],
     },
-    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
     secrets: [
       {
         secret_id: "url_token",
@@ -78,28 +76,17 @@ it("redacts declared secrets from current and historical URL artifacts", async (
   expect(
     JSON.stringify({ url: result.url, history: result.history }),
   ).not.toContain(secretValue);
-  expect(result.url).toMatchObject({
-    state: "captured",
-    value: {
-      redacted: true,
-      url: "https://app.example.test/?token=[REDACTED:url_token]#[REDACTED:url_token]",
-    },
-  });
+  const sanitizedUrl = {
+    redacted: true,
+    url: "https://app.example.test/?token=[REDACTED:url_token]#[REDACTED:url_token]",
+  };
+  expect(result.url).toMatchObject({ state: "captured", value: sanitizedUrl });
   expect(result.history).toMatchObject({
     state: "captured",
     value: {
-      current_url: {
-        redacted: true,
-        url: "https://app.example.test/?token=[REDACTED:url_token]#[REDACTED:url_token]",
-      },
-      navigation_entries: [
-        {
-          name: {
-            redacted: true,
-            url: "https://app.example.test/?token=[REDACTED:url_token]#[REDACTED:url_token]",
-          },
-        },
-      ],
+      length: 1,
+      current_url: sanitizedUrl,
+      navigation_entries: [{ type: "navigate", name: sanitizedUrl }],
     },
   });
 });
@@ -107,9 +94,7 @@ it("redacts declared secrets from current and historical URL artifacts", async (
 it("redacts a declared secret used as a cookie or storage name", async () => {
   const secretValue = "session-token";
   const scenarioWithSecret = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: "/opt/chromium" },
-    start_url: { url: "https://app.example.test/" },
-    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+    ...scenario,
     secrets: [
       { secret_id: "storage_key", environment_variable: "REA_STORAGE_KEY" },
     ],
@@ -158,4 +143,106 @@ it("redacts a declared secret used as a cookie or storage name", async () => {
       ],
     },
   });
+});
+
+const request = {
+  step_id: "request",
+  action: "request",
+  method: "POST",
+  path: "/api/items",
+};
+const savedToken = [{ name: "token", json_pointer: "/token", secret: true }];
+const ui = {
+  step_id: "ui",
+  locator: { kind: "css", selector: "#save" },
+  save_response: { method: "POST", path: "/api/items", save: savedToken },
+};
+const screenshotPrivacyCases: readonly {
+  readonly source: string;
+  readonly action?: unknown;
+  readonly supplied?: "declared" | "saved";
+}[] = [
+  { source: "a declared value", supplied: "declared" },
+  { source: "a saved value", supplied: "saved" },
+  {
+    source: "a planned request response",
+    action: { ...request, save: savedToken },
+  },
+  { source: "a planned click response", action: { ...ui, action: "click" } },
+  {
+    source: "a planned press response",
+    action: { ...ui, action: "press", key: "Enter" },
+  },
+  ...[
+    { source: "cookie", name: "session" },
+    { source: "local_storage", key: "session" },
+    {
+      source: "basic_credentials",
+      parts: [
+        { source: "literal", value: "user" },
+        { source: "cookie", name: "password" },
+      ],
+    },
+  ].map((value) => ({
+    source: `planned ${value.source} authentication`,
+    action: { ...request, headers: [{ name: "Authorization", value }] },
+  })),
+];
+
+it.each(screenshotPrivacyCases)(
+  "withholds requested pixels for $source",
+  async ({ action, supplied }) => {
+    const selected = browserScenarioSchema.parse({
+      ...scenario,
+      actions: action === undefined ? scenario.actions : [action],
+      secrets:
+        supplied === "declared"
+          ? [{ secret_id: "token", environment_variable: "TOKEN" }]
+          : [],
+    });
+    const value = "pixel-token-729a";
+    const protectedSecrets = resolveScenarioSecrets(
+      selected,
+      supplied === "declared" ? { TOKEN: value } : {},
+    );
+    if (supplied === "saved")
+      protectedSecrets.save("response.token", "token", value, true);
+    const screenshot = vi.fn<Page["screenshot"]>();
+    const result = await capturePlaywrightStepArtifacts({
+      page: { screenshot } as unknown as Page,
+      context: {} as BrowserContext,
+      secrets: protectedSecrets,
+      requested: new Set(["screenshot"]),
+    });
+    expect(result.screenshot).toMatchObject({
+      state: "missing",
+      reason: expect.stringContaining("sensitive"),
+    });
+    expect(screenshot).not.toHaveBeenCalled();
+  },
+);
+
+it("preserves requested pixels when saved response values are not marked sensitive", async () => {
+  const selected = browserScenarioSchema.parse({
+    ...scenario,
+    actions: [
+      {
+        ...request,
+        save: [{ name: "id", json_pointer: "/id", secret: false }],
+      },
+    ],
+  });
+  const pixels = Buffer.from("public pixels");
+  const screenshot = vi.fn(async () => pixels);
+  const result = await capturePlaywrightStepArtifacts({
+    page: { screenshot } as unknown as Page,
+    context: {} as BrowserContext,
+    secrets: resolveScenarioSecrets(selected, {}),
+    requested: new Set(["screenshot"]),
+  });
+  expect(result.screenshot).toMatchObject({
+    state: "captured",
+    value: { data_base64: pixels.toString("base64") },
+  });
+  expect(screenshot).toHaveBeenCalledTimes(1);
 });

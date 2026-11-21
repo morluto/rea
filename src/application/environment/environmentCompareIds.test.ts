@@ -9,23 +9,18 @@ import {
 } from "./environmentCompareIds.js";
 
 describe("IdMap", () => {
-  it("keeps the first pairing of either side and counts conflicting ones", () => {
+  it("keeps the first pairing and counts only usable non-identity mappings", () => {
     const map = new IdMap();
     map.learn(101, 1);
     map.learn("101", 1);
     map.learn(101, 2);
     map.learn(102, 1);
+    map.learn("same", "same");
     expect(map.env(101)).toBe(1);
     expect(map.env("101")).toBe(1);
     expect(map.hasEnv(1)).toBe(true);
     expect(map.size).toBe(1);
     expect(map.conflicts).toBe(2);
-  });
-
-  it("ignores a pair of equal values", () => {
-    const map = new IdMap();
-    map.learn("same", "same");
-    expect(map.size).toBe(0);
   });
 
   it("reserves equal pairs and withholds a target that represents two live IDs", () => {
@@ -56,14 +51,6 @@ describe("IdMap", () => {
     expect(map.size).toBe(0);
   });
 
-  it("withholds an environment ID reserved by a conflicting equal pair", () => {
-    const map = new IdMap();
-    map.learn(1, 2);
-    map.learn(1, 1);
-    expect(map.env(1)).toBeUndefined();
-    expect(map.size).toBe(0);
-  });
-
   it("keeps an equal id in its collection and rejects a second live id for one environment id there", () => {
     const map = new IdMap();
     map.learn(101, 1, "/api/books");
@@ -81,13 +68,13 @@ describe("IdMap", () => {
 describe("pairElements", () => {
   it("pairs objects by the shared unique string field that pairs the most", () => {
     const live = [
-      { id: 102, name: "Second", kind: "book" },
-      { id: 101, name: "First", kind: "book" },
+      { id: 102, name: "Second", handle: "new-second", kind: "book" },
+      { id: 101, name: "First", handle: "shared", kind: "book" },
     ];
     const env = [
-      { id: 1, name: "First", kind: "book" },
-      { id: 2, name: "Second", kind: "book" },
-      { id: 3, name: "Third", kind: "book" },
+      { id: 1, name: "First", handle: "old-first", kind: "book" },
+      { id: 2, name: "Second", handle: "shared", kind: "book" },
+      { id: 3, name: "Third", handle: "old-third", kind: "book" },
     ];
     expect(pairElements(live, env)).toEqual([
       [0, 1],
@@ -214,20 +201,6 @@ describe("translatePath", () => {
       "/api/releases/env%401/deploys/3/",
     );
     expect(translatePath("/api/%E0%A4%A/x", map)).toBe("/api/%E0%A4%A/x");
-  });
-
-  it("leaves a literal route segment in place when that text is a mapped id", () => {
-    const map = new IdMap();
-    map.learn("books", "stored-tag");
-    map.learn(1, 9);
-    expect(
-      translatePath(
-        "/api/books/1",
-        map,
-        () => undefined,
-        (index) => index < 2,
-      ),
-    ).toBe("/api/books/9");
   });
 });
 

@@ -1,6 +1,11 @@
+import type { ArtifactResourceScope } from "../resources/index.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   readClientConfigurationFiles,
+  inlineRegistrationEnvironment,
+  inlineRegistrationOrigins,
+  inlineRegistrationOverride,
   clientConfigurationForWrite,
   clientWriteDialect,
   effectiveClientConfiguration,
@@ -16,16 +21,26 @@ import {
   clientServerListedDisabled,
   clientServerPath,
   legacyClientServerPath,
+  shadowedClientServers,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
   parseZcodeFallbackConfiguration,
   serializeClientConfiguration,
   withClientServers,
   type ClientConfigurationDocument,
+  type ClientInlineConfiguration,
+  type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
+import { DISCOVERED_REGISTRATION_SETTINGS } from "./SetupRegistrationEnvironment.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { dshDocument, DshCordisDocument } from "./DshCordisPatch.js";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  PRIVATE_PROFILE_MODES,
+  privateProfileModesCurrent,
+  securePrivateDirectory,
+} from "./ClientPrivateProfile.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { withClientConfigurationTransaction } from "./ClientConfigurationTransaction.js";
 import { isClientConfigurationCleanupFailure } from "./ClientConfigurationCleanup.js";
@@ -39,11 +54,15 @@ import {
   type ProviderRequestBudgetResolver,
 } from "./ClientRegistrationEnvironment.js";
 
-import { refreshClientRegistration } from "./ClientRegistration.js";
+import {
+  clientRegistrationOwnership,
+  clientRegistrationOwnershipRemediation,
+  refreshClientRegistration,
+} from "./ClientRegistration.js";
+import { recommendedMcpToolTimeoutMs } from "../config/mcpStartupPolicy.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { packageReadTargetChanged } from "./MsixPackageStorage.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
@@ -51,11 +70,12 @@ import {
   readRegularFileText,
   readRegularFileTextSnapshot,
   InvalidUtf8FileError,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   preserveCurrentRecoveryBackup,
   selectCurrentRecoveryBackup,
 } from "./SetupRecoveryBackup.js";
+import { preservePrivateRecoveryBackup } from "./ClientRegistrationBackup.js";
 import type {
   ClientConfigurationInspection,
   ClientConfigurationResult,
@@ -65,6 +85,8 @@ import {
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanupFailure<string> {
   constructor(
@@ -88,9 +110,18 @@ export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanu
 export const configureClientConfiguration = async (
   client: SetupClient,
   environment: SetupProviderEnvironment = {},
-  command: readonly string[] = npxRegistrationCommand(),
+  command: readonly string[] = currentClientRegistrationCommand(),
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  // Setup writes the running host's client files unless its host selects one.
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<ClientConfigurationResult> => {
+  if (command.length === 0)
+    return {
+      status: "failed",
+      reason: "registration_ownership",
+      detail:
+        "The running REA entrypoint could not be identified; run setup from an installed REA command.",
+    };
   if (client.configPathError !== undefined)
     return { status: "failed", reason: "path" };
   const transactionPath = await resolveClientConfigTransactionPath(
@@ -101,24 +132,33 @@ export const configureClientConfiguration = async (
   try {
     return await withClientConfigurationTransaction(transactionPath, () =>
       configureClientDocument(
-        { client, transactionPath },
+        { client, transactionPath, platform },
         environment,
         command,
         resolveProviderRequestBudget,
       ),
     );
   } catch (cause: unknown) {
-    if (cause instanceof ConfigurationError)
+    if (cause instanceof ConfigurationError && !cause.cleanupIncomplete)
       return { status: "failed", reason: "readback" };
     throw cause;
   }
 };
 
+/** An error that still owns an unreleased resource must reach the caller. */
+const cleanupIncomplete = (cause: unknown): boolean =>
+  cause instanceof ConfigurationError && cause.cleanupIncomplete;
+
 const configureClientDocument = async (
   {
     client,
     transactionPath,
-  }: { readonly client: SetupClient; readonly transactionPath: string },
+    platform,
+  }: {
+    readonly client: SetupClient;
+    readonly transactionPath: string;
+    readonly platform: NodeJS.Platform;
+  },
   environment: SetupProviderEnvironment,
   command: readonly string[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
@@ -126,7 +166,12 @@ const configureClientDocument = async (
   const format = client.format;
   if (format === undefined || format === "unsupported")
     return { status: "failed", reason: "readback" };
-  const files = await readClientConfigurationFiles(client);
+  const files = await readClientConfigurationFiles(
+    client,
+    undefined,
+    platform,
+    { writeOverrides: environment },
+  );
   if (!files.ok) {
     throwCleanupFailure(files.error);
     return { status: "failed", reason: "readback" };
@@ -164,6 +209,19 @@ const configureClientDocument = async (
       format,
     );
     parsed = clientConfigurationForWrite(parsed, files.value);
+    const ownershipBlocker = registrationOwnershipBlocker(
+      client,
+      parsed,
+      original ?? "",
+      files.value,
+      platform,
+    );
+    if (ownershipBlocker !== undefined)
+      return {
+        status: "failed",
+        reason: "registration_ownership",
+        detail: ownershipBlocker,
+      };
     const policy = await readClientPolicyBlock(
       client,
       parsed,
@@ -173,6 +231,7 @@ const configureClientDocument = async (
         command,
         parsed,
         files.value,
+        platform,
         resolveProviderRequestBudget,
       ),
     );
@@ -188,10 +247,17 @@ const configureClientDocument = async (
     void cause;
     return { status: "failed", reason: "readback" };
   }
-  const fallback = await readZcodeFallbackServers(client, parsed);
+  const fallback = await readZcodeFallbackServers(client, platform, parsed);
   if (!fallback.ok) {
-    throwCleanupFailure(fallback.error);
-    return { status: "failed", reason: "readback" };
+    if (fallback.error.kind !== "registration_ownership")
+      throwCleanupFailure(fallback.error);
+    return fallback.error.kind === "registration_ownership"
+      ? {
+          status: "failed",
+          reason: "registration_ownership",
+          detail: fallback.error.detail,
+        }
+      : { status: "failed", reason: "readback" };
   }
   const desired = await clientConfigurationDesired(
     client,
@@ -202,9 +268,24 @@ const configureClientDocument = async (
       servers: { ...fallback.value, ...parsed.servers },
     },
     files.value,
+    platform,
     resolveProviderRequestBudget,
   );
-  if (registrationCurrent(parsed, desired)) return { status: "unchanged" };
+  // The settings written now can differ from the ones inspection admitted,
+  // for example a Hopper path set by an installation earlier in this setup.
+  const override = inlineOverrideBlocker(
+    client,
+    files.value,
+    desired,
+    platform,
+  );
+  if (override !== undefined)
+    return { status: "failed", reason: "read_only_override", detail: override };
+  if (
+    registrationCurrent(parsed, desired) &&
+    (await privateProfileCurrent(client, original))
+  )
+    return { status: "unchanged" };
   return persistClientConfiguration({
     client,
     transactionPath,
@@ -214,6 +295,7 @@ const configureClientDocument = async (
     parsed,
     desired,
     fallbackServers: fallback.value,
+    platform,
   });
 };
 
@@ -228,6 +310,7 @@ interface ClientConfigurationUpdate {
   readonly parsed: ClientConfigurationDocument;
   readonly desired: unknown;
   readonly fallbackServers: Readonly<Record<string, unknown>>;
+  readonly platform: NodeJS.Platform;
 }
 
 const persistClientConfiguration = async ({
@@ -239,6 +322,7 @@ const persistClientConfiguration = async ({
   parsed,
   desired,
   fallbackServers,
+  platform,
 }: ClientConfigurationUpdate): Promise<ClientConfigurationResult> => {
   // The plan chose this file; an MSIX package may have switched to its
   // private copy since, for example when it quit.
@@ -272,6 +356,7 @@ const persistClientConfiguration = async ({
       ...parsed.servers,
       [PRODUCT_IDENTITY.mcpServerKey]: desired,
     },
+    platform,
     PRODUCT_IDENTITY.mcpServerKey,
   );
   // OMP's denylist would hide the registration; keep every other listed name.
@@ -305,8 +390,7 @@ const persistClientConfiguration = async ({
         ...(legacyPath === undefined ? [] : [legacyPath]),
         ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
       ],
-      // Setup deletes only REA's OpenCode V1 name, which the native V2 entry
-      // supersedes whatever its launcher; every repeat goes, as one member does.
+      // Ownership admission above covers every legacy member removed here.
       { removeShadowedMembersAt: legacyPath === undefined ? [] : [legacyPath] },
     );
   } catch (cause: unknown) {
@@ -329,26 +413,50 @@ const persistClientConfiguration = async ({
     };
   let recoveryBackupPath: string | undefined;
   if (original !== undefined) {
-    const preserved = await preserveCurrentRecoveryBackup(
-      `${client.configPath}.rea.backup`,
-      transactionPath,
-      original,
-    );
+    // A private profile's backup stays owner-only even when it sits beside
+    // a requested link outside the secured target directory.
+    const preserved = await (
+      client.privateProfile === undefined
+        ? preserveCurrentRecoveryBackup
+        : preservePrivateRecoveryBackup
+    )(`${client.configPath}.rea.backup`, transactionPath, original);
     if (!preserved.ok) return { status: "failed", reason: "backup" };
     recoveryBackupPath = preserved.value;
   }
   let publication: ClientConfigurationPublication;
   try {
-    await mkdir(dirname(client.configPath), { recursive: true });
+    await mkdir(dirname(client.configPath), {
+      recursive: true,
+      ...(client.privateProfile !== undefined
+        ? { mode: PRIVATE_PROFILE_MODES.directory }
+        : {}),
+    });
+    // File modes are this host's, whatever platform the registration targets.
+    if (
+      client.privateProfile !== undefined &&
+      HOST_PLATFORM.platform !== "win32"
+    )
+      await securePrivateDirectory(
+        dirname(transactionPath),
+        client.privateProfile.home,
+        () => {},
+        undefined,
+      );
     publication = await ClientConfigurationPublication.write(
       transactionPath,
       serialized.value,
       original,
-      0o600,
-      { requestedPath: client.configPath, state: snapshot?.state },
+      {
+        requestedPath: client.configPath,
+        state: snapshot?.state,
+        ...(client.privateProfile !== undefined
+          ? { requiredMode: PRIVATE_PROFILE_MODES.file }
+          : {}),
+      },
     );
   } catch (cause: unknown) {
-    if (isClientConfigurationCleanupFailure(cause)) throw cause;
+    if (isClientConfigurationCleanupFailure(cause) || cleanupIncomplete(cause))
+      throw cause;
     if (isConfigurationConflict(cause))
       return conflictFailure(recoveryBackupPath);
     return {
@@ -411,39 +519,161 @@ const persistClientConfiguration = async ({
   });
 };
 
+/** What setup would write into a client's target file, from one read. */
+interface ClientRefresh {
+  readonly original: string | undefined;
+  readonly parsed: ClientConfigurationDocument | undefined;
+  readonly desired: unknown;
+  /** The layers the registration was read from. */
+  readonly sources: readonly ClientConfigurationSource[];
+  /** The inline layer whose override is the refusal, when it is. */
+  readonly overrideOrigin?: ClientInlineConfiguration["origin"];
+  /** Why setup refuses this write: write-target ownership, a client policy or an overriding inline layer. */
+  readonly refusal: string | undefined;
+}
+
+/**
+ * Read a client's layers and compute the registration setup would write,
+ * with setup's own refusal checks. An unreadable or malformed layer is a typed
+ * failure that keeps its path and recovery.
+ */
+const readClientRefresh = async (
+  client: SetupClient,
+  providerEnvironment: SetupProviderEnvironment,
+  command: readonly string[],
+  {
+    platform,
+    resolveProviderRequestBudget,
+    resources,
+    currentCommandPath,
+  }: {
+    readonly platform: NodeJS.Platform;
+    readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
+    readonly resources?: ArtifactResourceScope;
+    /** The entry point whose registrations setup owns; update names the new one. */
+    readonly currentCommandPath?: string;
+  },
+): Promise<Result<ClientRefresh, ClientConfigurationFileError>> => {
+  const files = await readClientConfigurationFiles(
+    client,
+    resources,
+    platform,
+    { writeOverrides: providerEnvironment },
+  );
+  if (!files.ok) {
+    throwCleanupFailure(files.error);
+    return files;
+  }
+  let original: string | undefined;
+  try {
+    original = await readRegularFileText(
+      client.configPath,
+      resources === undefined ? {} : { resources },
+    );
+  } catch (cause: unknown) {
+    if (!isMissing(cause)) throw cause;
+  }
+  const parsed =
+    original === undefined
+      ? undefined
+      : clientConfigurationForWrite(
+          parseClientConfiguration(original, client.format),
+          files.value,
+        );
+  const desired = await clientConfigurationDesired(
+    client,
+    providerEnvironment,
+    command,
+    parsed,
+    files.value,
+    platform,
+    resolveProviderRequestBudget,
+  );
+  const target =
+    dshEditabilityBlocker(client, files.value) ??
+    writeTargetOwnershipBlocker(
+      client,
+      files.value,
+      parsed,
+      original,
+      platform,
+      currentCommandPath,
+    );
+  if (target !== undefined)
+    return ok({
+      original,
+      parsed,
+      desired,
+      sources: files.value,
+      refusal: target,
+    });
+  const overrideOrigin = inlineRegistrationOverride(
+    client,
+    files.value,
+    desired,
+    platform,
+  );
+  if (overrideOrigin !== undefined)
+    return ok({
+      original,
+      parsed,
+      desired,
+      sources: files.value,
+      overrideOrigin,
+      refusal: inlineOverrideRemediation(client, overrideOrigin),
+    });
+  const policy = await readClientPolicyBlock(
+    client,
+    parsed,
+    desired,
+    resources,
+  );
+  if (!policy.ok) {
+    throwCleanupFailure(policy.error);
+    return ok({
+      original,
+      parsed,
+      desired,
+      sources: files.value,
+      refusal: policy.error.detail,
+    });
+  }
+  return ok({
+    original,
+    parsed,
+    desired,
+    sources: files.value,
+    refusal: policy.value,
+  });
+};
+
 /** Determine whether an existing client configuration matches the desired registration. */
 export const clientConfigurationAligned = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  // Setup reads the running host's client files unless its host selects one.
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<boolean> => {
   if (client.configPathError !== undefined) return false;
   try {
-    const files = await readClientConfigurationFiles(client);
-    if (!files.ok) {
-      throwCleanupFailure(files.error);
-      return false;
-    }
-    const original = await readRegularFileText(client.configPath);
-    const parsed = clientConfigurationForWrite(
-      parseClientConfiguration(original, client.format),
-      files.value,
-    );
-    const desired = await clientConfigurationDesired(
+    const refresh = await readClientRefresh(
       client,
       providerEnvironment,
       command,
-      parsed,
-      files.value,
-      resolveProviderRequestBudget,
+      resolveProviderRequestBudget === undefined
+        ? { platform }
+        : { platform, resolveProviderRequestBudget },
     );
-    const policy = await readClientPolicyBlock(client, parsed, desired);
-    if (!policy.ok) {
-      throwCleanupFailure(policy.error);
-      return false;
-    }
-    return policy.value === undefined && registrationCurrent(parsed, desired);
+    return (
+      refresh.ok &&
+      refresh.value.original !== undefined &&
+      refresh.value.parsed !== undefined &&
+      refresh.value.refusal === undefined &&
+      registrationCurrent(refresh.value.parsed, refresh.value.desired) &&
+      (await privateProfileCurrent(client, refresh.value.original))
+    );
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     // Unreadable configuration is treated as not aligned so setup repairs it.
@@ -452,12 +682,156 @@ export const clientConfigurationAligned = async (
   }
 };
 
+/** Why maintenance leaves a client to setup, with whether alignment is known. */
+export interface ClientRefreshRefusal {
+  readonly alignment: "refused" | "unknown";
+  readonly remediation: string;
+}
+
+/**
+ * Why update maintenance cannot refresh a client with `command`: setup's
+ * refusal (a client policy, an unreadable layer, or a read-only inline layer
+ * that would override the refreshed entry), or `unknown` alignment when the
+ * inline layer differs only in settings setup discovers from the installed
+ * providers. Maintenance has only the explicitly selected settings and does
+ * not run that discovery, so such a client needs `rea setup`. One refused
+ * client blocks the whole setup plan, so maintenance asks before selecting a
+ * client. Registration ownership is not checked here; the caller has already
+ * established it. A supplied scope retains the owner of a file whose cleanup
+ * failed.
+ */
+export const clientRefreshRefusal = async (
+  client: SetupClient,
+  providerEnvironment: SetupProviderEnvironment,
+  command: readonly string[],
+  {
+    platform,
+    currentCommandPath,
+    resources,
+  }: {
+    readonly platform: NodeJS.Platform;
+    /** The entry point the refreshing setup runs from. */
+    readonly currentCommandPath: string;
+    readonly resources?: ArtifactResourceScope;
+  },
+): Promise<ClientRefreshRefusal | undefined> => {
+  const refused = (remediation: string): ClientRefreshRefusal => ({
+    alignment: "refused",
+    remediation,
+  });
+  if (client.configPathError !== undefined)
+    return refused(client.configPathError);
+  try {
+    const refresh = await readClientRefresh(
+      client,
+      providerEnvironment,
+      command,
+      {
+        platform,
+        currentCommandPath,
+        ...(resources === undefined ? {} : { resources }),
+      },
+    );
+    // An unreadable or malformed layer is a refusal too: setup's preflight
+    // reports it the same way.
+    if (!refresh.ok) return refused(refresh.error.detail);
+    const discovered = await discoveredInlineSettings(
+      client,
+      providerEnvironment,
+      command,
+      refresh.value,
+      platform,
+    );
+    if (discovered !== undefined)
+      return {
+        alignment: "unknown",
+        remediation: `${discovered.origin} sets ${discovered.settings.join(", ")} in REA's ${PRODUCT_IDENTITY.mcpServerKey} registration for ${client.configPath}; setup discovers ${discovered.settings.length === 1 ? "that setting" : "those settings"} from the installed providers and update does not, so REA cannot tell whether this registration is current. Run ${PRODUCT_IDENTITY.cliBinary} setup to check and refresh it.`,
+      };
+    return refresh.value.refusal === undefined
+      ? undefined
+      : refused(refresh.value.refusal);
+  } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) throw cause;
+    if (cause instanceof ConfigurationError)
+      return refused(
+        `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
+      );
+    return refused(
+      `The configuration could not be read. Check its permissions before rerunning setup. ${errorMessage(cause)}`,
+    );
+  }
+};
+
+/**
+ * The read-only inline layer's settings that setup discovers and the caller
+ * did not select, when they decide this client's refresh: setup may write a
+ * different discovered value than the layer holds (the layer would then
+ * override it), so an entry that matches now is not known to stay current, and
+ * an override those values alone explain is not known to remain. Another
+ * refusal (ownership, policy, or an override other settings cause) does not
+ * depend on discovery.
+ */
+const discoveredInlineSettings = async (
+  client: SetupClient,
+  providerEnvironment: SetupProviderEnvironment,
+  command: readonly string[],
+  refresh: ClientRefresh,
+  platform: NodeJS.Platform,
+): Promise<
+  | {
+      readonly origin: ClientInlineConfiguration["origin"];
+      readonly settings: readonly string[];
+    }
+  | undefined
+> => {
+  const [origin] = inlineRegistrationOrigins(client);
+  if (origin === undefined) return undefined;
+  if (refresh.refusal !== undefined && refresh.overrideOrigin === undefined)
+    return undefined;
+  // Setting names are matched by the platform's environment identity, so a
+  // Windows layer's `Java_Home` is the discovered `JAVA_HOME`.
+  const declared = snapshotEnvironment(
+    inlineRegistrationEnvironment(refresh.sources),
+    platform,
+  );
+  const selected = snapshotEnvironment(providerEnvironment, platform);
+  const adopted = Object.fromEntries(
+    DISCOVERED_REGISTRATION_SETTINGS.flatMap((setting) => {
+      const value = declared[setting];
+      return Object.hasOwn(selected, setting) || value === undefined
+        ? []
+        : [[setting, value]];
+    }),
+  );
+  const settings = Object.keys(adopted);
+  if (settings.length === 0) return undefined;
+  if (refresh.overrideOrigin === undefined) return { origin, settings };
+  const desired = await clientConfigurationDesired(
+    client,
+    { ...providerEnvironment, ...adopted },
+    command,
+    refresh.parsed,
+    refresh.sources,
+    platform,
+  );
+  return inlineRegistrationOverride(
+    client,
+    refresh.sources,
+    desired,
+    platform,
+  ) === undefined
+    ? { origin, settings }
+    : undefined;
+};
+
 /** Preflight one client configuration before setup presents any mutations. */
 export const inspectClientConfiguration = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  // Setup reads the running host's client files unless its host selects one.
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Promise<ClientConfigurationInspection> => {
   let inspection: ClientConfigurationInspection;
   try {
@@ -465,6 +839,7 @@ export const inspectClientConfiguration = async (
       client,
       providerEnvironment,
       command,
+      platform,
       resolveProviderRequestBudget,
     );
   } catch (cause: unknown) {
@@ -487,12 +862,18 @@ const inspectClientDocument = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
+  platform: NodeJS.Platform,
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<ClientConfigurationInspection> => {
   if (client.configPathError !== undefined)
     return { status: "invalid", remediation: client.configPathError };
   if (client.format === "unsupported") return { status: "already_current" };
-  const files = await readClientConfigurationFiles(client);
+  const files = await readClientConfigurationFiles(
+    client,
+    undefined,
+    platform,
+    { writeOverrides: providerEnvironment },
+  );
   if (!files.ok) {
     throwCleanupFailure(files.error);
     return {
@@ -500,18 +881,9 @@ const inspectClientDocument = async (
       remediation: files.error.detail,
     };
   }
-  const existing = files.value.find(
-    ({ sourcePath }) => sourcePath === client.configPath,
-  );
-  const editabilityError =
-    existing?.dialect === "dsh"
-      ? dshDocument(existing.document).editabilityError
-      : undefined;
+  const editabilityError = dshEditabilityBlocker(client, files.value);
   if (editabilityError !== undefined)
-    return {
-      status: "invalid",
-      remediation: editabilityError.message,
-    };
+    return { status: "invalid", remediation: editabilityError };
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,
   );
@@ -527,19 +899,34 @@ const inspectClientDocument = async (
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (isMissing(cause)) {
-      // This read establishes absence; do not reuse an earlier user-file policy.
-      const policy = await readClientPolicyBlock(
+      const ownershipBlocker = writeTargetOwnershipBlocker(
         client,
+        files.value,
         undefined,
-        await clientConfigurationDesired(
-          client,
-          providerEnvironment,
-          command,
-          undefined,
-          files.value,
-          resolveProviderRequestBudget,
-        ),
+        undefined,
+        platform,
       );
+      if (ownershipBlocker !== undefined)
+        return { status: "invalid", remediation: ownershipBlocker };
+      const desired = await clientConfigurationDesired(
+        client,
+        providerEnvironment,
+        command,
+        undefined,
+        files.value,
+        platform,
+        resolveProviderRequestBudget,
+      );
+      const override = inlineOverrideBlocker(
+        client,
+        files.value,
+        desired,
+        platform,
+      );
+      if (override !== undefined)
+        return { status: "invalid", remediation: override };
+      // This read establishes absence; do not reuse an earlier user-file policy.
+      const policy = await readClientPolicyBlock(client, undefined, desired);
       if (!policy.ok) {
         throwCleanupFailure(policy.error);
         return {
@@ -549,16 +936,17 @@ const inspectClientDocument = async (
       }
       if (policy.value !== undefined)
         return { status: "invalid", remediation: policy.value };
-      const fallback = await readZcodeFallbackServers(client);
+      const fallback = await readZcodeFallbackServers(client, platform);
       if (!fallback.ok) {
-        throwCleanupFailure(fallback.error);
+        if (fallback.error.kind !== "registration_ownership")
+          throwCleanupFailure(fallback.error);
         return { status: "invalid", remediation: fallback.error.detail };
       }
       return { status: "create" };
     }
     return {
       status: "invalid",
-      remediation: `The configuration file could not be read. Check its permissions before rerunning setup. ${cause instanceof Error ? cause.message : String(cause)}`,
+      remediation: `The configuration file could not be read. Check its permissions before rerunning setup. ${errorMessage(cause)}`,
     };
   }
   try {
@@ -566,14 +954,32 @@ const inspectClientDocument = async (
       parseClientConfiguration(original, client.format),
       files.value,
     );
+    const ownershipBlocker = writeTargetOwnershipBlocker(
+      client,
+      files.value,
+      parsed,
+      original,
+      platform,
+    );
+    if (ownershipBlocker !== undefined)
+      return { status: "invalid", remediation: ownershipBlocker };
     const desired = await clientConfigurationDesired(
       client,
       providerEnvironment,
       command,
       parsed,
       files.value,
+      platform,
       resolveProviderRequestBudget,
     );
+    const override = inlineOverrideBlocker(
+      client,
+      files.value,
+      desired,
+      platform,
+    );
+    if (override !== undefined)
+      return { status: "invalid", remediation: override };
     const policy = await readClientPolicyBlock(client, parsed, desired);
     if (!policy.ok) {
       throwCleanupFailure(policy.error);
@@ -584,11 +990,15 @@ const inspectClientDocument = async (
     }
     if (policy.value !== undefined)
       return { status: "invalid", remediation: policy.value };
-    if (registrationCurrent(parsed, desired))
+    if (
+      registrationCurrent(parsed, desired) &&
+      (await privateProfileCurrent(client, original))
+    )
       return { status: "already_current" };
-    const fallback = await readZcodeFallbackServers(client, parsed);
+    const fallback = await readZcodeFallbackServers(client, platform, parsed);
     if (!fallback.ok) {
-      throwCleanupFailure(fallback.error);
+      if (fallback.error.kind !== "registration_ownership")
+        throwCleanupFailure(fallback.error);
       return { status: "invalid", remediation: fallback.error.detail };
     }
   } catch (cause: unknown) {
@@ -627,12 +1037,150 @@ const throwCleanupFailure = (error: ClientConfigurationFileError): void => {
   if (error.cleanupFailure !== undefined) throw error.cleanupFailure;
 };
 
+/** Setup cannot write around a read-only inline layer that overrides REA. */
+const inlineOverrideBlocker = (
+  client: SetupClient,
+  sources: readonly ClientConfigurationSource[],
+  desired: unknown,
+  platform: NodeJS.Platform,
+): string | undefined => {
+  const origin = inlineRegistrationOverride(client, sources, desired, platform);
+  return origin === undefined
+    ? undefined
+    : inlineOverrideRemediation(client, origin);
+};
+
+const inlineOverrideRemediation = (
+  client: SetupClient,
+  origin: ClientInlineConfiguration["origin"],
+): string =>
+  `${origin} overrides REA's ${PRODUCT_IDENTITY.mcpServerKey} registration in ${client.configPath}, and REA does not edit it. Remove the ${PRODUCT_IDENTITY.mcpServerKey} server from ${origin} or make it match, then rerun setup.`;
+
+/** A Cordis document setup cannot edit. */
+const dshEditabilityBlocker = (
+  client: SetupClient,
+  sources: readonly ClientConfigurationSource[],
+): string | undefined => {
+  const existing = sources.find(
+    ({ sourcePath }) => sourcePath === client.configPath,
+  );
+  return existing?.dialect === "dsh"
+    ? dshDocument(existing.document).editabilityError?.message
+    : undefined;
+};
+
+/**
+ * Setup's ownership check of the row it would replace: the target file's own
+ * row, or, when the file is absent, the row the lower layers supply.
+ */
+const writeTargetOwnershipBlocker = (
+  client: SetupClient,
+  sources: readonly ClientConfigurationSource[],
+  parsed: ClientConfigurationDocument | undefined,
+  original: string | undefined,
+  platform: NodeJS.Platform,
+  currentCommandPath?: string,
+): string | undefined => {
+  if (parsed !== undefined)
+    return registrationOwnershipBlocker(
+      client,
+      parsed,
+      original ?? "",
+      sources,
+      platform,
+      currentCommandPath,
+    );
+  const inherited = effectiveClientConfiguration(
+    sources,
+    { client, document: undefined },
+    platform,
+  );
+  return inherited === undefined
+    ? undefined
+    : registrationOwnershipBlocker(
+        client,
+        inherited,
+        "",
+        sources,
+        platform,
+        currentCommandPath,
+      );
+};
+
+/** Admit only absent or proven-owned rows that this setup would replace. */
+const registrationOwnershipBlocker = (
+  client: SetupClient,
+  parsed: ClientConfigurationDocument,
+  original: string,
+  sources: readonly ClientConfigurationSource[],
+  platform: NodeJS.Platform,
+  currentCommandPath?: string,
+): string | undefined => {
+  // Cordis owns registrations by stable entry ID, including malformed launchers.
+  if (parsed.dialect === "dsh") return undefined;
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  const entries: { value: unknown; paths: readonly string[] }[] = [];
+  const effective = effectiveClientConfiguration(
+    sources,
+    { client, document: parsed },
+    platform,
+  );
+  if (effective !== undefined && Object.hasOwn(effective.servers, name))
+    entries.push({
+      value: effective.servers[name],
+      // An inline layer is named by its origin; it has no path.
+      paths: [
+        ...(client.configPaths ?? [client.configPath]),
+        ...inlineRegistrationOrigins(client),
+      ],
+    });
+  const fragment = parsed.servers[name];
+  // A layered policy fragment inherits its launcher. Classify the effective
+  // launcher above, but also admit any explicit command this write replaces.
+  const inheritsLauncher =
+    effective !== undefined &&
+    effective !== parsed &&
+    isRecord(fragment) &&
+    !Object.hasOwn(fragment, "command");
+  if (Object.hasOwn(parsed.servers, name) && !inheritsLauncher)
+    entries.push({ value: parsed.servers[name], paths: [client.configPath] });
+  if (legacyClientServerPath(parsed, name) !== undefined) {
+    entries.push({
+      value: parsed.legacyServers[name],
+      paths: [client.configPath],
+    });
+    entries.push(
+      ...shadowedClientServers(original, parsed, name).legacyServers.map(
+        (value) => ({ value, paths: [client.configPath] }),
+      ),
+    );
+  }
+  for (const entry of entries) {
+    const ownership =
+      currentCommandPath === undefined
+        ? clientRegistrationOwnership(entry.value, client)
+        : clientRegistrationOwnership(entry.value, client, currentCommandPath);
+    if (ownership !== "owned")
+      return clientRegistrationOwnershipRemediation(ownership, entry.paths);
+  }
+  return undefined;
+};
+
 /** Admit the fallback only when the first native ZCode server would suppress it. */
 const readZcodeFallbackServers = async (
   client: SetupClient,
+  platform: NodeJS.Platform,
   parsed?: ClientConfigurationDocument,
 ): Promise<
-  Result<Readonly<Record<string, unknown>>, ClientConfigurationFileError>
+  Result<
+    Readonly<Record<string, unknown>>,
+    | ClientConfigurationFileError
+    | {
+        readonly kind: "registration_ownership";
+        readonly path: string;
+        readonly detail: string;
+      }
+  >
 > => {
   if (
     client.format !== "zcode" ||
@@ -652,7 +1200,20 @@ const readZcodeFallbackServers = async (
   if (source.value === undefined) return ok({});
   try {
     const parsed = parseZcodeFallbackConfiguration(source.value);
-    const environment = clientRegistrationEnvironment(parsed);
+    const ownershipBlocker = registrationOwnershipBlocker(
+      { ...client, configPath: path, format: "zcode_fallback" },
+      parsed,
+      source.value,
+      [],
+      platform,
+    );
+    if (ownershipBlocker !== undefined)
+      return err({
+        kind: "registration_ownership",
+        path,
+        detail: ownershipBlocker,
+      });
+    const environment = clientRegistrationEnvironment(parsed, client, platform);
     if (!environment.ok)
       return err({
         kind: "malformed",
@@ -664,7 +1225,7 @@ const readZcodeFallbackServers = async (
     return err({
       kind: "malformed",
       path,
-      detail: `${detail} ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `${detail} ${errorMessage(cause)}`,
     });
   }
 };
@@ -690,7 +1251,7 @@ const restoreConfig = async (
     return err({
       kind: "restore",
       path: publication.path,
-      detail: errorDetail(cause),
+      detail: errorMessage(cause),
     });
   }
 };
@@ -735,14 +1296,12 @@ const conflictFailure = (
   ...(backupPath === undefined ? {} : { backupPath }),
 });
 
-const errorDetail = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 /** Whether REA's entry matches, no legacy entry remains, and no client disable list suppresses it. */
 const registrationCurrent = (
   parsed: ClientConfigurationDocument,
   desired: unknown,
 ): boolean =>
+  parsed.requiresRewrite !== true &&
   (parsed.dialect !== "dsh" || dshDocument(parsed.document).ready) &&
   clientConfigurationValuesEqual(
     parsed.servers[PRODUCT_IDENTITY.mcpServerKey],
@@ -751,18 +1310,36 @@ const registrationCurrent = (
   !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
   !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey);
 
+/**
+ * A private profile with the wrong modes needs publication even when its row
+ * is current. Modes belong to the host holding the file, not to the platform
+ * the registration is written for.
+ */
+const privateProfileCurrent = async (
+  client: SetupClient,
+  original: string | undefined,
+): Promise<boolean> =>
+  client.privateProfile === undefined ||
+  (original !== undefined &&
+    (await privateProfileModesCurrent(
+      client.configPath,
+      HOST_PLATFORM.platform,
+    )));
+
 const clientConfigurationDesired = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   parsed: ClientConfigurationDocument | undefined,
   sources: readonly ClientConfigurationSource[],
+  platform: NodeJS.Platform,
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<unknown> => {
-  const effective = effectiveClientConfiguration(sources, {
-    client,
-    document: parsed,
-  });
+  const effective = effectiveClientConfiguration(
+    sources,
+    { client, document: parsed },
+    platform,
+  );
   const format = clientWriteDialect(
     parsed?.dialect ?? client.format ?? "json",
     sources,
@@ -770,26 +1347,40 @@ const clientConfigurationDesired = async (
   const launcher =
     command.length === 0 ? [PRODUCT_IDENTITY.cliBinary, "mcp"] : command;
   if (format === "dsh") {
-    const validated = clientRegistrationEnvironment(
+    // The budget resolver's declared read set keeps the gate fail-closed only
+    // for settings the derivation may actually read, so unrelated Cordis
+    // expressions stay preserved while the budget still resolves.
+    const validated = await clientRegistrationEnvironmentDetailsWithBudget(
       effective,
+      client,
       providerEnvironment,
+      "effective",
+      resolveProviderRequestBudget,
+      platform,
     );
     if (!validated.ok) throw validated.error;
     const desired = (
       parsed === undefined
         ? new DshCordisDocument("")
         : dshDocument(parsed.document)
-    ).desired(launcher, providerEnvironment);
+    ).desired(
+      launcher,
+      providerEnvironment,
+      platform,
+      recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
+    );
     if (!desired.ok) throw desired.error;
     return desired.value;
   }
   const validated = await clientRegistrationEnvironmentDetailsWithBudget(
     effective,
+    client,
     providerEnvironment,
     "effective",
     client.name === "codex" || client.name === "kimi"
       ? resolveProviderRequestBudget
       : undefined,
+    platform,
   );
   if (!validated.ok) throw validated.error;
   // Preserve explicitly configured server settings, never the ambient process
@@ -797,29 +1388,114 @@ const clientConfigurationDesired = async (
   // timeout facts; the target file's fragment remains the value being written.
   const environment = clientRegistrationEnvironment(
     parsed,
+    client,
+    platform,
     providerEnvironment,
     "fragment",
   );
   if (!environment.ok) throw environment.error;
-  const registrationEnvironment =
-    client.name === "kimi" &&
-    snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
-      undefined
-      ? {
-          ...environment.value,
-          REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
-        }
-      : environment.value;
   const registration = refreshClientRegistration(
     client,
     format,
     launcher,
-    registrationEnvironment,
+    environment.value,
     parsed === undefined
       ? undefined
       : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey),
     validated.value.timeoutInputs,
   );
   if (!registration.ok) throw registration.error;
-  return registration.value;
+  return withInheritedGooseSettings(
+    registration.value,
+    format,
+    client,
+    parsed,
+    sources,
+    effective,
+    providerEnvironment,
+    platform,
+  );
+};
+
+/**
+ * Goose replaces `envs` as a whole map per layer, so a user map must carry the
+ * inherited one. When the user entry declares no environment and a lower layer
+ * does, setup writes no map unless a setting is requested, and then writes the
+ * inherited map with the requested settings applied last. Other settings only a
+ * lower layer declares are left to that layer.
+ */
+const GOOSE_INHERITABLE_SETTINGS: readonly string[] = [
+  "name",
+  "description",
+  "enabled",
+  "timeout",
+];
+
+const withInheritedGooseSettings = (
+  withoutInherited: Record<string, unknown>,
+  format: ClientRegistrationDialect,
+  client: SetupClient,
+  parsed: ClientConfigurationDocument | undefined,
+  sources: readonly ClientConfigurationSource[],
+  effective: ClientConfigurationDocument | undefined,
+  providerEnvironment: SetupProviderEnvironment,
+  platform: NodeJS.Platform,
+): Record<string, unknown> => {
+  if (format !== "goose") return withoutInherited;
+  // The layers below the user file, which the user entry overlays field by field.
+  const lower = effectiveClientConfiguration(
+    sources,
+    { client, document: undefined },
+    platform,
+  );
+  const declares = (
+    document: ClientConfigurationDocument | undefined,
+    keys: readonly string[],
+  ) => {
+    const entry =
+      document === undefined
+        ? undefined
+        : effectiveClientServer(document, PRODUCT_IDENTITY.mcpServerKey);
+    return (
+      typeof entry === "object" &&
+      entry !== null &&
+      keys.some((key) => Object.hasOwn(entry, key))
+    );
+  };
+  // Goose merges each field separately, so a user map must use the spelling a
+  // lower layer declares: `envs` beside an inherited `env` alias would leave
+  // both in force, which Goose's readers reject as ambiguous.
+  const spelled = (
+    registration: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    if (!declares(lower, ["env"]) || !Object.hasOwn(registration, "envs"))
+      return registration;
+    const { envs, ...rest } = registration;
+    return { ...rest, env: envs };
+  };
+  const userDeclares = (keys: readonly string[]) => declares(parsed, keys);
+  // A setting only a lower layer declares stays in effect: writing setup's
+  // default into the user entry would override that caller's choice.
+  const registration = Object.fromEntries(
+    Object.entries(withoutInherited).filter(
+      ([key]) =>
+        !GOOSE_INHERITABLE_SETTINGS.includes(key) ||
+        userDeclares([key]) ||
+        !declares(lower, [key]),
+    ),
+  );
+  const environmentKeys = ["envs", "env"];
+  if (userDeclares(environmentKeys) || !declares(lower, environmentKeys))
+    return spelled(registration);
+  const { envs: _generated, ...rest } = registration;
+  if (Object.keys(providerEnvironment).length === 0) return rest;
+  const inherited = clientRegistrationEnvironment(
+    effective,
+    client,
+    platform,
+    providerEnvironment,
+    "fragment",
+  );
+  if (!inherited.ok) throw inherited.error;
+  return spelled({ ...rest, envs: { ...inherited.value } });
 };

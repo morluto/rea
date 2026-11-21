@@ -9,15 +9,15 @@ import {
 } from "./GhidraSessionError.js";
 
 /** Result settled by one queued Ghidra Program request. */
-export type GhidraQueuedRequestResult = Result<JsonValue, GhidraSessionError>;
+type GhidraQueuedRequestResult = Result<JsonValue, GhidraSessionError>;
 /** Socket execution seam used after a request reaches the queue head. */
-export type GhidraRequestExecutor = (
+type GhidraRequestExecutor = (
   method: string,
   parameters: JsonValue,
   options: GhidraRequestOptions,
 ) => Promise<GhidraQueuedRequestResult>;
 /** Stop the provider session when an admitted operation is cancelled. */
-export type GhidraActiveCancellationHandler = () => Promise<
+type GhidraActiveCancellationHandler = () => Promise<
   Result<null, AnalysisError>
 >;
 

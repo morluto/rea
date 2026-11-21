@@ -1,17 +1,21 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { normalizeEntrypointPath } from "../process/CurrentEntrypointPath.js";
+import {
+  CURRENT_ENTRYPOINT_PATH,
+  normalizeEntrypointPath,
+} from "../process/CurrentEntrypointPath.js";
 import { valid } from "semver";
 
 import {
   javaScriptRuntime,
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { posixPathCandidates } from "../process/executableSearch.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
-/** Package runners whose pinned launcher setup can register. */
-export type PackageRunner = "npx" | "bunx";
+/** Package runners recognized for invocation guidance and legacy registrations. */
+type PackageRunner = "npx" | "bunx";
 
 /** Read one variable; Windows variable names are case-insensitive. */
 const environmentValue = (
@@ -30,7 +34,7 @@ const environmentValue = (
 /** Identify the package runner that launched this process, if any. */
 export const invokingPackageRunner = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): PackageRunner | undefined => {
   if (environmentValue(environment, "npm_command", platform) !== "exec")
     return undefined;
@@ -47,7 +51,7 @@ export const invokingPackageRunner = (
 /** Copy an environment without the variable that marks a package-runner launch. */
 export const withoutPackageRunnerIdentity = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): NodeJS.ProcessEnv =>
   Object.fromEntries(
     Object.entries(environment).filter(([key]) =>
@@ -57,23 +61,32 @@ export const withoutPackageRunnerIdentity = (
     ),
   );
 
-/** Resolve a pinned package-runner launcher that stdio clients can spawn on the host. */
-export const packageRunnerRegistrationCommand = (
-  runner: PackageRunner,
-  platform: NodeJS.Platform = process.platform,
+/** Bind the selected REA entrypoint to the runtime already executing setup. */
+export const currentClientRegistrationCommand = (
+  selection: {
+    readonly platform?: NodeJS.Platform;
+    readonly entrypointPath?: string | undefined;
+    readonly environment?: Readonly<NodeJS.ProcessEnv>;
+  } = {},
 ): readonly string[] => {
-  const command =
-    runner === "npx"
-      ? ["npx", "-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"]
-      : ["bunx", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"];
-  // Both runners may be .cmd shims on Windows, which clients cannot spawn directly.
-  return platform === "win32" ? ["cmd.exe", "/d", "/c", ...command] : command;
+  // The registration names this process's runtime, so it defaults to this host.
+  const platform = selection.platform ?? HOST_PLATFORM.platform;
+  const environment = selection.environment ?? process.env;
+  const entrypointPath = Object.hasOwn(selection, "entrypointPath")
+    ? selection.entrypointPath
+    : CURRENT_ENTRYPOINT_PATH;
+  if (entrypointPath === undefined || entrypointPath.length === 0) return [];
+  return [
+    registrationRuntimePath(
+      process.execPath,
+      javaScriptRuntime(process.versions).id,
+      environment,
+      platform,
+    ),
+    registrationEntrypointPath(entrypointPath, environment, platform),
+    "mcp",
+  ];
 };
-
-/** Resolve a pinned npx launcher that stdio clients can spawn on the host. */
-export const npxRegistrationCommand = (
-  platform: NodeJS.Platform = process.platform,
-): readonly string[] => packageRunnerRegistrationCommand("npx", platform);
 
 const unwrapCmdCommand = (command: readonly string[]): readonly string[] => {
   const executable = command[0]?.toLowerCase();
@@ -117,8 +130,9 @@ const entrypointIdentity = (
   if (candidate === current) return "owned";
   // Bun's realpath can normalize parent segments differently from its launcher.
   // Without matching traversal semantics it cannot prove ownership of an alias.
+  // The comparison resolves paths on this host's filesystem.
   if (
-    process.platform !== "win32" &&
+    HOST_PLATFORM.platform !== "win32" &&
     javaScriptRuntime(process.versions).id === "bun" &&
     [candidate, current].some((path) => path.split("/").includes(".."))
   )
@@ -155,9 +169,11 @@ const sameFileExecutableAlias = (
   environment: Readonly<NodeJS.ProcessEnv>,
   identify: typeof entrypointIdentity,
 ): string => {
-  for (const directory of (environment.PATH ?? "").split(":")) {
-    if (!isAbsolute(directory)) continue;
-    const candidate = absoluteCallerPath(`${directory}/${name}`);
+  for (const { path: candidate } of posixPathCandidates(
+    name,
+    environment.PATH ?? "",
+    { relativeEntries: "skip" },
+  )) {
     if (identify(candidate, selected) !== "owned") continue;
     try {
       accessSync(candidate, constants.X_OK);
@@ -170,7 +186,7 @@ const sameFileExecutableAlias = (
 };
 
 /** Prefer an executable PATH alias that proves the same selected REA file. */
-export const registrationEntrypointPath = (
+const registrationEntrypointPath = (
   entrypoint: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,

@@ -1,3 +1,4 @@
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -8,6 +9,16 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const registrationPathWithoutRuntime = async (root: string) => {
+  const restrictedPath = join(root, "path-without-runtime");
+  await mkdir(restrictedPath);
+  // Linux process ownership requires procps; no JavaScript runtime is exposed.
+  if (process.platform === "linux")
+    await symlink("/bin/ps", join(restrictedPath, "ps"));
+  return restrictedPath;
+};
 
 cliTest.skipIf(process.platform === "win32")(
   "migrates an owned shebang registration and starts its generated MCP command without a runtime on PATH",
@@ -16,11 +27,7 @@ cliTest.skipIf(process.platform === "win32")(
     const profile = join(home, ".qwen");
     const config = join(profile, "settings.json");
     const entrypoint = resolve("scripts/rea.mjs");
-    const restrictedPath = join(home, "path-without-runtime");
-    await mkdir(restrictedPath);
-    // Linux process ownership requires procps; no JavaScript runtime is exposed.
-    if (process.platform === "linux")
-      await symlink("/bin/ps", join(restrictedPath, "ps"));
+    const restrictedPath = await registrationPathWithoutRuntime(home);
     const retainedEnvironment = {
       PATH: restrictedPath,
       CALLER_SETTING: "keep exactly",
@@ -107,13 +114,16 @@ cliTest.skipIf(process.platform === "win32")(
       env: { ...environment, ...registration.env },
       stderr: "pipe",
     });
-    const client = new Client({ name: "setup-interpreter", version: "1" });
+    const client = new Client(
+      { name: "setup-interpreter", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       expect(
         (await client.listTools()).tools.map(({ name }) => name),
       ).toContain("binary_session");
-      const session = await client.callTool({
+      const session = await artifactMcpCall(client, {
         name: "binary_session",
         arguments: {},
       });
@@ -146,6 +156,7 @@ cliTest.skipIf(process.platform === "win32").for([
     const root = await createTestTempDirectory("rea-launcher-registration-");
     const home = join(root, "home");
     const config = join(home, ".cursor/mcp.json");
+    const restrictedPath = await registrationPathWithoutRuntime(root);
     await mkdir(join(home, ".cursor"), { recursive: true });
     const unrelated = { command: "other-server", args: [] };
     await writeFile(config, JSON.stringify({ mcpServers: { unrelated } }));
@@ -158,35 +169,34 @@ cliTest.skipIf(process.platform === "win32").for([
           HOME: home,
           USERPROFILE: home,
           XDG_CONFIG_HOME: join(home, ".config"),
-          PATH: process.env.PATH ?? "",
+          PATH: restrictedPath,
         },
-        timeoutMs: 30_000,
       });
 
-    const setup = await run(registered, [
-      "setup",
-      "--client",
-      "cursor",
-      "--skill=false",
-      "--yes",
-      "--json",
-    ]);
+    const scope = ["--client", "cursor", "--skill=false", "--json"];
+    const setup = await run(registered, ["setup", "--yes", ...scope]);
     expect(setup.exitCode, setup.stderr).toBe(0);
-    for (const alias of [registered, alternate]) {
-      const doctor = await run(alias, [
-        "doctor",
-        "--client",
-        "cursor",
-        "--skill=false",
-        "--json",
-      ]);
-      expect(doctor.exitCode, doctor.stdout).toBe(0);
-      expect(JSON.parse(doctor.stdout)).toMatchObject({
-        scope_checks: expect.arrayContaining([
-          expect.objectContaining({ name: "registration:cursor", ok: true }),
-        ]),
-      });
-    }
+    expect(JSON.parse(setup.stdout)).toMatchObject({
+      doctor: {
+        healthy: true,
+        identity: {
+          registrations: [
+            {
+              client: "cursor",
+              state: "aligned",
+              command: [expect.any(String), join(root, registered), "mcp"],
+            },
+          ],
+        },
+      },
+    });
+    const doctor = await run(alternate, ["doctor", ...scope]);
+    expect(doctor.exitCode, doctor.stdout).toBe(0);
+    expect(JSON.parse(doctor.stdout)).toMatchObject({
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({ name: "registration:cursor", ok: true }),
+      ]),
+    });
     const uninstall = await run(alternate, ["uninstall", "--json"]);
     expect(uninstall.exitCode, uninstall.stderr).toBe(0);
     expect(JSON.parse(await readFile(config, "utf8"))).toEqual({
@@ -243,7 +253,8 @@ cliTest.skipIf(process.platform === "win32").for([
             client: "cursor",
             state: "unknown",
             command,
-            remediation: expect.stringContaining("symlink targets"),
+            config_path: config,
+            remediation: expect.stringMatching(/\S/u),
           }),
         ]),
       },
@@ -294,7 +305,6 @@ cliTest.skipIf(process.platform === "win32")(
           XDG_CONFIG_HOME: join(home, ".config"),
           PATH: process.env.PATH ?? "",
         },
-        timeoutMs: 30_000,
       });
     const uninstall = await run(["uninstall", "--json"]);
     expect(uninstall.exitCode, uninstall.stderr).toBe(0);

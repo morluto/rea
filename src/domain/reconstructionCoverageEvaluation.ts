@@ -1,3 +1,4 @@
+import { reconstructionUnknownHeads } from "./reconstructionUnknowns.js";
 import type { ReconstructionCoverageScope } from "./reconstructionCoverageScope.js";
 import type {
   ReconstructionClosureResult,
@@ -396,14 +397,27 @@ const verifierResultMatchesContract = (
 export const evaluateReconstructionCoverageRisks = (
   context: ReconstructionEvaluationContext,
 ): void => {
-  for (const unknownId of context.coverage.residual_unknown_ids)
-    if (!context.boundary.allowed_unknown_ids.includes(unknownId))
+  const unknownHeads = reconstructionUnknownHeads(
+    context.coverage.evidence_bundle.unknowns,
+  );
+  for (const unknownId of new Set(context.coverage.residual_unknown_ids)) {
+    const unknown = unknownHeads.get(unknownId);
+    if (unknown?.status === "resolved") continue;
+    if (!context.boundary.allowed_unknown_ids.includes(unknownId)) {
+      if (unknown !== undefined)
+        addEvidence(context, [
+          ...unknown.supporting_evidence_ids,
+          ...unknown.contradicting_evidence_ids,
+          ...unknown.mutation_evidence_ids,
+        ]);
       addReason(
         context,
         "active-unknown",
         unknownId,
         "Active residual unknown is not permitted by the completion boundary.",
       );
+    }
+  }
   for (const contradiction of context.coverage.contradictions)
     if (
       contradiction.status === "active" &&

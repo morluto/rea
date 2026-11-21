@@ -1,25 +1,26 @@
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import {
   commandObservationSchema,
   gdbCommandResultSchema,
 } from "../commandObservation.js";
 import { digestSchema } from "../digests.js";
-import { providerSchema } from "../evidence.js";
+import { providerSchema, evidenceSubjectTarget } from "../evidence.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 export const commandSummaryContext = {
   source_provider: providerSchema.nullable(),
@@ -42,9 +43,10 @@ export const gdbCommandSummarySchema = gdbCommandResultSchema
 /** Select existing owner facts without parsing a command or its output protocol. */
 export const projectCommandObservationView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<SummaryAnalysisView>(admitted, "summary");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -80,15 +82,16 @@ export const projectCommandObservationView = (
         { cause: parameters.error },
       ),
     );
+  const subject =
+    parent.subject === undefined
+      ? undefined
+      : evidenceSubjectTarget(parent.subject);
   const artifact =
-    parent.subject === null
-      ? null
-      : parent.subject === undefined
-        ? (parent.artifact ?? null)
-        : {
-            path: parent.subject.local_path,
-            sha256: parent.subject.digest.sha256,
-          };
+    parent.subject === undefined
+      ? (parent.artifact ?? null)
+      : subject === undefined
+        ? null
+        : { path: subject.path, sha256: subject.sha256 };
   const shared = {
     kind: "summary" as const,
     view,
@@ -98,7 +101,7 @@ export const projectCommandObservationView = (
     source_provider: parent.provider ?? null,
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: parameters.data,
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       parent.limitations,
       parent.evidenceId,
@@ -117,9 +120,7 @@ export const projectCommandObservationView = (
     if (!parsed.ok) return parsed;
     const selection = parameters.data;
     if (
-      typeof selection === "object" &&
-      selection !== null &&
-      !Array.isArray(selection) &&
+      isRecord(selection) &&
       typeof selection.command === "string" &&
       selection.command !== parsed.value.command
     )
@@ -136,7 +137,7 @@ export const projectCommandObservationView = (
     const { console, target, log, ...records } = parsed.value;
     return ok({
       ...shared,
-      parent_operation: "gdb_console",
+      parent_operation: "gdb_console" as const,
       summary: {
         ...records,
         available_counts: {
@@ -170,7 +171,7 @@ export const projectCommandObservationView = (
     );
   return ok({
     ...shared,
-    parent_operation: "inspect_with_objdump",
+    parent_operation: "inspect_with_objdump" as const,
     summary: report,
   });
 };

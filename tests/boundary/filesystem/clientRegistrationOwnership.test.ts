@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -80,6 +81,7 @@ it.each([
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(configPath, sample.source);
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment,
     });
     expect(
@@ -111,7 +113,7 @@ it.each([
   },
 );
 
-it("retains an OpenCode remote registration with a REA-like command", async () => {
+it("removes the owned OpenCode launcher despite invalid transport", async () => {
   const home = await createTestTempDirectory("rea-registration-remote-owner-");
   const configPath = join(home, ".config/opencode/opencode.json");
   const environment = { XDG_CONFIG_HOME: join(home, ".config") };
@@ -131,6 +133,7 @@ it("retains an OpenCode remote registration with a REA-like command", async () =
   await mkdir(dirname(configPath), { recursive: true });
   await writeFile(configPath, source);
   const statuses = await readClientRegistrationStatuses(home, undefined, {
+    platform: HOST_PLATFORM.platform,
     environment,
   });
   expect(statuses.find(({ client }) => client === "opencode")).toMatchObject({
@@ -145,10 +148,17 @@ it("retains an OpenCode remote registration with a REA-like command", async () =
     if (client === undefined) throw new Error("Expected the configured client");
     expect(await host.removeClient(client)).toMatchObject({
       name: "opencode",
-      status: "retained",
+      status: "removed",
     });
-    expect(await readFile(configPath, "utf8")).toBe(source);
-    expect(await readdir(dirname(configPath))).toEqual(["opencode.json"]);
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+      caller_root: "keep",
+      mcp: { servers: { peer: { type: "local", command: ["peer"] } } },
+    });
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(source);
+    expect(await readdir(dirname(configPath))).toEqual([
+      "opencode.json",
+      "opencode.json.rea.backup",
+    ]);
   } finally {
     expect(await host.close?.()).toBeUndefined();
   }

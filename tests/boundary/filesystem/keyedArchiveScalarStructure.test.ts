@@ -43,7 +43,7 @@ it("keeps literal wrapper-shaped dictionaries as real root maps", () => {
   }
 });
 
-it("retains own binary dictionary facts when a prototype key changes the decoder prototype", () => {
+it("retains an own binary dictionary prototype key without changing the decoded prototype", () => {
   const object = Object.fromEntries([
     ["__proto__", { inherited: "not an own fact" }],
     ["payload", "retained"],
@@ -63,8 +63,14 @@ it("retains own binary dictionary facts when a prototype key changes the decoder
     kind: "dictionary",
     value: { payload: "retained" },
   });
-  expect(graph.objects[1]?.value).toEqual({ payload: "retained" });
-  expect(graph.limitations).toContainEqual(
+  const value = graph.objects[1]?.value;
+  expect(value).toEqual(object);
+  if (value === null || typeof value !== "object")
+    throw new Error("Expected a decoded dictionary");
+  expect(Object.hasOwn(value, "__proto__")).toBe(true);
+  expect(Object.hasOwn(value, "inherited")).toBe(false);
+  expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+  expect(graph.limitations).not.toContainEqual(
     expect.stringContaining("__proto__"),
   );
 });

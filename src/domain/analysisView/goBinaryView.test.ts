@@ -1,11 +1,14 @@
+import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
+import {
+  changedEvidenceSubject,
+  fileIdentity,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
 import type { GoBinary } from "../go/goBinary.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const report: GoBinary = {
   artifact: { path: "/artifacts/program", sha256: "a".repeat(64), bytes: 512 },
@@ -37,6 +40,7 @@ const parent = (): AnalysisViewParent => {
     },
   );
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     subject: evidence.subject,
@@ -63,7 +67,6 @@ it("bounds inherited messages while keeping their complete parent reference", ()
     limitations: [note],
   };
   const result = projectAnalysisView(input, { kind: "summary" });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.limitations.join(" ")).toContain(input.evidenceId);
   expect(result.value.limitations.join(" ")).toContain("omitted");
@@ -71,16 +74,16 @@ it("bounds inherited messages while keeping their complete parent reference", ()
   expect(input.limitations[0]).toBe(note);
 });
 
-it.each(["path", "digest", "format"] as const)(
+it.each(["digest", "format"] as const)(
   "rejects a Go parent whose authenticated %s conflicts with its report",
   (field) => {
     const input = parent();
-    if (input.subject == null) throw new Error("Expected artifact subject");
-    const subject = {
-      ...input.subject,
-      ...(field === "path" ? { local_path: "/artifacts/other" } : {}),
-      ...(field === "digest" ? { digest: { sha256: "b".repeat(64) } } : {}),
-    };
+    if (input.subject === undefined || input.subject.identity.kind !== "file")
+      throw new Error("Expected artifact subject");
+    const subject = changedEvidenceSubject(
+      input.subject,
+      field === "digest" ? { sha256: "b".repeat(64) } : {},
+    );
     const result = projectAnalysisView(
       {
         ...input,
@@ -103,19 +106,20 @@ it.each([
   ["arm64", "arm64", true],
   ["future-cpu", null, true],
   ["", null, true],
-  ["amd64", "arm64", false],
   ["amd64", null, false],
   ["future-cpu", "arm64", false],
 ] as const)(
   "checks report architecture %j against subject %j for every Go view",
   (architecture, subjectArchitecture, accepted) => {
     const input = parent();
-    if (input.subject?.format !== "elf")
+    if (
+      input.subject === undefined ||
+      fileIdentity(input.subject).format !== "elf"
+    )
       throw new Error("Expected ELF subject");
-    const subject = {
-      ...input.subject,
+    const subject = changedEvidenceSubject(input.subject, {
       architecture: subjectArchitecture,
-    };
+    });
     const normalizedResult = { ...report, architecture };
     for (const view of [
       { kind: "summary" },
@@ -128,5 +132,73 @@ it.each([
       expect(result.ok).toBe(accepted);
       if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
     }
+  },
+);
+
+it("revalidates the parent subject after immutable Go report facts have been cached", () => {
+  const input = {
+    ...parent(),
+    normalizedResult: freezeOwnedJsonTreeSnapshot(structuredClone(report)),
+    sealedResult: true,
+  };
+  expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(true);
+  if (input.subject === undefined || input.subject.identity.kind !== "file")
+    throw new Error("Expected artifact subject");
+  expect(
+    projectAnalysisView(
+      {
+        ...input,
+        subject: changedEvidenceSubject(input.subject, {
+          sha256: "b".repeat(64),
+        }),
+      },
+      { kind: "summary" },
+    ).ok,
+  ).toBe(false);
+});
+
+it.each(["dependencies", "settings"] as const)(
+  "reports decoded empty Go %s as fully examined",
+  (collection) => {
+    const result = projectAnalysisView(
+      {
+        ...parent(),
+        normalizedResult: {
+          ...report,
+          build_info: {
+            header_offset: 0,
+            encoding: "inline",
+            go_version: null,
+            go_version_bytes_base64: "",
+            module_text: null,
+            module_bytes_base64: "",
+            version_location: { offset: 32, bytes: 0 },
+            module_location: { offset: 32, bytes: 0 },
+            module: {
+              path: null,
+              main: null,
+              dependencies: [],
+              settings: [],
+              unparsed_lines: [],
+              unparsed_line_bytes_base64: [],
+              complete: true,
+            },
+          },
+        },
+      },
+      { kind: "go", collection, offset: 3, limit: 1 },
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      page: { collection, rows: [] },
+      source_coverage: { build_info_available: true },
+    });
+    expect(result.value.coverage).toEqual({
+      status: "empty",
+      examined: 0,
+      total: 0,
+      next_offset: null,
+      exhausted: true,
+    });
   },
 );

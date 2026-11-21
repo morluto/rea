@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
+import { webTextFacts } from "../../domain/webContentArtifact.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
@@ -8,18 +8,16 @@ import type {
   WebRuntimeSource,
   webRuntimeLocationSchema,
 } from "../../domain/webRuntime.js";
-import type { CdpEvent } from "../CdpConnection.js";
+import type { CdpReceivedEvent } from "../CdpConnection.js";
 import type { CdpRuntimeSession } from "./CdpRuntimeSession.js";
 import {
   runtimeContextSchema,
   runtimeScriptParsedSchema,
-} from "./CdpRuntimeProtocol.js";
-import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";
-
-const scriptIdentitySchema = runtimeScriptParsedSchema.pick({ scriptId: true });
-const contextIdentitySchema = z.object({
-  context: runtimeContextSchema.shape.context.pick({ id: true }),
-});
+  cdpContextFrameClaim,
+  selectCdpScriptFrame,
+} from "../CdpScriptContextFacts.js";
+import { RuntimeRetention } from "./CdpRuntimeRetention.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Source ownership is proven by execution context/frame metadata, independently of URL aliases. */
 export class CdpRuntimeSources {
@@ -34,27 +32,26 @@ export class CdpRuntimeSources {
   readonly #changed = new Set<string>();
   readonly #changedContexts = new Set<number>();
   readonly #sources = new Map<string, WebRuntimeSource>();
-  #retainedBytes = 0;
-  #sourceBytes = 0;
+  readonly #metadata: RuntimeRetention;
+  readonly #sourceText: RuntimeRetention;
   #failure: AnalysisError | undefined;
-  constructor(readonly session: CdpRuntimeSession) {}
+  constructor(readonly session: CdpRuntimeSession) {
+    this.#metadata = new RuntimeRetention(session.operation, "metadata");
+    this.#sourceText = new RuntimeRetention(session.operation, "sources");
+  }
 
   /** Subscribe before enabling Debugger; existing uncollected scripts are replayed by the producer. */
-  ingest(event: CdpEvent, retainNewMetadata = true): void {
-    if (
-      event.sessionId !== this.session.transport.sessionId ||
-      this.#failure !== undefined
-    )
-      return;
+  ingest(event: CdpReceivedEvent, retainNewMetadata = true): void {
+    if (this.#failure !== undefined) return;
+    const registered = event.registered;
     try {
-      if (event.method === "Runtime.executionContextCreated") {
-        this.#retainedBytes += Buffer.byteLength(JSON.stringify(event.params));
-        assertRuntimeRetention(
-          this.session.operation,
-          "metadata",
-          this.#retainedBytes,
-        );
-        const context = runtimeContextSchema.parse(event.params).context;
+      if (registered?.method === "Runtime.executionContextCreated") {
+        const bytes = registered.payload.declarationBytes;
+        if (!bytes.ok) throw bytes.error;
+        this.#metadata.charge(bytes.value);
+        const declaration = registered.payload.runtime;
+        if (!declaration.success) throw declaration.error;
+        const context = declaration.data.context;
         const previous = this.#contexts.get(context.id);
         if (
           previous !== undefined &&
@@ -65,14 +62,13 @@ export class CdpRuntimeSources {
             if (item.execution_context_id === context.id) this.revalidate(item);
         }
         if (retainNewMetadata) this.#contexts.set(context.id, context);
-      } else if (event.method === "Debugger.scriptParsed") {
-        this.#retainedBytes += Buffer.byteLength(JSON.stringify(event.params));
-        assertRuntimeRetention(
-          this.session.operation,
-          "metadata",
-          this.#retainedBytes,
-        );
-        const script = runtimeScriptParsedSchema.parse(event.params);
+      } else if (registered?.method === "Debugger.scriptParsed") {
+        const bytes = registered.payload.declarationBytes;
+        if (!bytes.ok) throw bytes.error;
+        this.#metadata.charge(bytes.value);
+        const declaration = registered.payload.runtime;
+        if (!declaration.success) throw declaration.error;
+        const script = declaration.data;
         const previous = this.scripts.get(script.scriptId);
         if (
           previous !== undefined &&
@@ -90,7 +86,7 @@ export class CdpRuntimeSources {
           ? cause
           : new AnalysisOutputError(
               this.session.operation,
-              cause instanceof Error ? cause.message : String(cause),
+              errorMessage(cause),
             );
     }
   }
@@ -101,15 +97,15 @@ export class CdpRuntimeSources {
   }
 
   /** Frozen inventories still monitor known identities through asynchronous source reads. */
-  verifyKnownIdentity(event: CdpEvent): void {
-    if (event.method === "Debugger.scriptParsed") {
-      const id = scriptIdentitySchema.safeParse(event.params);
-      if (id.success && this.scripts.has(id.data.scriptId))
+  verifyKnownIdentity(event: CdpReceivedEvent): void {
+    const registered = event.registered;
+    if (registered?.method === "Debugger.scriptParsed") {
+      const { scriptId } = registered.payload.facts;
+      if (scriptId !== undefined && this.scripts.has(scriptId))
         this.ingest(event, false);
-    } else if (event.method === "Runtime.executionContextCreated") {
-      const id = contextIdentitySchema.safeParse(event.params);
-      if (id.success && this.#contexts.has(id.data.context.id))
-        this.ingest(event, false);
+    } else if (registered?.method === "Runtime.executionContextCreated") {
+      const { id } = registered.payload.facts;
+      if (id !== undefined && this.#contexts.has(id)) this.ingest(event, false);
     }
   }
 
@@ -136,13 +132,14 @@ export class CdpRuntimeSources {
       )
     )
       return false;
-    const reported = scriptContext?.frameId;
-    const contextFrame = context?.frameId;
+    const frame = selectCdpScriptFrame(
+      cdpContextFrameClaim(scriptContext),
+      cdpContextFrameClaim(context),
+    );
     return (
-      (reported === undefined ||
-        contextFrame === undefined ||
-        reported === contextFrame) &&
-      (reported ?? contextFrame) === this.session.target.frame_id
+      !frame.invalid &&
+      !frame.conflicting &&
+      frame.frameId === this.session.target.frame_id
     );
   }
 
@@ -244,42 +241,33 @@ export class CdpRuntimeSources {
   }
 
   private async capture(scriptId: string): Promise<WebRuntimeSource["source"]> {
-    let raw: unknown;
+    let text: string;
     try {
-      raw = await this.session.command("Debugger.getScriptSource", {
-        scriptId,
-      });
+      ({ scriptSource: text } = await this.session.command(
+        "Debugger.getScriptSource",
+        { scriptId },
+      ));
     } catch (cause: unknown) {
       if (
         this.session.options.signal?.aborted ||
         !(cause instanceof AnalysisError)
       )
         throw cause;
+      // A failed or malformed reply limits only this script. The reason is the
+      // boundary's own failure text, which names a malformed reply's pointer.
       return {
         state: "unavailable",
         reason: cause.userMessage ?? cause.message,
       };
     }
-    const source = z.object({ scriptSource: z.string() }).safeParse(raw);
-    if (!source.success)
-      throw new AnalysisOutputError(
-        this.session.operation,
-        "Debugger.getScriptSource returned malformed source text.",
-      );
-    const text = source.data.scriptSource;
-    const bytes = Buffer.byteLength(text);
-    this.#sourceBytes += bytes;
-    assertRuntimeRetention(
-      this.session.operation,
-      "sources",
-      this.#sourceBytes,
-    );
+    this.#sourceText.charge(Buffer.byteLength(text));
+    const facts = webTextFacts(text);
     return {
       state: "captured",
       text,
-      sha256: createHash("sha256").update(text).digest("hex"),
-      utf8_bytes: bytes,
-      utf16_units: text.length,
+      sha256: facts.sha256,
+      utf8_bytes: facts.utf8Bytes,
+      utf16_units: facts.utf16Units,
     };
   }
 }

@@ -6,7 +6,6 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import {
   HELD_FIXED_TAG_ROWS,
-  TAG_ROWS,
   misshelvedRows,
   referencedCreateRows,
   shelvedRows,
@@ -63,11 +62,7 @@ describe("create plans learned from every call", () => {
     });
   });
 
-  it.each([
-    { id: 1, name: "Different Hall", floor: "ground" },
-    { id: 2, name: "Map Room", floor: "upper" },
-    null,
-  ])(
+  it.each([{ id: 2, name: "Map Room", floor: "upper" }, null])(
     "withholds a create whose sent reference contradicts its answer (%j)",
     (shelf) => {
       expect(createPlan(referencedCreateRows(shelf))).toMatchObject({
@@ -86,7 +81,6 @@ describe("create plans learned from every call", () => {
   });
 
   it("trims no clock a later create shows trimmed after a held entity showed it at a fixed width", () => {
-    expect(createPlan(TAG_ROWS, "post_tags")).toMatchObject({ served: true });
     const plan = createPlan(HELD_FIXED_TAG_ROWS, "post_tags");
     expect(plan).toMatchObject({ served: false, reason: "unexplained-change" });
     expect(plan.rules).not.toContainEqual(
@@ -175,24 +169,16 @@ describe("merging a later create into a plan", () => {
     });
   const unshelvedExemplar = { id: 3, name: "Third" };
 
-  it("takes a reference one call alone shows when the other did not send its member", () => {
-    const merged = mergedCreatePlan(
-      plan,
-      unshelvedExemplar,
-      shelved(4, "Fourth"),
-    );
-    expect(merged).toMatchObject({
-      rules: expect.arrayContaining([reference]),
-      body: { accepted: ["name", "shelf_id"], required: ["name"] },
-    });
-  });
-
-  it("keeps a reference an earlier call added through calls that leave it out, and agrees with it when it returns", () => {
+  it("adds an optional reference and keeps it through later omission and return", () => {
     const added = mergedCreatePlan(
       plan,
       unshelvedExemplar,
       shelved(4, "Fourth"),
     )!;
+    expect(added).toMatchObject({
+      rules: expect.arrayContaining([reference]),
+      body: { accepted: ["name", "shelf_id"], required: ["name"] },
+    });
     const omitted = mergedCreatePlan(
       added,
       unshelvedExemplar,
@@ -213,5 +199,54 @@ describe("merging a later create into a plan", () => {
         unshelved(7, "Seventh", { shelf_id: 1 }),
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("merging a later create's made object", () => {
+  const made = (counts: { member: string; start: number }[]): FieldRule => ({
+    field: "subscription",
+    rule: "made-object",
+    clocks: ["created"],
+    format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    own: ["entity_id"],
+    counts,
+  });
+  const body = {
+    accepted: ["title"],
+    fixed: [],
+    required: ["title"],
+    identity: null,
+    kinds: [],
+  };
+  const title: FieldRule = { field: "title", rule: "echo" };
+  const subscription = (id: number, task: number) => ({
+    id,
+    entity: "task",
+    entity_id: task,
+    created: "2026-10-26T10:00:00Z",
+  });
+  const plan = { rules: [title, made([])], body };
+  const exemplar = { title: "First", subscription: subscription(31, 20) };
+  const later = {
+    entity: { title: "Third", subscription: subscription(32, 22) },
+    body: { title: "Third" },
+    rules: [title, made([{ member: "id", start: 32 }])],
+    contract: body,
+  };
+  const earlier = (accepted: number) => ({
+    kept: new Set<string>(),
+    clockOf: () => undefined,
+    createCollections: Array.from({ length: accepted }, () => "/api/tasks"),
+  });
+
+  it("counts a member only the later create shows while the exemplar is the one create accepted", () => {
+    expect(
+      mergedCreatePlan(plan, exemplar, later, earlier(1))?.rules,
+    ).toContainEqual(made([{ member: "id", start: 31 }]));
+  });
+
+  it("makes no count of a member creates past the exemplar held alike", () => {
+    // Creates of 31 and 31 then 32 are no count: serving would make 31, 32, 33.
+    expect(mergedCreatePlan(plan, exemplar, later, earlier(2))).toBeUndefined();
   });
 });

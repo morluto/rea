@@ -1,3 +1,8 @@
+import {
+  transportReplyContracts,
+  type TransportHopperClient,
+  HopperFixtureLauncher,
+} from "./hopperClient.fixture.js";
 import { spawn } from "node:child_process";
 import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,18 +20,18 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperApplicationLauncher } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
-import { acquireHopperTargetLease } from "../../../../src/process/HopperLease.js";
-import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
+import { acquireHopperTargetLease } from "../../../../src/hopper/HopperLease.js";
 
 // Failure assertions keep the external document unknown. Teardown then publishes
 // this run's authenticated bridge so normal cleanup can release its runtime/lease.
 const trackFailedHelperClient = (
   launcher: BridgeLauncher,
   startupTimeoutMs = 10_000,
-): HopperClient => {
+): TransportHopperClient => {
   let session: BridgeSession | undefined;
   let external = false;
   const client = new HopperClient({
+    replyContracts: transportReplyContracts,
     launcher: {
       async launch(input, options) {
         session = input;
@@ -80,20 +85,24 @@ const projectPrimaryStartupFailure = (error: AnalysisError) => {
   return projectAnalysisError(primary);
 };
 
-it("does not equate an owned native helper exit with an external GUI exit", async () => {
+const spotlightReport =
+  "Hopper has not been found.\nPlease make sure that Spotlight is active in order for this tool to find Hopper's executable.\n";
+
+it("keeps document ownership unknown when an unverified helper reports Spotlight failure", async () => {
   const directory = await createTestTempDirectory("rea-hopper-helper-failure-");
   const targetPath = join(directory, "target");
   await writeFile(targetPath, "fixture target");
+  const helperPath = join(directory, "helper.cjs");
+  await writeFile(
+    helperPath,
+    `process.stderr.write(${JSON.stringify(spotlightReport)}, () => process.exit(3));`,
+  );
   const launcher = new HopperApplicationLauncher({
     environment: {},
     launcherPath: process.execPath,
     targetPath,
     targetKind: "executable",
-    loaderArgs: [
-      "-e",
-      'process.stderr.write("Hopper has not been found.\\n", () => process.exit(3))',
-      "--",
-    ],
+    loaderArgs: [helperPath, "--"],
     bridgeScriptPath: "/rea/hopper_bridge.py",
     launchMode: "native",
   });
@@ -108,9 +117,11 @@ it("does not equate an owned native helper exit with an external GUI exit", asyn
   });
   if (result.ok) throw new Error("Expected the native helper to fail");
   expect(projectPrimaryStartupFailure(result.error)).toMatchObject({
+    code: "provider_unavailable",
+    message: expect.stringContaining("Spotlight"),
     details: {
       provider_state: "unknown",
-      launcher: { exit_code: 3 },
+      launcher: { exit_code: 3, stderr: { text: spotlightReport } },
     },
   });
   expect(client.operationHealth()).toMatchObject({
@@ -127,11 +138,12 @@ it.skipIf(process.platform !== "darwin")(
     );
     const targetPath = join(directory, "target");
     await writeFile(targetPath, "fixture target");
-    const loaderArgs = [
-      "-e",
-      'process.stderr.write("Hopper has not been found.\\nPlease make sure that Spotlight is active in order for this tool to find Hopper\'s executable.\\n", () => process.exit(3))',
-      "--",
-    ];
+    const helperPath = join(directory, "spotlight-helper.cjs");
+    await writeFile(
+      helperPath,
+      `process.stderr.write(${JSON.stringify(spotlightReport)}, () => process.exit(3));`,
+    );
+    const loaderArgs = [helperPath, "--"];
     // Simulate a verified native helper at the launcher provenance boundary;
     // publisher verification itself has real codesign boundary coverage.
     const native = new HopperApplicationLauncher(
@@ -149,6 +161,7 @@ it.skipIf(process.platform !== "darwin")(
     const retry = new HopperFixtureLauncher();
     let session: BridgeSession | undefined;
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher: {
         async launch(input, options) {
           if (session !== undefined) return retry.launch(input);
@@ -199,7 +212,68 @@ it.skipIf(process.platform !== "darwin")(
   },
 );
 
-it.each(["exit", "signal", "exit75"] as const)(
+it("classifies a pre-handoff Apple Events denial as not retryable from the same client", async () => {
+  const stderr =
+    "Cannot launch Hopper!\nNot authorized to send Apple events to Hopper Disassembler.\n";
+  const launcher: BridgeLauncher = {
+    launch() {
+      return Promise.resolve(
+        ok({
+          process: spawn(
+            process.execPath,
+            [
+              "-e",
+              `process.stderr.write(${JSON.stringify(stderr)}, () => process.exit(2));`,
+            ],
+            { stdio: ["ignore", "pipe", "pipe"] },
+          ),
+          ownsProcessLifetime: false as const,
+          providerLifetime: "external-application" as const,
+          shutdownMode: "bridge-request" as const,
+          authorizationDenialBeforeHandoff: true as const,
+        }),
+      );
+    },
+  };
+  const client = new HopperClient({
+    replyContracts: transportReplyContracts,
+    launcher,
+    startupTimeoutMs: 10_000,
+  });
+  onTestFinished(async () => {
+    const closed = await client.close();
+    if (!closed.ok) throw closed.error;
+  });
+  const failed = await client.start();
+  expect(failed).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "HopperStartError",
+      cleanupIncomplete: false,
+    },
+  });
+  if (failed.ok) throw new Error("Expected Apple Events denial");
+  expect(projectAnalysisError(failed.error)).toMatchObject({
+    code: "provider_unavailable",
+    category: "unavailable",
+    retryable: false,
+    details: {
+      stage: "launch",
+      provider_state: "unknown",
+      retry_action: "unknown",
+      launch_rejection: {
+        boundary: "apple_events_authorization",
+        reason: "not_authorized",
+        responsibility: "client_or_disclaimed_runtime",
+        settings_pane: "privacy_security_automation",
+        entitlement_id: "com.apple.security.automation.apple-events",
+      },
+      launcher: { exit_code: 2, signal: null },
+    },
+  });
+});
+
+it.each(["signal", "exit75"] as const)(
   "reports a failed non-owning launcher %s without waiting for bridge timeout or inventing a GUI exit",
   async (termination) => {
     let token = "";
@@ -211,7 +285,7 @@ it.each(["exit", "signal", "exit75"] as const)(
         const stop =
           termination === "signal"
             ? 'process.kill(process.pid, "SIGTERM")'
-            : `process.exit(${termination === "exit75" ? 75 : 1})`;
+            : "process.exit(75)";
         return Promise.resolve(
           ok({
             process: spawn(
@@ -245,8 +319,7 @@ it.each(["exit", "signal", "exit75"] as const)(
       details: {
         stage: "launch",
         launcher: {
-          exit_code:
-            termination === "signal" ? null : termination === "exit75" ? 75 : 1,
+          exit_code: termination === "signal" ? null : 75,
           signal: termination === "signal" ? "SIGTERM" : null,
           stdout: {
             text: expect.stringContaining("API_KEY=local-evidence-kept"),

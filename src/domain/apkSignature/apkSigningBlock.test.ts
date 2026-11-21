@@ -1,4 +1,6 @@
+import { isParseLimit } from "../parseFailureAnalysisError.js";
 import { describe, expect, it } from "vitest";
+import { zip64Tail } from "../../../tests/fixtures/apkSignature/zip64Tail.js";
 
 import {
   APK_BLOCK_ID,
@@ -102,12 +104,29 @@ describe("APK signing block locator", () => {
     if (!tail.ok) return;
     const block = locateApkSigningBlock(bytes, tail.value);
     expect(block.ok).toBe(true);
-    if (!block.ok || block.value === null) return expect(block).toBeTruthy();
+    if (!block.ok || block.value === null)
+      throw new Error("Expected an APK signing block");
     expect(block.value.pairs.map((p) => p.id)).toEqual([
       APK_BLOCK_ID.signatureV2,
       APK_BLOCK_ID.signatureV3,
     ]);
     expect([...block.value.pairs[0]!.value]).toEqual([0xaa, 0xbb, 0xcc, 0xdd]);
+  });
+
+  it("names the enforced limit for a physically framed extra pair", () => {
+    const bytes = apkWithBlock(
+      Array.from({ length: 4097 }, () => ({ id: 0xffffffff, value: [] })),
+    );
+    const tail = parseZipTail(bytes);
+    if (!tail.ok) throw new Error("Expected a framed ZIP tail");
+    const result = locateApkSigningBlock(bytes, tail.value);
+    if (result.ok) throw new Error("Expected a signing-block pair refusal");
+    expect(isParseLimit(result.error, "apk-signing-block")).toBe(true);
+    expect(result.error).toMatchObject({
+      failure: {
+        limit: { name: "max_signing_block_pairs", maximum: 4096 },
+      },
+    });
   });
 
   it("returns null when no block magic precedes the central directory", () => {
@@ -177,7 +196,66 @@ describe("APK signing block locator", () => {
   });
 });
 
+describe("Zip64 volume declarations", () => {
+  it.each([16, 20])(
+    "refuses a Zip64 end record naming another volume at field %s",
+    async (field) => {
+      const { bytes, recordOffset } = await zip64Tail();
+      expect(parseZipTail(bytes).ok).toBe(true);
+      new DataView(bytes.buffer).setUint32(recordOffset + field, 1, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "zip64-unsupported" },
+      });
+    },
+  );
+
+  it("accepts deferred classic disk fields but refuses another disk", async () => {
+    const { bytes, eocdOffset } = await zip64Tail();
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocdOffset + 4, 0xffff, true);
+    view.setUint16(eocdOffset + 6, 0xffff, true);
+    expect(parseZipTail(bytes).ok).toBe(true);
+    view.setUint16(eocdOffset + 6, 1, true);
+    expect(parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "zip64-unsupported" },
+    });
+  });
+});
+
 describe("Zip64 end-of-central-directory", () => {
+  it.each([43n, 45n, 1n << 63n])(
+    "rejects a Zip64 record whose declared body size is %s",
+    async (size) => {
+      const { bytes, recordOffset } = await zip64Tail();
+      expect(parseZipTail(bytes).ok).toBe(true);
+      new DataView(bytes.buffer).setBigUint64(recordOffset + 4, size, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "malformed-zip", offset: recordOffset + 4 },
+      });
+    },
+  );
+
+  it("allows a Zip64 extensible sector that fits before the locator", async () => {
+    const { bytes, recordOffset, locatorOffset } = await zip64Tail();
+    const extension = Uint8Array.of(0xfe, 0xff, 1, 0, 0, 0, 0);
+    const extended = new Uint8Array(bytes.length + extension.length);
+    extended.set(bytes.subarray(0, locatorOffset));
+    extended.set(extension, locatorOffset);
+    extended.set(
+      bytes.subarray(locatorOffset),
+      locatorOffset + extension.length,
+    );
+    new DataView(extended.buffer).setBigUint64(
+      recordOffset + 4,
+      BigInt(44 + extension.length),
+      true,
+    );
+    expect(parseZipTail(extended).ok).toBe(true);
+  });
+
   it("follows a Zip64 EOCD locator to the central-directory offset", () => {
     const body = new Bytes().raw(Array.from({ length: 40 }, () => 0));
     const cdOffset = body.b.length;
@@ -325,5 +403,64 @@ describe("EOCD that cannot describe the archive", () => {
     expect(tail.ok).toBe(false);
     if (tail.ok) return;
     expect(tail.error.kind).toBe("malformed-zip");
+  });
+});
+
+describe("classic ZIP disk declarations", () => {
+  it.each([
+    [1, 0],
+    [0, 1],
+    [1, 1],
+  ])(
+    "refuses disk %s and directory disk %s before selecting a local span",
+    (disk, directoryDisk) => {
+      const bytes = apkWithBlock([]);
+      const eocd = bytes.length - 22;
+      const view = new DataView(bytes.buffer);
+      view.setUint16(eocd + 4, disk, true);
+      view.setUint16(eocd + 6, directoryDisk, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "multi-disk-unsupported" },
+      });
+    },
+  );
+
+  it.each([0, 2])(
+    "refuses a single-disk record declaring %s of its one entry",
+    (entriesOnDisk) => {
+      const bytes = apkWithBlock([]);
+      const eocd = bytes.length - 22;
+      new DataView(bytes.buffer).setUint16(eocd + 8, entriesOnDisk, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "malformed-zip", offset: eocd + 8 },
+      });
+    },
+  );
+
+  it("checks disk ownership in the count-saturated classic fallback", () => {
+    const bytes = apkWithBlock([]);
+    const eocd = bytes.length - 22;
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocd + 4, 1, true);
+    view.setUint16(eocd + 8, 0xffff, true);
+    view.setUint16(eocd + 10, 0xffff, true);
+    expect(parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "multi-disk-unsupported" },
+    });
+  });
+
+  it("checks per-disk counts in the count-saturated classic fallback", () => {
+    const bytes = apkWithBlock([]);
+    const eocd = bytes.length - 22;
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocd + 8, 0xfffe, true);
+    view.setUint16(eocd + 10, 0xffff, true);
+    expect(parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-zip", offset: eocd + 8 },
+    });
   });
 });

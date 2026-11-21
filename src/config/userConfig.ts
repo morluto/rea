@@ -1,9 +1,22 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rmdir,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { homeDirectoryFromEnvironment } from "./homeDirectory.js";
+import { parseEnvironmentValues } from "./environment.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 /**
  * User-owned provider configuration persisted at
@@ -96,6 +109,17 @@ export const parseUserConfig = (
       new ConfigurationError("Invalid REA user configuration", { settings }),
     );
   }
+  const native = parseEnvironmentValues(parsed);
+  if (!native.ok) return native;
+  const jadx = parsed.REA_JADX_MCP_JAR;
+  if (jadx !== undefined && !isAbsolute(jadx))
+    return err(
+      new ConfigurationError("Invalid REA user configuration", {
+        settings: [
+          { setting: "REA_JADX_MCP_JAR", constraint: "must be absolute" },
+        ],
+      }),
+    );
   return ok(parsed);
 };
 
@@ -110,9 +134,19 @@ export const mergeUserConfig = (
   configContents: string | undefined,
 ): Result<Readonly<NodeJS.ProcessEnv>, ConfigurationError> => {
   if (configContents === undefined) return ok(environment);
+  const parsed = parseUserConfigText(configContents);
+  if (!parsed.ok) return parsed;
+  const merged: NodeJS.ProcessEnv = { ...environment };
+  for (const [key, value] of Object.entries(parsed.value)) {
+    if (merged[key] === undefined) merged[key] = value;
+  }
+  return ok(Object.freeze(merged));
+};
+
+const parseUserConfigText = (contents: string) => {
   let raw: unknown;
   try {
-    raw = JSON.parse(configContents);
+    raw = JSON.parse(contents);
   } catch (cause) {
     return err(
       new ConfigurationError("Invalid REA user configuration", {
@@ -126,127 +160,222 @@ export const mergeUserConfig = (
       }),
     );
   }
-  const parsed = parseUserConfig(raw);
-  if (!parsed.ok) return parsed;
-  const merged: NodeJS.ProcessEnv = { ...environment };
-  for (const [key, value] of Object.entries(parsed.value)) {
-    if (merged[key] === undefined) merged[key] = value;
-  }
-  return ok(Object.freeze(merged));
+  return parseUserConfig(raw);
 };
 
 /** Read the user config file; absent files yield undefined. */
 export const readUserConfig = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
-  readFileImpl: (path: string, encoding: "utf8") => Promise<string> = readFile,
-): Promise<string | undefined> => {
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+): Promise<Result<string | undefined, ConfigurationError>> => {
   const path = userConfigFilePath(environment, platform);
   try {
-    return await readFileImpl(path, "utf8");
+    return ok(await readFile(path, "utf8"));
   } catch (cause) {
     const code =
       typeof cause === "object" && cause !== null && "code" in cause
         ? String((cause as NodeJS.ErrnoException).code)
         : "";
-    if (code === "ENOENT") return undefined;
-    throw cause;
+    if (code === "ENOENT") return ok(undefined);
+    return err(configFileError(path, "could not be read", cause));
   }
 };
 
-/**
- * Persist one or more settings to the user config file, creating parent
- * directories as needed. The file is rewritten in full, sorted for stable
- * diffs, with a trailing newline. The new content is staged next to the file
- * and moved into place with rename, so an interrupted write never leaves a
- * partial JSON document behind.
- */
+/** Resolve saved settings for a production invocation and retain the file failure. */
+export const loadUserConfiguration = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+): Promise<Result<Readonly<NodeJS.ProcessEnv>, ConfigurationError>> => {
+  const contents = await readUserConfig(environment, platform);
+  if (!contents.ok) return contents;
+  const result = mergeUserConfig(environment, contents.value);
+  if (result.ok) return result;
+  const detail = result.error.settings
+    .map(({ setting, constraint }) => `${setting}: ${constraint}`)
+    .join(", ");
+  return err(
+    configFileError(
+      userConfigFilePath(environment, platform),
+      detail,
+      result.error,
+    ),
+  );
+};
+
+type UserSettings = Partial<Record<PersistedSetting, string>>;
+
+const errorCode = (cause: unknown): unknown =>
+  cause instanceof Error && "code" in cause ? cause.code : undefined;
+
+const configFileError = (path: string, detail: string, cause?: unknown) =>
+  new ConfigurationError(
+    `Cannot use the REA user configuration at ${path}. ${detail}`,
+    {
+      cause,
+      settings: [{ setting: path, constraint: detail }],
+      remediationAction:
+        "Check the named file and its parent directory before retrying.",
+    },
+  );
+
+/** Apply a complete edit under one cross-process lock. */
+export const updateUserConfig = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  settings: UserSettings,
+  remove: readonly PersistedSetting[],
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+): Promise<{
+  readonly settings: UserSettings;
+  readonly removed: readonly PersistedSetting[];
+}> => {
+  const path = userConfigFilePath(environment, platform);
+  const checked = parseUserConfig(settings);
+  if (!checked.ok) throw checked.error;
+  if (remove.some((name) => Object.hasOwn(settings, name)))
+    throw configFileError(
+      path,
+      "a setting cannot be set and unset in the same edit",
+    );
+
+  const parent = dirname(path);
+  if (Object.keys(settings).length > 0)
+    await mkdir(parent, { recursive: true }).catch((cause: unknown) => {
+      throw configFileError(
+        path,
+        "could not create the configuration directory",
+        cause,
+      );
+    });
+  const lock = `${path}.lock`;
+  try {
+    await mkdir(lock);
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT" && Object.keys(settings).length === 0)
+      return { settings: {}, removed: [] };
+    if (errorCode(cause) === "EEXIST")
+      throw configFileError(
+        path,
+        `another edit holds ${lock}. Retry after it finishes. If a previous process was interrupted, remove the empty lock directory after confirming no edit is active`,
+        cause,
+      );
+    throw configFileError(
+      path,
+      "could not acquire the configuration lock",
+      cause,
+    );
+  }
+  let failure: ConfigurationError | undefined;
+  try {
+    const existing = await lstat(path).catch((cause: unknown) => {
+      if (errorCode(cause) === "ENOENT") return undefined;
+      throw cause;
+    });
+    if (existing !== undefined && !existing.isFile()) {
+      failure = configFileError(path, "must name a regular file for an edit");
+      throw failure;
+    }
+    const contents =
+      existing === undefined
+        ? ok(undefined)
+        : await readUserConfig(environment, platform);
+    if (!contents.ok) {
+      failure = contents.error;
+      throw failure;
+    }
+    const parsed =
+      contents.value === undefined
+        ? ok({} as UserSettings)
+        : parseUserConfigText(contents.value);
+    if (!parsed.ok) {
+      failure = parsed.error;
+      throw failure;
+    }
+    const next = { ...parsed.value, ...checked.value };
+    const removed = [...new Set(remove)].filter((key) =>
+      Object.hasOwn(next, key),
+    );
+    for (const key of removed) delete next[key];
+    const canonical = (value: UserSettings) =>
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(value).sort(([a], [b]) => a.localeCompare(b)),
+        ),
+        null,
+        2,
+      );
+    const before = canonical(parsed.value);
+    const after = canonical(next);
+    if (before !== after)
+      await publishConfig(path, after + "\n", existing?.mode);
+    return { settings: next, removed };
+  } catch (cause) {
+    failure ??= configFileError(
+      path,
+      "could not write the configuration",
+      cause,
+    );
+    throw failure;
+  } finally {
+    try {
+      await rmdir(lock);
+    } catch (cause) {
+      throw configFileError(
+        lock,
+        "could not release the configuration lock",
+        failure === undefined ? cause : new AggregateError([failure, cause]),
+      );
+    }
+  }
+};
+
+const publishConfig = async (
+  path: string,
+  contents: string,
+  mode: number | undefined,
+): Promise<void> => {
+  const staging = await mkdtemp(join(dirname(path), ".rea-config-"));
+  const staged = join(staging, "content");
+  let failure: unknown;
+  try {
+    await writeFile(staged, contents, { flag: "wx", mode: 0o600 });
+    if (mode !== undefined) {
+      await chmod(staged, mode & 0o777);
+      try {
+        await link(path, `${path}.rea.backup`);
+      } catch (cause) {
+        if (errorCode(cause) !== "EEXIST") throw cause;
+      }
+    }
+    await rename(staged, path);
+  } catch (cause) {
+    failure = cause;
+    throw cause;
+  } finally {
+    try {
+      await unlink(staged).catch((cause: unknown) => {
+        if (errorCode(cause) !== "ENOENT") throw cause;
+      });
+      await rmdir(staging);
+    } catch (cause) {
+      throw configFileError(
+        staging,
+        "could not clear the staged configuration",
+        failure === undefined ? cause : new AggregateError([failure, cause]),
+      );
+    }
+  }
+};
+
 export const writeUserConfig = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  settings: Partial<Record<PersistedSetting, string>>,
-  platform: NodeJS.Platform = process.platform,
-  io: ConfigFileIo = defaultConfigFileIo(),
-): Promise<Partial<Record<PersistedSetting, string>>> => {
-  const existing = await readUserConfig(environment, platform, io.readFile);
-  let current: Partial<Record<PersistedSetting, string>> = {};
-  if (existing !== undefined) {
-    const parsed = parseUserConfig(JSON.parse(existing));
-    if (!parsed.ok) throw parsed.error;
-    current = parsed.value;
-  }
-  const next = { ...current, ...settings };
-  await persistUserConfig(environment, next, platform, io);
-  return next;
-};
+  settings: UserSettings,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+): Promise<UserSettings> =>
+  (await updateUserConfig(environment, settings, [], platform)).settings;
 
-/** Remove settings from the config file, returning the removed keys. */
 export const unsetUserConfig = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   keys: readonly PersistedSetting[],
-  platform: NodeJS.Platform = process.platform,
-  io: ConfigFileIo = defaultConfigFileIo(),
-): Promise<readonly PersistedSetting[]> => {
-  const existing = await readUserConfig(environment, platform, io.readFile);
-  if (existing === undefined) return [];
-  const parsed = parseUserConfig(JSON.parse(existing));
-  if (!parsed.ok) throw parsed.error;
-  const before = new Set(Object.keys(parsed.value));
-  const next: Partial<Record<PersistedSetting, string>> = {};
-  for (const [key, value] of Object.entries(parsed.value)) {
-    if (!keys.includes(key as PersistedSetting))
-      (next as Record<string, string>)[key] = value;
-  }
-  await persistUserConfig(environment, next, platform, io);
-  const removed = [...before].filter((key) =>
-    keys.includes(key as PersistedSetting),
-  );
-  return removed as PersistedSetting[];
-};
-
-/** Injectable file operations for persisting the user config. */
-interface ConfigFileIo {
-  readFile: typeof readFile;
-  writeFile: (path: string, data: string, encoding: "utf8") => Promise<void>;
-  mkdir: (path: string) => Promise<void>;
-  rename: (from: string, to: string) => Promise<void>;
-}
-
-const defaultConfigFileIo = (): ConfigFileIo => ({
-  readFile,
-  writeFile: (path, data, encoding) =>
-    writeFile(path, data, encoding).then(() => undefined),
-  mkdir: (path) =>
-    mkdir(dirname(path), { recursive: true }).then(() => undefined),
-  rename: (from, to) => rename(from, to).then(() => undefined),
-});
-
-/**
- * The single read/change/write tail shared by every mutation: stage the
- * document beside the real file, then rename it into place. Rename is
- * atomic, so readers never observe a half-written file.
- */
-const persistUserConfig = async (
-  environment: Readonly<NodeJS.ProcessEnv>,
-  settings: Partial<Record<PersistedSetting, string>>,
-  platform: NodeJS.Platform,
-  io: ConfigFileIo,
-): Promise<void> => {
-  const path = userConfigFilePath(environment, platform);
-  const staged = `${path}.tmp`;
-  await io.mkdir(path);
-  await io.writeFile(
-    staged,
-    JSON.stringify(sortedSettings(settings), null, 2) + "\n",
-    "utf8",
-  );
-  await io.rename(staged, path);
-};
-
-const sortedSettings = (
-  settings: Partial<Record<PersistedSetting, string>>,
-): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(settings).sort(([left], [right]) =>
-      left.localeCompare(right),
-    ),
-  ) as Record<string, string>;
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+): Promise<readonly PersistedSetting[]> =>
+  (await updateUserConfig(environment, {}, keys, platform)).removed;

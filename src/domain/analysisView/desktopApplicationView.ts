@@ -16,13 +16,14 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { ok, err, type Result } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import { ok, err } from "../result.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 // Bound diagnostic context independently of the retained report size. Previews
 // are display values; stable file IDs select the original paths and all issues.
@@ -146,9 +147,12 @@ type DesktopViewRow = DesktopApplication[DesktopCollection][number];
 const validatedParents = new WeakSet<object>();
 export const projectDesktopApplicationView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "desktop-application")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof desktopViewRequestSchema>
+  >(admitted, "summary", "desktop-application");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -181,12 +185,11 @@ export const projectDesktopApplicationView = (
       validatedParents.add(key);
     }
   }
+  const subject = evidenceFileTarget(parent);
   if (
-    parent.subject === undefined ||
-    parent.subject === null ||
-    parent.subject.format !== "directory" ||
-    parent.subject.local_path !== report.root.path ||
-    parent.subject.digest.sha256 !== report.root.snapshot_sha256
+    subject === undefined ||
+    subject.format !== "directory" ||
+    subject.sha256 !== report.root.snapshot_sha256
   )
     return err(
       analysisViewInputError([
@@ -272,7 +275,7 @@ export const projectDesktopApplicationView = (
       else group.count++;
     }
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -290,10 +293,7 @@ export const projectDesktopApplicationView = (
         components: report.components.map(summarizeBasis),
         next_probe_groups: [...groups.values()],
       },
-      coverage: completeWithinViewCoverage(
-        report.files.length,
-        report.files.length,
-      ),
+      coverage: completeWithinViewCoverage(report.files.length),
     });
   }
   let rows: readonly DesktopViewRow[] = report[view.collection];
@@ -342,7 +342,7 @@ export const projectDesktopApplicationView = (
           ),
     );
   return ok({
-    kind: "desktop-application",
+    kind: "desktop-application" as const,
     view,
     ...shared,
     source_coverage: report.coverage,

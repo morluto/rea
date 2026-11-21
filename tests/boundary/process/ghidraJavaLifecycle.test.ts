@@ -13,6 +13,7 @@ import {
 } from "../../../src/process/ProcessOwnershipObservation.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 // Real, idle Node processes stand in for Java. These controls exercise POSIX
 // process ownership and complete-output semantics, not a JVM or Ghidra.
@@ -176,6 +177,12 @@ posix.each([true, false])(
           code: "version_unresolved",
           cancellation: { reason },
         });
+        if (
+          result.error instanceof AnalysisError ||
+          result.error._tag !== "GhidraJavaProbeFailure"
+        )
+          throw new Error("Expected the invalid Java report");
+        expect(result.error.cancellation?.reason).toBe(reason);
         expect(Object.keys(result.error)).not.toContain("cancellation");
         expect(() => JSON.stringify(result.error)).not.toThrow();
       }
@@ -230,6 +237,7 @@ posix(
       if (
         result.ok ||
         launched === undefined ||
+        result.error instanceof AnalysisError ||
         result.error._tag !== "GhidraJavaProbeFailure"
       )
         throw new Error("Expected incomplete-output deadline failure");
@@ -295,7 +303,7 @@ it("retains only the preparation owner's exact failed root through cancellation 
                 close: async () => {
                   closes++;
                   if (denied) throw cleanup;
-                  cleanup.resolveCleanup();
+                  releaseOwnedCleanup(cleanup);
                 },
               },
             },

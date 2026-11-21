@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import * as t from "@babel/types";
 
+import { retainSemanticAmbientEffect } from "./javascriptSemanticAmbientWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
   javaScriptSourceInvocationContext,
@@ -8,7 +9,7 @@ import {
   resolveJavaScriptGenericInvocation,
 } from "./javascriptIntrinsicInvocation.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   completeSemanticSteps,
   traverseJavaScriptAst,
@@ -98,3 +99,86 @@ it.each([
       );
   },
 );
+
+it("retains fixed dispatch and rereads live spread arguments", () => {
+  const parsed = parseJavaScriptSource(
+    "Object.getPrototypeOf([]);Object.getPrototypeOf(...[[]]);",
+    "dispatch.mjs",
+  );
+  if (parsed === null) throw new Error("Expected dispatch fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const [direct, spread] = parsed.program.body.map((statement) =>
+    t.isExpressionStatement(statement) &&
+    t.isCallExpression(statement.expression)
+      ? statement.expression
+      : undefined,
+  );
+  if (direct === undefined || spread === undefined)
+    throw new Error("Expected direct and spread calls");
+  let lookups = 0;
+  const interop = createSemanticModuleInterop(state, {
+    fixedIntrinsicPaths: true,
+    intrinsicPath: () => {
+      lookups += 1;
+      return ["intrinsic", "Object", "getPrototypeOf"];
+    },
+  });
+  const normalized = interop.intrinsicInvocationFacts(direct);
+  expect(normalized.settled).toBe(true);
+  expect(normalized.invocation?.kind).toBe("known");
+  const firstLookups = lookups;
+  for (let index = 0; index < 64; index++)
+    expect(interop.intrinsicInvocation(direct)).toBe(normalized.invocation);
+  expect(lookups).toBe(firstLookups);
+  expect(interop.intrinsicInvocation(direct, undefined, () => true)?.kind).toBe(
+    "opaque",
+  );
+
+  const before = interop.intrinsicInvocationFacts(spread);
+  expect(before.settled).toBe(false);
+  expect(before.invocation?.arguments?.[0]?.type).toBe("ArrayExpression");
+  retainSemanticAmbientEffect(
+    state,
+    "write",
+    ["array-iterator-prototype", "next"],
+    undefined,
+  );
+  const after = interop.intrinsicInvocationFacts(spread);
+  expect(after.settled).toBe(false);
+  expect(after.invocation?.arguments?.[0]?.type).toBe("SpreadElement");
+});
+
+it("refreshes settled dispatch when its owner records an earlier replacement", () => {
+  const parsed = parseJavaScriptSource(
+    "Object.getPrototypeOf = replacement; Object.getPrototypeOf([]);",
+    "captured-dispatch.mjs",
+  );
+  if (parsed === null) throw new Error("Expected dispatch fixture");
+  const [write, read] = parsed.program.body;
+  if (!t.isExpressionStatement(read) || !t.isCallExpression(read.expression))
+    throw new Error("Expected invocation");
+  if (write === undefined) throw new Error("Expected earlier effect site");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const path = ["intrinsic", "Object", "getPrototypeOf"];
+  const interop = createSemanticModuleInterop(state, {
+    fixedIntrinsicPaths: true,
+    intrinsicPath: () => path,
+  });
+  const original = interop.intrinsicInvocationFacts(read.expression);
+  expect(original).toMatchObject({
+    invocation: { kind: "known" },
+    settled: true,
+  });
+  expect(interop.intrinsicInvocationFacts(read.expression)).toBe(original);
+  interop.retainWrite(write, path);
+  const changed = interop.intrinsicInvocationFacts(read.expression);
+  expect(changed).toMatchObject({
+    invocation: { kind: "opaque", path },
+    settled: true,
+  });
+  expect(interop.intrinsicInvocationFacts(read.expression)).toBe(changed);
+});

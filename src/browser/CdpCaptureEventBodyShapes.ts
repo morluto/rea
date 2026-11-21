@@ -6,6 +6,7 @@ import {
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { isJsonContentType } from "./CdpCaptureEventHelpers.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import type { NetworkState } from "./CdpCaptureEventTypes.js";
@@ -13,16 +14,14 @@ import type { NetworkState } from "./CdpCaptureEventTypes.js";
 export const ingestResponseBodyShape = (
   state: CdpCaptureEventsState,
   requestId: string,
-  value: unknown,
+  reply: CdpCommandResult<"Network.getResponseBody"> | "malformed",
 ): void => {
   if (!state.network.has(requestId)) return;
-  const result = recordValue(value);
-  const body = cdpStringValue(result?.body);
-  const base64Encoded = result?.base64Encoded;
-  if (body === undefined || typeof base64Encoded !== "boolean") {
+  if (reply === "malformed") {
     invalidResponseBodyShape(state, requestId);
     return;
   }
+  const { body, base64Encoded } = reply;
   const decoded = base64Encoded ? decodePaddedBase64(body) : body;
   if (decoded === undefined) {
     invalidResponseBodyShape(state, requestId);
