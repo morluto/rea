@@ -28,11 +28,14 @@
 * **browser:** name the inherited address-space limit on a decoder memory refusal ([92f3f28](https://github.com/morluto/rea/commit/92f3f28d2952508499668452adcdf285e43bf857))
 * **browser:** separate the decoder CPU budget from an inherited ceiling ([947fa8f](https://github.com/morluto/rea/commit/947fa8f14d6c3688f29a440c6d6468e812897ab8))
 * **browser:** share the capture resource-constraint constructor ([d6a5b32](https://github.com/morluto/rea/commit/d6a5b32ed0a1dd368eaeaca0d91ca30765a75581))
+* **build:** keep Windows import symbols independent of the build path ([#12753](https://github.com/morluto/rea/issues/12753)) ([f85fae6](https://github.com/morluto/rea/commit/f85fae63e149a8164e17949f65f7884fd043a4b5))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
 * **desktop:** claim agentenv capture exclusively and survive FIFO write errors ([#12838](https://github.com/morluto/rea/issues/12838)) ([72f8f52](https://github.com/morluto/rea/commit/72f8f521a68722c64e229fa5174b17d1822750de))
+* **desktop:** classify complete filename boundary code points ([d9f2fd3](https://github.com/morluto/rea/commit/d9f2fd365dea6622e90bad56f29b278920e0fee2))
 * **desktop:** keep every state-reader close failure in the cleanup composite ([10597e1](https://github.com/morluto/rea/commit/10597e10f233bb7ae1306a441e5770880cb2976a)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **desktop:** leave host-dependent ELF library names unresolved ([1b2299c](https://github.com/morluto/rea/commit/1b2299c7f80f831af6f5243f6ea82b887a482c00))
+* **desktop:** match title filenames at Unicode boundaries ([d07d28b](https://github.com/morluto/rea/commit/d07d28b53348b820a8a3769b5b1fd45f8096015d))
 * **desktop:** preserve dynamic-token refusal wording ([efe6927](https://github.com/morluto/rea/commit/efe692721ea5206cd98f0847c2978c365f8bb289))
 * **desktop:** report JSON view depth after reviver stack exhaustion ([#12759](https://github.com/morluto/rea/issues/12759)) ([6a0a5e7](https://github.com/morluto/rea/commit/6a0a5e73790c8670631618878a5ca26b860fe758))
 * **desktop:** skip only ASCII whitespace before a desktop entry key ([#13126](https://github.com/morluto/rea/issues/13126)) ([a44e705](https://github.com/morluto/rea/commit/a44e705ad820d24e95577b4f61a3dc633ca4fcb8))
@@ -50,7 +53,9 @@
 * **pe:** exclude section padding from RVA metadata reads ([#12755](https://github.com/morluto/rea/issues/12755)) ([c5b5d9f](https://github.com/morluto/rea/commit/c5b5d9f7ea3f0f32a3ebf0834314ae3888ab4132))
 * **reference:** retain physical Git read failure after cleanup refusal ([#12848](https://github.com/morluto/rea/issues/12848)) ([f4937a0](https://github.com/morluto/rea/commit/f4937a04be3148a7f9a191f1114a8210b7264108))
 * **rizin:** report the required inferior terminal field ([#13019](https://github.com/morluto/rea/issues/13019)) ([d84652e](https://github.com/morluto/rea/commit/d84652e55b43ad7c494efe67d8324b35d4a05695))
+* **setup:** accept hyphenated client names and suggest the closest one ([ed5c3dd](https://github.com/morluto/rea/commit/ed5c3dd10d937eb5e6bb8c41afa44eb6b0af2052))
 * **setup:** keep MCP launchers usable after session cleanup ([#13185](https://github.com/morluto/rea/issues/13185)) ([1587b46](https://github.com/morluto/rea/commit/1587b46a9faa54b1fac925e0d4c827383e80b1ff))
+* **setup:** list supported clients instead of a suggestion for an empty client name ([244cb64](https://github.com/morluto/rea/commit/244cb646771dfe594b10e6031cc176df4f1ef560))
 * **setup:** preserve caller comments on detached DSH aliases ([#13032](https://github.com/morluto/rea/issues/13032)) ([270c3a6](https://github.com/morluto/rea/commit/270c3a6b285b30c71bcd2f57fad451417769840f))
 * **setup:** recognize DSH registrations nested in Cordis groups ([#13037](https://github.com/morluto/rea/issues/13037)) ([9fd8c8d](https://github.com/morluto/rea/commit/9fd8c8d90331a16164a9849d56bf84ed8682b139))
 * **uninstall:** keep emptied DSH inserts from applying overrides ([#13036](https://github.com/morluto/rea/issues/13036)) ([76da8fd](https://github.com/morluto/rea/commit/76da8fd8baa9ffe61be1d772a3cc1d0ac65dbf8b))
@@ -75,6 +80,7 @@
 * **javascript:** share settled ambient call continuations ([#13010](https://github.com/morluto/rea/issues/13010)) ([2e45687](https://github.com/morluto/rea/commit/2e45687dfde28274a5451223695a14f0ae6e5afd))
 * **mcp:** reduce deferred catalog startup data ([#13039](https://github.com/morluto/rea/issues/13039)) ([8f2b865](https://github.com/morluto/rea/commit/8f2b865c0645aab11a1d5d4c027d34089a925bf2))
 * **web:** normalize each browser redaction marker once ([#13172](https://github.com/morluto/rea/issues/13172)) ([6818b01](https://github.com/morluto/rea/commit/6818b01d5aacfdcc119054fec8d985d7b9ccfb5f))
+* **web:** stop repeated accessibility reads after method refusal ([#13191](https://github.com/morluto/rea/issues/13191)) ([3130adb](https://github.com/morluto/rea/commit/3130adbb1bcc69d08eca38337d0baf1391a66961))
 
 
 ### Code Refactoring
@@ -95,6 +101,7 @@
 
 ### Documentation
 
+* **artifacts:** explain the per-file verification cost of extraction ([#12745](https://github.com/morluto/rea/issues/12745)) ([6878c17](https://github.com/morluto/rea/commit/6878c17a833e6a595d4f80e47e98c256d60ca9c0))
 * **cli:** explain Ghidra annotation lifetime in command help ([f8192bd](https://github.com/morluto/rea/commit/f8192bd39d233ccf6e3dd8fd06b1e21082316ddf)), closes [#8242](https://github.com/morluto/rea/issues/8242)
 * **cli:** list the desktop_build doctor scope in provider selection ([4bd9327](https://github.com/morluto/rea/commit/4bd9327325b75a4632a3a50f0500ae2bfbd00718)), closes [#10251](https://github.com/morluto/rea/issues/10251)
 * **install:** describe setup's direct-launch MCP registrations ([c0af3e2](https://github.com/morluto/rea/commit/c0af3e293cd85bfdece21a4e2ce2f7d25ab8e684)), closes [#10252](https://github.com/morluto/rea/issues/10252)
@@ -380,6 +387,7 @@
 * **setup:** consolidate installer consent and plan disclosure checks ([#12869](https://github.com/morluto/rea/issues/12869)) ([234cae0](https://github.com/morluto/rea/commit/234cae0592ca4ef6ef002598a3e39396e1739501))
 * **setup:** consolidate malformed dry-run CLI coverage ([6bc96f3](https://github.com/morluto/rea/commit/6bc96f3f9900dcebd9c502592d325cd495d554ae))
 * **setup:** consolidate manual-client selection coverage ([f718e17](https://github.com/morluto/rea/commit/f718e17caaa8fa73d6a8705833e811a3be85b994))
+* **setup:** cover client name resolution and typo suggestions ([fe1f851](https://github.com/morluto/rea/commit/fe1f85105705b272282e96042c93e588c20f1c42))
 * **snapshot:** consolidate Ghidra replay and import coverage ([#12915](https://github.com/morluto/rea/issues/12915)) ([4269f79](https://github.com/morluto/rea/commit/4269f796782cfc4cd17cb4050371417960f6b70f))
 * **snapshots:** consolidate non-object file admission checks ([#13047](https://github.com/morluto/rea/issues/13047)) ([eb84f90](https://github.com/morluto/rea/commit/eb84f90417d23cd73a9b2f097b80c3737cad8268))
 * **snapshots:** verify ambiguous provenance through direct replay ([#13046](https://github.com/morluto/rea/issues/13046)) ([b6fced4](https://github.com/morluto/rea/commit/b6fced40a3917168d3dcd3faece150707a6f8072))
