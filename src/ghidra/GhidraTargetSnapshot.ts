@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { open } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { mkdir, open, rm, stat } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
 import {
   withArtifactRegularFile,
   withArtifactFileHandle,
@@ -13,6 +13,7 @@ import {
 } from "../resources/index.js";
 import {
   NonRegularFileReadError,
+  RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
@@ -73,7 +74,7 @@ export const createGhidraTargetSnapshot = async (
   }
   const resources = options.resourceScope ?? new ArtifactResourceScope();
   try {
-    return await resources.run(() =>
+    const snapshot = await resources.run(() =>
       withArtifactRegularFile(
         sourcePath,
         resources,
@@ -123,10 +124,155 @@ export const createGhidraTargetSnapshot = async (
         "follow",
       ),
     );
+    // Xcode 17 clang keeps all DWARF in a sibling <name>.dSYM bundle while the
+    // staged Mach-O keeps no __debug_info. Ghidra's DWARFAnalyzer only discovers
+    // a bundle named after the staged executable's path, so stage a renamed copy
+    // next to the snapshot; the runtime root owner cleans it up with the tree.
+    await stageCompanionDsym(
+      sourcePath,
+      snapshotPath,
+      resources,
+      options.signal,
+    );
+    return snapshot;
   } catch (cause: unknown) {
     // The private runtime owns partial snapshot entries. Its owner removes the
     // tree after every retained descriptor settles; do not unlink a raw name.
     throw mapArtifactFileFailure(cause, classifySnapshotFailure);
+  }
+};
+
+/** DWARF member inside the caller-selected sibling dSYM bundle. */
+const companionDwarfPath = (sourcePath: string): string =>
+  join(
+    `${sourcePath}.dSYM`,
+    "Contents",
+    "Resources",
+    "DWARF",
+    basename(sourcePath),
+  );
+
+/** Cancellation must escape the optional-companion skip semantics below. */
+const companionCancelled = (cause: unknown): boolean =>
+  cause instanceof ArtifactReaderFailure && cause.reason === "cancelled";
+
+const stageCompanionDsym = async (
+  sourcePath: string,
+  snapshotPath: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const sourceDwarf = companionDwarfPath(sourcePath);
+  const stagedBundle = `${snapshotPath}.dSYM`;
+  const stagedDwarf = join(
+    stagedBundle,
+    "Contents",
+    "Resources",
+    "DWARF",
+    basename(snapshotPath),
+  );
+  try {
+    if (!(await stat(sourceDwarf)).isFile()) return;
+    await mkdir(dirname(stagedDwarf), { recursive: true });
+    // Copy in bounded chunks so cancellation and startup-deadline expiry
+    // interrupt even a large dSYM instead of blocking on one whole-file copy.
+    await withArtifactRegularFile(
+      sourceDwarf,
+      resources,
+      signal,
+      async ({ handle: source }) => {
+        const initial = await source.stat({ bigint: true });
+        assertArtifactReadActive(signal);
+        await withArtifactFileHandle(
+          stagedDwarf,
+          await open(stagedDwarf, "wx", 0o600),
+          resources,
+          signal,
+          async (destination) => {
+            await destination.chmod(0o600);
+            const input = readArtifactFileChunks(source, {
+              end: initial.size,
+              signal,
+            });
+            for await (const chunk of input) {
+              assertArtifactReadActive(signal);
+              await destination.writeFile(chunk);
+              assertArtifactReadActive(signal);
+            }
+            // A companion that shifts mid-copy would stage truncated or mixed
+            // bytes; treat it like the digest probe and fall into the
+            // optional-companion skip below instead of staging bad DWARF.
+            if (
+              input.readCoverage().kind !== "complete" ||
+              !sameRegularFileState(
+                initial,
+                await source.stat({ bigint: true }),
+              )
+            )
+              throw new RegularFileChangedError(sourceDwarf);
+          },
+        );
+      },
+      "follow",
+    );
+  } catch (cause: unknown) {
+    // Remove any partial staged bundle so a later attempt starts clean; the
+    // runtime root owner still removes the whole tree if this best-effort
+    // cleanup itself fails.
+    try {
+      await rm(stagedBundle, { recursive: true, force: true });
+    } catch {
+      // Best effort only; the runtime root owner still removes the tree.
+    }
+    if (companionCancelled(cause)) throw cause;
+    // DWARF is optional evidence: when the sibling bundle is absent,
+    // unreadable, or has an unexpected layout, keep the snapshot and its
+    // "unknown symbols" semantics instead of failing admission.
+  }
+};
+
+/**
+ * Commit the companion dSYM's presence and content digest, or null when no
+ * sibling companion stages. This shares the staging probe so an absent,
+ * unreadable, or unstable companion resolves to the same no-companion
+ * identity the staged snapshot actually analyzed. Cancellation propagates.
+ */
+export const ghidraCompanionDsymDigest = async (
+  sourcePath: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<string | null> => {
+  const sourceDwarf = companionDwarfPath(sourcePath);
+  try {
+    if (!(await stat(sourceDwarf)).isFile()) return null;
+    return await withArtifactRegularFile(
+      sourceDwarf,
+      resources,
+      signal,
+      async ({ handle: source }) => {
+        const initial = await source.stat({ bigint: true });
+        assertArtifactReadActive(signal);
+        const hash = createHash("sha256");
+        const input = readArtifactFileChunks(source, {
+          end: initial.size,
+          signal,
+        });
+        for await (const chunk of input) {
+          assertArtifactReadActive(signal);
+          hash.update(chunk);
+        }
+        if (
+          input.readCoverage().kind !== "complete" ||
+          !sameRegularFileState(initial, await source.stat({ bigint: true }))
+        )
+          return null;
+        return hash.digest("hex");
+      },
+      "follow",
+    );
+  } catch (cause: unknown) {
+    if (companionCancelled(cause)) throw cause;
+    return null;
   }
 };
 

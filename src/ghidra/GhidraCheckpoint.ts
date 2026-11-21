@@ -37,6 +37,7 @@ import {
 } from "./GhidraFileArtifacts.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
+import { ghidraCompanionDsymDigest } from "./GhidraTargetSnapshot.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const sourceSchema = z
@@ -183,15 +184,38 @@ async function readSource(
   return manifest.source;
 }
 
-/** Resolve storage and content identity once for the shared CLI/MCP analysis profile. */
+/**
+ * Resolve storage and content identity once for the shared CLI/MCP analysis
+ * profile. A staged companion dSYM changes the analyzed symbols, so its digest
+ * takes part in the checkpoint key; targets without one keep the established
+ * identity and their existing saved Programs.
+ */
 export async function resolveGhidraCheckpoint(
   root: string,
   targetSha256: string,
   profile: AnalysisProfileCommitment,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
+  targetPath?: string,
 ): Promise<GhidraCheckpointSelection> {
-  const key = sha256Hex(JSON.stringify([targetSha256, profile.digest]));
+  const companionDsymSha256 =
+    targetPath === undefined
+      ? null
+      : await ghidraCompanionDsymDigest(targetPath, resources, signal).catch(
+          (cause: unknown) => {
+            throw classifyProviderFailure(
+              cause,
+              ghidraFileDialect("resolve_analysis_profile", {}),
+            );
+          },
+        );
+  const key = sha256Hex(
+    JSON.stringify(
+      companionDsymSha256 === null
+        ? [targetSha256, profile.digest]
+        : [targetSha256, profile.digest, companionDsymSha256],
+    ),
+  );
   const selection = {
     directory: appendCallerPath(root, key),
     key,

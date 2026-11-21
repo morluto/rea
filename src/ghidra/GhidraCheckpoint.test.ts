@@ -13,7 +13,7 @@ import {
   symlink,
   type FileHandle,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { acquireOwnedLease } from "../process/OwnedLease.js";
@@ -461,6 +461,110 @@ it.skipIf(process.platform === "win32")(
     await owner.close();
     expect((await peer.acquire("physical"))?.sha256).toBe(
       owner.observation.source?.sha256,
+    );
+  },
+);
+
+const writeCompanionDsym = async (targetPath: string, bytes: string) => {
+  const dwarf = join(
+    `${targetPath}.dSYM`,
+    "Contents",
+    "Resources",
+    "DWARF",
+    basename(targetPath),
+  );
+  await mkdir(dirname(dwarf), { recursive: true });
+  await writeFile(dwarf, bytes);
+};
+
+const resolveWithCompanion = (
+  root: string,
+  resources: ArtifactResourceScope,
+  targetPath: string,
+) =>
+  resolveGhidraCheckpoint(
+    root,
+    target,
+    profile,
+    resources,
+    undefined,
+    targetPath,
+  );
+
+it.skipIf(process.platform === "win32")(
+  "keeps the established checkpoint identity when no companion dSYM stages",
+  async () => {
+    const f = await fixture();
+    const selection = await resolveWithCompanion(
+      f.root,
+      f.resources,
+      join(f.root, "no-dsym-target"),
+    );
+    expect(selection).toEqual(f.selection);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "selects a fresh checkpoint when a companion dSYM appears without replacing the saved Program",
+  async () => {
+    const f = await fixture();
+    await f.owner.acquire("first");
+    await f.owner.publish(f.packed);
+    await f.owner.close();
+    const manifestPath = join(f.selection.directory, "current.json");
+    const before = await readFile(manifestPath, "utf8");
+    const targetPath = join(f.root, "companion-target");
+    await writeCompanionDsym(targetPath, "companion dwarf v1");
+
+    const withCompanion = await resolveWithCompanion(
+      f.root,
+      f.resources,
+      targetPath,
+    );
+    expect(withCompanion.key).not.toBe(f.selection.key);
+    expect(withCompanion.directory).not.toBe(f.selection.directory);
+
+    const fresh = new GhidraCheckpoint(withCompanion, f.resources);
+    owners.push(fresh);
+    expect(await fresh.acquire("second")).toBeUndefined();
+    expect(await readFile(manifestPath, "utf8")).toBe(before);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "binds the companion checkpoint identity to the dSYM content",
+  async () => {
+    const f = await fixture();
+    const targetPath = join(f.root, "companion-target");
+    await writeCompanionDsym(targetPath, "companion dwarf v1");
+    const initial = await resolveWithCompanion(f.root, f.resources, targetPath);
+    expect(initial.key).not.toBe(f.selection.key);
+    expect(await resolveWithCompanion(f.root, f.resources, targetPath)).toEqual(
+      initial,
+    );
+
+    await writeCompanionDsym(targetPath, "companion dwarf v2");
+    const changed = await resolveWithCompanion(f.root, f.resources, targetPath);
+    expect(changed.key).not.toBe(initial.key);
+    expect(changed.directory).not.toBe(initial.directory);
+
+    await writeCompanionDsym(targetPath, "companion dwarf v1");
+    expect(
+      (await resolveWithCompanion(f.root, f.resources, targetPath)).key,
+    ).toBe(initial.key);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps the established identity when the companion layout is unreadable",
+  async () => {
+    const f = await fixture();
+    const targetPath = join(f.root, "companion-target");
+    await mkdir(join(`${targetPath}.dSYM`, "Contents", "Resources"), {
+      recursive: true,
+    });
+    expect(await resolveWithCompanion(f.root, f.resources, targetPath)).toEqual(
+      f.selection,
     );
   },
 );
