@@ -17,6 +17,7 @@ import {
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
+  projectedUnavailableComponents,
   projectionCoverage,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
@@ -99,9 +100,7 @@ export const projectAndroidInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const all = projectedFileComponents(entries);
-  const unavailable = entries.flatMap(({ unavailable }) =>
-    unavailable === undefined ? [] : [unavailable],
-  );
+  const unavailable = projectedUnavailableComponents(entries);
   const classified = classify(all);
   const bridgeProjection = bridgeCandidates(
     [...classified.dex, ...classified.jvm_classes],
@@ -134,7 +133,7 @@ export const projectAndroidInventory = (
       : []),
     ...(unavailable.length > 0
       ? [
-          "Some inventoried occurrences have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component absence is unknown.",
+          "Some inventoried files or slices have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component absence is unknown.",
         ]
       : []),
   ];
