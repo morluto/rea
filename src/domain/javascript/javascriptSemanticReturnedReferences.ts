@@ -4,6 +4,7 @@ import {
   semanticBindingEffectGeneration,
   semanticMemberWriteSources,
 } from "./javascriptSemanticEffectLog.js";
+import { semanticGlobalCodeSites } from "./javascriptSemanticEffectRecord.js";
 import { intrinsicPrototypeMemberMayHaveChanged } from "./javascriptSemanticIntrinsicInstances.js";
 
 import {
@@ -101,7 +102,8 @@ export const createSemanticReturnedReferences = (
       readonly result: SemanticReturnedReferenceResult;
       readonly invocation: t.Node | undefined;
       readonly iterationUnknown: boolean;
-      readonly ambientGeneration: number;
+      readonly ambientGeneration: number | undefined;
+      readonly opaqueSites: number;
       readonly dependencies: readonly {
         readonly binding: JavaScriptSemanticBindingState;
         readonly generation: number;
@@ -114,14 +116,21 @@ export const createSemanticReturnedReferences = (
       existing !== undefined &&
       existing.invocation === invocation &&
       existing.iterationUnknown === state.arrayIterationUnknown &&
-      existing.ambientGeneration ===
-        semanticAmbientEffectGeneration(state, "contents") &&
+      existing.opaqueSites === semanticGlobalCodeSites(state).length &&
+      (existing.ambientGeneration === undefined ||
+        existing.ambientGeneration ===
+          semanticAmbientEffectGeneration(state, "contents")) &&
       existing.dependencies.every(
         ({ binding, generation }) =>
           semanticBindingEffectGeneration(binding) === generation,
       )
     )
       return existing.result;
+    // Plain lexical alias and callable walks depend on binding generations.
+    // Only transitions that can consult live ambient effects require their
+    // generation too; recording an unrelated ambient effect does not change
+    // the syntax or binding identity of a plain callable.
+    let readsAmbientEffects = invocation !== undefined;
     const dependencies = new Map<JavaScriptSemanticBindingState, number>();
     const functions = new Set<t.Function>();
     const work: Candidate[] = [];
@@ -311,7 +320,25 @@ export const createSemanticReturnedReferences = (
             result.unresolvedInvocation = true;
           continue;
         }
-        dependencies.set(binding, semanticBindingEffectGeneration(binding));
+        // Binding effects are fixed during this synchronous walk. Many
+        // source reads can select the same binding at different captures;
+        // record its cache dependencies once and still resolve every read.
+        if (!dependencies.has(binding)) {
+          const generation = semanticBindingEffectGeneration(binding);
+          dependencies.set(binding, generation);
+          if (!readsAmbientEffects)
+            readsAmbientEffects =
+              generation > 0 ||
+              binding.initializers.some(
+                ({ iterationSources }) => iterationSources !== undefined,
+              ) ||
+              binding.referenceInitializers.some(
+                ({ iterationSources, fallbackSources, requiredSources }) =>
+                  iterationSources !== undefined ||
+                  fallbackSources !== undefined ||
+                  requiredSources !== undefined,
+              );
+        }
         // A directly invoked function's parameter starts as its argument,
         // which therefore did not escape at the call.
         const argument = semanticDirectInvocationArgument(node, binding, state);
@@ -506,6 +533,8 @@ export const createSemanticReturnedReferences = (
           }
         }
       } else if (t.isObjectExpression(node)) {
+        // Getter dispatch and prototype selection can consult live effects.
+        readsAmbientEffects = true;
         const [key, ...suffix] = current.path ?? [];
         for (const choice of key === undefined
           ? [undefined]
@@ -539,6 +568,7 @@ export const createSemanticReturnedReferences = (
       } else if (t.isArrayExpression(node)) {
         const [key, ...path] = current.path ?? [];
         if (current.path !== undefined && key !== undefined) {
+          readsAmbientEffects ||= node.elements.some(t.isSpreadElement);
           for (const choice of semanticAliasSelectionChoices(key))
             for (const source of semanticArrayPropertyReferences(
               node,
@@ -625,6 +655,7 @@ export const createSemanticReturnedReferences = (
       } else if (t.isNewExpression(node))
         pending.push({ ...current, node: node.callee, classKind: "instance" });
       else if (t.isClass(node)) {
+        readsAmbientEffects = true;
         const [key, ...path] = current.path ?? [];
         if (current.path !== undefined && key !== undefined) {
           for (const choice of semanticAliasSelectionChoices(key)) {
@@ -742,7 +773,10 @@ export const createSemanticReturnedReferences = (
       result,
       invocation,
       iterationUnknown: state.arrayIterationUnknown,
-      ambientGeneration: semanticAmbientEffectGeneration(state, "contents"),
+      ambientGeneration: readsAmbientEffects
+        ? semanticAmbientEffectGeneration(state, "contents")
+        : undefined,
+      opaqueSites: semanticGlobalCodeSites(state).length,
       dependencies: [...dependencies].map(([binding, generation]) => ({
         binding,
         generation,
