@@ -61,3 +61,43 @@ policy enforcement. Incoming references are recovered static relationships;
 reflection, dynamic loading, and unresolved calls remain unknown. Preserve
 artifact digests, locations, diagnostics, and incomplete coverage. For archive
 members rather than code analysis, use `open_binary` and `inspect_artifact`.
+
+## Large APKs
+
+Keep defaults when the APK fits. When retained diagnostics establish JVM heap
+exhaustion, check the observed maximum heap and available host/container memory.
+Budget for JVM native memory and other processes as well; a heap cap is not a
+total memory cap. One 105,453-class APK exhausted an observed 2 GiB heap; loading
+completed with `REA_JADX_HEAP_MIB=6144`. This is an example, not a minimum or a
+guarantee for other APKs. Only use it when the memory budget permits:
+
+```sh
+REA_JADX_HEAP_MIB=6144 rea inspect-android-package /absolute/path/app.apk --format json
+```
+
+For MCP, set the variable in the environment of the REA server handling the
+request before it starts; changing an unrelated shell does not affect a running
+server. Retain the failed diagnostics and retry the same bounded operation.
+Heap exhaustion differs from a missing JADX JAR, `jdk.compiler`, or client tool
+registration; use the prerequisite or connection remedy for those failures.
+
+If deliberately using the headless JADX MCP server directly, inspect its
+`tools/list` first. Its 0.7.1 `load_apk` schema supports `include_packages`, a
+comma-separated string of package or fully qualified class prefixes to keep.
+An unscoped direct load can trigger broad preprocessing; `threads: 1` alone
+does not narrow that work. For a focused investigation, call `load_apk` with
+arguments such as:
+
+```json
+{
+  "path": "/absolute/path/app.apk",
+  "include_packages": "com.example.feature,com.example.MainActivity",
+  "threads": 1
+}
+```
+
+Replace the example prefixes with discovered candidates. These are direct JADX
+arguments, not REA Android tool arguments; REA manages its own loading behavior.
+Record the selected prefixes as a coverage limit: omitted classes and their
+references remain unexamined. Unload the APK and terminate the owned direct
+server when finished.
