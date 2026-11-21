@@ -10,11 +10,6 @@ import { inflate } from "node:zlib";
 import { promisify } from "node:util";
 import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  inspectGhidraInstallation,
-  type GhidraInstallationInspection,
-} from "../ghidra/GhidraInstallation.js";
-import { admitGhidraInstallation } from "../ghidra/GhidraAdmission.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { isAbortOf } from "../process/SignalAbort.js";
@@ -34,7 +29,6 @@ import {
   type AnalysisExecution,
   type ExecutionOptions,
   type ProviderAvailability,
-  type RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
 import {
@@ -252,37 +246,52 @@ const isBufferLimitExceeded = (err: unknown): boolean => {
   return code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
 };
 
-const resolveGhidraHeadless = async (
-  signal?: AbortSignal,
-): Promise<string | null> => {
-  try {
-    const inspectionOwner: RetainedResourceScope = {
-      retain: () => {},
-      run: (operation) => operation(),
-    };
-    const inspection: GhidraInstallationInspection =
-      await inspectGhidraInstallation({
-        environment: process.env,
-        resourceOwner: inspectionOwner,
-        platform: HOST_PLATFORM.platform,
-        architecture: HOST_PLATFORM.architecture,
-        ...(signal === undefined ? {} : { signal }),
-        ...(process.env.GHIDRA_INSTALL_DIR === undefined
-          ? {}
-          : { installDir: process.env.GHIDRA_INSTALL_DIR }),
-        ...(process.env.JAVA_HOME === undefined
-          ? {}
-          : { javaHome: process.env.JAVA_HOME }),
-      });
-    const admission = admitGhidraInstallation(inspection, {
-      existingProject: false,
-    });
-    if (admission.admitted) {
-      return admission.installation.analyzeHeadlessPath;
+const resolveGhidraHeadless = (): string | null => {
+  const isWindows = HOST_PLATFORM.platform === "win32";
+  const headlessName = isWindows ? "analyzeHeadless.bat" : "analyzeHeadless";
+
+  // An explicit setting remains authoritative even when malformed or stale;
+  // automatic discovery is only a fallback when the caller supplied none.
+  const envDir = process.env.GHIDRA_INSTALL_DIR;
+  if (typeof envDir === "string" && envDir.trim().length > 0) {
+    const candidate = join(envDir, "support", headlessName);
+    const properties = join(envDir, "Ghidra", "application.properties");
+    if (existsSync(candidate) && existsSync(properties)) {
+      return candidate;
     }
-  } catch {
-    // If inspection fails or throws, treat as unavailable
+    // Explicit setting was provided but is invalid or stale: do not fall back.
+    return null;
   }
+
+  // Fallback discovery only when no explicit setting was provided
+  const pathEnv = process.env.PATH ?? "";
+  const pathDirs = pathEnv
+    .split(isWindows ? ";" : ":")
+    .filter((p) => p.length > 0);
+  for (const dir of pathDirs) {
+    const directHeadless = join(dir, headlessName);
+    if (existsSync(directHeadless)) return directHeadless;
+
+    const subHeadless = join(dir, "support", headlessName);
+    if (existsSync(subHeadless)) return subHeadless;
+
+    const ghidraRunName = isWindows ? "ghidraRun.bat" : "ghidraRun";
+    const ghidraRun = join(dir, ghidraRunName);
+    if (existsSync(ghidraRun)) {
+      const fromGhidraRun = join(dir, "support", headlessName);
+      if (existsSync(fromGhidraRun)) return fromGhidraRun;
+    }
+  }
+
+  const systemCandidates = ["/opt/ghidra", "/usr/share/ghidra"];
+  for (const root of systemCandidates) {
+    const candidate = join(root, "support", headlessName);
+    const properties = join(root, "Ghidra", "application.properties");
+    if (existsSync(candidate) && existsSync(properties)) {
+      return candidate;
+    }
+  }
+
   return null;
 };
 
@@ -985,7 +994,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       prefix: "rea-uefi-decompile-",
     });
 
-    const ghidraBin = await resolveGhidraHeadless(signal);
+    const ghidraBin = resolveGhidraHeadless();
 
     const MAX_DISASSEMBLY_MODULE_BYTES = 2 * 1024 * 1024;
     const MAX_DISASSEMBLY_TOTAL_BYTES = 64 * 1024 * 1024;
