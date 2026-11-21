@@ -269,14 +269,30 @@ interface AmbientStoredReferences {
   readonly widened: Set<WidenedStoreGroup>;
 }
 
+type AmbientCallResult =
+  | { readonly kind: "prototype"; readonly target: t.Node }
+  | { readonly kind: "array-iterator"; readonly receiver?: t.Node };
+
+const ambientResultCallee = (
+  node: t.Node,
+  escapedContents: boolean,
+): t.Node | undefined =>
+  t.isCallExpression(node) ||
+  t.isOptionalCallExpression(node) ||
+  t.isNewExpression(node)
+    ? node.callee
+    : t.isTaggedTemplateExpression(node)
+      ? node.tag
+      : escapedContents && (t.isFunction(node) || t.isClass(node))
+        ? node
+        : undefined;
+
 interface AmbientReferenceFacts {
   readonly stores: WeakMap<t.Node, AmbientStoredReferences>;
-  readonly callResult: (
-    node: t.CallExpression | t.OptionalCallExpression,
-  ) =>
-    | { readonly kind: "prototype"; readonly target: t.Node }
-    | { readonly kind: "array-iterator"; readonly receiver?: t.Node }
-    | undefined;
+  readonly callResult: (node: t.CallExpression | t.OptionalCallExpression) => {
+    readonly result: AmbientCallResult | undefined;
+    readonly settled: boolean;
+  };
   readonly freshObject: (node: t.Node) => boolean;
   readonly arrayIteratorReceiver: (node: t.Node) => boolean;
 }
@@ -571,19 +587,26 @@ export const createAmbientPathResolver = (
           memberPaths.set(current.node, memberPath);
         }
         const { root, members } = memberPath;
-        // Returned references and iterator receivers can depend on effects
-        // retained since the previous query. Re-enter them in the live walk.
+        // A settled dispatch and source-local return graph can be folded
+        // into the shared traversal. Keep effect-sensitive captures on the
+        // live frontier, including the array-receiver check of iterator calls.
+        const isCall =
+          t.isCallExpression(root) || t.isOptionalCallExpression(root);
+        const callee = possibleWrites
+          ? ambientResultCallee(root, escapedContents)
+          : undefined;
+        const observedCall =
+          frontier !== undefined && isCall
+            ? facts?.callResult(root)
+            : undefined;
         if (
           frontier !== undefined &&
-          (t.isCallExpression(root) ||
-            t.isOptionalCallExpression(root) ||
-            t.isNewExpression(root) ||
-            t.isTaggedTemplateExpression(root) ||
-            (escapedContents && (t.isFunction(root) || t.isClass(root))) ||
-            (t.isObjectExpression(root) &&
-              root.properties.some((property) =>
-                t.isObjectMethod(property, { kind: "get" }),
-              )))
+          ((isCall &&
+            (observedCall?.settled !== true ||
+              observedCall.result?.kind === "array-iterator")) ||
+            (callee !== undefined &&
+              observedCall?.result?.kind !== "prototype" &&
+              returnedReferences.observesAmbientEffects(callee)))
         ) {
           frontier.add(root);
           resolvedIdentity = true;
@@ -929,11 +952,10 @@ export const createAmbientPathResolver = (
           );
           continue;
         }
-        const callResult =
-          possibleWrites &&
-          (t.isCallExpression(root) || t.isOptionalCallExpression(root))
-            ? facts?.callResult(root)
-            : undefined;
+        const callResult = (
+          observedCall ??
+          (possibleWrites && isCall ? facts?.callResult(root) : undefined)
+        )?.result;
         if (callResult?.kind === "prototype") {
           continueWith(
             callResult.target,
@@ -970,22 +992,8 @@ export const createAmbientPathResolver = (
           ]);
           resolvedIdentity = true;
         }
-        if (
-          possibleWrites &&
-          (t.isCallExpression(root) ||
-            t.isOptionalCallExpression(root) ||
-            t.isNewExpression(root) ||
-            t.isTaggedTemplateExpression(root) ||
-            (escapedContents && (t.isFunction(root) || t.isClass(root))))
-        ) {
-          continueReturned(
-            t.isFunction(root) || t.isClass(root)
-              ? root
-              : t.isTaggedTemplateExpression(root)
-                ? root.tag
-                : root.callee,
-            suffix,
-          );
+        if (callee !== undefined) {
+          continueReturned(callee, suffix);
           continue;
         }
         if (possibleWrites && t.isConditionalExpression(root)) {
@@ -1428,6 +1436,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   }[] = [];
   const stores = new WeakMap<t.Node, AmbientStoredReferences>();
   const interop = createSemanticModuleInterop(state, {
+    fixedIntrinsicPaths: true,
     intrinsicPath: (node) => {
       const [path] = ambientReads(node).paths;
       return path?.[0] === "global" && path.every((key) => key !== null)
@@ -1435,6 +1444,44 @@ export function* indexJavaScriptAmbientWritesSteps(
         : undefined;
     },
   });
+  // Resolve captures after the scan has observed every opaque site. Unlike
+  // invocation classification, interpreting the ambient return form is only
+  // needed by the post-scan walk.
+  const settledCalls = new WeakMap<
+    t.CallExpression | t.OptionalCallExpression,
+    ReturnType<AmbientReferenceFacts["callResult"]>
+  >();
+  const classifyCall = (
+    node: t.CallExpression | t.OptionalCallExpression,
+    invocation: JavaScriptIntrinsicInvocation | undefined,
+  ): AmbientCallResult | undefined => {
+    const prototype = intrinsicPrototypeRead(invocation);
+    if (prototype !== undefined)
+      return { kind: "prototype", target: prototype };
+    if (
+      invocation?.path.length === 4 &&
+      invocation.path[1] === "Array" &&
+      invocation.path[2] === "prototype" &&
+      arrayIteratorMethods.has(invocation.path[3]!)
+    )
+      return { kind: "array-iterator" };
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    if (!(t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)))
+      return undefined;
+    const key = semanticStaticPropertyKey(callee.property, callee.computed);
+    if (
+      !(key !== null && arrayIteratorMethods.has(key)) &&
+      !(
+        callee.computed &&
+        globalReferenceNamespace(callee.property, state, [
+          "Symbol",
+          "iterator",
+        ]) !== undefined
+      )
+    )
+      return undefined;
+    return { kind: "array-iterator", receiver: callee.object };
+  };
   const ambientWrites = createAmbientPathResolver(state, true, {
     stores,
     freshObject: interop.isFreshObject,
@@ -1444,35 +1491,12 @@ export function* indexJavaScriptAmbientWritesSteps(
         (isIntrinsicGlobalReference(node.callee, state, "Array") ||
           isIntrinsicTypedArrayConstruction(node, state))),
     callResult: (node) => {
-      const invocation = interop.intrinsicInvocation(node);
-      const prototype = intrinsicPrototypeRead(invocation);
-      if (prototype !== undefined)
-        return { kind: "prototype", target: prototype };
-      if (
-        invocation?.path.length === 4 &&
-        invocation.path[1] === "Array" &&
-        invocation.path[2] === "prototype" &&
-        arrayIteratorMethods.has(invocation.path[3]!)
-      )
-        return { kind: "array-iterator" };
-      const callee = unwrapJavaScriptExpression(node.callee).node;
-      if (
-        !(t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
-      )
-        return undefined;
-      const key = semanticStaticPropertyKey(callee.property, callee.computed);
-      if (
-        !(key !== null && arrayIteratorMethods.has(key)) &&
-        !(
-          callee.computed &&
-          globalReferenceNamespace(callee.property, state, [
-            "Symbol",
-            "iterator",
-          ]) !== undefined
-        )
-      )
-        return undefined;
-      return { kind: "array-iterator", receiver: callee.object };
+      const cached = settledCalls.get(node);
+      if (cached !== undefined) return cached;
+      const { invocation, settled } = interop.intrinsicInvocationFacts(node);
+      const effects = { result: classifyCall(node, invocation), settled };
+      if (settled) settledCalls.set(node, effects);
+      return effects;
     },
   });
   yield* collectJavaScriptIdentityWritesSteps(

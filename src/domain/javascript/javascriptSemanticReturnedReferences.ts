@@ -85,6 +85,15 @@ export interface SemanticReturnedReferenceResult {
   readonly precision: "exact" | "widened";
 }
 
+interface SemanticReturnedReferenceReader {
+  (
+    callee: t.Node,
+    invocation?: t.CallExpression | t.OptionalCallExpression,
+  ): SemanticReturnedReferenceResult;
+  /** Whether the callee-only read depends on live ambient effects. */
+  readonly observesAmbientEffects: (callee: t.Node) => boolean;
+}
+
 /** Resolve local result references conservatively, without claiming call execution. */
 export const createSemanticReturnedReferences = (
   state: JavaScriptSemanticAnalysisState,
@@ -92,10 +101,7 @@ export const createSemanticReturnedReferences = (
     | "potential-reference"
     | "direct-call"
     | "awaited-call" = "potential-reference",
-): ((
-  callee: t.Node,
-  invocation?: t.CallExpression | t.OptionalCallExpression,
-) => SemanticReturnedReferenceResult) => {
+): SemanticReturnedReferenceReader => {
   const results = new WeakMap<
     t.Node,
     {
@@ -110,7 +116,10 @@ export const createSemanticReturnedReferences = (
       }[];
     }
   >();
-  return (callee, invocation) => {
+  const resolve = (
+    callee: t.Node,
+    invocation?: t.CallExpression | t.OptionalCallExpression,
+  ): SemanticReturnedReferenceResult => {
     const existing = results.get(callee);
     if (
       existing !== undefined &&
@@ -786,4 +795,10 @@ export const createSemanticReturnedReferences = (
       state.returnedReferenceWidenings.add(callee);
     return result;
   };
+  return Object.assign(resolve, {
+    observesAmbientEffects: (callee: t.Node): boolean => {
+      resolve(callee);
+      return results.get(callee)?.ambientGeneration !== undefined;
+    },
+  });
 };
