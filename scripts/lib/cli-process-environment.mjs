@@ -20,7 +20,7 @@ export const prepareCliProcessEnvironment = (
     environment.PLAYWRIGHT_BROWSERS_PATH === undefined
   ) {
     const cacheRoot =
-      environment.XDG_CACHE_HOME ?? join(environment.HOME ?? ".", ".cache");
+      environment.XDG_CACHE_HOME || join(environment.HOME ?? ".", ".cache");
     environment.PLAYWRIGHT_BROWSERS_PATH = join(cacheRoot, "ms-playwright");
   }
 };
