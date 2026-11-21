@@ -150,7 +150,8 @@ export function selectStaticCheckArtifact(
   runAttempt,
   name = STATIC_EVIDENCE_ARTIFACTS["Static checks"],
 ) {
-  if (runAttempt !== 1) return null;
+  if (!Number.isSafeInteger(runAttempt) || runAttempt < 1) return null;
+  const attemptName = runAttempt === 1 ? name : `${name}-attempt-${runAttempt}`;
   if (
     !Array.isArray(page?.artifacts) ||
     !Number.isSafeInteger(page.total_count) ||
@@ -158,7 +159,9 @@ export function selectStaticCheckArtifact(
     page.artifacts.length >= 100
   )
     return null;
-  const matches = page.artifacts.filter((artifact) => artifact.name === name);
+  const matches = page.artifacts.filter(
+    (artifact) => artifact.name === attemptName,
+  );
   if (matches.length !== 1) return null;
   const [artifact] = matches;
   if (

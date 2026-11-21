@@ -206,7 +206,7 @@ jobs:
         if: always() && needs.changes.outputs.code == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: static-check-reports
+          name: ${{ github.run_attempt == 1 && 'static-check-reports' || format('static-check-reports-attempt-{0}', github.run_attempt) }}
           path: .cache/static-checks/
           include-hidden-files: true
           if-no-files-found: ignore
@@ -272,7 +272,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: static-deep-check-reports
+          name: ${{ github.run_attempt == 1 && 'static-deep-check-reports' || format('static-deep-check-reports-attempt-{0}', github.run_attempt) }}
           path: .cache/static-checks/
           include-hidden-files: true
           if-no-files-found: ignore
