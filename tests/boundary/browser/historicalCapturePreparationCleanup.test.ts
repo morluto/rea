@@ -162,6 +162,7 @@ it("cancels after snapshot acquisition without launching or adopting the opaque 
       { signal: controller.signal },
     );
     if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(primaryAnalysisError(result.error).cause).toBe(reason);
     expect(result.error.partialObservation).toMatchObject({
       kind: "file-snapshot-hash",
