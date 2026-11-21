@@ -320,20 +320,25 @@ export const createSemanticReturnedReferences = (
             result.unresolvedInvocation = true;
           continue;
         }
-        dependencies.set(binding, semanticBindingEffectGeneration(binding));
-        if (!readsAmbientEffects)
-          readsAmbientEffects =
-            semanticBindingEffectGeneration(binding) > 0 ||
-            binding.initializers.some(
-              ({ iterationSources }) => iterationSources !== undefined,
-            ) ||
-            binding.referenceInitializers.some(
-              ({ iterationSources, fallbackSources, requiredSources }) =>
-                iterationSources !== undefined ||
-                fallbackSources !== undefined ||
-                requiredSources !== undefined,
-            );
-
+        // Binding effects are fixed during this synchronous walk. Many
+        // source reads can select the same binding at different captures;
+        // record its cache dependencies once and still resolve every read.
+        if (!dependencies.has(binding)) {
+          const generation = semanticBindingEffectGeneration(binding);
+          dependencies.set(binding, generation);
+          if (!readsAmbientEffects)
+            readsAmbientEffects =
+              generation > 0 ||
+              binding.initializers.some(
+                ({ iterationSources }) => iterationSources !== undefined,
+              ) ||
+              binding.referenceInitializers.some(
+                ({ iterationSources, fallbackSources, requiredSources }) =>
+                  iterationSources !== undefined ||
+                  fallbackSources !== undefined ||
+                  requiredSources !== undefined,
+              );
+        }
         // A directly invoked function's parameter starts as its argument,
         // which therefore did not escape at the call.
         const argument = semanticDirectInvocationArgument(node, binding, state);
