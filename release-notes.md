@@ -348,6 +348,7 @@
 * **web:** consolidate interrupted module resolution evidence ([#13072](https://github.com/morluto/rea/issues/13072)) ([f63915d](https://github.com/morluto/rea/commit/f63915d6f2bc55328bd3e38a337079b127d8113d))
 * **web:** consolidate module context and resolver evidence checks ([#13071](https://github.com/morluto/rea/issues/13071)) ([56a0617](https://github.com/morluto/rea/commit/56a0617f518432f14ba981c8c55f1b920f857f5e))
 * **web:** consolidate module syntax and capture identity fixtures ([#13073](https://github.com/morluto/rea/issues/13073)) ([8322b55](https://github.com/morluto/rea/commit/8322b555523ed83aa895af5e4ff666023ca511fc))
+* **web:** consolidate redirect ancestry comparison proofs ([#13082](https://github.com/morluto/rea/issues/13082)) ([5b04c74](https://github.com/morluto/rea/commit/5b04c74ae05d3c5acf739f2941cd8d9145761f3d))
 * **web:** consolidate scenario alignment and ordering proofs ([#13078](https://github.com/morluto/rea/issues/13078)) ([b723393](https://github.com/morluto/rea/commit/b7233936118915a1f9c230873c95be08f7ae06e7))
 * **web:** consolidate scenario event coverage proofs ([#13079](https://github.com/morluto/rea/issues/13079)) ([2dc27d1](https://github.com/morluto/rea/commit/2dc27d164ab2c989d3fe06e8f1dcb2892366f686))
 * **web:** consolidate scenario transaction and context proofs ([#13081](https://github.com/morluto/rea/issues/13081)) ([3a60c55](https://github.com/morluto/rea/commit/3a60c55a91c3211fe087c572570c8e907d881e7e))
