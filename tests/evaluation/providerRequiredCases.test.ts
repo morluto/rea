@@ -218,3 +218,75 @@ it.for([
     );
   },
 );
+
+processTest.for([0, 124] as const)(
+  "installs signal prerequisites only after bounded acquisition (%i)",
+  async (status, { processes }) => {
+    const workflow = z
+      .object({
+        jobs: z.object({
+          sigrok: z.object({
+            steps: z.array(
+              z.object({
+                uses: z.string().optional(),
+                with: z.record(z.string(), z.unknown()).optional(),
+              }),
+            ),
+          }),
+        }),
+      })
+      .parse(
+        parse(
+          readFileSync(".github/workflows/real-signal-recording.yml", "utf8"),
+        ),
+      );
+    const input = z
+      .object({
+        packages: z.literal("sigrok-cli util-linux python3"),
+        "download-timeout-seconds": z.literal("90"),
+      })
+      .parse(
+        workflow.jobs.sigrok.steps.find(
+          (step) => step.uses === "./.github/actions/host-apt-packages",
+        )?.with,
+      );
+    const action = z
+      .object({
+        runs: z.object({ steps: z.tuple([z.object({ run: z.string() })]) }),
+      })
+      .parse(
+        parse(
+          readFileSync(".github/actions/host-apt-packages/action.yml", "utf8"),
+        ),
+      );
+    const command = `
+      sudo() {
+        printf '%s\n' "$*"
+        if [[ "$*" == *--download-only* ]]; then return ${status}; fi
+      }
+      ${action.runs.steps[0].run}
+    `;
+    const result = await processes.run(
+      "bash",
+      ["-eo", "pipefail", "-c", command],
+      {
+        env: {
+          ...process.env,
+          REA_APT_PACKAGES: input.packages,
+          REA_APT_DOWNLOAD_TIMEOUT: input["download-timeout-seconds"],
+          REA_APT_INSTALL_RECOMMENDS: "true",
+        },
+      },
+    );
+    expect(result.exitCode, result.stderr).toBe(status);
+    const commands = result.stdout
+      .trim()
+      .split("\n")
+      .filter((line) => !line.startsWith("::error::"));
+    const download =
+      "timeout --kill-after=5s 90s apt-get -o Acquire::Retries=2 --download-only install --yes -- sigrok-cli util-linux python3";
+    const install =
+      "apt-get --no-download install --yes -- sigrok-cli util-linux python3";
+    expect(commands).toEqual(status === 0 ? [download, install] : [download]);
+  },
+);
