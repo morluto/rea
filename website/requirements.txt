@@ -9,3 +9,5 @@ markdownify==1.2.3
 PyYAML==6.0.3
 # Rasterize the README contributor grid during a manual snapshot refresh.
 Pillow==13.0.0
+# Compress the shared first-paint stylesheet in the published build.
+rcssmin==1.2.2

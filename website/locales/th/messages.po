@@ -5604,6 +5604,11 @@ msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr "ตั้งชื่อตัวดำเนินการและตรวจสอบเส้นทางตัวดำเนินการทั้งสอง"
 
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "นักวิเคราะห์คิดที่คอมพิวเตอร์"
+
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
 msgid "Illustrative expert reasoning"
