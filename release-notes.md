@@ -396,6 +396,7 @@
 * **web:** consolidate saved response retention checks ([#13133](https://github.com/morluto/rea/issues/13133)) ([4a249df](https://github.com/morluto/rea/commit/4a249dfde64a5c15a20066792a0573d78921f47d))
 * **web:** consolidate saved scenario path checks ([#13122](https://github.com/morluto/rea/issues/13122)) ([b5cb5e2](https://github.com/morluto/rea/commit/b5cb5e2f0dd740993dc35a02c8d94068cf79df46))
 * **web:** consolidate scenario alignment and ordering proofs ([#13078](https://github.com/morluto/rea/issues/13078)) ([b723393](https://github.com/morluto/rea/commit/b7233936118915a1f9c230873c95be08f7ae06e7))
+* **web:** consolidate scenario deadline and diagnostic checks ([#13149](https://github.com/morluto/rea/issues/13149)) ([560de52](https://github.com/morluto/rea/commit/560de528a35ced86c4b719e62091011c43a4e193))
 * **web:** consolidate scenario event coverage proofs ([#13079](https://github.com/morluto/rea/issues/13079)) ([2dc27d1](https://github.com/morluto/rea/commit/2dc27d164ab2c989d3fe06e8f1dcb2892366f686))
 * **web:** consolidate scenario request cleanup checks ([#13116](https://github.com/morluto/rea/issues/13116)) ([ad4c558](https://github.com/morluto/rea/commit/ad4c558789289f42f3be74694080d5a99c4ad16d))
 * **web:** consolidate scenario response body bounds ([#13120](https://github.com/morluto/rea/issues/13120)) ([6ae91b2](https://github.com/morluto/rea/commit/6ae91b2a10ee178c057c0afecf2c6a012824cdde))
