@@ -18,6 +18,7 @@ on:
       - "tests/support/reverseDebuggerMcpTestHelpers.ts"
       - "tests/support/process/pidFile.ts"
       - "tests/fixtures/mcpToolError.ts"
+      - "tests/fixtures/temporaryDirectory.ts"
 
 permissions:
   contents: read
