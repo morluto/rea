@@ -404,6 +404,11 @@ export const documentationSections = [
         route: "/android-ota-payload",
       },
       {
+        text: "UBI images",
+        source: "guides/firmware/ubi-images.md",
+        route: "/ubi-images",
+      },
+      {
         text: "Flattened devicetree inspection",
         source: "devicetree.md",
         route: "/devicetree",

@@ -49,6 +49,7 @@ import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
 } from "../../domain/firmware/androidOtaPayload.fixture.js";
+import { twoVolumeUbiImage } from "../../domain/firmware/ubiImage.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -605,6 +606,19 @@ it("classifies nested Android OTA payloads as containers by CrAU magic", () => {
   expect(
     classifyArtifactBytesAtPath("ota/payload.bin", v1AndroidOtaPayload()),
   ).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
+it("classifies nested UBI images as containers by a valid UBI# header", () => {
+  const image = twoVolumeUbiImage();
+  expect(classifyArtifactBytesAtPath("nand/rootfs.ubi", image)).toEqual({
+    kind: "container",
+    format: "ubi-image",
+  });
+  image.writeUInt32BE(0, 60);
+  expect(classifyArtifactBytesAtPath("nand/rootfs.ubi", image)).toEqual({
     kind: "resource",
     format: "file",
   });

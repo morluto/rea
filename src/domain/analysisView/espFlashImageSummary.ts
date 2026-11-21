@@ -12,6 +12,7 @@ import {
   type ArtifactFormatMetadata,
 } from "../artifactFormatMetadata.js";
 import { summarizeAndroidOtaPayload } from "./androidOtaPayloadSummary.js";
+import { summarizeUbiImage } from "./ubiImageSummary.js";
 
 type EspFlashImageFacts = z.infer<typeof espFlashImageFactsSchema>;
 
@@ -126,17 +127,19 @@ const summarizeImage = (
 });
 
 /**
- * Root facts for the summary view: compact for an ESP flash layout and an
- * Android OTA payload.
+ * Root facts for the summary view: compact for an ESP flash layout, an
+ * Android OTA payload and a UBI image.
  */
 export const summaryRootMetadata = (
   metadata: ArtifactFormatMetadata,
 ):
   | ArtifactFormatMetadata
   | EspFlashImageSummaryMetadata
-  | ReturnType<typeof summarizeAndroidOtaPayload> => {
+  | ReturnType<typeof summarizeAndroidOtaPayload>
+  | ReturnType<typeof summarizeUbiImage> => {
   if (metadata.kind === "android-ota-payload")
     return summarizeAndroidOtaPayload(metadata);
+  if (metadata.kind === "ubi-image") return summarizeUbiImage(metadata);
   if (metadata.kind !== "esp-flash-image") return metadata;
   const { bootloader, apps, ...rest } = metadata;
   return {

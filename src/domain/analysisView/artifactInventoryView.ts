@@ -42,6 +42,7 @@ import {
 import { analysisViewResultInputError } from "./analysisViewParent.js";
 import { ARTIFACT_INVENTORY_VIEW_CAVEATS } from "./artifactInventoryViewCaveats.js";
 import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
+import { ubiImageSummaryMetadataSchema } from "./ubiImageSummary.js";
 import {
   espFlashImageSummaryMetadataSchema,
   summaryRootMetadata,
@@ -108,14 +109,16 @@ export const artifactInventorySummarySchema = z.strictObject({
     .exactOptional(),
   manifest: artifactGraphManifestSchema,
   /**
-   * An ESP flash layout's nested images appear as summaries here, and an
-   * Android OTA payload's partition, group and APEX arrays as counts.
+   * An ESP flash layout's nested images appear as summaries here, an
+   * Android OTA payload's partition, group and APEX arrays as counts, and a
+   * UBI image's volume array as counts.
    */
   root_format_metadata: z
     .union([
       artifactFormatMetadataSchema,
       espFlashImageSummaryMetadataSchema,
       androidOtaPayloadSummaryMetadataSchema,
+      ubiImageSummaryMetadataSchema,
     ])
     .exactOptional(),
   available_counts: z.strictObject({
@@ -298,7 +301,8 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "dfuse" ||
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
-    inventory.manifest.root_format === "android-ota-payload";
+    inventory.manifest.root_format === "android-ota-payload" ||
+    inventory.manifest.root_format === "ubi-image";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,

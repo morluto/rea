@@ -416,7 +416,8 @@ REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 `REA_FIRMWARE_TEST_ENTRYPOINT` can select an isolated installed npm package's
 `scripts/rea.mjs` to verify the packaged CLI/MCP workflow. Real coverage here is
 generated gzip/USTAR/ext4 with a Linux x64 ELF child; SquashFS, UBIFS, proprietary
-firmware, other hosts and architectures remain unverified.
+firmware, other hosts and architectures remain unverified. UBI volume containers
+have a native reader; see [Inspect UBI images](#inspect-ubi-images).
 
 ## Inspect ESP images
 
@@ -475,6 +476,16 @@ verifying signatures. Full payloads can reconstruct REPLACE, ZERO and
 REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
 extraction. See [Android OTA update payloads](android-ota-payload.md)
 for header facts, operation types, limits and verification scope.
+
+## Inspect UBI images
+
+`inspect-artifact` / `extract-artifact` recognize a UBI image or NAND dump by
+its `UBI#` erase-counter header and inventory the eraseblock layout and volume
+table without mounting anything. Each volume is reassembled from its logical
+eraseblocks into `volumes/<name>`; a volume with a missing logical eraseblock
+is inventoried and refuses extraction. UBIFS and SquashFS contents inside a
+volume are not decoded. See [UBI images](ubi-images.md) for layout facts,
+volume table checks, reassembly rules and verification scope.
 
 ## Inspect UF2 and DfuSe images
 

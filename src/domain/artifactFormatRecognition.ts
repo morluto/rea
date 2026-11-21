@@ -9,6 +9,7 @@ import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { recognizeUbiImage } from "./firmware/ubiImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
@@ -26,6 +27,7 @@ export type RecognizedArtifactFormat = Extract<
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
+  | "ubi-image"
   | "intel-hex"
   | "srec"
   | "uf2"
@@ -117,6 +119,13 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
             format: "android-ota-payload",
             reason: ota.reason,
           };
+    },
+    ({ prefix }) => {
+      const ubi = recognizeUbiImage(prefix);
+      if (ubi === undefined) return undefined;
+      return ubi.state === "recognized"
+        ? { state: "recognized", format: "ubi-image" }
+        : { state: "refused", format: "ubi-image", reason: ubi.reason };
     },
     ({ prefix }) => {
       const format = detectHexRecordEncoding(prefix);

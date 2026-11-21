@@ -14,6 +14,7 @@ import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
+import { twoVolumeUbiImage } from "./firmware/ubiImage.fixture.js";
 
 /** A classic iNES header declaring one 16 KiB PRG bank, with no bank bytes. */
 const headerOnlyInes = (): Buffer => {
@@ -50,6 +51,16 @@ it.each([
     bytes: v1AndroidOtaPayload(),
     format: "android-ota-payload",
     reason: expect.stringContaining("major version 1"),
+  },
+  {
+    label: "a UBI image with a bad erase-counter header CRC",
+    bytes: (() => {
+      const bytes = twoVolumeUbiImage();
+      bytes.writeUInt32BE(0, 60);
+      return bytes;
+    })(),
+    format: "ubi-image",
+    reason: expect.stringContaining("erase-counter header CRC mismatch"),
   },
 ])("refuses $label in one place", (row) => {
   expect(recognize(row.bytes)).toEqual({
@@ -168,3 +179,10 @@ it.each([8, 12, 19])(
     expect(recognize(bytes)).toBeUndefined();
   },
 );
+
+it("recognizes a UBI image by its erase-counter header", () => {
+  expect(recognize(twoVolumeUbiImage())).toMatchObject({
+    state: "recognized",
+    format: "ubi-image",
+  });
+});

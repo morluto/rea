@@ -392,6 +392,16 @@ rea extract-artifact ./payload.bin --json
 See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
 facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
 
+Inventory the volumes of a UBI image or NAND dump and reassemble each one:
+
+```sh
+rea inspect-artifact ./nand.ubi --detail summary --evidence_output nand.json --json
+rea extract-artifact ./nand.ubi --json
+```
+
+See [UBI images](../guides/firmware/ubi-images.md) for eraseblock layout, the volume
+table, LEB reassembly and missing-LEB refusals.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
