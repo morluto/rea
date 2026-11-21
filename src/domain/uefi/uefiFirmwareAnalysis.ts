@@ -567,6 +567,7 @@ export const uefiResultSchemas = {
         type: z.string().optional(),
         source_path: z.string().optional(),
         source_logical_path: z.string().optional(),
+        source_stream: z.string().nullable().optional(),
         source_range: range.nullable().optional(),
         disassembly_status: z.enum(["ok", "failed", "omitted"]),
         c_file: z.string().nullable(),

@@ -161,7 +161,7 @@ The tool accepts two input formats:
 - **Phase-Correct Scaffolding Fallback**: When Ghidra is absent or decompilation exceeds budget, REA
   generates typed C entry point scaffolding adhering to PI and UEFI specifications:
   - `PEIM`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_PEI_FILE_HANDLE, const EFI_PEI_SERVICES **)`
-  - `PEI_CORE`: `void EFIAPI ModuleEntryPoint(const EFI_SEC_PEI_HAND_OFF *, const EFI_PEI_PPI_DESCRIPTOR *)`
+  - `PEI_CORE`: `void EFIAPI ModuleEntryPoint(const EFI_SEC_PEI_HAND_OFF *, const EFI_PEI_PPI_DESCRIPTOR *, void *Context)`
   - `SEC` / `security-core`: `void EFIAPI ModuleEntryPoint(void *PeiCoreEntryPoint)`
   - `DXE_CORE`: `void EFIAPI ModuleEntryPoint(void *HobStart)`
   - `DXE` driver, `SMM`, and `APP`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_HANDLE, EFI_SYSTEM_TABLE *)`
@@ -179,7 +179,7 @@ the requested absent `output_directory`:
 - `firmware_manifest.json` indexing all modules, relative paths, phase counts, and active limitations.
 - `README.md` markdown table summarizing module metadata with portable relative links.
 - Retained Evidence registers confidence as `"derived"`, reflecting decompiled control flow and reconstructed prototypes.
-- Contract metadata declares `mayDiscardData: true` and `mutatesSession: true`.
+- Contract metadata declares `mayDiscardData: false` and `mutatesSession: true`.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
 structural records. Artifact inventory applies the same ceiling to volume

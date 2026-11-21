@@ -17,6 +17,7 @@ import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreati
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import * as ExecFileOutputModule from "../process/ExecFileOutput.js";
+import { ghidraProfileInstallationHost } from "../ghidra/GhidraInstallation.fixture.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -1818,6 +1819,12 @@ it("rejects an already existing output directory under SafeOutputTree", async ()
       decompileRequest(imagePath, outDir),
     );
     expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(
+        (executed.error as { issues?: readonly { path: readonly string[] }[] })
+          .issues?.[0]?.path,
+      ).toEqual(["output_directory"]);
+    }
   } finally {
     await provider.close();
   }
@@ -3460,8 +3467,7 @@ it("escapes special Markdown characters in module names when generating README",
     expect(result.total_modules_decompiled).toBe(1);
 
     const readmeRaw = await readFile(join(outDir, "README.md"), "utf8");
-    expect(readmeRaw).toContain("\\|");
-    expect(readmeRaw).toContain("\\`");
+    expect(readmeRaw).toContain("``Driver|With`Pipe AndNewline[Bracket]``");
     expect(readmeRaw).toContain("Driver_With_Pipe AndNewline_Bracket_.c");
   } finally {
     await provider.close();
@@ -3718,7 +3724,9 @@ it("injects isolated JVM home and tmpdir properties for Ghidra execution", async
       return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
     });
 
-  const provider = new UefiAnalysisProvider();
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
   try {
     await provider.execute(
       decompileRequest(inDir, outDir, { include_disassembly: false }),
@@ -3956,4 +3964,109 @@ it("composes cleanup failure with ordinary staging Node errors via analysisError
 it("describes pre-extracted directories in the decompile path schema", () => {
   const desc = uefiInputSchemas.decompile_uefi_firmware.shape.path.description;
   expect(desc).toContain("pre-extracted module directory");
+});
+
+it("attributes pre-extracted directory destination collision to output_directory via outputDirectoryAdmissionRefusal", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-dest-refusal-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await mkdirFs(outDir, { recursive: true });
+  await writeFile(join(inDir, "mod.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(
+        (executed.error as { issues?: readonly { path: readonly string[] }[] })
+          .issues?.[0]?.path,
+      ).toEqual(["output_directory"]);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("detects concurrent source module modification via expectedSha256 and refuses to decompile", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-toctou-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // Create two 17 MiB PE modules so the 32 MiB preload budget is exhausted by the second
+  const minimalPe = createMinimalPeBuffer();
+  const pe17Mb = Buffer.concat([
+    minimalPe,
+    Buffer.alloc(17 * 1024 * 1024 - minimalPe.length, 0),
+  ]);
+  await writeFile(join(inDir, "00_first.efi"), pe17Mb);
+
+  // Second module will have mod.bytes === undefined due to preload budget (17 + 17 > 32)
+  const targetPe = join(inDir, "01_target.efi");
+  await writeFile(targetPe, pe17Mb);
+
+  // Mutate targetPe on disk when PrivateRuntimeRoot is created (between inventory and staging)
+  const origCreate = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  const createSpy = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementation(async (options) => {
+      const root = await origCreate(options);
+      await writeFile(
+        targetPe,
+        Buffer.concat([pe17Mb, Buffer.from("CORRUPTED_BYTES")]),
+      );
+      return root;
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, {
+        include_disassembly: false,
+        max_modules: 5,
+      }),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      const detail =
+        executed.error.message +
+        " " +
+        ((executed.error.cause as Error)?.message ?? "");
+      expect(detail).toContain("modified concurrently during analysis");
+    }
+  } finally {
+    createSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("escapes names containing backticks using CommonMark compliant multi-backtick code spans in README table", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-backtick-table-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "My`Tricky`Module.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    expect(executed.ok).toBe(true);
+
+    const readmeContent = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeContent).toContain("``");
+    expect(readmeContent).not.toMatch(/\\`/);
+  } finally {
+    await provider.close();
+  }
 });

@@ -10,6 +10,7 @@ import { existsSync, type Dirent } from "node:fs";
 import {
   mkdir,
   open,
+  opendir,
   readdir,
   readFile,
   rm,
@@ -34,12 +35,19 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
   SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
 } from "../resources/index.js";
+import {
+  inspectGhidraInstallation,
+  type GhidraInstallationHost,
+  type GhidraInstallationOptions,
+} from "../ghidra/GhidraInstallation.js";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
   type ProviderAvailability,
+  type RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
 import {
@@ -125,10 +133,12 @@ interface DiscoveredUefiModule {
   readonly sourcePath?: string | undefined;
   readonly sourceRelPath?: string | undefined;
   readonly sourceLogicalPath?: string | undefined;
+  readonly sourceStream?: string | null | undefined;
   readonly sourceRange?:
     | { readonly offset: number; readonly length: number }
     | null
     | undefined;
+  readonly expectedSha256?: string | undefined;
   readonly byteLength: number;
 }
 
@@ -339,53 +349,19 @@ const isBufferLimitExceeded = (err: unknown): boolean => {
   return code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
 };
 
-const resolveGhidraHeadless = (): string | null => {
-  const isWindows = HOST_PLATFORM.platform === "win32";
-  const headlessName = isWindows ? "analyzeHeadless.bat" : "analyzeHeadless";
-
-  // An explicit setting remains authoritative even when malformed or stale;
-  // automatic discovery is only a fallback when the caller supplied none.
-  const envDir = process.env.GHIDRA_INSTALL_DIR;
-  if (typeof envDir === "string" && envDir.trim().length > 0) {
-    const candidate = join(envDir, "support", headlessName);
-    const properties = join(envDir, "Ghidra", "application.properties");
-    if (existsSync(candidate) && existsSync(properties)) {
-      return candidate;
-    }
-    // Explicit setting was provided but is invalid or stale: do not fall back.
-    return null;
-  }
-
-  // Fallback discovery only when no explicit setting was provided
-  const pathEnv = process.env.PATH ?? "";
-  const pathDirs = pathEnv
-    .split(isWindows ? ";" : ":")
-    .filter((p) => p.length > 0);
-  for (const dir of pathDirs) {
-    const directHeadless = join(dir, headlessName);
-    if (existsSync(directHeadless)) return directHeadless;
-
-    const subHeadless = join(dir, "support", headlessName);
-    if (existsSync(subHeadless)) return subHeadless;
-
-    const ghidraRunName = isWindows ? "ghidraRun.bat" : "ghidraRun";
-    const ghidraRun = join(dir, ghidraRunName);
-    if (existsSync(ghidraRun)) {
-      const fromGhidraRun = join(dir, "support", headlessName);
-      if (existsSync(fromGhidraRun)) return fromGhidraRun;
+const formatMarkdownCodeSpan = (text: string): string => {
+  const sanitized = text.replace(/[\r\n]+/g, " ");
+  const matches = sanitized.match(/`+/g);
+  let maxBackticks = 0;
+  if (matches) {
+    for (const m of matches) {
+      if (m.length > maxBackticks) maxBackticks = m.length;
     }
   }
-
-  const systemCandidates = ["/opt/ghidra", "/usr/share/ghidra"];
-  for (const root of systemCandidates) {
-    const candidate = join(root, "support", headlessName);
-    const properties = join(root, "Ghidra", "application.properties");
-    if (existsSync(candidate) && existsSync(properties)) {
-      return candidate;
-    }
-  }
-
-  return null;
+  const delimiter = "`".repeat(maxBackticks + 1);
+  const needsPadding = sanitized.startsWith("`") || sanitized.endsWith("`");
+  const content = needsPadding ? ` ${sanitized} ` : sanitized;
+  return `${delimiter}${content}${delimiter}`;
 };
 
 /** Offsets are scoped to the scanner's exact stream and may repeat across streams. */
@@ -437,18 +413,43 @@ const selectTarget = (
  * worker per stream; budgets are enforced by the worker reply contract. No
  * prlimit wrapper and no external tools are involved.
  */
+export interface UefiProviderOptions {
+  readonly workerModulePath?: string;
+  readonly ghidraInstallationHost?: GhidraInstallationHost;
+}
+
+/**
+ * Pure TypeScript UEFI provider: static flash-image cartography plus budgeted
+ * extraction. LZMA payloads decode through one owned, freshly spawned node
+ * worker per stream; budgets are enforced by the worker reply contract. No
+ * prlimit wrapper and no external tools are involved.
+ */
 export class UefiAnalysisProvider implements UefiAnalysisPort {
   #closing = false;
   #tail: Promise<void> = Promise.resolve();
   readonly #resources = new ArtifactResourceScope();
   readonly #workerModulePath: string;
+  readonly #ghidraInstallationHost?: GhidraInstallationHost | undefined;
+  readonly #inspectionOwner: RetainedResourceScope = {
+    retain: (owner, resource) =>
+      this.#resources.retain({
+        kind: "lease",
+        resource,
+        lease: { release: () => owner.close() },
+      }),
+    run: (operation) => this.#resources.run(operation),
+  };
 
-  constructor(
-    workerModulePath: string = fileURLToPath(
-      new URL("./UefiLzmaWorker.js", import.meta.url),
-    ),
-  ) {
-    this.#workerModulePath = workerModulePath;
+  constructor(workerModulePathOrOptions?: string | UefiProviderOptions) {
+    if (typeof workerModulePathOrOptions === "string") {
+      this.#workerModulePath = workerModulePathOrOptions;
+    } else {
+      this.#workerModulePath =
+        workerModulePathOrOptions?.workerModulePath ??
+        fileURLToPath(new URL("./UefiLzmaWorker.js", import.meta.url));
+      this.#ghidraInstallationHost =
+        workerModulePathOrOptions?.ghidraInstallationHost;
+    }
   }
 
   async inspectAvailability(): Promise<ProviderAvailability> {
@@ -641,7 +642,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     return this.#resources.run(async () => {
       checkpoint();
       if (request.operation === "decompile_uefi_firmware") {
-        await SafeOutputTree.checkDestination(request.input.output_directory);
+        await SafeOutputTree.checkDestination(
+          request.input.output_directory,
+        ).catch((cause: unknown) => {
+          throw outputDirectoryAdmissionRefusal(
+            request.operation,
+            "output_directory",
+            cause,
+          );
+        });
       }
       let isDirectory = false;
       try {
@@ -1086,14 +1095,52 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       );
     }
 
-    await SafeOutputTree.checkDestination(input.output_directory);
+    await SafeOutputTree.checkDestination(input.output_directory).catch(
+      (cause: unknown) => {
+        throw outputDirectoryAdmissionRefusal(
+          request.operation,
+          "output_directory",
+          cause,
+        );
+      },
+    );
 
     const tempRoot = await PrivateRuntimeRoot.create({
       prefix: "rea-uefi-decompile-",
     });
 
-    const ghidraBin = resolveGhidraHeadless();
+    const ghidraInstallDir = process.env.GHIDRA_INSTALL_DIR;
+    const ghidraJavaHome = process.env.JAVA_HOME;
+    const ghidraOptions: GhidraInstallationOptions = {
+      signal,
+      resourceOwner: this.#inspectionOwner,
+      environment: process.env,
+      ...(ghidraInstallDir ? { installDir: ghidraInstallDir } : {}),
+      ...(ghidraJavaHome ? { javaHome: ghidraJavaHome } : {}),
+    };
+    const ghidraInspection = await (
+      this.#ghidraInstallationHost === undefined
+        ? inspectGhidraInstallation(ghidraOptions)
+        : inspectGhidraInstallation(ghidraOptions, this.#ghidraInstallationHost)
+    ).catch(() => null);
+    const ghidraBin =
+      ghidraInspection?.status === "available"
+        ? ghidraInspection.analyzeHeadlessPath
+        : null;
+    const ghidraVersion =
+      ghidraInspection?.status === "available"
+        ? ghidraInspection.providerVersion
+        : null;
     let ghidraEngineUsed = false;
+
+    if (
+      process.env.GHIDRA_INSTALL_DIR &&
+      ghidraInspection?.status === "unavailable"
+    ) {
+      effectiveLimitations.push(
+        `Configured Ghidra installation is unavailable: ${ghidraInspection.rejection.reason}`,
+      );
+    }
 
     const MAX_DISASSEMBLY_MODULE_BYTES = 2 * 1024 * 1024;
     const MAX_DISASSEMBLY_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -1140,6 +1187,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         type?: string | undefined;
         source_path?: string | undefined;
         source_logical_path?: string | undefined;
+        source_stream?: string | null | undefined;
         source_range?: { offset: number; length: number } | null | undefined;
         disassembly_status: "ok" | "failed" | "omitted";
         relative_c_file: string;
@@ -1173,9 +1221,23 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         }
 
         moduleSeq++;
-        const modBytes =
-          mod.bytes ??
-          (mod.sourcePath ? await readFile(mod.sourcePath) : Buffer.alloc(0));
+        let modBytes = mod.bytes;
+        if (modBytes === undefined && mod.sourcePath) {
+          const freshBytes = await readFile(mod.sourcePath);
+          const freshSha256 = sha256Hex(freshBytes);
+          if (
+            mod.expectedSha256 !== undefined &&
+            freshSha256 !== mod.expectedSha256
+          ) {
+            throw new Error(
+              `Source module ${mod.sourceRelPath ?? mod.sourcePath} was modified concurrently during analysis (expected sha256 ${mod.expectedSha256}, observed ${freshSha256}).`,
+            );
+          }
+          modBytes = freshBytes;
+        }
+        if (modBytes === undefined) {
+          modBytes = Buffer.alloc(0);
+        }
 
         const phaseKey = mod.phase.toLowerCase() as keyof typeof phaseCounts;
         if (phaseCounts[phaseKey] !== undefined) {
@@ -1644,7 +1706,23 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 if (signal.aborted) signal.throwIfAborted();
                 if (isAbortOf(ghidraErr, signal)) throw ghidraErr;
                 const errDetail = sanitizeDiag(errorMessage(ghidraErr));
-                if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                const budgetMatch =
+                  /decompiled C output exceeded (\d+) byte limit/i.exec(
+                    errDetail,
+                  );
+                if (budgetMatch) {
+                  const limitBytes = Number(budgetMatch[1]);
+                  const limitLabel =
+                    limitBytes < MAX_DECOMPILE_MODULE_BYTES
+                      ? "64 MiB aggregate staging budget"
+                      : "4 MiB per-module limit";
+                  const limitMsg = `Decompiled C output for ${mod.rawName} stopped after reaching ${limitLabel}; recovered with reconstructed entry scaffolding.`;
+                  if (!effectiveLimitations.includes(limitMsg)) {
+                    effectiveLimitations.push(limitMsg);
+                  }
+                } else if (
+                  recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS
+                ) {
                   effectiveLimitations.push(
                     `Ghidra C decompilation for ${mod.rawName} failed: ${errDetail}`,
                   );
@@ -1697,6 +1775,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               : {}),
             ...(mod.sourceLogicalPath !== undefined
               ? { source_logical_path: mod.sourceLogicalPath }
+              : {}),
+            ...(mod.sourceStream !== undefined
+              ? { source_stream: mod.sourceStream }
               : {}),
             ...(mod.sourceRange !== undefined
               ? { source_range: mod.sourceRange }
@@ -1768,14 +1849,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         "| Phase | Name | GUID | Size (Bytes) | Disassembly Status | C Scaffold | Disassembly |",
         "|---|---|---|---|---|---|---|",
         ...stagedModules.map((m) => {
-          const safeCellName = m.name
-            .replace(/[\r\n]+/g, " ")
-            .replace(/\|/g, "\\|")
-            .replace(/`/g, "\\`");
+          const safeCellName = formatMarkdownCodeSpan(m.name);
+          const safeGuid = formatMarkdownCodeSpan(m.guid ?? "N/A");
           const safeLinkName = m.name
             .replace(/[\r\n]+/g, " ")
             .replace(/[[\]|`]/g, "_");
-          return `| ${m.phase} | \`${safeCellName}\` | \`${m.guid ?? "N/A"}\` | ${m.code_bytes} | ${m.disassembly_status} | [${safeLinkName}.c](${m.relative_c_file}) | ${m.relative_asm_file ? `[${safeLinkName}.asm](${m.relative_asm_file})` : "N/A"} |`;
+          return `| ${m.phase} | ${safeCellName} | ${safeGuid} | ${m.code_bytes} | ${m.disassembly_status} | [${safeLinkName}.c](${m.relative_c_file}) | ${m.relative_asm_file ? `[${safeLinkName}.asm](${m.relative_asm_file})` : "N/A"} |`;
         }),
       ];
       publicationEntries.push({
@@ -1847,7 +1926,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             phases: phaseCounts,
             modules: finalModules,
             producers: {
-              ghidra: ghidraEngineUsed ? ghidraBin : null,
+              ghidra: ghidraEngineUsed ? (ghidraVersion ?? ghidraBin) : null,
               disassembler: input.include_disassembly
                 ? disassemblyEngineUsed
                 : "none",
@@ -2059,7 +2138,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   typeName: file.type_name,
                   phase,
                   sourceLogicalPath: section.logical_path,
-                  sourceRange: {
+                  sourceStream: payload.sourceStream,
+                  sourceRange: payload.range ?? {
                     offset: section.offset + section.header_length,
                     length: payload.bytes.length,
                   },
@@ -2100,15 +2180,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       isFile: () => boolean;
     }> = [];
     const dirQueue: string[] = [input.path];
+    let totalEntriesVisited = 0;
 
     while (dirQueue.length > 0) {
       checkpoint();
       signal.throwIfAborted();
       const currentDir = dirQueue.shift()!;
-      let entries: Dirent[];
+      let dirHandle;
       try {
-        entries = await readdir(currentDir, { withFileTypes: true });
-        entries.sort((a, b) => compareUnicodeCodePoints(a.name, b.name));
+        dirHandle = await opendir(currentDir);
       } catch (dirErr) {
         if (currentDir === input.path) {
           throw new Error(
@@ -2122,21 +2202,49 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         }
         continue;
       }
-      for (const entry of entries) {
-        checkpoint();
-        signal.throwIfAborted();
-        if (dirEntries.length >= MAX_DIRECTORY_INVENTORY_ENTRIES) {
-          limitations.push(
-            `Directory discovery stopped after reaching ${MAX_DIRECTORY_INVENTORY_ENTRIES} entry budget.`,
-          );
-          dirQueue.length = 0;
-          break;
-        }
-        if (entry.isDirectory()) {
-          dirQueue.push(join(currentDir, entry.name));
-        } else if (entry.isFile()) {
-          dirEntries.push({
+
+      const currentSubdirEntries: Array<{
+        name: string;
+        isDir: boolean;
+        isFile: boolean;
+      }> = [];
+
+      try {
+        for await (const entry of dirHandle) {
+          checkpoint();
+          signal.throwIfAborted();
+          totalEntriesVisited++;
+          if (totalEntriesVisited > MAX_DIRECTORY_INVENTORY_ENTRIES) {
+            limitations.push(
+              `Directory discovery stopped after reaching ${MAX_DIRECTORY_INVENTORY_ENTRIES} entry budget.`,
+            );
+            dirQueue.length = 0;
+            break;
+          }
+          currentSubdirEntries.push({
             name: entry.name,
+            isDir: entry.isDirectory(),
+            isFile: entry.isFile(),
+          });
+        }
+      } catch (streamErr) {
+        if (limitations.length < 50) {
+          limitations.push(
+            `Directory streaming interrupted: ${errorMessage(streamErr)}`,
+          );
+        }
+      }
+
+      currentSubdirEntries.sort((a, b) =>
+        compareUnicodeCodePoints(a.name, b.name),
+      );
+
+      for (const item of currentSubdirEntries) {
+        if (item.isDir) {
+          dirQueue.push(join(currentDir, item.name));
+        } else if (item.isFile) {
+          dirEntries.push({
+            name: item.name,
             parentPath: currentDir,
             isFile: () => true,
           });
@@ -2513,6 +2621,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         sourceRelPath: candidate.identityRelPath,
         ...(retainedBytes !== undefined ? { bytes: retainedBytes } : {}),
         sourcePath: candidate.fullPath,
+        expectedSha256: fileSha256,
         byteLength: candidate.size,
       });
     }
