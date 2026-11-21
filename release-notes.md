@@ -506,6 +506,7 @@
 * **v8:** consolidate code-cache parser and recovery coverage ([8af645c](https://github.com/morluto/rea/commit/8af645c25c7f36f6be74d4baff4aee6d8b422d75))
 * **v8:** consolidate relative CLI and source-byte checks ([#12867](https://github.com/morluto/rea/issues/12867)) ([aa16513](https://github.com/morluto/rea/commit/aa1651311d27a4a0a224d00f427eaee9c4fd1387))
 * **v8:** cover the six-word code cache header ([978cc6d](https://github.com/morluto/rea/commit/978cc6d46bb663cb97244a758205e0988a238deb))
+* **verification:** consolidate fixture retry and process lineage checks ([#13237](https://github.com/morluto/rea/issues/13237)) ([4f64006](https://github.com/morluto/rea/commit/4f640064a4c743dd1b912c0e72c1ebf063ca00d6))
 * **wasm:** consolidate WABT and glue parser checks ([c11e73b](https://github.com/morluto/rea/commit/c11e73bd642cee0e12f0dfd7826d412dd9332506))
 * **wasm:** consolidate WABT output and glue scanner checks ([#12822](https://github.com/morluto/rea/issues/12822)) ([c11e73b](https://github.com/morluto/rea/commit/c11e73bd642cee0e12f0dfd7826d412dd9332506))
 * **web:** acknowledge CDP socket timeout phases before advancing time ([#13181](https://github.com/morluto/rea/issues/13181)) ([8691cfa](https://github.com/morluto/rea/commit/8691cfa96b9130262491b7af991583c1aca63f1d))
