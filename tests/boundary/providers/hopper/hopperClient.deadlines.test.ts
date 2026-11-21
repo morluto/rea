@@ -5,6 +5,7 @@ import {
   HopperFixtureLauncher,
   startHopperFixtureClient,
 } from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 describe("HopperClient request deadlines", () => {
   it("propagates deadlines through the socket client and accepts late replies safely", async () => {
@@ -16,17 +17,15 @@ describe("HopperClient request deadlines", () => {
       .then(settled);
     const request = await launcher.waitForRequest("echo", "deadline");
     try {
-      await vi.waitFor(
-        () =>
-          expect(settled).toHaveBeenCalledWith({
-            ok: false,
-            error: expect.objectContaining({
-              _tag: "HopperTimeoutError",
-              timeoutMs: 100,
-              operation: "echo",
-            }),
+      await waitFor(() =>
+        expect(settled).toHaveBeenCalledWith({
+          ok: false,
+          error: expect.objectContaining({
+            _tag: "HopperTimeoutError",
+            timeoutMs: 100,
+            operation: "echo",
           }),
-        { timeout: 1000 },
+        }),
       );
       expect(client.requestActivity()).toMatchObject({
         callerState: "cancelled",
@@ -92,7 +91,7 @@ describe("HopperClient request deadlines", () => {
       { value: "queued" },
       { timeoutMs: 1000 },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(client.requestActivity()?.queuedRequests).toBe(1),
     );
     await client.close();

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   RECORDED_LINUX_CORE_ARCHITECTURES,
   RECORDED_LINUX_CORE_PROFILES,
 } from "../../domain/native/recordedCrash.js";
 import {
-  recordedCrashFixture,
   recordedCrashFixtureBytes,
+  recordedCrashSignalFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/recordedCrash.js";
 import { validateRecordedCrashSources } from "./RecordedCrashSourceBindings.js";
 
@@ -15,7 +16,7 @@ const diagnostics = { stdout: "", stderr: "", truncated: false } as const;
 const bind = (
   architecture?: "x86_64-little-endian" | "aarch64-little-endian",
 ) => {
-  const report = recordedCrashFixture("/selected.core", architecture);
+  const report = recordedCrashSignalFixture("/selected.core", architecture);
   return { report, bytes: recordedCrashFixtureBytes(report) };
 };
 
@@ -103,6 +104,19 @@ describe("recorded core source bindings", () => {
     ).toThrow(/aarch64-little-endian source bytes/);
   });
 
+  it.each([0, 1])(
+    "rejects reported descriptor %i when its bytes run beyond the snapshot",
+    (noteIndex) => {
+      const { report, bytes } = bind();
+      const note = report.notes[noteIndex];
+      if (note === undefined) throw new Error("Expected a note fixture");
+      note.descriptor_location.offset = `0x${(bytes.length - 1).toString(16)}`;
+      expect(() =>
+        validateRecordedCrashSources(report, bytes, diagnostics),
+      ).toThrow(AnalysisOutputError);
+    },
+  );
+
   it("rejects an amd64 register name reported for AArch64", () => {
     const { report, bytes } = bind("aarch64-little-endian");
     const renamed = {
@@ -131,5 +145,17 @@ describe("recorded core source bindings", () => {
     expect(() =>
       validateRecordedCrashSources(wrongPid, bytes, diagnostics),
     ).toThrow(/aarch64-little-endian source bytes/);
+  });
+
+  it("rejects a wrong register value at its correctly bound source location", () => {
+    const { report, bytes } = bind("aarch64-little-endian");
+    const register = report.threads[0]?.registers[0];
+    if (register === undefined) throw new Error("Expected a register fixture");
+    register.value = "0x1";
+    expect(() =>
+      validateRecordedCrashSources(report, bytes, diagnostics),
+    ).toThrow(
+      "Reported register value differs from its recorded source bytes.",
+    );
   });
 });

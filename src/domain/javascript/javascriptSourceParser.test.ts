@@ -4,13 +4,12 @@ import * as t from "@babel/types";
 import {
   parseJavaScriptSource,
   parseRecoveredJavaScript,
-  parserPluginsForPath,
   javaScriptRuntimeContext,
   javaScriptProgramStrictness,
-  javaScriptTopLevelThisMayBeGlobal,
+  javaScriptThisOwner,
 } from "./javascriptSourceParser.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it.each([
   ["class C extends (this.marker, Object) {}", true],
@@ -39,7 +38,7 @@ it.each([
     });
     if (selected === undefined) throw new Error("Missing this fixture");
     expect(
-      javaScriptTopLevelThisMayBeGlobal(selected, parsed.program, parents),
+      javaScriptThisOwner(selected, parsed.program, parents) === "global",
     ).toBe(expected);
   },
 );
@@ -72,9 +71,7 @@ it.each([
   (source, path, context) => {
     const parsed = parseJavaScriptSource(source, path);
     if (parsed === null) throw new Error("Expected parsed source");
-    const recovered = parseRecoveredJavaScript(source, path, {
-      plugins: parserPluginsForPath(path),
-    }).file;
+    const recovered = parseRecoveredJavaScript(source, path, {}).file;
     expect(javaScriptRuntimeContext(parsed.program)).toBe(context);
     expect(javaScriptRuntimeContext(recovered.program)).toBe(context);
     expect(javaScriptRuntimeContext(t.cloneNode(parsed.program, true))).toBe(
@@ -95,9 +92,7 @@ it.each([
     const parsed = parseJavaScriptSource(source, path);
     if (parsed === null) throw new Error("Expected parsed source");
     expect(javaScriptProgramStrictness(parsed.program)).toBe(strictness);
-    const recovered = parseRecoveredJavaScript(source, path, {
-      plugins: parserPluginsForPath(path),
-    }).file;
+    const recovered = parseRecoveredJavaScript(source, path, {}).file;
     expect(javaScriptProgramStrictness(recovered.program)).toBe(strictness);
   },
 );
@@ -120,9 +115,17 @@ ipcMain.handle("layout:ready",()=>pick);`;
   for (const path of ["main.js", "main.cjs", "main.mjs", "main.jsx"]) {
     const result = analyze(source, path);
     expect(result?.errors).toBe(0);
-    expect(result?.facts.electron.ipc).toContainEqual(
-      expect.objectContaining({ channel: "layout:ready", operation: "handle" }),
-    );
+    if (path === "main.mjs") {
+      expect(result?.facts.electron.ipc).toEqual([]);
+    } else {
+      expect(result?.facts.electron.ipc).toContainEqual(
+        expect.objectContaining({
+          channel: "layout:ready",
+          operation: "handle",
+          ...(path === "main.cjs" ? {} : { loader_authority: "candidate" }),
+        }),
+      );
+    }
   }
 });
 

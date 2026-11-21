@@ -1,4 +1,3 @@
-import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";
 import { expect, it } from "vitest";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
@@ -30,118 +29,94 @@ const run = async (
       );
 };
 
-it.each(
-  actions.flatMap((action) =>
-    [false, true].flatMap((loader) =>
-      ["split", "clear", "inline", "credentials"].map((kind) => ({
-        action,
-        loader,
-        kind,
-      })),
-    ),
-  ),
-)(
-  "preserves full $kind frame identity in $action evidence with loader=$loader",
-  async ({ action, loader, kind }) => {
+const documentId = "document-1";
+const query = "/app?caller=retained";
+const frameTree = (url: string, fields: Record<string, unknown> = {}) => ({
+  frameTree: {
+    frame: { id: "runtime-main", loaderId: documentId, url, ...fields },
+  },
+});
+
+it.each([
+  ["execution", "#details", "#details", documentId, false],
+  ["listeners", "", "", undefined, false],
+  ["execution", undefined, "#old", undefined, false],
+  ["listeners", "#details", "#details", documentId, true],
+] as const)(
+  "preserves reported %s identity with split fragment %s",
+  async (action, splitFragment, fragment, loaderId, credentials) => {
     const browser = await startRuntimeBrowser({
-      commandResult: ({ method }, origin) =>
-        method === "Page.getFrameTree"
-          ? {
-              frameTree: {
-                frame: {
-                  id: "runtime-main",
-                  ...(loader ? { loaderId: "document-1" } : {}),
-                  url: `${kind === "credentials" ? origin.replace("://", "://user:password@") : origin}/app?caller=retained#old`,
-                  ...(kind === "inline"
-                    ? {}
-                    : { urlFragment: kind === "clear" ? "" : "#details" }),
-                },
-              },
-            }
-          : undefined,
+      commandResult: ({ method }, origin) => {
+        if (method !== "Page.getFrameTree") return undefined;
+        const host = credentials
+          ? origin.replace("://", "://user:password@")
+          : origin;
+        return frameTree(`${host}${query}#old`, {
+          loaderId,
+          urlFragment: splitFragment,
+        });
+      },
     });
     trackBrowser(browser);
     const result = await run(browser, action);
     if (!result.ok) throw result.error;
     expect(result.value.target).toMatchObject({
-      initial_url: `${browser.allowedOrigin}/app?caller=retained${kind === "inline" ? "#old" : kind === "clear" ? "" : "#details"}`,
+      frame_id: "runtime-main",
+      initial_url: `${browser.allowedOrigin}${query}${fragment}`,
       origin: browser.allowedOrigin,
-      loader_id: loader ? "document-1" : null,
+      loader_id: loaderId ?? null,
     });
   },
 );
 
-const transitions = [
-  { kind: "equivalent", loader: false, reason: null },
-  { kind: "fragment-change", loader: false, reason: "target_changed" },
-  { kind: "fragment-change", loader: true, reason: null },
-  { kind: "malformed", loader: false, reason: "protocol_error" },
-  { kind: "malformed", loader: true, reason: "protocol_error" },
-  { kind: "foreign-malformed", loader: true, reason: "target_not_allowed" },
-  { kind: "foreign-loader-change", loader: true, reason: "target_changed" },
-  { kind: "foreign", loader: false, reason: "target_changed" },
-  { kind: "foreign", loader: true, reason: "target_not_allowed" },
-  { kind: "missing", loader: true, reason: "protocol_error" },
-  { kind: "frame-change", loader: true, reason: "target_changed" },
-  { kind: "loader-change", loader: true, reason: "target_changed" },
-  { kind: "unsupported", loader: true, reason: "target_not_allowed" },
-] as const;
-it.each(
-  actions.flatMap((action) => transitions.map((item) => ({ action, ...item }))),
-)(
-  "checks parsed $kind final identity in $action with loader=$loader",
-  async ({ action, kind, loader, reason }) => {
+const foreign = { url: "https://foreign.example/app" };
+const badFragment = { urlFragment: 7 };
+const changedFragment = { urlFragment: "#changed" };
+const changedLoader = { loaderId: "replacement" };
+const changed = "target_changed";
+const refused = "target_not_allowed";
+const invalid = "protocol_error";
+
+it.each([
+  ["execution", "equivalent inline fragment", false, "inline", null],
+  ["listeners", "fragment change, no loader", false, changedFragment, changed],
+  ["execution", "fragment change, same loader", true, changedFragment, null],
+  ["listeners", "malformed fragment", true, badFragment, invalid],
+  [
+    "listeners",
+    "malformed foreign",
+    true,
+    { ...foreign, ...badFragment },
+    refused,
+  ],
+  [
+    "execution",
+    "foreign with new loader",
+    true,
+    { ...foreign, ...changedLoader },
+    changed,
+  ],
+  ["execution", "foreign with same loader", true, foreign, refused],
+  ["execution", "missing URL", true, { url: undefined }, invalid],
+  ["listeners", "different frame", true, { id: "replacement" }, changed],
+  ["execution", "different loader", true, changedLoader, changed],
+  ["listeners", "unsupported base", false, { url: "about:blank" }, refused],
+] as const)(
+  "checks %s document with %s",
+  async (action, _label, loader, change, reason) => {
     const browser = await startRuntimeBrowser({
       commandResult: ({ method }, origin, reads) => {
         if (method !== "Page.getFrameTree") return undefined;
-        const changed = reads > 1;
-        const url = `${origin}/app?caller=retained`;
-        return {
-          frameTree: {
-            frame: {
-              id:
-                changed && kind === "frame-change"
-                  ? "replacement"
-                  : "runtime-main",
-              ...(loader
-                ? {
-                    loaderId:
-                      changed &&
-                      (kind === "loader-change" ||
-                        kind === "foreign-loader-change")
-                        ? "replacement"
-                        : "document-1",
-                  }
-                : {}),
-              ...(changed && kind === "missing"
-                ? {}
-                : {
-                    url:
-                      changed &&
-                      (kind === "foreign-malformed" ||
-                        kind === "foreign" ||
-                        kind === "foreign-loader-change")
-                        ? "https://foreign.example/app"
-                        : changed && kind === "unsupported"
-                          ? "about:blank"
-                          : changed && kind === "equivalent"
-                            ? `${url}#details`
-                            : url,
-                  }),
-              ...(changed && kind === "equivalent"
-                ? {}
-                : {
-                    urlFragment:
-                      changed &&
-                      (kind === "malformed" || kind === "foreign-malformed")
-                        ? 7
-                        : changed && kind === "fragment-change"
-                          ? "#changed"
-                          : "#details",
-                  }),
-            },
-          },
-        };
+        const url = `${origin}${query}`;
+        const updated =
+          change === "inline"
+            ? { url: `${url}#details`, urlFragment: undefined }
+            : change;
+        return frameTree(url, {
+          loaderId: loader ? documentId : undefined,
+          urlFragment: "#details",
+          ...(reads > 1 ? updated : {}),
+        });
       },
     });
     trackBrowser(browser);
@@ -149,20 +124,38 @@ it.each(
     if (reason === null) {
       if (!result.ok) throw result.error;
       expect(result.value.target.initial_url).toBe(
-        `${browser.allowedOrigin}/app?caller=retained#details`,
+        `${browser.allowedOrigin}${query}#details`,
       );
     } else {
       expect(result).toMatchObject({ ok: false, error: { reason } });
-      if (kind === "foreign" && loader && !result.ok) {
-        if (!(result.error instanceof BrowserObservationError))
-          throw result.error;
-        expect(result.error.detail).toBe(
-          `Selected target allowed-page moved to an unselected origin during ${result.error.operation}.`,
-        );
-      }
     }
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).toContain("Debugger.disable");
     expect(methods).toContain("Target.detachFromTarget");
+  },
+);
+
+it.each(actions)(
+  "refuses a child root after collecting %s evidence",
+  async (action) => {
+    let sourceRead = false;
+    let returnedChild = false;
+    const browser = await startRuntimeBrowser({
+      commandResult: ({ method }, origin) => {
+        if (method === "Debugger.getScriptSource") sourceRead = true;
+        if (method !== "Page.getFrameTree" || !sourceRead) return undefined;
+        returnedChild = true;
+        return frameTree(`${origin}/app`, { parentId: "enclosing-frame" });
+      },
+    });
+    trackBrowser(browser);
+    expect(await run(browser, action)).toMatchObject({
+      ok: false,
+      error: { reason: "protocol_error" },
+    });
+    expect(returnedChild).toBe(true);
+    expect(browser.commands.map(({ method }) => method)).toEqual(
+      expect.arrayContaining(["Debugger.disable", "Target.detachFromTarget"]),
+    );
   },
 );

@@ -1,4 +1,7 @@
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  sourcePublicationRecoveryOf,
+  type AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import {
   childFailureDiagnostics,
   projectAnalysisError,
@@ -10,13 +13,16 @@ import {
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, type Result } from "../domain/result.js";
-import type { AnalysisExecution } from "./AnalysisProvider.js";
-import type { BinarySession } from "./binary/BinarySession.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import type { AnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { BinarySessionPort } from "./binary/BinarySessionPort.js";
 import {
-  tryParseEvidence,
-  withEvidenceCallerInputPath,
-} from "../domain/evidence.js";
+  analysisErrorWithCleanupFailure,
+  analysisErrorWithCloseRejection,
+  withInheritedCleanupOwnership,
+} from "../domain/analysisErrorCleanup.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /**
  * Project a one-shot failure for its invocation, which has released its
@@ -33,24 +39,58 @@ export const projectDirectAnalysisFailure = (
   callerInputPath: string,
 ): ReturnType<typeof projectAnalysisError> => {
   const projection = projectInvocationFailure(error);
-  const observation = tryParseEvidence(projection.details?.partial_observation);
-  return observation === undefined
-    ? projection
-    : {
-        ...projection,
-        details: {
-          ...projection.details,
-          partial_observation: withEvidenceCallerInputPath(
-            observation,
+  const partial = projection.details?.partial_observation;
+  const wrapped = isRecord(partial) && partial.kind === "unretained-evidence";
+  // Only authenticated Evidence gains the request path; a record that fails
+  // authentication is projected as the owner reported it, never as absent.
+  const observation = recognizeEvidence(wrapped ? partial.evidence : partial);
+  const rebound =
+    !observation.ok || observation.value === undefined
+      ? undefined
+      : withEvidenceCallerInputPath(observation.value, callerInputPath);
+  const completed = sourcePublicationRecoveryOf(error)?.completed;
+  const completedWithPath =
+    completed?.kind === "unretained-evidence" ||
+    completed?.kind === "inline-evidence"
+      ? {
+          ...completed,
+          evidence: withEvidenceCallerInputPath(
+            completed.evidence,
             callerInputPath,
           ),
-        },
-      };
+        }
+      : completed?.kind === "unretained-observation"
+        ? {
+            ...completed,
+            observation: {
+              ...completed.observation,
+              caller_input_path: callerInputPath,
+            },
+          }
+        : undefined;
+  if (rebound === undefined && completedWithPath === undefined)
+    return projection;
+  return {
+    ...projection,
+    details: {
+      ...projection.details,
+      ...(rebound === undefined
+        ? {}
+        : {
+            partial_observation: wrapped
+              ? { ...partial, evidence: rebound }
+              : rebound,
+          }),
+      ...(completedWithPath === undefined
+        ? {}
+        : { completed_observation: completedWithPath }),
+    },
+  };
 };
 
 /** Await one-shot cleanup and retain either the outcome or both failures. */
 export const withSessionCleanup = async <Value>(
-  session: BinarySession,
+  session: Pick<BinarySessionPort, "close">,
   operation: () => Promise<Value>,
   onCleanupFailure: (value: Value, error: AnalysisError) => Value,
 ): Promise<Value> => {
@@ -120,16 +160,8 @@ export const managedAnalysisCleanupFailure = (
   result: Result<AnalysisExecution, AnalysisError>,
   error: AnalysisError,
 ): Result<AnalysisExecution, AnalysisError> => {
-  // A close rejection without a live cleanup state has unknown completion;
-  // an empty dependency set must not turn that rejection into confirmed cleanup.
-  if (!result.ok) {
-    const failure = analysisErrorWithCleanupFailure(result.error, error);
-    return err(
-      error.cleanupIncomplete
-        ? failure.bindCleanupDependencies([result.error, error])
-        : failure,
-    );
-  }
+  if (!result.ok)
+    return err(analysisErrorWithCloseRejection(result.error, error));
   const failure = new ProviderAdapterError(
     error instanceof ProviderAdapterError ? error.providerId : "rea",
     "close_binary",
@@ -146,9 +178,5 @@ export const managedAnalysisCleanupFailure = (
       ),
     },
   );
-  return err(
-    error.cleanupIncomplete
-      ? failure.bindCleanupDependencies([error])
-      : failure,
-  );
+  return err(withInheritedCleanupOwnership(failure, error));
 };

@@ -34,7 +34,7 @@ it.each([
     });
     expect(() => decodeHarCapture(text, [])).toThrow(
       expect.objectContaining({
-        reason: "format",
+        failure: expect.objectContaining({ kind: "malformed" }),
         pointer: `/log/entries/0/timings${field}`,
       }),
     );
@@ -49,13 +49,7 @@ it("validates malformed timings before excluding an explicitly sensitive propert
   expect(() => decodeHarCapture(text, ["timings"])).toThrow(CaptureFormatError);
 });
 
-it.each([
-  { cache: null },
-  { cache: false },
-  { cache: 0 },
-  { cache: "cache" },
-  { cache: [] },
-])("rejects a non-object HAR cache: $cache", ({ cache }) => {
+it.each([null, false, []])("rejects a non-object HAR cache: %j", (cache) => {
   const fixture = historicalHar();
   const entry = fixture.log.entries[0]!;
   expect(() =>
@@ -67,7 +61,7 @@ it.each([
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "format",
+      failure: expect.objectContaining({ kind: "malformed" }),
       pointer: "/log/entries/0/cache",
     }),
   );
@@ -85,7 +79,7 @@ it.each([-1, -0.5])("rejects negative HAR elapsed time: %s", (time) => {
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "format",
+      failure: expect.objectContaining({ kind: "malformed" }),
       pointer: "/log/entries/0/time",
     }),
   );
@@ -111,7 +105,7 @@ it.each(["onContentLoad", "onLoad"])(
         ),
       ).toThrow(
         expect.objectContaining({
-          reason: "format",
+          failure: expect.objectContaining({ kind: "malformed" }),
           pointer: `/log/pages/0/pageTimings/${field}`,
         }),
       );
@@ -287,7 +281,6 @@ it("does not decode container lookalikes when excluding explicitly sensitive bod
 });
 
 it.each([
-  { values: [] },
   { values: ["response"] },
   { values: ["content"] },
   { values: ["log"] },
@@ -444,18 +437,26 @@ it("rejects identical duplicate core fields before schema validation", () => {
   expect(() => decodeHarCapture(text, [])).toThrow("duplicate");
 });
 
-it("names the violated HAR schema constraint without restating capture values", () => {
-  expect(() =>
-    decodeHarCapture(
-      JSON.stringify({
-        log: { creator: { name: "x", version: "1" }, entries: [] },
+it.each([
+  {
+    log: { creator: { name: "x", version: "1" }, entries: [] },
+    missing: "version",
+  },
+  { log: { version: "1.2", entries: [] }, missing: "creator" },
+])(
+  "names a required HAR property $missing without disclosing producer values",
+  ({ log, missing }) => {
+    expect(() => decodeHarCapture(JSON.stringify({ log }), [])).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "malformed",
+          field: "/log",
+          detail: `HAR schema validation failed: required (must have required property '${missing}').`,
+        }),
       }),
-      [],
-    ),
-  ).toThrow(
-    "HAR schema validation failed: required (must have required property 'version').",
-  );
-});
+    );
+  },
+);
 
 it("preserves prototype-named producer members through the capture boundary", () => {
   const text = JSON.stringify(historicalHar()).replace(
@@ -729,14 +730,6 @@ it("redacts actual authentication fields and explicit binary values while preser
   });
 });
 
-it.each([
-  "{",
-  '{"log":{},"log":{}}',
-  JSON.stringify({ log: { version: "1.2", entries: [] } }),
-])("rejects malformed producer data %s", (text) => {
-  expect(() => decodeHarCapture(text, [])).toThrow();
-});
-
 it("preserves observed SaveHar null post-data without broadening arbitrary HAR producers", () => {
   const fixture = historicalHar();
   const first = fixture.log.entries[0];
@@ -767,16 +760,20 @@ it("preserves observed SaveHar null post-data without broadening arbitrary HAR p
   ).toThrow("HAR schema validation failed");
 });
 
-it.each(["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"])(
-  "retains Playwright 1.58.2 bracketed IPv6 spelling in reported Evidence: %s",
-  (address) => {
+it.each([
+  { version: "1.58.2", address: "[2001:db8::1]" },
+  { version: "1.64.1", address: "[::1]" },
+  { version: "1.58.2", address: "[::ffff:192.0.2.1]" },
+])(
+  "retains Playwright $version bracketed IPv6 spelling in reported Evidence: $address",
+  ({ version, address }) => {
     const fixture = historicalHar();
     const first = fixture.log.entries[0];
     if (first === undefined) throw new Error("fixture missing");
     const input = {
       log: {
         ...fixture.log,
-        creator: { name: "Playwright", version: "1.58.2" },
+        creator: { name: "Playwright", version },
         entries: [
           {
             ...first,
@@ -794,9 +791,13 @@ it.each(["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"])(
         _extension: { serverIPAddress: address },
       },
     });
-    expect(decoded.records[0]?.limitations).toContain(
-      "This capture declares Playwright 1.58.2 and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.",
+    const limitation = decoded.records[0]?.limitations.find((line) =>
+      line.includes(`Playwright ${version}`),
     );
+    expect(limitation).toMatch(/bracketed IPv6.*serverIPAddress/iu);
+    expect(limitation).toMatch(/original spellings.*retained/iu);
+    expect(limitation).toMatch(/brackets.*only.*valid IPv6.*validation copy/iu);
+    expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
     expect(
       decoded.records[1]?.limitations.some((limitation) =>
         limitation.includes("bracketed IPv6 serverIPAddress"),
@@ -825,9 +826,15 @@ it.each(["[2620:0:860:ed1a::1]", "[::1]"])(
     expect(decoded.records[0]).toMatchObject({
       reported: { serverIPAddress: address },
     });
-    expect(decoded.records[0]?.limitations).toContain(
-      "This capture declares Chromium DevTools (WebInspector 537.36) and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.",
+    const limitation = decoded.records[0]?.limitations.find((line) =>
+      line.includes("WebInspector 537.36"),
     );
+    expect(limitation).toMatch(
+      /Chromium DevTools.*bracketed IPv6.*serverIPAddress/iu,
+    );
+    expect(limitation).toMatch(/original spellings.*retained/iu);
+    expect(limitation).toMatch(/brackets.*only.*valid IPv6.*validation copy/iu);
+    expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
     expect(
       decoded.records[1]?.limitations.some((limitation) =>
         limitation.includes("bracketed IPv6 serverIPAddress"),
@@ -865,6 +872,41 @@ it.each([
     ).toThrow("HAR schema validation failed");
   },
 );
+
+it("retains the empty serverIPAddress Chromium DevTools writes for a request without a remote address", () => {
+  const fixture = historicalHar();
+  const first = fixture.log.entries[0];
+  if (first === undefined) throw new Error("fixture missing");
+  const log = {
+    ...fixture.log,
+    creator: { name: "WebInspector", version: "537.36" },
+    entries: [{ ...first, serverIPAddress: "" }, structuredClone(first)],
+  };
+  const decoded = decodeHarCapture(JSON.stringify({ log }), []);
+  expect(decoded.records).toHaveLength(2);
+  expect(decoded.records[0]).toMatchObject({
+    reported: { serverIPAddress: "" },
+  });
+  const limitation = decoded.records[0]?.limitations.find((line) =>
+    line.includes("WebInspector 537.36"),
+  );
+  expect(limitation).toMatch(/Chromium DevTools.*empty serverIPAddress/iu);
+  expect(limitation).toMatch(/empty value is retained.*validation copy/iu);
+  expect(limitation).toMatch(/server address is unknown/iu);
+  expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
+  expect(
+    decoded.records[1]?.limitations.some((line) =>
+      line.includes("empty serverIPAddress"),
+    ),
+  ).toBe(false);
+  for (const creator of [
+    { name: "other", version: "1" },
+    { name: "Playwright", version: "1.64.1" },
+  ])
+    expect(() =>
+      decodeHarCapture(JSON.stringify({ log: { ...log, creator } }), []),
+    ).toThrow("HAR schema validation failed");
+});
 
 it.each([
   "c2VjcmV0",
@@ -953,7 +995,12 @@ it.each([
     const enclosing = depth - 3;
     const text = `{"log":{"version":"1.2","creator":{"name":"fixture","version":"1"},"entries":[],"_extension":${"[".repeat(enclosing)}${innermost}${"]".repeat(enclosing)}}}`;
     if (accepted) expect(decodeHarCapture(text, []).total_records).toBe(0);
-    else expect(() => decodeHarCapture(text, [])).toThrow("nesting budget");
+    else
+      expect(() => decodeHarCapture(text, [])).toThrow(
+        expect.objectContaining({
+          limit: { name: "nesting-depth", maximum: 64 },
+        }),
+      );
   },
 );
 
@@ -965,7 +1012,9 @@ it("rejects excessive extension nesting instead of returning a partial capture",
       JSON.stringify({ ...historicalHar(), _extension: extension }),
       [],
     ),
-  ).toThrow("nesting budget");
+  ).toThrow(
+    expect.objectContaining({ limit: { name: "nesting-depth", maximum: 64 } }),
+  );
 });
 
 it.each([

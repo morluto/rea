@@ -11,6 +11,8 @@ import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutio
 
 /** One exact module origin followed through imports, requires, or aliases. */
 export interface JavaScriptModuleOrigin {
+  /** An unbound require whose CommonJS wrapper is not established. */
+  readonly loaderAuthority?: "candidate";
   readonly resolutionMode?: JavaScriptModuleResolutionMode;
   readonly specifier: string;
   readonly importedPath: readonly string[];
@@ -264,6 +266,7 @@ export interface JavaScriptSemanticEventOperation {
 
 /** One timer scheduling or cancellation candidate. */
 export interface JavaScriptSemanticTimerOperation {
+  readonly builtinAuthority?: "candidate";
   readonly timerId: string;
   readonly kind: "schedule" | "cancel";
   readonly method:
@@ -284,6 +287,7 @@ export interface JavaScriptSemanticTimerOperation {
 
 /** One explicit asynchronous node:child_process creation candidate. */
 export interface JavaScriptSemanticChildProcessSpawn {
+  readonly builtinAuthority?: "candidate";
   readonly processId: string;
   readonly method: "spawn" | "exec" | "execFile" | "fork";
   readonly location: JavaScriptSourceRange;
@@ -299,6 +303,7 @@ export interface JavaScriptSemanticChildProcessSpawn {
 
 /** One exit/error listener or signal operation linked to child candidates. */
 export interface JavaScriptSemanticChildProcessInteraction {
+  readonly builtinAuthority?: "candidate";
   readonly interactionId: string;
   readonly kind: "listener" | "signal";
   readonly method: "on" | "once" | "addListener" | "kill";
@@ -314,6 +319,7 @@ export interface JavaScriptSemanticChildProcessInteraction {
 
 /** One environment, argv, file, or default configuration source. */
 export interface JavaScriptSemanticConfigurationOperation {
+  readonly builtinAuthority?: "candidate";
   readonly configId: string;
   readonly kind: "environment" | "argv" | "file" | "default";
   readonly location: JavaScriptSourceRange;
@@ -328,6 +334,7 @@ export interface JavaScriptSemanticConfigurationOperation {
 
 /** One request construction or response-consumer candidate. */
 export interface JavaScriptSemanticRequestOperation {
+  readonly builtinAuthority?: "candidate";
   readonly requestId: string;
   readonly kind: "request" | "response-consumer";
   readonly method:
@@ -372,6 +379,7 @@ export interface JavaScriptSemanticBoundaryOperation {
 
 /** One explicit built-in resource acquisition or release candidate. */
 export interface JavaScriptSemanticResourceOperation {
+  readonly builtinAuthority?: "candidate";
   readonly resourceId: string;
   readonly kind: "acquire" | "release";
   readonly method:
@@ -395,6 +403,8 @@ export interface JavaScriptSemanticResourceOperation {
 export interface JavaScriptSemanticObjectOperation {
   readonly objectOperationId: string;
   readonly kind: "read" | "write" | "spread" | "destructure";
+  /** Proven own data slot at this operation's read rather than in the merged value. */
+  readonly sourcePresence?: "present";
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly objectBindingId: string | null;
@@ -418,6 +428,8 @@ export interface JavaScriptSemanticFrontier {
 
 /** Static import/export relationship retained for cross-file composition. */
 export interface JavaScriptSemanticModuleLink {
+  /** The literal request is observed, but its CommonJS wrapper is unknown. */
+  readonly loaderAuthority?: "candidate";
   readonly resolutionMode?: JavaScriptModuleResolutionMode;
   readonly kind:
     | "import"
@@ -496,6 +508,7 @@ export interface JavaScriptSemanticIr {
   readonly functionFingerprints: readonly JavaScriptSemanticFunctionFingerprint[];
   readonly frontiers: readonly JavaScriptSemanticFrontier[];
   readonly coverage: JavaScriptSemanticCoverage;
+  readonly loaderCondition?: string;
   readonly limitations: readonly string[];
 }
 

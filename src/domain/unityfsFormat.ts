@@ -1,3 +1,5 @@
+import { BinaryReader } from "./binaryContainer.js";
+import { strictUtf8Decoder } from "./strictUtf8.js";
 /**
  * UnityFS (AssetBundle) container structure: a fixed signature header followed
  * by a compressed blocks-and-directory table and a block-compressed data area.
@@ -104,7 +106,15 @@ export const unityFsLayoutFlags = (
 };
 
 /** Producer version strings are short; the bound keeps a corrupt header local. */
-export const UNITYFS_HEADER_STRING_MAX = 1024;
+const UNITYFS_HEADER_STRING_MAX = 1024;
+const UNITYFS_VERSION_STRINGS_OFFSET = UNITYFS_SIGNATURE.length + 4;
+const UNITYFS_HEADER_TAIL_BYTES = 8 + 4 + 4 + 4;
+
+/** A prefix covering the signature, version, both bounded strings and fixed tail. */
+export const UNITYFS_HEADER_PREFIX_BYTES =
+  UNITYFS_VERSION_STRINGS_OFFSET +
+  2 * UNITYFS_HEADER_STRING_MAX +
+  UNITYFS_HEADER_TAIL_BYTES;
 
 /** Declared header fields; support and extent admission belong to callers. */
 export interface UnityFsHeaderFacts {
@@ -119,7 +129,7 @@ export interface UnityFsHeaderFacts {
   readonly afterFixed: number;
 }
 
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 
 /**
  * Decode declared fields after the caller admits a prefix covering the
@@ -130,8 +140,7 @@ export const readUnityFsHeaderFacts = (
   bytes: Uint8Array,
 ): UnityFsHeaderFacts | undefined => {
   if (!hasUnityFsHeader(bytes)) return undefined;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let cursor = 12;
+  let cursor = UNITYFS_VERSION_STRINGS_OFFSET;
   const readString = (): string | undefined => {
     const start = cursor;
     while (
@@ -156,18 +165,23 @@ export const readUnityFsHeaderFacts = (
   if (
     playerVersion === undefined ||
     engineVersion === undefined ||
-    cursor + 20 > bytes.length
+    cursor + UNITYFS_HEADER_TAIL_BYTES > bytes.length
   )
     return undefined;
   const fixed = cursor;
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    false,
+    "unityfs",
+  );
   return {
-    formatVersion: view.getUint32(8),
+    formatVersion: reader.u32(8),
     playerVersion,
     engineVersion,
-    declaredSize: view.getBigUint64(fixed),
-    compressedBlocksInfoSize: view.getUint32(fixed + 8),
-    uncompressedBlocksInfoSize: view.getUint32(fixed + 12),
-    flags: view.getUint32(fixed + 16),
-    afterFixed: fixed + 20,
+    declaredSize: reader.word(fixed, 64),
+    compressedBlocksInfoSize: reader.u32(fixed + 8),
+    uncompressedBlocksInfoSize: reader.u32(fixed + 12),
+    flags: reader.u32(fixed + 16),
+    afterFixed: fixed + UNITYFS_HEADER_TAIL_BYTES,
   };
 };

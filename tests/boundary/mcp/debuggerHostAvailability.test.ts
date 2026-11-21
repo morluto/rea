@@ -45,7 +45,7 @@ it("reports debugger start host restrictions without requiring an analysis targe
       ["start_gdb_session", {}],
       [
         "start_rizin_debug_session",
-        { path: "./absent.bin", inferior_tty: "/dev/null" },
+        { path: "/absent.bin", inferior_tty: "/dev/null" },
       ],
     ] as const) {
       const response = await client.callTool({ name, arguments: args });

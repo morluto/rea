@@ -1,9 +1,22 @@
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { readEvidence, readEvidencePayload } from "../evidenceValidation.js";
 import { err, ok, type Result } from "../result.js";
 import type { z } from "zod";
+
+import {
+  managedModuleRow,
+  type ManagedModuleEvidenceFacts,
+} from "./managedModuleIdentity.js";
+
+interface ManagedScopedEvidenceFacts extends ManagedModuleEvidenceFacts {
+  readonly artifact: { readonly sha256: string };
+  readonly identity_scope?: {
+    readonly requires_artifact_sha256: string;
+    readonly requires_mvid: string | null;
+  };
+}
 
 /** Build-local metadata tokens join only under a known, matching module MVID. */
 export const managedTokenScopesMatch = (
@@ -19,14 +32,7 @@ export const managedTokenScopesMatch = (
  * A null subject remains valid and means there is no digest to cross-check.
  */
 export const readManagedInspectionEvidence = <
-  Payload extends {
-    readonly artifact: { readonly sha256: string };
-    readonly identity_scope?: {
-      readonly requires_artifact_sha256: string;
-      readonly requires_mvid: string | null;
-    };
-    readonly module?: { readonly mvid: string | null } | null;
-  },
+  Payload extends ManagedScopedEvidenceFacts,
 >(
   rawEvidence: unknown,
   operation: string,
@@ -53,25 +59,55 @@ export const readManagedInspectionEvidence = <
       ]),
     );
   }
-  const payload = readEvidencePayload(schema, evidence.normalized_result);
+  const payload = readEvidencePayload(schema, evidence.normalized_result, {
+    within: ["normalized_result"],
+  });
   if (!payload.ok) return payload;
   const result = payload.value;
   const artifactSha256 = result.artifact.sha256;
-  const subjectSha256 = evidence.subject?.digest.sha256;
+  const subjectSha256 = evidenceFileTarget(evidence)?.sha256;
   if (subjectSha256 !== undefined && artifactSha256 !== subjectSha256)
     return err(
       integrityFailure(
         `Managed Evidence ${operation} (${evidence.evidence_id}) subject SHA-256 ${subjectSha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
       ),
     );
+  const scope = validateManagedTokenScope(
+    result,
+    operation,
+    evidence.evidence_id,
+  );
+  if (!scope.ok) return scope;
+  return ok({ evidence, result });
+};
+
+/** Bind recorded token scope to the artifact and module that gave it meaning. */
+export const validateManagedTokenScope = (
+  result: ManagedScopedEvidenceFacts,
+  operation: string,
+  evidenceId: string,
+): Result<void, EvidenceIntegrityError> => {
+  const artifactSha256 = result.artifact.sha256;
   const scope = result.identity_scope;
   if (scope !== undefined && scope.requires_artifact_sha256 !== artifactSha256)
     return err(
       integrityFailure(
-        `Managed Evidence ${operation} (${evidence.evidence_id}) token scope SHA-256 ${scope.requires_artifact_sha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
+        `Managed Evidence ${operation} (${evidenceId}) token scope SHA-256 ${scope.requires_artifact_sha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
       ),
     );
-  const moduleMvid = result.module?.mvid ?? null;
+  const metadata = result.metadata;
+  if (
+    metadata?.unresolved_module_name !== undefined &&
+    (result.module != null ||
+      metadata.table_row_counts.Module !== 1 ||
+      metadata.status !== "partial")
+  )
+    return err(
+      integrityFailure(
+        `Managed Evidence ${operation} (${evidenceId}) has conflicting Module identity or coverage for an unresolved name`,
+      ),
+    );
+  const moduleMvid = managedModuleRow(result)?.mvid ?? null;
   const scopedMvid = scope?.requires_mvid;
   if (
     scopedMvid !== undefined &&
@@ -79,10 +115,10 @@ export const readManagedInspectionEvidence = <
   )
     return err(
       integrityFailure(
-        `Managed Evidence ${operation} (${evidence.evidence_id}) token scope MVID ${String(scopedMvid)} does not match module MVID ${String(moduleMvid)}`,
+        `Managed Evidence ${operation} (${evidenceId}) token scope MVID ${String(scopedMvid)} does not match module MVID ${String(moduleMvid)}`,
       ),
     );
-  return ok({ evidence, result });
+  return ok(undefined);
 };
 
 const integrityFailure = (message: string): EvidenceIntegrityError =>

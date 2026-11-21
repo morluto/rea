@@ -1,4 +1,8 @@
 import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
+import {
+  DEFAULT_NODE_SEA_READER_LIMITS,
+  type NodeSeaReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 import { setImmediate } from "node:timers/promises";
 
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
@@ -6,11 +10,10 @@ import type { NodeSeaMetadata } from "../domain/artifactFormatMetadata.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "./ArtifactPaths.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+  ArtifactReaderFailure,
+  artifactReaderLimitFailure,
+} from "../resources/index.js";
 import {
-  NODE_SEA_BLOB_TOO_LARGE,
-  NODE_SEA_MAX_BLOB_BYTES,
   decodeNodeSeaBlob,
   type DecodedNodeSeaBlob,
   type NodeSeaByteRange,
@@ -19,7 +22,6 @@ import {
   locateNodeSea,
   readNodeSeaBlob,
   scanNodeSeaFuse,
-  type NodeSeaLocation,
 } from "./nodeSea/NodeSeaLocation.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
@@ -30,7 +32,6 @@ import {
 
 const SNAPSHOT_PATH = "__node_sea__/snapshot";
 const CODE_CACHE_PATH = "__node_sea__/code-cache";
-const MAIN_FALLBACK_PATH = "__node_sea__/main.cjs";
 const ASSET_FALLBACK_PREFIX = "__node_sea__/assets/";
 
 type NodeSeaRole = "main-script" | "snapshot" | "code-cache" | "asset";
@@ -44,6 +45,8 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
   constructor(
     path: string,
     admitted?: StableRegularFileDescriptor | NodeSeaAdmission,
+    private readonly limits: NodeSeaReaderLimits = DEFAULT_NODE_SEA_READER_LIMITS,
+    private readonly expandedBytes?: number,
   ) {
     const admission =
       admitted !== undefined && "kind" in admitted ? admitted : undefined;
@@ -66,34 +69,48 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
     this.#admission = undefined;
   }
 
+  /** Reuse only the decode admitted under this accepted policy. */
+  async #readBlob(
+    source: StableRegularFileDescriptor,
+    signal?: AbortSignal,
+  ): Promise<Pick<NodeSeaAdmission, "location" | "decoded">> {
+    const admittedLimits = this.#admission?.limits;
+    if (
+      this.#admission !== undefined &&
+      admittedLimits !== undefined &&
+      Object.entries(this.limits).every(
+        ([field, value]) => Reflect.get(admittedLimits, field) === value,
+      )
+    )
+      return this.#admission;
+    const location = await locateNodeSea(
+      source.handle,
+      source.initial.size,
+      signal,
+      this.limits,
+    );
+    if (location === undefined) throw formatFailure("blob was not found");
+    const decoded = await decodeNodeSeaBlob(
+      await readNodeSeaBlob(source, location, signal, this.limits),
+      signal,
+      this.limits,
+    );
+    return { location, decoded };
+  }
+
   protected override async prepareEntries(
     signal?: AbortSignal,
   ): Promise<PositionalArtifactEntries> {
     const { handle, initial } = await this.verifyCarrier(signal);
-    // Freshness remains owned by ArtifactFileSource even when classification
-    // already decoded this exact borrowed descriptor's blob.
-    let location: NodeSeaLocation;
-    let decoded: DecodedNodeSeaBlob;
-    if (this.#admission !== undefined) {
-      ({ location, decoded } = this.#admission);
-    } else {
-      const found = await locateNodeSea(handle, initial.size, signal);
-      if (found === undefined) throw formatFailure("blob was not found");
-      location = found;
-      if (location.blobLength > NODE_SEA_MAX_BLOB_BYTES)
-        throw new ArtifactReaderFailure("limit", NODE_SEA_BLOB_TOO_LARGE, {
-          boundary: "memory",
-        });
-      decoded = await decodeNodeSeaBlob(
-        await readNodeSeaBlob(handle, location, initial.size, signal),
-        signal,
-      );
-    }
+    const { location, decoded } = await this.#readBlob(
+      { handle, initial },
+      signal,
+    );
     const fuse = await scanNodeSeaFuse(handle, initial.size, signal);
     const entries: PositionalArtifactEntry[] = [];
     let declaredBytes = 0n;
     const expansionBudget = BigInt(
-      artifactExpansionBudgetBytes(location.blobLength),
+      this.expandedBytes ?? artifactExpansionBudgetBytes(location.blobLength),
     );
     let index = 0;
     for (const member of seaMembers(decoded)) {
@@ -101,10 +118,12 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
       this.assertOpen(signal);
       declaredBytes += BigInt(member.range.length);
       if (declaredBytes > expansionBudget)
-        throw new ArtifactReaderFailure(
-          "limit",
-          `Node SEA readable entries declare ${String(declaredBytes)} bytes, exceeding this blob's ${String(expansionBudget)}-byte expansion budget`,
-          { boundary: "memory" },
+        throw artifactReaderLimitFailure(
+          "artifact_limits.expanded_bytes",
+          Number(expansionBudget),
+          "bytes",
+          declaredBytes,
+          "memory",
         );
       const start = location.blobOffset + member.range.offset;
       if (start > initial.size || member.range.length > initial.size - start)
@@ -143,6 +162,9 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
       include_exec_argv: decoded.includeExecArgv,
       exec_argv_extension: decoded.execArgvExtension,
       exec_argv: [...decoded.execArgv],
+      ...(decoded.mainCodeFormat === undefined
+        ? {}
+        : { main_code_format: decoded.mainCodeFormat }),
       code_path: decoded.codePath,
       carrier: location.carrier,
       blob_offset: location.blobOffset,
@@ -155,10 +177,11 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
     this.#admission = undefined;
     return {
       entries,
-      coverage:
-        fuse.fuseContradiction === null
-          ? undefined
-          : { status: "complete", limitations: [fuse.fuseContradiction] },
+      coverage: {
+        status: "complete",
+        limitations:
+          fuse.fuseContradiction === null ? [] : [fuse.fuseContradiction],
+      },
     };
   }
 }
@@ -197,7 +220,12 @@ function* seaMembers(decoded: DecodedNodeSeaBlob): Generator<{
   };
   if (decoded.mainScript !== null)
     yield {
-      path: mappedPath(decoded.codePath, MAIN_FALLBACK_PATH),
+      path: mappedPath(
+        decoded.codePath,
+        decoded.mainCodeFormat === "module"
+          ? "__node_sea__/main.mjs"
+          : "__node_sea__/main.cjs",
+      ),
       sourcePath: decoded.codePath,
       role: "main-script",
       range: decoded.mainScript,

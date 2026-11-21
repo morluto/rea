@@ -2,8 +2,10 @@ import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
+import { invalidRegexPatternError } from "../process/RegexMatcher.js";
 import { idaAddressSchema } from "./IdaProtocolValues.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Apply the named public contract and IDA's explicit-address boundary before startup. */
 export const parseIdaInput = (
@@ -65,13 +67,7 @@ export const parseIdaInput = (
       );
     } catch (cause: unknown) {
       return err(
-        new AnalysisInputError(operation, { cause }, [
-          {
-            path: ["pattern"],
-            reason: "invalid_format",
-            message: "Supply a valid regular expression.",
-          },
-        ]),
+        invalidRegexPatternError(operation, errorMessage(cause), { cause }),
       );
     }
   }

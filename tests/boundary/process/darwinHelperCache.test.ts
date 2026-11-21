@@ -12,12 +12,13 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFakeXcrun } from "../../fixtures/darwinHelperToolchain.js";
+import { waitFor } from "../../support/testWait.js";
 import {
   aclListingGrantsWrite,
   createDarwinHelperCache,
@@ -38,14 +39,17 @@ const exists = (path: string): Promise<boolean> =>
   );
 
 /** One cache over fixture sources and toolchain, plus a helper to publish. */
-const fixtureCache = async (prefix: string, rootParent = "cache") => {
+const fixtureCache = async (
+  prefix: string,
+  { rootParent = "cache", stalledLookups = false } = {},
+) => {
   const directory = await createTestTempDirectory(prefix);
   const source = join(directory, "Reader.swift");
   await writeFile(source, "// helper source v1\n");
   const compiled = join(directory, "compiled-reader");
   await writeFile(compiled, "#!/bin/sh\necho compiled\n");
   await chmod(compiled, 0o755);
-  const xcrun = await writeFakeXcrun(directory);
+  const xcrun = await writeFakeXcrun(directory, false, stalledLookups);
   const root = join(directory, rootParent, "process-helper");
   const create = () =>
     createDarwinHelperCache({
@@ -65,30 +69,6 @@ const missKey = async (
     throw new Error(`Expected a miss: ${lookup.kind}`);
   return lookup.key;
 };
-
-it.skipIf(!posix)(
-  "publishes a private verified entry that a later process reuses",
-  async () => {
-    const fixture = await fixtureCache("rea-helper-cache-publish-");
-    const first = fixture.create();
-    const key = await missKey(first);
-    const published = await first.publish(key, fixture.compiled);
-    expect(published).toBe(join(await realpath(fixture.root), key, "reader"));
-    expect((await stat(fixture.root)).mode & 0o777).toBe(0o700);
-    expect((await stat(join(fixture.root, key))).mode & 0o777).toBe(0o700);
-    expect((await stat(published ?? "")).mode & 0o777).toBe(0o700);
-    expect(
-      (await stat(join(fixture.root, key, "manifest.json"))).mode & 0o777,
-    ).toBe(0o600);
-    expect(await readdir(fixture.root)).toEqual([key]);
-    // A fresh cache object stands in for the next REA process.
-    expect(await fixture.create().lookup()).toEqual({
-      kind: "hit",
-      executable: published,
-    });
-    await first.close();
-  },
-);
 
 it.skipIf(!posix)(
   "keys entries on helper sources and the toolchain xcrun resolves",
@@ -178,10 +158,9 @@ it.skipIf(!posix)(
     expect(await readdir(loose.root)).toEqual([]);
 
     // Another user could rename the verified entry out of a shared parent.
-    const shared = await fixtureCache(
-      "rea-helper-cache-shared-parent-",
-      "shared/cache",
-    );
+    const shared = await fixtureCache("rea-helper-cache-shared-parent-", {
+      rootParent: "shared/cache",
+    });
     await mkdir(join(shared.directory, "shared"), { recursive: true });
     await chmod(join(shared.directory, "shared"), 0o777);
     expect(await shared.create().lookup()).toEqual({ kind: "unavailable" });
@@ -197,14 +176,28 @@ it.skipIf(!posix)(
   async () => {
     const fixture = await fixtureCache("rea-helper-cache-race-");
     const key = await missKey(fixture.create());
-    const caches = Array.from({ length: 4 }, () => fixture.create());
-    const results = await Promise.all(
-      caches.map((cache) => cache.publish(key, fixture.compiled)),
-    );
-    expect(new Set(results).size).toBe(1);
-    expect(results[0]).toMatch(/\/reader$/u);
-    expect(await readdir(fixture.root)).toEqual([key]);
-    await Promise.all(caches.map((cache) => cache.close()));
+    const original = await readFile(fixture.compiled, "utf8");
+    const alternative = join(fixture.directory, "alternative-reader");
+    const different = "#!/bin/sh\necho alternative\n";
+    await writeFile(alternative, different);
+    const caches = [fixture.create(), fixture.create()] as const;
+    try {
+      const results = await Promise.allSettled([
+        caches[0].publish(key, fixture.compiled),
+        caches[1].publish(key, alternative),
+      ]);
+      const published = join(await realpath(fixture.root), key, "reader");
+      const result = { status: "fulfilled", value: published };
+      expect(results).toEqual([result, result]);
+      const winner = await readFile(published, "utf8");
+      expect([original, different]).toContain(winner);
+      const loser = winner === original ? alternative : fixture.compiled;
+      expect(await caches[1].publish(key, loser)).toBe(published);
+      expect(await readFile(published, "utf8")).toBe(winner);
+      expect(await readdir(fixture.root)).toEqual([key]);
+    } finally {
+      await Promise.all(caches.map((cache) => cache.close()));
+    }
   },
 );
 
@@ -253,64 +246,79 @@ it("keeps the caller's home path segments instead of normalizing them", () => {
   );
 });
 
-it.skipIf(!posix)(
-  "stops stalled toolchain lookups when preparation is cancelled",
-  async () => {
-    const directory = await createTestTempDirectory("rea-helper-cache-stall-");
-    const source = join(directory, "Reader.swift");
-    await writeFile(source, "// helper source\n");
-    const xcrun = await writeFakeXcrun(directory, false, true);
-    const cache = createDarwinHelperCache({
-      directory: join(directory, "process-helper"),
-      sources: [source],
-      xcrun: xcrun.executable,
-      environment: process.env,
-    });
-    const started = Date.now();
-    expect(await cache.lookup(AbortSignal.timeout(200))).toEqual({
-      kind: "unavailable",
-    });
-    // Far below the 15 s lookup deadline: both lookups ended with the signal.
-    expect(Date.now() - started).toBeLessThan(5_000);
-
-    const reader = createDarwinProcessRunTokenReader({
-      compiler: { kind: "xcrun", executable: xcrun.executable },
-      helperCacheDirectory: join(directory, "reader-cache"),
-    });
+it.skipIf(!posix).each(["cache lookup", "reader preparation"] as const)(
+  "cancels both stalled toolchain commands during %s",
+  async (operation) => {
+    const { create, xcrun, root } = await fixtureCache(
+      "rea-helper-cache-stall-",
+      {
+        stalledLookups: true,
+      },
+    );
+    const owner =
+      operation === "cache lookup"
+        ? create()
+        : createDarwinProcessRunTokenReader({
+            compiler: { kind: "xcrun", executable: xcrun.executable },
+            helperCacheDirectory: root,
+          });
     const controller = new AbortController();
-    const prepared = reader.prepare(controller.signal);
-    setTimeout(() => controller.abort(new Error("caller cancelled")), 200);
-    const cancelled = Date.now();
-    await expect(prepared).rejects.toThrow("caller cancelled");
-    await reader.close();
-    expect(Date.now() - cancelled).toBeLessThan(5_000);
-    expect(await xcrun.compilations()).toBe(0);
+    const reason = new Error("caller cancelled");
+    let settled = false;
+    const result = (
+      "lookup" in owner
+        ? owner.lookup(controller.signal)
+        : owner.prepare(controller.signal)
+    )
+      .catch((cause: unknown) => cause)
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      const started = await waitFor(async () => {
+        const calls = await xcrun.stalledLookups();
+        if (!settled && calls.length < 2)
+          throw new Error("Waiting for both toolchain commands");
+        return calls;
+      });
+      expect(started.sort()).toEqual([
+        '["--find","swiftc"]',
+        '["--show-sdk-path"]',
+      ]);
+      expect(settled).toBe(false);
+      const cancelledAt = performance.now();
+      controller.abort(reason);
+      const outcome = await result;
+      if (operation === "cache lookup")
+        expect(outcome).toEqual({ kind: "unavailable" });
+      else
+        expect(outcome).toMatchObject({
+          _tag: "ProcessOwnershipInspectionCancelled",
+          reason,
+        });
+      // Cancellation wins while both commands are held past their acknowledgement.
+      expect(performance.now() - cancelledAt).toBeLessThan(5_000);
+      expect(await xcrun.compilations()).toBe(0);
+    } finally {
+      controller.abort(reason);
+      await Promise.all([result, owner.close()]);
+    }
   },
 );
 
 it("rejects only ACL entries that allow another principal to write", () => {
-  const entry = (line: string) =>
-    `drwx------+ 3 analyst  staff  96 31 Oct 09:00 /Users/analyst/x\n${line}\n`;
-  // macOS homes ship with this entry; it must not disable the cache.
-  expect(aclListingGrantsWrite(entry(" 0: group:everyone deny delete"))).toBe(
-    false,
-  );
-  expect(
-    aclListingGrantsWrite(entry(" 0: group:everyone inherited deny delete")),
-  ).toBe(false);
-  expect(
-    aclListingGrantsWrite(entry(" 0: user:nobody allow read,search")),
-  ).toBe(false);
-  expect(
-    aclListingGrantsWrite(
-      entry(" 0: FFFFEEEE-DDDD-CCCC-BBBB-AAAAFFFFFFFE allow write,append"),
-    ),
-  ).toBe(true);
-  expect(
-    aclListingGrantsWrite(
-      entry(" 1: user:nobody inherited allow add_file,file_inherit"),
-    ),
-  ).toBe(true);
+  const cases = [
+    [" 0: group:everyone deny delete", false],
+    [" 0: group:everyone inherited deny delete", false],
+    [" 0: user:nobody allow read,search", false],
+    [" 0: FFFFEEEE-DDDD-CCCC-BBBB-AAAAFFFFFFFE allow write,append", true],
+    [" 1: user:nobody inherited allow add_file,file_inherit", true],
+  ] as const;
+  // Default macOS deny-delete entries must leave the cache available.
+  for (const [entry, writable] of cases) {
+    const listing = `drwx------+ 3 analyst  staff  96 31 Oct 09:00 /Users/analyst/x\n${entry}\n`;
+    expect(aclListingGrantsWrite(listing), entry).toBe(writable);
+  }
   expect(aclListingGrantsWrite("-rw------- 1 analyst staff 0 x\n")).toBe(false);
 });
 
@@ -374,7 +382,7 @@ const fixtureProcess = {
 };
 
 it.skipIf(!posix)(
-  "runs the shared helper in later readers without recompiling and keeps it after close",
+  "publishes one private helper that later readers execute and keep after close",
   async () => {
     const directory = await createTestTempDirectory("rea-helper-cache-reader-");
     const helperCacheDirectory = join(directory, "process-helper");
@@ -388,8 +396,17 @@ it.skipIf(!posix)(
     let shared: string;
     try {
       shared = await first.prepare();
-      expect(shared.endsWith("/reader")).toBe(true);
-      expect(shared.includes("/process-helper/")).toBe(true);
+      const root = await realpath(helperCacheDirectory);
+      const entry = dirname(shared);
+      expect(dirname(entry)).toBe(root);
+      expect(shared).toBe(join(entry, "reader"));
+      expect(await readdir(root)).toEqual([basename(entry)]);
+      const modes = await Promise.all(
+        [root, entry, shared, join(entry, "manifest.json")].map(
+          async (path) => (await stat(path)).mode & 0o777,
+        ),
+      );
+      expect(modes).toEqual([0o700, 0o700, 0o700, 0o600]);
       expect((await first.read([fixtureProcess])).get(123)).toEqual({
         state: "readable",
         runId: "fixture",
@@ -466,19 +483,37 @@ it.skipIf(!posix)(
       helperCacheDirectory,
     });
     const controller = new AbortController();
+    const reason = new Error("caller cancelled");
+    let settled = false;
+    const prepared = reader
+      .prepare(controller.signal)
+      .catch((cause: unknown) => cause)
+      .finally(() => {
+        settled = true;
+      });
     try {
-      const prepared = reader.prepare(controller.signal);
-      const deadline = Date.now() + 10_000;
-      while ((await xcrun.compilations()) === 0 && Date.now() < deadline)
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      controller.abort(new Error("caller cancelled"));
-      await expect(prepared).rejects.toThrow("caller cancelled");
-    } finally {
+      const root = await waitFor(async () => {
+        const [reported] = await xcrun.roots();
+        if (reported === undefined && !settled)
+          throw new Error("Waiting for the compiler's owned root");
+        return reported;
+      });
+      if (root === undefined)
+        throw new Error("Preparation settled before compilation started");
+      expect(settled).toBe(false);
+      expect((await stat(root)).isDirectory()).toBe(true);
+      controller.abort(reason);
+      expect(await prepared).toMatchObject({
+        _tag: "ProcessOwnershipInspectionCancelled",
+        reason,
+      });
       await reader.close();
+      expect(await readdir(helperCacheDirectory)).toEqual([]);
+      await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      controller.abort(reason);
+      await Promise.all([prepared, reader.close()]);
     }
-    expect(await readdir(helperCacheDirectory)).toEqual([]);
-    const [compileRoot] = await xcrun.roots();
-    expect(await exists(compileRoot ?? "")).toBe(false);
   },
 );
 

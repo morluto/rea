@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { runInNewContext } from "node:vm";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource as analyzeUnknownHostSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 // Webpack 5 standalone bootstrap with an Electron external, as emitted for
 // `target: "electron-main"`.
@@ -31,12 +36,27 @@ const expectUnresolved = (source: string) => {
   ).toEqual([]);
 };
 
+it("does not claim Electron host identity from an unbound require in unknown context", () => {
+  const analysis = analyzeUnknownHostSource(bootstrap(EXTERNAL, CONSUMER));
+  expect(analysis.electron.browser_windows).toContainEqual(
+    expect.objectContaining({
+      preload_path: "./preload.js",
+      loader_authority: "candidate",
+    }),
+  );
+  expect(analysis.analysis_coverage.applicability.electron).toBe("unknown");
+});
+
 describe("Electron identity through Webpack externals", () => {
   it.each([
     ["const key=45840;n.m[key]=local;", 0],
     ["const key='45840';delete n.m[key];", 0],
     ["n.m[runtimeKey]=local;", 0],
     ["const key=45841;n.m[key]=local;", 1],
+    ["const key=flag?45841:'45842';n.m[key]=local;", 1],
+    ["const key=flag?45840:'45842';n.m[key]=local;", 0],
+    ["const key=flag?dynamicKey:'45842';n.m[key]=local;", 0],
+    ["const key=flag?'__proto__':'45842';n.m[key]=local;", 0],
   ] as const)(
     "preserves only unmodified external slots after %s",
     (write, expected) => {
@@ -182,6 +202,21 @@ describe("Electron identity through Webpack externals", () => {
   });
 });
 
+it.each([
+  ["45841", 1],
+  ["45840", 0],
+] as const)(
+  "scopes writes to cache slots when one key is %s",
+  (key, expected) => {
+    const source = bootstrap(
+      EXTERNAL,
+      CONSUMER,
+      `n.c=c;const key=flag?${key}:"45842";n.c[key]={exports:local};n(100);`,
+    );
+    expect(electronOf(source).browser_windows).toHaveLength(expected);
+  },
+);
+
 describe("Webpack loader alias bounds", () => {
   const getterSource = (initializers: readonly string[], selection = "") =>
     bootstrap(
@@ -302,6 +337,89 @@ describe("Webpack loader alias bounds", () => {
       },
     });
   });
+});
+
+it("reports the alias budget when a destructured external alias chain exceeds it", () => {
+  // 520 const hops exceed the default 512 alias selections; the origin is not
+  // claimed, and the walk reports its limit instead of a silent absence.
+  const hops = Array.from(
+    { length: 520 },
+    (_, index) => `const a${index + 1}=a${index};`,
+  ).join("");
+  const analysis = analyzeJavaScriptStaticSource(
+    bootstrap(
+      EXTERNAL,
+      `const a0=n(45840);${hops}const{BrowserWindow}=a520;new BrowserWindow({});`,
+    ),
+  );
+  expect(analysis.electron.browser_windows).toEqual([]);
+  expect(analysis.analysis_coverage).toMatchObject({
+    examination: {
+      semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
+    },
+  });
+});
+
+describe("exhausted CommonJS delegate-write receiver selections", () => {
+  const writes = "while(flag)receiver=receiver[key];receiver[key]=0;";
+
+  it.each([
+    ["a closed local cycle", `let receiver={};${writes}`, 1],
+    [
+      "a Module stored in a property",
+      `let receiver={host:module};${writes}`,
+      0,
+    ],
+    [
+      "a Module installed through a prior member write",
+      `let receiver={};receiver.host=module;${writes}`,
+      0,
+    ],
+    [
+      "an opaque parameter",
+      `function mutate(receiver){${writes}}mutate(module);`,
+      0,
+    ],
+    [
+      "a mutated prototype",
+      `Object.prototype.host=module;let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "indirect eval that can change inherited members",
+      `(0, eval)(code);let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "constructed code that can change inherited members",
+      `Function(code)();let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "an unfinished source closure",
+      `let receiver=[${Array<string>(24).fill("0").join(",")}];${writes}`,
+      0,
+    ],
+  ] as const)(
+    "preserves the receiver proof for %s",
+    (_name, sideEffect, expected) => {
+      const source = bootstrap(EXTERNAL, CONSUMER, `${sideEffect}n(100);`);
+      const parsed = parseJavaScriptSource(source, "main.cjs");
+      if (parsed === null) throw new Error("Expected a parsed Webpack fixture");
+      const analysis = analyzeParsedJavaScriptStaticSource(source, parsed, {
+        alias_selections: 16,
+      });
+      expect(
+        analysis.analysis_coverage.examination.semantic_resource_limits,
+      ).toContain("alias-selections");
+      expect(analysis.electron.browser_windows).toHaveLength(expected);
+      expect(
+        analysis.electron.ipc.filter(
+          ({ resolution_basis }) => resolution_basis !== "wrapper-substitution",
+        ),
+      ).toHaveLength(expected);
+    },
+  );
 });
 
 describe("Webpack externals with a tampered runtime", () => {
@@ -619,4 +737,79 @@ describe("Webpack identity through erased TypeScript syntax", () => {
       expectUnresolved(bootstrap(EXTERNAL, CONSUMER, entry));
     },
   );
+});
+
+describe("Electron members destructured from a Webpack external binding", () => {
+  const WINDOW = 'webPreferences:{preload:"./p.js",nodeIntegration:true}';
+  const directIpc = (source: string) =>
+    electronOf(source).ipc.filter(
+      ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
+    );
+
+  it.each([
+    ["a shorthand pattern", "const{BrowserWindow}=s;new BrowserWindow"],
+    ["a renamed pattern", "const{BrowserWindow:W}=s;new W"],
+    ["a two-hop alias", "const w=s;const{BrowserWindow}=w;new BrowserWindow"],
+    ["a plain alias", "const w=s;new w.BrowserWindow"],
+  ])("follows the window class through %s", (_name, consumer) => {
+    expect(
+      electronOf(
+        bootstrap(EXTERNAL, `const s=n(45840);${consumer}({${WINDOW}});`),
+      ).browser_windows,
+    ).toMatchObject([{ preload_path: "./p.js" }]);
+  });
+
+  it.each([
+    [
+      "a top-level registration",
+      'const s=n(45840);const{app,ipcMain}=s;ipcMain.handle("chan",async()=>[]);',
+    ],
+    [
+      "a guarded registration in a nested function",
+      'const s=n(45840);const{app,ipcMain}=s;const init=()=>{if(!ipcMain||!app)return;ipcMain.on("chan",()=>{})};init();',
+    ],
+  ])("follows destructured IPC through %s", (_name, consumer) => {
+    expect(directIpc(bootstrap(EXTERNAL, consumer))).toMatchObject([
+      { channel: "chan", side: "main" },
+    ]);
+  });
+
+  it.each([
+    [
+      "a reassigned external binding",
+      "let s=n(45840);s=other;const{BrowserWindow}=s;",
+    ],
+    [
+      "an overwritten class member",
+      "const s=n(45840);s.BrowserWindow=class{};const{BrowserWindow}=s;",
+    ],
+    [
+      "an overwritten member through an alias",
+      "const s=n(45840);const w=s;w.BrowserWindow=class{};const{BrowserWindow}=s;",
+    ],
+    ["a cyclic alias", "var a=b,b=a;const{BrowserWindow}=a;"],
+    [
+      "an alias read before its hoisted source is initialized",
+      "var saved=s;var s=n(45840);const{BrowserWindow}=saved;",
+    ],
+    ["a different table key", "const s=n(45841);const{BrowserWindow}=s;"],
+    [
+      "a rebindable binding exposed to direct eval",
+      "let s=n(45840);eval(code);const{BrowserWindow}=s;",
+    ],
+  ])("keeps %s unresolved", (_name, prefix) => {
+    expect(
+      electronOf(
+        bootstrap(EXTERNAL, `${prefix}new BrowserWindow({${WINDOW}});`),
+      ).browser_windows,
+    ).toEqual([]);
+  });
+
+  it("keeps a require alias exposed to direct eval unresolved", () => {
+    expect(
+      electronOf(
+        `let s=require("electron");eval(code);const{BrowserWindow}=s;new BrowserWindow({${WINDOW}});`,
+      ).browser_windows,
+    ).toEqual([]);
+  });
 });

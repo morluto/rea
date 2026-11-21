@@ -7,6 +7,7 @@ import type {
   JavaScriptSemanticChildProcessSpawn,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
+import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.js";
 import {
   createSemanticExpressionShapeResolver,
   optionsAfterOptionalArgv,
@@ -16,7 +17,7 @@ import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
-  staticObjectProperty,
+  staticObjectCopyPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -33,7 +34,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectLiteralString,
   dataEffectMemberCallee,
   assignedSemanticResultBindings,
@@ -49,9 +50,18 @@ interface ChildProcessAnalysis {
   readonly childProcessInteractions: readonly JavaScriptSemanticChildProcessInteraction[];
 }
 
-type ChildSpawnContext = JavaScriptExpressionShapeResolver;
+interface ChildSpawnArguments {
+  readonly options: t.Node | undefined;
+  readonly argvCount: number | null;
+  readonly readOption: ReturnType<typeof staticObjectCopyPropertyReader>;
+}
+
+type ChildSpawnContext = JavaScriptExpressionShapeResolver & {
+  readonly arguments: WeakMap<SpawnCandidate, ChildSpawnArguments>;
+};
 
 interface SpawnCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly method: JavaScriptSemanticChildProcessSpawn["method"];
   readonly ownerCallableId: string | null;
@@ -71,14 +81,22 @@ export const collectJavaScriptSemanticChildProcesses = (
   state: JavaScriptSemanticAnalysisState,
   callables: readonly JavaScriptSemanticCallable[],
 ): ChildProcessAnalysis => {
-  const context = createSemanticExpressionShapeResolver(state);
+  const context: ChildSpawnContext = {
+    ...createSemanticExpressionShapeResolver(state),
+    arguments: new WeakMap(),
+  };
   const candidates = collectSpawns(program, state, callables).filter(
     (candidate) =>
+      !rejectsCommand(candidate, context) &&
       !forkRejectsStdioArray(candidate, context) &&
-      !rejectsOptionsShape(candidate, context, state),
+      !rejectsStdioLiteral(candidate, context) &&
+      !rejectsProcessOptionLiteral(candidate, context) &&
+      !rejectsValidatedOption(candidate, context, state) &&
+      !rejectsOptionsShape(candidate, context, state) &&
+      !rejectsCallback(candidate, context),
   );
   const childProcessSpawns = candidates.map((candidate) =>
-    immutableSpawn(candidate, context),
+    immutableSpawn(candidate, context, state),
   );
   return {
     childProcessSpawns,
@@ -106,8 +124,9 @@ const collectSpawns = (
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-        const method = childProcessMethod(node.callee, state);
-        if (method !== null) {
+        const identity = childProcessMethod(node.callee, state);
+        if (identity !== null) {
+          const { method, builtinAuthority } = identity;
           const projectedResultBindings = assignedSemanticResultBindings(
             node,
             ancestors,
@@ -116,6 +135,7 @@ const collectSpawns = (
           output.push({
             node,
             method,
+            ...(builtinAuthority === undefined ? {} : { builtinAuthority }),
             ownerCallableId: callableStack.callables.at(-1) ?? null,
             resultBindingId: scalarAssignedResultBinding(
               projectedResultBindings,
@@ -141,10 +161,14 @@ const collectSpawns = (
 const immutableSpawn = (
   candidate: SpawnCandidate,
   context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticChildProcessSpawn => {
-  const { options, argvCount } = spawnArguments(candidate, context);
+  const args = spawnArguments(candidate, context);
   const command = dataEffectLiteralString(candidate.node.arguments[0]);
   return {
+    ...(candidate.builtinAuthority === undefined
+      ? {}
+      : { builtinAuthority: candidate.builtinAuthority }),
     processId: spawnId(candidate),
     method: candidate.method,
     location: range(candidate.node),
@@ -152,9 +176,9 @@ const immutableSpawn = (
     resultBindingId: candidate.resultBindingId,
     projectedResultBindings: candidate.projectedResultBindings,
     command,
-    argvCount,
-    environmentSupplied: environmentSupplied(options, context),
-    stdioMode: stdioMode(options, candidate.method, context),
+    argvCount: args.argvCount,
+    environmentSupplied: environmentSupplied(args.readOption, context, state),
+    stdioMode: stdioMode(args, candidate.method, context),
     resolution: command === null ? "partial" : "complete",
   };
 };
@@ -216,6 +240,11 @@ const childInteraction = (
   const method = semanticStaticPropertyName(member.property, member.computed);
   const classification = classifyInteraction(method, node.arguments[0]);
   if (classification === null) return null;
+  if (
+    classification.kind === "listener" &&
+    rejectsSemanticEventListener(node.arguments[1])
+  )
+    return null;
   const binding = objectBinding(member.object, state);
   const { candidates: linked, complete } = resolveChildCandidates(
     member.object,
@@ -225,6 +254,9 @@ const childInteraction = (
   const { kind, interactionMethod, eventName } = classification;
   const listener = node.arguments[1];
   return {
+    ...(linked.some((candidate) => candidate.builtinAuthority === "candidate")
+      ? { builtinAuthority: "candidate" as const }
+      : {}),
     interactionId: `child:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
     kind,
     method: interactionMethod,
@@ -239,7 +271,11 @@ const childInteraction = (
       kind === "signal" ? killSignalName(node.arguments, state) : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
-    resolution: complete ? "complete" : "partial",
+    resolution:
+      complete &&
+      linked.every((candidate) => candidate.builtinAuthority !== "candidate")
+        ? "complete"
+        : "partial",
   };
 };
 
@@ -288,14 +324,28 @@ const classifyInteraction = (
 const childProcessMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticChildProcessSpawn["method"] | null => {
-  const method = builtinDataEffectMethod(callee, state, [
+): {
+  readonly method: JavaScriptSemanticChildProcessSpawn["method"];
+  readonly builtinAuthority?: "candidate";
+} | null => {
+  const identity = builtinDataEffectIdentity(callee, state, [
     "child_process",
     "node:child_process",
   ]);
-  return (
-    CHILD_PROCESS_METHODS.find((candidate) => candidate === method) ?? null
-  );
+  const method =
+    identity?.path.length === 1
+      ? CHILD_PROCESS_METHODS.find(
+          (candidate) => candidate === identity.path[0],
+        )
+      : undefined;
+  return method === undefined
+    ? null
+    : {
+        method,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+      };
 };
 
 const resolveChildCandidates = (
@@ -380,30 +430,35 @@ const resolveChildCandidates = (
 const spawnArguments = (
   candidate: SpawnCandidate,
   context: ChildSpawnContext,
-): {
-  readonly options: t.Node | undefined;
-  readonly argvCount: number | null;
-} => {
+): ChildSpawnArguments => {
+  const cached = context.arguments.get(candidate);
+  if (cached !== undefined) return cached;
   const args = candidate.node.arguments;
-  if (t.isSpreadElement(args[0])) return { options: args[0], argvCount: null };
   const second = args[1] && unwrapJavaScriptExpression(args[1]).node;
   const argv =
     candidate.method !== "exec" && t.isArrayExpression(second)
       ? second
       : undefined;
   // exec(command[, options][, callback]) has no argv slot.
-  const options =
-    candidate.method === "exec"
+  const options = t.isSpreadElement(args[0])
+    ? args[0]
+    : candidate.method === "exec"
       ? second
       : optionsAfterOptionalArgv(args, context);
-  return {
+  const result: ChildSpawnArguments = {
     options,
     argvCount:
+      !t.isSpreadElement(args[0]) &&
       argv !== undefined &&
       !argv.elements.some((element) => t.isSpreadElement(element))
         ? argv.elements.length
         : null,
+    // Node copies its options before validation. Accessors in that copy may
+    // change later members, so every consumer shares the same parsed facts.
+    readOption: staticObjectCopyPropertyReader(options, context.isNullish),
   };
+  context.arguments.set(candidate, result);
+  return result;
 };
 
 /**
@@ -412,18 +467,60 @@ const spawnArguments = (
  * through instead of supplying one.
  */
 const environmentSupplied = (
-  options: t.Node | undefined,
+  readOption: ChildSpawnArguments["readOption"],
   context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  const lookup = staticObjectProperty(options, "env", context.isNullish);
+  const lookup = readOption("env");
   if (lookup.status !== "explicit") return false;
   const value = unwrapJavaScriptExpression(lookup.value).node;
   if (context.isNullish(value)) return false;
+  if (
+    t.isIdentifier(value, { name: "NaN" }) &&
+    isUnshadowedGlobal(value, state, "NaN")
+  )
+    return false;
   return staticJavaScriptTruthiness(value) !== false;
 };
 
+/**
+ * The `stdio` string values Node accepts for `spawn`, `execFile` and `fork`.
+ *
+ * Measured on Node 24.22.1: `"pipe"`, `"overlapped"`, `"inherit"` and `"ignore"` start a
+ * child; `"ipc"`, `"PIPE"`, `"pipe "`, `"pipeline"`, `"stream"` and `"stdio"` all throw
+ * `ERR_INVALID_ARG_VALUE` before anything is created. The set is exact and case-sensitive.
+ */
+const STREAM_STDIO_MODES = new Set([
+  "pipe",
+  "overlapped",
+  "inherit",
+  "ignore",
+] as const);
+
+/**
+ * Whether an exact string `stdio` makes the call throw before a child exists.
+ *
+ * `spawn` passes the string to `getValidStdio`, so every value outside
+ * `STREAM_STDIO_MODES` throws. `fork` sends the string through `stdioStringToArray`, which
+ * refuses `""` on its own — it does not split the string and it never appends `"ipc"`, so
+ * the rejection is that one explicit check rather than an IPC-count rule. Measured on Node
+ * 24.22.1: `spawn(..., {stdio: ""})` starts a child while `fork(..., {stdio: ""})` throws
+ * `ERR_INVALID_ARG_VALUE`.
+ *
+ * `exec` and `execFile` are excluded by the caller: async `execFile` does not forward
+ * `stdio` to its underlying `spawn` at all, so `execFile(..., {stdio: "bad"})` returns a
+ * real child, which `stdioMode` already records as `"default"`.
+ */
+const rejectsStdioString = (
+  value: string,
+  method: JavaScriptSemanticChildProcessSpawn["method"],
+): boolean =>
+  (STREAM_STDIO_MODES as ReadonlySet<string>).has(value)
+    ? false
+    : method === "fork" || value !== "";
+
 const stdioMode = (
-  options: t.Node | undefined,
+  { options, readOption }: ChildSpawnArguments,
   method: JavaScriptSemanticChildProcessSpawn["method"],
   context: ChildSpawnContext,
 ): string => {
@@ -432,19 +529,43 @@ const stdioMode = (
   if (options === undefined) return "default";
   const expression = unwrapJavaScriptExpression(options).node;
   if (context.isNullish(expression)) return "default";
-  const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
+  const lookup = readOption("stdio");
   if (lookup.status === "missing")
-    return unsetStdioMode(expression, method, context);
+    return unsetStdioMode(readOption, method, context);
   if (lookup.status !== "explicit") return "dynamic";
   const value = unwrapJavaScriptExpression(lookup.value).node;
   if (context.isNullish(value))
-    return unsetStdioMode(expression, method, context);
+    return unsetStdioMode(readOption, method, context);
   if (t.isStringLiteral(value)) return value.value;
   if (t.isArrayExpression(value)) return "array";
   // fork ignores any other known stdio value and falls back to `silent`.
   if (method === "fork" && staticJavaScriptTruthiness(value) !== undefined)
-    return unsetStdioMode(expression, method, context);
+    return unsetStdioMode(readOption, method, context);
   return "dynamic";
+};
+
+/**
+ * Whether a `stdio` member is a string Node refuses at the call site.
+ *
+ * The value is read through the shared literal owner rather than the AST kind, because a
+ * no-substitution template literal is the same string to Node: measured on Node 24.22.1,
+ * `{stdio: \`ipc\`}` throws `ERR_INVALID_ARG_VALUE` while `{stdio: \`pipe\`}` starts a
+ * child. A non-string value is left to `stdioMode`, which already reports it as
+ * `"dynamic"`, so this filter only speaks about strings.
+ */
+const rejectsStdioLiteral = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  // Async exec/execFile do not forward options.stdio to their underlying spawn.
+  if (candidate.method === "exec" || candidate.method === "execFile")
+    return false;
+  const { readOption } = spawnArguments(candidate, context);
+  const lookup = readOption("stdio");
+  if (lookup.status !== "explicit") return false;
+  const literal = readExactJavaScriptLiteral(lookup.value);
+  if (!literal.found || typeof literal.value !== "string") return false;
+  return rejectsStdioString(literal.value, candidate.method);
 };
 
 /**
@@ -461,11 +582,8 @@ const forkRejectsStdioArray = (
   context: ChildSpawnContext,
 ): boolean => {
   if (candidate.method !== "fork") return false;
-  const { options } = spawnArguments(candidate, context);
-  if (options === undefined) return false;
-  const expression = unwrapJavaScriptExpression(options).node;
-  if (context.isNullish(expression)) return false;
-  const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
+  const { readOption } = spawnArguments(candidate, context);
+  const lookup = readOption("stdio");
   if (lookup.status !== "explicit") return false;
   const value = unwrapJavaScriptExpression(lookup.value).node;
   if (!t.isArrayExpression(value)) return false;
@@ -481,6 +599,45 @@ const forkRejectsStdioArray = (
       literal !== undefined && literal.found && literal.value === "ipc",
   ).length;
   return ipcCount !== 1;
+};
+
+/** Only proven invalid cwd paths or argv0 strings establish call-site rejection. */
+const rejectsProcessOptionLiteral = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  const { readOption } = spawnArguments(candidate, context);
+  for (const member of ["cwd", "argv0"] as const) {
+    const lookup = readOption(member);
+    if (lookup.status !== "explicit") continue;
+    const value = unwrapJavaScriptExpression(lookup.value).node;
+    if (context.isNullish(value)) continue;
+    // The value is read through the shared literal owner, so a no-substitution template
+    // literal counts as the string Node receives: measured on Node 24.22.1,
+    // `{cwd: \`/tmp\`}` and `{argv0: \`x\`}` both start a child.
+    const literal = readExactJavaScriptLiteral(value);
+    if (literal.found) {
+      if (typeof literal.value === "string") continue;
+      return true;
+    }
+    if (t.isStringLiteral(value)) continue;
+    // A constructor can return a URL or another accepted path value. Its name
+    // cannot prove that cwd is invalid, including qualified and custom constructors.
+    if (member === "cwd" && t.isNewExpression(value)) continue;
+    if (
+      t.isObjectExpression(value) ||
+      t.isArrayExpression(value) ||
+      t.isBooleanLiteral(value) ||
+      t.isBigIntLiteral(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isFunctionExpression(value) ||
+      t.isClassExpression(value) ||
+      t.isNewExpression(value)
+    )
+      return true;
+  }
+  return false;
 };
 
 /**
@@ -500,6 +657,13 @@ const rejectsOptionsShape = (
   if (options === undefined) return false;
   const value = unwrapJavaScriptExpression(options).node;
   if (context.isArray(value)) return true;
+  if (
+    candidate.method !== "execFile" &&
+    (t.isFunctionExpression(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isClassExpression(value))
+  )
+    return true;
   const literal = readExactJavaScriptLiteral(value);
   if (literal.found)
     return !(candidate.method !== "spawn" && literal.value === null);
@@ -515,6 +679,249 @@ const rejectsOptionsShape = (
   return isUnpricedPrimitiveLiteral(value);
 };
 
+/**
+ * Node validates the command before it normalizes anything else, so a command it
+ * refuses throws synchronously and no child process exists.
+ *
+ * Measured on Node 24.22.1 for spawn, execFile, exec and fork:
+ *
+ *   a missing command, null, undefined, a number, a boolean,
+ *   an object or an array                  -> THREW ERR_INVALID_ARG_TYPE
+ *   a string holding a NUL byte            -> THREW ERR_INVALID_ARG_VALUE
+ *   ""                                     -> THREW ERR_INVALID_ARG_VALUE, except fork("")
+ *                                             which starts a child
+ *   " " or any other non-empty string      -> child
+ *
+ * fork validates its module as a path, not a string: a WHATWG URL, an object
+ * with own `href` and `protocol`, a class with static ones, and a Uint8Array
+ * all start a child, so an object, class or `new` value stays for fork.
+ *
+ * Only a command proven by source syntax counts; a spread or computed value stays.
+ */
+const rejectsCommand = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  const [first] = candidate.node.arguments;
+  if (first === undefined) return true;
+  if (t.isSpreadElement(first)) return false;
+  const value = unwrapJavaScriptExpression(first).node;
+  if (context.isNullish(value)) return true;
+  const literal = readExactJavaScriptLiteral(value);
+  if (literal.found) {
+    if (typeof literal.value !== "string") return true;
+    if (literal.value.includes("\u0000")) return true;
+    return literal.value === "" && candidate.method !== "fork";
+  }
+  if (isUnpricedPrimitiveLiteral(value)) return true;
+  if (candidate.method === "fork")
+    return (
+      context.isArray(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isFunctionExpression(value) ||
+      t.isRegExpLiteral(value)
+    );
+  // `new` always yields an object, which Node's string check refuses.
+  return isObjectValuedSyntax(value, context);
+};
+
+/** Syntax whose value is always an object, never a primitive. */
+const isObjectValuedSyntax = (
+  value: t.Node,
+  context: ChildSpawnContext,
+): boolean =>
+  context.isArray(value) ||
+  t.isObjectExpression(value) ||
+  t.isArrowFunctionExpression(value) ||
+  t.isFunctionExpression(value) ||
+  t.isClassExpression(value) ||
+  t.isRegExpLiteral(value) ||
+  t.isNewExpression(value);
+
+type ChildOptionValue =
+  | { readonly kind: "nullish" }
+  | { readonly kind: "null" }
+  | { readonly kind: "primitive"; readonly value: unknown }
+  | { readonly kind: "bigint" | "object" | "unknown" };
+
+/** Classify an option member only as far as source syntax proves it. */
+const childOptionValue = (
+  node: t.Node,
+  context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
+): ChildOptionValue => {
+  const value = unwrapJavaScriptExpression(node).node;
+  const literal = readExactJavaScriptLiteral(value);
+  if (literal.found)
+    return literal.value === null
+      ? { kind: "null" }
+      : { kind: "primitive", value: literal.value };
+  if (context.isNullish(value)) return { kind: "nullish" };
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnshadowedGlobal(value, state, value.name)
+  )
+    return { kind: "primitive", value: Number(value.name) };
+  // The shared reader refuses a non-finite numeric literal such as `1e400` and a
+  // signed one such as `-0` or `-1e400`; `-0` stays an accepted timeout.
+  if (t.isNumericLiteral(value))
+    return { kind: "primitive", value: value.value };
+  if (
+    t.isUnaryExpression(value) &&
+    (value.operator === "-" || value.operator === "+")
+  ) {
+    const operand = unwrapJavaScriptExpression(value.argument).node;
+    if (t.isNumericLiteral(operand))
+      return {
+        kind: "primitive",
+        value: value.operator === "-" ? -operand.value : operand.value,
+      };
+    // `-1n` is a BigInt; `+1n` throws before any options object exists.
+    if (t.isBigIntLiteral(operand)) return { kind: "bigint" };
+  }
+  if (t.isBigIntLiteral(value)) return { kind: "bigint" };
+  if (isObjectValuedSyntax(value, context)) return { kind: "object" };
+  return { kind: "unknown" };
+};
+
+/** A value proven to be something other than what `accepts` admits. */
+const provenOtherThan =
+  (accepts: (value: unknown) => boolean) =>
+  (option: ChildOptionValue): boolean =>
+    option.kind === "bigint" ||
+    option.kind === "object" ||
+    (option.kind === "primitive" && !accepts(option.value));
+
+const ALL_SPAWN_METHODS = ["spawn", "execFile", "exec", "fork"] as const;
+const isBoolean = (value: unknown) => typeof value === "boolean";
+
+/**
+ * Options Node validates while normalizing a spawn, before any child exists.
+ * Measured on Node 24.22.1; each rule applies only to the methods that forward
+ * the member to that validation:
+ *
+ *   timeout: -1 / 1.5 / "1" / true / NaN / Infinity / 0n -> THREW ERR_OUT_OF_RANGE
+ *   timeout: 0 / 1e3 / 2 ** 53 / null / undefined       -> child
+ *   spawn and fork: detached, windowsHide or windowsVerbatimArguments that is
+ *   not a boolean, null or undefined                      -> THREW ERR_INVALID_ARG_TYPE
+ *   spawn and fork: serialization other than "json", "advanced" or undefined,
+ *   including null                                        -> THREW ERR_INVALID_ARG_VALUE
+ *   spawn and execFile: shell that is not a boolean, string, null or
+ *   undefined                                             -> THREW ERR_INVALID_ARG_TYPE
+ *   execFile and exec: maxBuffer -1 / NaN / "1" / 0n      -> THREW ERR_OUT_OF_RANGE
+ *   execFile and exec: maxBuffer 0 / 1.5 / Infinity       -> child
+ *
+ * execFile does not forward the boolean flags or serialization to its spawn,
+ * and exec replaces a non-string shell with the default one.
+ */
+const VALIDATED_CHILD_OPTIONS: readonly {
+  readonly member: string;
+  readonly methods: readonly JavaScriptSemanticChildProcessSpawn["method"][];
+  readonly rejects: (option: ChildOptionValue) => boolean;
+}[] = [
+  {
+    member: "timeout",
+    methods: ALL_SPAWN_METHODS,
+    rejects: provenOtherThan(
+      (value) =>
+        typeof value === "number" && Number.isInteger(value) && value >= 0,
+    ),
+  },
+  ...(["detached", "windowsHide", "windowsVerbatimArguments"] as const).map(
+    (member) => ({
+      member,
+      methods: ["spawn", "fork"] as const,
+      rejects: provenOtherThan(isBoolean),
+    }),
+  ),
+  {
+    member: "serialization",
+    methods: ["spawn", "fork"],
+    rejects: (option) =>
+      option.kind === "null" ||
+      provenOtherThan((value) => value === "json" || value === "advanced")(
+        option,
+      ),
+  },
+  {
+    member: "shell",
+    methods: ["spawn", "execFile"],
+    rejects: provenOtherThan(
+      (value) => isBoolean(value) || typeof value === "string",
+    ),
+  },
+  {
+    member: "maxBuffer",
+    methods: ["execFile", "exec"],
+    rejects: provenOtherThan(
+      (value) => typeof value === "number" && value >= 0,
+    ),
+  },
+];
+
+const rejectsValidatedOption = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const { readOption } = spawnArguments(candidate, context);
+  return VALIDATED_CHILD_OPTIONS.some(({ member, methods, rejects }) => {
+    if (!methods.includes(candidate.method)) return false;
+    const lookup = readOption(member);
+    return (
+      lookup.status === "explicit" &&
+      rejects(childOptionValue(lookup.value, context, state))
+    );
+  });
+};
+
+/** Select only callback slots whose overload is established by source syntax. */
+const rejectsCallback = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  if (candidate.method !== "exec" && candidate.method !== "execFile")
+    return false;
+  const args = candidate.node.arguments;
+  if (args.slice(0, 4).some((argument) => t.isSpreadElement(argument)))
+    return false;
+  const second = args[1] && unwrapJavaScriptExpression(args[1]).node;
+  const third = args[2] && unwrapJavaScriptExpression(args[2]).node;
+  let callback: t.Node | undefined;
+  if (candidate.method === "exec") {
+    // A function in slot 1 replaces slot 2, even when slot 2 is not callable.
+    if (
+      second !== undefined &&
+      !context.isNullish(second) &&
+      !rejectsSemanticEventListener(second)
+    )
+      return false;
+    callback = third;
+  } else if (t.isObjectExpression(second) || t.isRegExpLiteral(second)) {
+    callback = third;
+  } else if (
+    second === undefined ||
+    context.isArray(second) ||
+    context.isNullish(second)
+  ) {
+    // With argv present, a third-slot function replaces the fourth callback.
+    if (
+      third !== undefined &&
+      !context.isNullish(third) &&
+      !rejectsSemanticEventListener(third)
+    )
+      return false;
+    callback = args[3];
+  } else {
+    return false;
+  }
+  return (
+    callback !== undefined &&
+    !context.isNullish(callback) &&
+    rejectsSemanticEventListener(callback)
+  );
+};
 /**
  * The exact-value reader deliberately refuses to price a BigInt, a non-finite
  * numeric literal such as `1e400`, and a negated numeric literal such as `-0`.
@@ -540,12 +947,12 @@ const isUnpricedPrimitiveLiteral = (value: t.Node): boolean => {
  * when `silent` is truthy and inherits them otherwise.
  */
 const unsetStdioMode = (
-  options: t.Node,
+  readOption: ChildSpawnArguments["readOption"],
   method: JavaScriptSemanticChildProcessSpawn["method"],
   context: ChildSpawnContext,
 ): string => {
   if (method !== "fork") return "default";
-  const silent = staticObjectProperty(options, "silent", context.isNullish);
+  const silent = readOption("silent");
   if (silent.status === "missing") return "default";
   if (silent.status !== "explicit") return "dynamic";
   const value = unwrapJavaScriptExpression(silent.value).node;

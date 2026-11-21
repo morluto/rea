@@ -17,15 +17,13 @@ import {
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../../../src/native/CommandRunner.js";
-import {
-  LipoFieldRetentionError,
-  parseLipoCapture,
-} from "../../../../src/native/parsers/lipo.js";
+import { parseLipoCapture } from "../../../../src/native/parsers/lipo.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../../../../src/artifacts/ArtifactReader.js";
+} from "../../../../src/resources/ArtifactReader.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../../../src/domain/native/nativeCommandOutput.js";
+import { LipoFieldRetentionError } from "../../../../src/domain/apple/lipo.js";
 
 it.each(["absent", "valid", "uninterpretable"] as const)(
   "preserves %s lipo fields through native observations and structural slice inventory",
@@ -104,9 +102,7 @@ it.each(["absent", "valid", "uninterpretable"] as const)(
         expect(entries[0]?.limitations).toEqual(
           mode === "valid"
             ? []
-            : [
-                "Slice range was derived from structural Mach-O facts because lipo omitted it.",
-              ],
+            : [expect.stringMatching(/structural Mach.O.*lipo.*omitted/iu)],
         );
       }
     } finally {
@@ -133,7 +129,7 @@ it("does not replace a parsed contradictory lipo range with structural fallback"
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "integrity",
-      message: expect.stringContaining("disagrees with the Mach-O FAT table"),
+      integrityCheck: "layout-consistency",
     });
   } finally {
     await reader.close();
@@ -169,7 +165,6 @@ it("refuses retained raw-field expansion as capacity rather than a malformed lip
     "list_architectures",
     path,
   );
-  expect(refused.ok).toBe(false);
   if (refused.ok) throw new Error("Expected lipo field retention refusal");
   expect(refused.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",

@@ -1,8 +1,18 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import {
+  scenarioSerializationAllowance,
+  scenarioQueryLength,
+} from "./BrowserScenarioSerialization.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactSensitiveFailure } from "../domain/explicitSensitiveFailure.js";
+import {
+  explicitTextSpellings,
+  lowercasePercentEscapes,
+} from "../domain/explicitSensitiveValues.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createHash } from "node:crypto";
+import { toUSVString } from "node:util";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type {
@@ -40,16 +50,6 @@ const normalizedSecretValues = (value: string): readonly string[] => [
   ...new Set([value.replace(/^[\t ]+|[\t ]+$/gu, ""), value]),
 ];
 
-const encodedSecretValues = (secret: string): ReadonlySet<string> => {
-  const component = encodeURIComponent(secret);
-  return new Set([
-    component,
-    // Special-URL queries escape apostrophes while keeping the component's tilde.
-    component.replace(/'/gu, "%27"),
-    new URLSearchParams([["value", secret]]).toString().slice("value=".length),
-  ]);
-};
-
 type SecretSpellings = "url" | "text";
 interface SecretPattern {
   readonly text: string;
@@ -66,30 +66,41 @@ interface SecretNeedle {
   readonly marker: Buffer;
 }
 
-const normalizePercentEscapes = (value: string): string => {
-  if (!value.includes("%")) return value;
-  return value.replace(/%[0-9a-f]{2}/giu, (escape) => escape.toLowerCase());
-};
-
 const secretPatterns = (
   secret: string,
   spellings: SecretSpellings,
 ): readonly SecretPattern[] => {
   if (secret === "") return [];
+  // UTF-8 and Web APIs replace unpaired UTF-16 units; retain source identity
+  // while accounting for those emitted spellings only in redaction patterns.
+  const scalar = toUSVString(secret);
+  const literals = [...new Set([secret, scalar])];
   const patterns: SecretPattern[] = [
-    { text: secret, searchText: secret, percentInsensitive: false },
-    ...[...encodedSecretValues(secret)].map((text) => ({
+    ...literals.map((text) => ({
       text,
-      searchText: normalizePercentEscapes(text),
+      searchText: text,
+      percentInsensitive: false,
+    })),
+    ...explicitTextSpellings(scalar, [
+      "uri-component",
+      "uri-query",
+      "form",
+    ]).map((text) => ({
+      text,
+      searchText: lowercasePercentEscapes(text),
       percentInsensitive: true,
     })),
   ];
   if (spellings === "text")
-    patterns.push({
-      text: JSON.stringify(secret).slice(1, -1),
-      searchText: JSON.stringify(secret).slice(1, -1),
-      percentInsensitive: false,
-    });
+    patterns.push(
+      ...literals.flatMap((text) =>
+        explicitTextSpellings(text, ["json-escaped"]).map((escaped) => ({
+          text: escaped,
+          searchText: escaped,
+          percentInsensitive: false,
+        })),
+      ),
+    );
   const seen = new Set<string>();
   return patterns.filter(({ text, percentInsensitive }) => {
     if (text === "") return false;
@@ -224,15 +235,13 @@ const redactionMarker = (
 ): string => {
   const candidates = [`${REDACTION_PREFIX}${id}]`, "[REDACTED]", "…", ""];
   return (
-    candidates.find((candidate) =>
-      patterns.every(
-        (pattern) =>
-          !patternMatches(
-            candidate,
-            normalizePercentEscapes(candidate),
-            pattern,
-          ),
-      ),
+    candidates.find(
+      (candidate) =>
+        !containsSecretPattern(
+          candidate,
+          lowercasePercentEscapes(candidate),
+          patterns,
+        ),
     ) ?? ""
   );
 };
@@ -246,7 +255,7 @@ const replaceSecretLiterals = (
   const normalizedValue = replacements.some(
     ({ percentInsensitive }) => percentInsensitive,
   )
-    ? normalizePercentEscapes(value)
+    ? lowercasePercentEscapes(value)
     : value;
   const parts: string[] = [];
   let offset = 0;
@@ -555,10 +564,10 @@ export class BrowserScenarioSecrets {
       retention.maxAllocationBytes,
     );
     if (!redacted.ok) throw new Error(redacted.error.message);
-    return redacted.value ?? body;
+    return redacted.value.bytes ?? body;
   }
 
-  /** Decode JSON only when redaction is active; other bytes retain their existing binary policy. */
+  /** Check JSON spellings only while redaction is active, including bodies of unknown type. */
   redactJsonBody(
     body: Buffer,
     retention: {
@@ -566,7 +575,8 @@ export class BrowserScenarioSecrets {
       readonly maxAllocationBytes: number;
     },
     scope: ScenarioRedactionScope = "current",
-  ): Buffer {
+    mode: "json" | "unknown" = "json",
+  ): { readonly bytes: Buffer; readonly json: boolean } {
     if (
       body.length === 0 ||
       (scope === "response"
@@ -574,20 +584,24 @@ export class BrowserScenarioSecrets {
         : this.textPatterns
       ).length === 0
     )
-      return body;
-    const text = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(body);
+      return { bytes: body, json: mode === "json" };
+    let text: string;
+    try {
+      text = decodeStrictUtf8(body, "preserve");
+    } catch (cause: unknown) {
+      if (mode === "unknown") return { bytes: body, json: false };
+      throw cause;
+    }
     const redacted = redactResponseSource(
       text,
       [],
       (value) => this.redact(value, scope),
       retention.maxBytes,
       retention.maxAllocationBytes,
+      mode === "unknown",
     );
     if (!redacted.ok) throw new Error(redacted.error.message);
-    return redacted.value ?? body;
+    return { bytes: redacted.value.bytes ?? body, json: redacted.value.json };
   }
 
   private retainSavedRedactions(
@@ -655,8 +669,28 @@ export class BrowserScenarioSecrets {
 
   url(destination: BrowserScenarioUrl): string {
     const url = new URL(destination.url);
-    for (const { name, value } of destination.query)
-      url.searchParams.append(name, this.value(value));
+    if (destination.query.length > 0) {
+      const query: [string, string][] = destination.query.map(
+        ({ name, value }) => [name, this.value(value)],
+      );
+      const entries = [...url.searchParams, ...query];
+      // Appending form entries reserializes the literal query too; fragments remain unchanged.
+      const queryStart = url.href.indexOf("?");
+      const hashStart = url.href.indexOf("#");
+      const existingQueryLength =
+        queryStart >= 0 && (hashStart < 0 || queryStart < hashStart)
+          ? (hashStart < 0 ? url.href.length : hashStart) - queryStart
+          : 0;
+      const budget =
+        scenarioSerializationAllowance() -
+        (url.href.length - existingQueryLength) -
+        1;
+      if (scenarioQueryLength(entries, budget, "form") > budget)
+        throw new Error(
+          "Expanded scenario URL exceeds the current heap/string serialization allowance; reduce repeated values or raise the parent Node heap and restart.",
+        );
+      for (const [name, value] of query) url.searchParams.append(name, value);
+    }
     return url.href;
   }
 
@@ -696,7 +730,7 @@ export class BrowserScenarioSecrets {
     );
     return containsSecretPattern(
       output,
-      normalizePercentEscapes(output),
+      lowercasePercentEscapes(output),
       patterns,
     )
       ? ""
@@ -784,7 +818,7 @@ export class BrowserScenarioSecrets {
       this.urlPatterns,
     );
     if (
-      containsSecretPattern(output, normalizePercentEscapes(output), patterns)
+      containsSecretPattern(output, lowercasePercentEscapes(output), patterns)
     )
       return {
         url: "",
@@ -803,7 +837,7 @@ export class BrowserScenarioSecrets {
     const patterns = this.textPatterns;
     if (
       patterns.length > 0 &&
-      containsSecretPattern(value, normalizePercentEscapes(value), patterns)
+      containsSecretPattern(value, lowercasePercentEscapes(value), patterns)
     )
       return { value_state: "redacted-secret", value_sha256: null };
     const hash = createHash("sha256");

@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const invalidLogLevelMessage =
   'REA configuration is invalid: REA_LOG_LEVEL: Invalid option: expected one of "trace"|"debug"|"info"|"warn"|"error"|"fatal"|"silent".\n';
@@ -23,7 +23,7 @@ for (const level of ["loud", "INFO"])
       };
       for (const doctor of [
         await cli.run(doctorInvocation),
-        await runFileCli(cli, doctorInvocation),
+        await cli.run(doctorInvocation),
       ]) {
         expect(doctor.exitCode, doctor.stderr).toBe(1);
         expect(doctor.stderr).toBe("");
@@ -82,8 +82,9 @@ cliTest(
         arguments: arguments_,
         environment: { REA_LOG_LEVEL: "loud" },
       };
-      const fresh = await cli.run(invocation);
-      const shared = await runFileCli(cli, invocation);
+      // Compare the launcher itself with the file's shared process.
+      const fresh = await cli.run({ ...invocation, freshProcess: true });
+      const shared = await cli.run(invocation);
       for (const result of [fresh, shared]) {
         expect(result.exitCode, JSON.stringify(arguments_)).toBe(1);
         expect(result.stdout, JSON.stringify(arguments_)).toBe("");
@@ -97,8 +98,8 @@ cliTest(
       arguments: ["doctor"],
       environment: { REA_LOG_LEVEL: "loud", COMPLETE: "bash" },
     };
-    const fresh = await cli.run(completion);
-    const shared = await runFileCli(cli, completion);
+    const fresh = await cli.run({ ...completion, freshProcess: true });
+    const shared = await cli.run(completion);
     for (const result of [fresh, shared]) {
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");

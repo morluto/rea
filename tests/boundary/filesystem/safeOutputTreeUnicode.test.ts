@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 
 const boundary = vi.hoisted(() => ({ decomposed: false }));
 vi.mock("node:fs/promises", async (original) => {

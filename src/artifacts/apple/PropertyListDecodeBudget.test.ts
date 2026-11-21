@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { parsePlistXmlSource } from "../../native/parsers/plist.js";
-import { preflightPropertyListDecode } from "./PropertyListDecodeBudget.js";
+import { preflightPropertyListDecode } from "../../domain/apple/propertyListDecodeBudget.js";
 
 const xmlPlist = (body: string): Buffer =>
   Buffer.from(
@@ -14,7 +14,6 @@ it("refuses an XML plist whose DOM exceeds the native decode budget", () => {
   const parsed = parsePlistXmlSource(
     xmlPlist(`<array>\n${"<true/>\n".repeat(100_000)}</array>\n`),
   );
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected a decode budget refusal");
   expect(parsed.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(parsed.error.message).toContain("native plist decode budget");
@@ -28,7 +27,6 @@ it.each(["é", "_", ":", "雪", "\u{1d4b3}"])(
     const parsed = parsePlistXmlSource(
       xmlPlist(`<array>${`<${name}/>`.repeat(100_000)}</array>`),
     );
-    expect(parsed.ok).toBe(false);
     if (parsed.ok) throw new Error("Expected a decode budget refusal");
     expect(parsed.error).toBeInstanceOf(AnalysisResourceConstraintError);
   },
@@ -38,7 +36,6 @@ it("refuses text whose entity references exceed the decode budget", () => {
   const parsed = parsePlistXmlSource(
     xmlPlist(`<array><string>${"&amp;".repeat(1_000_000)}</string></array>`),
   );
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected a decode budget refusal");
   expect(parsed.error).toBeInstanceOf(AnalysisResourceConstraintError);
 });

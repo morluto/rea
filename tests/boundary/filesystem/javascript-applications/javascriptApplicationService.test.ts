@@ -7,7 +7,7 @@ import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { writeJavaScriptSourceSelectionFixture } from "../../../fixtures/javascriptSourceSelection.js";
 
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { scanCanonicalArtifactInventory } from "../../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -17,7 +17,7 @@ import {
   readJavaScriptArtifactFiles,
 } from "../../../support/javascriptApplicationScope.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { createJavaScriptSourceAnalysis } from "../../../../src/javascript/analysis/JavaScriptSourceAnalysis.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
@@ -400,8 +400,9 @@ describe("JavaScript application failure diagnostics", () => {
       code: "unreadable_output",
       details: {
         operation: "analyze_javascript_application",
-        reason:
-          "Result schema rejected 1 issue at /semantic_graph/nodes/42/application_node_ids/0 (custom)",
+        reason: expect.stringMatching(
+          /schema.*1 issue.*\/semantic_graph\/nodes\/42\/application_node_ids\/0.*custom/i,
+        ),
       },
     });
   });
@@ -572,7 +573,6 @@ describe("JavaScript application symbolic coverage", () => {
       format: "directory",
       source_paths: ["self.js", "mutual.js"],
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     const normalized = javascriptApplicationAnalysisResultSchema.parse(
       result.value.normalized_result,

@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect } from "vitest";
@@ -11,13 +15,14 @@ import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import {
   analysisViewResultSchema,
   goBinarySummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import {
   createGoBinaryFixture,
   GO_MODULE_TEXT,
 } from "../../fixtures/go/image.js";
+import { createGoRodataStringFixture } from "../../fixtures/go/rodataStringImage.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -66,7 +71,7 @@ const goViewTest = mcpTest.extend<{
               tool.name === "inspect_analysis_view",
           )
           .map((tool) => {
-            const output = tool.outputSchema;
+            const output = canonicalOutputSchema(tool.name);
             if (output === undefined)
               throw new Error(`Missing ${tool.name} output schema`);
             expect(output.$schema).toBe(
@@ -90,7 +95,7 @@ const goViewTest = mcpTest.extend<{
         ).toBe(true);
         const reply = await client.callTool(
           { name, arguments: input },
-          { toolDefinition: tool },
+          { toolDefinition: withCanonicalOutputSchema(tool) },
         );
         expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
         return parseEvidence(reply.structuredContent);
@@ -158,7 +163,6 @@ goViewTest(
   "retains exact Go rows and complete Evidence after source removal",
   async ({ goViews: { client, root, path, bytes, call } }) => {
     const complete = await call("inspect_go_binary", { path });
-    const report = goBinarySchema.parse(complete.normalized_result);
     const summary = await call("inspect_go_binary", {
       path,
       detail: "summary",
@@ -206,7 +210,7 @@ goViewTest(
       {
         index: 0,
         version: "v1.2.3",
-        replacement: report.build_info!.module.dependencies[0]!.replacement,
+        replacement: { path: "../dependency", version: "", sum: "" },
       },
     ]);
     expect(first.coverage).toMatchObject({
@@ -361,13 +365,22 @@ mcpTest(
       };
       const empty = await client.callTool({
         name: "inspect_analysis_view",
-        arguments: { source, view: { kind: "go", collection: "dependencies" } },
+        arguments: {
+          source,
+          view: { kind: "go", collection: "dependencies", offset: 3, limit: 1 },
+        },
       });
       expect(empty.isError, JSON.stringify(empty)).not.toBe(true);
       const page = goPage(parseEvidence(empty.structuredContent));
       expect(page).toMatchObject({
-        page: { rows: [] },
-        coverage: { total: 0 },
+        page: { collection: "dependencies", rows: [] },
+        coverage: {
+          status: "unavailable",
+          examined: 0,
+          total: null,
+          next_offset: null,
+          exhausted: false,
+        },
         source_coverage: {
           build_info_available: false,
           module_parse_complete: null,
@@ -385,5 +398,119 @@ mcpTest(
     } finally {
       await session.close();
     }
+  },
+);
+
+goViewTest(
+  "pages and filters retained Go string_literals through MCP views",
+  async ({ goViews: { client, root, call } }) => {
+    const path = join(root, "strings.elf");
+    const fixture = createGoRodataStringFixture({
+      format: "elf",
+      rodata: Buffer.from(
+        "ListResourceProvidersgenaihttps://example.invalid/v1",
+        "utf8",
+      ),
+      headers: [
+        { section: "data", offsetInSection: 0, ptr: 0x102000n, len: 21n },
+        { section: "data", offsetInSection: 16, ptr: 0x102015n, len: 5n },
+        { section: "data", offsetInSection: 32, ptr: 0x10201an, len: 26n },
+        { section: "data", offsetInSection: 48, ptr: 0x102015n, len: 5n },
+      ],
+    });
+    await writeFile(path, fixture.bytes);
+
+    const limited = goBinarySummaryViewResultSchema.parse(
+      (
+        await call("inspect_go_binary", {
+          path,
+          include_string_literals: true,
+          max_string_literals: 2,
+          detail: "summary",
+        })
+      ).normalized_result,
+    );
+    expect(limited.source_coverage.string_literals).toBe("truncated");
+    expect(limited.summary.string_literals).toMatchObject({
+      evidence_kind: "inferred",
+      available_count: 2,
+      discovered_count: 3,
+      aggregate_bytes: 26,
+      max_items: 2,
+      truncated: true,
+      limits_reached: ["max_string_literals"],
+    });
+
+    const summary = goBinarySummaryViewResultSchema.parse(
+      (
+        await call("inspect_go_binary", {
+          path,
+          include_string_literals: true,
+          detail: "summary",
+        })
+      ).normalized_result,
+    );
+    expect(summary.source_coverage.string_literals).toBe("complete");
+    expect(summary.summary.string_literals).toMatchObject({
+      evidence_kind: "inferred",
+      available_count: 3,
+      discovered_count: 3,
+      truncated: false,
+    });
+
+    expect(
+      limited.unknowns.filter((reason) => !summary.unknowns.includes(reason)),
+    ).toHaveLength(1);
+
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: summary.parent_evidence_id,
+    };
+    const page = goPage(
+      await call("inspect_analysis_view", {
+        source,
+        view: {
+          kind: "go",
+          collection: "string_literals",
+          contains: "ena",
+          fields: ["value", "location", "reference_count"],
+        },
+      }),
+    );
+    expect(page.page).toEqual({
+      collection: "string_literals",
+      rows: [
+        {
+          index: 1,
+          value: "genai",
+          location: { offset: fixture.rodataOffset + 21, bytes: 5 },
+          reference_count: 2,
+        },
+      ],
+    });
+
+    const unrequestedSummary = goBinarySummaryViewResultSchema.parse(
+      (await call("inspect_go_binary", { path, detail: "summary" }))
+        .normalized_result,
+    );
+    expect(unrequestedSummary.source_coverage.string_literals).toBe(
+      "not-requested",
+    );
+    const refused = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: unrequestedSummary.parent_evidence_id,
+        },
+        view: { kind: "go", collection: "string_literals" },
+      },
+    });
+    expect(parseMcpToolError(refused).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["view", "collection"], reason: "invalid_value" }],
+      },
+    });
   },
 );

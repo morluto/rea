@@ -2,15 +2,121 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
+import { fitFixture } from "../../src/artifacts/fit/FitImage.fixture.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../src/domain/evidence.js";
 import {
   cells,
   devicetreeFixture,
-} from "../../src/firmware/devicetree/Devicetree.fixture.js";
+  emptyStringsAtReservationBoundaryFixture,
+} from "../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const paddingDiagnostic = /FDT structure padding contains/iu;
+
+cliTest(
+  "retains DTB facts and reports both nonzero padding placements",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dtb-padding-");
+    const path = join(root, "board.dtb");
+    const zeroPadded = devicetreeFixture({
+      name: "",
+      properties: { model: Buffer.from([0x78, 0]) },
+      children: [{ name: "a" }],
+    });
+    const nonzeroPadded = Buffer.from(zeroPadded);
+    const start = nonzeroPadded.readUInt32BE(8);
+    // Two-byte model value rounded up to four, then a child named "a".
+    const propertyPadding = start + 22;
+    nonzeroPadded[propertyPadding] = 1;
+    // libfdt's in-place rename from "abc" to "a" leaves the former 'c'.
+    nonzeroPadded[start + 30] = 0x63;
+
+    const inspect = async (bytes: Buffer) => {
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-devicetree", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      return toolContract("inspect_devicetree").outputSchema.parse(result.json);
+    };
+    const control = await inspect(zeroPadded);
+    expect(control.limitations).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(paddingDiagnostic)]),
+    );
+    const observed = await inspect(nonzeroPadded);
+    const diagnostic = `FDT structure padding contains 2 nonzero bytes. The first is at file offset ${String(propertyPadding)}.`;
+    expect(observed.limitations).toContain(diagnostic);
+    expect(observed.normalized_result).toMatchObject({
+      summary: { model: "x" },
+      nodes: expect.arrayContaining([expect.objectContaining({ path: "/a" })]),
+      coverage: {
+        status: "complete",
+        examined_nodes: 2,
+        examined_properties: 1,
+      },
+      limitations: expect.arrayContaining([diagnostic]),
+    });
+
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_devicetree", { path });
+    expect(reply.isError).not.toBe(true);
+    const mcp = toolContract("inspect_devicetree").outputSchema.parse(
+      reply.structuredContent,
+    );
+    expect(mcp.limitations).toContain(diagnostic);
+    expect(mcp.normalized_result).toEqual(observed.normalized_result);
+    expect((await readFile(path)).equals(nonzeroPadded)).toBe(true);
+  },
+);
+
+cliTest(
+  "reports FIT structure padding without losing image inventory",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-fit-padding-");
+    const path = join(root, "boot.itb");
+    const bytes = fitFixture({
+      images: [{ name: "kernel", data: Buffer.from([1, 2, 3, 4]) }],
+    });
+    const inspect = () =>
+      cli.run({ arguments: ["inspect-artifact", path, "--json"] });
+
+    await writeFile(path, bytes);
+    const control = await inspect();
+    expect(control.exitCode, control.stderr).toBe(0);
+    expect(control.json).not.toMatchObject({
+      limitations: expect.arrayContaining([
+        expect.stringMatching(paddingDiagnostic),
+      ]),
+    });
+
+    const rootNamePadding = bytes.readUInt32BE(8) + 5;
+    bytes[rootNamePadding] = 1;
+    await writeFile(path, bytes);
+    const observed = await inspect();
+    expect(observed.exitCode, observed.stderr).toBe(0);
+    expect(observed.json).toMatchObject({
+      limitations: expect.arrayContaining([
+        `FDT structure padding contains 1 nonzero byte. The first is at file offset ${String(rootNamePadding)}.`,
+      ]),
+      normalized_result: {
+        coverage: { status: "complete-within-substeps" },
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "root-manifest",
+            value: expect.objectContaining({
+              root_format: "fit",
+              occurrence_count: 2,
+            }),
+          }),
+        ]),
+      },
+    });
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "rejects ambiguous Devicetree node paths in correctly hashed Evidence",
@@ -143,6 +249,32 @@ cliTest("inspects a relative DTB and preserves the source", async ({ cli }) => {
   });
   expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
+for (const version of [16, 17] as const) {
+  cliTest(
+    `inspects a v${version} DTB with empty strings at arbitrary in-blob offsets`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-dtb-empty-strings-");
+      for (const offset of [0, 44, 56, 60, 72]) {
+        const path = join(root, `board-${String(offset)}.dtb`);
+        const bytes = emptyStringsAtReservationBoundaryFixture(version);
+        bytes.writeUInt32BE(offset, 12);
+        await writeFile(path, bytes);
+        const result = await cli.run({
+          arguments: ["inspect-devicetree", path, "--json"],
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        const report = toolContract("inspect_devicetree").outputSchema.parse(
+          result.json,
+        ).normalized_result;
+        expect(report).toMatchObject({
+          nodes: [{ path: "/" }],
+          reservations: [],
+        });
+        expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+      }
+    },
+  );
+}
 cliTest(
   "does not resolve through a legacy phandle when the canonical value is malformed",
   async ({ cli }) => {
@@ -178,8 +310,10 @@ cliTest(
       hex: "",
       derived: { cells: null },
     });
-    expect(report.limitations).toContain(
-      "phandle at /target is not a single cell; this node's reference identity remains unresolved.",
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(
+        /phandle.*\/target.*not a single cell.*unresolved/iu,
+      ),
     );
   },
 );
@@ -263,5 +397,13 @@ for (const [name, build, flags, code] of [
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({ code });
+    if (name === "exhausted")
+      expect(result.json).toMatchObject({
+        details: {
+          reported_limits: { boundary: "max_nodes", maximum: 1 },
+          reason: expect.stringContaining("raise that caller-selected limit"),
+        },
+        retryable: false,
+      });
   });
 }

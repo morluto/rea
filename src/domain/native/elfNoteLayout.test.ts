@@ -11,7 +11,12 @@ it.each([false, true])(
     view.setUint32(4, 0x80000001, littleEndian);
     view.setUint32(8, 0xfedcba98, littleEndian);
     const before = Buffer.from(backing);
-    const parsed = readElfNoteHeader(backing.subarray(7), littleEndian);
+    const prefix = new Uint8Array(
+      backing.buffer,
+      backing.byteOffset + 7,
+      backing.byteLength - 7,
+    );
+    const parsed = readElfNoteHeader(prefix, littleEndian);
     expect(backing.equals(before)).toBe(true);
     backing.fill(0);
     expect(parsed).toEqual({
@@ -30,7 +35,10 @@ it.each([false, true])(
         readElfNoteHeader(bytes.subarray(7, 7 + observed), littleEndian),
       ).toEqual({
         ok: false,
-        error: { kind: "malformed", message: "ELF note header is truncated" },
+        error: {
+          kind: "malformed",
+          message: expect.stringContaining("truncated"),
+        },
       });
   },
 );

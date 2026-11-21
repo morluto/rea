@@ -1,5 +1,5 @@
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
-import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../ports/AnalysisProvider.js";
 import {
   inspectWindowsNativeReadiness,
   type WindowsNativeReadiness,
@@ -8,6 +8,15 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
+import {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+} from "./GhidraAdmission.js";
+
+export {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+};
 
 /** Target architectures admitted by the Windows P0 native PE boundary. */
 export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
@@ -22,7 +31,7 @@ const providerOperations = Object.freeze([
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
-  "The imported Program and temporary project are ephemeral and deleted on close. Annotation operations edit session database metadata; original executable bytes are never written.",
+  "Ghidra Program checkpoint mode is disabled: closing discards metadata edits; original executable bytes are unchanged. For stock ELF/PE/Mach-O on Linux/macOS, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory before starting REA (restart MCP after changing its startup environment).",
   "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
 ]);
 
@@ -30,7 +39,7 @@ export const healthLimitations = Object.freeze([
 export const windowsP0Limitations = Object.freeze([
   "Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, DOS MZ images, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.",
   "The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.",
-  "Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.",
+  "Windows sessions require the matching packaged Windows x64 native addon, local NTFS/ReFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.",
 ]);
 
 export type GhidraSessionSource =
@@ -50,8 +59,8 @@ export const ghidraHealthLimitations = (
       ]
     : source === "owned-checkpoint"
       ? [
-          "Opt-in Ghidra checkpoints retain the last successfully saved owned Program, including its names, comments and types. Restoring a checkpoint skips auto-analysis; its analysis is retained state, not a fresh discovery.",
-          "REA saves initial completed analysis and saves metadata changes on normal close. A failed save retains the live session for retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
+          "Ghidra Program checkpoint mode is enabled (REA_GHIDRA_CHECKPOINT_DIR). Opening the same target/profile automatically restores saved analysis, names, comments and types; no separate save or restore tool is needed. Restored analysis is retained state, not a fresh discovery.",
+          "REA saves initial completed analysis and metadata changes on normal close (close_binary in MCP). A failed save retains the live session for close retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
           "The live project is a temporary working copy. Checkpoints persist in REA_GHIDRA_CHECKPOINT_DIR; source executables and caller-selected source projects are not modified.",
         ]
       : healthLimitations;
@@ -89,6 +98,30 @@ export const ghidraEmptyOutgoingReferencesLimitation =
 /** Attached to an empty outgoing-reference list of one instruction result. */
 export const ghidraEmptyInstructionOutgoingLimitation =
   "Ghidra's ReferenceManager returned no actionable outgoing references from this instruction in this session. An empty list reflects what this analysis resolved, not proof that the instruction references nothing. The instruction's own disassembly is an independent check for direct outgoing references (a direct operand naming a target with no recorded reference contradicts the empty result) before concluding there are none.";
+
+/** Seeds apply before a fresh import's auto-analysis; other sources refuse them. */
+const seedSessionRestriction: Readonly<Record<GhidraSessionSource, string>> = {
+  "fresh-import": "",
+  "existing-project":
+    " without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME, because seeds apply only to a fresh import",
+  "owned-checkpoint":
+    " without REA_GHIDRA_CHECKPOINT_DIR, because checkpoints do not admit seeds",
+};
+
+/**
+ * Declared-entry recovery for code that Ghidra auto-analysis did not reach.
+ * It names the seed mechanism without asserting that any address holds code.
+ */
+export const ghidraFunctionSeedRecovery = (
+  source: GhidraSessionSource,
+): string =>
+  `Code that auto-analysis did not reach, such as a handler entered only through a runtime-filled dispatch table, has no Ghidra function. To analyze it from a known entry address, declare that address as a \`function\` seed in REA_GHIDRA_SEED_FILE for a new REA process${seedSessionRestriction[source]}; that session's seed outcome limitation counts created and failed function seeds.`;
+
+/** Attached to a not_in_procedure result: absence from the function inventory is not proof of data. */
+export const ghidraNotInProcedureLimitation = (
+  source: GhidraSessionSource,
+): string =>
+  `Ghidra has no function at or containing this address in this session. This reflects the current function inventory, not proof that the address holds no code. ${ghidraFunctionSeedRecovery(source)}`;
 
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
@@ -138,7 +171,7 @@ export const limitationsFor = (
     case "search_bytes":
       return [
         ...common,
-        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
+        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Unbounded searches separately list skipped unloaded blocks and loaded overlays; use an overlay address-space bound to search it. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
       ];
     case "address_to_file_offset":
       return [
@@ -234,14 +267,23 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
     return Object.freeze({
       provider: GHIDRA_PROVIDER_IDENTITY,
       operation,
+      ...(operation === "analyze_function"
+        ? { nativeValueFlow: { status: "supported" as const } }
+        : {}),
       available: true,
       reason: null,
-      // Project writes are private import machinery. Analysis reads are bound
-      // to the artifact/profile; session annotations disable snapshot replay.
+      // Dossier projections consume runtime budgets. Reobserve even an imported
+      // snapshot so a raised or lowered budget cannot replay stale flow coverage.
+      // Ghidra retains its own native decompiler cache.
       ...(GHIDRA_MUTATING_OPERATIONS.has(operation) ||
       operation === "list_documents"
         ? {}
-        : { cachePolicy: "snapshot" as const }),
+        : {
+            cachePolicy:
+              operation === "analyze_function"
+                ? ("live" as const)
+                : ("snapshot" as const),
+          }),
       effects: Object.freeze({
         mutatesArtifact: GHIDRA_MUTATING_OPERATIONS.has(operation),
         launchesProcess: true,
@@ -262,14 +304,6 @@ export const checkpointCapabilities = (): readonly CapabilityDescriptor[] =>
     ...capability,
     limitations: limitationsFor(capability.operation, "owned-checkpoint"),
   }));
-
-/** The selected database mode is not part of Windows P0 authority. */
-export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
-  "An existing Ghidra project cannot be opened on the Windows launch path.";
-
-/** Windows P0 imports targets into ephemeral projects only. */
-export const EXISTING_PROJECT_WINDOWS_REMEDIATION =
-  "Unset REA_GHIDRA_PROJECT_PATH in the environment that starts REA to import targets into an ephemeral project, or open the existing project on a supported Linux or macOS host; restart REA after changing the environment.";
 
 /** Read-only project mode retains precise unavailable mutation capabilities. */
 export const existingProjectCapabilities = (

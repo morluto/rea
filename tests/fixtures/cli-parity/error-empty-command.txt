@@ -1,0 +1,14 @@
+$ rea ""
+exit: 1
+--- stdout
+code: COMMAND_NOT_FOUND
+message: '' is not a command for 'rea'. Did you mean 'mcp'?
+cta:
+  description: "Suggested commands:"
+  commands[2]:
+    - command: rea mcp
+    - command: rea --help
+      description: see all available commands
+<end>
+--- stderr
+<end>

@@ -1,9 +1,11 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, posix, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { readEffectiveClientRegistrationConfiguration } from "../../../src/application/ClientConfigurationFiles.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 import {
@@ -177,6 +179,7 @@ describe("Pi registration semantics", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "pi"),
@@ -219,6 +222,7 @@ describe("Pi registration semantics", () => {
         }),
       );
       const statuses = await readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(statuses.find(({ client: name }) => name === "pi")).toMatchObject({
@@ -265,6 +269,7 @@ describe("Pi strict JSON parsing", () => {
       expect(
         (
           await readClientRegistrationStatuses(home, undefined, {
+            platform: HOST_PLATFORM.platform,
             environment: {},
           })
         ).find(({ client: name }) => name === "pi"),
@@ -315,6 +320,7 @@ describe("Pi strict JSON parsing", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "pi"),
@@ -364,6 +370,7 @@ describe("Pi project-scoped discovery and overrides", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client }) => client === "pi");
@@ -410,6 +417,7 @@ describe("Pi project-scoped discovery and overrides", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client }) => client === "pi");
@@ -460,6 +468,7 @@ describe("Pi project-scoped discovery and overrides", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client: c }) => c === "pi");
@@ -470,35 +479,39 @@ describe("Pi project-scoped discovery and overrides", () => {
       config_path: projectConfigPath,
     });
   });
-
-  it.runIf(process.platform === "win32")(
-    "excludes projectConfigPaths when PI_CODING_AGENT_DIR matches project directory case-insensitively",
-    async () => {
-      const home = await createTestTempDirectory("rea-pi-case-home-");
-      const projectDir = await createTestTempDirectory("rea-pi-case-cwd-");
-      const projectConfigDir = join(projectDir, ".pi");
-      await mkdir(projectConfigDir, { recursive: true });
-      const configPath = join(projectConfigDir, "mcp.json");
-      await writeFile(configPath, "{}\n");
-      const cwd = vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-      try {
-        const matchingClients = supportedClients(home, "win32", {
-          PI_CODING_AGENT_DIR: join(projectDir.toLowerCase(), ".pi"),
-        });
-        const matchingPi = matchingClients.find(({ name }) => name === "pi");
-        expect(matchingPi?.projectConfigPaths).toBeUndefined();
-
-        const distinctClients = supportedClients(home, "win32", {
-          PI_CODING_AGENT_DIR: join(home, ".pi"),
-        });
-        const distinctPi = distinctClients.find(({ name }) => name === "pi");
-        expect(distinctPi?.projectConfigPaths).toEqual([configPath]);
-      } finally {
-        cwd.mockRestore();
-      }
-    },
-  );
 });
+
+it.runIf(process.platform === "win32")(
+  "keeps one user source when a project config aliases PI_CODING_AGENT_DIR",
+  async () => {
+    const home = await createTestTempDirectory("rea-pi-case-home-");
+    const projectDirectory = await createTestTempDirectory("rea-pi-case-cwd-");
+    const projectConfigDir = join(projectDirectory, ".pi");
+    await mkdir(projectConfigDir, { recursive: true });
+    const configPath = join(projectConfigDir, "mcp.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcpServers: { rea: { command: command[0], args: command.slice(1) } },
+      }),
+    );
+    const matchingPi = piPath(home, "win32", {
+      PI_CODING_AGENT_DIR: join(projectDirectory.toLowerCase(), ".pi"),
+    });
+    if (matchingPi === undefined) throw new Error("missing Pi client");
+    expect(
+      await readEffectiveClientRegistrationConfiguration(
+        matchingPi,
+        undefined,
+        "win32",
+        { projectDirectory },
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: { scope: "user", launcherScope: "user" },
+    });
+  },
+);
 
 describe("Pi project-scoped partial overrides", () => {
   it("applies a partial project override onto a user registration and directs remediation to the project file", async () => {
@@ -534,6 +547,7 @@ describe("Pi project-scoped partial overrides", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client }) => client === "pi");
@@ -549,7 +563,7 @@ describe("Pi project-scoped partial overrides", () => {
     expect(piStatus?.remediation).not.toContain("Run rea setup");
   });
 
-  it("ignores unused environment fields in partial project overrides when user registration is valid", async () => {
+  it("names the invalid project file when a flags-only override carries environment fields", async () => {
     const { home, client } = await piClient();
     const projectDir = await createTestTempDirectory("rea-pi-project-cwd-");
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
@@ -584,12 +598,13 @@ describe("Pi project-scoped partial overrides", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client }) => client === "pi");
     expect(piStatus).toMatchObject({
       client: "pi",
-      state: "aligned",
+      state: "invalid",
       scope: "project",
       config_path: projectConfigPath,
     });
@@ -603,7 +618,9 @@ describe("Pi project-scoped inherited environment validation", () => {
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
     await trustPiProject(home, projectDir);
 
-    const client = supportedClients(home).find(({ name }) => name === "pi");
+    const client = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "pi",
+    );
     if (client === undefined) throw new Error("missing pi client");
 
     await mkdir(dirname(client.configPath), { recursive: true });
@@ -637,6 +654,7 @@ describe("Pi project-scoped inherited environment validation", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client: c }) => c === "pi");
@@ -658,7 +676,9 @@ describe("Pi project-scoped inherited environment validation", () => {
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
     await trustPiProject(home, projectDir);
 
-    const client = supportedClients(home).find(({ name }) => name === "pi");
+    const client = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "pi",
+    );
     if (client === undefined) throw new Error("missing pi client");
 
     await mkdir(dirname(client.configPath), { recursive: true });
@@ -688,6 +708,7 @@ describe("Pi project-scoped inherited environment validation", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client: c }) => c === "pi");
@@ -726,6 +747,7 @@ describe("Pi standalone partial override validation", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client }) => client === "pi");
@@ -777,6 +799,7 @@ describe("Pi project-scoped launcher provenance and fallback", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client }) => client === "pi");
@@ -834,6 +857,7 @@ describe("Pi project-scoped launcher provenance and fallback", () => {
       );
 
       const statuses = await readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       const piStatus = statuses.find(({ client }) => client === "pi");
@@ -880,6 +904,7 @@ describe("Pi project-scoped disabled launcher package update", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client }) => client === "pi");
@@ -920,10 +945,13 @@ describe("Pi project-scoped fallback on sibling servers", () => {
     );
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client }) => client === "pi");
-    const client = supportedClients(home).find(({ name }) => name === "pi");
+    const client = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "pi",
+    );
     expect(piStatus).toMatchObject({
       client: "pi",
       state: "missing",
@@ -933,263 +961,6 @@ describe("Pi project-scoped fallback on sibling servers", () => {
     expect(piStatus?.remediation).toContain(
       "Run rea setup to refresh this registration",
     );
-  });
-});
-
-describe("Pi project-scoped uninstall", () => {
-  it("uninstalls REA-owned project registrations with a backup and preserves manual partial overrides", async () => {
-    const { home } = await piClient();
-    const projectDir = await createTestTempDirectory("rea-pi-project-cwd-");
-    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-    await trustPiProject(home, projectDir);
-
-    const projectConfigDir = join(projectDir, ".pi");
-    await mkdir(projectConfigDir, { recursive: true });
-    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
-    await writeFile(
-      projectConfigPath,
-      JSON.stringify({
-        mcpServers: {
-          other: { command: "other-server" },
-          rea: {
-            command: command[0],
-            args: command.slice(1),
-          },
-        },
-      }),
-    );
-
-    const clientWithProject = piPath(home, process.platform, {});
-    if (clientWithProject === undefined) throw new Error("missing Pi client");
-    expect(clientWithProject.projectConfigPaths).toEqual([projectConfigPath]);
-
-    const host = systemUninstallHost(home);
-    const clients = await host.clients();
-    const piClients = clients.filter(({ name }) => name === "pi");
-    expect(piClients.map((c) => c.configPath)).toContain(projectConfigPath);
-
-    const projectClient = piClients.find(
-      (c) => c.configPath === projectConfigPath,
-    );
-    if (projectClient === undefined) throw new Error("missing project client");
-
-    const result = await host.removeClient(projectClient);
-    expect(result).toMatchObject({
-      name: "pi",
-      status: "removed",
-    });
-
-    const projectContent = JSON.parse(
-      await readFile(projectConfigPath, "utf8"),
-    );
-    expect(projectContent).toEqual({
-      mcpServers: {
-        other: { command: "other-server" },
-      },
-    });
-    expect(
-      await readFile(`${projectConfigPath}.rea.backup`, "utf8"),
-    ).toBeDefined();
-
-    // Now test retention of manual partial override
-    await writeFile(
-      projectConfigPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: { enabled: false },
-        },
-      }),
-    );
-    const retainedResult = await host.removeClient(projectClient);
-    expect(retainedResult).toMatchObject({
-      name: "pi",
-      status: "retained",
-      detail: expect.stringContaining("not REA-owned"),
-    });
-  });
-
-  it("refuses to remove an owned project registration when user configuration defines an unowned rea server", async () => {
-    const { home, client } = await piClient();
-    const projectDir = await createTestTempDirectory("rea-pi-hidden-foreign-");
-    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-    await trustPiProject(home, projectDir);
-
-    // User configuration has a foreign/unowned rea server
-    await writeFile(
-      client.configPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: { command: "foreign-pi-server", args: [] },
-        },
-      }),
-    );
-
-    // Project configuration has an owned rea server
-    const projectConfigDir = join(projectDir, ".pi");
-    await mkdir(projectConfigDir, { recursive: true });
-    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
-    await writeFile(
-      projectConfigPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: {
-            command: command[0],
-            args: command.slice(1),
-          },
-        },
-      }),
-    );
-
-    const host = systemUninstallHost(home);
-    const clients = await host.clients();
-    const projectClient = clients.find(
-      (c) => c.name === "pi" && c.configPath === projectConfigPath,
-    );
-    if (projectClient === undefined) throw new Error("missing project client");
-
-    // Inspect preflight fails
-    const preflight = await host.inspectClient(projectClient);
-    expect(preflight).toMatchObject({
-      status: "failed",
-      detail: expect.stringContaining("not REA-owned"),
-    });
-
-    // Remove client refuses
-    const result = await host.removeClient(projectClient);
-    expect(result).toMatchObject({
-      name: "pi",
-      status: "failed",
-      detail: expect.stringContaining("not REA-owned"),
-    });
-
-    // Project file is unchanged and no backup is created
-    const contentAfter = JSON.parse(await readFile(projectConfigPath, "utf8"));
-    expect(contentAfter.mcpServers?.rea).toBeDefined();
-    await expect(
-      readFile(`${projectConfigPath}.rea.backup`, "utf8"),
-    ).rejects.toThrow();
-  });
-});
-
-describe("Pi untrusted project uninstall fallback", () => {
-  it("removes an owned project registration without blocking uninstall when project is untrusted and user configuration defines an unowned rea server", async () => {
-    const { home, client } = await piClient();
-    const projectDir = await createTestTempDirectory(
-      "rea-pi-untrusted-uninstall-",
-    );
-    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-
-    // User configuration has an unowned rea server
-    await writeFile(
-      client.configPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: { command: "foreign-pi-server", args: [] },
-        },
-      }),
-    );
-
-    // Untrusted project configuration has an owned rea server
-    const projectConfigDir = join(projectDir, ".pi");
-    await mkdir(projectConfigDir, { recursive: true });
-    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
-    await writeFile(
-      projectConfigPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: {
-            command: command[0],
-            args: command.slice(1),
-          },
-        },
-      }),
-    );
-
-    const host = systemUninstallHost(home);
-    const clients = await host.clients();
-    const projectClient = clients.find(
-      (c) => c.name === "pi" && c.configPath === projectConfigPath,
-    );
-    if (projectClient === undefined) throw new Error("missing project client");
-
-    const preflight = await host.inspectClient(projectClient);
-    expect(preflight).toBeUndefined();
-
-    const result = await host.removeClient(projectClient);
-    expect(result).toMatchObject({
-      name: "pi",
-      status: "removed",
-    });
-
-    const contentAfter = JSON.parse(await readFile(projectConfigPath, "utf8"));
-    expect(contentAfter.mcpServers?.rea).toBeUndefined();
-    expect(
-      await readFile(`${projectConfigPath}.rea.backup`, "utf8"),
-    ).toBeDefined();
-  });
-});
-
-describe("Pi ambiguous trust uninstall fallback", () => {
-  it("conservatively refuses to remove an owned project registration when trust is malformed and user configuration defines an unowned rea server", async () => {
-    const { home, client } = await piClient();
-    const projectDir = await createTestTempDirectory(
-      "rea-pi-malformed-trust-unowned-",
-    );
-    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-
-    // User configuration has an unowned rea server
-    await writeFile(
-      client.configPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: { command: "foreign-pi-server", args: [] },
-        },
-      }),
-    );
-
-    // Project configuration has an owned rea server
-    const projectConfigDir = join(projectDir, ".pi");
-    await mkdir(projectConfigDir, { recursive: true });
-    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
-    await writeFile(
-      projectConfigPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: {
-            command: command[0],
-            args: command.slice(1),
-          },
-        },
-      }),
-    );
-
-    // Malformed trust file
-    await mkdir(join(home, ".pi", "agent"), { recursive: true });
-    const trustPath = join(home, ".pi", "agent", "trust.json");
-    await writeFile(trustPath, "{ malformed_json");
-
-    const host = systemUninstallHost(home);
-    const clients = await host.clients();
-    const projectClient = clients.find(
-      (c) => c.name === "pi" && c.configPath === projectConfigPath,
-    );
-    if (projectClient === undefined) throw new Error("missing project client");
-
-    const preflight = await host.inspectClient(projectClient);
-    expect(preflight).toMatchObject({
-      status: "failed",
-      detail: expect.stringContaining("not REA-owned"),
-    });
-
-    const result = await host.removeClient(projectClient);
-    expect(result).toMatchObject({
-      name: "pi",
-      status: "failed",
-      detail: expect.stringContaining("not REA-owned"),
-    });
-
-    const contentAfter = JSON.parse(await readFile(projectConfigPath, "utf8"));
-    expect(contentAfter.mcpServers?.rea).toBeDefined();
   });
 });
 
@@ -1227,6 +998,7 @@ describe("Pi project trust enforcement", () => {
 
     // Without trust decision in trust.json or settings.json, project is untrusted
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client: c }) => c === "pi");
@@ -1242,7 +1014,7 @@ describe("Pi project trust enforcement", () => {
     const trustedStatuses = await readClientRegistrationStatuses(
       home,
       undefined,
-      { environment: {} },
+      { platform: HOST_PLATFORM.platform, environment: {} },
     );
     const trustedPiStatus = trustedStatuses.find(({ client: c }) => c === "pi");
     expect(trustedPiStatus).toMatchObject({
@@ -1255,7 +1027,7 @@ describe("Pi project trust enforcement", () => {
 });
 
 describe("Pi project trust error handling", () => {
-  it("preserves named trust failures in doctor and does not block uninstall when trust.json is malformed", async () => {
+  it("preserves named trust failures in doctor when trust.json is malformed", async () => {
     const { home, client } = await piClient();
     const alignedCommand = command;
     await mkdir(join(home, ".pi", "agent"), { recursive: true });
@@ -1293,6 +1065,7 @@ describe("Pi project trust error handling", () => {
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client: c }) => c === "pi");
@@ -1303,21 +1076,6 @@ describe("Pi project trust error handling", () => {
       config_path: trustPath,
     });
     expect(piStatus?.remediation).toContain("malformed");
-
-    const host = systemUninstallHost(home);
-    const clients = await host.clients();
-    const projectClient = clients.find(
-      (c) => c.name === "pi" && c.configPath === projectConfigPath,
-    );
-    expect(projectClient).toBeDefined();
-    if (projectClient === undefined) throw new Error("missing project client");
-    const uninstallResult = await host.removeClient(projectClient);
-    expect(uninstallResult).toMatchObject({
-      name: "pi",
-      status: "removed",
-    });
-    const projectDoc = JSON.parse(await readFile(projectConfigPath, "utf8"));
-    expect(projectDoc.mcpServers.rea).toBeUndefined();
   });
 
   it("reports invalid project settings in doctor when settings.json is malformed", async () => {
@@ -1358,6 +1116,7 @@ describe("Pi project trust error handling", () => {
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
 
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     const piStatus = statuses.find(({ client: c }) => c === "pi");

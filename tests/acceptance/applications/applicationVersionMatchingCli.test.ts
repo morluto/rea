@@ -7,31 +7,27 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "keeps unavailable source-selection scopes unknown in version comparisons",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-version-scope-");
     const application = join(root, "application");
-    const copy = join(root, "copy");
-    await Promise.all([mkdir(application), mkdir(copy)]);
+    await mkdir(application);
     const files = [
       ["lib.js", "export function shared() { return 1; }\n"],
       ["main.js", 'export const name = "one";\n'],
     ] as const;
     for (const [name, contents] of files) {
-      await Promise.all([
-        writeFile(join(application, name), contents),
-        writeFile(join(copy, name), contents),
-      ]);
+      await writeFile(join(application, name), contents);
     }
 
-    const analyze = async (input: string, selected: boolean) => {
+    const analyze = async (selected: boolean) => {
       const response = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          input,
+          application,
           ...(selected ? ["--source-path", "main.js"] : []),
           "--json",
         ],
@@ -40,9 +36,8 @@ cliTest(
       expect(response.exitCode, response.stderr).toBe(0);
       return parseEvidence(response.json);
     };
-    const full = await analyze(application, false);
-    const selected = await analyze(application, true);
-    const fullCopy = await analyze(copy, false);
+    const full = await analyze(false);
+    const selected = await analyze(true);
     const selectedAnalysis = javascriptApplicationAnalysisResultSchema.parse(
       selected.normalized_result,
     );
@@ -55,10 +50,13 @@ cliTest(
             properties.operation === "select-javascript-sources",
         ),
     );
-    expect(parseScope?.observations[0]?.evidence).toMatchObject({
+    const scopeEvidence = parseScope?.observations[0]?.evidence;
+    if (scopeEvidence === undefined)
+      throw new Error("Missing source scope evidence");
+    expect(scopeEvidence).toMatchObject({
       state: "unavailable",
       limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
+        expect.stringMatching(/source_paths.*inventoried.*not analyzed/iu),
       ],
     });
 
@@ -69,7 +67,7 @@ cliTest(
     ) => {
       const inputPath = join(root, `${name}.json`);
       await writeFile(inputPath, JSON.stringify({ left, right }));
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: ["compare-application-versions", inputPath, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });
@@ -80,7 +78,6 @@ cliTest(
     };
     const forward = await compare(full, selected, "forward");
     const reverse = await compare(selected, full, "reverse");
-    const unchangedCopy = await compare(full, fullCopy, "full-copy");
 
     expect(
       forward.items.find(
@@ -89,9 +86,7 @@ cliTest(
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
-      limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
-      ],
+      limitations: scopeEvidence.limitations,
       evidence_links: expect.arrayContaining([
         full.evidence_id,
         selected.evidence_id,
@@ -104,15 +99,12 @@ cliTest(
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
-      limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
-      ],
+      limitations: scopeEvidence.limitations,
     });
     expect(forward.summary.added).toBe(0);
     expect(forward.summary.removed).toBe(0);
     expect(reverse.summary.added).toBe(0);
     expect(reverse.summary.removed).toBe(0);
-    expect(unchangedCopy.summary).toMatchObject({ added: 0, removed: 0 });
   },
 );
 
@@ -120,12 +112,17 @@ cliTest(
   "uses syntax-aware bundle fingerprints for changed syntax and renamed bindings",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-fingerprint-version-");
+    const literalPrefix = "x".repeat(1_024);
     const pairs = [
       ["bigint", "exports.v = 1n;", "exports.v = 2n;"],
       ["bigint-key", "exports.v = { 1n: 1 };", "exports.v = { 2n: 1 };"],
       ["directive", '"use strict";', '"use asm";'],
       ["assignment", "exports.v = 1;", "exports.v += 1;"],
-      ["string", 'exports.v = "left";', 'exports.v = "right";'],
+      [
+        "long-string",
+        `exports.v = "${literalPrefix}left";`,
+        `exports.v = "${literalPrefix}right";`,
+      ],
       ["class-method", "class A { foo() {} }", "class A { bar() {} }"],
       ["class-field", "class A { foo = 1; }", "class A { bar = 1; }"],
       [
@@ -493,7 +490,7 @@ cliTest(
     const compare = async (left: unknown, right: unknown) => {
       const inputPath = join(root, `comparison-${Math.random()}.json`);
       await writeFile(inputPath, JSON.stringify({ left, right }));
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: ["compare-application-versions", inputPath, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });

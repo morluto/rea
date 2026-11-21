@@ -58,7 +58,7 @@ it("keeps structural Mach-O slice inventory across short descriptor reads", asyn
       ]);
       expect(shortReads).toBeGreaterThan(4);
       expect(entries[0]?.limitations).toEqual([
-        "Slice range was derived from structural Mach-O facts because lipo omitted it.",
+        expect.stringMatching(/structural Mach.O.*lipo.*omitted/iu),
       ]);
     } finally {
       await reader.close();

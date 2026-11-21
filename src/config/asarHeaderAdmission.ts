@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { AsarListingAdmission } from "./asarListingAdmission.js";
 
 export const ASAR_HEADER_ADMISSION_SETTING = "REA_ASAR_MAX_HEADER_BYTES";
 
@@ -13,6 +14,8 @@ export const ASAR_HEADER_ADMISSION_SETTING = "REA_ASAR_MAX_HEADER_BYTES";
 export interface AsarHeaderAdmission {
   readonly maximumBytes: number;
   readonly source: "default" | "setting" | "runtime";
+  /** Independently resolved expanded listing policy; omission uses its default. */
+  readonly listing?: AsarListingAdmission;
 }
 
 export const DEFAULT_ASAR_HEADER_ADMISSION: AsarHeaderAdmission = {
@@ -20,7 +23,7 @@ export const DEFAULT_ASAR_HEADER_ADMISSION: AsarHeaderAdmission = {
   source: "default",
 };
 
-export const asarMaxHeaderBytesConstraint = `${ASAR_HEADER_ADMISSION_SETTING} must be a positive decimal integer of at most ${String(MAXIMUM_ASAR_MAX_HEADER_BYTES)} bytes (256 MiB); the default is ${String(DEFAULT_ASAR_MAX_HEADER_BYTES)} bytes (16 MiB).`;
+const asarMaxHeaderBytesConstraint = `${ASAR_HEADER_ADMISSION_SETTING} must be a positive decimal integer of at most ${String(MAXIMUM_ASAR_MAX_HEADER_BYTES)} bytes (256 MiB); the default is ${String(DEFAULT_ASAR_MAX_HEADER_BYTES)} bytes (16 MiB).`;
 
 /** Optional decimal byte count for the ASAR header/index admission. */
 export const asarMaxHeaderBytesSchema = z
