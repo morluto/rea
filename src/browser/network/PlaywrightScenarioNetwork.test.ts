@@ -432,33 +432,6 @@ it("keeps observed completion independent of rejected completion metadata", asyn
   expect(omitted).not.toContain("request-unfinished");
 });
 
-it.each(["finished", "failed", "unfinished"])(
-  "counts selected omitted response content when %s",
-  async (terminal) => {
-    const { collector, omittedEventCounts } = harness(
-      { request_body: false, response_body: true, header_values: false },
-      undefined,
-      "fixture",
-      { max_network_transactions: 1 },
-    );
-    collector.request(new RequestFixture("admitted"));
-    const request = new RequestFixture("omitted");
-    const response = new ResponseFixture(request, "response");
-    collector.request(request);
-    collector.response(response);
-    expect(omittedEventCounts.get("network-content")).toBe(1);
-    collector.response(response);
-    expect(omittedEventCounts.get("network-content")).toBe(1);
-    if (terminal === "finished") collector.finished(request);
-    if (terminal === "failed") collector.failed(request);
-    expect(omittedEventCounts.get("network-content")).toBe(1);
-    await collector.finish();
-    expect(omittedEventCounts.get("network-content")).toBe(1);
-    expect(response.bodyReads).toBe(0);
-    expect(request.bodyReads).toBe(0);
-  },
-);
-
 it("redacts declared secrets in browser-produced form and JSON encodings", async () => {
   for (const secret of ["私密", 'space " and \n']) {
     const { collector, events } = harness(selection, undefined, secret);
@@ -985,67 +958,90 @@ it.each([
   },
 );
 
-it("bounds admitted transactions before invoking content producers", async () => {
-  const { collector, events } = harness();
-  const admitted: RequestFixture[] = [];
-  for (let index = 0; index < 1024; index += 1) {
-    const request = new RequestFixture(`body-${index}`);
-    admitted.push(request);
-    collector.request(request);
-    collector.request(request); // repeated producer delivery cannot add jobs
-  }
-  const rejected = new RequestFixture("rejected");
-  const response = new ResponseFixture(rejected, "rejected");
-  collector.request(rejected);
-  collector.response(response);
-  collector.finished(rejected);
-  await collector.finish();
-  expect(admitted[0]?.bodyReads).toBe(1);
-  expect(
-    admitted.every(
-      (request) => request.bodyReads === 1 && request.headerReads === 1,
-    ),
-  ).toBe(true);
-  expect(rejected.bodyReads).toBe(0);
-  expect(rejected.headerReads).toBe(0);
-  expect(response.bodyReads).toBe(0);
-  expect(response.headerReads).toBe(0);
-  expect(
-    events.filter((event) => event.kind === "network-content"),
-  ).toHaveLength(1024);
-  expect(collector.limitations().join(" ")).toContain("resource budget");
-});
+it.each([
+  {
+    label: "default",
+    cap: 1024,
+    selected: selection,
+    limits: {},
+  },
+  {
+    label: "caller-selected",
+    cap: 2,
+    selected: {
+      request_body: false,
+      response_body: true,
+      header_values: false,
+    },
+    limits: { max_network_transactions: 2 },
+  },
+])(
+  "enforces the $label transaction limit before reading content and counts omissions once",
+  async ({ cap, selected, limits }) => {
+    const { collector, events, omittedEventCounts } = harness(
+      selected,
+      undefined,
+      "fixture",
+      limits,
+    );
+    const admitted = Array.from({ length: cap }, (_, index) => {
+      const request = new RequestFixture(`body-${index}`);
+      collector.request(request);
+      collector.request(request);
+      return request;
+    });
+    const omitted = ["finished", "failed", "pending"].map((state) => {
+      const request = new RequestFixture(state);
+      const response = new ResponseFixture(request, state);
+      collector.request(request);
+      collector.request(request);
+      collector.response(response);
+      collector.response(response);
+      return { request, response, state };
+    });
+    expect(omittedEventCounts.get("network-content")).toBe(
+      selected.request_body ? 6 : 3,
+    );
+    for (const { request, state } of omitted) {
+      if (state === "finished") collector.finished(request);
+      if (state === "failed") collector.failed(request);
+    }
+    const admittedResponse = new ResponseFixture(admitted[0]!, "retained");
+    collector.response(admittedResponse);
+    collector.finished(admitted[0]!);
+    await collector.finish();
 
-it("uses the caller's transaction limit and reports the exact omitted ID range", async () => {
-  const { collector, events, omittedEventCounts } = harness(
-    selection,
-    undefined,
-    "fixture",
-    { max_network_transactions: 2 },
-  );
-  const requests = Array.from(
-    { length: 4 },
-    (_, index) => new RequestFixture(`body-${String(index)}`),
-  );
-  for (const request of requests) collector.request(request);
-  collector.response(new ResponseFixture(requests[2]!, "body-2"));
-  collector.finished(requests[2]!);
-  await collector.finish();
-  expect(collector.omittedTransactionRange()).toEqual({
-    first_transaction_id: "request-3",
-    last_transaction_id: "request-4",
-    count: 2,
-    reason: "max-network-transactions",
-  });
-  expect(events.filter(({ kind }) => kind === "request")).toHaveLength(2);
-  expect(Object.fromEntries(omittedEventCounts)).toEqual({
-    request: 2,
-    "network-content": 3,
-    response: 1,
-    "request-finished": 1,
-  });
-  expect(requests[2]?.bodyReads).toBe(0);
-});
+    expect(events.filter(({ kind }) => kind === "request")).toHaveLength(cap);
+    expect(
+      events.filter(({ kind }) => kind === "network-content"),
+    ).toHaveLength((selected.request_body ? cap : 0) + 1);
+    const extraOrMissingReads = admitted.filter(
+      ({ bodyReads, headerReads }) =>
+        bodyReads !== Number(selected.request_body) ||
+        headerReads !== Number(selected.header_values),
+    );
+    expect(extraOrMissingReads.map(({ marker }) => marker)).toEqual([]);
+    expect(admittedResponse.bodyReads).toBe(1);
+    for (const { request, response } of omitted) {
+      expect(request.bodyReads + request.headerReads).toBe(0);
+      expect(response.bodyReads + response.headerReads).toBe(0);
+    }
+    expect(collector.omittedTransactionRange()).toEqual({
+      first_transaction_id: `request-${cap + 1}`,
+      last_transaction_id: `request-${cap + 3}`,
+      count: 3,
+      reason: "max-network-transactions",
+    });
+    expect(Object.fromEntries(omittedEventCounts)).toEqual({
+      request: 3,
+      response: 3,
+      "request-finished": 1,
+      "request-failed": 1,
+      "network-content": selected.request_body ? 6 : 3,
+    });
+    expect(collector.limitations().join(" ")).toContain("resource budget");
+  },
+);
 
 it("uses the caller's body-byte limit and returns typed size evidence", async () => {
   const { collector, events } = harness(selection, undefined, "fixture", {
