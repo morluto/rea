@@ -88,7 +88,7 @@ def main():
     source = Path(bridge_path).read_text(encoding="utf-8")
     exec(compile(source, bridge_path, "exec"), namespace)
     namespace["REA_TARGET_PATH"] = FakeDocumentProvider.document.getExecutableFilePath()
-    namespace["_configure_hopper_api"](FakeDocumentProvider)
+    namespace["Document"] = FakeDocumentProvider
     namespace["_bind_session_document"]()
     dispatch = namespace["_dispatch"]
     address = "0x401000"
@@ -148,7 +148,27 @@ def main():
     unset_result = dispatch("unset_bookmark", {"address": address})
     after_unset = dispatch("list_bookmarks", {})
 
+    missing_apis = []
+    for operation, api in [
+        ("list_bookmarks", "getBookmarks"),
+        ("unset_bookmark", "hasBookmarkAtAddress"),
+        ("unset_bookmark", "removeBookmarkAtAddress"),
+    ]:
+        original = getattr(document, api)
+        setattr(document, api, None)
+        try:
+            dispatch(operation, {"address": address} if operation == "unset_bookmark" else {})
+        except Exception as error:
+            missing_apis.append({
+                "api": api,
+                "diagnostic_type": namespace["_diagnostic_type"](error),
+                "message": str(error),
+            })
+        finally:
+            setattr(document, api, original)
+
     print(json.dumps({
+        "missing_apis": missing_apis,
         "fresh_empty": {
             "result": fresh_empty_result,
             "listing": fresh_empty_listing,

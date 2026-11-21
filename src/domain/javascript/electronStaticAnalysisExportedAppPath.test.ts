@@ -1,7 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 const cases = [
   ["native setter", "const change=app.setAppPath;", true, [1]],
@@ -47,14 +47,14 @@ it.each(cases)(
       runInNewContext("change.call(app,'./lib');", namespace);
       expect(changed).toBe(expected);
     }
-    const exported = analyzeJavaScriptStaticSource(
+    const exported = analyzeCommonJsStaticFixture(
       `${defining}export{change,app};`,
     );
     expect(exported.parse_error_count).toBe(0);
     expect((exported.electron.app_path_changes ?? []).length > 0).toBe(
       possible,
     );
-    const caller = analyzeJavaScriptStaticSource(
+    const caller = analyzeCommonJsStaticFixture(
       "import{change,app}from'./helper.mjs';change.call(app,'./lib');",
     );
     expect(caller.parse_error_count).toBe(0);
@@ -63,7 +63,7 @@ it.each(cases)(
 );
 
 it("does not treat a type-only exported setter as a runtime escape", () => {
-  const analysis = analyzeJavaScriptStaticSource(
+  const analysis = analyzeCommonJsStaticFixture(
     "const{app}=require('electron');const change=app.setAppPath;export type{change};",
   );
   expect(analysis.parse_error_count).toBe(0);
@@ -78,7 +78,7 @@ it.each([
 ] as const)(
   "selects the published runtime value in %s",
   (declaration, possible) => {
-    const analysis = analyzeJavaScriptStaticSource(
+    const analysis = analyzeCommonJsStaticFixture(
       `const{app}=require('electron');${declaration}`,
     );
     expect(analysis.parse_error_count).toBe(0);
@@ -105,7 +105,7 @@ it.each(cases)(
       runInNewContext("change.call(app,'./lib');", module.exports);
       expect(changed).toBe(expected);
     }
-    const analysis = analyzeJavaScriptStaticSource(defining);
+    const analysis = analyzeCommonJsStaticFixture(defining);
     expect(analysis.parse_error_count).toBe(0);
     expect((analysis.electron.app_path_changes ?? []).length > 0).toBe(
       possible,
@@ -125,7 +125,7 @@ it.each([
 ] as const)(
   "follows shared runtime export values and receivers in %s",
   (published, possible) => {
-    const analysis = analyzeJavaScriptStaticSource(
+    const analysis = analyzeCommonJsStaticFixture(
       `const {app}=require('electron');const change=app.setAppPath;${published}`,
     );
     expect(analysis.parse_error_count).toBe(0);

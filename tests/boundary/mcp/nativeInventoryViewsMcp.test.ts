@@ -1,10 +1,15 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { NATIVE_INVENTORY_OPERATIONS } from "../../../src/domain/native/nativeInventory.js";
 import { ok } from "../../../src/domain/result.js";
@@ -12,6 +17,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const procedureRows = [
   {
@@ -23,6 +29,33 @@ const procedureRows = [
     address: "0x2000",
     value: "second",
     procedure: { external: false, thunk: false, thunk_target: null },
+  },
+];
+// Symbols came from the source-owned PowerPC DOL capture; classification models the updated bridge output.
+const searchProcedureRows = [
+  {
+    address: "0x80003100",
+    value: "FUN_80003100",
+    procedure: { external: false, thunk: false, thunk_target: null },
+    symbol: {
+      primary: true,
+      dynamic: false,
+      external: false,
+      type: "function",
+      source: "default",
+    },
+  },
+  {
+    address: "0x80003130",
+    value: "__start",
+    procedure: { external: false, thunk: false, thunk_target: null },
+    symbol: {
+      primary: true,
+      dynamic: false,
+      external: false,
+      type: "function",
+      source: "user_defined",
+    },
   },
 ];
 const stringRows = [
@@ -55,13 +88,9 @@ it("shares complete/summary source identity and advertised contracts across all 
     "native-inventory-views",
     (operation) => {
       if (operation === "search_procedures")
-        return Promise.resolve(
-          ok(procedureRows.map(({ address, value }) => ({ address, value }))),
-        );
+        return Promise.resolve(ok(searchProcedureRows));
       if (operation === "search_strings")
-        return Promise.resolve(
-          ok(stringRows.map(({ address, value }) => ({ address, value }))),
-        );
+        return Promise.resolve(ok(stringRows));
       const result =
         operation === "list_names"
           ? nameRows
@@ -75,48 +104,47 @@ it("shares complete/summary source identity and advertised contracts across all 
   const tools = (await harness.mcp.listTools()).tools;
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const viewTool = tools.find((tool) => tool.name === "inspect_analysis_view");
-  if (viewTool?.outputSchema === undefined)
-    throw new Error("Missing view schema");
+  if (viewTool === undefined) throw new Error("Missing view schema");
   const viewInputSchema: Record<string, unknown> = viewTool.inputSchema;
-  const viewOutputSchema: Record<string, unknown> = viewTool.outputSchema;
+  const viewOutputSchema: Record<string, unknown> = canonicalOutputSchema(
+    viewTool.name,
+  );
   expect(ajv.validateSchema(viewInputSchema)).toBe(true);
   expect(ajv.validateSchema(viewOutputSchema)).toBe(true);
   for (const operation of NATIVE_INVENTORY_OPERATIONS) {
     const contract = toolContract(operation);
     const advertised = tools.find((tool) => tool.name === operation);
-    if (advertised?.outputSchema === undefined)
-      throw new Error("Missing operation schema");
+    if (advertised === undefined) throw new Error("Missing operation schema");
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const parameters = operation.startsWith("search_")
       ? { pattern: ".", mode: "regex" }
       : {};
-    const completeReply = await harness.mcp.callTool({
-      name: operation,
-      arguments: parameters,
-    });
+    const completeReply = await harness.mcp.callTool(
+      { name: operation, arguments: parameters },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
     if (completeReply.isError) throw new Error(JSON.stringify(completeReply));
-    expect(
-      ajv.validate(outputSchema, completeReply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const complete = parseEvidence(
       contract.outputSchema.parse(completeReply.structuredContent),
     );
     if (!Array.isArray(complete.normalized_result))
       throw new Error("Expected complete row array");
+    expect(complete.normalized_result.length).toBeGreaterThan(0);
+    if (operation === "search_procedures")
+      expect(complete.normalized_result).toEqual(searchProcedureRows);
+    if (operation === "search_strings")
+      expect(complete.normalized_result).toEqual(stringRows);
     expect(complete.parameters).not.toHaveProperty("detail");
-    const summaryReply = await harness.mcp.callTool({
-      name: operation,
-      arguments: { ...parameters, detail: "summary" },
-    });
+    const summaryReply = await harness.mcp.callTool(
+      { name: operation, arguments: { ...parameters, detail: "summary" } },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
     if (summaryReply.isError) throw new Error(JSON.stringify(summaryReply));
-    expect(
-      ajv.validate(outputSchema, summaryReply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const summary = parseEvidence(
       contract.outputSchema.parse(summaryReply.structuredContent),
     );
@@ -147,21 +175,20 @@ it("shares complete/summary source identity and advertised contracts across all 
       offset < (complete.normalized_result as unknown[]).length;
       offset++
     ) {
-      const pageReply = await harness.mcp.callTool({
-        name: "inspect_analysis_view",
-        arguments: {
-          source: {
-            kind: "retained-evidence",
-            evidence_id: complete.evidence_id,
+      const pageReply = await harness.mcp.callTool(
+        {
+          name: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: complete.evidence_id,
+            },
+            view: { kind: "native-inventory", offset, limit: 1 },
           },
-          view: { kind: "native-inventory", offset, limit: 1 },
         },
-      });
+        { toolDefinition: withCanonicalOutputSchema(viewTool) },
+      );
       if (pageReply.isError) throw new Error(JSON.stringify(pageReply));
-      expect(
-        ajv.validate(viewOutputSchema, pageReply.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       const page = toolContract("inspect_analysis_view").outputSchema.parse(
         pageReply.structuredContent,
       ).normalized_result;
@@ -251,10 +278,13 @@ it("refuses summary before provider work when no retaining session is configured
       },
     },
   });
-  const client = new Client({
-    name: "unretained-native-summary",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "unretained-native-summary",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -263,12 +293,22 @@ it("refuses summary before provider work when no retaining session is configured
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  const reply = await client.callTool({
-    name: "list_procedures",
-    arguments: { detail: "summary" },
-  });
-  expect(reply.isError).toBe(true);
-  expect(parseMcpToolError(reply).error.code).toBe("capability_unavailable");
+  for (const [name, parameters] of [
+    ["list_procedures", {}],
+    ["inspect_native_load_image", {}],
+    ["procedure_address", { procedure: "fixture_main" }],
+    ["procedure_callees", { procedure: "fixture_main" }],
+    ["procedure_callers", { procedure: "fixture_main" }],
+    ["resolve_containing_procedure", { address: "0x401001" }],
+    ["get_call_graph", { address: "fixture_main" }],
+  ] as const) {
+    const reply = await client.callTool({
+      name,
+      arguments: { ...parameters, detail: "summary" },
+    });
+    expect(reply.isError).toBe(true);
+    expect(parseMcpToolError(reply).error.code).toBe("capability_unavailable");
+  }
   expect(calls).toBe(0);
 });
 
@@ -277,7 +317,7 @@ it("projects imported inventories with an unknown artifact without inventing a p
     throw new Error("Retained views must not open a provider");
   });
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "borrowed.native", name: "Borrowed engine", version: "1" },
     {
       operation: "list_procedures",
@@ -291,7 +331,10 @@ it("projects imported inventories with an unknown artifact without inventing a p
   const recorded = session.recordEvidence(source);
   if (!recorded.ok) throw recorded.error;
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unbound-native-views", version: "1" });
+  const client = new Client(
+    { name: "unbound-native-views", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -316,7 +359,9 @@ it("projects imported inventories with an unknown artifact without inventing a p
     if (reply.isError) throw new Error(JSON.stringify(reply));
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence).toMatchObject({
-      subject: null,
+      subject: {
+        identity: { kind: "unknown", reason: "derived-from-linked-evidence" },
+      },
       locations: [],
       evidence_links: [source.evidence_id],
       normalized_result: {

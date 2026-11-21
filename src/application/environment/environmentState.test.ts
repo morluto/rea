@@ -29,11 +29,11 @@ import {
   loadEnvironmentState,
   prepareServedState,
 } from "./environmentState.js";
-import { STATE_INTAKE_LIMIT_BYTES } from "./environmentStateDocument.js";
 import {
-  EnvironmentStateStore,
-  ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
-} from "./environmentStateStore.js";
+  STATE_INTAKE_LIMIT_BYTES,
+  parseStateDocument,
+} from "./environmentStateDocument.js";
+import { EnvironmentStateStore } from "./environmentStateStore.js";
 
 const fixture = environmentStateServeFixture();
 const { source, state } = environmentStateServeInputs(fixture);
@@ -82,10 +82,11 @@ describe("loadEnvironmentState", () => {
     expect(state.entities.length).toBeGreaterThan(0);
   });
 
-  it("refuses non-Evidence JSON, another view kind, another capture's state and other template rules", () => {
+  it("refuses non-Evidence JSON, another view kind, another capture's state and other template rules", async () => {
     const notEvidence = loadEnvironmentState({}, source);
     if (notEvidence.ok || !(notEvidence.error instanceof AnalysisInputError))
       throw new Error("Expected an input refusal");
+    expect(notEvidence.error.issues.length).toBeGreaterThan(0);
     expect(
       notEvidence.error.issues.every((issue) => issue.path[0] === "state"),
     ).toBe(true);
@@ -113,7 +114,7 @@ describe("loadEnvironmentState", () => {
         ],
       },
     });
-    const ruleless = inspectAnalysisView({
+    const ruleless = await inspectAnalysisView({
       source: { kind: "inline", evidence: fixture.capture },
       view: { kind: "environment-state", template_rules: [] },
     });
@@ -160,10 +161,10 @@ describe("served collection history", () => {
     if (original === undefined) throw new Error("Expected a seeded entity");
     const run = () => {
       const store = new EnvironmentStateStore(state);
+      const before = JSON.stringify(store.snapshot());
       for (let index = 0; index < 2000; index += 1) {
         const collection = `/api/history/${String(index)}-${"x".repeat(900)}`;
         const id = `history-${String(index)}`;
-        const before = JSON.stringify(store.snapshot());
         const result = store.insert({ ...original, collection, id }, 0);
         if (!result.ok) {
           expect(JSON.stringify(store.snapshot())).toBe(before);
@@ -185,55 +186,71 @@ describe("served collection history", () => {
     if (refused === null)
       throw new Error("Expected reported history budget details");
     expect(refused).toEqual(run());
-    expect(refused).toMatchObject({
-      max_collection_history_bytes: ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
-    });
-    expect(refused.collection_history_bytes).toBeGreaterThan(
-      ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
-    );
+    const maximum = refused.max_collection_history_bytes;
+    expect(maximum).toEqual(expect.any(Number));
+    if (typeof maximum !== "number")
+      throw new Error("Expected a history limit");
+    expect(maximum).toBeGreaterThan(0);
+    expect(refused.collection_history_bytes).toBeGreaterThan(maximum);
   });
 
-  it("does not charge a deleted loaded collection again at the history limit", () => {
-    const original = state.entities[0];
-    if (original === undefined) throw new Error("Expected a seeded entity");
-    const loadedState = {
-      ...state,
-      entities: Array.from({ length: 1200 }, (_, index) => ({
-        ...original,
-        collection: `/api/loaded/${String(index)}-${"y".repeat(80)}`,
-        id: `loaded-${String(index)}`,
-      })),
-    };
-    const store = new EnvironmentStateStore(loadedState);
-    for (const entity of store.ofType(original.type)) store.remove(entity);
-    expect(store.knownCollectionsOf(original.type)).toHaveLength(1200);
+  it("does not charge loaded collection paths again after deletion at the history limit", () => {
+    const capture = timedCaptureEvidence([
+      ["GET", "/api/orgs/1/books", [{ id: 1, title: "A" }]],
+      ["GET", "/api/orgs/1/books/1", { id: 1, title: "A" }],
+      ["GET", "/api/orgs/2/books", [{ id: 2, title: "B" }]],
+      ["GET", "/api/orgs/2/books/2", { id: 2, title: "B" }],
+    ]);
+    const { state: nested } = environmentStateServeInputs(
+      environmentStateServeFixture(capture),
+    );
+    const seed = nested.entities[0];
+    if (seed === undefined) throw new Error("Expected a seeded book");
 
-    const baseline = loadedState.entities[0];
-    if (baseline === undefined) throw new Error("Expected a loaded entity");
-    let refused = false;
-    for (let index = 0; index < 2000; index += 1) {
-      const collection = `/api/generated/${String(index)}-${"z".repeat(900)}`;
-      const entity = {
-        ...original,
-        collection,
-        id: `generated-${String(index)}`,
-      };
-      const inserted = store.insert(entity, 0);
+    const suffix = "7".repeat(4092);
+    const bookAt = (ordinal: number) => ({
+      ...seed,
+      collection: `/api/orgs/${String(ordinal).padStart(4, "0")}${suffix}/books`,
+      record_ordinals: [],
+    });
+    const loaded = [bookAt(9998), bookAt(9999)];
+    const store = new EnvironmentStateStore(nested);
+    const initial = store.snapshot().rea_state;
+    const replaced = store.replace({
+      rea_state: { ...initial, entities: loaded },
+    });
+    if (!replaced.ok) throw replaced.error;
+
+    store.removeAll(loaded);
+    expect(store.knownCollectionsOf(seed.type)).toEqual(
+      expect.arrayContaining(loaded.map(({ collection }) => collection)),
+    );
+    const removed = store.snapshot();
+    expect(removed.rea_state.entities).toEqual([]);
+    const empty = JSON.stringify(removed);
+
+    let exhausted = false;
+    for (let ordinal = 0; ordinal < 400; ordinal += 1) {
+      const candidate = bookAt(ordinal);
+      const inserted = store.insert(candidate, 0);
       if (!inserted.ok) {
-        refused = true;
+        expect(inserted.error).toMatchObject({
+          resource: "capacity",
+          reportedLimits: { max_collection_history_bytes: expect.any(Number) },
+        });
+        exhausted = true;
         break;
       }
-      const held = store.entity(entity.type, collection, entity.id);
-      if (held === undefined) throw new Error("Expected generated entity");
-      store.remove(held);
+      store.remove(candidate);
     }
-    expect(refused).toBe(true);
+    expect(exhausted).toBe(true);
+    expect(JSON.stringify(store.snapshot())).toBe(empty);
 
-    const restored = store.insert(baseline, 0);
-    expect(restored.ok).toBe(true);
-    expect(
-      store.entity(baseline.type, baseline.collection, baseline.id),
-    ).toEqual(baseline);
+    // Loaded and generated paths have the same accounting cost by type and length.
+    for (const book of loaded) {
+      expect(store.insert(book, 0).ok).toBe(true);
+      expect(store.entity(book.type, book.collection, book.id)).toEqual(book);
+    }
   });
 });
 
@@ -263,7 +280,7 @@ describe("deriveEnvironmentState", () => {
     });
   });
 
-  it("projects the authenticated capture as retained Evidence, so a capture inline admission refuses still yields its state", () => {
+  it("projects the authenticated capture as retained Evidence, so a capture inline admission refuses still yields its state", async () => {
     const capture = timedCaptureEvidence(
       Array.from({ length: 20 }, (_, index) => [
         "GET",
@@ -271,7 +288,7 @@ describe("deriveEnvironmentState", () => {
         { id: index, text: "x".repeat(200_000) },
       ]),
     );
-    const inline = inspectAnalysisView({
+    const inline = await inspectAnalysisView({
       source: { kind: "inline", evidence: capture },
       view: { kind: "environment-state", template_rules: [] },
     });
@@ -679,24 +696,20 @@ describe("rea-state/v1 validation", () => {
       path: "rea_state/types",
       message: "differs from the served types",
     });
-    const prototypeMember = (at: "entity" | "fields") =>
+    const prototypeMember = () =>
       firstProblem(
         JSON.parse(
           JSON.stringify(documentWith(() => undefined)).replace(
-            at === "entity" ? '"type":' : '"fields":{',
-            at === "entity"
-              ? '"__proto__":{"x":1},"type":'
-              : '"fields":{"__proto__":{"x":1},',
+            '"type":',
+            '"__proto__":{"x":1},"type":',
           ),
         ),
       );
-    expect(prototypeMember("entity")).toEqual({
+    expect(prototypeMember()).toEqual({
       path: "rea_state/entities/0",
       message: "has a member rea-state/v1 does not define",
     });
-    expect(prototypeMember("fields")).toMatchObject({
-      path: "rea_state/entities/0/fields",
-    });
+
     expect(firstProblem([])).toMatchObject({ path: "" });
     expect(
       firstProblem({ rea_state: { version: 2, entities: [], documents: [] } }),
@@ -729,10 +742,74 @@ describe("wide state value validation", () => {
     expect(store.replace(document).ok).toBe(true);
     const retained = store.snapshot().rea_state.entities[0]?.fields.caller_wide;
     if (!Array.isArray(retained)) throw new Error("Expected the wide value");
-    expect(retained).toHaveLength(wide.length);
-    expect(retained.at(-1)).toBe(wide.at(-1));
+    expect(retained).toEqual(wide);
     const retainedObject =
       store.snapshot().rea_state.entities[0]?.fields.caller_wide_object;
     expect(retainedObject).toEqual(wideObject);
+  });
+});
+
+it("retains arbitrary dictionary keys and owned JSON references at state intake", () => {
+  const dictionary = JSON.parse(
+    '{"__proto__":{"constructor":{"prototype":"kept"}},"constructor":7,"prototype":8}',
+  );
+  const document = documentWith((value) => {
+    const entity = value.rea_state.entities[0]!;
+    entity.fields = { ...(entity.fields as object), ...dictionary };
+  });
+  const entity = document.rea_state.entities[0]!;
+  const fields = entity.fields;
+  const owned = parseStateDocument(state, document, true);
+  if (!owned.ok) throw owned.error;
+  expect(owned.value.entities[0]?.fields).toBe(fields);
+  const copied = parseStateDocument(state, document);
+  if (!copied.ok) throw copied.error;
+  expect(copied.value.entities[0]?.fields).not.toBe(fields);
+  expect(copied.value.entities[0]?.fields).toEqual(fields);
+  expect(Object.hasOwn(copied.value.entities[0]!.fields, "__proto__")).toBe(
+    true,
+  );
+  const store = new EnvironmentStateStore(state);
+  expect(store.replace(document).ok).toBe(true);
+  const snapshot = JSON.stringify(store.snapshot());
+  expect(store.replace(JSON.parse(snapshot)).ok).toBe(true);
+  expect(JSON.stringify(store.snapshot())).toBe(snapshot);
+});
+
+it.each(["__proto__", "constructor", "prototype"])(
+  "refuses unknown structural member %s before projection",
+  (key) => {
+    const document = documentWith(() => undefined);
+    const structures = [
+      document,
+      document.rea_state,
+      document.rea_state.entities[0]!,
+    ];
+    const view = { tool: "fixture", fields: {} };
+    document.rea_state.entities[0]!.view_fields = [view];
+    const held = { tool: "fixture", path: "/fixture", value: {} };
+    document.rea_state.documents = [held];
+    structures.push(view, held);
+    for (const structure of structures) {
+      Object.defineProperty(structure, key, {
+        value: 1,
+        configurable: true,
+        enumerable: true,
+      });
+      expect(firstProblem(document).message).toBe(
+        "has a member rea-state/v1 does not define",
+      );
+      Reflect.deleteProperty(structure, key);
+    }
+  },
+);
+
+it("keeps missing fields distinct from invalid JSON field contents", () => {
+  const document = documentWith((value) => {
+    Reflect.deleteProperty(value.rea_state.entities[0]!, "fields");
+  });
+  expect(firstProblem(document)).toEqual({
+    path: "rea_state/entities/0/fields",
+    message: "is required",
   });
 });

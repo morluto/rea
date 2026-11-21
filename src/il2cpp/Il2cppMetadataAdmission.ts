@@ -25,6 +25,19 @@ const emptyRows = {
   string_literals: { value: "", value_base64: null },
 };
 
+/**
+ * Smallest serialized generic method instance row; checked against the
+ * remaining budget for the whole genericMethodTable before any row resolves.
+ */
+export const IL2CPP_GENERIC_INSTANCE_MINIMUM_BYTES = JSON.stringify({
+  state: "unknown",
+  address: null,
+  rva: null,
+  method_spec: 0,
+  method: 0,
+  name: null,
+}).length;
+
 /** Per-snapshot admission, before text expansion and each retained fact. */
 export const createIl2cppMetadataAdmission = (
   limit: number,

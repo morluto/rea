@@ -1,12 +1,12 @@
 import { deflateSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { rustAuditableMetadataSchema } from "../domain/rust/rustBinary.js";
-import {
-  RUST_SECTION_BYTES,
-  readAuditableSection,
-  RustAuditableFormatFailure,
-  RustAuditableResourceFailure,
-} from "./RustAuditableReader.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
+
+import { readAuditableSection } from "./RustAuditableReader.js";
+
+// Explicit 1 MiB input boundary, independent of the reader implementation.
+const RUST_SECTION_BYTES = 1024 * 1024;
 
 const section = (document: unknown) =>
   readAuditableSection(
@@ -14,6 +14,8 @@ const section = (document: unknown) =>
     0,
     deflateSync(Buffer.from(JSON.stringify(document))),
   );
+const sectionJson = (document: string) =>
+  readAuditableSection(".dep-v0", 0, deflateSync(Buffer.from(document)));
 
 it("preserves package order, omitted kind, and the root index", () => {
   const parsed = section({
@@ -58,31 +60,71 @@ it("preserves package order, omitted kind, and the root index", () => {
   expect(parsed.uncompressed_bytes).toBeGreaterThan(parsed.compressed_bytes);
 });
 
-it("reports dependency cycles and keeps an omitted format version unknown", () => {
+it("preserves historical cargo-auditable feature lists and rejects bad values", () => {
   const parsed = section({
+    format: 0,
     packages: [
-      { name: "a", version: "1", source: "local", dependencies: [1] },
-      { name: "b", version: "1", source: "local", dependencies: [0] },
+      {
+        name: "feature_dep",
+        version: "1.2.3",
+        source: "crates.io",
+        features: ["default", "serde"],
+      },
     ],
   });
-  expect(parsed.cyclic_dependency_indices).toEqual([0, 1]);
-  expect(parsed.format_version).toBeNull();
-  expect(parsed.root_package_index).toBeNull();
+  expect(parsed.packages).toEqual([
+    {
+      name: "feature_dep",
+      version: "1.2.3",
+      source: "crates.io",
+      kind: null,
+      dependencies: [],
+      features: ["default", "serde"],
+      root: false,
+    },
+  ]);
+  const omitted = section({
+    packages: [{ name: "no_features", version: "1", source: "crates.io" }],
+  });
+  const explicitEmpty = section({
+    packages: [
+      {
+        name: "no_features",
+        version: "1",
+        source: "crates.io",
+        features: [],
+      },
+    ],
+  });
+  expect(omitted.packages[0]?.features).toBeNull();
+  expect(explicitEmpty.packages[0]?.features).toEqual([]);
+  expect(() =>
+    section({
+      packages: [
+        {
+          name: "feature_dep",
+          version: "1.2.3",
+          source: "crates.io",
+          features: ["default", 7],
+        },
+      ],
+    }),
+  ).toThrow(ParseFailureError);
 });
 
-it("includes every package that participates in a dependency cycle", () => {
+it("reports only cyclic packages and preserves omitted root and version", () => {
+  // A multi-package component, a self-cycle, and a leaf reachable from a cycle.
   const parsed = section({
-    packages: [
-      { name: "a", version: "1", source: "local", dependencies: [1, 2] },
-      { name: "b", version: "1", source: "local", dependencies: [0] },
-      { name: "c", version: "1", source: "local", dependencies: [1] },
-    ],
+    packages: [[1, 2, 4], [0], [1], [3], []].map((dependencies, index) => ({
+      name: `package-${String(index)}`,
+      version: "1",
+      source: "local",
+      dependencies,
+    })),
   });
-  expect(parsed.cyclic_dependency_indices).toEqual([0, 1, 2]);
-  const self = section({
-    packages: [{ name: "a", version: "1", source: "local", dependencies: [0] }],
-  });
-  expect(self.cyclic_dependency_indices).toEqual([0]);
+  expect(parsed.cyclic_dependency_indices).toEqual([0, 1, 2, 3]);
+  expect(parsed.format_version).toBeNull();
+  expect(parsed.root_package_index).toBeNull();
 });
 
 it("finishes a long acyclic dependency chain", () => {
@@ -106,7 +148,7 @@ it("rejects out-of-range indices, multiple roots, and schema drift", () => {
         { name: "a", version: "1", source: "local", dependencies: [2] },
       ],
     }),
-  ).toThrow(RustAuditableFormatFailure);
+  ).toThrow(ParseFailureError);
   expect(() =>
     section({
       packages: [
@@ -139,7 +181,24 @@ it("rejects invalid JSON, trailing zlib bytes, and an empty section", () => {
   );
   expect(() =>
     readAuditableSection(".dep-v0", 0, Buffer.from([1, 2, 3])),
-  ).toThrow(RustAuditableFormatFailure);
+  ).toThrow(ParseFailureError);
+});
+
+it("rejects duplicate decoded JSON fields before object conversion", () => {
+  for (const document of [
+    '{"packages":[],"packages":[]}',
+    '{"packages":[{"name":"alpha","name":"beta","version":"1","source":"local"}]}',
+    '{"packages":[{"name":"alpha","version":"1","source":"local","dependencies":[0],"dependencies":[]}]}',
+    '{"packages":[],"meta":{"name":"alpha","na\\u006de":"beta"}}',
+  ])
+    expect(() => sectionJson(document)).toThrow(
+      /duplicate field "(?:packages|name|dependencies)"/u,
+    );
+  expect(
+    sectionJson(
+      '{"packages":[{"name":"alpha","version":"1","source":"local"}]}',
+    ).packages,
+  ).toHaveLength(1);
 });
 
 it("stops an inflate that exceeds the section ratio", () => {
@@ -147,38 +206,122 @@ it("stops an inflate that exceeds the section ratio", () => {
   const compressed = deflateSync(raw);
   expect(compressed.length * 64).toBeLessThan(raw.length);
   expect(() => readAuditableSection(".dep-v0", 0, compressed)).toThrow(
-    RustAuditableResourceFailure,
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: {
+          name: "inflated dependency JSON bytes",
+          maximum: compressed.length * 64,
+        },
+      }),
+    }),
   );
   expect(() =>
     readAuditableSection(".dep-v0", 0, Buffer.alloc(RUST_SECTION_BYTES + 1)),
   ).toThrow(/1 MiB/);
 });
 
-it.each([0, 8])("reads documented cargo-auditable revision %i", (format) => {
-  const parsed = section({
-    format,
-    packages: [
-      { name: "sample", version: "0.1.0", source: "local", root: true },
-    ],
+it("retains the compressed-stream limit for a PE section with padding", () => {
+  const compressed = deflateSync(Buffer.alloc(RUST_SECTION_BYTES), {
+    level: 0,
   });
-  expect(parsed).toMatchObject({
-    format_version: format,
-    root_package_index: 0,
-  });
-  expect(rustAuditableMetadataSchema.parse(parsed)).toEqual(parsed);
+  expect(compressed.length).toBeGreaterThan(RUST_SECTION_BYTES);
+  const fileAlignment = 512;
+  const stored = Buffer.alloc(
+    Math.ceil(compressed.length / fileAlignment) * fileAlignment,
+  );
+  compressed.copy(stored);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, {
+      peFileAlignment: fileAlignment,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "compressed dependency bytes",
+          maximum: RUST_SECTION_BYTES,
+        }),
+      }),
+    }),
+  );
 });
 
-it.each([{ source: 4 }, { source: 9 }, { source: 99 }])(
-  "preserves unknown revision $source for the documented preceding-revision interpretation",
-  ({ source }) => {
+it("names the padded-storage basis when a padded section overflows inflate allocation", () => {
+  // A short stream padded to FileAlignment: the stream-based limit is unknown
+  // when inflate stops, so the enforced bound comes from the storage size.
+  const document = Buffer.concat([
+    Buffer.from(JSON.stringify({ packages: [] })),
+    Buffer.alloc(40_000, 0x20),
+  ]);
+  const compressed = deflateSync(document);
+  const fileAlignment = 512;
+  expect(compressed.length).toBeLessThan(fileAlignment);
+  const stored = Buffer.alloc(fileAlignment);
+  compressed.copy(stored);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, {
+      peFileAlignment: fileAlignment,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "inflated dependency JSON bytes",
+          maximum: fileAlignment * 64,
+        }),
+      }),
+      cause: expect.objectContaining({ code: "ERR_BUFFER_TOO_LARGE" }),
+      message: expect.stringContaining("padded section's storage size"),
+    }),
+  );
+  // Without padding the reported limit is still the plain size limit.
+  expect(() => readAuditableSection(".dep-v0", 0, compressed)).toThrow(
+    "Inflated dependency JSON exceeds the size limit",
+  );
+});
+
+it("names the fixed cap when it bounds a large padded section's inflate allocation", () => {
+  // Storage above 128 KiB derives more than the fixed 8 MiB cap, so the cap,
+  // not the padded storage size, is the enforced bound.
+  const compressed = deflateSync(Buffer.alloc(9 * 1024 * 1024, 0x20));
+  const fileAlignment = 512;
+  const stored = Buffer.alloc(132 * 1024);
+  compressed.copy(stored);
+  let failure: unknown;
+  try {
+    readAuditableSection(".dep-v0", 0, stored, {
+      peFileAlignment: fileAlignment,
+    });
+  } catch (cause: unknown) {
+    failure = cause;
+  }
+  expect(failure).toMatchObject({
+    failure: expect.objectContaining({
+      kind: "limit",
+      limit: expect.objectContaining({
+        name: "inflated dependency JSON bytes",
+        maximum: 8 * 1024 * 1024,
+      }),
+    }),
+  });
+  expect((failure as Error).message).not.toContain("storage size");
+});
+
+it.each([0, 4, 8, 0xffff_ffff])(
+  "preserves cargo-auditable revision %i through metadata validation",
+  (format) => {
     const parsed = section({
-      format: source,
+      format,
       packages: [
         { name: "sample", version: "0.1.0", source: "local", root: true },
       ],
     });
     expect(parsed).toMatchObject({
-      format_version: source,
+      format_version: format,
+      root_package_index: 0,
     });
     expect(rustAuditableMetadataSchema.parse(parsed)).toEqual(parsed);
   },
@@ -200,8 +343,11 @@ it.each([-1, 1.5, 0x1_0000_0000])(
   (format) => {
     expect(() => section({ format, packages: [] })).toThrow(
       expect.objectContaining({
-        name: "RustAuditableFormatFailure",
-        kind: "malformed",
+        name: "ParseFailureError",
+        failure: expect.objectContaining({
+          kind: "malformed",
+          format: "rust-auditable",
+        }),
       }),
     );
   },
@@ -253,10 +399,13 @@ it("admits dependency expansion before allocating normalized or reverse edges", 
   expect(payload.length).toBeLessThan(RUST_SECTION_BYTES);
   expect(() => readAuditableSection(".dep-v0", 0, payload)).toThrow(
     expect.objectContaining({
-      constraint: {
-        resource: "transport",
-        reported_limits: { maximum_output_bytes: 8 * 1024 * 1024 },
-      },
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "dependency graph output bytes",
+          maximum: 8 * 1024 * 1024,
+        }),
+      }),
     }),
   );
 });

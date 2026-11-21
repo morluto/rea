@@ -1,6 +1,10 @@
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
@@ -9,7 +13,6 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { compareJavaScriptExportShapesEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
-import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../../../src/contracts/applicationToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -28,7 +31,7 @@ it("executes the advertised export presence example with matching analyzed Evide
     throw new Error("Missing advertised presence example");
   const { client, close } = await createApplicationMcpHarness({
     serverOptions: {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      environment: { ...process.env },
     },
   });
   onTestFinished(close);
@@ -36,7 +39,9 @@ it("executes the advertised export presence example with matching analyzed Evide
   const advertised = listing.tools.find(
     ({ name }) => name === "compare_javascript_export_shapes",
   );
-  const examples = z.array(z.unknown()).parse(advertised?.inputSchema.examples);
+  const examples = z
+    .array(z.unknown())
+    .parse(canonicalInputSchema("compare_javascript_export_shapes").examples);
   expect(new Set(examples.map((input) => JSON.stringify(input))).size).toBe(
     examples.length,
   );
@@ -167,22 +172,22 @@ describe("application workflow MCP parity", () => {
       right_export_name: "default",
     };
     try {
-      const relativePath = relative(process.cwd(), leftRoot);
-      const relativeApplication = await client.callTool({
+      const selectedPath = `${leftRoot}${sep}.`;
+      const selectedApplication = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: { input_path: relativePath },
+        arguments: { input_path: selectedPath },
       });
-      expect(relativeApplication.isError).not.toBe(true);
-      const relativeEvidence = parseEvidence(
-        relativeApplication.structuredContent,
+      expect(selectedApplication.isError).not.toBe(true);
+      const selectedEvidence = parseEvidence(
+        selectedApplication.structuredContent,
       );
-      expect(relativeEvidence.parameters.input_path).toBe(relativePath);
+      expect(selectedEvidence.parameters.input_path).toBe(selectedPath);
       expect(left.value.parameters.input_path).toBe(leftRoot);
-      expect(relativeEvidence.normalized_result).toEqual(
+      expect(selectedEvidence.normalized_result).toEqual(
         left.value.normalized_result,
       );
-      expect(relativeEvidence.subject).toEqual(left.value.subject);
-      expect(relativeEvidence.evidence_id).not.toBe(left.value.evidence_id);
+      expect(selectedEvidence.subject).toEqual(left.value.subject);
+      expect(selectedEvidence.evidence_id).not.toBe(left.value.evidence_id);
       const full = await client.callTool({
         name: "compare_javascript_export_shapes",
         arguments: { left: left.value, right: right.value, ...selectors },
@@ -190,7 +195,7 @@ describe("application workflow MCP parity", () => {
       expect(full.isError).not.toBe(true);
       expect(full.structuredContent).toMatchObject({
         normalized_result: {
-          summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
+          summary: { added: 1, removed: 0, changed: 0, unknown: 3 },
           property_inventories: expect.arrayContaining([
             expect.objectContaining({
               side: "right",
@@ -198,27 +203,37 @@ describe("application workflow MCP parity", () => {
               properties: expect.arrayContaining(["/depth"]),
             }),
           ]),
-          changes: [
-            {
+          changes: expect.arrayContaining([
+            expect.objectContaining({
               status: "added",
               path: "/depth",
               presence: { left: "absent", right: "present" },
               right: { availability: "literal", value: 1 },
-            },
-          ],
+            }),
+            ...["heading", "paragraph", "strong"].map((value) =>
+              expect.objectContaining({
+                path: "/text",
+                discriminant: { path: "/type", value },
+                status: "unknown",
+                left: expect.objectContaining({ availability: "unknown" }),
+                right: expect.objectContaining({ availability: "unknown" }),
+              }),
+            ),
+          ]),
+          coverage: { status: "partial" },
         },
       });
       const advertised = (await client.listTools()).tools.find(
         ({ name }) => name === "compare_javascript_export_shapes",
       );
-      if (advertised?.outputSchema === undefined)
+      if (advertised === undefined)
         throw new Error("Missing advertised export-shape output schema");
       const validate = new Ajv2020({
         strict: false,
         validateFormats: false,
-      }).compile(
-        z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
-      );
+        inlineRefs: false,
+        code: { optimize: false },
+      }).compile(canonicalOutputSchema(advertised.name));
       expect(validate(full.structuredContent)).toBe(true);
       expect(session.exportEvidenceBundle().records).toEqual(
         expect.arrayContaining([
@@ -316,7 +331,16 @@ describe("repeated partial export comparisons", () => {
         expect(response.isError, JSON.stringify(response)).not.toBe(true);
         const evidence = parseEvidence(response.structuredContent);
         expect(evidence.normalized_result).toMatchObject({
-          changes: [],
+          changes: [
+            expect.objectContaining({
+              path: "/count",
+              status: "unknown",
+              presence: { left: "unknown-coverage", right: "unknown-coverage" },
+              left: expect.objectContaining({ availability: "unknown" }),
+              right: expect.objectContaining({ availability: "unknown" }),
+            }),
+          ],
+          summary: { added: 0, removed: 0, changed: 0, unknown: 1 },
           coverage: { status: "partial" },
         });
         return evidence.evidence_id;
@@ -365,6 +389,13 @@ describe("repeated partial export comparisons", () => {
           true,
         );
       const retained = session.exportEvidenceBundle();
+      for (const id of evidenceIds)
+        expect(retained.unknowns).toContainEqual(
+          expect.objectContaining({
+            domain: "javascript-export-shape",
+            supporting_evidence_ids: [id],
+          }),
+        );
       await Promise.all(pairs.map((pair) => compare(pair)));
       expect(session.exportEvidenceBundle()).toEqual(retained);
     },
@@ -372,50 +403,6 @@ describe("repeated partial export comparisons", () => {
 });
 
 describe("source-produced export comparison inventories", () => {
-  it("records partial comparison coverage even when matching unknown projections produce no changes", async () => {
-    const source = `export default function make() {
-      const result = { kind: "record", count: 1 };
-      delete result.count;
-      return result;
-    }`;
-    const [left, right] = await Promise.all([
-      analyzeSourceEvidence(source),
-      analyzeSourceEvidence(source),
-    ]);
-    const { client, session, close } = await createApplicationMcpHarness();
-    onTestFinished(close);
-    const response = await client.callTool({
-      name: "compare_javascript_export_shapes",
-      arguments: {
-        left,
-        right,
-        left_module_path: "parser.mjs",
-        left_export_name: "default",
-        right_module_path: "parser.mjs",
-        right_export_name: "default",
-      },
-    });
-    expect(response.isError).not.toBe(true);
-    expect(response.structuredContent).toMatchObject({
-      normalized_result: {
-        changes: [],
-        summary: { added: 0, removed: 0, changed: 0, unknown: 0 },
-        coverage: { status: "partial" },
-      },
-    });
-    const { evidence_id: evidenceId } = z
-      .object({ evidence_id: z.string() })
-      .parse(response.structuredContent);
-    expect(session.exportEvidenceBundle().unknowns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          domain: "javascript-export-shape",
-          supporting_evidence_ids: [evidenceId],
-        }),
-      ]),
-    );
-  });
-
   it("retains large source-produced export inventories through comparison schemas", async () => {
     const fields = Array.from(
       { length: 64 },
@@ -491,7 +478,7 @@ ${returnSites}
       left_omitted_fields: 0,
       right_omitted_fields: 0,
     });
-  }, 30_000);
+  });
 });
 
 const analyzeSourceEvidence = async (source: string) => {
@@ -516,7 +503,5 @@ const compareEvidence = (
     right_export_name: "default",
   });
   if (!compared.ok) throw compared.error;
-  return javaScriptExportShapeComparisonResultSchema.parse(
-    compared.value.normalized_result,
-  );
+  return compared.value.result;
 };

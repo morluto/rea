@@ -1,55 +1,83 @@
-import { z } from "zod";
-
-import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
-  importManagedReconstruction,
-  managedReconstructionImportInputSchema,
-  type ManagedReconstructionImportInput,
+  executeManagedReconstructionImport,
+  managedReconstructionImportRequestSchema,
+  resolveManagedReconstructionImport,
+  type ManagedReconstructionImportRequest,
   type ManagedReconstructionImportResult,
+  type ResolvedManagedReconstructionImport,
 } from "../../domain/managed/managedReconstruction.js";
-import { err, ok, type Result } from "../../domain/result.js";
-import { MANAGED_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
+import { ok, type Result } from "../../domain/result.js";
+import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  requestInputError,
-  workflowInputError,
-} from "../workflowInputError.js";
+  resolveEvidenceRequest,
+  type EvidenceLookup,
+} from "../EvidenceInputResolver.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { InvestigationWorkflowExecution } from "../investigation/InvestigationWorkflows.js";
 
 const OPERATION = "import_managed_reconstruction" as const;
 
-/** Authenticate and import managed decompiler reconstruction as Evidence. */
-export const importManagedReconstructionEvidence = (
+/** Validate the request envelope and authenticate its managed Evidence source once. */
+const resolveManagedReconstructionEvidenceInput = (
   rawInput: unknown,
-): Result<Evidence, AnalysisError> => {
-  const parsed = managedReconstructionImportInputSchema.safeParse(rawInput);
-  if (!parsed.success)
-    return err(requestInputError(OPERATION, parsed.error, rawInput));
-  return importManagedReconstructionEvidenceValidated(parsed.data);
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
+): Result<ResolvedManagedReconstructionImport, AnalysisError> => {
+  const parsed = resolveEvidenceRequest(
+    OPERATION,
+    rawInput,
+    managedReconstructionImportRequestSchema,
+    lookup,
+    options,
+  );
+  if (!parsed.ok) return parsed;
+  return resolveManagedReconstructionImport(parsed.value.input);
 };
 
-/** Import reconstruction from input parsed by a trusted adapter. */
-export const importManagedReconstructionEvidenceValidated = (
-  input: ManagedReconstructionImportInput,
+/**
+ * Validate the raw request envelope, then authenticate and import its source;
+ * the authenticated static Evidence is the import's source.
+ */
+export const importManagedReconstructionExecution = (
+  rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const resolved = resolveManagedReconstructionEvidenceInput(
+    rawInput,
+    lookup,
+    options,
+  );
+  if (!resolved.ok) return resolved;
+  const result = executeManagedReconstructionImport(resolved.value);
+  return ok({
+    evidence: createManagedReconstructionEvidence(
+      resolved.value.request,
+      result,
+    ),
+    sources: [resolved.value.staticEvidence],
+    unknown: undefined,
+  });
+};
+
+/** Validate the raw request envelope, then authenticate and import its source. */
+export const importManagedReconstructionEvidence = (
+  rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<Evidence, AnalysisError> => {
-  try {
-    const result = importManagedReconstruction(input);
-    return ok(createManagedReconstructionEvidence(input, result));
-  } catch (cause: unknown) {
-    return err(
-      cause instanceof TypeError || cause instanceof z.ZodError
-        ? workflowInputError(OPERATION, cause)
-        : new AnalysisProtocolError(
-            "Managed reconstruction import produced an invalid result",
-            { cause },
-          ),
-    );
-  }
+  const imported = importManagedReconstructionExecution(
+    rawInput,
+    lookup,
+    options,
+  );
+  return imported.ok ? ok(imported.value.evidence) : imported;
 };
 
 const createManagedReconstructionEvidence = (
-  input: ManagedReconstructionImportInput,
+  input: ManagedReconstructionImportRequest,
   result: ManagedReconstructionImportResult,
 ): Evidence =>
   createEvidence(
@@ -63,20 +91,18 @@ const createManagedReconstructionEvidence = (
       predicateType: "rea.managed-reconstruction-import",
       operation: OPERATION,
       parameters: {
-        static_members_evidence_id: input.static_members.evidence_id,
-        decompiler: jsonValueSchema.parse(result.decompiler),
-        method_locks: jsonValueSchema.parse(
-          input.methods.map(
-            ({ token, signature_sha256, normalized_il_sha256 }) => ({
-              token,
-              signature_sha256,
-              normalized_il_sha256,
-            }),
-          ),
+        static_members_evidence_id: result.static_observation.evidence_id,
+        decompiler: result.decompiler,
+        method_locks: input.methods.map(
+          ({ token, signature_sha256, normalized_il_sha256 }) => ({
+            token,
+            signature_sha256,
+            normalized_il_sha256,
+          }),
         ),
-        notes: jsonValueSchema.parse(input.notes),
+        notes: input.notes,
       },
-      result: jsonValueSchema.parse(result),
+      result,
       rawResult: null,
       confidence: "inferred",
       authority: "analyst-inference",

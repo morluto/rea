@@ -3,16 +3,18 @@ import { readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 
 import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import { HopperClient } from "../../../src/hopper/HopperClient.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import {
   GhidraFixtureLauncher,
   ghidraFixturePath,
 } from "./ghidra/ghidraClient.fixture.js";
 import { HopperFixtureLauncher } from "./hopper/hopperClient.fixture.js";
+import { waitFor } from "../../support/testWait.js";
 
 const providers = [
   {
@@ -59,36 +61,38 @@ it.each(providers)(
   "cancels a $name restart wait without taking ownership of pending close",
   async ({ create, cancelled }) => {
     const { client, roots, children } = create();
-    const entered = createDeferred<void>();
-    const gate = createDeferred<void>();
+    const providerClose = phaseGate();
     const originalClose = PrivateRuntimeRoot.prototype.close;
     const close = vi
       .spyOn(PrivateRuntimeRoot.prototype, "close")
       .mockImplementation(async function (this: PrivateRuntimeRoot) {
         if (this.path === roots[0]) {
-          entered.resolve();
-          await gate.promise;
+          await providerClose.hold();
         }
         await originalClose.call(this);
       });
     let closing: ReturnType<typeof client.close> | undefined;
-    try {
+    let retry: ReturnType<typeof client.start> | undefined;
+    const controller = new AbortController();
+    await withVerifierCleanup(async () => {
       await expect(client.start()).resolves.toMatchObject({ ok: true });
       closing = client.close();
-      await entered.promise;
-      const controller = new AbortController();
-      const retry = client.start(controller.signal);
+      await providerClose.reached(closing, "provider close");
+      retry = client.start(controller.signal);
       let settled: Awaited<typeof retry> | undefined;
-      void retry.then((result) => {
-        settled = result;
-      });
+      void retry.then(
+        (result) => {
+          settled = result;
+        },
+        () => undefined,
+      );
       controller.abort();
-      await vi.waitFor(() =>
+      await waitFor(() =>
         expect(settled).toMatchObject({ ok: false, error: cancelled }),
       );
       await expect(access(roots[0] ?? "")).resolves.toBeUndefined();
       expect(children).toHaveLength(1);
-      gate.resolve();
+      providerClose.release();
       await expect(closing).resolves.toMatchObject({ ok: true });
       await retry;
       await expect(access(roots[0] ?? "")).rejects.toMatchObject({
@@ -96,11 +100,19 @@ it.each(providers)(
       });
       await expect(client.start()).resolves.toMatchObject({ ok: true });
       expect(children).toHaveLength(2);
-    } finally {
-      gate.resolve();
-      await closing;
-      await client.close();
-      close.mockRestore();
-    }
+    }, [
+      () => providerClose.release(),
+      () => controller.abort(),
+      async () => {
+        await retry;
+      },
+      async () => {
+        await closing;
+      },
+      async () => {
+        await expect(client.close()).resolves.toMatchObject({ ok: true });
+      },
+      () => close.mockRestore(),
+    ]);
   },
 );

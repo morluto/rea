@@ -1,18 +1,24 @@
 import { z } from "zod";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
   normalizeArtifactPath,
   ArtifactPathRegistry,
-} from "../../artifacts/ArtifactPaths.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+} from "../../resources/index.js";
+import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { JavaScriptRecoveryResult } from "../../domain/javascript/javascriptRecovery.js";
-import {
-  isRecoveryFileSizeError,
-  readRecoveryFile,
-  recoveryFailureMessage,
-} from "./RecoveryFiles.js";
+import { isRecoveryFileSizeError, readRecoveryFile } from "./RecoveryFiles.js";
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
 import type { runWakaruCommand } from "./WakaruCommand.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const warningSchema = z.looseObject({
   filename: z.string(),
@@ -52,11 +58,23 @@ const provenanceSchema = z.looseObject({
 
 const OPERATION = "recover_javascript_sources";
 
+/** Keep the reader's exact cleanup owner alongside the finished command output. */
+export class WakaruReportReadFailure extends Error {
+  constructor(
+    readonly failure: ArtifactReaderFailure,
+    readonly capturedOutput: AnalysisCapturedOutput,
+  ) {
+    super(failure.message, { cause: failure });
+  }
+}
+
 type ReportContext = {
   execution: Awaited<ReturnType<typeof runWakaruCommand>>;
   provenancePath: string;
   snapshots: ReadonlyMap<string, Buffer>;
   files: readonly { relativePath: string }[];
+  resources?: ArtifactResourceScope;
+  signal?: AbortSignal;
 };
 
 /**
@@ -66,7 +84,7 @@ type ReportContext = {
  * checks below remain exact.
  */
 export const parseWakaruReports = async (context: ReportContext) => {
-  const { execution, provenancePath } = context;
+  const { execution, provenancePath, resources, signal } = context;
 
   try {
     if (execution.exit_code !== 0 && execution.exit_code !== 1)
@@ -74,11 +92,11 @@ export const parseWakaruReports = async (context: ReportContext) => {
         "Wakaru did not complete recovery (expected exit 0 or a reported partial exit 1)",
       );
     const report = reportSchema.parse(JSON.parse(execution.stdout));
-    const provenance = provenanceSchema.parse(
-      JSON.parse(
-        (await readWakaruProvenanceReport(provenancePath)).toString("utf8"),
-      ),
+    const decoded = safeParseUtf8Json(
+      await readWakaruProvenanceReport(provenancePath, signal, resources),
     );
+    if (!decoded.ok) throw decoded.cause;
+    const provenance = provenanceSchema.parse(decoded.value);
     if (report.total !== report.modules.length || report.failed > report.total)
       throw new TypeError("Reported module totals disagree");
     if (
@@ -101,11 +119,29 @@ export const parseWakaruReports = async (context: ReportContext) => {
           : ("complete" as const),
     };
   } catch (cause: unknown) {
+    const capturedOutput = {
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      exit_code: execution.exit_code,
+      signal: execution.signal,
+      truncated: false,
+    };
+    if (
+      cause instanceof AnalysisCancelledError ||
+      cause instanceof AnalysisAccessDeniedError ||
+      cause instanceof AnalysisArtifactChangedError
+    )
+      throw cause.retainCapturedOutput(capturedOutput);
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      (cause.cleanup !== undefined || cause.reason === "cancelled")
+    )
+      throw new WakaruReportReadFailure(cause, capturedOutput);
     throw new ProviderAdapterError("wakaru", OPERATION, {
       cause,
       ...wakaruReportGuidance(cause),
       diagnostics: {
-        reason: `Unusable Wakaru recovery report: ${recoveryFailureMessage(cause)}`,
+        reason: `Unusable Wakaru recovery report: ${errorMessage(cause)}`,
         exit_code: execution.exit_code,
         signal: execution.signal,
         stdout: execution.stdout,
@@ -118,9 +154,18 @@ export const parseWakaruReports = async (context: ReportContext) => {
 const PROVENANCE_REPORT_ALLOWANCE = `Wakaru provenance report exceeds the ${String(RECOVERY_LIMITS.reportBytes)}-byte report allowance`;
 
 /** Report-size refusals name the fixed allowance; other read failures stay unchanged. */
-const readWakaruProvenanceReport = async (path: string): Promise<Buffer> => {
+const readWakaruProvenanceReport = async (
+  path: string,
+  signal: AbortSignal | undefined,
+  resources: ArtifactResourceScope | undefined,
+): Promise<Buffer> => {
   try {
-    return await readRecoveryFile(path, RECOVERY_LIMITS.reportBytes);
+    return await readRecoveryFile(
+      path,
+      RECOVERY_LIMITS.reportBytes,
+      signal,
+      resources,
+    );
   } catch (cause: unknown) {
     if (!isRecoveryFileSizeError(cause, RECOVERY_LIMITS.reportBytes))
       throw cause;
@@ -229,11 +274,13 @@ export const validateRecoverySourceMap = (
     mappings: z.string(),
   });
   try {
-    schema.parse(JSON.parse(bytes.toString("utf8")));
+    const decoded = safeParseUtf8Json(bytes);
+    if (!decoded.ok) throw decoded.cause;
+    schema.parse(decoded.value);
   } catch (cause: unknown) {
     throw new AnalysisOutputError(
       OPERATION,
-      `Invalid emitted source map for ${filename}: ${recoveryFailureMessage(cause)}`,
+      `Invalid emitted source map for ${filename}: ${errorMessage(cause)}`,
       { cause },
     );
   }

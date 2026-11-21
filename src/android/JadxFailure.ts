@@ -1,12 +1,14 @@
-import { jadxOperationTimeoutGuidance } from "./JadxRelease.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { JadxInterruption } from "./JadxInterruption.js";
 import { z } from "zod";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -17,11 +19,17 @@ import {
   StableFileHashFailure,
 } from "../filesystem/StableFileHash.js";
 import {
+  RegularFileCancelled,
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { androidSnapshotCopy } from "./AndroidTargetSnapshot.js";
 import type { JadxSession } from "./JadxSession.js";
 import type { JadxMcpTransport } from "./JadxMcpTransport.js";
+import type { OwnedMcpTransportFailure } from "../process/OwnedMcpStdioTransport.js";
+import { jadxHeapExhausted } from "./JadxProtocol.js";
+import { JADX_HEAP_REMEDIATION } from "./JadxRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface FailureContext {
   readonly cause: unknown;
@@ -40,6 +48,13 @@ type DiagnosticFailure = {
   | { readonly kind: "startup"; readonly command: string }
   | { readonly kind: "execution" }
   | { readonly kind: "output"; readonly reason: string }
+  | {
+      readonly kind: "output_limit";
+      readonly limit: Extract<
+        OwnedMcpTransportFailure,
+        { readonly kind: "output_limit" }
+      >;
+    }
   | { readonly kind: "cancelled" }
   | { readonly kind: "timeout"; readonly timeoutMs: number }
 );
@@ -111,39 +126,110 @@ const observeJadxFailure = (
             cause: cancellation.reason,
             ...jadxOperationTimeoutGuidance(timeoutMs),
           })
-        : new AnalysisCancelledError(request.operation, {
-            cause: cancellation.reason,
-          });
+        : cancelledBy(request.operation, carriedReason(cancellation.reason));
   if (cause instanceof RegularFileCleanupFailure) {
-    const primaryCause =
-      cause.outcome.kind === "failed"
-        ? stableFileHashCause(cause.outcome.cause)
-        : cause;
+    const reason = errorMessage(cause.cleanupCause);
+    // A finished copy or its cancellation can sit on this close or inside a
+    // nested one when another descriptor also rejected close. Name every
+    // descriptor that failed; the copied output path stays on the observation.
+    const closeFailures = snapshotCloseFailures(cause);
+    const descriptorPaths = [
+      ...new Set(closeFailures.map((failure) => failure.path)),
+    ];
+    const completed = completedSnapshotCopy(cause);
+    const nestedCancellation = nestedFileCancellation(cause);
+    const nestedCancellationError =
+      nestedCancellation === undefined
+        ? undefined
+        : timeout.aborted && nestedCancellation.reason === timeout.reason
+          ? new AnalysisTimeoutError(request.operation, timeoutMs, {
+              cause: nestedCancellation.reason,
+              ...jadxOperationTimeoutGuidance(timeoutMs),
+            })
+          : cancelledBy(
+              request.operation,
+              carriedReason(nestedCancellation.reason),
+            );
+    const snapshotObservation =
+      completed === undefined
+        ? undefined
+        : {
+            kind: "file-snapshot-hash" as const,
+            path: completed.snapshotPath,
+            sha256: completed.sha256,
+            bytes: completed.bytes,
+          };
+    if (completed !== undefined && nestedCancellationError === undefined)
+      return new ProviderCleanupError(
+        "jadx",
+        descriptorPaths,
+        {
+          reason,
+          snapshot_copy: "completed",
+          source_path: completed.sourcePath,
+          snapshot_sha256: completed.sha256,
+          snapshot_bytes: completed.bytes,
+        },
+        {
+          operation: request.operation,
+          cause,
+          ...(snapshotObservation === undefined
+            ? {}
+            : { partialObservation: snapshotObservation }),
+        },
+      );
+    const primaryCause = nestedOperationCause(cause);
     const primary =
-      cancellationError ??
+      nestedCancellationError ??
       (primaryCause instanceof AnalysisError
         ? primaryCause
         : new ProviderAdapterError("jadx", request.operation, {
             cause: primaryCause,
-            userMessage:
-              primaryCause instanceof Error
-                ? primaryCause.message
-                : String(primaryCause),
+            userMessage: errorMessage(primaryCause),
           }));
     const cleanup = new ProviderCleanupError(
       "jadx",
-      [cause.path],
+      descriptorPaths,
       {
-        reason:
-          cause.cleanupCause instanceof Error
-            ? cause.cleanupCause.message
-            : String(cause.cleanupCause),
+        reason,
+        ...(completed === undefined
+          ? {}
+          : {
+              snapshot_copy: "completed" as const,
+              source_path: completed.sourcePath,
+              snapshot_sha256: completed.sha256,
+              snapshot_bytes: completed.bytes,
+            }),
       },
       { operation: request.operation, cause },
     );
-    return analysisErrorWithCleanupFailure(primary, cleanup, request.operation);
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      request.operation,
+    );
+    if (snapshotObservation !== undefined)
+      composed.retainPartialObservation(snapshotObservation);
+    return composed;
   }
-  if (cancellationError !== undefined) return cancellationError;
+  if (cancellationError !== undefined) {
+    const completed = completedSnapshotCopy(cause);
+    if (completed !== undefined) {
+      cancellationError.retainPartialObservation({
+        kind: "file-snapshot-hash",
+        path: completed.snapshotPath,
+        sha256: completed.sha256,
+        bytes: completed.bytes,
+      });
+      cancellationError.retainDiagnostics({
+        snapshot_copy: "completed",
+        source_path: completed.sourcePath,
+        snapshot_sha256: completed.sha256,
+        snapshot_bytes: completed.bytes,
+      });
+    }
+    return cancellationError;
+  }
   if (cause instanceof StableFileHashFailure)
     return new ProviderAdapterError("jadx", request.operation, {
       cause: cause.cause,
@@ -155,6 +241,13 @@ const observeJadxFailure = (
       ...diagnostic,
       kind: "output",
       reason: "JADX response violated the pinned upstream protocol",
+    };
+  if (observed?.kind === "output_limit")
+    return {
+      ...diagnostic,
+      cause: observed.cause,
+      kind: "output_limit",
+      limit: observed,
     };
   if (observed?.kind === "protocol")
     return {
@@ -176,16 +269,70 @@ const observeJadxFailure = (
   );
 };
 
+/**
+ * A finished copy can be the close outcome or the value inside a nested
+ * cancellation thrown after the destination close succeeded.
+ */
+const completedSnapshotCopy = (
+  cause: unknown,
+): ReturnType<typeof androidSnapshotCopy> => {
+  if (cause instanceof RegularFileCancelled)
+    return androidSnapshotCopy(cause.outcome.value);
+  if (!(cause instanceof RegularFileCleanupFailure)) return undefined;
+  if (cause.outcome.kind === "completed")
+    return androidSnapshotCopy(cause.outcome.value);
+  return completedSnapshotCopy(cause.outcome.cause);
+};
+
+/** This close and any nested close whose failure is its operation outcome. */
+const snapshotCloseFailures = (
+  cause: RegularFileCleanupFailure,
+): readonly RegularFileCleanupFailure[] => {
+  const failures = [cause];
+  if (
+    cause.outcome.kind === "failed" &&
+    cause.outcome.cause instanceof RegularFileCleanupFailure
+  )
+    failures.push(...snapshotCloseFailures(cause.outcome.cause));
+  return failures;
+};
+
+/** Cancellation recorded on this close or on a nested descriptor close. */
+const nestedFileCancellation = (
+  cause: unknown,
+): { readonly reason: unknown } | undefined => {
+  const direct = regularFileCancellation(cause);
+  if (direct !== undefined) return direct;
+  if (
+    cause instanceof RegularFileCleanupFailure &&
+    cause.outcome.kind === "failed"
+  )
+    return nestedFileCancellation(cause.outcome.cause);
+  return undefined;
+};
+
+/** The operation error under nested close failures, not the close wrapper. */
+const nestedOperationCause = (cause: unknown): unknown => {
+  if (
+    cause instanceof RegularFileCleanupFailure &&
+    cause.outcome.kind === "failed"
+  )
+    return nestedOperationCause(stableFileHashCause(cause.outcome.cause));
+  return stableFileHashCause(cause);
+};
+
 const presentDiagnosticFailure = (
   failure: DiagnosticFailure,
 ): AnalysisError => {
   const output = failure.transport?.diagnostics();
-  const options = {
-    cause: failure.cause,
-    ...(output === undefined ? {} : { capturedOutput: output }),
-  };
+  const captured = output === undefined ? {} : { capturedOutput: output };
+  const options = { cause: failure.cause, ...captured };
   if (failure.kind === "cancelled")
-    return new AnalysisCancelledError(failure.operation, options);
+    return cancelledBy(
+      failure.operation,
+      carriedReason(failure.cause),
+      captured,
+    );
   if (failure.kind === "timeout")
     return new AnalysisTimeoutError(failure.operation, failure.timeoutMs, {
       ...options,
@@ -193,8 +340,41 @@ const presentDiagnosticFailure = (
     });
   if (failure.kind === "output")
     return new AnalysisOutputError(failure.operation, failure.reason, options);
+  if (failure.kind === "output_limit") {
+    const { scope, ceiling } = failure.limit;
+    return new AnalysisResourceConstraintError(
+      failure.operation,
+      "transport",
+      `${failure.limit.cause.message}; no partial Evidence was returned.`,
+      {
+        [scope === "frame" ? "max_response_bytes" : "max_operation_bytes"]:
+          ceiling.limit,
+      },
+      {
+        ...options,
+        // REA bounds JADX stdio output at fixed sizes with no runtime override.
+        retryable: false,
+        fixedAllowance: ceiling,
+      },
+    );
+  }
   if (failure.kind === "startup") {
-    const reason = `Java could not start REA's Android bridge using ${failure.command}: ${failure.cause instanceof Error ? failure.cause.message : String(failure.cause)}. ${output === undefined || output.stderr.length === 0 ? "No launcher stderr was observed." : "Review the retained launcher diagnostics."}${output?.truncated === true ? " Diagnostics are incomplete." : ""} Review the selected Java/JADX configuration; for a JVM memory limit, review REA_JADX_HEAP_MIB and inherited JVM options such as JAVA_TOOL_OPTIONS.`;
+    // Before the handshake the retained stderr is the only evidence of why the
+    // launcher stopped; a heap shortage there is a resource limit, not setup.
+    if (jadxHeapExhausted(output?.stderr ?? ""))
+      return new AnalysisResourceConstraintError(
+        failure.operation,
+        "memory",
+        "The JADX worker JVM ran out of heap before REA's Android bridge answered",
+        // The bridge never reported its heap, so the limit stays unknown.
+        { observed_max_heap_bytes: null },
+        {
+          ...options,
+          retryable: false,
+          remediationAction: JADX_HEAP_REMEDIATION,
+        },
+      );
+    const reason = `Java could not start REA's Android bridge using ${failure.command}: ${errorMessage(failure.cause)}. ${output === undefined || output.stderr.length === 0 ? "No launcher stderr was observed." : "Review the retained launcher diagnostics."}${output?.truncated === true ? " Diagnostics are incomplete." : ""} Review the selected Java/JADX configuration; for a JVM memory limit, review REA_JADX_HEAP_MIB and inherited JVM options such as JAVA_TOOL_OPTIONS.`;
     return new AnalysisCapabilityUnavailableError(
       "jadx",
       failure.operation,
@@ -208,10 +388,7 @@ const presentDiagnosticFailure = (
   return new ProviderAdapterError("jadx", failure.operation, {
     ...options,
     diagnostics: {
-      reason:
-        failure.cause instanceof Error
-          ? failure.cause.message
-          : String(failure.cause),
+      reason: errorMessage(failure.cause),
     },
   });
 };

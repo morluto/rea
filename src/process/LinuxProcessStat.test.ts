@@ -31,11 +31,13 @@ it("parses command names containing parentheses and retains native relation fact
     parseLinuxProcessStat(statRecord({ command: "worker ) old ) name" })),
   ).toEqual({
     pid: 42,
+    name: "worker ) old ) name",
     startTime: "987654",
     lifecycle: "non-zombie",
     parentPid: 17,
     processGroupId: 18,
     sessionId: 19,
+    kernelThread: false,
   });
 });
 
@@ -47,16 +49,40 @@ it("accepts zero parent, process-group, and session IDs as native facts", () => 
   ).toMatchObject({ parentPid: 0, processGroupId: 0, sessionId: 0 });
 });
 
-it("distinguishes zombie lifecycle and rejects malformed or missing identity fields", () => {
-  expect(parseLinuxProcessStat(statRecord({ state: "Z" }))?.lifecycle).toBe(
-    "zombie",
-  );
-  expect(parseLinuxProcessStat("(worker) S 1 2 3")).toBeUndefined();
-  expect(parseLinuxProcessStat(statRecord({ pid: "0" }))).toBeUndefined();
-  expect(parseLinuxProcessStat(statRecord({ state: "??" }))).toBeUndefined();
-  expect(parseLinuxProcessStat(statRecord({ startTime: "not-a-number" }))).toBe(
-    undefined,
-  );
+it("retains identity when Linux teardown reports unavailable group and session IDs", () => {
+  // Linux v6.8 fs/proc/array.c: do_task_stat initializes pgid/sid to -1
+  // and only replaces them while lock_task_sighand succeeds.
+  expect(
+    parseLinuxProcessStat(
+      statRecord({
+        parentPid: "0",
+        processGroupId: "-1",
+        sessionId: "-1",
+        state: "X",
+        flags: "4",
+      }),
+    ),
+  ).toEqual({
+    pid: 42,
+    name: "worker",
+    startTime: "987654",
+    lifecycle: "dead",
+    parentPid: 0,
+    processGroupId: -1,
+    sessionId: -1,
+    kernelThread: false,
+  });
+});
+
+it.each([
+  ["missing PID", "(worker) S 1 2 3"],
+  ["PID zero", statRecord({ pid: "0" })],
+  ["malformed state", statRecord({ state: "??" })],
+  ["malformed start time", statRecord({ startTime: "not-a-number" })],
+  ["invalid group sentinel", statRecord({ processGroupId: "-2" })],
+  ["invalid session sentinel", statRecord({ sessionId: "-2" })],
+])("rejects a native stat record with %s", (_reason, record) => {
+  expect(parseLinuxProcessStat(record)).toBeUndefined();
 });
 
 it.each(["R", "S", "D"])(
@@ -85,11 +111,33 @@ it.each(["invalid", "-1", "4.1", "9007199254740992"])(
   (flags) => {
     expect(parseLinuxProcessStat(statRecord({ flags }))).toEqual({
       pid: 42,
+      name: "worker",
       startTime: "987654",
       lifecycle: undefined,
       parentPid: 17,
       processGroupId: 18,
       sessionId: 19,
+      kernelThread: undefined,
     });
   },
 );
+
+it("distinguishes a kernel thread from a process sharing its flags", () => {
+  // Field 9 task_flags: PF_KTHREAD is 0x00200000; PF_EXITING stays orthogonal.
+  expect(parseLinuxProcessStat(statRecord({ flags: "2097408" }))).toMatchObject(
+    {
+      kernelThread: true,
+      lifecycle: "non-zombie",
+    },
+  );
+  expect(parseLinuxProcessStat(statRecord({ flags: "2097156" }))).toMatchObject(
+    {
+      kernelThread: true,
+      lifecycle: "exiting",
+    },
+  );
+  expect(parseLinuxProcessStat(statRecord({ flags: "4" }))).toMatchObject({
+    kernelThread: false,
+    lifecycle: "exiting",
+  });
+});

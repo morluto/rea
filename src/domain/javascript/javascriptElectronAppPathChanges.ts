@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { semanticMemberWriteSources } from "./javascriptSemanticEffectLog.js";
 
 import {
   semanticStaticPropertyKey,
@@ -20,7 +21,6 @@ import {
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -31,6 +31,7 @@ import { assignmentValueSources } from "./javascriptSemanticRequireOrigin.js";
 import { semanticRuntimeExportValueSources } from "./javascriptModuleDeclaration.js";
 import {
   commonJsRuntimeExportValues,
+  commonJsExportApplicability,
   indexCommonJsExportReceiversSteps,
   type CommonJsExportReceiverEffect,
   type CommonJsExportSite,
@@ -95,7 +96,7 @@ export const createSemanticElectronAppPathChangeQuery = (
       const node = unwrapJavaScriptExpression(candidate.node).node;
       // Close the finite source graph after the precise context budget is
       // exhausted. Widening alone is never evidence of an Electron origin.
-      if (!widened && scheduled >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      if (!widened && scheduled >= state.precision.alias_selections) {
         state.valueResourceLimits.add("alias-selections");
         widened = true;
       }
@@ -242,11 +243,10 @@ export const createSemanticElectronAppPathChangeQuery = (
                     : [...source.projection, ...path],
               });
             }
-          for (const effect of binding.memberWrites)
-            for (const source of effect.assignedSources ?? []) {
-              if (semanticReferenceSourcesInactive(source, state)) continue;
-              enqueue({ ...current, node: source.node, path: undefined });
-            }
+          for (const source of semanticMemberWriteSources(binding)) {
+            if (semanticReferenceSourcesInactive(source, state)) continue;
+            enqueue({ ...current, node: source.node, path: undefined });
+          }
           continue;
         }
         for (const source of sources)
@@ -312,7 +312,7 @@ export const createSemanticElectronAppPathChangeQuery = (
         for (const choice of semanticAliasSelectionChoices(key!)) {
           const sources = t.isObjectExpression(node)
             ? semanticObjectPropertyReferences(node, [choice], state)
-            : semanticArrayPropertyReferences(node, [choice]);
+            : semanticArrayPropertyReferences(node, [choice], state);
           for (const source of sources)
             if (
               !source.inherited ||
@@ -359,20 +359,26 @@ export const createSemanticElectronAppPathChangeQuery = (
       return true;
     const exported = commonJsRuntimeExportValues(node, state);
     if (
-      !exported.some(({ value }) => value !== null) ||
+      !exported.some(
+        ({ value, iterationSource }) =>
+          value !== null || iterationSource !== undefined,
+      ) ||
       (!t.isAssignmentExpression(node) && !t.isCallExpression(node))
     )
       return false;
-    commonJsReceivers ??= completeSemanticSteps(
+    const receivers = (commonJsReceivers ??= completeSemanticSteps(
       indexCommonJsExportReceiversSteps(state),
-    );
-    return (
-      commonJsReceivers.get(node) !== "detached" &&
-      exported.some(
-        ({ value, projection, ownEnumerable }) =>
-          value !== null &&
-          possiblePath(value, true, projection, ownEnumerable),
-      )
+    ));
+    return exported.some(
+      ({ exportedName, value, projection, ownEnumerable, iterationSource }) =>
+        commonJsExportApplicability(receivers.get(node), exportedName) !==
+          "detached" &&
+        (value !== null
+          ? possiblePath(value, true, projection, ownEnumerable)
+          : iterationSource !== undefined &&
+            // Unknown iteration does not identify any yielded slot. Retain
+            // only source reachability through the existing escape query.
+            possiblePath(iterationSource, true)),
     );
   };
 };

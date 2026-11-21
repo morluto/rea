@@ -1,74 +1,67 @@
-import { z } from "incur";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
-import { logCliCommand } from "../cliLogging.js";
-import { compareSourceToBundleCliInputSchema } from "../contracts/javascript/applicationWorkflowInputContracts.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractDocumentCommand } from "./contractCommand.js";
+import {
+  evidenceBundleOption,
+  runEvidenceInputCommand,
+} from "./evidenceInputCommand.js";
+
+/** The reference file path exactly as the caller spelled it, if any. */
+const spelledReferencePath = (document: unknown): string | undefined => {
+  if (typeof document !== "object" || document === null) return undefined;
+  const reference = (document as { readonly reference?: unknown }).reference;
+  if (typeof reference !== "object" || reference === null) return undefined;
+  const path = (reference as { readonly path?: unknown }).path;
+  return typeof path === "string" ? path : undefined;
+};
 
 /** CLI file transport delegates graph authentication and comparison to the same owners as MCP. */
 export const registerSourceToBundleCommand = (
   cli: CliInstance,
   logger: Logger,
-): void => {
-  const name = CLI_COMMANDS.compareSourceToBundle;
-  cli.command(name, {
-    description:
-      "Compare historical source (inline graph or reference {kind:file,path}) with authenticated application Evidence. Save the complete JSON to query with inspect-analysis-view.",
-    args: z.object({
-      inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, name, async () => {
-          const input = await parseCliJsonInput(args.inputJson, name, signal);
-          if (!input.ok) return input.error;
-          const parsed = compareSourceToBundleCliInputSchema.safeParse(
-            input.value,
-          );
-          if (!parsed.success)
-            return {
-              error: "Application workflow failed",
-              ...projectAnalysisError(
-                analysisInputErrorFromIssues(
-                  name,
-                  parsed.error.issues,
-                  input.value,
-                ),
-              ),
-            };
-          const resources = new ArtifactResourceScope();
-          const result = await finishAnalysisCommand(
-            async () => {
-              const { resolveSourceToBundleReference } =
-                await import("../application/javascript/SourceToBundleReference.js");
-              const reference = await resolveSourceToBundleReference(
-                parsed.data.reference,
-                signal,
-                resources,
-              );
-              if (!reference.ok) return reference;
-              const { compareSourceToBundleEvidenceValidated } =
-                await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
-              return compareSourceToBundleEvidenceValidated({
-                ...reference.value,
-                application: parsed.data.application,
-              });
-            },
+): void =>
+  registerContractDocumentCommand(
+    cli,
+    logger,
+    contractNamed(APPLICATION_TOOL_CONTRACTS, "compare_source_to_bundle"),
+    {
+      description:
+        "Compare historical source (inline graph or reference {kind:file,path}) with authenticated application Evidence. Save the complete JSON to query with inspect-analysis-view.",
+      document: "Inline workflow JSON or JSON file path",
+      callerPaths: [["reference", "path"]],
+      omit: {
+        view: "A one-shot command retains no session Evidence for a selected view; save the complete comparison and query it with inspect-analysis-view",
+      },
+      cliOptions: { evidenceBundle: evidenceBundleOption },
+    },
+    async (document, { signal, operation, spelled, frame, cliOptions }) => {
+      const requestedReferencePath = spelledReferencePath(spelled);
+      const result = await runEvidenceInputCommand(
+        document,
+        { operation, signal, frame, cliOptions },
+        async (lookup, resources) => {
+          const { executeSourceToBundleComparison } =
+            await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
+          const compared = await executeSourceToBundleComparison(
+            document,
+            lookup,
             resources,
-            "javascript-application-workflow",
-            "compare_source_to_bundle",
-            signal,
+            {
+              signal,
+              ...(requestedReferencePath === undefined
+                ? {}
+                : { requestedReferencePath }),
+            },
           );
-          return "evidence_id" in result
-            ? result
-            : { error: "Application workflow failed", ...result };
-        }),
-      ),
-  });
-};
+          return compared.ok
+            ? { ok: true, value: compared.value.evidence }
+            : compared;
+        },
+      );
+      return result.ok
+        ? result.value
+        : { error: "Application workflow failed", ...result.error };
+    },
+  );

@@ -1,10 +1,11 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { _electron as electron } from "playwright-core";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { observeOwnedProcessLineage } from "../process/ProcessOwnershipObservation.js";
 import type {
@@ -12,8 +13,11 @@ import type {
   ProcessCleanupResult,
   ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
-import { runWithExecutionLimits } from "./PlaywrightElectronActiveActions.js";
-import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
+import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
+import {
+  cleanupElectronProcesses,
+  systemElectronCleanupHost,
+} from "./ElectronProcessCleanup.js";
 
 type ElectronApplication = Awaited<ReturnType<typeof electron.launch>>;
 
@@ -30,6 +34,8 @@ export class ElectronCaptureCleanup {
     application: Pick<ElectronApplication, "close">,
     ownership: PersistentOwnedProcessGroup | undefined,
     lineage: ProcessLineageObservation | undefined,
+    // The host whose process tree this cleanup releases.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {
     this.#ownership = ownership;
     this.#lineage = lineage;
@@ -113,7 +119,8 @@ export class ElectronCaptureCleanup {
     // current tokens/start identities. Windows requires this attempt's lineage.
     return cleanupElectronProcesses(
       ownership,
-      process.platform === "win32" ? current : (this.#lineage ?? current),
+      this.platform === "win32" ? current : (this.#lineage ?? current),
+      systemElectronCleanupHost(this.platform),
     );
   }
 }

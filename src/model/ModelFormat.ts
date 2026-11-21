@@ -1,38 +1,37 @@
-/** Producing constraint for a model capacity refusal. Recovery uses this, not message text. */
-export const MODEL_CAPACITY_LIMITS = [
-  "header-bytes",
-  "report-bytes",
-  "representation-bytes",
-  "exact-offset",
-  "metadata-nesting",
-] as const;
+import { Budget } from "../domain/budget.js";
+import {
+  decodeLimit,
+  malformedInput,
+  type ParseFailureError,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 
-/** Which fixed model allowance refused the request. */
-export type ModelCapacityLimit = (typeof MODEL_CAPACITY_LIMITS)[number];
+/** The ParseFailure format of GGUF and Safetensors model headers. */
+export const MODEL_FORMAT = "model";
 
-/** Format failures stay separate from filesystem, capacity and cancellation failures. */
-export class ModelFormatFailure extends Error {
-  /** Set only for `kind: "capacity"`. */
-  readonly limit: ModelCapacityLimit | undefined;
-  constructor(kind: "format" | "unsupported", message: string);
-  constructor(kind: "capacity", message: string, limit: ModelCapacityLimit);
-  constructor(
-    readonly kind: "format" | "unsupported" | "capacity",
-    message: string,
-    limit?: ModelCapacityLimit,
-  ) {
-    super(message);
-    this.name = "ModelFormatFailure";
-    if (kind === "capacity" && limit === undefined)
-      throw new TypeError("Model capacity failures require a limit kind");
-    if (kind !== "capacity" && limit !== undefined)
-      throw new TypeError("Only model capacity failures carry a limit kind");
-    this.limit = limit;
-  }
-}
+/** A fixed model allowance refused the input; the limit name is its {@link ModelCapacityLimit}. */
+export const modelCapacityFailure = (
+  limit: ModelCapacityLimit,
+  detail: string,
+): ParseFailureError<"limit"> =>
+  decodeLimit(MODEL_FORMAT, detail, {
+    name: limit,
+    maximum: modelCapacityLimits[limit].maximum,
+  });
 
 export function rejectModel(message: string): never {
-  throw new ModelFormatFailure("format", message);
+  throw malformedInput(MODEL_FORMAT, message);
+}
+
+export function rejectPickle(): never {
+  throw unsupportedInput(
+    MODEL_FORMAT,
+    "PyTorch pickle/ZIP model deserialization is unsupported; supply GGUF or safetensors instead",
+  );
 }
 
 // Shared header ceiling for GGUF and Safetensors. Safetensors counts declared
@@ -42,62 +41,77 @@ export const MODEL_HEADER_BYTES = 100_000_000;
 export const MODEL_REPORT_BYTES = 32 * 1024 * 1024;
 export const MODEL_ARRAY_PREVIEW = 8;
 export const MODEL_METADATA_NESTING = 32;
+export const MODEL_JSON_NESTING = 32;
 
 const fixedModelLimit = (allowance: string): string =>
   `${allowance}. This release has no runtime override. Additional host memory does not raise it. Repeating the unchanged request fails the same way.`;
 
-/** Recovery for the allowance that actually refused the model. Host memory does not raise it. */
-export const modelCapacityRemediation = (limit: ModelCapacityLimit): string => {
-  switch (limit) {
-    case "header-bytes":
-      return fixedModelLimit("The model header allowance is 100,000,000 bytes");
-    case "report-bytes":
-      return fixedModelLimit(
-        `The retained model report allowance is ${String(MODEL_REPORT_BYTES)} bytes`,
-      );
-    case "representation-bytes":
-      return fixedModelLimit(
-        `The retained model representation allowance is ${String(MODEL_REPORT_BYTES)} bytes`,
-      );
-    case "exact-offset":
-      return fixedModelLimit(
-        `Exact host offset precision stops at ${String(Number.MAX_SAFE_INTEGER)}`,
-      );
-    case "metadata-nesting":
-      return fixedModelLimit(
-        `GGUF metadata nesting is limited to ${String(MODEL_METADATA_NESTING)} array frames`,
-      );
-  }
-};
+const modelCapacityLimits = {
+  "header-bytes": {
+    maximum: MODEL_HEADER_BYTES,
+    legacyMaximumKey: "maximum_header_bytes",
+    allowance: (maximum: number) =>
+      `The model header allowance is ${maximum.toLocaleString("en-US")} bytes`,
+  },
+  "report-bytes": {
+    maximum: MODEL_REPORT_BYTES,
+    legacyMaximumKey: "maximum_report_bytes",
+    allowance: (maximum: number) =>
+      `The retained model report allowance is ${String(maximum)} bytes`,
+  },
+  "representation-bytes": {
+    maximum: MODEL_REPORT_BYTES,
+    legacyMaximumKey: "maximum_representation_bytes",
+    allowance: (maximum: number) =>
+      `The retained model representation allowance is ${String(maximum)} bytes`,
+  },
+  "exact-offset": {
+    maximum: Number.MAX_SAFE_INTEGER,
+    legacyMaximumKey: "maximum_exact_offset",
+    allowance: (maximum: number) =>
+      `Exact host offset precision stops at ${String(maximum)}`,
+  },
+  "metadata-nesting": {
+    maximum: MODEL_METADATA_NESTING,
+    legacyMaximumKey: "maximum_array_frames",
+    allowance: (maximum: number) =>
+      `GGUF metadata nesting is limited to ${String(maximum)} array frames`,
+  },
+  "json-nesting": {
+    maximum: MODEL_JSON_NESTING,
+    legacyMaximumKey: "maximum_json_depth",
+    allowance: (maximum: number) =>
+      `Safetensors JSON nesting is limited to ${String(maximum)} levels`,
+  },
+} as const;
 
-/** Limits that belong to the producing constraint, without unrelated ceilings. */
-export const modelCapacityReportedLimits = (
-  limit: ModelCapacityLimit,
-): Readonly<Record<string, number>> => {
-  switch (limit) {
-    case "header-bytes":
-      return { maximum_header_bytes: MODEL_HEADER_BYTES };
-    case "report-bytes":
-      return { maximum_report_bytes: MODEL_REPORT_BYTES };
-    case "representation-bytes":
-      return { maximum_representation_bytes: MODEL_REPORT_BYTES };
-    case "exact-offset":
-      return { maximum_exact_offset: Number.MAX_SAFE_INTEGER };
-    case "metadata-nesting":
-      return { maximum_array_frames: MODEL_METADATA_NESTING };
-  }
+type ModelCapacityLimit = keyof typeof modelCapacityLimits;
+
+const isModelCapacityLimit = (name: string): name is ModelCapacityLimit =>
+  Object.hasOwn(modelCapacityLimits, name);
+
+/** The model parser supplies the enforced maximum and the original cause. */
+export const modelCapacityConstraint = (operation: string, cause: unknown) => {
+  if (!isParseLimit(cause, MODEL_FORMAT)) return undefined;
+  const { name, maximum } = cause.failure.limit;
+  if (!isModelCapacityLimit(name)) return undefined;
+  const { allowance, legacyMaximumKey } = modelCapacityLimits[name];
+  return parseLimitConstraint(operation, "memory", cause, {
+    legacyMaximumKey,
+    retryable: false,
+    remediationAction: fixedModelLimit(allowance(maximum)),
+  });
 };
 
 /** Charge representation growth before retaining rows or decoding long strings. */
 export class ModelReportBudget {
-  #remaining = MODEL_REPORT_BYTES;
+  readonly #bytes = new Budget(MODEL_REPORT_BYTES);
   charge(bytes: number): void {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
-      throw new ModelFormatFailure(
-        "capacity",
-        "Model facts exceed the 32 MiB retained representation budget. This release has no runtime override.",
+    this.#bytes.charge(bytes, () =>
+      modelCapacityFailure(
         "representation-bytes",
-      );
-    this.#remaining -= bytes;
+        "Model facts exceed the 32 MiB retained representation budget. This release has no runtime override.",
+      ),
+    );
   }
 }

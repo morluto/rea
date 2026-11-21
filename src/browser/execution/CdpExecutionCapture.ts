@@ -1,16 +1,13 @@
-import { z } from "zod";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import type {
   ObserveWebExecutionInput,
   WebExecution,
+  WebExecutionObservation,
 } from "../../domain/webExecution.js";
 import { CdpExecutionCollection } from "./CdpExecutionCollection.js";
-import { preciseCoverageSchema } from "./CdpRuntimeProtocol.js";
+import type { CdpCommandResult } from "../protocol/CdpCommands.js";
 import { normalizePreciseCoverage } from "./CdpPreciseCoverage.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 
@@ -18,23 +15,27 @@ import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 export const captureWebExecution = async (
   input: ObserveWebExecutionInput,
   sources: CdpRuntimeSources,
-): Promise<WebExecution> => {
+): Promise<WebExecutionObservation> => {
   const session = sources.session;
   const collection = new CdpExecutionCollection(sources);
   const { window, requests } = collection;
   try {
-    for (const domain of ["Page", "Runtime", "Debugger", "Network", "Profiler"])
+    for (const domain of [
+      "Page",
+      "Runtime",
+      "Debugger",
+      "Network",
+      "Profiler",
+    ] as const)
       await session.enable(domain);
     await session.assertDocument();
     sources.check();
     session.preciseCoverageMayBeActive = true;
-    const started = z.object({ timestamp: z.number().min(0) }).parse(
-      await session.command("Profiler.startPreciseCoverage", {
-        callCount: true,
-        detailed: true,
-        allowTriggeredUpdates: false,
-      }),
-    );
+    const started = await session.command("Profiler.startPreciseCoverage", {
+      callCount: true,
+      detailed: true,
+      allowTriggeredUpdates: false,
+    });
     sources.check();
     window.check();
     if (window.reason !== undefined)
@@ -63,34 +64,23 @@ export const captureWebExecution = async (
     const reason = await waiting;
     session.beginCompletion();
     if (session.options.signal?.aborted)
-      throw new AnalysisCancelledError(session.operation, {
-        cause: session.options.signal.reason,
-      });
+      throw cancelledBy(session.operation, session.options.signal);
     sources.check();
     requests.check();
-    let raw: unknown;
+    let sampled: CdpCommandResult<"Profiler.takePreciseCoverage"> | undefined;
     if (reason === "window_elapsed") {
       await session.assertDocument();
-      raw = await session.command("Profiler.takePreciseCoverage");
+      sampled = await session.command("Profiler.takePreciseCoverage");
     }
     collection.freezeMetadata();
     await stopPreciseCoverage(session, reason);
     session.preciseCoverageMayBeActive = false;
     const requestItems = requests.result();
-    const parsed =
-      raw === undefined ? undefined : preciseCoverageSchema.safeParse(raw);
-    if (parsed !== undefined && !parsed.success)
-      throw new AnalysisOutputError(
-        session.operation,
-        `Malformed precise coverage: ${parsed.error.message}`,
-      );
     const mainScripts = [...sources.scripts.keys()].filter((id) =>
       sources.belongsToDocument(id),
     );
     const reportedIds = new Set(
-      parsed?.success === true
-        ? parsed.data.result.map((script) => script.scriptId)
-        : [],
+      sampled?.result.map((script) => script.scriptId) ?? [],
     );
     const ids = [
       ...mainScripts,
@@ -106,9 +96,9 @@ export const captureWebExecution = async (
       sources.belongsToDocument(id),
     );
     const sample =
-      parsed?.success === true
-        ? normalizePreciseCoverage(parsed.data, sources, retained)
-        : undefined;
+      sampled === undefined
+        ? undefined
+        : normalizePreciseCoverage(sampled, sources, retained);
     await session.options.progress?.report({
       phase: "browser_execution",
       completed: 2,
@@ -150,10 +140,11 @@ export const captureWebExecution = async (
         disables_optimized_execution: true,
         takes_one_resetting_sample: sample !== undefined,
         executes_selected_code: false,
-        cleanup: "confirmed",
+        cleanup: "unconfirmed",
         page_ownership: "external",
       },
       limitations: [
+        ...(session.discovery.limitations ?? []),
         "Website source ownership requires the selected main frame and a proven default execution world. Isolated, worker and unknown worlds are excluded from coverage/source joins; referenced producer context metadata is retained.",
         "Precise coverage resets counters, retains execution records and prevents optimized execution until stopped. Timing and JIT behavior are affected.",
         "Only the selected main document's proven frame/context scripts are attributed. Child frames, workers, service workers, WebAssembly and scripts without ownership metadata remain outside this operation.",

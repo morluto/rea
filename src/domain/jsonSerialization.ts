@@ -23,6 +23,20 @@ export function* jsonParts(value: unknown, pretty = false): Generator<string> {
   yield* encodeValue(value, pretty, false);
 }
 
+/** Exact UTF-8 bytes of ordinary JSON without allocating the whole document. */
+export const jsonByteLength = (value: unknown): number => {
+  let bytes = 0;
+  for (const part of jsonParts(value)) bytes += Buffer.byteLength(part, "utf8");
+  return bytes;
+};
+
+/** Exact UTF-16 code units of ordinary JSON without allocating the whole document. */
+export const jsonTextCodeUnits = (value: unknown): number => {
+  let length = 0;
+  for (const part of jsonParts(value)) length += part.length;
+  return length;
+};
+
 /** Encode validated JSON with canonical key ordering without allocating the whole document. */
 export function* canonicalJsonParts(value: unknown): Generator<string> {
   yield* encodeValue(value, false, true);
@@ -100,9 +114,7 @@ function* encodeString(value: string): Generator<string> {
 /** Encoded text accumulated before it is yielded as one part. */
 const PART_CHARACTERS = 16 * 1024;
 
-const indentation: string[] = [];
-const indent = (depth: number): string =>
-  (indentation[depth] ??= `\n${"  ".repeat(depth)}`);
+const INDENT_SPACES = " ".repeat(PART_CHARACTERS);
 
 interface ContainerFrame {
   readonly value: object;
@@ -212,15 +224,30 @@ function* encodeValue(
     const frame = stack.at(-1);
     if (frame === undefined) break;
     const member = nextMember(frame);
+    if (member !== undefined && frame.written > 0) buffer += ",";
+    if (pretty && (member !== undefined || frame.written > 0)) {
+      if (buffer.length === PART_CHARACTERS) {
+        yield buffer;
+        buffer = "";
+      }
+      buffer += "\n";
+      let spaces = 2 * (frame.depth + (member === undefined ? 0 : 1));
+      // Deep indentation can itself fill several parts. Reuse one whitespace
+      // block so neither the string allocation nor its retention grows with depth.
+      while (buffer.length + spaces >= PART_CHARACTERS) {
+        const available = PART_CHARACTERS - buffer.length;
+        yield buffer + INDENT_SPACES.slice(0, available);
+        buffer = "";
+        spaces -= available;
+      }
+      buffer += INDENT_SPACES.slice(0, spaces);
+    }
     if (member === undefined) {
-      if (pretty && frame.written > 0) buffer += indent(frame.depth);
       buffer += frame.array ? "]" : "}";
       ancestors.delete(frame.value);
       stack.pop();
       continue;
     }
-    if (frame.written > 0) buffer += ",";
-    if (pretty) buffer += indent(frame.depth + 1);
     if (member.key !== undefined) {
       const key = scalarText(member.key);
       if (key !== undefined) buffer += key;

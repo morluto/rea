@@ -130,13 +130,6 @@ it("preserves recovered diagnostics and file evidence through filesystem import"
     },
     {
       from_path: "src/recovered.js",
-      to: "node:fs",
-      kind: "requires",
-      resolution: "external",
-      parse_state: "partial",
-    },
-    {
-      from_path: "src/recovered.js",
       to: "src/lazy.js",
       kind: "imports",
       resolution: "internal",

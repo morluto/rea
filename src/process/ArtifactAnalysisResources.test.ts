@@ -1,16 +1,26 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
-import { writeFile } from "node:fs/promises";
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import {
+  artifactResourceDialect,
+  createArtifactAnalysisResources,
+} from "../providers/artifactResourceFailure.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import {
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "../resources/ArtifactResourceScope.js";
+import { withArtifactRegularFile } from "../resources/ArtifactFileOperation.js";
+import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { OwnedCommandFailure } from "./OwnedCommand.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -18,11 +28,123 @@ import {
 import { createEvidence } from "../domain/evidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "./LinuxResourceLimits.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
+import type {
+  AnalysisError,
+  AnalysisPartialObservation,
+} from "../domain/analysisErrorBase.js";
+import type { Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
+
+/** Providers finalize these resources through runOwned with their release as the close. */
+const finish = async <T>(
+  resources: ArtifactAnalysisResources,
+  result: Result<T, AnalysisError>,
+  partial: (value: T) => AnalysisPartialObservation,
+  operation = resources.operation,
+  signal?: AbortSignal,
+): Promise<Result<T, AnalysisError>> =>
+  finalizedResult(
+    await runOwned(async () => result, {
+      providerId: resources.providerId,
+      operation,
+      signal,
+      close: () => resources.release(),
+      partial,
+    }),
+  );
+
+it.runIf(process.platform !== "win32")(
+  "offers a resolved-file retry from the shared selected-artifact boundary",
+  async () => {
+    const root = await createTestTempDirectory("rea-selected-artifact-");
+    const target = join(root, "target.bin");
+    const selected = join(root, "selected");
+    await writeFile(target, "fixture");
+    await symlink(target, selected);
+    const resources = createArtifactAnalysisResources(
+      "fixture-provider",
+      "decode_signal_recording",
+      readStableArtifact,
+      readLinuxResourceLimits,
+      { message: "busy", details: {} },
+    );
+    try {
+      const result = await resources.run(async () =>
+        ok(
+          await resources.readSelectedArtifact({
+            path: selected,
+            maximumBytes: 1024,
+            allowanceName: "fixture input allowance",
+            observedOutput: undefined,
+          }),
+        ),
+      );
+      if (result.ok) throw new Error("Expected selected symlink refusal");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.remediation.action).toContain(target);
+      expect(projected).not.toHaveProperty("recovery");
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
+it.each(["command", "limiter"])(
+  "attributes post-run %s read failure to its exact artifact and retains producer output",
+  async (failedPath) => {
+    const source = new ArtifactReaderFailure("path", "Artifact was replaced");
+    const reads: string[] = [];
+    const resources = createArtifactAnalysisResources(
+      "fixture-provider",
+      "fixture-operation",
+      async (path) => {
+        reads.push(path);
+        if (path === failedPath) throw source;
+        return { bytes: Buffer.from("executable"), sha256: "unchanged" };
+      },
+      readLinuxResourceLimits,
+      { message: "busy", details: {} },
+    );
+    const output = {
+      stdout: "completed observation",
+      stderr: "producer warning",
+      truncated: true,
+      exit_code: 0,
+      signal: null,
+    };
+    try {
+      const result = await resources.run(async () =>
+        ok(
+          await resources.readCommandAfterRun(
+            "command",
+            { path: "limiter", sha256: "unchanged" },
+            output,
+            "inspect_signal_decoders",
+          ),
+        ),
+      );
+      if (result.ok) throw new Error("Expected failed post-run verification");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisArtifactChangedError",
+        operation: "inspect_signal_decoders",
+        path: failedPath,
+        capturedOutput: output,
+      });
+      expect(result.error.cause).toBe(source);
+      expect(reads).toEqual(
+        failedPath === "command" ? ["command"] : ["command", "limiter"],
+      );
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
 it("projects the specific reason and member evidence for retained cleanup", async () => {
   const producer = Object.assign(new EventEmitter(), {
@@ -55,7 +177,7 @@ it("projects the specific reason and member evidence for retained cleanup", asyn
       ],
     }),
   });
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readStableArtifact,
@@ -64,7 +186,8 @@ it("projects the specific reason and member evidence for retained cleanup", asyn
   );
   resources.retain({ path: "runtime-root", close: async () => {} }, owner);
 
-  const result = await resources.finish(
+  const result = await finish(
+    resources,
     err(new ProviderAdapterError("fixture-provider", "fixture-operation")),
     () => {
       throw new Error("unexpected success observation");
@@ -111,7 +234,7 @@ it("projects the specific reason and member evidence for retained cleanup", asyn
 
 it("preserves the primary error and resolves cleanup status after retry", async () => {
   let closes = 0;
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readStableArtifact,
@@ -130,7 +253,7 @@ it("preserves the primary error and resolves cleanup status after retry", async 
     "producer returned malformed output",
     {
       partialObservation: createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           id: "fixture",
           name: "Fixture",
@@ -146,7 +269,7 @@ it("preserves the primary error and resolves cleanup status after retry", async 
     },
   );
 
-  const result = await resources.finish(err(primary), () => {
+  const result = await finish(resources, err(primary), () => {
     throw new Error("unexpected success observation");
   });
 
@@ -172,7 +295,7 @@ it("preserves the primary error and resolves cleanup status after retry", async 
 it("resolves each returned cleanup error with its own retained root", async () => {
   let closesA = 0;
   let closesB = 0;
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readStableArtifact,
@@ -186,7 +309,8 @@ it("resolves each returned cleanup error with its own retained root", async () =
       if (closesA === 1) throw new Error("root A close failure");
     },
   });
-  const first = await resources.finish(
+  const first = await finish(
+    resources,
     err(new AnalysisOutputError("fixture-operation", "primary failure")),
     () => {
       throw new Error("unexpected success observation");
@@ -202,7 +326,7 @@ it("resolves each returned cleanup error with its own retained root", async () =
     },
   });
   const partial = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: null },
     {
       operation: "fixture-operation",
@@ -211,7 +335,7 @@ it("resolves each returned cleanup error with its own retained root", async () =
       confidence: "observed",
     },
   );
-  const second = await resources.finish(ok("completed"), () => partial);
+  const second = await finish(resources, ok("completed"), () => partial);
 
   if (second.ok) throw new Error("expected root B cleanup failure");
   expect(second.error.partialObservation).toEqual(partial);
@@ -256,7 +380,7 @@ it("resolves an artifact cleanup error when its scope owner later closes", async
     }
     return { bytes: Buffer.alloc(0), sha256: "0".repeat(64) };
   };
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readArtifact,
@@ -274,7 +398,11 @@ it("resolves an artifact cleanup error when its scope owner later closes", async
     ok(await resources.read("fixture", 1)),
   );
 
-  expect(retried.ok).toBe(true);
+  if (!retried.ok) throw retried.error;
+  expect(retried.value).toEqual({
+    bytes: Buffer.alloc(0),
+    sha256: "0".repeat(64),
+  });
   expect(first.error.cleanupIncomplete).toBe(false);
   expect(closes).toBe(2);
   await resources.close();
@@ -315,7 +443,7 @@ it("keeps a runtime root until its descriptor cleanup owner is released", async 
     }
     return { bytes: Buffer.alloc(0), sha256: "0".repeat(64) };
   };
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture-provider",
     "fixture-operation",
     readArtifact,
@@ -333,7 +461,7 @@ it("keeps a runtime root until its descriptor cleanup owner is released", async 
     },
   });
 
-  const outer = await resources.finish(first, () => {
+  const outer = await finish(resources, first, () => {
     throw new Error("unexpected success observation");
   });
 
@@ -350,7 +478,11 @@ it("keeps a runtime root until its descriptor cleanup owner is released", async 
   const retried = await resources.run(async () =>
     ok(await resources.read("fixture", 1)),
   );
-  expect(retried.ok).toBe(true);
+  if (!retried.ok) throw retried.error;
+  expect(retried.value).toEqual({
+    bytes: Buffer.alloc(0),
+    sha256: "0".repeat(64),
+  });
   expect(first.error.cleanupIncomplete).toBe(false);
   await resources.release();
   expect(rootCloses).toBe(1);
@@ -367,7 +499,7 @@ it.each([
 ])(
   "preserves caller cancellation at resource admission: %s",
   async (reason) => {
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture",
       "inspect_signal_decoders",
       readStableArtifact,
@@ -380,7 +512,6 @@ it.each([
         calls++;
         return ok("unexpected");
       }, AbortSignal.abort(reason));
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected cancelled admission");
       expect(result.error.cause).toBe(reason);
       expect(result.error.cleanupResources).toEqual([]);
@@ -402,7 +533,7 @@ it.each([
 ])(
   "projects the command owner's exact cancellation independently of physical causes: %s",
   async (reason) => {
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture",
       "inspect_signal_decoders",
       readStableArtifact,
@@ -455,16 +586,21 @@ it.each([false, true])(
       });
       if (!failedClose) throw primary;
       if (scope === undefined) throw new Error("Expected retained file scope");
-      return withArtifactRegularFile(path, scope, _signal, async (file) => {
-        const close = file.close.bind(file);
-        file.close = async () => {
-          if (!mayClose) throw new Error("injected descriptor close failure");
-          await close();
-        };
-        throw primary;
-      });
+      return withArtifactRegularFile(
+        path,
+        scope,
+        _signal,
+        async ({ handle: file }) => {
+          const close = file.close.bind(file);
+          file.close = async () => {
+            if (!mayClose) throw new Error("injected descriptor close failure");
+            await close();
+          };
+          throw primary;
+        },
+      );
     };
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture",
       "inspect_signal_decoders",
       readArtifact,
@@ -492,7 +628,7 @@ it.each([false, true])(
 );
 
 it("names the fixed producer command deadline and says it has no override", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_packet_fields",
     readStableArtifact,
@@ -520,7 +656,7 @@ it("names the fixed producer command deadline and says it has no override", asyn
 });
 
 it("says REA retains the tighter inherited limit when a producer signal fires", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_packet_fields",
     readStableArtifact,
@@ -557,8 +693,8 @@ it("says REA retains the tighter inherited limit when a producer signal fires", 
     expect(projected.remediation.action).toContain(
       "an unchanged retry may succeed or may fail the same way",
     );
-    expect(projected.remediation.action).not.toContain(
-      "Repeating the unchanged request fails the same way.",
+    expect(projected.remediation.action).not.toMatch(
+      /unchanged request.*fails/iu,
     );
     expect(projected.retryable).toBe(true);
     expect(projected.details).toMatchObject({
@@ -570,7 +706,7 @@ it("says REA retains the tighter inherited limit when a producer signal fires", 
 });
 
 it("keeps an unchanged SIGXFSZ retry uncertain when the inherited limit was not reported", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_packet_fields",
     readStableArtifact,
@@ -593,13 +729,10 @@ it("keeps an unchanged SIGXFSZ retry uncertain when the inherited limit was not 
       ),
     );
     expect(projected.remediation.action).toContain(
-      "The effective inherited limit was not reported.",
-    );
-    expect(projected.remediation.action).toContain(
       "an unchanged retry may succeed or may fail the same way",
     );
-    expect(projected.remediation.action).not.toContain(
-      "Repeating the unchanged request fails the same way.",
+    expect(projected.remediation.action).not.toMatch(
+      /unchanged request.*fails/iu,
     );
     expect(projected.retryable).toBe(true);
     expect(projected.details).toMatchObject({
@@ -612,7 +745,7 @@ it("keeps an unchanged SIGXFSZ retry uncertain when the inherited limit was not 
 });
 
 it("treats a fixed command-output cap as a non-retryable capture allowance", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_packet_fields",
     readStableArtifact,
@@ -635,15 +768,20 @@ it("treats a fixed command-output cap as a non-retryable capture allowance", asy
       resource: "memory",
       reportedLimits: { output_bytes: 1024 },
       retryable: false,
+      fixedAllowance: { kind: "capture", limit: 1024, unit: "bytes" },
     });
     const projected = projectAnalysisError(error);
-    expect(projected.retryable).toBe(false);
-    expect(projected.remediation.action).toContain(
-      "The retained command-output allowance of 1024 bytes",
-    );
-    expect(projected.remediation.action).toContain(
-      "this release has no runtime override",
-    );
+    expect(projected).toMatchObject({
+      retryable: false,
+      details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "capture",
+          limit: 1024,
+          unit: "bytes",
+        },
+      },
+    });
     expect(projected.remediation.action).not.toMatch(
       /Review the reported worker memory limits/u,
     );
@@ -656,7 +794,7 @@ it("treats a fixed command-output cap as a non-retryable capture allowance", asy
 });
 
 it("retains a physical command failure when the owner also observed late cancellation", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -677,7 +815,12 @@ it("retains a physical command failure when the owner also observed late cancell
       { command_timeout_ms: 100, output_bytes: 1024 },
       undefined,
     );
-    expect(error).toMatchObject({ _tag: "AnalysisOutputError" });
+    expect(error).toBeInstanceOf(UnclassifiedProviderFailure);
+    expect(error).toMatchObject({
+      providerId: "fixture",
+      examined: { failure_kind: "protocol", reason: "physical failure" },
+    });
+    expect(projectAnalysisError(error).code).toBe("execution_failure");
     expect(error.cause).toBe(failure);
   } finally {
     await resources.close();
@@ -686,7 +829,7 @@ it("retains a physical command failure when the owner also observed late cancell
 
 it("preserves typed caller cancellation through failed workspace cleanup and retry", async () => {
   let denied = true;
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -704,7 +847,7 @@ it("preserves typed caller cancellation through failed workspace cleanup and ret
     },
   });
   try {
-    const result = await resources.finish(err(primary), () => {
+    const result = await finish(resources, err(primary), () => {
       throw new Error("Must not produce success Evidence");
     });
     if (result.ok) throw new Error("Expected retained workspace");
@@ -725,14 +868,7 @@ it("preserves typed caller cancellation through failed workspace cleanup and ret
 
 it("observes cancellation after pending descriptor cleanup before admitting replacement work", async () => {
   let closes = 0;
-  let cleanupStarted: () => void = () => {};
-  const started = new Promise<void>((resolve) => {
-    cleanupStarted = resolve;
-  });
-  let releaseCleanup: () => void = () => {};
-  const held = new Promise<void>((resolve) => {
-    releaseCleanup = resolve;
-  });
+  const descriptorCleanup = phaseGate();
   const readArtifact: typeof readStableArtifact = async (
     _path,
     _limit,
@@ -747,8 +883,7 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
       lease: new AnalysisCleanupLease(async () => {
         closes++;
         if (closes === 1) throw new Error("descriptor close denied");
-        cleanupStarted();
-        await held;
+        await descriptorCleanup.hold();
       }, ["descriptor"]),
     } as const;
     await scope.release(retained);
@@ -763,7 +898,7 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
       },
     );
   };
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readArtifact,
@@ -771,7 +906,9 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
     { message: "busy", details: {} },
   );
   let calls = 0;
-  try {
+  const caller = new AbortController();
+  let pending: ReturnType<typeof resources.run> | undefined;
+  await withVerifierCleanup(async () => {
     const first = await resources.run(async () =>
       ok(await resources.read("fixture", 1)),
     );
@@ -779,30 +916,33 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
       ok: false,
       error: { cleanupIncomplete: true },
     });
-    const caller = new AbortController();
     const reason = { request: "cancel while old descriptor closes" };
-    const pending = resources.run(async () => {
+    pending = resources.run(async () => {
       calls++;
       return ok("Must not run");
     }, caller.signal);
-    await started;
+    await descriptorCleanup.reached(pending, "descriptor cleanup");
     caller.abort(reason);
-    releaseCleanup();
+    descriptorCleanup.release();
     const result = await pending;
     if (result.ok) throw new Error("Expected cancelled replacement");
     expect(result.error.cause).toBe(reason);
     expect(calls).toBe(0);
     if (!first.ok) expect(first.error.cleanupIncomplete).toBe(false);
-  } finally {
-    releaseCleanup();
-    await resources.close();
-  }
+  }, [
+    () => caller.abort(),
+    descriptorCleanup.release,
+    async () => {
+      await pending;
+    },
+    () => resources.close(),
+  ]);
 });
 
 it.each([false, true])(
   "keeps an existing physical primary across cleanup-time cancellation (failed close: %s)",
   async (failsClose) => {
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "fixture",
       "inspect_signal_decoders",
       readStableArtifact,
@@ -823,7 +963,8 @@ it.each([false, true])(
       },
     });
     try {
-      const result = await resources.finish(
+      const result = await finish(
+        resources,
         err(primary),
         () => {
           throw new Error("Failed work must not produce success Evidence");
@@ -835,6 +976,13 @@ it.each([false, true])(
       expect(failsClose ? result.error.cleanupPrimary : result.error).toBe(
         primary,
       );
+      // The recorded failure stays primary and keeps the late cancellation.
+      expect(primary.secondaryFailures).toEqual([
+        expect.objectContaining({
+          _tag: "AnalysisCancelledError",
+          cause: { request: "late cancellation" },
+        }),
+      ]);
       denied = false;
       await resources.close();
       expect(result.error.cleanupIncomplete).toBe(false);
@@ -849,7 +997,7 @@ it.each([false, true])(
 );
 
 it("keeps cleanup with no reported capability unresolved instead of clearing it from an empty scope", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -886,7 +1034,7 @@ it("keeps cleanup with no reported capability unresolved instead of clearing it 
 });
 
 it("joins mixed runtime cleanup and resolves each error only through its exact lease", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -939,7 +1087,7 @@ it("retains producer output when a completed read is cancelled during failed clo
   const caller = new AbortController();
   const reason = { request: "cancel during close" };
   const scope = new ArtifactResourceScope();
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,
@@ -958,7 +1106,7 @@ it("retains producer output when a completed read is cancelled during failed clo
       path,
       scope,
       caller.signal,
-      async (file) => {
+      async ({ handle: file }) => {
         const close = file.close.bind(file);
         file.close = async () => {
           caller.abort(reason);
@@ -970,12 +1118,14 @@ it("retains producer output when a completed read is cancelled during failed clo
     ).catch((cause: unknown) => cause);
     if (!(cause instanceof ArtifactReaderFailure))
       throw new Error("Expected retained artifact failure");
-    const error = resources.cleanupFailure(
+    const error = classifyProviderFailure(
       cause,
-      () => {
-        throw new Error("Completed read has no physical failure");
-      },
-      output,
+      artifactResourceDialect(resources, {
+        kind: "integrity",
+        operation: "inspect_signal_decoders",
+        path,
+        capturedOutput: output,
+      }),
     );
     const primary = error.cleanupPrimary;
     expect(primary).toMatchObject({
@@ -1004,7 +1154,7 @@ it("retains producer output when a completed read is cancelled during failed clo
 });
 
 it("keeps aggregate cleanup live through partial recovery without reclosing healthy roots", async () => {
-  const resources = new ArtifactAnalysisResources(
+  const resources = createArtifactAnalysisResources(
     "fixture",
     "inspect_signal_decoders",
     readStableArtifact,

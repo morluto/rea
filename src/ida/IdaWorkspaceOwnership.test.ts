@@ -1,13 +1,22 @@
-import { chmod, readdir, realpath, rm, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { requirePermissionDenial } from "../../tests/fixtures/permissionDenial.js";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createIdaTarget,
   RecordingIdaMcp,
 } from "../../tests/fixtures/idaMcp.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
+import { IdaWorkspace } from "./IdaWorkspace.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -25,6 +34,7 @@ const clientFor = (root: string, target: BinaryTarget) => {
       args: [],
       env: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },
@@ -35,23 +45,65 @@ const clientFor = (root: string, target: BinaryTarget) => {
 };
 
 describe("IDA workspace ownership before input preparation", () => {
+  it.skipIf(process.platform === "win32").each([
+    ["missing", "ENOENT"],
+    ["file", "ENOTDIR"],
+  ] as const)(
+    "retains the native %s-component failure as the workspace configuration cause",
+    async (component, code) => {
+      const { root, target } = await createIdaTarget();
+      roots.push(root);
+      const lexical = join(root, "workspace");
+      await mkdir(lexical);
+      if (component === "file")
+        await writeFile(join(root, component), "not a directory");
+      const selected = `${root}/${component}/../workspace`;
+      await expect(
+        IdaWorkspace.allocate(target, selected),
+      ).rejects.toMatchObject({
+        _tag: "ConfigurationError",
+        cause: { code, path: selected },
+        settings: [
+          {
+            setting: "workspaceRoot",
+            constraint: expect.stringContaining(code),
+          },
+        ],
+        diagnostics: { workspace_root: selected },
+      });
+      expect(await readdir(lexical)).toEqual([]);
+    },
+  );
+
   it.skipIf(process.platform === "win32")(
-    "opens the private input through a canonical path when the workspace root is a symlink",
+    "opens the canonical private input in the physical workspace selected through a symlink and ..",
     async () => {
       const { root, target } = await createIdaTarget();
       roots.push(root);
-      const linked = join(
-        await createTestTempDirectory("rea-ida-link-"),
-        "root",
+      const physical = join(root, "physical", "workspace");
+      const lexical = join(root, "workspace");
+      await mkdir(join(root, "physical", "inner"), { recursive: true });
+      await mkdir(physical);
+      await mkdir(lexical);
+      await symlink(join(root, "physical", "inner"), join(root, "link"));
+      const { client, producer } = clientFor(
+        `${root}/link/../workspace`,
+        target,
       );
-      await symlink(root, linked);
-      const { client, producer } = clientFor(linked, target);
-      expect((await client.execute("health", {})).ok).toBe(true);
-      const open = producer.calls.find(({ name }) => name === "idb_open");
-      expect(
-        String(open?.args.input_path).startsWith(`${await realpath(root)}/`),
-      ).toBe(true);
-      expect((await client.close()).ok).toBe(true);
+      try {
+        const health = await client.execute("health", {});
+        if (!health.ok) throw health.error;
+        const input = producer.calls.find(({ name }) => name === "idb_open")
+          ?.args.input_path;
+        if (typeof input !== "string")
+          throw new Error("Expected a private input path");
+        expect(dirname(dirname(input))).toBe(await realpath(physical));
+        expect(input).toBe(await realpath(input));
+        expect(await readdir(lexical)).toEqual([]);
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+      expect(await readdir(physical)).toEqual([]);
     },
   );
 
@@ -70,9 +122,10 @@ describe("IDA workspace ownership before input preparation", () => {
     expect(await readdir(root)).toEqual([]);
   });
 
-  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  it.skipIf(process.platform === "win32")(
     "preserves the input identity failure and retries workspace removal after permission recovery",
-    async () => {
+    async (context) => {
+      await requirePermissionDenial(context, "directory-write");
       const { root, target } = await createIdaTarget();
       roots.push(root);
       const { client, producer } = clientFor(root, {
@@ -112,4 +165,25 @@ describe("IDA workspace ownership before input preparation", () => {
       expect(await readdir(root)).toEqual(["target.elf"]);
     },
   );
+});
+
+it("attributes an unusable workspace parent to workspaceRoot without opening a worker", async () => {
+  const { root, target } = await createIdaTarget();
+  roots.push(root);
+  const { client, producer } = clientFor(join(root, "missing-parent"), target);
+  const result = await client.execute("health", {});
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ConfigurationError",
+      settings: [
+        {
+          setting: "workspaceRoot",
+          constraint: expect.stringContaining("ENOENT"),
+        },
+      ],
+    },
+  });
+  expect(producer.calls.some(({ name }) => name === "idb_open")).toBe(false);
+  expect((await client.close()).ok).toBe(true);
 });

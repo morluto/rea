@@ -1,12 +1,11 @@
-import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  readRegularFile,
-  RegularFileCleanupFailure,
-} from "./RegularFileRead.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { readRegularFile } from "../process/RegularFileRead.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface RecoveryBackupSelection {
   readonly backupPath: string;
@@ -21,9 +20,6 @@ export interface RecoveryBackupSelectionFailure {
 
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
-
-const errorDetail = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Select a persistent snapshot only when its bytes match this transaction's original. */
 export const selectCurrentRecoveryBackup = async (
@@ -48,7 +44,7 @@ export const selectCurrentRecoveryBackup = async (
       return err({
         kind: "unreadable",
         path: firstBackupPath,
-        detail: `The recovery backup could not be checked: ${errorDetail(cause)}`,
+        detail: `The recovery backup could not be checked: ${errorMessage(cause)}`,
       });
   }
   if (firstBackup === undefined)
@@ -56,7 +52,7 @@ export const selectCurrentRecoveryBackup = async (
   if (firstBackup.equals(expected))
     return ok({ backupPath: firstBackupPath, present: true });
 
-  const digest = createHash("sha256").update(expected).digest("hex");
+  const digest = sha256Hex(expected);
   const recoveryPath = `${firstBackupPath}.${digest}.recovery`;
   let recovery: Buffer | undefined;
   try {
@@ -67,7 +63,7 @@ export const selectCurrentRecoveryBackup = async (
       return err({
         kind: "unreadable",
         path: recoveryPath,
-        detail: `The recovery backup could not be checked: ${errorDetail(cause)}`,
+        detail: `The recovery backup could not be checked: ${errorMessage(cause)}`,
       });
   }
   if (recovery !== undefined && !recovery.equals(expected))
@@ -123,7 +119,7 @@ export const preserveCurrentRecoveryBackup = async (
         return err({
           kind: "copy",
           path: backupPath,
-          detail: `The recovery backup could not be written: ${errorDetail(cause)}`,
+          detail: `The recovery backup could not be written: ${errorMessage(cause)}`,
         });
     }
   }

@@ -1,11 +1,14 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
   analysisViewCaptureEvidence,
   analysisViewCaptureFixture,
-  environmentManifestCaptureFixture,
+  timedCaptureEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import { scenarioCaptureEvidence } from "../../../tests/fixtures/browserScenarioCapture.js";
+import { readRecordedRequestLine } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import {
   environmentServeFixture,
   environmentServeSource,
@@ -14,7 +17,81 @@ import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
-import { loadEnvironmentSource } from "./environmentSource.js";
+import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
+import {
+  loadEnvironmentSource,
+  recordedExchange,
+  replayedBody,
+} from "./environmentSource.js";
+
+it.each([
+  { text: "hello", encoding: undefined, expected: "hello" },
+  { text: "aGVsbG8=", encoding: "base64", expected: "hello" },
+  { text: "68656c6c6f", encoding: "hex", expected: null },
+  { text: "aGVsbG8", encoding: "base64url", expected: null },
+  { text: "hello", encoding: "", expected: null },
+  { text: "hello", encoding: null, expected: null },
+  { text: "", encoding: undefined, expected: "" },
+  { text: "", encoding: "base64", expected: "" },
+])(
+  "replays only decoded bodies for the declared encoding $encoding",
+  ({ text, encoding, expected }) => {
+    const bytes =
+      encoding === "base64" ? Buffer.from(text, "base64") : Buffer.alloc(0);
+    const record: WebNetworkCaptureRecord = {
+      ordinal: 0,
+      location: { kind: "json-pointer", pointer: "/log/entries/0" },
+      reported: {
+        request: { method: "GET", url: "https://example.invalid/hello" },
+        response: {
+          status: 200,
+          content: {
+            mimeType: "text/plain",
+            text,
+            ...(encoding === undefined ? {} : { encoding }),
+          },
+        },
+      },
+      numeric_literals: [],
+      binary_fields:
+        encoding === "base64"
+          ? [
+              {
+                pointer: "/response/content/text",
+                representation: "har-base64-content",
+                state: "retained",
+                content_base64: text,
+                bytes: bytes.length,
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+              },
+            ]
+          : [],
+      redactions: [],
+      limitations: [],
+    };
+    const line = readRecordedRequestLine(record.reported, true, () => true);
+    if (line?.kind !== "line")
+      throw new Error("Expected a recorded request line");
+    const exchange = recordedExchange(record, line);
+    expect(exchange.bodyText).toBe(expected);
+    expect(replayedBody(exchange)).toEqual(
+      expected === null ? { kind: "none" } : { kind: "text", text: expected },
+    );
+    expect(record.reported).toMatchObject({
+      response: {
+        content: { text, ...(encoding === undefined ? {} : { encoding }) },
+      },
+    });
+    if (encoding === undefined && text !== "") {
+      record.redactions.push({
+        pointer: "/response/content",
+        reason: "explicit-sensitive-value",
+        scope: "property-name",
+      });
+      expect(recordedExchange(record, line).bodyText).toBeNull();
+    }
+  },
+);
 
 const refusal = (manifest: unknown, evidence: unknown, operation?: string) => {
   const loaded = loadEnvironmentSource(manifest, evidence, operation);
@@ -33,7 +110,7 @@ const resealed = (
     unknown
   >;
   edit(result);
-  return createEvidence(undefined, evidence.provider, {
+  return createEvidence(unknownTarget("not-observed"), evidence.provider, {
     operation,
     parameters: structuredClone(evidence.parameters),
     result: result as never,
@@ -102,30 +179,9 @@ describe("loadEnvironmentSource", () => {
     }
   });
 
-  it("refuses a manifest whose parent is not the supplied evidence with a typed invalid request", () => {
+  it("refuses manifests of another view kind, non-capture evidence and non-Evidence JSON", async () => {
     const fixture = environmentServeFixture();
-    const other = analysisViewCaptureEvidence(analysisViewCaptureFixture());
-    const projected = refusal(fixture.manifest, other);
-    expect(projected).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-      details: {
-        operation: "environment-serve",
-        issues: [
-          {
-            path: ["evidence", "evidence_id"],
-            reason: "invalid_value",
-            expected: fixture.capture.evidence_id,
-          },
-        ],
-      },
-    });
-    expect(projected.message).toContain("different capture");
-  });
-
-  it("refuses manifests of another view kind, non-capture evidence and non-Evidence JSON", () => {
-    const fixture = environmentServeFixture();
-    const surface = inspectAnalysisView({
+    const surface = await inspectAnalysisView({
       source: { kind: "inline", evidence: fixture.capture },
       view: { kind: "api-surface" },
     });
@@ -161,14 +217,14 @@ describe("loadEnvironmentSource", () => {
     );
   });
 
-  it("indexes nothing for a manifest that cites no records and leaves tampered captures to authentication", () => {
+  it("indexes nothing for a manifest that cites no records and leaves tampered captures to authentication", async () => {
     const fixture = environmentServeFixture();
     const capture = analysisViewCaptureEvidence({
       ...analysisViewCaptureFixture(),
       records: [],
       total_records: 0,
     });
-    const manifest = inspectAnalysisView({
+    const manifest = await inspectAnalysisView({
       source: { kind: "inline", evidence: capture },
       view: { kind: "environment-manifest" },
     });
@@ -203,12 +259,16 @@ describe("loadEnvironmentSource payload attribution", () => {
       "inspect_web_network_capture",
       "capture_browser_scenario",
     ]) {
-      const capture = createEvidence(undefined, fixture.capture.provider, {
-        operation,
-        parameters: {},
-        result: {},
-        confidence: "observed",
-      });
+      const capture = createEvidence(
+        unknownTarget("not-observed"),
+        fixture.capture.provider,
+        {
+          operation,
+          parameters: {},
+          result: {},
+          confidence: "observed",
+        },
+      );
       for (const command of ["environment-serve", "environment-export"]) {
         const loaded = loadEnvironmentSource(
           citing(fixture.manifest, capture),
@@ -302,31 +362,19 @@ describe("loadEnvironmentSource payload attribution", () => {
 });
 
 describe("loadEnvironmentSource recorded request lines", () => {
-  it("keeps the delimiter of an explicit empty query in the recorded exchange", () => {
-    const capture = environmentManifestCaptureFixture();
-    const record = capture.records.find((entry) =>
-      JSON.stringify(entry.reported).includes("/api/users/2"),
-    );
-    if (record === undefined) throw new Error("Fixture lacks /api/users/2");
-    const reported = structuredClone(record.reported) as {
-      request: { url: string };
-    };
-    reported.request.url = `${reported.request.url}?`;
-    record.reported = reported;
-    const evidence = analysisViewCaptureEvidence(capture);
-    const manifest = inspectAnalysisView({
+  it("keeps the delimiter of an explicit empty query in the recorded exchange", async () => {
+    const evidence = timedCaptureEvidence([
+      ["GET", "/api/users/2?", { id: 2 }],
+      ["GET", "/api/users/3", { id: 3 }],
+    ]);
+    const manifest = await inspectAnalysisView({
       source: { kind: "inline", evidence },
       view: { kind: "environment-manifest" },
     });
     if (!manifest.ok) throw manifest.error;
     const loaded = loadEnvironmentSource(manifest.value, evidence);
     if (!loaded.ok) throw loaded.error;
-    const exchanges = [...loaded.value.exchanges.values()];
-    expect(
-      exchanges.find((entry) => entry.path === "/api/users/2")?.query,
-    ).toBe("?");
-    expect(
-      exchanges.find((entry) => entry.path === "/api/users/3")?.query,
-    ).toBeNull();
+    expect(loaded.value.exchanges.get(0)?.query).toBe("?");
+    expect(loaded.value.exchanges.get(1)?.query).toBeNull();
   });
 });

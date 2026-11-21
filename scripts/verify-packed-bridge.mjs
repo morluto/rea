@@ -1,16 +1,31 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { AGENTENV_BRIDGE_SOURCES } from "../src/desktop/AgentEnvBridgeSources.ts";
 import { GHIDRA_BRIDGE_SOURCES } from "../src/ghidra/GhidraBridgeSources.ts";
 
-const exec = promisify(execFile);
 const packedHopperBridge = "package/bridge/hopper_bridge.py";
 const packedCutterBridge = "package/bridge/cutter/rea_bridge.py";
+const packedHexRaysBridge = "package/bridge/ida/hexrays_queries.py";
+const root = fileURLToPath(new URL("../", import.meta.url));
+const packedAgentEnvSources = Object.values(AGENTENV_BRIDGE_SOURCES).map(
+  (url) => `package/${relative(root, fileURLToPath(url)).split(sep).join("/")}`,
+);
 
 /** Check shipped bridge files; real-provider lanes verify runtime behavior. */
-export async function verifyPackedBridge({ tarball, packedFiles }) {
+export async function verifyPackedBridge({ tarball, packedFiles, commands }) {
+  if (
+    packedFiles.some(
+      (path) => path.includes("__pycache__") || path.endsWith(".pyc"),
+    )
+  ) {
+    throw new Error("package contained generated Python bytecode");
+  }
   for (const path of [
     packedHopperBridge,
     packedCutterBridge,
+    packedHexRaysBridge,
+    ...packedAgentEnvSources,
     ...Object.values(GHIDRA_BRIDGE_SOURCES).map(
       (name) => `package/bridge/ghidra/${name}`,
     ),
@@ -18,18 +33,23 @@ export async function verifyPackedBridge({ tarball, packedFiles }) {
     if (!packedFiles.includes(path)) throw new Error(`package omitted ${path}`);
   }
   // Read the packed source without extracting into the caller's leased root.
-  await exec("python3", [
-    "-c",
-    [
-      "import ast, sys, tarfile",
-      "with tarfile.open(sys.argv[1]) as archive:",
-      "    member = archive.getmember(sys.argv[2])",
-      "    if not member.isfile():",
-      "        raise ValueError(f'{member.name} is not a regular file')",
-      "    with archive.extractfile(member) as source:",
-      "        ast.parse(source.read().decode('utf-8'), filename=sys.argv[2])",
-    ].join("\n"),
-    tarball,
-    packedHopperBridge,
-  ]);
+  // Only the interpreter's standard library is needed; caller-local modules
+  // and site startup hooks must not replace the parser or execute here.
+  for (const path of [packedHopperBridge, packedHexRaysBridge])
+    await commands.exec("python3", [
+      "-I",
+      "-S",
+      "-c",
+      [
+        "import ast, sys, tarfile",
+        "with tarfile.open(sys.argv[1]) as archive:",
+        "    member = archive.getmember(sys.argv[2])",
+        "    if not member.isfile():",
+        "        raise ValueError(f'{member.name} is not a regular file')",
+        "    with archive.extractfile(member) as source:",
+        "        ast.parse(source.read().decode('utf-8'), filename=sys.argv[2])",
+      ].join("\n"),
+      tarball,
+      path,
+    ]);
 }

@@ -332,7 +332,10 @@ it("does not attribute overwritten require members to Node's resolver", async ()
   if (!result.ok) throw result.error;
   expect(
     result.value.relationships
-      .filter(({ kind }) => kind === "requires")
+      .filter(
+        ({ kind, resolution }) =>
+          kind === "requires" && resolution === "internal",
+      )
       .map(({ from_path, to }) => [from_path, to])
       .sort((left, right) => (left[0] ?? "").localeCompare(right[0] ?? "")),
   ).toEqual([
@@ -341,4 +344,17 @@ it("does not attribute overwritten require members to Node's resolver", async ()
     ["local-loader.cjs", "loaded.cjs"],
     ["optional-call.cjs", "loaded.cjs"],
   ]);
+  expect(
+    result.value.relationships.filter(
+      ({ kind, resolution }) => kind === "requires" && resolution === "unknown",
+    ),
+  ).toEqual(
+    ["assigned.cjs", "computed.cjs", "defined.cjs"].map((from_path) => ({
+      from_path,
+      to: "./loaded.cjs",
+      kind: "requires",
+      resolution: "unknown",
+      parse_state: "partial",
+    })),
+  );
 });

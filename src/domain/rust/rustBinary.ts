@@ -1,10 +1,16 @@
 import { z } from "zod";
+import {
+  RUST_PRODUCER_DEFAULTS,
+  rustProducerLimitsField,
+} from "./rustResourceLimits.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
+import { producerLimitControl } from "../producerResourceLimits.js";
 import { digestSchema } from "../digests.js";
 import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
-import { BINARY_ARCHITECTURES } from "../binaryTargetTypes.js";
+import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import {
   machoSelectionContainsRange,
   selectedSliceAgreesWithReport,
@@ -12,25 +18,14 @@ import {
   machoTargetSelectionSchema,
 } from "../apple/machoTargetSelection.js";
 
-/** Preserve the format owner's architecture spelling separately from Evidence vocabulary. */
-export const rustArchitectureForSubject = (architecture: string) => {
-  switch (architecture) {
-    case "386":
-      return "x86";
-    case "amd64":
-      return "x86_64";
-    default:
-      return BINARY_ARCHITECTURES.find(
-        (supported) => supported === architecture,
-      );
-  }
-};
-
 /** Known revisions used to interpret compatible cargo-auditable documents. */
 export const RUST_AUDITABLE_FORMAT_VERSIONS = [0, 1, 8] as const;
+/** Default compiler-path retention; callers can select a larger bounded prefix. */
+export const DEFAULT_RUSTC_HASH_LIMIT = 64;
 
 const index = z.int().nonnegative();
 const rustcHash = z.string().regex(/^[0-9a-f]{40}$/u);
+export const rustPackageFeaturesSchema = z.array(z.string().min(1)).nullable();
 
 /** One embedded package, with omitted kind and root preserved as null and false. */
 export const rustPackageSchema = z.strictObject({
@@ -39,6 +34,7 @@ export const rustPackageSchema = z.strictObject({
   source: z.string().min(1),
   kind: z.enum(["runtime", "build"]).nullable(),
   dependencies: z.array(index),
+  features: rustPackageFeaturesSchema.default(null),
   root: z.boolean(),
 });
 
@@ -47,11 +43,21 @@ const dependencyEdgeSchema = z.strictObject({
   to_index: index,
 });
 
+const DEPENDENCY_SECTION_NAMES = [".dep-v0", "__DATA,.dep-v0"] as const;
+
+/** The dependency section's name in a container: Mach-O qualifies it with its segment. */
+export const rustDependencySectionName = (
+  format: "elf" | "pe" | "macho" | "wasm",
+): (typeof DEPENDENCY_SECTION_NAMES)[number] =>
+  format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
+
 /** zlib JSON from one `.dep-v0` section, in the section's package order. */
 export const rustAuditableMetadataSchema = z.strictObject({
-  section_name: z.enum([".dep-v0", "__DATA,.dep-v0"]),
+  section_name: z.enum(DEPENDENCY_SECTION_NAMES),
   file_offset: index,
+  /** Stored section range, including accepted PE file-alignment bytes. */
   section_bytes: z.int().positive(),
+  /** Bytes consumed by the zlib stream; the inflate ratio uses this size. */
   compressed_bytes: z.int().positive(),
   uncompressed_bytes: z.int().positive(),
   /** Original embedded revision; null means the source omitted the field. */
@@ -65,6 +71,15 @@ export const rustAuditableMetadataSchema = z.strictObject({
 /** Inferred compiler id from read-only `/rustc/<40-hex>/` paths. */
 export const rustcCommitSchema = z.strictObject({
   evidence_kind: z.literal("inferred"),
+  coverage: z
+    .strictObject({
+      status: z.literal("partial"),
+      reason: z.enum(["max_rustc_hashes", "report_bytes"]),
+      effective_limit: z.int().positive(),
+      /** The request parameter that bounded retention, and how to change it. */
+      limit: analysisParameterLimitSchema.exactOptional(),
+    })
+    .exactOptional(),
   hashes: z
     .array(
       z.strictObject({
@@ -75,39 +90,140 @@ export const rustcCommitSchema = z.strictObject({
     .min(1),
 });
 
+/**
+ * The complete-report allowance left no room for any compiler path; the
+ * control that bounded it, recorded outside the dropped compiler record.
+ */
+export const rustcCommitOmissionSchema = z.strictObject({
+  reason: z.literal("report_bytes"),
+  limit: analysisParameterLimitSchema,
+});
+
+type RustcCoverage = NonNullable<z.infer<typeof rustcCommitSchema>["coverage"]>;
+
+/**
+ * Partial compiler-path coverage and the per-call control that bounded it:
+ * `max_rustc_hashes` for the path count, `producer_limits.output_bytes` for
+ * the complete-report allowance. Each adapter names the option that sets it.
+ */
+export const rustcPartialCoverage = (
+  reason: RustcCoverage["reason"],
+  effectiveLimit: number,
+): RustcCoverage => ({
+  status: "partial",
+  reason,
+  effective_limit: effectiveLimit,
+  limit:
+    reason === "report_bytes"
+      ? producerLimitControl(
+          "output_bytes",
+          effectiveLimit,
+          RUST_PRODUCER_DEFAULTS.output_bytes,
+        )
+      : {
+          control_kind: "parameter",
+          parameter: "max_rustc_hashes",
+          effective_value: effectiveLimit,
+          unit: "count",
+          minimum: 1,
+          maximum: Number.MAX_SAFE_INTEGER,
+          default_value: DEFAULT_RUSTC_HASH_LIMIT,
+          applies_at: "next_call",
+        },
+});
+
 /** One explicit local executable or library, independent of a disassembler target. */
 export const inspectRustBinaryInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to the selected executable or library",
   ),
   architecture: machoSliceArchitectureSchema.exactOptional(),
+  producer_limits: rustProducerLimitsField,
+  max_rustc_hashes: z
+    .int()
+    .positive()
+    .exactOptional()
+    .describe(
+      `Maximum distinct inferred compiler paths to retain (default ${String(DEFAULT_RUSTC_HASH_LIMIT)}). Omitted paths leave compiler coverage partial without discarding dependency facts. Raise this value on the next call to recover a larger prefix; complete-report byte admission still applies.`,
+    ),
 });
+
+/**
+ * Container word size on a Rust dependency report and its summary view.
+ * ELF, PE and Mach-O are 32 or 64. WebAssembly declares no container word
+ * size, so the value is null. Null is not a number and must not be coerced.
+ */
+export type RustContainerBits = 32 | 64 | null;
+
+/** `32 | 64 | null`. Null is valid only for a WebAssembly report. */
+export const rustContainerBitsSchema = z
+  .union([z.literal(32), z.literal(64)])
+  .nullable()
+  .describe(
+    "Container word size: 32 or 64 for ELF, PE and Mach-O. null for WebAssembly, which declares no container word size. null is not a number and must not be coerced to 32 or 64.",
+  ) satisfies z.ZodType<RustContainerBits>;
 
 /** Bounded cargo-auditable observation. A missing section is null, not an empty dependency list. */
 export const rustBinarySchema = z
   .strictObject({
     artifact: z.strictObject({
       path: localPathStringSchema,
+      /** Source-host basename, retained for projection on other hosts. Older Evidence may omit it. */
+      file_name: localPathStringSchema.exactOptional(),
       sha256: digestSchema,
       bytes: index,
     }),
-    format: z.enum(["elf", "pe", "macho"]),
+    format: z.enum(["elf", "pe", "macho", "wasm"]),
     architecture: z.string(),
-    bits: z.union([z.literal(32), z.literal(64)]),
+    bits: rustContainerBitsSchema,
     byte_order: z.enum(["little", "big"]),
     /** The universal slice that was read; file offsets stay inside it. */
     selected_slice: machoTargetSelectionSchema.exactOptional(),
     auditable_metadata: rustAuditableMetadataSchema.nullable(),
     rustc_commit: rustcCommitSchema.nullable(),
+    /**
+     * Present when the complete-report allowance left no room for any
+     * compiler path, so `rustc_commit` is null: the control that bounded it.
+     */
+    rustc_commit_omission: rustcCommitOmissionSchema.exactOptional(),
     limitations: z.array(z.string()),
   })
   .superRefine((report, context) => {
+    if ((report.format === "wasm") !== (report.bits === null))
+      issue(
+        context,
+        ["bits"],
+        "Word size is null exactly when the container is WebAssembly.",
+      );
+    if ((report.format === "wasm") !== (report.architecture === "wasm"))
+      issue(
+        context,
+        ["architecture"],
+        "Architecture is wasm exactly when the container is WebAssembly.",
+      );
+    if (report.format === "wasm" && report.byte_order !== "little")
+      issue(context, ["byte_order"], "A WebAssembly module is little-endian.");
     const metadata = report.auditable_metadata;
     if (metadata !== null) {
+      if (metadata.section_name !== rustDependencySectionName(report.format))
+        issue(
+          context,
+          ["auditable_metadata", "section_name"],
+          "Dependency section name does not belong to the report's container.",
+        );
       checkSection(report.artifact.bytes, metadata, context);
       checkPackages(metadata, context);
     }
     checkRustc(report.artifact.bytes, report.rustc_commit, context);
+    if (
+      report.rustc_commit_omission !== undefined &&
+      report.rustc_commit !== null
+    )
+      issue(
+        context,
+        ["rustc_commit_omission"],
+        "A compiler-path omission is recorded only when no compiler path was retained.",
+      );
     checkSlice(report, context);
   });
 
@@ -136,12 +252,12 @@ const checkSection = (
 ): void => {
   if (
     !inside(fileBytes, metadata.file_offset, metadata.section_bytes) ||
-    metadata.compressed_bytes !== metadata.section_bytes
+    metadata.compressed_bytes > metadata.section_bytes
   )
     issue(
       context,
       ["auditable_metadata", "file_offset"],
-      "Dependency section range is outside the selected artifact or disagrees with its compressed size.",
+      "Dependency section range is outside the selected artifact or shorter than its compressed stream.",
     );
 };
 
@@ -327,7 +443,7 @@ const checkSlice = (report: RustBinary, context: z.RefinementCtx): void => {
     !selectedSliceAgreesWithReport(
       slice,
       report.format,
-      rustArchitectureForSubject(report.architecture),
+      binaryMetadataArchitecture(report.architecture),
     ) ||
     ranges.some(
       ({ offset, bytes }) =>

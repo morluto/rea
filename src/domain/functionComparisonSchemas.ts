@@ -1,8 +1,10 @@
 import { z } from "zod";
-import { overallStatus } from "./functionComparisonResults.js";
+import { overallStatus, summarize } from "./functionComparisonResults.js";
+import { canonicalJson } from "./comparisonSemantics.js";
+import { coverageStatusSchema } from "./coverage.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { nativeAddressSchema } from "./native/nativeAddress.js";
 
 const comparisonStatusSchema = z.enum(["unchanged", "changed", "unknown"]);
 export const functionComparisonDimensionNameSchema = z.enum([
@@ -35,6 +37,11 @@ const functionDimensionContextShape = {
   right_count: z.int().min(0).nullable(),
   evidence_links: z.array(evidenceIdSchema).min(2),
   limitations: z.array(z.string()),
+  discovery_status: coverageStatusSchema
+    .describe(
+      "Static call discovery coverage for the compared observations; omission means unreported.",
+    )
+    .exactOptional(),
 };
 
 const functionDimensionSchema = z.union([
@@ -72,6 +79,19 @@ const functionMatchSchema = z.union([
     right_name: z.string(),
   }),
   z.object({
+    status: z.literal("matched"),
+    method: z.literal("same-entry"),
+    entry_address: nativeAddressSchema,
+    left_name: z.string(),
+    right_name: z.string(),
+  }),
+  z.object({
+    status: z.literal("matched"),
+    method: z.literal("same-evidence"),
+    left_name: z.string(),
+    right_name: z.string(),
+  }),
+  z.object({
     status: z.enum(["mismatched", "ambiguous"]),
     method: z.literal("explicit"),
     left_name: z.string(),
@@ -91,11 +111,64 @@ export const functionComparisonResultSchema = z
       changed: z.int().min(0),
       unknown: z.int().min(0),
     }),
-    dimensions: z.array(functionDimensionSchema).length(8),
+    dimensions: z
+      .array(functionDimensionSchema)
+      .length(functionComparisonDimensionNameSchema.options.length),
     changes: z.array(functionDimensionSchema),
     limitations: z.array(z.string()),
   })
   .superRefine((result, context) => {
+    const dimensions = new Map<DimensionName, FunctionDimension>();
+    for (const [index, dimension] of result.dimensions.entries()) {
+      if (dimensions.has(dimension.dimension))
+        context.addIssue({
+          code: "custom",
+          path: ["dimensions", index, "dimension"],
+          message: "Function comparison dimensions must occur exactly once.",
+          params: { constraint: "dimensions-unique" },
+        });
+      dimensions.set(dimension.dimension, dimension);
+    }
+    const expectedSummary = summarize(result.dimensions);
+    for (const status of comparisonStatusSchema.options)
+      if (result.summary[status] !== expectedSummary[status])
+        context.addIssue({
+          code: "custom",
+          path: ["summary", status],
+          message: "Function comparison summary must count its dimensions.",
+          params: { constraint: "summary-counts-dimensions" },
+        });
+    const changes = new Set<DimensionName>();
+    for (const [index, change] of result.changes.entries()) {
+      const dimension = dimensions.get(change.dimension);
+      if (
+        changes.has(change.dimension) ||
+        dimension === undefined ||
+        change.status === "unchanged" ||
+        canonicalJson(change) !== canonicalJson(dimension)
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["changes", index],
+          message:
+            "Function comparison changes must cite each changed or unknown dimension exactly as recorded.",
+          params: { constraint: "changes-cite-dimensions" },
+        });
+      changes.add(change.dimension);
+    }
+    if (
+      result.dimensions.some(
+        ({ dimension, status }) =>
+          status !== "unchanged" && !changes.has(dimension),
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["changes"],
+        message:
+          "Function comparison changes must include every changed or unknown dimension.",
+        params: { constraint: "changes-cover-dimensions" },
+      });
     if (
       result.status !==
       overallStatus(result.dimensions, result.function_match.status)
@@ -105,6 +178,7 @@ export const functionComparisonResultSchema = z
         path: ["status"],
         message:
           "Function comparison status contradicts its dimensions or function match.",
+        params: { constraint: "status-matches-dimensions" },
       });
   });
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import {
-  parseRuntimeReconciliationInput,
+  readRuntimeReconciliationInput,
   reconcileJavaScriptRuntime,
 } from "../../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
 import { reconcileRuntimeEntities } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationMatching.js";
@@ -22,82 +22,88 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 
 const CAPTURED = "export const observed = 'different';\n";
 
-const collisionInput = async (
-  alternatives: number,
-  explicitMapping: boolean,
+const readInput = (
+  input: Parameters<typeof readRuntimeReconciliationInput>[0],
 ) => {
-  const root = await applicationFixture();
-  if (alternatives > 0) await writeFile(join(root, "other.js"), CAPTURED);
-  const live = explicitMapping
-    ? await createTestTempDirectory("rea-runtime-content-live-")
-    : root;
-  const extra = await createTestTempDirectory("rea-runtime-content-extra-");
-  await writeFile(join(extra, "app.js"), CAPTURED);
-  return parseRuntimeReconciliationInput(
-    reconcileJavaScriptRuntimeInputSchema.parse({
-      static_layers: [
-        {
-          role: "application",
-          analysis: await analyzeFixture(root),
-          runtime_mappings: explicitMapping
-            ? [{ kind: "file-root", root: live, artifact_prefix: "" }]
-            : [],
-        },
-        ...(alternatives > 1
-          ? [{ role: "assets", analysis: await analyzeFixture(extra) }]
-          : []),
-      ],
-      runtime_observations: [
-        electronRuntimeEvidence(live, CAPTURED, { includeWorker: false }),
-      ],
-    }),
-  );
+  const result = readRuntimeReconciliationInput(input);
+  if (!result.ok) throw result.error;
+  return result.value;
 };
 
-it.each([
-  [0, false],
-  [1, false],
-  [2, false],
-  [0, true],
-  [1, true],
-  [2, true],
-] as const)(
-  "preserves mapped disagreement with %i other content matches (explicit mapping: %s)",
-  async (alternatives, explicitMapping) => {
-    const parsed = await collisionInput(alternatives, explicitMapping);
-    const result = reconcileJavaScriptRuntime(parsed);
+it("retains the mapped disagreement despite equal bytes at other locations", async () => {
+  const root = await applicationFixture();
+  const live = await createTestTempDirectory("rea-runtime-content-live-");
+  const extra = await createTestTempDirectory("rea-runtime-content-extra-");
+  await Promise.all([
+    writeFile(join(root, "other.js"), CAPTURED),
+    writeFile(join(extra, "app.js"), CAPTURED),
+  ]);
+  const [application, assets] = await Promise.all([
+    analyzeFixture(root),
+    analyzeFixture(extra),
+  ]);
+  const captures = [root, live].map((path, index) =>
+    electronRuntimeEvidence(path, CAPTURED, {
+      includeWorker: false,
+      targetId: `mismatch-${index}`,
+    }),
+  );
+  const result = reconcileJavaScriptRuntime(
+    readInput(
+      reconcileJavaScriptRuntimeInputSchema.parse({
+        static_layers: [
+          {
+            role: "application",
+            analysis: application,
+            runtime_mappings: [
+              { kind: "file-root", root: live, artifact_prefix: "" },
+            ],
+          },
+          { role: "assets", analysis: assets },
+        ],
+        runtime_observations: captures,
+      }),
+    ),
+  );
+  const layer = result.static_layers.find(({ role }) => role === "application");
+  const node = result.graph.nodes.find(
+    ({ kind, observations }) =>
+      kind === "javascript-asset" &&
+      observations.length === 1 &&
+      observations.some(({ properties }) => properties.path === "app.js"),
+  );
+  if (layer === undefined || node === undefined)
+    throw new Error("Missing fixture application asset");
+  for (const [index, basis] of [
+    "artifact-path",
+    "operator-file-mapping",
+  ].entries()) {
     const script = result.reconciliations.find(
-      ({ entity_kind }) => entity_kind === "script",
+      ({ entity_kind, runtime_evidence_id }) =>
+        entity_kind === "script" &&
+        runtime_evidence_id === captures[index]?.evidence_id,
     );
     expect(script).toMatchObject({
       status: "unmatched",
-      basis: explicitMapping ? "operator-file-mapping" : "artifact-path",
+      basis,
       confidence: "high",
       reason: "captured-content-disagrees-with-static-location",
       static_layer_id: null,
       static_node_id: null,
       candidate_static_count: 1,
+      candidate_static_nodes: [
+        { static_layer_id: layer.layer_id, static_node_id: node.node_id },
+      ],
     });
-    const candidate = script?.candidate_static_nodes[0];
-    const selected = result.graph.nodes.find(
-      ({ node_id }) => node_id === candidate?.static_node_id,
-    );
-    expect(selected?.observations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          properties: expect.objectContaining({ path: "app.js" }),
-        }),
-      ]),
-    );
     expect(
       result.graph.edges.some(
-        (edge) =>
-          edge.relation === "observed_as" &&
-          edge.target_node_id === script?.runtime_node_id,
+        ({ relation, target_node_id }) =>
+          relation === "observed_as" &&
+          target_node_id === script?.runtime_node_id,
       ),
     ).toBe(false);
-  },
-);
+  }
+});
 
 it("restricts content-and-location ambiguity to mapped candidates", async () => {
   const application = await applicationFixture();
@@ -106,7 +112,7 @@ it("restricts content-and-location ambiguity to mapped candidates", async () => 
   const live = await createTestTempDirectory("rea-runtime-content-mapped-");
   const analysis = await analyzeFixture(application);
   const mapping = [{ kind: "file-root", root: live, artifact_prefix: "" }];
-  const parsed = parseRuntimeReconciliationInput(
+  const parsed = readInput(
     reconcileJavaScriptRuntimeInputSchema.parse({
       static_layers: [
         { role: "application", analysis, runtime_mappings: mapping },
@@ -131,46 +137,70 @@ it("restricts content-and-location ambiguity to mapped candidates", async () => 
     reason: "ambiguous-static-candidates",
     candidate_static_count: 2,
   });
-  const unmapped = result.static_layers.find(({ role }) => role === "assets");
-  expect(
-    script?.candidate_static_nodes.map(
-      ({ static_layer_id }) => static_layer_id,
-    ),
-  ).not.toContain(unmapped?.layer_id);
+  const app = result.graph.nodes.find(
+    ({ kind, observations }) =>
+      kind === "javascript-asset" &&
+      observations.some(({ properties }) => properties.path === "app.js"),
+  );
+  if (app === undefined)
+    throw new Error("Missing fixture shared application asset");
+  expect(script?.candidate_static_nodes).toEqual(
+    result.static_layers
+      .filter(({ role }) => role === "application" || role === "cache")
+      .map(({ layer_id }) => ({
+        static_layer_id: layer_id,
+        static_node_id: app.node_id,
+      })),
+  );
 });
 
-it.each([false, true])(
-  "retains digest-only matching without a mapped candidate (mapping: %s)",
-  async (mapped) => {
-    const root = await applicationFixture();
-    await writeFile(join(root, "other.js"), CAPTURED);
-    const live = await createTestTempDirectory(
-      "rea-runtime-content-unlocated-",
-    );
-    const result = reconcileJavaScriptRuntime(
-      parseRuntimeReconciliationInput(
-        reconcileJavaScriptRuntimeInputSchema.parse({
-          static_layers: [
-            {
-              role: "application",
-              analysis: await analyzeFixture(root),
-              runtime_mappings: mapped
-                ? [{ kind: "file-root", root: live, artifact_prefix: "" }]
-                : [],
-            },
-          ],
-          runtime_observations: [
-            electronRuntimeEvidence(live, CAPTURED, {
-              scriptFile: "absent.js",
-              includeWorker: false,
-            }),
-          ],
-        }),
-      ),
-    );
+it("matches exact bytes when either a mapped or unmapped location has no candidate", async () => {
+  const root = await applicationFixture();
+  await writeFile(join(root, "other.js"), CAPTURED);
+  const mapped = await createTestTempDirectory(
+    "rea-runtime-content-unlocated-",
+  );
+  const unmapped = await createTestTempDirectory(
+    "rea-runtime-content-unmapped-",
+  );
+  const analysis = await analyzeFixture(root);
+  const captures = [mapped, unmapped].map((path, index) =>
+    electronRuntimeEvidence(path, CAPTURED, {
+      scriptFile: "absent.js",
+      includeWorker: false,
+      targetId: `digest-only-${index}`,
+    }),
+  );
+  const result = reconcileJavaScriptRuntime(
+    readInput(
+      reconcileJavaScriptRuntimeInputSchema.parse({
+        static_layers: [
+          {
+            role: "application",
+            analysis,
+            runtime_mappings: [
+              { kind: "file-root", root: mapped, artifact_prefix: "" },
+            ],
+          },
+        ],
+        runtime_observations: captures,
+      }),
+    ),
+  );
+  const expected = result.graph.nodes.find(
+    ({ kind, observations }) =>
+      kind === "javascript-asset" &&
+      observations.some(({ properties }) => properties.path === "other.js"),
+  );
+  if (expected === undefined) throw new Error("Missing fixture digest match");
+  const scripts = result.reconciliations.filter(
+    ({ entity_kind }) => entity_kind === "script",
+  );
+  expect(scripts).toHaveLength(2);
+  for (const { evidence_id } of captures)
     expect(
-      result.reconciliations.find(
-        ({ entity_kind }) => entity_kind === "script",
+      scripts.find(
+        ({ runtime_evidence_id }) => runtime_evidence_id === evidence_id,
       ),
     ).toMatchObject({
       status: "matched",
@@ -178,12 +208,30 @@ it.each([false, true])(
       confidence: "high",
       reason: "unique-content-match",
       candidate_static_count: 1,
+      static_node_id: expected.node_id,
     });
-  },
-);
+});
 
 it("keeps unavailable mapped digests unknown instead of borrowing unrelated matches", async () => {
-  const parsed = await collisionInput(1, true);
+  const root = await applicationFixture();
+  await writeFile(join(root, "other.js"), CAPTURED);
+  const live = await createTestTempDirectory("rea-runtime-content-unknown-");
+  const parsed = readInput(
+    reconcileJavaScriptRuntimeInputSchema.parse({
+      static_layers: [
+        {
+          role: "application",
+          analysis: await analyzeFixture(root),
+          runtime_mappings: [
+            { kind: "file-root", root: live, artifact_prefix: "" },
+          ],
+        },
+      ],
+      runtime_observations: [
+        electronRuntimeEvidence(live, CAPTURED, { includeWorker: false }),
+      ],
+    }),
+  );
   const candidates = collectStaticRuntimeCandidates(parsed.layers).map(
     (candidate) =>
       candidate.paths.includes("app.js") && candidate.category === "javascript"
@@ -212,6 +260,7 @@ it("keeps unavailable mapped digests unknown instead of borrowing unrelated matc
   const candidate = script?.candidate_static_nodes[0];
   const states = classifyStaticLoadStates(
     parsed.layers,
+    parsed.captures,
     runtime.entities,
     result.items,
     {
@@ -232,201 +281,147 @@ it("keeps unavailable mapped digests unknown instead of borrowing unrelated matc
 
 const UNRELATED = "export const unrelated = 17;\n";
 
-type LayerSetup = {
-  readonly root: string;
-  readonly mapping: "none" | "explicit";
-};
-
-/** Reconcile one captured script, located at absent.js under live, against layers. */
-const reconcileCapturedScript = async (input: {
-  readonly layers: readonly LayerSetup[];
-  readonly live: string;
-  readonly source: string;
-  readonly includeWorker?: boolean;
-}) => {
-  const result = reconcileJavaScriptRuntime(
-    parseRuntimeReconciliationInput(
-      reconcileJavaScriptRuntimeInputSchema.parse({
-        static_layers: await Promise.all(
-          input.layers.map(async ({ root, mapping }, index) => ({
-            role: (["application", "cache", "assets"] as const)[index],
-            analysis: await analyzeFixture(root),
-            runtime_mappings:
-              mapping === "explicit"
-                ? [{ kind: "file-root", root: input.live, artifact_prefix: "" }]
-                : [],
-          })),
-        ),
-        runtime_observations: [
-          electronRuntimeEvidence(input.live, input.source, {
-            scriptFile: "absent.js",
-            includeWorker: input.includeWorker ?? false,
-          }),
-        ],
+it("reports absence only where a layer authorizes the capture location", async () => {
+  const [application, cache, mappedApplication, mappedCache, unmapped] =
+    await Promise.all([
+      applicationFixture(),
+      applicationFixture(),
+      createTestTempDirectory("rea-runtime-application-mapped-"),
+      createTestTempDirectory("rea-runtime-cache-mapped-"),
+      createTestTempDirectory("rea-runtime-unmapped-"),
+    ]);
+  const [applicationEvidence, cacheEvidence] = await Promise.all([
+    analyzeFixture(application),
+    analyzeFixture(cache),
+  ]);
+  const captures = [application, mappedApplication, mappedCache, unmapped].map(
+    (path, index) =>
+      electronRuntimeEvidence(path, UNRELATED, {
+        scriptFile: "absent.js",
+        includeWorker: index === 3,
+        targetId: `no-match-${index}`,
       }),
-    ),
   );
-  const item = (kind: string) =>
-    result.reconciliations.find(({ entity_kind }) => entity_kind === kind);
-  return { result, script: item("script"), worker: item("worker") };
-};
-
-it("keeps an unmapped captured script without a content match unknown", async () => {
-  const root = await applicationFixture();
-  const live = await createTestTempDirectory("rea-runtime-unmapped-");
-  const { result, script, worker } = await reconcileCapturedScript({
-    layers: [{ root, mapping: "none" }],
-    live,
-    source: UNRELATED,
-    includeWorker: true,
-  });
-  const unknown = {
-    status: "unknown",
-    basis: "none",
-    confidence: "unknown",
-    reason: "no-authorized-location-mapping",
-    static_layer_id: null,
-    static_node_id: null,
-    candidate_static_count: 0,
-  };
-  expect(script).toMatchObject(unknown);
-  // A source-free worker at an unmapped location shares the same rule.
-  expect(worker).toMatchObject(unknown);
-  expect(result.summary).toMatchObject({ matched: 0, unmatched: 0 });
-  expect(
-    result.graph.edges.some(({ relation }) => relation === "observed_as"),
-  ).toBe(false);
-});
-
-it.each(["explicit", "implicit-root"] as const)(
-  "reports a mapped captured script without a content match as unmatched (%s)",
-  async (mapping) => {
-    const root = await applicationFixture();
-    const live =
-      mapping === "explicit"
-        ? await createTestTempDirectory("rea-runtime-mapped-absent-")
-        : root;
-    const { result, script } = await reconcileCapturedScript({
-      layers: [{ root, mapping: mapping === "explicit" ? "explicit" : "none" }],
-      live,
-      source: UNRELATED,
-    });
-    expect(script).toMatchObject({
-      status: "unmatched",
-      basis: "none",
-      confidence: "high",
-      reason: "no-static-content-match",
-      candidate_static_count: 0,
-    });
-    expect(result.summary.unmatched).toBe(1);
-  },
-);
-
-it.each([
-  ["only the second", ["none", "explicit"], "unmatched"],
-  ["only the first", ["explicit", "none"], "unmatched"],
-  ["neither", ["none", "none"], "unknown"],
-] as const)(
-  "classifies an unmatched captured script when %s of two layers maps it",
-  async (_label, mappings, status) => {
-    const live = await createTestTempDirectory("rea-runtime-layer-mapping-");
-    const { script } = await reconcileCapturedScript({
-      layers: await Promise.all(
-        mappings.map(async (mapping) => ({
-          root: await applicationFixture(),
-          mapping,
-        })),
-      ),
-      live,
-      source: UNRELATED,
-    });
-    expect(script).toMatchObject({
-      status,
-      reason:
-        status === "unknown"
-          ? "no-authorized-location-mapping"
-          : "no-static-content-match",
-    });
-  },
-);
-
-it.each([
-  [1, "matched", "unique-content-match"],
-  [2, "ambiguous", "ambiguous-static-candidates"],
-] as const)(
-  "keeps unmapped content-only correspondence with %i digest candidates",
-  async (copies, status, reason) => {
-    const live = await createTestTempDirectory("rea-runtime-unmapped-content-");
-    const { result, script } = await reconcileCapturedScript({
-      layers: await Promise.all(
-        Array.from({ length: copies }, async () => {
-          const root = await applicationFixture();
-          await writeFile(join(root, "other.js"), CAPTURED);
-          return { root, mapping: "none" as const };
-        }),
-      ),
-      live,
-      source: CAPTURED,
-    });
-    expect(script).toMatchObject({
-      status,
-      basis: copies === 1 ? "content-sha256" : "none",
-      reason,
-      candidate_static_count: copies,
-    });
-    expect(result.summary.unmatched).toBe(0);
-  },
-);
-
-it.each([
-  ["https://example.test/assets/absent.js", "unmatched"],
-  ["https://other.test/assets/absent.js", "unknown"],
-] as const)(
-  "applies URL-prefix mapping presence to captured script %s",
-  async (url, status) => {
-    const root = await applicationFixture();
-    const parsed = parseRuntimeReconciliationInput(
+  const result = reconcileJavaScriptRuntime(
+    readInput(
       reconcileJavaScriptRuntimeInputSchema.parse({
         static_layers: [
           {
             role: "application",
-            analysis: await analyzeFixture(root),
+            analysis: applicationEvidence,
             runtime_mappings: [
               {
-                kind: "url-prefix",
-                prefix: "https://example.test/assets/",
+                kind: "file-root",
+                root: mappedApplication,
                 artifact_prefix: "",
               },
             ],
           },
+          {
+            role: "cache",
+            analysis: cacheEvidence,
+            runtime_mappings: [
+              { kind: "file-root", root: mappedCache, artifact_prefix: "" },
+            ],
+          },
         ],
-        runtime_observations: [
-          electronRuntimeEvidence(root, UNRELATED, { includeWorker: false }),
-        ],
+        runtime_observations: captures,
       }),
+    ),
+  );
+  const unmatched = {
+    status: "unmatched",
+    basis: "none",
+    confidence: "high",
+    reason: "no-static-content-match",
+    static_layer_id: null,
+    static_node_id: null,
+    candidate_static_count: 0,
+  };
+  const unknown = {
+    ...unmatched,
+    status: "unknown",
+    confidence: "unknown",
+    reason: "no-authorized-location-mapping",
+  };
+  const code = result.reconciliations.filter(
+    ({ entity_kind }) => entity_kind === "script" || entity_kind === "worker",
+  );
+  expect(code).toHaveLength(5);
+  for (const [index, { evidence_id }] of captures.entries()) {
+    const rows = code.filter(
+      ({ runtime_evidence_id }) => runtime_evidence_id === evidence_id,
     );
-    // Model a URL-located capture at the matcher boundary; browser and
-    // Inspector projections supply URL locations to the same classifier.
-    const entities = projectRuntimeCaptures(parsed.captures).entities.map(
-      (entity) =>
-        entity.kind === "script"
-          ? { ...entity, location: { kind: "url" as const, value: url } }
-          : entity,
-    );
+    expect(
+      rows.find(({ entity_kind }) => entity_kind === "script"),
+    ).toMatchObject(index < 3 ? unmatched : unknown);
+    if (index === 3)
+      expect(
+        rows.find(({ entity_kind }) => entity_kind === "worker"),
+      ).toMatchObject(unknown);
+  }
+  const runtimeIds = new Set(
+    code.map(({ runtime_node_id }) => runtime_node_id),
+  );
+  expect(
+    result.graph.edges.some(
+      ({ relation, target_node_id }) =>
+        relation === "observed_as" && runtimeIds.has(target_node_id),
+    ),
+  ).toBe(false);
+});
+
+it("applies URL-prefix presence to captured scripts independently of origin lookalikes", async () => {
+  const root = await applicationFixture();
+  const parsed = readInput(
+    reconcileJavaScriptRuntimeInputSchema.parse({
+      static_layers: [
+        {
+          role: "application",
+          analysis: await analyzeFixture(root),
+          runtime_mappings: [
+            {
+              kind: "url-prefix",
+              prefix: "https://example.test/assets/",
+              artifact_prefix: "",
+            },
+          ],
+        },
+      ],
+      runtime_observations: [
+        electronRuntimeEvidence(root, UNRELATED, { includeWorker: false }),
+      ],
+    }),
+  );
+  const { entities } = projectRuntimeCaptures(parsed.captures);
+  const candidates = collectStaticRuntimeCandidates(parsed.layers);
+  // Browser and Inspector projections supply URLs to this same matcher.
+  for (const [url, status, confidence, reason] of [
+    [
+      "https://example.test/assets/absent.js",
+      "unmatched",
+      "high",
+      "no-static-content-match",
+    ],
+    [
+      "https://other.test/assets/absent.js",
+      "unknown",
+      "unknown",
+      "no-authorized-location-mapping",
+    ],
+  ] as const) {
     const result = reconcileRuntimeEntities({
-      entities,
-      candidates: collectStaticRuntimeCandidates(parsed.layers),
+      entities: entities.map((entity) =>
+        entity.kind === "script"
+          ? { ...entity, location: { kind: "url", value: url } }
+          : entity,
+      ),
+      candidates,
       layers: parsed.layers,
     });
     expect(
       result.items.find(({ entity_kind }) => entity_kind === "script"),
-    ).toMatchObject({
-      status,
-      confidence: status === "unknown" ? "unknown" : "high",
-      reason:
-        status === "unknown"
-          ? "no-authorized-location-mapping"
-          : "no-static-content-match",
-    });
-  },
-);
+      url,
+    ).toMatchObject({ status, confidence, reason, candidate_static_count: 0 });
+  }
+});

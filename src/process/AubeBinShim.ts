@@ -1,42 +1,52 @@
 import {
-  closeSync,
+  accessSync,
   constants,
-  fstatSync,
-  openSync,
-  readSync,
+  readFileSync,
+  readlinkSync,
   realpathSync,
+  statSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
-// aube (the installer behind mise's npm backend) writes each package bin as a
-// POSIX shell shim, not a symlink. The shim runs node on the script inside one
-// version's store directory, so that versioned path is all `process.argv[1]`
-// ever shows. The shim itself stays at a stable path across upgrades, and its
-// second line names the script it runs, relative to the shim's directory.
-const SHIM_HEADER = /^#!\/bin\/sh\n# aube-bin-shim v2 target=([^\n]+)\n/u;
-const HEADER_BYTES = 512;
+// Pin the POSIX v2 generator instead of trusting its uninstall marker.
+// https://github.com/aubepkg/aube/blob/d4c6265856caea19c7e8699d289ccc6773de02bd/crates/aube-linker/src/sys.rs#L1063-L1154
+const MAX_BIN_SHIM_BYTES = 64 * 1024;
+const TARGET_MARKER = "# aube-bin-shim v2 target=";
+const BOUND_NODE_MARKER = "# aube-node-shim v1 ";
+const SAFE_TARGET = /^[\w.@+/-]+$/u;
+const SAFE_NODE_PATH =
+  /^export NODE_PATH="\$basedir\/[\w.@+/-]+(?::\$basedir\/[\w.@+/-]+)*"$/u;
+const BASEDIR = [
+  'link="$0"',
+  "hops=0",
+  'while [ -L "$link" ] && [ "$hops" -lt 40 ]; do',
+  "  hops=$((hops+1))",
+  '  target=$(readlink "$link")',
+  '  case "$target" in',
+  '    /*) link="$target" ;;',
+  '    *)  link="$(dirname "$link")/$target" ;;',
+  "  esac",
+  "done",
+  'basedir=$(dirname "$link")',
+];
 
-const readHeader = (path: string): string | undefined => {
-  let descriptor: number | undefined;
+const readShim = (path: string): string | undefined => {
   try {
-    // Non-blocking, so a registered path naming a FIFO cannot stall the read.
-    descriptor = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
-    if (!fstatSync(descriptor).isFile()) return undefined;
-    const buffer = Buffer.alloc(HEADER_BYTES);
-    const length = readSync(descriptor, buffer, 0, HEADER_BYTES, 0);
-    return buffer.subarray(0, length).toString("utf8");
+    accessSync(path, constants.X_OK);
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size > MAX_BIN_SHIM_BYTES) return undefined;
+    const contents = readFileSync(path, {
+      flag: constants.O_RDONLY | constants.O_NONBLOCK,
+    });
+    return contents.length <= MAX_BIN_SHIM_BYTES
+      ? contents.toString("utf8")
+      : undefined;
   } catch {
     return undefined;
-  } finally {
-    // A failed close loses nothing here; it must not escape as a classification error.
-    if (descriptor !== undefined)
-      try {
-        closeSync(descriptor);
-      } catch {}
   }
 };
 
-const samePath = (left: string, right: string): boolean => {
+const sameFile = (left: string, right: string): boolean => {
   try {
     return realpathSync.native(left) === realpathSync.native(right);
   } catch {
@@ -44,50 +54,90 @@ const samePath = (left: string, right: string): boolean => {
   }
 };
 
-/** Absolute script an aube v2 shim runs, or undefined when it is not one. */
-export const aubeShimTarget = (shimPath: string): string | undefined => {
-  if (!isAbsolute(shimPath)) return undefined;
-  const target = SHIM_HEADER.exec(readHeader(shimPath) ?? "")?.[1];
-  if (target === undefined || isAbsolute(target)) return undefined;
-  // The shim follows links to itself before taking its directory, so a link
-  // to a shim runs the target beside the real file.
+/** The script launched by a supported, PATH-independent Aube Node shim. */
+export const aubeShimTarget = (
+  shim: string,
+  runtime: string,
+): string | undefined => {
+  if (!isAbsolute(shim)) return undefined;
+  const lines = readShim(shim)?.split("\n");
+  if (lines?.shift() !== "#!/bin/sh") return undefined;
+  const marker = lines.shift();
+  if (!marker?.startsWith(TARGET_MARKER)) return undefined;
+  const target = marker.slice(TARGET_MARKER.length);
+  if (!SAFE_TARGET.test(target) || isAbsolute(target)) return undefined;
+  const bound = lines[0]?.startsWith(BOUND_NODE_MARKER) === true;
+  if (
+    bound &&
+    !/^[a-f0-9]+$/u.test(lines.shift()!.slice(BOUND_NODE_MARKER.length))
+  )
+    return undefined;
+  if (!BASEDIR.every((line) => line.trimStart() === lines.shift()?.trimStart()))
+    return undefined;
+  if (lines[0] !== undefined && SAFE_NODE_PATH.test(lines[0])) lines.shift();
+
   try {
-    return resolve(dirname(realpathSync.native(shimPath)), target);
+    const parent = dirname(realpathSync.native(shim));
+    const selectedRuntime = realpathSync.native(runtime);
+    if (bound) {
+      const exec = /^exec '([^'\n]+)' "\$basedir\/"'([^'\n]+)' "\$@"$/u.exec(
+        lines[0] ?? "",
+      );
+      const interpreter = exec?.[1];
+      if (
+        lines.length !== 2 ||
+        lines[1] !== "" ||
+        interpreter === undefined ||
+        interpreter !== selectedRuntime ||
+        exec?.[2] !== target
+      )
+        return undefined;
+      accessSync(interpreter, constants.X_OK);
+    } else {
+      const body = [
+        'if [ -x "$basedir/node" ]; then',
+        ` exec "$basedir/node" "$basedir/${target}" "$@"`,
+        "else",
+        ` exec node "$basedir/${target}" "$@"`,
+        "fi",
+        "",
+      ];
+      const interpreter = join(parent, "node");
+      if (
+        lines.length !== body.length ||
+        !body.every(
+          (line, index) => line.trimStart() === lines[index]?.trimStart(),
+        ) ||
+        (interpreter !== selectedRuntime &&
+          readlinkSync(interpreter) !== selectedRuntime)
+      )
+        return undefined;
+      accessSync(interpreter, constants.X_OK);
+    }
+    return resolve(parent, target);
   } catch {
     return undefined;
   }
 };
 
-/** Whether `shimPath` is an aube shim that runs exactly `entrypointPath`. */
-export const aubeShimRunsEntrypoint = (
-  shimPath: string,
-  entrypointPath: string,
-): boolean => {
-  const target = aubeShimTarget(shimPath);
-  return target !== undefined && samePath(target, entrypointPath);
-};
-
-/**
- * The aube shim that launched `entrypointPath`, found as `<dir>/.bin/<bin>`
- * beside an enclosing `node_modules` directory, or undefined when no shim
- * there runs this exact entrypoint. The outermost one wins: the entrypoint
- * sits under a nested `node_modules` inside the versioned store, and a shim
- * there would move with the version just like the script does.
- */
+/** The outer generated shim that selects the running installation's script. */
 export const aubeShimLauncher = (
-  entrypointPath: string,
-  binName: string,
+  entrypoint: string,
+  name: string,
+  runtime: string,
 ): string | undefined => {
-  if (!isAbsolute(entrypointPath)) return undefined;
+  if (!isAbsolute(entrypoint)) return undefined;
   let launcher: string | undefined;
   for (
-    let directory = dirname(entrypointPath);
+    let directory = dirname(entrypoint);
     directory !== dirname(directory);
     directory = dirname(directory)
   ) {
     if (basename(directory) !== "node_modules") continue;
-    const candidate = join(directory, ".bin", binName);
-    if (aubeShimRunsEntrypoint(candidate, entrypointPath)) launcher = candidate;
+    const candidate = join(directory, ".bin", name);
+    const target = aubeShimTarget(candidate, runtime);
+    if (target !== undefined && sameFile(target, entrypoint))
+      launcher = candidate;
   }
   return launcher;
 };

@@ -1,4 +1,16 @@
-import type { StateView } from "./environmentStateRules.js";
+import {
+  ownMember,
+  renderStateEntity,
+  same,
+  type JsonObject,
+  type StateEntity,
+  type StateItemView,
+  type StateView,
+} from "./environmentStateRules.js";
+import {
+  collectionTarget,
+  entityTarget,
+} from "./environmentStateWriteChecks.js";
 
 /** The fields a read of a view shows of its entities, less volatile ones it does not compare; all of a document's. */
 export const shownFields = (
@@ -16,12 +28,14 @@ export type TouchedTargets = Map<string, Map<string, readonly string[] | null>>;
 /** Per target, when the latest modelled write since its last check ended, and each tool's latest call there. */
 export type PendingTargets = Map<
   string,
-  { until: number; readonly at: Map<string, number> }
+  { until: number | undefined; readonly at: Map<string, number> }
 >;
 
 /** Whether a write that ended at `until` was still running when a read began at `start`, so the read may show either state. */
-export const overlapsWrite = (until: number, start: number): boolean =>
-  until > start;
+export const overlapsWrite = (
+  until: number | undefined,
+  start: number | undefined,
+): boolean => until === undefined || start === undefined || until > start;
 
 /** What the gate tracks of the writes since each target's last check, and when each unmodelled write ran. */
 export interface WriteHistory {
@@ -64,8 +78,11 @@ export const interference = (
 export const runningAt = (
   pending: PendingTargets,
   key: string,
-  start: number,
-): boolean => overlapsWrite(pending.get(key)?.until ?? -Infinity, start);
+  start: number | undefined,
+): boolean => {
+  const held = pending.get(key);
+  return held !== undefined && overlapsWrite(held.until, start);
+};
 
 /** The tools whose writes a read exercises: those that changed its targets since they were last checked, less those that borrowed the read to learn their effect. */
 export const exercisedBy = (
@@ -88,13 +105,18 @@ export const touchTarget = (
   write: {
     readonly index: number;
     readonly tool: string;
-    readonly end: number;
+    readonly end: number | undefined;
     readonly fields: readonly string[] | undefined;
   },
 ): void => {
   const held = pending.get(target);
   pending.set(target, {
-    until: Math.max(held?.until ?? -Infinity, write.end),
+    // One unknown completion keeps this target pending until a real check clears it.
+    until:
+      write.end === undefined ||
+      (held !== undefined && held.until === undefined)
+        ? undefined
+        : Math.max(held?.until ?? -Infinity, write.end),
     at: (held?.at ?? new Map()).set(write.tool, write.index),
   });
   const tools = touched.get(target) ?? new Map();
@@ -176,6 +198,32 @@ export class WriteEffects {
       else
         for (const tool of byTool.get(key)?.keys() ?? [])
           if (!unseen.has(tool)) byTool.get(key)!.delete(tool);
+  }
+
+  /** A read showed the entity absent: no write's effect on it remains, so a write left with no entity drops from the collection. */
+  removed(
+    touched: TouchedTargets,
+    gone: {
+      readonly type: string;
+      readonly collection: string;
+      readonly id: string;
+    },
+  ): void {
+    const entity = entityTarget(gone.type, gone.collection, gone.id);
+    const collection = collectionTarget(gone.type, gone.collection);
+    this.#changed.delete(entity);
+    const byTool = this.#members.get(collection);
+    if (byTool === undefined) return;
+    for (const [tool, entities] of byTool) {
+      if (!entities.delete(entity) || entities.size > 0) continue;
+      byTool.delete(tool);
+      touched.get(collection)?.delete(tool);
+    }
+  }
+
+  /** The fields a tool's effect on an entity still holds: null for a create's or delete's whole effect, undefined when none remains. */
+  changedOn(key: string, tool: string): readonly string[] | null | undefined {
+    return this.#changed.get(key)?.get(tool);
   }
 
   /** Whether a read showing `fields` of a target shows anything of a tool's effect there: a create's or delete's always, an update's through a field it changed; unknown claims count as shown. */
@@ -347,4 +395,38 @@ export const forgetChecked = (
       at?.delete(name);
     }
   pending.effects.checked(key, unseen);
+};
+
+/**
+ * Check, field by field, the writes that changed an entity an unmodelled write also changed:
+ * each write's own fields must show as the state holds them, but for volatile ones, which take
+ * the read's value and so show nothing of a write. A create wrote every field, so it cannot be
+ * told apart from the unmodelled change and is not checked.
+ */
+export const writtenFieldChecks = (
+  entity: StateEntity,
+  view: StateItemView,
+  observed: JsonObject,
+  check: {
+    readonly volatile: ReadonlySet<string>;
+    readonly writes: ReadonlyMap<string, readonly string[] | null>;
+  },
+): Map<string, boolean> => {
+  const shown = renderStateEntity(entity, view, check.volatile, observed);
+  const outcomes = new Map<string, boolean>();
+  for (const [tool, fields] of check.writes) {
+    const compared = (fields ?? []).filter(
+      (field) =>
+        !check.volatile.has(field) &&
+        (Object.hasOwn(observed, field) || Object.hasOwn(shown, field)),
+    );
+    if (fields === null || compared.length === 0) continue;
+    outcomes.set(
+      tool,
+      compared.every((field) =>
+        same(ownMember(shown, field), ownMember(observed, field)),
+      ),
+    );
+  }
+  return outcomes;
 };

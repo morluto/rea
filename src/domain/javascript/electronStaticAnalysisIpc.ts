@@ -3,10 +3,12 @@ import * as t from "@babel/types";
 import type {
   ElectronIpcDescriptor,
   ElectronIpcFinding,
+  ElectronIpcReceiver,
   ElectronSenderValidationFinding,
 } from "./electronStaticAnalysisTypes.js";
 import {
   boundedExpression,
+  electronCandidateAuthority,
   electronCalleePath,
   electronStaticValue,
   handlerKind,
@@ -19,7 +21,12 @@ import {
 } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import { compositeKey } from "../unicodeCodePointOrder.js";
-import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import type {
+  JavaScriptAnalysisAccumulator,
+  JavaScriptFindingContext,
+} from "./javascriptStaticAnalysisState.js";
 
 /** Inspect Electron IPC operations and validation candidates. */
 export const inspectElectronIpcNode = (
@@ -37,24 +44,26 @@ const inspectIpcCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const descriptor = ipcDescriptor(electronCalleePath(node.callee, context));
+  const scoped = scopedIpcDescriptor(node, context);
+  const descriptor =
+    scoped?.descriptor ??
+    ipcDescriptor(electronCalleePath(node.callee, context));
   if (descriptor === undefined) return;
   const channelNode = argumentNode(node.arguments[0]);
-  const channelValue = electronStaticValue(context.source, channelNode);
+  const literal = electronStaticValue(context.source, channelNode);
   const channel =
-    channelValue.status === "literal" && typeof channelValue.value === "string"
-      ? channelValue.value
+    literal.status === "literal" && typeof literal.value === "string"
+      ? literal.value
       : null;
   const channelReference =
     channel === null
       ? {
           channel: null,
-          channel_expression:
-            channelValue.status === "dynamic"
-              ? channelValue.expression
-              : boundedExpression(context.source, channelNode),
+          channel_expression: boundedExpression(context.source, channelNode),
         }
       : { channel, channel_expression: null };
+  if (channel === null && channelNode !== undefined && node.start != null)
+    context.accumulator.pendingIpcChannels.set(node.start, channelNode);
   const handlerNode =
     descriptor.mode === "listen" || descriptor.mode === "handle"
       ? argumentNode(node.arguments[1])
@@ -87,7 +96,9 @@ const inspectIpcCall = (
   if (findingState.handler_kind === "missing")
     context.accumulator.unknownFindings += 1;
   const finding: ElectronIpcFinding = {
+    ...(scoped?.authority ?? electronCandidateAuthority(node.callee, context)),
     ...findingState,
+    ...(scoped === undefined ? {} : { receiver: scoped.receiver }),
     ...channelReference,
     module_key: null,
     location: range(node),
@@ -98,6 +109,90 @@ const inspectIpcCall = (
     node,
     value: finding,
   });
+};
+
+/**
+ * Resolve lexical values for direct sites left to the syntax pass. Wrapper
+ * reconciliation owns replacements, guarded channels and per-invocation
+ * registrations, so a known channel never absorbs one of those registrations.
+ */
+export const finishElectronIpcChannels = (
+  accumulator: JavaScriptAnalysisAccumulator,
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  const wrapperSites = new Set(
+    accumulator.ipc
+      .filter(({ value }) => value.resolution_basis === "wrapper-substitution")
+      .map(({ offset }) => offset),
+  );
+  for (const [index, { offset, value }] of accumulator.ipc.entries()) {
+    if (
+      value.channel !== null ||
+      value.invocation_channels !== undefined ||
+      wrapperSites.has(offset)
+    )
+      continue;
+    const argument = accumulator.pendingIpcChannels.get(offset);
+    if (argument === undefined) continue;
+    const channel = evaluateSemanticExpression(argument, state);
+    if (channel.status !== "literal" || typeof channel.value !== "string")
+      continue;
+    accumulator.ipc[index] = {
+      offset,
+      value: {
+        ...value,
+        channel: channel.value,
+        channel_expression: null,
+        channel_basis: "static-value",
+      },
+    };
+    accumulator.unknownFindings -= 1;
+  }
+  accumulator.pendingIpcChannels.clear();
+};
+
+const scopedIpcDescriptor = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  context: JavaScriptFindingContext,
+):
+  | {
+      readonly descriptor: ElectronIpcDescriptor;
+      readonly receiver: ElectronIpcReceiver;
+      readonly authority: { readonly loader_authority?: "candidate" };
+    }
+  | undefined => {
+  if (
+    !t.isMemberExpression(node.callee) &&
+    !t.isOptionalMemberExpression(node.callee)
+  )
+    return undefined;
+  const operation = semanticStaticPropertyName(
+    node.callee.property,
+    node.callee.computed,
+  );
+  const descriptor = ipcDescriptor(["ipcMain", operation]);
+  if (descriptor === undefined) return undefined;
+  const receiver = context.browserWindowReceiver?.(node.callee.object, node, [
+    operation,
+  ]);
+  if (receiver === undefined) return undefined;
+  const path = receiver.path;
+  const kind =
+    path.length === 3 && path[0] === "webContents" && path[1] === "ipc"
+      ? "web-contents"
+      : path.length === 4 &&
+          path[0] === "webContents" &&
+          path[1] === "mainFrame" &&
+          path[2] === "ipc"
+        ? "main-frame"
+        : undefined;
+  return kind === undefined
+    ? undefined
+    : {
+        descriptor,
+        authority: receiver.authority,
+        receiver: { kind, owner_location: range(receiver.owner) },
+      };
 };
 
 const inspectValidationComparison = (

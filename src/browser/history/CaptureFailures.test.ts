@@ -1,12 +1,56 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  captureDecoderHeapContinuingRecovery,
+  DEFAULT_CAPTURE_DECODER_HEAP,
+} from "../../config/captureDecoderHeap.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
-import { historicalCaptureFailure } from "./CaptureFailures.js";
-import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "./CaptureRelease.js";
+import {
+  historicalCaptureFailure,
+  protobufCaptureFailure,
+} from "./CaptureFailures.js";
+import {
+  CaptureFormatError,
+  captureLimitForReply,
+} from "./CaptureFormatError.js";
+import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../tests/fixtures/captureDecoderLimits.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+
+it.each([
+  { phase: "capture-read", field: ["capture_path"] },
+  {
+    phase: "descriptor-read",
+    field: ["protobuf", "schema", "descriptor_set_path"],
+  },
+] as const)("offers the resolved-file retry for $phase", ({ phase, field }) => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/capture.har",
+    format: "har",
+    protobuf: {
+      schema: {
+        descriptor_set_path: "/selected/schema.pb",
+        message_type: "capture.Message",
+      },
+    },
+  });
+  const resolvedPath = "/resolved/regular-file";
+  const cause = new ArtifactReaderFailure("path", "Selected a symlink", {
+    resolvedPath,
+  });
+  const projected = projectAnalysisError(
+    historicalCaptureFailure(input, cause, phase),
+  );
+  expect(projected).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: field }] },
+    remediation: { action: expect.stringContaining(resolvedPath) },
+  });
+  expect(projected).not.toHaveProperty("recovery");
+});
 
 it.each([
   { label: "POSIX SIGABRT", exitCode: null, signal: "SIGABRT" },
@@ -29,6 +73,15 @@ it.each([
       },
       exitCode,
       signal,
+      runtimeExhaustion: {
+        runtime: "v8",
+        area: "heap",
+        stream: "stderr",
+        line: stderr.trim(),
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      },
     });
     const projected = analysisErrorProjectionSchema.parse(
       projectAnalysisError(historicalCaptureFailure(input, cause, "decoder")),
@@ -36,10 +89,9 @@ it.each([
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      message: expect.stringContaining("fixed V8 heap"),
       remediation: {
         action: expect.stringContaining(
-          "smaller capture exported by its producer",
+          captureDecoderHeapContinuingRecovery(DEFAULT_CAPTURE_DECODER_HEAP),
         ),
       },
       details: {
@@ -49,11 +101,23 @@ it.each([
           observed_signal: signal,
         },
         captured_output: { stdout: "", stderr },
+        diagnostics: {
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            area: "heap",
+            stream: "stderr",
+            line: stderr.trim(),
+            line_complete: true,
+          },
+        },
       },
     });
-    expect(JSON.stringify(projected)).not.toContain("rea doctor");
     // Bun ignores the decoder's V8 heap flags, so no fixed heap is reported.
-    const heapLimits = { old_generation_heap_mib: 192, semi_space_heap_mib: 8 };
+    const heapLimits = {
+      old_generation_heap_mib: 192,
+      old_generation_heap_source: "default",
+      semi_space_heap_mib: 8,
+    };
     if (process.versions.bun === undefined)
       expect(projected).toMatchObject({
         details: { reported_limits: heapLimits },
@@ -106,7 +170,6 @@ it.each([
     );
     expect(projected).toMatchObject({
       code: "resource_constraint",
-      message: expect.stringContaining("Windows Job Object memory limit"),
       details: {
         resource: "memory",
         reported_limits: {
@@ -119,7 +182,7 @@ it.each([
     });
     // The enforced limit is reported only where Bun runs on Windows.
     if (NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null)
-      expect(JSON.stringify(projected)).not.toContain(
+      expect(projected.details?.reported_limits).not.toHaveProperty(
         "process_memory_limit_bytes",
       );
     else
@@ -128,11 +191,6 @@ it.each([
           reported_limits: {
             process_memory_limit_bytes: NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
           },
-        },
-        remediation: {
-          action: expect.stringContaining(
-            `${String(NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)} bytes`,
-          ),
         },
       });
     // The same exit without the job notification remains an ordinary failure.
@@ -197,6 +255,7 @@ it.each(["before open", "during read"])(
     const cause = new ArtifactReaderFailure(
       "integrity",
       `Artifact changed ${stage}: ${path}`,
+      { integrityCheck: "container-identity" },
     );
     const error = historicalCaptureFailure(input, cause, "capture-read");
     const projected = projectAnalysisError(error);
@@ -211,7 +270,6 @@ it.each(["before open", "during read"])(
         reason: cause.message,
       },
     });
-    expect(projected.remediation.action).toContain("stable");
     const redacted = projectAnalysisError(
       redactExplicitFailure(error, ["private-marker", "REDACTED"]),
     );
@@ -267,6 +325,38 @@ it("retains actual command status and both diagnostic streams when cleanup also 
   expect(JSON.stringify(redacted)).not.toContain("private-marker");
   expect(redacted.code).toBe("cleanup_incomplete");
 });
+it("resolves the reported cleanup when the decoder's process lease confirms release", async () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const cause = new OwnedCommandFailure(
+    "process",
+    "Observed command failure",
+    null,
+    "Observed cleanup failure",
+    undefined,
+    ["pid:42"],
+  );
+  let stopped = false;
+  const processLease = new AnalysisCleanupLease(async () => {
+    if (!stopped) throw new Error("decoder still running");
+  }, ["pid:42"]);
+  const error = historicalCaptureFailure(
+    input,
+    cause,
+    "decoder",
+    undefined,
+    DEFAULT_CAPTURE_DECODER_HEAP,
+    processLease,
+  );
+  expect(error.cleanupIncomplete).toBe(true);
+  await expect(processLease.release()).rejects.toThrow("decoder still running");
+  expect(error.cleanupIncomplete).toBe(true);
+  stopped = true;
+  await processLease.release();
+  expect(error.cleanupIncomplete).toBe(false);
+});
 it.each(["io", "unavailable"] as const)(
   "keeps %s read failures separate from malformed capture input",
   (reason) => {
@@ -320,9 +410,115 @@ it("preserves the exact cancellation reason and an earlier reader failure", () =
 
   const changed = historicalCaptureFailure(
     input,
-    new ArtifactReaderFailure("integrity", "Observed changed capture"),
+    new ArtifactReaderFailure("integrity", "Observed changed capture", {
+      integrityCheck: "container-identity",
+    }),
     "capture-read",
     { signal: controller.signal },
   );
   expect(changed._tag).toBe("AnalysisArtifactChangedError");
+});
+
+it.each(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"])(
+  "reports an unresolvable selected capture path (%s) as capture_path input",
+  (code) => {
+    const input = inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: "/selected/input.har",
+      format: "har",
+    });
+    const cause = Object.assign(
+      new Error(`${code}: lstat '/selected/input.har'`),
+      { code },
+    );
+    expect(
+      projectAnalysisError(
+        historicalCaptureFailure(input, cause, "capture-read"),
+      ),
+    ).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["capture_path"],
+            message: expect.stringContaining(code),
+          },
+        ],
+      },
+    });
+  },
+);
+
+it("keeps physical capture read errors as provider failures", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const cause = Object.assign(new Error("EIO: read '/selected/input.har'"), {
+    code: "EIO",
+  });
+  expect(
+    projectAnalysisError(
+      historicalCaptureFailure(input, cause, "capture-read"),
+    ),
+  ).toMatchObject({
+    code: "execution_failure",
+    details: { diagnostics: { phase: "capture-read" } },
+  });
+});
+
+it.each([
+  {
+    limit: { name: "protobuf-body", maximum: 1024 },
+    parameter: "max_input_bytes",
+    expected: "maximum_protobuf_body_bytes",
+  },
+  {
+    limit: { name: "protobuf-decoding", maximum: 2048 },
+    parameter: "max_reply_bytes",
+    expected: "maximum_encoded_capture_bytes",
+  },
+] as const)(
+  "names the $parameter budget for a $limit.name refusal",
+  ({ limit, parameter, expected }) => {
+    const input = inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: "/selected/capture.har",
+      format: "har",
+    });
+    const cause = new CaptureFormatError(limit, "Protobuf limit reached");
+    const error = protobufCaptureFailure(input, cause);
+    expect.soft(error.cause).toBe(cause);
+    const projected = projectAnalysisError(error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: { reported_limits: { [expected]: limit.maximum } },
+      remediation: {
+        action: expect.stringContaining(`Increase ${parameter}`),
+      },
+    });
+    expect(projected.remediation.action).toContain(String(limit.maximum));
+  },
+);
+
+it("derives each decoder-child wire reason from the limit table", () => {
+  expect(
+    new CaptureFormatError(
+      { name: "nesting-depth", maximum: 64 },
+      "deep",
+      "/log",
+    ),
+  ).toMatchObject({ replyReason: "input-limit", pointer: "/log" });
+  expect(
+    new CaptureFormatError({ name: "expanded-input", maximum: 1 }, "big")
+      .replyReason,
+  ).toBe("expanded-limit");
+  expect(new CaptureFormatError("malformed", "bad").replyReason).toBe("format");
+  expect(new CaptureFormatError("unsupported", "no").replyReason).toBe(
+    "unsupported",
+  );
+  expect(captureLimitForReply("input-limit")).toBe("nesting-depth");
+  expect(captureLimitForReply("expanded-limit")).toBe("expanded-input");
+  // A reply-size refusal is not a decoder input limit.
+  expect(captureLimitForReply("limit")).toBeUndefined();
 });

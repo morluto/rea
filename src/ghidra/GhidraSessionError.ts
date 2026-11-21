@@ -1,11 +1,15 @@
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
+import type { GhidraDiagnosticsScope } from "./GhidraDiagnostics.js";
+import { isGhidraByteSearchCursorMismatch } from "./GhidraByteSearchCursorFailure.js";
+import { ghidraFileOffsetOutcome } from "./GhidraFileOffsetFailure.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GhidraLaunchSupportError } from "./GhidraJavaLaunch.js";
 import {
   GhidraLaunchError,
@@ -20,11 +24,13 @@ const MAX_COMMAND_OUTPUT_BYTES = 8 * 1024;
 
 /** Stable failure phase for one private Ghidra headless session. */
 export type GhidraSessionFailureKind =
+  | "admission"
   | "cancelled"
   | "timeout"
   | "start"
   | "process"
   | "protocol"
+  | "checkpoint"
   | "remote"
   | "analysis_timeout";
 
@@ -39,6 +45,8 @@ export interface GhidraSessionErrorOptions extends ErrorOptions {
   readonly timeoutMs?: number;
   readonly remoteCode?: string;
   readonly cleanupFailure?: AnalysisError;
+  /** Caller cancellation that closed the session while this failure settled. */
+  readonly concurrentCancellation?: { readonly reason: unknown };
 }
 
 /** Provider-owned failure with bounded, token-redacted local diagnostics. */
@@ -49,6 +57,7 @@ export class GhidraSessionError extends Error {
   readonly cleanupFailure: AnalysisError | undefined;
   readonly cancellation: { readonly reason: unknown } | undefined;
   readonly partialObservation: AnalysisPartialObservation | undefined;
+  readonly concurrentCancellation: { readonly reason: unknown } | undefined;
 
   constructor(
     readonly kind: GhidraSessionFailureKind,
@@ -64,6 +73,7 @@ export class GhidraSessionError extends Error {
     this.cleanupFailure = options.cleanupFailure;
     this.cancellation = options.cancellation;
     this.partialObservation = options.partialObservation;
+    this.concurrentCancellation = options.concurrentCancellation;
   }
 
   /** Refresh diagnostics without discarding owned failure or cleanup facts. */
@@ -82,10 +92,7 @@ export class GhidraSessionError extends Error {
     const combined =
       this.cleanupFailure === undefined || this.cleanupFailure === cleanup
         ? cleanup
-        : analysisErrorWithCleanupFailure(
-            this.cleanupFailure,
-            cleanup,
-          ).bindCleanupDependencies([this.cleanupFailure, cleanup]);
+        : analysisErrorWithCleanupDependencies(this.cleanupFailure, cleanup);
     return this.#copy(diagnostics, combined);
   }
 
@@ -101,11 +108,28 @@ export class GhidraSessionError extends Error {
     );
   }
 
+  /**
+   * Keep this failure primary while recording that caller cancellation closed
+   * the session before it settled, so projections do not promise reuse.
+   */
+  withConcurrentCancellation(cancellation: {
+    readonly reason: unknown;
+  }): GhidraSessionError {
+    return this.#copy(
+      { ...this.diagnostics, session_closed_by_cancellation: true },
+      this.cleanupFailure,
+      this.message,
+      this.partialObservation,
+      cancellation,
+    );
+  }
+
   #copy(
     diagnostics: Readonly<Record<string, JsonValue>>,
     cleanupFailure: AnalysisError | undefined,
     message = this.message,
     partialObservation = this.partialObservation,
+    concurrentCancellation = this.concurrentCancellation,
   ): GhidraSessionError {
     return new GhidraSessionError(this.kind, message, diagnostics, {
       ...(Object.hasOwn(this, "cause") ? { cause: this.cause } : {}),
@@ -116,6 +140,9 @@ export class GhidraSessionError extends Error {
       ...(this.remoteCode === undefined ? {} : { remoteCode: this.remoteCode }),
       ...(cleanupFailure === undefined ? {} : { cleanupFailure }),
       ...(partialObservation === undefined ? {} : { partialObservation }),
+      ...(concurrentCancellation === undefined
+        ? {}
+        : { concurrentCancellation }),
     });
   }
 }
@@ -159,10 +186,23 @@ const createGhidraSessionError = (failure: {
     },
   );
 
-/** Bind session-failure construction to a live, token-redacted diagnostic view. */
+/** Bridge input failures share classification with their domain error projection. */
+export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
+  code === "invalid_request" ||
+  code === "invalid_regex_pattern" ||
+  code === "not_found" ||
+  code === "procedure_not_found" ||
+  code === "file_offset_unmapped" ||
+  code === "procedure_ambiguous" ||
+  code === "file_offset_ambiguous" ||
+  code === "ambiguous";
+
+/** Bind session-failure construction to its causal diagnostic scope. */
 export const bindGhidraSessionFailure =
   (
-    diagnostics: () => Readonly<Record<string, JsonValue>>,
+    diagnostics: (
+      scope: GhidraDiagnosticsScope,
+    ) => Readonly<Record<string, JsonValue>>,
     redact: (value: string, incomplete?: boolean) => string = (value) => value,
   ) =>
   (
@@ -178,7 +218,15 @@ export const bindGhidraSessionFailure =
       kind,
       message: redact(message),
       diagnostics: {
-        ...diagnostics(),
+        ...diagnostics(
+          kind === "remote" &&
+            (isGhidraInputFailureCode(options.remoteCode) ||
+              options.remoteCode === "invalid_function_name" ||
+              ghidraFileOffsetOutcome(options.remoteCode) !== undefined ||
+              isGhidraByteSearchCursorMismatch(options.remoteCode))
+            ? "request"
+            : "session",
+        ),
         ...(cause === undefined
           ? {}
           : { failure_cause: describeCause(cause, redact) }),
@@ -213,7 +261,7 @@ const describeCause = (
     return describeErrorCause(cause, redact, depth);
   }
   if (typeof cause === "string") {
-    const message = boundedUtf8Text(redact(cause), MAX_CAUSE_MESSAGE_BYTES);
+    const message = utf8HeadExcerpt(redact(cause), MAX_CAUSE_MESSAGE_BYTES);
     return {
       type: "string",
       message: message.text,
@@ -232,17 +280,18 @@ const describeErrorCause = (
   redact: (value: string, incomplete?: boolean) => string,
   depth: number,
 ): JsonValue => {
-  const message = boundedUtf8Text(
+  const message = utf8HeadExcerpt(
     redact(cause.message),
     MAX_CAUSE_MESSAGE_BYTES,
   );
-  const name = boundedUtf8Text(redact(cause.name), MAX_CAUSE_FIELD_BYTES);
+  const name = utf8HeadExcerpt(redact(cause.name), MAX_CAUSE_FIELD_BYTES);
   return {
     name: name.text,
     ...(name.truncated ? { name_truncated: true } : {}),
     message: message.text,
     ...(message.truncated ? { message_truncated: true } : {}),
     ...causeCode(cause, redact),
+    ...causeAdmissionDetail(cause, redact),
     ...causeSignal(cause, redact),
     ...causeCommandOutcome(cause, redact),
     ...causeCompilerOutcome(cause, redact),
@@ -259,11 +308,11 @@ const causeCommandOutcome = (
   if (!(cause instanceof GhidraLaunchSupportError)) return {};
   const outcome = cause.outcome;
   if (outcome === undefined) return {};
-  const stdout = boundedUtf8Text(
+  const stdout = utf8HeadExcerpt(
     redact(outcome.stdout, outcome.outputTruncated !== false),
     MAX_COMMAND_OUTPUT_BYTES,
   );
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     redact(outcome.stderr, outcome.outputTruncated !== false),
     MAX_COMMAND_OUTPUT_BYTES,
   );
@@ -281,13 +330,31 @@ const causeCommandOutcome = (
   };
 };
 
+const causeAdmissionDetail = (
+  cause: Error,
+  redact: (value: string, incomplete?: boolean) => string,
+): Record<string, JsonValue> => {
+  if (!(cause instanceof GhidraAdmissionError) || cause.detail === undefined)
+    return {};
+  const detail: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(cause.detail)) {
+    if (typeof value === "number") {
+      detail[key] = value;
+      continue;
+    }
+    const bounded = utf8HeadExcerpt(redact(value), MAX_CAUSE_FIELD_BYTES);
+    detail[key] = bounded.text;
+  }
+  return { detail };
+};
+
 const causeCode = (
   cause: Error,
   redact: (value: string, incomplete?: boolean) => string,
 ): Record<string, JsonValue> => {
   const code = "code" in cause ? cause.code : undefined;
   if (typeof code === "string") {
-    const bounded = boundedUtf8Text(redact(code), MAX_CAUSE_FIELD_BYTES);
+    const bounded = utf8HeadExcerpt(redact(code), MAX_CAUSE_FIELD_BYTES);
     return {
       code: bounded.text,
       ...(bounded.truncated ? { code_truncated: true } : {}),
@@ -303,7 +370,7 @@ const causeSignal = (
 ): Record<string, JsonValue> => {
   const signal = "signal" in cause ? cause.signal : undefined;
   if (typeof signal === "string") {
-    const bounded = boundedUtf8Text(redact(signal), MAX_CAUSE_FIELD_BYTES);
+    const bounded = utf8HeadExcerpt(redact(signal), MAX_CAUSE_FIELD_BYTES);
     return {
       signal: bounded.text,
       ...(bounded.truncated ? { signal_truncated: true } : {}),
@@ -320,7 +387,7 @@ const causeCompilerOutcome = (
   if (!(cause instanceof DarwinProcessOwnershipInspectionError)) return {};
   const outcome = cause.compilerOutcome;
   if (outcome === undefined) return {};
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     redact(outcome.stderr),
     MAX_COMPILER_STDERR_BYTES,
   );
@@ -344,7 +411,7 @@ const boundedCompilerField = (
   redact: (value: string, incomplete?: boolean) => string,
 ): { readonly value: string | number | null; readonly truncated: boolean } => {
   if (typeof value !== "string") return { value, truncated: false };
-  const bounded = boundedUtf8Text(redact(value), MAX_CAUSE_FIELD_BYTES);
+  const bounded = utf8HeadExcerpt(redact(value), MAX_CAUSE_FIELD_BYTES);
   return { value: bounded.text, truncated: bounded.truncated };
 };
 
@@ -370,13 +437,13 @@ const causeLaunchRollback = (
       },
     };
   const result = rollback.result;
-  const reason = boundedUtf8Text(
+  const reason = utf8HeadExcerpt(
     redact(result.reason),
     MAX_CAUSE_MESSAGE_BYTES,
   );
   const diagnostic = (value: string | undefined): Record<string, JsonValue> => {
     if (value === undefined) return {};
-    const bounded = boundedUtf8Text(redact(value), MAX_CAUSE_MESSAGE_BYTES);
+    const bounded = utf8HeadExcerpt(redact(value), MAX_CAUSE_MESSAGE_BYTES);
     return {
       diagnostic: bounded.text,
       ...(bounded.truncated ? { diagnostic_truncated: true } : {}),
@@ -463,11 +530,11 @@ const causeLaunchOutcome = (
   if (cause.cause instanceof GhidraLaunchSupportError) return launchSupport;
   const output = cause.capturedOutput;
   if (output === undefined) return launchSupport;
-  const stdout = boundedUtf8Text(
+  const stdout = utf8HeadExcerpt(
     redact(output.stdout),
     GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
   );
-  const stderr = boundedUtf8Text(
+  const stderr = utf8HeadExcerpt(
     redact(output.stderr),
     GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
   );

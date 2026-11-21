@@ -26,7 +26,7 @@ it.each([
   "excludes URL userinfo after optional whitespace while preserving the original header text: $value",
   ({ value, expected }) => {
     const redactor = new CaptureRedaction([]);
-    expect(redactor.text(value, "/response/headers/0/value", true)).toBe(
+    expect(redactor.text(value, "/response/headers/0/value", {})).toBe(
       expected,
     );
     expect(redactor.redactions).toEqual([
@@ -56,7 +56,7 @@ it.each([
   "/\t/user:password@example.test/path",
 ])("excludes credentials whose raw URL span is ambiguous: %s", (value) => {
   const redactor = new CaptureRedaction([]);
-  expect(redactor.text(value, "/request/url", true)).toBeNull();
+  expect(redactor.text(value, "/request/url", {})).toBeNull();
   expect(redactor.redactions).toEqual([
     { pointer: "/request/url", reason: "transport-credential" },
   ]);
@@ -66,7 +66,7 @@ it.each([
 it("uses non-special URL authority rules to remove the complete userinfo span", () => {
   const value = "custom://user:secret@part\\more:password@host/path";
   const redactor = new CaptureRedaction([]);
-  expect(redactor.text(value, "/response/redirectURL", true)).toBe(
+  expect(redactor.text(value, "/response/redirectURL", {})).toBe(
     "custom://host/path",
   );
   expect(redactor.redactions).toEqual([
@@ -83,7 +83,7 @@ it("preserves noncanonical URLs and path/query userinfo lookalikes without parse
     "//invalid host\\user:password@literal",
   ]) {
     const redactor = new CaptureRedaction([]);
-    expect(redactor.text(value, "/request/url", true)).toBe(value);
+    expect(redactor.text(value, "/request/url", {})).toBe(value);
     expect(redactor.redactions).toEqual([]);
   }
 });

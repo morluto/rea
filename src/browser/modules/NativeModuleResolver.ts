@@ -1,3 +1,9 @@
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import {
+  chromiumLaunchRemediation,
+  chromiumSandboxEnabled,
+} from "../ChromiumSandbox.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type {
@@ -7,15 +13,16 @@ import type {
   ConsoleMessage,
   LaunchOptions,
 } from "playwright-core";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import type { WebModuleResolutionPort } from "../../application/WebModulePorts.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { WebModuleResolutionPort } from "../../ports/WebModulePorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
@@ -25,13 +32,15 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import type {
   WebModuleResolutionBatch,
   WebModuleResolutionObservation,
 } from "../../domain/webModuleTrace.js";
 import { webModuleResolutionSchema } from "../../domain/webModuleTrace.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
+import { importMapForTrustedResolver } from "./importMapForTrustedResolver.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "trace_web_module_imports";
 const TIMEOUT_MS = 20000;
@@ -71,6 +80,20 @@ export type ModuleResolverLauncher = (
 const launch: ModuleResolverLauncher = async (options) =>
   (await import("playwright-core")).chromium.launch(options);
 
+const moduleResolverFailure = (
+  cause: unknown,
+  executable: string,
+  remediationAction: string | undefined,
+): ProviderAdapterError =>
+  new ProviderAdapterError("native-module-resolver", OPERATION, {
+    cause,
+    ...(remediationAction === undefined ? {} : { remediationAction }),
+    diagnostics: {
+      executable,
+      error_message: errorMessage(cause),
+    },
+  });
+
 /** Use native import.meta.resolve in an owned context with locally fulfilled requests. */
 export class NativeModuleResolver implements WebModuleResolutionPort {
   #tail: Promise<void> = Promise.resolve();
@@ -78,10 +101,16 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   #closePromise: Promise<void> | undefined;
   #pendingCleanup: AnalysisCleanupLease | undefined;
 
+  readonly environment: Readonly<Record<string, string | undefined>>;
+
   constructor(
-    readonly environment: Readonly<Record<string, string | undefined>>,
+    environment: Readonly<Record<string, string | undefined>>,
     readonly launcher: ModuleResolverLauncher = launch,
-  ) {}
+    // The host Chromium launches on; defaults to the running host.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  ) {
+    this.environment = snapshotEnvironment(environment, platform);
+  }
 
   resolve(
     input: Parameters<WebModuleResolutionPort["resolve"]>[0],
@@ -103,9 +132,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
     options?: ExecutionOptions,
   ): ReturnType<WebModuleResolutionPort["resolve"]> {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const pending = await this.#retryCleanup();
     if (pending !== undefined) return err(pending);
     const executable = this.environment.REA_BROWSER_EXECUTABLE;
@@ -114,13 +141,22 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
         new AnalysisCapabilityUnavailableError(
           "native-module-resolver",
           OPERATION,
-          "missing_browser_executable",
+          executable === undefined
+            ? "missing_browser_executable"
+            : "invalid_browser_executable",
           {
             userMessage:
               "Provide an absolute REA_BROWSER_EXECUTABLE for a caller-supplied Chromium browser supporting import.meta.resolve. REA installs no browser.",
+            ...(executable === undefined
+              ? {}
+              : { diagnostics: { executable } }),
           },
         ),
       );
+    const chromiumSandbox = chromiumSandboxEnabled(
+      this.environment,
+      this.platform,
+    );
     const deadline = new ProviderStartupDeadline(TIMEOUT_MS, options?.signal);
     let activeCall:
       | { settled: boolean; interruption?: AnalysisError }
@@ -128,9 +164,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
     let interruption: AnalysisError | undefined;
     const interrupted = (): AnalysisError =>
       deadline.interruption === "cancelled"
-        ? new AnalysisCancelledError(OPERATION, {
-            cause: deadline.signal.reason,
-          })
+        ? cancelledBy(OPERATION, deadline.signal)
         : new AnalysisTimeoutError(OPERATION, TIMEOUT_MS);
     const assertActive = (): void => {
       if (!deadline.signal.aborted) return;
@@ -155,6 +189,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       );
     };
     let lease: AnalysisCleanupLease | undefined;
+    let launched = false;
     let cleanup: Promise<void> | undefined;
     const close = (): Promise<void> => {
       if (cleanup === undefined && lease !== undefined) {
@@ -180,22 +215,22 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       const browser = await observe(() =>
         this.launcher({
           executablePath: executable,
+          env: this.environment,
           headless: true,
           timeout: Math.max(1, deadline.remainingMs()),
           handleSIGINT: false,
           handleSIGTERM: false,
           handleSIGHUP: false,
+          chromiumSandbox,
           args: [
             "--disable-dev-shm-usage",
             "--disable-background-networking",
             "--renderer-process-limit=1",
             "--js-flags=--max-old-space-size=128",
-            ...(this.environment.REA_BROWSER_NO_SANDBOX === "true"
-              ? ["--no-sandbox"]
-              : []),
           ],
         }),
       );
+      launched = true;
       lease = new AnalysisCleanupLease(async () => {
         if (
           deadline.signal.aborted &&
@@ -227,14 +262,15 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
               cause instanceof AnalysisCapabilityUnavailableError ||
               cause instanceof BrowserObservationError
             ? cause
-            : new ProviderAdapterError("native-module-resolver", OPERATION, {
+            : moduleResolverFailure(
                 cause,
-                diagnostics: {
-                  executable,
-                  error_message:
-                    cause instanceof Error ? cause.message : String(cause),
-                },
-              }),
+                executable,
+                // Only an unresolved sandboxed launch can be a sandbox failure;
+                // later engine failures keep the default recovery guidance.
+                launched || !chromiumSandbox
+                  ? undefined
+                  : chromiumLaunchRemediation(true),
+              ),
       );
     } finally {
       deadline.signal.removeEventListener("abort", onAbort);
@@ -251,22 +287,30 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       if (lease !== undefined)
         new AnalysisCleanupLeaseGroup(cleanupError, [lease]);
     }
-    if (result.ok && options?.signal?.aborted)
+    if (options?.signal?.aborted)
       result = err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-          partialObservation: completedObservation(input, result.value),
-        }),
+        analysisErrorWithCancellation(
+          result.ok ? undefined : result.error,
+          cancelledBy(
+            OPERATION,
+            options.signal,
+            result.ok
+              ? {
+                  partialObservation: completedObservation(input, result.value),
+                }
+              : {},
+          ),
+        ),
       );
     if (cleanupError !== undefined)
       return err(
         result.ok
           ? cleanupError
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               result.error,
               cleanupError,
               OPERATION,
-            ).bindCleanupDependencies([result.error, cleanupError]),
+            ),
       );
 
     return result;
@@ -287,9 +331,11 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   }
 
   #closedError(): AnalysisError {
-    return new BrowserObservationError(OPERATION, "cleanup_failed", {
-      detail: "Native module resolver is closing.",
-    });
+    return new AnalysisCapabilityUnavailableError(
+      "native-module-resolver",
+      OPERATION,
+      "Native module resolver is closing.",
+    );
   }
 
   async #retryCleanup(): Promise<AnalysisError | undefined> {
@@ -356,7 +402,7 @@ const resolveInBrowser = async (
         await route.fulfill({
           status: 200,
           contentType: "text/html",
-          body: `<!doctype html>${input.importMap === null ? "" : `<base href="${htmlAttribute(new URL(input.importMap.baseUrl).href)}"><script type="importmap">${scriptJson(input.importMap.value)}</script>`}`,
+          body: `<!doctype html>${input.importMap === null ? "" : `<base href="${htmlAttribute(new URL(input.importMap.baseUrl).href)}"><script type="importmap">${scriptJson(importMapForTrustedResolver(input.importMap.value, importerUrl, input.importMap.baseUrl))}</script>`}`,
         });
       } else if (
         !stubSent &&
@@ -381,7 +427,9 @@ const resolveInBrowser = async (
           resource_type: request.resourceType(),
           effect: "blocked",
         });
-        await route.abort();
+        // Playwright's default network error code, named so the abort-reason
+        // guard sees an argument rather than a bare AbortController abort.
+        await route.abort("failed");
       }
     }),
   );
@@ -485,7 +533,7 @@ const cleanupFailure = (
     "native-module-resolver",
     ["chromium-browser"],
     {
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
     {
       cause,

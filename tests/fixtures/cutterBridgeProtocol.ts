@@ -118,6 +118,8 @@ export const writeDescriptor = async (
   options: {
     readonly currentFile?: string | null;
     readonly documentGeneration?: number;
+    readonly maxRequestBytes?: number;
+    readonly bridgeSourceSha256?: string | null;
   } = {},
 ): Promise<void> =>
   writeFile(
@@ -132,6 +134,12 @@ export const writeDescriptor = async (
       current_file: options.currentFile ?? null,
       cutter_version: "Cutter fixture version",
       identity_status: "partial",
+      ...(options.maxRequestBytes === undefined
+        ? {}
+        : { max_request_bytes: options.maxRequestBytes }),
+      ...(options.bridgeSourceSha256 === undefined
+        ? {}
+        : { bridge_source_sha256: options.bridgeSourceSha256 }),
     }),
     { mode: 0o600 },
   );

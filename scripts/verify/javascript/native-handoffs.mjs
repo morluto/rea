@@ -11,16 +11,18 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createEvidence } from "../../../dist/domain/evidence.js";
-import { PrivateRuntimeRoot } from "../../../dist/process/PrivateRuntimeRoot.js";
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
-import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
-import {
-  matchesStructuredScopeExpectation,
-  structuredScopeExpectationsSchema,
-} from "../../lib/javascript-file-scope-oracle.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import { importVerifierSource } from "../../lib/verifier-source-loader.mjs";
+
+const { matchesStructuredScopeExpectation, structuredScopeExpectationsSchema } =
+  await importVerifierSource(
+    new URL("../../lib/javascript-file-scope-oracle.mts", import.meta.url).href,
+  );
 
 const { values } = parseArgs({
   options: {
@@ -122,8 +124,6 @@ const simulatedNativeEvidence = (path, sha256) =>
     },
   );
 let temporary;
-let primaryError;
-let retainTemporary = false;
 let report;
 const ownedCommand = async (command, arguments_, timeoutMs = 60_000) => {
   try {
@@ -140,12 +140,17 @@ const ownedCommand = async (command, arguments_, timeoutMs = 60_000) => {
       { timeoutMs, diagnosticBytes: 16 * 1024 * 1024 },
     );
   } catch (cause) {
-    retainTemporary ||=
-      cause instanceof OwnedCommandFailure && cause.cleanupOwner !== undefined;
+    if (
+      cause instanceof OwnedCommandFailure &&
+      cause.cleanupOwner !== undefined
+    )
+      temporary.retain(
+        `Command cleanup is incomplete; retaining its private inputs at ${temporary.path}.`,
+      );
     throw cause;
   }
 };
-try {
+await withVerifierCleanup(async () => {
   const archiveSha256 = await fileDigest(values.artifact);
   const companion = join(`${values.artifact}.unpacked`, values["addon-path"]);
   let companionSha256 = null;
@@ -217,7 +222,7 @@ try {
   const timedOut = preparation.wire_response.isError === true;
   assert.equal(timedOut, values["expect-timeout"]);
   if (!timedOut)
-    assert.equal(preparation.response.subject.digest.sha256, archiveSha256);
+    assert.equal(preparation.response.subject.identity.sha256, archiveSha256);
   const sourceId = timedOut
     ? preparation.response.error.details.partial_observation.evidence_id
     : preparation.response.normalized_result.parent_evidence_id;
@@ -313,7 +318,7 @@ try {
   }
   let cliParity = null;
   if (values["cli-parity"]) {
-    temporary = await PrivateRuntimeRoot.create({
+    temporary = await VerifierFixture.open({
       prefix: "rea-native-handoff-verifier-",
     });
     const bundlePath = join(temporary.path, "bundle.json");
@@ -380,7 +385,7 @@ try {
     );
   let tokenCosts = null;
   if (values["tokenizer-python"]) {
-    temporary ??= await PrivateRuntimeRoot.create({
+    temporary ??= await VerifierFixture.open({
       prefix: "rea-native-handoff-verifier-",
     });
     const input = join(temporary.path, "token-input.json");
@@ -460,23 +465,5 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
     assert.ok(safeIdentity, "Native identity/linkage oracle failed");
     assert.ok(safeApplicability, "File analysis applicability oracle failed");
   }
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [
-      () => client.close(),
-      () => transport.close(),
-      async () => {
-        if (retainTemporary)
-          throw new Error(
-            `Command cleanup incomplete; retaining owned inputs at ${temporary?.path}.`,
-          );
-        await temporary?.close();
-      },
-    ],
-    primaryError,
-  );
-}
+}, [() => client.close(), () => transport.close(), () => temporary?.release()]);
 console.log(serialize(report));

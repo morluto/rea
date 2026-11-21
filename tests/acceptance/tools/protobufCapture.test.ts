@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { readFile, unlink, writeFile, mkdir, truncate } from "node:fs/promises";
+import {
+  readFile,
+  unlink,
+  writeFile,
+  mkdir,
+  truncate,
+  symlink,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -10,13 +17,14 @@ import {
   protobufFrame,
   protobufCaptureBody,
 } from "../../fixtures/protobufCapture.js";
+import { expectCliMcpEvidenceParity } from "../../fixtures/cliMcpEvidenceParity.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   webNetworkCaptureSchema,
   inspectWebNetworkCaptureInputSchema,
 } from "../../../src/domain/webNetworkCapture.js";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
@@ -156,6 +164,15 @@ captureTest(
     });
     const missingError = parseMcpToolError(missing).error;
     expect(missingError.code).toBe("invalid_request");
+    expect(missingError.details).toMatchObject({
+      issues: [
+        {
+          path: ["protobuf", "schema", "message_type"],
+          reason: "invalid_value",
+          message: expect.stringContaining("capture.Missing"),
+        },
+      ],
+    });
     const retainedSource = retainedCaptureDetailsSchema.parse(
       missingError.details,
     ).partial_observation;
@@ -192,15 +209,24 @@ captureTest(
       repeated[index + 1] = 1;
     }
     await writeFile(capacityPath, protobufHar(protobufFrame(repeated)));
+    const replyBudget = 8 * 1024 * 1024;
     const capacity = await call("inspect_web_network_capture", {
       capture_path: capacityPath,
       format: "har",
+      max_reply_bytes: replyBudget,
       record_ordinals: [0],
       sensitive_values: ["unrelated fixture exclusion"],
     });
     const capacityError = parseMcpToolError(capacity).error;
-    expect(capacityError.code).toBe("resource_constraint");
-    expect(capacityError.retryable).toBe(false);
+    expect(capacityError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "capacity",
+        reported_limits: { maximum_encoded_capture_bytes: replyBudget },
+      },
+      remediation: { action: expect.stringContaining("max_reply_bytes") },
+    });
     const capacitySource = retainedCaptureDetailsSchema.parse(
       capacityError.details,
     ).partial_observation;
@@ -345,11 +371,18 @@ captureTest(
     await mkdir(directory);
     await writeFile(oversized, "");
     await truncate(oversized, 32 * 1024 * 1024 + 1);
-    for (const [path, reason] of [
+    const failures: Array<readonly [string, string]> = [
       [join(root, "missing.pb"), "invalid_value"],
       [directory, "invalid_format"],
       [oversized, "out_of_range"],
-    ] as const) {
+    ];
+    // A single component exceeds POSIX NAME_MAX. Windows path limits vary by host.
+    if (process.platform !== "win32") {
+      failures.push([join(root, "x".repeat(300)), "invalid_value"]);
+      await symlink("loop", join(root, "loop"));
+      failures.push([join(root, "loop", "descriptor.pb"), "invalid_value"]);
+    }
+    for (const [path, reason] of failures) {
       const response = await call("inspect_web_network_capture", {
         ...args,
         sensitive_values: ["unrelated fixture exclusion"],
@@ -367,6 +400,18 @@ captureTest(
           { path: ["protobuf", "schema", "descriptor_set_path"], reason },
         ],
       });
+      if (path.endsWith("x".repeat(300)))
+        expect(error.details?.issues).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining("ENAMETOOLONG"),
+          }),
+        ]);
+      if (path === join(root, "loop", "descriptor.pb"))
+        expect(error.details?.issues).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining("ELOOP"),
+          }),
+        ]);
       expect(
         retainedCaptureDetailsSchema.parse(error.details).partial_observation
           .kind,
@@ -559,6 +604,12 @@ captureTest(
 
 const trailerCases = [
   ["valid", "grpc-status", "0", "complete"],
+  [
+    "opaque",
+    "grpc-status",
+    "0\r\nx-note: caf\u00e9\r\nx-after: kept",
+    "partial",
+  ],
   ["uppercase", "Grpc-Status", "0", "partial"],
   ["nul", "grpc-status", "0\u0000bad", "partial"],
   ["lf", "grpc-status", "0\nbad", "partial"],
@@ -582,7 +633,10 @@ captureTest.for(
   async ({ framing, name, headerName, value, status }, { cli, mcp }) => {
     const root = await createTestTempDirectory("rea-grpc-web-trailers-");
     const path = join(root, `${framing}-${name}.har`);
-    const trailer = Buffer.from(`${headerName}: ${value}\r\n`);
+    const trailer = Buffer.from(
+      `${headerName}: ${value}\r\n`,
+      name === "opaque" ? "latin1" : "utf8",
+    );
     const body = Buffer.concat([
       protobufFrame(Buffer.from([8, 1])),
       protobufFrame(trailer, 128),
@@ -592,7 +646,7 @@ captureTest.for(
       `application/${framing}`,
     );
     await writeFile(path, original);
-    const response = await cli.run({
+    const options = {
       arguments: [
         "inspect-web-network-capture",
         path,
@@ -603,6 +657,10 @@ captureTest.for(
         "auto",
         "--json",
       ],
+    };
+    const response = await cli.run({
+      ...options,
+      freshProcess: name === "valid",
     });
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
@@ -618,6 +676,12 @@ captureTest.for(
       ],
       fields: [{ number: 1, wire_type: "varint", value: "1" }],
     });
+    if (name === "opaque") {
+      expect(report.records[0]?.protobuf?.[0]?.frames[1]?.trailers).toEqual([
+        { name: "grpc-status", value: "0" },
+        { name: "x-after", value: "kept" },
+      ]);
+    }
     const reply = await mcp.call("inspect_web_network_capture", {
       capture_path: path,
       format: "har",
@@ -625,7 +689,7 @@ captureTest.for(
       protobuf: { framing: "auto" },
     });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-    expect(reply.structuredContent).toEqual(response.json);
+    expectCliMcpEvidenceParity(response.json, reply.structuredContent, path);
     expect(await readFile(path, "utf8")).toBe(original);
   },
 );

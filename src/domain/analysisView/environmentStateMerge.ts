@@ -9,6 +9,8 @@ import {
 /** One entity object as one tool recorded it. */
 export interface StateObservation {
   readonly position: number;
+  /** Where in its read the entity was listed; 0 for an item read. */
+  readonly index: number;
   readonly ordinal: number;
   readonly tool: string;
   readonly item: boolean;
@@ -79,7 +81,8 @@ export const mergeObservedEntity = (entity: ObservedEntity): StateEntity => {
  * How observed values changed, per entity in timeline order. A shared field that differs from the
  * previous repeat of the same request line is volatile, unless a recorded write lies between them;
  * a field that differs from its previous observation on another line across a write rewrites the
- * type. Either across a write means the reads do not agree on one initial state.
+ * type. Either across a write means the reads do not agree on one initial state; each such pair of
+ * observations is a span the type's initial reads can end before.
  */
 export const classifyEntityChanges = (
   entities: Iterable<ObservedEntity>,
@@ -88,9 +91,23 @@ export const classifyEntityChanges = (
 ): {
   readonly rewritten: ReadonlySet<string>;
   readonly volatile: ReadonlyMap<string, Set<string>>;
+  readonly spans: readonly {
+    readonly type: string;
+    readonly earlier: number;
+    readonly later: number;
+  }[];
 } => {
   const rewritten = new Set<string>();
   const volatile = new Map<string, Set<string>>();
+  const spans: { type: string; earlier: number; later: number }[] = [];
+  const rewrite = (
+    type: string,
+    earlier: StateObservation,
+    later: StateObservation,
+  ) => {
+    rewritten.add(type);
+    spans.push({ type, earlier: earlier.ordinal, later: later.ordinal });
+  };
   const changed = (before: StateObservation, after: StateObservation) =>
     Object.keys(after.object).filter(
       (name) =>
@@ -113,7 +130,8 @@ export const classifyEntityChanges = (
       if (repeat !== undefined) {
         if (writeBetween(repeat, after)) {
           // Key additions/removals are changes too, even when every shared field is unchanged.
-          if (!same(repeat.object, after.object)) rewritten.add(entity.type);
+          if (!same(repeat.object, after.object))
+            rewrite(entity.type, repeat, after);
         } else
           for (const name of changed(repeat, after))
             volatile.set(
@@ -130,11 +148,11 @@ export const classifyEntityChanges = (
           !same(previous.observation.object[name], after.object[name]) &&
           writeBetween(previous.observation, after)
         )
-          rewritten.add(entity.type);
+          rewrite(entity.type, previous.observation, after);
         lastOfField.set(name, sighting);
       }
       lastOfLine.set(line, after);
     });
   }
-  return { rewritten, volatile };
+  return { rewritten, volatile, spans };
 };

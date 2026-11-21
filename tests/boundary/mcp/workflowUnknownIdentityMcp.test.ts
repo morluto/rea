@@ -1,10 +1,11 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
+
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -28,14 +29,12 @@ const withClient = async (
 
 const pathSource = () => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (template.subject === null)
-    throw new Error("Call-path fixtures must be artifact-bound");
   const dossier = functionDossierSchema.parse(template.normalized_result);
   return createEvidence(
     {
       path: `${template.subject.local_path}/workflow-unknown-path`,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
@@ -44,7 +43,7 @@ const pathSource = () => {
         ...template.parameters,
         observation: "workflow-unknown-path",
       },
-      result: jsonValueSchema.parse({
+      result: {
         ...dossier,
         callees: [
           {
@@ -54,7 +53,7 @@ const pathSource = () => {
             body: { available: false, reason: "No body was observed." },
           },
         ],
-      }),
+      },
       confidence: template.confidence,
       authority: template.authority,
       relationshipCoverage: { status: "complete" },
@@ -64,22 +63,18 @@ const pathSource = () => {
 
 const incompleteRight = (suffix: string) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.right;
-  if (template.subject === null)
-    throw new Error("Comparison fixtures must be artifact-bound");
   return createEvidence(
     {
       path: `${template.subject.local_path}/${suffix}`,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
       operation: "analyze_function",
       parameters: { ...template.parameters, observation: suffix },
-      result: jsonValueSchema.parse(
-        functionDossierSchema.parse(
-          FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
-        ),
+      result: functionDossierSchema.parse(
+        FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
       ),
       confidence: template.confidence,
       authority: template.authority,
@@ -243,6 +238,9 @@ it("continues rejecting duplicate explicit record_unknown identities", async () 
       name: "record_unknown",
       arguments: input,
     });
-    expect(parseMcpToolError(duplicate).error.code).toBe("revision_conflict");
+    expect(parseMcpToolError(duplicate).error).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("already exists"),
+    });
   });
 });

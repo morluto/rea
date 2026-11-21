@@ -1,3 +1,16 @@
+import type { HostPlatform } from "../platform/HostPlatform.js";
+import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
+import {
+  DEFAULT_JADX_OPERATION_TIMEOUT_MS,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
+import {
+  jadxOperationTimeoutGuidance,
+  JADX_OPERATION_TIMEOUT_REMEDIATION,
+} from "./JadxOperationTimeout.js";
 import { inspectJadxJava, type JadxJavaProbeOptions } from "./JadxJavaProbe.js";
 import {
   JadxInterruption,
@@ -5,43 +18,48 @@ import {
 } from "./JadxInterruption.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, posix, win32 } from "node:path";
+import {
+  posixPathCandidates,
+  windowsPathCandidates,
+  type PathSearchCandidate,
+} from "../process/executableSearch.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import {
-  AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
+import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+  ZipArtifactReader,
+} from "../resources/index.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import type { DoctorProviderCheck } from "../application/Doctor.js";
+import type { DoctorProviderCheck } from "../ports/DoctorProviderInspection.js";
 import {
-  DEFAULT_JADX_OPERATION_TIMEOUT_MS,
-  jadxOperationTimeoutGuidance,
   JADX_JAR_CONFIGURATION_REMEDIATION,
   JADX_JAVA_PROBE_REMEDIATION,
   JADX_JAVA_RUNTIME_REMEDIATION,
   JADX_JVM_OPTIONS_REMEDIATION,
-  JADX_OPERATION_TIMEOUT_REMEDIATION,
   JADX_UNSUPPORTED_HOST_REMEDIATION,
   JADX_WINDOWS_NATIVE_REMEDIATION,
 } from "./JadxRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 // Bound ZIP metadata allocation during discovery. The audited 0.7.1 JAR's
 // central directory occupies 2,294,350 bytes; class bodies are not read here.
@@ -65,10 +83,10 @@ type ConfigurationFailureCode =
   | "open_options_invalid";
 
 /**
- * Failure kinds tagged at the JADX configuration boundary. Consumers (the
- * doctor adapter) project the boundary's remediation and classification for
- * a kind; they must not reinterpret the phase/setting evidence to derive
- * them.
+ * Failure kinds tagged at the JADX configuration boundary. Availability
+ * carries the boundary's remediation for a kind and the doctor adapter
+ * projects its classification; neither reinterprets the phase/setting
+ * evidence to derive them.
  */
 export type JadxFailureKind =
   | "windows_native_artifact"
@@ -94,72 +112,52 @@ export const JADX_FAILURE_KINDS: readonly JadxFailureKind[] = [
   "unsupported_host",
 ];
 
-export interface JadxFailureOutcome {
-  readonly remediation: string;
-  readonly classification: DoctorProviderCheck["classification"];
-}
+/** The boundary-owned repair instruction for one tagged failure kind. */
+const jadxFailureRemediation = (kind: JadxFailureKind): string => {
+  switch (kind) {
+    case "windows_native_artifact":
+    case "windows_native_runtime":
+      return JADX_WINDOWS_NATIVE_REMEDIATION;
+    case "java_runtime":
+    case "java_home":
+      return JADX_JAVA_RUNTIME_REMEDIATION;
+    case "jvm_options":
+      return JADX_JVM_OPTIONS_REMEDIATION;
+    case "operation_timeout":
+      return JADX_OPERATION_TIMEOUT_REMEDIATION;
+    case "jar":
+      return JADX_JAR_CONFIGURATION_REMEDIATION;
+    case "java_probe":
+      return JADX_JAVA_PROBE_REMEDIATION;
+    case "unsupported_host":
+      return JADX_UNSUPPORTED_HOST_REMEDIATION;
+  }
+};
 
 /**
- * Project the boundary-owned remediation and classification for a failure
- * kind. A null kind (missing or corrupt tag) keeps JAR guidance, matching
- * the previous fallthrough for unclassified failures.
+ * Project the doctor classification for a failure kind. A null kind (an
+ * untagged readiness failure) is classified as configuration drift.
  */
-export const projectJadxFailureOutcome = (
+export const jadxFailureClassification = (
   kind: JadxFailureKind | null,
   configured: boolean,
-): JadxFailureOutcome => {
+): DoctorProviderCheck["classification"] => {
   const drift = configured ? "config_drift" : "missing_analysis_engine";
   switch (kind) {
     case "windows_native_artifact":
-      return {
-        remediation: JADX_WINDOWS_NATIVE_REMEDIATION,
-        classification: "missing_dependency",
-      };
-    case "windows_native_runtime":
-      return {
-        remediation: JADX_WINDOWS_NATIVE_REMEDIATION,
-        classification: "runtime_failure",
-      };
     case "java_runtime":
-      return {
-        remediation: JADX_JAVA_RUNTIME_REMEDIATION,
-        classification: "missing_dependency",
-      };
-    case "java_home":
-      return {
-        remediation: JADX_JAVA_RUNTIME_REMEDIATION,
-        classification: drift,
-      };
-    case "jvm_options":
-      return {
-        remediation: JADX_JVM_OPTIONS_REMEDIATION,
-        classification: drift,
-      };
-    case "operation_timeout":
-      return {
-        remediation: JADX_OPERATION_TIMEOUT_REMEDIATION,
-        classification: drift,
-      };
-    case "jar":
-      return {
-        remediation: JADX_JAR_CONFIGURATION_REMEDIATION,
-        classification: drift,
-      };
-    case "java_probe":
-      return {
-        remediation: JADX_JAVA_PROBE_REMEDIATION,
-        classification: drift,
-      };
+      return "missing_dependency";
+    case "windows_native_runtime":
+      return "runtime_failure";
     case "unsupported_host":
-      return {
-        remediation: JADX_UNSUPPORTED_HOST_REMEDIATION,
-        classification: "unsupported_host",
-      };
+      return "unsupported_host";
+    case "java_home":
+    case "jvm_options":
+    case "operation_timeout":
+    case "jar":
+    case "java_probe":
     case null:
-      return {
-        remediation: JADX_JAR_CONFIGURATION_REMEDIATION,
-        classification: drift,
-      };
+      return drift;
   }
 };
 
@@ -178,12 +176,21 @@ class JadxConfigurationFailure extends Error {
 /** Inspect the same JAR and Java prerequisites that gate actual execution. */
 export const inspectJadxAvailability = async (
   environment: Readonly<Record<string, string | undefined>>,
-  options: JadxJavaProbeOptions,
+  options: JadxJavaProbeOptions & {
+    /** The host whose process-ownership controls and Java layout apply. */
+    readonly host: HostPlatform;
+    /** Admitted runtime override; omission retains launch configuration. */
+    readonly operationTimeoutMs?: number | undefined;
+  },
 ): Promise<ProviderAvailability> => {
   try {
-    const operationTimeoutMs = readOperationTimeout(environment);
+    const operationTimeoutMs = readOperationTimeout(
+      environment,
+      options.operationTimeoutMs,
+    );
     const configuration = await readJadxConfigurationInputs(
       environment,
+      options.host,
       options.signal,
     );
     await validateJadxConfigurationContents(
@@ -205,17 +212,20 @@ export const inspectJadxAvailability = async (
     };
   } catch (cause) {
     if (cause instanceof JadxInterruption)
-      throw new AnalysisCancelledError(
+      throw cancelledBy(
         options.operation ?? "inspect_jadx_configuration",
-        { cause: cause.reason },
+        carriedReason(cause.reason),
       );
     if (cause instanceof JadxConfigurationFailure)
       return {
         status: "unavailable",
         code: cause.code,
         reason: cause.message,
+        remediation: jadxFailureRemediation(cause.kind),
         diagnostics: { ...cause.diagnostics, failure_kind: cause.kind },
       };
+    const prerequisite = ownedProcessPrerequisiteAvailability(cause);
+    if (prerequisite !== undefined) return prerequisite;
     throw cause;
   }
 };
@@ -227,9 +237,10 @@ export const inspectJadxAvailability = async (
 export const resolveJadxOperationTimeout = (
   environment: Readonly<Record<string, string | undefined>>,
   operation: AndroidOperation,
+  runtimeTimeoutMs?: number,
 ): Result<number, AnalysisCapabilityUnavailableError> => {
   try {
-    return ok(readOperationTimeout(environment));
+    return ok(readOperationTimeout(environment, runtimeTimeoutMs));
   } catch (cause) {
     if (!(cause instanceof JadxConfigurationFailure)) throw cause;
     return err(projectConfigurationFailure(operation, cause));
@@ -240,10 +251,11 @@ export const resolveJadxOperationTimeout = (
 export const resolveJadxConfigurationInputs = async (
   environment: Readonly<Record<string, string | undefined>>,
   operation: AndroidOperation,
+  host: HostPlatform,
   signal?: AbortSignal,
 ): Promise<JadxConfiguration> => {
   try {
-    return await readJadxConfigurationInputs(environment, signal);
+    return await readJadxConfigurationInputs(environment, host, signal);
   } catch (cause) {
     if (!(cause instanceof JadxConfigurationFailure)) throw cause;
     throw projectConfigurationFailure(operation, cause);
@@ -270,12 +282,13 @@ export const validateJadxConfiguration = async (
 
 const readJadxConfigurationInputs = async (
   environment: Readonly<Record<string, string | undefined>>,
+  host: HostPlatform,
   signal?: AbortSignal,
 ): Promise<JadxConfiguration> => {
   throwIfJadxInterrupted(signal);
-  requireSupportedHost();
+  requireSupportedHost(host);
   const jar = await resolveJar(environment);
-  const java = await resolveJava(environment, signal);
+  const java = await resolveJava(environment, host.platform, signal);
   await requireJavaHomeExecutable(environment.JAVA_HOME, java);
   throwIfJadxInterrupted(signal);
   return { jar, java, jvmArguments: resolveJvmArguments(environment) };
@@ -341,7 +354,7 @@ const requireEngineArchive = async (
             ),
         },
         options.signal,
-        async (handle) => {
+        async ({ handle, initial }) => {
           try {
             // Metadata enumeration borrows this descriptor. The file workflow
             // alone owns admission, final close, cancellation and failed retry.
@@ -349,7 +362,7 @@ const requireEngineArchive = async (
               jar,
               "zip",
               JAR_METADATA_READ_MAX_BYTES,
-              { handle, initial: await handle.stat() },
+              { handle, initial },
             );
             const missing = new Set([
               "com/atxx/jhmcp/JadxSession.class",
@@ -416,11 +429,7 @@ const requireEngineArchive = async (
                 },
               );
       if (primary === undefined) throw cleanup;
-      throw analysisErrorWithCleanupFailure(
-        primary,
-        cleanup,
-        operation,
-      ).bindCleanupDependencies([primary, cleanup]);
+      throw analysisErrorWithCleanupDependencies(primary, cleanup, operation);
     }
     if (cause instanceof ArtifactFileCancelled) {
       throw archiveCancellation(cause.fileCancellation.reason, options, {
@@ -442,7 +451,7 @@ const requireEngineArchive = async (
 };
 
 const archiveInspectionFailure = (jar: string, cause: unknown) => {
-  const reason = cause instanceof Error ? cause.message : String(cause);
+  const reason = errorMessage(cause);
   return configurationFailure(
     "version_unresolved",
     `Cannot inspect REA_JADX_MCP_JAR ${jar} as a Java archive: ${reason}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
@@ -486,36 +495,37 @@ const archiveCancellation = (
         diagnostics,
         ...jadxOperationTimeoutGuidance(options.operationDeadline.timeoutMs),
       })
-    : new AnalysisCancelledError(operation, { cause: reason, diagnostics });
+    : cancelledBy(operation, carriedReason(reason), { diagnostics });
 };
 
-const requireSupportedHost = (): void => {
-  if (process.platform === "linux" || process.platform === "darwin") return;
-  if (process.platform === "win32" && process.arch === "x64") {
-    const loaded = systemWindowsNativeAuthority();
+const requireSupportedHost = (host: HostPlatform): void => {
+  const { platform, architecture } = host;
+  if (platform === "linux" || platform === "darwin") return;
+  if (platform === "win32" && architecture === "x64") {
+    const loaded = systemWindowsNativeAuthority(host);
     if (loaded.available) {
       if (loaded.authority.inspection.protocolStdin === true) return;
       throw configurationFailure(
         "runtime_missing",
         "The bundled Windows native artifact lacks owned protocol stdin; use a matching current Windows x64 REA package.",
         {
-          platform: process.platform,
-          architecture: process.arch,
+          platform: platform,
+          architecture: architecture,
           phase: "process-ownership",
           owned_protocol_stdin: false,
         },
         "windows_native_artifact",
       );
     }
-    const readiness = inspectWindowsNativeReadiness(process.platform, loaded);
+    const readiness = inspectWindowsNativeReadiness(platform, loaded);
     throw configurationFailure(
       readiness.available ? "runtime_unavailable" : readiness.code,
       readiness.available
         ? "Windows native readiness disagreed with the native loader result."
         : readiness.reason,
       {
-        platform: process.platform,
-        architecture: process.arch,
+        platform: platform,
+        architecture: architecture,
         phase: "process-ownership",
         owned_protocol_stdin: false,
         ...(readiness.available
@@ -536,8 +546,8 @@ const requireSupportedHost = (): void => {
   }
   throw configurationFailure(
     "unsupported_host",
-    `Android JADX subprocess ownership is unsupported on ${process.platform}/${process.arch}; use Linux, macOS, or Windows x64 with its bundled native controls.`,
-    { platform: process.platform },
+    `Android JADX subprocess ownership is unsupported on ${platform}/${architecture}; use Linux, macOS, or Windows x64 with its bundled native controls.`,
+    { platform: platform },
     "unsupported_host",
   );
 };
@@ -576,7 +586,7 @@ const resolveJar = async (
     if (cause instanceof JadxConfigurationFailure) throw cause;
     throw configurationFailure(
       "executable_missing",
-      `Cannot read REA_JADX_MCP_JAR ${jar}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Cannot read REA_JADX_MCP_JAR ${jar}: ${errorMessage(cause)}`,
       { jar_path: jar },
       "jar",
       cause,
@@ -586,37 +596,49 @@ const resolveJar = async (
 
 const resolveJava = async (
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ): Promise<string> => {
-  const executable = process.platform === "win32" ? "java.exe" : "java";
+  const windows = platform === "win32";
+  const executable = windows ? "java.exe" : "java";
   if (environment.JAVA_HOME === undefined) {
-    if (process.platform !== "win32") return executable;
-    const path =
-      Object.entries(environment).find(
-        ([key]) => key.toLowerCase() === "path",
-      )?.[1] ?? "";
-    for (const directory of [process.cwd(), ...path.split(delimiter)]) {
+    // Resolve in the caller's directory once. The module probe and the engine
+    // run in different directories, and the selected executable also owns the
+    // retained session's cache identity. Empty POSIX PATH components select
+    // cwd. `java.exe` names its extension, so PATHEXT never fails the search.
+    const windowsSearch = windows
+      ? windowsPathCandidates(executable, environment)
+      : undefined;
+    const candidates: Iterable<PathSearchCandidate> =
+      windowsSearch === undefined
+        ? posixPathCandidates(executable, environment.PATH ?? "/usr/bin:/bin", {
+            relativeEntries: "resolve",
+          })
+        : windowsSearch.ok
+          ? windowsSearch.value
+          : [];
+    for (const { path: candidate } of candidates) {
       throwIfJadxInterrupted(signal);
-      // Windows PATH commonly quotes individual entries containing spaces.
-      const selected =
-        directory.startsWith('"') && directory.endsWith('"')
-          ? directory.slice(1, -1)
-          : directory;
-      const candidate = resolve(selected, executable);
       try {
-        await access(candidate, constants.R_OK | constants.X_OK);
-        if ((await stat(candidate)).isFile()) return await realpath(candidate);
+        await access(
+          candidate,
+          windows ? constants.R_OK | constants.X_OK : constants.X_OK,
+        );
+        if ((await stat(candidate)).isFile())
+          return windows ? await realpath(candidate) : candidate;
       } catch (cause: unknown) {
         if (
           typeof cause === "object" &&
           cause !== null &&
           "code" in cause &&
-          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+          (cause.code === "ENOENT" ||
+            cause.code === "ENOTDIR" ||
+            (!windows && (cause.code === "EACCES" || cause.code === "EPERM")))
         )
           continue;
         throw configurationFailure(
           "runtime_missing",
-          `Cannot inspect selected Java executable ${candidate}: ${errorText(cause)}`,
+          `Cannot inspect selected Java executable ${candidate}: ${errorMessage(cause)}`,
           { java_executable: candidate },
           "java_runtime",
           cause,
@@ -625,13 +647,18 @@ const resolveJava = async (
     }
     throw configurationFailure(
       "runtime_missing",
-      "Cannot find java.exe on the selected Windows PATH. Select a full JDK with JAVA_HOME or PATH, then verify it with java --list-modules. REA does not install Java.",
-      { java_executable: executable },
+      `Cannot find an executable ${executable} on the selected ${windows ? "Windows " : ""}PATH. Select a full JDK with JAVA_HOME or PATH, then verify it with java --list-modules. REA does not install Java.`,
+      { java_executable: executable, phase: "path-lookup" },
       "java_runtime",
     );
   }
-  if (isAbsolute(environment.JAVA_HOME))
-    return join(environment.JAVA_HOME, "bin", executable);
+  // JAVA_HOME follows the same host path rules as the PATH search above.
+  if ((windows ? win32 : posix).isAbsolute(environment.JAVA_HOME))
+    return appendCallerPath(
+      environment.JAVA_HOME,
+      `bin/${executable}`,
+      platform,
+    );
   throw configurationFailure(
     "open_options_invalid",
     "JAVA_HOME must select an existing JDK by absolute path; omit it to use java on PATH.",
@@ -658,13 +685,43 @@ const requireJavaHomeExecutable = async (
     if (cause instanceof JadxConfigurationFailure) throw cause;
     throw configurationFailure(
       "runtime_missing",
-      `Cannot execute JAVA_HOME java ${java}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Cannot execute JAVA_HOME java ${java}: ${errorMessage(cause)}`,
       { java_executable: java },
       "java_runtime",
       cause,
     );
   }
 };
+
+/** Smallest heap MiB or processor count. Zero is neither a heap size nor a count. */
+export const JADX_JVM_NUMERIC_MINIMUM = 1;
+
+/**
+ * Omitted `REA_JADX_HEAP_MIB` and `REA_JADX_ACTIVE_PROCESSOR_COUNT` pass no
+ * flag, so the JVM keeps its own default.
+ */
+export const JADX_JVM_DEFAULT = null;
+
+/** Heap MiB must be an exact safe integer. A larger flag cannot round-trip. */
+export const JADX_HEAP_MIB_MAXIMUM = Number.MAX_SAFE_INTEGER;
+
+/** `-XX:ActiveProcessorCount` is a Java `int`; this is a count, not a duration. */
+export const JADX_ACTIVE_PROCESSOR_COUNT_MAXIMUM = 2_147_483_647;
+
+const jadxJvmBounds = (
+  name: "REA_JADX_HEAP_MIB" | "REA_JADX_ACTIVE_PROCESSOR_COUNT",
+) =>
+  name === "REA_JADX_HEAP_MIB"
+    ? {
+        defaultValue: JADX_JVM_DEFAULT,
+        minimum: JADX_JVM_NUMERIC_MINIMUM,
+        maximum: JADX_HEAP_MIB_MAXIMUM,
+      }
+    : {
+        defaultValue: JADX_JVM_DEFAULT,
+        minimum: JADX_JVM_NUMERIC_MINIMUM,
+        maximum: JADX_ACTIVE_PROCESSOR_COUNT_MAXIMUM,
+      };
 
 const resolveJvmArguments = (
   environment: Readonly<Record<string, string | undefined>>,
@@ -674,40 +731,48 @@ const resolveJvmArguments = (
     ["REA_JADX_HEAP_MIB", "-Xmx", "m"],
     ["REA_JADX_ACTIVE_PROCESSOR_COUNT", "-XX:ActiveProcessorCount=", ""],
   ] as const) {
-    const value = environment[name];
-    if (value === undefined) continue;
-    if (!/^[1-9]\d*$/u.test(value) || !Number.isSafeInteger(Number(value)))
+    const bounds = jadxJvmBounds(name);
+    const selected =
+      environment[name] ??
+      (bounds.defaultValue === null ? undefined : String(bounds.defaultValue));
+    if (selected === undefined) continue;
+    const parsed =
+      /^[1-9]\d*$/u.test(selected) && Number.isSafeInteger(Number(selected))
+        ? Number(selected)
+        : undefined;
+    if (parsed === undefined || parsed < bounds.minimum)
       throw configurationFailure(
         "open_options_invalid",
-        `${name} must be a positive safe integer; received ${value}.`,
-        { setting: name, value },
+        `${name} must be a positive safe integer; received ${selected}.`,
+        { setting: name, value: selected },
         "jvm_options",
       );
-    if (
-      name === "REA_JADX_ACTIVE_PROCESSOR_COUNT" &&
-      Number(value) > 2_147_483_647
-    )
+    if (parsed > bounds.maximum)
       throw configurationFailure(
         "open_options_invalid",
-        `${name} exceeds the JVM's signed 32-bit processor-count range.`,
-        { setting: name, value },
+        name === "REA_JADX_ACTIVE_PROCESSOR_COUNT"
+          ? `${name} exceeds the JVM's signed 32-bit processor-count range.`
+          : `${name} must be a positive safe integer; received ${selected}.`,
+        { setting: name, value: selected },
         "jvm_options",
       );
-    result.push(`${prefix}${value}${suffix}`);
+    result.push(`${prefix}${selected}${suffix}`);
   }
   return result;
 };
 
 const readOperationTimeout = (
   environment: Readonly<Record<string, string | undefined>>,
+  runtimeTimeoutMs?: number,
 ): number => {
+  if (runtimeTimeoutMs !== undefined) return runtimeTimeoutMs;
   const value = environment.REA_JADX_OPERATION_TIMEOUT_MS;
   if (value === undefined) return DEFAULT_JADX_OPERATION_TIMEOUT_MS;
   const parsed = providerStartupTimeoutSchema.safeParse(value);
   if (parsed.success) return parsed.data;
   throw configurationFailure(
     "open_options_invalid",
-    `REA_JADX_OPERATION_TIMEOUT_MS must be a decimal millisecond count from 1 to 2147483647; received ${value}.`,
+    `REA_JADX_OPERATION_TIMEOUT_MS must be a decimal millisecond count from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; received ${value}.`,
     { setting: "REA_JADX_OPERATION_TIMEOUT_MS", value },
     "operation_timeout",
   );
@@ -726,6 +791,7 @@ const inspectJavaRuntime = async (
       failure.message,
       failure.diagnostics,
       failure.kind,
+      failure.inspectionFailure,
     );
   }
 };
@@ -744,6 +810,3 @@ const configurationFailure = (
     kind,
     cause === undefined ? undefined : { cause },
   );
-
-const errorText = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

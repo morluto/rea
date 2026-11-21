@@ -1,22 +1,31 @@
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
-  ArtifactFileCleanupFailure,
-  bindArtifactFileCleanup,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import type { ElfNotesPort } from "../../application/binaryDiagnostics/ElfNotesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import {
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
+  projectArtifactCloseFailure,
+  ArtifactReaderFailure,
+  type StableArtifactSnapshot,
+  readStableArtifact,
+  yieldArtifactRead,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { ElfNotesPort } from "../../ports/binaryDiagnostics/ElfNotesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-} from "../../domain/analysisErrorCore.js";
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../../domain/compression/zstandardFrameAllowance.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
@@ -24,9 +33,12 @@ import {
   type InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import { err, ok } from "../../domain/result.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { ELF_NOTES_PROVIDER } from "../../application/InvestigationProviders.js";
-import { parseElfNotes } from "./ElfNoteParser.js";
+import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
+import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
+import {
+  ELF_NOTE_TEXT_ALLOWANCE,
+  parseElfNotesCooperative,
+} from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_notes";
 
@@ -39,26 +51,19 @@ export class ElfNotesProvider implements ElfNotesPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         ELF_NOTES_PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
   async inspect(input: InspectElfNotesInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -66,7 +71,7 @@ export class ElfNotesProvider implements ElfNotesPort {
           this.#resources,
         );
         return ok(
-          parseElfNotes(
+          await parseElfNotesCooperative(
             snapshot.bytes,
             {
               path: input.path,
@@ -74,17 +79,15 @@ export class ElfNotesProvider implements ElfNotesPort {
               bytes: snapshot.bytes.length,
             },
             input,
+            () => yieldArtifactRead(options?.signal),
           ),
         );
       });
     } catch (cause) {
-      return err(elfNotesFailure(cause, input, options?.signal));
+      return err(elfNotesFailure(cause, input, snapshot));
     }
   }
 }
-
-const NOTE_TEXT_BUDGET =
-  "The ELF note text, hash, and scan budget tied to the admitted image length";
 
 const inputBudgetRemediation = (
   boundary: "file-size" | "capacity",
@@ -98,83 +101,86 @@ const inputBudgetRemediation = (
       ? `The image exceeds the ${String(MAX_INSPECT_ELF_NOTE_ENTRIES)}-entry note-table ceiling this operation accepts; select a smaller artifact.`
       : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected note entry budget.`;
 
+const sectionNameBudgetRemediation = (required: bigint): string =>
+  required <= BigInt(MAX_INSPECT_ELF_NOTE_FILE_BYTES)
+    ? `Raise max_file_bytes to at least ${String(required)} bytes to admit the source and decoded ELF section names.`
+    : `The source and decoded ELF section names require ${String(required)} bytes, above this operation's ${String(MAX_INSPECT_ELF_NOTE_FILE_BYTES)}-byte maximum; select an image with a smaller section-name table.`;
+
 const elfNotesFailurePrimary = (
-  cause: unknown,
+  facts: ArtifactFilePrimaryFacts,
   input: InspectElfNotesInput,
 ) => {
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
+  const { cause, origin } = facts;
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ZstandardFrameAllowanceError)
+    return projectZstandardFrameAllowance(OPERATION, cause);
+  const sectionNameBudget = elfSectionNameBudget(cause);
+  if (isParseLimit(cause, "elf") && sectionNameBudget !== undefined)
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      retryable: false,
+      remediationAction: sectionNameBudgetRemediation(
+        sectionNameBudget.required,
+      ),
     });
-  if (cause instanceof ArtifactReaderFailure) {
-    if (cause.reason === "limit") {
-      // Caller-selected read and entry budgets name the bound to raise.
-      // The note text, hash, and scan ceiling equals the admitted image
-      // length, so host memory cannot raise it.
-      const noteTextBudget = cause.boundary === "memory";
-      return new AnalysisResourceConstraintError(
+  if (isParseLimit(cause, "elf-notes")) {
+    const entryBudget = cause.failure.limit.name === "max_entries";
+    return parseLimitConstraint(
+      OPERATION,
+      entryBudget ? "capacity" : "memory",
+      cause,
+      entryBudget
+        ? {
+            retryable: false,
+            remediationAction: inputBudgetRemediation("capacity", input),
+          }
+        : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
+            limit: cause.failure.limit.maximum,
+            unit: "bytes",
+          }),
+    );
+  }
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
+    if (cause.reason === "limit")
+      return parseLimitConstraint(
         OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
+        "file-size",
+        decodeLimit(
+          "elf-notes",
+          cause.message,
+          { name: "max_file_bytes", maximum: input.max_file_bytes },
+          { cause },
+        ),
         {
-          max_file_bytes: input.max_file_bytes,
-          max_entries: input.max_entries,
-        },
-        {
-          cause,
-          ...(cause.boundary === undefined
-            ? {}
-            : noteTextBudget
-              ? fixedAllowanceOptions(NOTE_TEXT_BUDGET, "parser")
-              : {
-                  retryable: false as const,
-                  remediationAction: inputBudgetRemediation(
-                    cause.boundary,
-                    input,
-                  ),
-                }),
+          retryable: false,
+          remediationAction: inputBudgetRemediation("file-size", input),
         },
       );
-    }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected ELF image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "ELF image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
-    cause instanceof ArtifactReaderFailure ? cause.reason : "io",
+    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
+      ? cause.reason
+      : "io",
     undefined,
     cause instanceof Error ? cause.message : "ELF note inspection failed.",
     { cause },
@@ -184,24 +190,18 @@ const elfNotesFailurePrimary = (
 const elfNotesFailure = (
   cause: unknown,
   input: InspectElfNotesInput,
-  signal: AbortSignal | undefined,
+  snapshot?: StableArtifactSnapshot,
 ) => {
-  const primary =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? elfNotesFailurePrimary(cause.fileCleanupFailure.outcome.cause, input)
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : elfNotesFailurePrimary(cause, input);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
-    ELF_NOTES_PROVIDER.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+  const primary = elfNotesFailurePrimary(
+    artifactFilePrimaryFacts(cause),
+    input,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
+    ELF_NOTES_PROVIDER.id,
+    OPERATION,
+    snapshot,
+  );
 };

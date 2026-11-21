@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { appendFile, cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -5,12 +6,12 @@ import { describe, expect, it } from "vitest";
 import { createPackage } from "@electron/asar";
 
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { evaluateCodexEvents } from "../../../src/evaluation/CodexAgentEval.js";
+import { evaluateCodexEvents } from "../../evaluation/model-evals/CodexAgentEval.js";
 import {
   createAgentEvaluationFixtures,
   agentFixtureClaims,
-} from "../../../src/evaluation/AgentEvaluationFixtures.js";
-import type { FixtureClaimExpectation } from "../../../src/evaluation/KnownAnswerEvaluation.js";
+} from "../../evaluation/model-evals/AgentEvaluationFixtures.js";
+import type { FixtureClaimExpectation } from "../../evaluation/model-evals/KnownAnswerEvaluation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -136,7 +137,8 @@ describe("known-answer packaged artifact digest binding", () => {
         arguments: { input_path: targets.javascript },
       });
       const evidence = resultEvidence(result);
-      expect(evidence.subject?.digest.sha256).not.toBe(
+      expect(fileIdentity(evidence.subject).sha256).toEqual(expect.any(String));
+      expect(fileIdentity(evidence.subject).sha256).not.toBe(
         targets.javascriptSha256,
       );
       const manifest = claimManifest(claims, evidence);
@@ -290,8 +292,9 @@ describe("Notes export known-answer evaluation", () => {
           await createPackage(join(root, "notes-electron"), path);
         }
         const workflow = await notesWorkflow(harness, path);
-        const digest = notesEvidence(workflow, "analyze_javascript_application")
-          .subject?.digest.sha256;
+        const digest = fileIdentity(
+          notesEvidence(workflow, "analyze_javascript_application").subject,
+        ).sha256;
         expect(digest === targets.notesElectronSha256).toBe(path === foreign);
         const assessment = grade(
           workflow.events,
@@ -347,7 +350,16 @@ const assertNotesAnswerFailures = (
   const assess = (answer: unknown, events = workflow.events) =>
     grade(events, answer, "analyze_javascript_application", claims)
       .factualAssessment;
-  expect(assess(manifest).status).toBe("passed");
+  const baseline = assess(manifest);
+  expect(
+    baseline.status,
+    JSON.stringify({
+      manifestFailures: baseline.manifestFailures,
+      failedClaims: baseline.claims
+        .filter((claim) => claim.status !== "passed")
+        .map(({ id, failures }) => ({ id, failures })),
+    }),
+  ).toBe("passed");
   const cases = [
     {
       id: "renderer_ipc",
@@ -364,6 +376,16 @@ const assertNotesAnswerFailures = (
       id: "semantic_boundary",
       patch: {
         value: { status: "found", coverage: "complete", relevant_unknowns: 0 },
+      },
+      failure: "value_mismatch",
+    },
+    {
+      id: "feature_modules",
+      patch: {
+        value: {
+          paths: ["csv.js", "main.js", "preload.js", "renderer.js"],
+          coverage: "partial",
+        },
       },
       failure: "value_mismatch",
     },

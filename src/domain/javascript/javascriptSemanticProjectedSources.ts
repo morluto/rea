@@ -3,28 +3,20 @@ import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import {
-  semanticPropertyPathKeyMatches,
-  type JavaScriptSemanticPropertyPath,
-} from "./javascriptSemanticPropertyPaths.js";
+import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
-  type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingMemberWritesObservedAt } from "./javascriptSemanticEffectLog.js";
 import {
-  semanticBindingAtRead,
-  semanticDefiniteEffectPrecedesReference,
-  semanticEffectTiming,
-  semanticTopLevelEffectFollowsCapture,
-} from "./javascriptSemanticMutationInitializers.js";
-import {
-  semanticCopiedReferencePath,
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import { semanticStoredSourceSelection } from "./javascriptSemanticIterationSources.js";
 import {
   semanticAliasSelectionChoices,
@@ -97,7 +89,7 @@ interface ProjectedSource {
 }
 
 /** A fresh parent does not prove a descendant receiver is a fresh allocation. */
-const hasFreshProjectedReceiver = (
+export const hasFreshProjectedReceiver = (
   root: t.Node,
   path: JavaScriptSemanticPropertyPath,
   state: JavaScriptSemanticAnalysisState,
@@ -113,7 +105,7 @@ const hasFreshProjectedReceiver = (
     if (paths.has(key)) return false;
     paths.add(key);
     examined.set(node, paths);
-    if (++selections > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (++selections > state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       return false;
     }
@@ -131,12 +123,12 @@ const hasFreshProjectedReceiver = (
     const sources = t.isObjectExpression(node)
       ? semanticObjectPropertyReferences(node, [selected!], state)
       : t.isArrayExpression(node)
-        ? semanticArrayPropertyReferences(node, [selected!])
+        ? semanticArrayPropertyReferences(node, [selected!], state)
         : [];
     if (sources.length === 0) return false;
     if (
       selections + pending.length + sources.length >
-      SEMANTIC_ALIAS_SELECTION_LIMIT
+      state.precision.alias_selections
     ) {
       state.valueResourceLimits.add("alias-selections");
       return false;
@@ -178,10 +170,37 @@ export const semanticProjectedSourceEligibilityAtRead = (
   )?.sources;
 
 /** Keep imported origins subject to the same selected writes as other values. */
-export const semanticProjectedSourceFactsAtRead = (
+// Projection alternatives are introduced by callers. An ordinary property path
+// remains ordinary while the owner selects stored and copied source prefixes.
+export function semanticProjectedSourceFactsAtRead(
+  binding: JavaScriptSemanticBindingState,
+  reference: t.Node,
+  path: JavaScriptSemanticPropertyPath,
+  state: JavaScriptSemanticAnalysisState,
+  includeUnknown: boolean,
+  memberReadAt?: t.Node,
+  capturedSelections?: readonly SemanticCapturedSelection[],
+  retainEligibility?: boolean,
+  valueEscapesHideSources?: boolean,
+):
+  | {
+      readonly sources: readonly (Omit<ProjectedSource, "path"> & {
+        readonly path: JavaScriptSemanticPropertyPath;
+      })[];
+      readonly storedSources: readonly (Omit<ProjectedSource, "path"> & {
+        readonly path: JavaScriptSemanticPropertyPath;
+      })[];
+      readonly retainsOrigin: boolean;
+    }
+  | undefined;
+export function semanticProjectedSourceFactsAtRead(
   ...arguments_: Parameters<typeof projectedSourceFactsAtRead>
-): ReturnType<typeof projectedSourceFactsAtRead> =>
-  projectedSourceFactsAtRead(...arguments_);
+): ReturnType<typeof projectedSourceFactsAtRead>;
+export function semanticProjectedSourceFactsAtRead(
+  ...arguments_: Parameters<typeof projectedSourceFactsAtRead>
+): ReturnType<typeof projectedSourceFactsAtRead> {
+  return projectedSourceFactsAtRead(...arguments_);
+}
 
 const projectedSourceFactsAtRead = (
   binding: JavaScriptSemanticBindingState,
@@ -192,13 +211,17 @@ const projectedSourceFactsAtRead = (
   memberReadAt: t.Node = reference,
   capturedSelections: readonly SemanticCapturedSelection[] = [],
   retainEligibility = false,
+  // Accessor lookup reads source syntax. A prior value escape does not hide
+  // that syntax; unknown writes and invocations still fail closed.
+  valueEscapesHideSources = true,
 ):
   | {
       readonly sources: readonly ProjectedSource[];
+      readonly storedSources: readonly ProjectedSource[];
       readonly retainsOrigin: boolean;
     }
   | undefined => {
-  const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
+  const read = semanticBindingAtRead(binding, reference, state);
   const captured = [
     ...read.binding.initializers,
     ...read.binding.referenceInitializers,
@@ -211,129 +234,43 @@ const projectedSourceFactsAtRead = (
     normalizedCaptures?.find((capture) => capture.depth >= depth)?.at;
   const selectedAt = (depth: number): t.Node =>
     captureForDepth(depth) ?? memberReadAt;
-  const samePrefix = (
-    prefix: JavaScriptSemanticBindingState["memberWrites"][number],
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ): boolean =>
-    prefix.path.length < effect.path.length &&
-    prefix.path.every(
-      (key, index) =>
-        key !== null &&
-        typeof key !== "object" &&
-        effect.path[index] !== null &&
-        typeof effect.path[index] !== "object" &&
-        String(key) === String(effect.path[index]),
+  const { writes, replaced, superseded, escapeMayPrecede } =
+    semanticBindingMemberWritesObservedAt(
+      state,
+      binding,
+      path,
+      {
+        at: selectedAt,
+        capturedAt:
+          normalizedCaptures === undefined ? undefined : captureForDepth,
+        captured,
+      },
+      hasFreshProjectedReceiver,
     );
-  const targetsReplacedPrefix = (
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ): boolean =>
-    capturedSelections.length > 0 &&
-    binding.memberWrites.some((replacement) => {
-      const capture = captureForDepth(replacement.path.length);
-      const receiverAt = effect.receiverAt ?? effect.node;
-      return (
-        capture !== undefined &&
-        receiverAt !== undefined &&
-        t.isAssignmentExpression(replacement.node, { operator: "=" }) &&
-        samePrefix(replacement, effect) &&
-        semanticTopLevelEffectFollowsCapture(
-          capture,
-          replacement.node,
-          state.parentsByNode,
-        ) &&
-        semanticDefiniteEffectPrecedesReference(
-          replacement.node,
-          receiverAt,
-          state.parentsByNode,
-        ) &&
-        hasFreshProjectedReceiver(
-          replacement.node.right,
-          effect.path.slice(replacement.path.length, -1),
-          state,
-        )
-      );
-    });
-  const matches = (
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ) =>
-    (effect.receiverInitializers === undefined ||
-      effect.receiverInitializers.length === 0 ||
-      captured.length === 0 ||
-      effect.receiverInitializers.some((receiver) =>
-        captured.some(
-          (source) =>
-            source.node === receiver.node &&
-            JSON.stringify(source.projection) ===
-              JSON.stringify(receiver.projection),
-        ),
-      )) &&
-    path.length > 0 &&
-    effect.path.length <= path.length &&
-    effect.path.every((key, index) => {
-      const selected = path[index];
-      return (
-        selected !== undefined &&
-        semanticAliasSelectionChoices(selected).some(
-          (choice) =>
-            choice === null ||
-            typeof choice === "object" ||
-            semanticPropertyPathKeyMatches(key, String(choice)),
-        )
-      );
-    }) &&
-    semanticEffectTiming(selectedAt(effect.path.length), effect.node, state) !==
-      "after" &&
-    !targetsReplacedPrefix(effect);
-  const writes = binding.memberWrites.filter(matches);
-  let replacement:
-    | JavaScriptSemanticBindingState["memberWrites"][number]
-    | undefined;
-  for (const effect of writes) {
-    if (
-      t.isAssignmentExpression(effect.node, { operator: "=" }) &&
-      effect.path.every(
-        (key, index) =>
-          key !== null &&
-          typeof key !== "object" &&
-          path[index] !== null &&
-          typeof path[index] !== "object" &&
-          String(key) === String(path[index]),
-      ) &&
-      semanticDefiniteEffectPrecedesReference(
-        effect.node,
-        selectedAt(effect.path.length),
-        state.parentsByNode,
-      ) &&
-      (replacement === undefined ||
-        semanticDefiniteEffectPrecedesReference(
-          replacement.node!,
-          effect.node,
-          state.parentsByNode,
-        ) ||
-        (replacement.node === effect.node &&
-          (replacement.assignedSources?.[0]?.target?.start ?? -1) <
-            (effect.assignedSources?.[0]?.target?.start ?? -1)))
-    )
-      replacement = effect;
-  }
-  const superseded = (
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ) =>
-    replacement !== undefined &&
-    effect.node !== undefined &&
-    effect !== replacement &&
-    (semanticEffectTiming(replacement.node!, effect.node, state) === "before" ||
-      (effect.node === replacement.node &&
-        (effect.assignedSources?.[0]?.target?.start ?? -1) <
-          (replacement.assignedSources?.[0]?.target?.start ?? -1)));
-  if (
-    includeUnknown &&
-    binding.escapedPaths.some(
-      (effect) => matches(effect) && !superseded(effect),
-    )
-  )
+  if (includeUnknown && valueEscapesHideSources && escapeMayPrecede())
     return undefined;
   const sources: ProjectedSource[] = [];
+  const sourceKeys = new WeakMap<t.Node, Set<string>>();
+  const captureIds = new WeakMap<t.Node, number>();
+  let nextCaptureId = 0;
+  const appendSource = (source: ProjectedSource): void => {
+    const captures = semanticNormalizeCapturedSelections(
+      source.capturedSelections,
+    )?.map(({ at, depth, ownEnumerable }) => {
+      let id = captureIds.get(at);
+      if (id === undefined) {
+        id = nextCaptureId++;
+        captureIds.set(at, id);
+      }
+      return [id, depth, ownEnumerable];
+    });
+    const key = JSON.stringify([source.path, captures]);
+    const keys = sourceKeys.get(source.node) ?? new Set<string>();
+    if (keys.has(key)) return;
+    keys.add(key);
+    sourceKeys.set(source.node, keys);
+    sources.push(source);
+  };
   for (const effect of writes) {
     if (!retainEligibility && superseded(effect)) continue;
     if (
@@ -360,7 +297,7 @@ const projectedSourceFactsAtRead = (
           choice === undefined ? [] : [choice],
         );
         if (selection !== null)
-          sources.push({
+          appendSource({
             node: source.node,
             path: [...selection.projection, ...suffix],
             ...(selection.capturedSelectionDepth === undefined
@@ -380,12 +317,13 @@ const projectedSourceFactsAtRead = (
       }
     }
   }
-  if (!retainEligibility && replacement !== undefined)
-    return { sources, retainsOrigin: false };
+  const storedSources = [...sources];
+  if (!retainEligibility && replaced)
+    return { sources, storedSources, retainsOrigin: false };
   for (const initializer of read.binding.initializers) {
     if (semanticReferenceIterationUnknown(initializer, state)) return undefined;
     if (semanticReferenceSourcesInactive(initializer, state)) continue;
-    sources.push({
+    appendSource({
       node: initializer.node,
       path: [...initializer.projection, ...path],
     });
@@ -403,7 +341,7 @@ const projectedSourceFactsAtRead = (
         "identity",
       );
       if (projection !== null)
-        sources.push({
+        appendSource({
           node: initializer.node,
           path: [...projection, ...suffix],
           capturedSelections:
@@ -421,5 +359,5 @@ const projectedSourceFactsAtRead = (
         });
     }
   }
-  return { sources, retainsOrigin: true };
+  return { sources, storedSources, retainsOrigin: true };
 };

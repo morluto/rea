@@ -1,4 +1,6 @@
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -7,14 +9,17 @@ const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const range = z.strictObject({ offset: bytes, length: bytes.positive() });
 /** Default analysis phase budget, excluding queue admission and publication. */
 export const DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS = 120_000;
-/** Largest delay supported without overflowing Node timers. */
-export const MAX_FIRMWARE_TIMEOUT_MS = 2_147_483_647;
-const timeout = z.number().int().min(1).max(MAX_FIRMWARE_TIMEOUT_MS);
+/** Largest staging file-byte budget the schema accepts. */
+export const MAX_FIRMWARE_STAGING_BYTES = 512 * 1024 * 1024;
+/** Largest staging entry budget the schema accepts. */
+export const MAX_FIRMWARE_STAGING_ENTRIES = 100_000;
+/** Largest extraction depth the input contract accepts. */
+export const MAX_FIRMWARE_EXTRACTION_DEPTH = 10;
 const target = {
   path: absoluteLocalPathStringSchema.describe(
     "Absolute local firmware file; never executed. Relative paths are rejected.",
   ),
-  analysis_timeout_ms: timeout
+  analysis_timeout_ms: timerDurationMsSchema
     .optional()
     .describe(
       "Analysis wall-clock budget in milliseconds (default 120000), from tool resolution through inspection and its final workspace cleanup, or extraction through inventory. Excludes queue admission and extraction publication. Does not raise fixed CPU, memory or byte limits.",
@@ -36,14 +41,14 @@ export const firmwareInputSchemas = {
       .number()
       .int()
       .min(1)
-      .max(10)
+      .max(MAX_FIRMWARE_EXTRACTION_DEPTH)
       .default(3)
       .describe("Extraction depth; reaching it yields partial analysis"),
     max_output_bytes: z
       .number()
       .int()
       .min(1)
-      .max(512 * 1024 * 1024)
+      .max(MAX_FIRMWARE_STAGING_BYTES)
       .default(256 * 1024 * 1024)
       .describe(
         "Staging file-byte budget, checked during extraction; transient overshoot is possible",
@@ -52,10 +57,10 @@ export const firmwareInputSchemas = {
       .number()
       .int()
       .min(1)
-      .max(100_000)
+      .max(MAX_FIRMWARE_STAGING_ENTRIES)
       .default(10_000)
       .describe("Staging entry budget, including directories and links"),
-    publication_timeout_ms: timeout
+    publication_timeout_ms: timerDurationMsSchema
       .default(120_000)
       .describe(
         "Publication and final cleanup budget in milliseconds, started after extraction and inventory; increase for a slow destination",
@@ -92,13 +97,11 @@ const engine = z.strictObject({
   source_revision: z.null(),
   worker_count: z.literal(1),
 });
-/** Small execution metadata contract; historical omissions remain unknown. */
+/** Execution metadata every firmware result carries. */
 export const firmwareExecutionBudgetSchema = z.object({
-  analysis_timeout_ms: timeout
-    .exactOptional()
-    .describe(
-      "Actual analysis phase budget in milliseconds; absent in historical Evidence means unknown",
-    ),
+  analysis_timeout_ms: timerDurationMsSchema.describe(
+    "Actual analysis phase budget in milliseconds",
+  ),
 });
 const selection = z.strictObject({ ...range.shape, sha256: digestSchema });
 const chunk = z.strictObject({
@@ -108,7 +111,7 @@ const chunk = z.strictObject({
   handler: z.string().nullable(),
   encrypted: z.boolean().nullable(),
   root_file_range: range.nullable(),
-  /** The producer reported extraction problems for this chunk. */
+  /** The producer reported an extraction error or missing dependency for this chunk. */
   extraction_failed: z.boolean(),
 });
 /** One unextracted region or failing task/stage, with a supported continuation
@@ -117,6 +120,7 @@ export const extractionGap = z.strictObject({
   kind: z.enum([
     "missing-extractor-dependency",
     "unknown-chunk-handler",
+    "unclassified-range",
     "encrypted-chunk",
     "depth-limited",
     "extractor-failure",
@@ -168,9 +172,11 @@ export const firmwareResultSchemas = {
     engine,
     selection,
     output_directory: z.string(),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
     files: z.array(
       z.strictObject({
+        // Producer-relative identity retains source spelling; `path` identifies
+        // the actual published file after destination name normalization.
         relative_path: z.string(),
         path: z.string(),
         size: bytes,
@@ -187,6 +193,11 @@ export const firmwareResultSchemas = {
         relative_path: z.string(),
         kind: z.enum(["symlink", "special"]),
         link_target: z.string().nullable(),
+        // Older retained Evidence may lack raw target bytes.
+        link_target_hex: z
+          .string()
+          .regex(/^(?:[0-9a-f]{2})*$/u)
+          .optional(),
       }),
     ),
     chunks: z.array(chunk),

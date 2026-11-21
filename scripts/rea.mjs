@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 
 import { access } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { prepareCliProcessEnvironment } from "./lib/cli-process-environment.mjs";
+import { unsupportedRuntimeMessage } from "./lib/runtime-admission.mjs";
 
 // Route production MCP before importing Incur. Incur owns registration helpers
 // such as `mcp add`, while the MCP runtime serves the tool catalog over stdio
@@ -11,166 +14,162 @@ const args = process.argv.slice(2);
 const { default: packageJson } = await import("../package.json", {
   with: { type: "json" },
 });
-process.env.REA_PACKAGE_VERSION = packageJson.version;
-const isMcpEntry = args[0] === "--mcp" || args[0] === "mcp";
-const isMcpMode = isMcpEntry && args.length === 1;
-const isMcpDoctorMode = args[0] === "mcp" && args[1] === "doctor";
-// Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`,
-// while `mcp -h --http` reaches the HTTP entry's own help.
-const isMcpHttpMode =
-  isMcpEntry &&
-  (args[1]?.startsWith("-") ?? false) &&
-  args.slice(1).includes("--http");
+// Admit the runtime before the first compiled import. Compiled modules import
+// Node APIs that absent releases only reject while linking, so an unsupported
+// release previously surfaced as a module error from every command, including
+// `--version` and `doctor`. `process.exit` is required here: setting exitCode
+// would still reach the imports below.
+const unsupportedRuntime = unsupportedRuntimeMessage(
+  packageJson.engines?.node,
+  process.versions.node,
+);
+if (unsupportedRuntime !== undefined) {
+  process.stderr.write(`${unsupportedRuntime}\n`);
+  process.exit(1);
+}
+prepareCliProcessEnvironment(
+  process.env,
+  process.platform,
+  packageJson.version,
+);
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const builtinArgumentRuntime = "dist/cli-runtime/cliBuiltinArguments.js";
+const builtinArguments = (await compiledRuntimeExists([builtinArgumentRuntime]))
+  ? await import("../dist/cli-runtime/cliBuiltinArguments.js")
+  : undefined;
+const entry = builtinArguments?.classifyCliEntrypoint(args, process.env);
+/** How long an exiting command may wait for its remaining handles to close. */
+const EXIT_DRAIN_GRACE_MS = 1_000;
 /** Exit status of a writer terminated by SIGPIPE (128 + 13). */
 const SIGPIPE_EXIT_STATUS = 141;
 // Set once the reader of CLI output has closed the pipe.
 let stdoutClosed = false;
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-// Windows home lookup throws for an empty USERPROFILE. Dependencies resolve
-// home during import, before REA's own resolver can apply its account fallback.
-if (process.platform === "win32" && process.env.USERPROFILE === "") {
-  delete process.env.USERPROFILE;
-}
-
-// Playwright's registry assumes one of its three desktop host platforms when
-// it chooses the browser cache directory. Termux reports `android`, although
-// its Node runtime and filesystem are POSIX-compatible. Keep the cache path
-// explicit so REA can start on Termux. Browser launch still requires a
-// caller-supplied Android-compatible Chromium executable.
-if (
-  process.platform === "android" &&
-  process.env.PLAYWRIGHT_BROWSERS_PATH === undefined
-) {
-  const cacheRoot =
-    process.env.XDG_CACHE_HOME ?? join(process.env.HOME ?? ".", ".cache");
-  process.env.PLAYWRIGHT_BROWSERS_PATH = join(cacheRoot, "ms-playwright");
-}
-
-const runtimeFiles =
-  isMcpMode || isMcpHttpMode
+const runtimeFiles = [
+  builtinArgumentRuntime,
+  ...(entry?.kind === "mcp-stdio" || entry?.kind === "mcp-http"
     ? ["dist/mcp/main.js"]
-    : isMcpDoctorMode
+    : entry?.kind === "mcp-doctor"
       ? ["dist/mcp/main.js", "dist/cli-runtime/mcpDoctor.js"]
       : [
           "dist/cli-runtime/cli.js",
-          "dist/cli-runtime/cliOutput.js",
+          "dist/cli-runtime/cliOneShot.js",
           "dist/cli-runtime/cliResultOutput.js",
-        ];
+        ]),
+];
 
 if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(
     `REA's compiled runtime is missing. Run \`npm ci && npm run build:cached\` in ${packageRoot} to install dependencies and build REA, then restart it. If this is an installed package, reinstall rea-agents.\n`,
   );
   process.exitCode = 1;
-} else if (isMcpMode) {
+} else if (entry?.kind === "mcp-stdio") {
   const { runEntrypoint } = await import("../dist/mcp/main.js");
   await runEntrypoint();
-} else if (isMcpHttpMode) {
+} else if (entry?.kind === "mcp-http") {
   const { runMcpHttpEntrypoint } = await import("../dist/mcp/main.js");
-  await runMcpHttpEntrypoint(args.slice(1));
-} else if (isMcpDoctorMode) {
+  await runMcpHttpEntrypoint(entry.command);
+} else if (entry?.kind === "mcp-doctor") {
   guardClosedStdout();
-  const { runProductionMcpDoctorCli } =
-    await import("../dist/cli-runtime/mcpDoctor.js");
-  const result = await runProductionMcpDoctorCli(args.slice(2), {
-    dispatcherPath: fileURLToPath(import.meta.url),
-    packageRoot,
-  });
-  writeStdout(result.output);
-  process.exitCode = result.exitCode;
+  // Doctor runs outside the command dispatcher, so the launcher measures its
+  // timing global, which the global argument reader has taken out.
+  const { arguments: doctorCliArguments, timings: timingRequested } = entry;
+  const started = performance.now();
+  try {
+    const { runProductionMcpDoctorCli } =
+      await import("../dist/cli-runtime/mcpDoctor.js");
+    const result = await runProductionMcpDoctorCli(doctorCliArguments, {
+      dispatcherPath: fileURLToPath(import.meta.url),
+      packageRoot,
+      stdoutIsTerminal: process.stdout.isTTY === true,
+    });
+    writeStdout(result.output);
+    process.exitCode = result.exitCode;
+  } finally {
+    if (timingRequested)
+      process.stderr.write(
+        `${JSON.stringify({ rea_timings: { version: 1, command_ms: Math.round(performance.now() - started) } })}\n`,
+      );
+  }
 } else {
-  const { cliConfigurationError, closeCliJavaScriptResources, createCli } =
-    await import("../dist/cli-runtime/cli.js");
-  const { createCliResultOutput } =
-    await import("../dist/cli-runtime/cliResultOutput.js");
-  const {
-    normalizeCliArguments,
-    renderCliOutputArgumentError,
-    renderEmptyFilteredCliOutput,
-    validateCliOutputArguments,
-  } = await import("../dist/cli-runtime/cliOutput.js");
+  const { runOneShotCli } = await import("../dist/cli-runtime/cliOneShot.js");
   guardClosedStdout();
-  const cliArgs = normalizeCliArguments(args);
-  const outputArguments = validateCliOutputArguments(cliArgs);
-  const configurationError = cliConfigurationError(process.env);
   let dispatchFailure;
+  let closeCliResources;
   // Incur can exit from the callback below before this function returns.
   // That callback owns the status, including a closed-pipe exit of 141.
   let exiting = false;
   try {
-    // Doctor is the readiness report for this failure. Other commands still stop
-    // here so they do not run with an unusable log level.
-    if (configurationError !== undefined && !isDoctorCommand(cliArgs)) {
-      process.stderr.write(`${configurationError}\n`);
-      process.exitCode = 1;
-    } else if (!outputArguments.ok) {
-      writeStdout(renderCliOutputArgumentError(outputArguments));
-      process.exitCode = 1;
-    } else {
-      let wroteOutput = false;
-      const resultOutput = createCliResultOutput(cliArgs, process.stdout);
-      try {
-        await createCli(process.env, resultOutput).serve(cliArgs, {
-          stdout: (output) => {
-            if (resultOutput?.handled) {
-              if (resultOutput.failed && !stdoutClosed)
-                process.stderr.write(output);
-              return;
-            }
-            if (output.length > 0) wroteOutput = true;
-            writeStdout(output);
-          },
-          // A command failure caused by the closed pipe keeps the pipe's status.
-          // Worker shutdown is shared with the dispatch finally below. A failed
-          // shutdown is reported here because this callback is what exits.
-          exit: (code) => {
-            exiting = true;
-            const status = stdoutClosed ? SIGPIPE_EXIT_STATUS : code;
-            void Promise.resolve()
-              .then(() => closeCliJavaScriptResources())
-              .then(
-                () => {
-                  process.exit(status);
-                },
-                (cleanup) => {
-                  process.stderr.write(
-                    `Failed to close the JavaScript analysis worker: ${cleanupFailureText(cleanup)}\n`,
-                  );
-                  process.exit(
-                    stdoutClosed
-                      ? SIGPIPE_EXIT_STATUS
-                      : status === 0
-                        ? 1
-                        : status,
-                  );
-                },
-              );
-          },
-        });
-      } catch (cause) {
-        if (wroteOutput) throw cause;
-        const recovered = await resultOutput
-          ?.recoverFormattingFailure(cause)
-          .catch((writeFailure) => {
-            // Recovery writes outside Incur's command boundary. A reader that
-            // declined this document keeps the same quiet SIGPIPE outcome.
-            if (!stdoutClosed) throw writeFailure;
-            return true;
-          });
-        if (!recovered) throw cause;
-        process.exitCode = stdoutClosed ? SIGPIPE_EXIT_STATUS : 1;
-      }
-      if (!wroteOutput && !resultOutput?.handled)
-        writeStdout(renderEmptyFilteredCliOutput(cliArgs) ?? "");
-    }
+    await runOneShotCli(args, {
+      environment: process.env,
+      runtime: {
+        packageName: packageJson.name,
+        packageVersion: packageJson.version,
+        versions: process.versions,
+        platform: process.platform,
+        architecture: process.arch,
+      },
+      stdoutIsTerminal: process.stdout.isTTY === true,
+      resultDestination: process.stdout,
+      closedStdoutStatus: SIGPIPE_EXIT_STATUS,
+      writeStdout,
+      writeStderr: (text) => {
+        process.stderr.write(text);
+      },
+      stdoutClosed: () => stdoutClosed,
+      exitCode: () =>
+        typeof process.exitCode === "number" ? process.exitCode : 0,
+      setExitCode: (code) => {
+        process.exitCode = code;
+      },
+      ownCliResources: (close) => {
+        closeCliResources = close;
+      },
+      exitRequested: () => exiting,
+      // A command failure caused by the closed pipe keeps the pipe's status.
+      // Worker shutdown is shared with the dispatch finally below. A failed
+      // shutdown is reported here because this callback is what exits.
+      exit: (code, finishOutput) => {
+        exiting = true;
+        void (async () => {
+          let status = code;
+          try {
+            await closeCliResources();
+          } catch (cleanup) {
+            process.stderr.write(
+              `Failed to close CLI resources: ${cleanupFailureText(cleanup)}\n`,
+            );
+            if (status === 0) status = 1;
+          }
+          try {
+            await finishOutput();
+          } catch (cause) {
+            if (!stdoutClosed)
+              process.stderr.write(`${cleanupFailureText(cause)}\n`);
+            if (status === 0) status = 1;
+          }
+          // process.exit() shuts the platform down without tearing the
+          // isolate down, so a V8 compile thread waiting for a collection can
+          // deadlock that shutdown. Let the event loop drain instead, and force
+          // the exit only when a handle outlives a short grace.
+          process.exitCode = stdoutClosed ? SIGPIPE_EXIT_STATUS : status;
+          setTimeout(
+            () => process.exit(process.exitCode),
+            EXIT_DRAIN_GRACE_MS,
+          ).unref();
+        })();
+      },
+    });
   } catch (cause) {
+    if (isClosedReaderFailure(cause)) {
+      stdoutClosed = true;
+      process.exitCode = SIGPIPE_EXIT_STATUS;
+    }
     dispatchFailure = cause;
   } finally {
     // Serve and output rendering can throw after a worker is parked. Stop it
     // on that path too, and keep the dispatch failure when both fail.
     try {
-      await closeCliJavaScriptResources();
+      await closeCliResources?.();
     } catch (cleanup) {
       // The exit callback reports this same shared failure and then exits.
       if (!exiting) {
@@ -184,28 +183,12 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       }
     }
   }
-  if (!exiting && dispatchFailure !== undefined) throw dispatchFailure;
-}
-
-/** True when the first positional command is `doctor`, after global output flags. */
-function isDoctorCommand(arguments_) {
-  const valuedFlags = new Set([
-    "--format",
-    "--filter-output",
-    "--token-limit",
-    "--token-offset",
-  ]);
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
-    if (argument === "--") return arguments_[index + 1] === "doctor";
-    if (valuedFlags.has(argument)) {
-      index += 1;
-      continue;
-    }
-    if (argument.startsWith("-")) continue;
-    return argument === "doctor";
-  }
-  return false;
+  if (
+    !exiting &&
+    dispatchFailure !== undefined &&
+    !(stdoutClosed && isClosedReaderFailure(dispatchFailure))
+  )
+    throw dispatchFailure;
 }
 
 /**
@@ -221,7 +204,7 @@ function cleanupFailureText(cleanup) {
 
 function guardClosedStdout() {
   process.stdout.on("error", (cause) => {
-    if (cause?.code === "EPIPE") {
+    if (isClosedReaderFailure(cause)) {
       stdoutClosed = true;
       process.exitCode = SIGPIPE_EXIT_STATUS;
       return;
@@ -229,6 +212,14 @@ function guardClosedStdout() {
     // Other failures stay unhandled unless a pending JSON write reports them.
     if (process.stdout.listenerCount("error") === 1) throw cause;
   });
+}
+
+/**
+ * A write failure that means the stdout reader has gone. A pipe reports EPIPE;
+ * macOS can report ENOTCONN when the reader closes a socket-pair stdout.
+ */
+function isClosedReaderFailure(cause) {
+  return cause?.code === "EPIPE" || cause?.code === "ENOTCONN";
 }
 
 function writeStdout(output) {

@@ -1,124 +1,91 @@
-import { z } from "incur";
-import {
-  WEB_NETWORK_CAPTURE_FORMATS,
-  inspectWebNetworkCaptureInputSchema,
-} from "../domain/webNetworkCapture.js";
-import { createWebNetworkCaptureService } from "../composition/webNetworkCaptures.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
+
+import { createWebNetworkCaptureService } from "../composition/webNetworkCaptures.js";
+import { WEB_NETWORK_CAPTURE_TOOL_CONTRACTS } from "../contracts/webNetworkCaptureToolContracts.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import type { CliInstance } from "./types.js";
-import { cliIntegerArgument } from "./options.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  deliverCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { explicitSensitiveValueOptions } from "./explicitSensitiveArguments.js";
+
+/** The descriptor path member as `callerInputs` names it. */
+const DESCRIPTOR_PATH = "protobuf.schema.descriptor_set_path";
 
 /** Expose offline historical capture inspection with the same selection contract as MCP. */
 export const registerWebNetworkCaptureCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
-): void => {
-  const service = createWebNetworkCaptureService(environment);
-  cli.command(CLI_COMMANDS.inspectWebNetworkCapture, {
-    description:
-      "Inspect retained HAR, native mitmproxy, Fiddler SAZ or aioquic qlog records without fetching recorded URLs",
-    args: z.object({
-      capturePath: z.string().describe("Absolute local capture path"),
-      format: z
-        .enum(WEB_NETWORK_CAPTURE_FORMATS)
-        .describe("Producer capture format"),
-    }),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      protobufFraming: z
-        .enum(["auto", "raw", "grpc", "grpc-web", "grpc-web-text"])
-        .optional()
-        .describe("Override framing for selected retained binary bodies"),
-      protobufBodyPointer: z
-        .array(z.string())
-        .optional()
-        .describe("Exact body pointers; repeat to select several"),
-      protobufSchema: z
-        .string()
-        .optional()
-        .describe("Absolute local compiled FileDescriptorSet path"),
-      protobufMessage: z
-        .string()
-        .optional()
-        .describe("Fully qualified message type in the descriptor set"),
-      record: z
-        .array(cliIntegerArgument(0))
-        .optional()
-        .describe("Zero-based producer ordinals; repeat to select several"),
-      ...explicitSensitiveValueOptions,
-      captureTimeoutMs:
-        inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.inspectWebNetworkCapture,
-          async () => {
-            return deliverCliAnalysisEvidence({
-              run: () =>
-                service.inspect(
-                  {
-                    capture_path: absoluteCallerPath(args.capturePath),
-                    format: args.format,
-                    sensitive_values: options.sensitiveValue,
-                    ...([
-                      options.protobufFraming,
-                      options.protobufBodyPointer,
-                      options.protobufSchema,
-                      options.protobufMessage,
-                    ].every((value) => value === undefined)
-                      ? {}
-                      : {
-                          protobuf: {
-                            framing: options.protobufFraming ?? "auto",
-                            ...(options.protobufBodyPointer === undefined
-                              ? {}
-                              : { body_pointers: options.protobufBodyPointer }),
-                            ...(options.protobufSchema === undefined &&
-                            options.protobufMessage === undefined
-                              ? {}
-                              : {
-                                  schema: {
-                                    descriptor_set_path:
-                                      options.protobufSchema === undefined
-                                        ? undefined
-                                        : absoluteCallerPath(
-                                            options.protobufSchema,
-                                          ),
-                                    message_type: options.protobufMessage,
-                                  },
-                                }),
-                          },
-                        }),
-                    ...(options.record === undefined
-                      ? {}
-                      : { record_ordinals: options.record }),
-                    ...(options.captureTimeoutMs === undefined
-                      ? {}
-                      : { capture_timeout_ms: options.captureTimeoutMs }),
-                  },
-                  { signal },
-                ),
-              service,
-              providerId: "web-network-capture",
-              operation: "inspect_web_network_capture",
-              signal,
-              detail: options.detail,
-              evidenceOutput: options.evidence_output,
-            });
+): void =>
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(
+      WEB_NETWORK_CAPTURE_TOOL_CONTRACTS,
+      "inspect_web_network_capture",
+    ),
+    {
+      description:
+        "Inspect retained HAR, native mitmproxy, Fiddler SAZ or aioquic qlog records without fetching recorded URLs",
+      positionals: ["capture_path", "format"],
+      callerPaths: ["capture_path"],
+      evidenceDelivery: true,
+      flatten: {
+        protobuf: {
+          framing: {
+            name: "protobufFraming",
+            description: "Override framing for selected retained binary bodies",
           },
-        ),
-      ),
-  });
-};
+          body_pointers: {
+            name: "protobufBodyPointer",
+            description: "Exact body pointers; repeat to select several",
+          },
+          schema: {
+            flatten: {
+              descriptor_set_path: {
+                name: "protobufSchema",
+                description: "Local compiled FileDescriptorSet path",
+                callerPath: true,
+              },
+              message_type: {
+                name: "protobufMessage",
+                description:
+                  "Fully qualified message type in the descriptor set",
+              },
+            },
+          },
+        },
+      },
+      fields: {
+        capture_path: { description: "Local capture path" },
+        format: { description: "Producer capture format" },
+        record_ordinals: {
+          name: "record",
+          description: "Zero-based producer ordinals; repeat to select several",
+        },
+        sensitive_values: {
+          name: "sensitiveValue",
+          description:
+            "Literal string values explicitly marked sensitive; repeat as needed",
+        },
+      },
+    },
+    async (input, { signal, delivery, callerInputs }) => {
+      const service = createWebNetworkCaptureService(environment);
+      const descriptor = callerInputs[DESCRIPTOR_PATH] as string | undefined;
+      return deliverCliAnalysisEvidence({
+        run: () => service.inspect(input, { signal }),
+        // Evidence keeps each caller path as the caller spelled it.
+        callerInputPath: callerInputs.capture_path as string,
+        ...(descriptor === undefined
+          ? {}
+          : { callerInputPaths: { descriptor_set_path: descriptor } }),
+        service,
+        providerId: "web-network-capture",
+        operation: "inspect_web_network_capture",
+        signal,
+        detail: delivery!.detail,
+        evidenceOutput: delivery!.evidenceOutput,
+        sensitiveValues: input.sensitive_values ?? [],
+      });
+    },
+  );

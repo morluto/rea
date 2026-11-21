@@ -3,14 +3,42 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let sharedDiagnosticHome = "";
+
+beforeAll(async () => {
+  sharedDiagnosticHome = (
+    await createTestWorkspace("rea-client-config-diagnostic-")
+  ).root;
+});
+
+beforeEach(async () => {
+  for (const entry of await readdir(sharedDiagnosticHome)) {
+    await rm(join(sharedDiagnosticHome, entry), {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+afterAll(async () => {
+  if (sharedDiagnosticHome !== "") {
+    await removeTestWorkspace(sharedDiagnosticHome);
+  }
+});
 
 const cases = [
   {
@@ -82,8 +110,23 @@ const cases = [
     client: "cursor",
     path: ".cursor/mcp.json",
     text: "not-json",
-    diagnostic: "Configuration is not valid JSON",
+    diagnostic: "Configuration is not valid JSONC and was not changed",
+    syntax: "JSONC",
+  },
+  {
+    // Pi loads mcp.json with strict JSON.parse, so REA's reader admits JSON only.
+    client: "pi",
+    path: ".pi/agent/mcp.json",
+    text: '{"mcpServers":{},}',
+    diagnostic: "Configuration is not valid JSON and was not changed",
     syntax: "JSON",
+  },
+  {
+    client: "codex",
+    path: ".codex/config.toml",
+    text: "[mcp_servers\n",
+    diagnostic: "Configuration is not valid TOML and was not changed",
+    syntax: "TOML",
   },
   {
     client: "hermes",
@@ -96,7 +139,7 @@ const cases = [
     client: "dsh",
     path: ".dsh/cordis.patch.yml",
     text: "- insert: [\n",
-    diagnostic: "Configuration is not valid YAML",
+    diagnostic: "Invalid or unsupported Cordis YAML",
     syntax: "YAML",
   },
 ] as const;
@@ -105,9 +148,7 @@ for (const scenario of cases)
   cliTest(
     `setup and uninstall explain ${scenario.client} configuration ${scenario.text}`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-client-config-diagnostic-",
-      );
+      const home = sharedDiagnosticHome;
       const config = join(home, scenario.path);
       await mkdir(dirname(config), { recursive: true });
       const original =
@@ -139,8 +180,10 @@ for (const scenario of cases)
         appliedActions: [],
       });
       if ("syntax" in scenario) {
-        expect(setup.json).toMatchObject({ remediation: expect.any(String) });
-        if (scenario.syntax === "JSON")
+        expect(setup.json).toMatchObject({
+          remediation: expect.stringMatching(/\S/u),
+        });
+        if (scenario.syntax === "JSONC")
           expect(setup.stdout).toContain("Invalid JSON/JSONC");
       } else {
         expect(setup.json).toMatchObject({
@@ -166,7 +209,7 @@ for (const scenario of cases)
       });
       if (!("syntax" in scenario))
         expect(uninstall.stdout).not.toContain("not valid JSON");
-      expect(await readFile(config)).toEqual(original);
+      expect(Buffer.compare(await readFile(config), original)).toBe(0);
       expect(await readdir(dirname(config))).toEqual([
         scenario.path.split("/").at(-1),
       ]);
@@ -178,6 +221,9 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   async ({ cli }) => {
     const home = await createTestTempDirectory(
       "rea-doctor-denied-registration-",
+    );
+    const moduleCache = await createTestTempDirectory(
+      "rea-doctor-swift-cache-",
     );
     const locked = join(home, "owned-denied");
     const target = join(locked, "client.json");
@@ -202,6 +248,7 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
           HOME: home,
           USERPROFILE: home,
           XDG_CONFIG_HOME: join(home, ".config"),
+          REA_DARWIN_MODULE_CACHE_PATH: moduleCache,
         },
       });
       expect(result.exitCode).toBe(1);
@@ -222,6 +269,55 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       await chmod(locked, 0o700);
     }
     expect(await readFile(target, "utf8")).toBe(original);
-    expect(await readdir(home)).toEqual([".claude.json", "owned-denied"]);
+    expect((await readdir(home)).sort()).toEqual([
+      ".claude.json",
+      "owned-denied",
+    ]);
+  },
+);
+
+cliTest(
+  "doctor reports unknown provider readiness for a malformed selected registration",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory(
+      "rea-doctor-unknown-registration-",
+    );
+    const config = join(home, ".config/opencode/opencode.json");
+    await mkdir(dirname(config), { recursive: true });
+    await writeFile(config, "not JSON");
+    const result = await cli.run({
+      arguments: [
+        "doctor",
+        "--client",
+        "opencode",
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      cwd: home,
+      environment: {
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: join(home, ".config"),
+        GHIDRA_INSTALL_DIR: join(home, "ghidra"),
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "ghidra",
+          configured: null,
+          available: null,
+        }),
+      ]),
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "ghidra",
+          classification: "unknown",
+          ok: false,
+        }),
+      ]),
+    });
   },
 );

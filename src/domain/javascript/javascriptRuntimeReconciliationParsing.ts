@@ -1,20 +1,24 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { parseEvidence, type Evidence } from "../evidence.js";
+import {
+  evidenceFileTarget,
+  evidenceSubjectDisplay,
+  type Evidence,
+} from "../evidence.js";
 import {
   javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
 } from "./javascriptApplicationAnalysis.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
-import type { ReconcileJavaScriptRuntimeInput } from "./javascriptRuntimeReconciliationSchemas.js";
+import type { ReconcileJavaScriptRuntimeFrame } from "./javascriptRuntimeReconciliationSchemas.js";
 import {
   assertEvidenceIdentity,
+  authenticateRuntimeEvidence,
   invalidInput,
-  parseAtPath,
+  parseInputAtPath,
 } from "./javascriptRuntimeReconciliationInputValidation.js";
 
 type StaticLayerInput =
-  ReconcileJavaScriptRuntimeInput["static_layers"][number];
+  ReconcileJavaScriptRuntimeFrame["static_layers"][number];
 type RuntimeMapping = StaticLayerInput["runtime_mappings"][number];
 
 export interface ParsedStaticLayer {
@@ -26,26 +30,14 @@ export interface ParsedStaticLayer {
   readonly runtimeMappings: readonly RuntimeMapping[];
 }
 
-/** Parse and semantically bind every static analysis Evidence layer. */
-export const parseStaticLayers = (
-  layers: readonly StaticLayerInput[],
-  path: readonly (string | number)[] = ["static_layers"],
-): ParsedStaticLayer[] =>
-  layers
-    .map((layer, index) =>
-      parseStaticLayer(layer, [...path, index, "analysis"]),
-    )
-    .sort((left, right) =>
-      compareUnicodeCodePoints(left.layerId, right.layerId),
-    );
-
-const parseStaticLayer = (
+/** Authenticate and semantically bind one admitted static analysis layer. */
+export const parseStaticLayer = (
   layer: StaticLayerInput,
   evidencePath: readonly (string | number)[],
 ): ParsedStaticLayer => {
-  const evidence = parseAtPath(parseEvidence, layer.analysis, evidencePath);
-  const result = parseAtPath(
-    (value) => javascriptApplicationAnalysisResultSchema.parse(value),
+  const evidence = authenticateRuntimeEvidence(layer.analysis, evidencePath);
+  const result = parseInputAtPath(
+    javascriptApplicationAnalysisResultSchema,
     evidence.normalized_result,
     [...evidencePath, "normalized_result"],
   );
@@ -62,11 +54,12 @@ const parseStaticLayer = (
     },
     evidencePath,
   );
+  const target = evidenceFileTarget(evidence);
   if (
-    evidence.subject === null ||
-    evidence.subject.digest.sha256 !== result.root_artifact_sha256 ||
-    evidence.subject.format !== result.format ||
-    evidence.subject.local_path !== result.input_path
+    target === undefined ||
+    target.sha256 !== result.root_artifact_sha256 ||
+    target.format !== result.format ||
+    evidenceSubjectDisplay(evidence)?.local_path !== result.input_path
   )
     throw invalidInput(
       [...evidencePath, "subject"],

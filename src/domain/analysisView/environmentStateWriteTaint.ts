@@ -1,7 +1,7 @@
 import {
-  decodedSegment,
   isParam,
   normalizedPath,
+  pathSegmentMatches,
   segmentsOf,
 } from "./environmentStateRules.js";
 import {
@@ -66,15 +66,14 @@ export class WriteTaint {
     return this.#targets.has(target);
   }
 
-  /** Whether an unmodelled write above a collection path left everything under it unknown, each collection segment matching the write's verbatim or once percent-decoded. */
+  /** Whether an unmodelled write above a collection path left everything under it unknown, each collection segment matching the write's verbatim or either once percent-decoded. */
   under(collection: string): boolean {
     const concrete = segmentsOf(collection);
     return this.#prefixes.some((prefix) =>
       segmentsOf(prefix).every(
         (segment, index) =>
           isParam(segment) ||
-          segment === concrete[index] ||
-          decodedSegment(concrete[index] ?? "") === segment,
+          pathSegmentMatches(concrete[index] ?? "", segment),
       ),
     );
   }

@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { StateRecordChronology } from "./StateRecordChronology.js";
+import { OmittedFields } from "./environmentStateWriteOmitted.js";
+import { checkedLines, servedLine } from "./environmentStateCheckedLines.js";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   timedCaptureEvidence,
+  analysisViewCaptureEvidence,
+  environmentManifestCaptureFixture,
   type TimedCaptureRow,
 } from "../../../tests/fixtures/analysisView.js";
 import {
@@ -18,7 +23,13 @@ import {
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { JsonValue } from "../jsonValue.js";
 import { ok } from "../result.js";
-import { itemTarget, SimulatedState } from "./environmentStateWriteChecks.js";
+import {
+  checkItemRead,
+  itemTarget,
+  SimulatedState,
+} from "./environmentStateWriteChecks.js";
+import { UnseenEntities } from "./environmentStateWriteAdoption.js";
+import type { StateItemView } from "./environmentStateRules.js";
 import {
   laterObservation,
   type ObservationSearch,
@@ -26,6 +37,7 @@ import {
 import { updatedFields } from "./environmentStateWriteApply.js";
 import {
   retainFixed,
+  retainCreateExemplar,
   type EffectContext,
 } from "./environmentStateWriteEffects.js";
 
@@ -38,6 +50,168 @@ const gated = (rows: readonly TimedCaptureRow[], tool: string) => {
 };
 
 const RENAMED = renamedBook(FIRST_BOOK, "Renamed Book", 3);
+
+it.each([
+  ["read", "1", null],
+  ["read", "2", { ordinal: 4, pointer: "" }],
+  ["source", "1", null],
+  ["source", "2", { ordinal: 5, pointer: "" }],
+] as const)(
+  "does not borrow an entity read across an overlapping %s write to book %s",
+  (phase, target, expected) => {
+    const rows = [
+      [
+        "GET",
+        "/api/books",
+        [
+          { id: 1, name: "A" },
+          { id: 2, name: "B" },
+        ],
+        200,
+        undefined,
+        0,
+        5,
+      ],
+      ["GET", "/api/books/1", { id: 1, name: "A" }, 200, undefined, 1, 5],
+      ["GET", "/api/books/2", { id: 2, name: "B" }, 200, undefined, 2, 5],
+      ...(phase === "source"
+        ? [
+            [
+              "POST",
+              `/api/books/${target}/archive`,
+              null,
+              204,
+              {},
+              3,
+              10_000,
+            ] as const,
+          ]
+        : []),
+      [
+        "PATCH",
+        "/api/books/1",
+        null,
+        204,
+        { name: "Z" },
+        phase === "source" ? 4 : 3,
+        5,
+      ],
+      [
+        "GET",
+        "/api/books/1",
+        { id: 1, name: "Z" },
+        200,
+        undefined,
+        phase === "source" ? 5 : 4,
+        phase === "source" ? 5 : 1_500,
+      ],
+      ...(phase === "read"
+        ? [
+            [
+              "POST",
+              `/api/books/${target}/archive`,
+              null,
+              204,
+              {},
+              5,
+              5,
+            ] as const,
+          ]
+        : []),
+      [
+        "GET",
+        "/api/books/1",
+        { id: 1, name: "Z" },
+        200,
+        undefined,
+        phase === "source" ? 14 : 6,
+        5,
+      ],
+    ] as const;
+    const entries = rows.map(
+      ([method, path, body, status, request, time, duration]) => ({
+        startedDateTime: new Date(
+          Date.UTC(2026, 0, 1, 0, 0, time),
+        ).toISOString(),
+        time: duration,
+        request: {
+          method,
+          url: `http://app.example${path}`,
+          bodySize:
+            request === undefined
+              ? 0
+              : Buffer.byteLength(JSON.stringify(request)),
+          ...(request === undefined
+            ? {}
+            : {
+                postData: {
+                  mimeType: "application/json",
+                  text: JSON.stringify(request),
+                },
+              }),
+        },
+        response: {
+          status,
+          content: { mimeType: "application/json", text: JSON.stringify(body) },
+        },
+      }),
+    );
+    const capture = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture(entries),
+    );
+    const plan = environmentStateViewOf(capture).writes.find(
+      ({ tool }) => tool === "patch_books_by_id",
+    );
+    expect(plan?.observation).toEqual(expected);
+    if (target === "1") expect(plan?.served).toBe(false);
+  },
+);
+
+/** A book whose constant names organisation 1, created at exchange `seconds`. */
+const tiedToOrgOne = (id: number, name: string, seconds: number): Book => ({
+  ...book(id, name, bookClock(seconds)),
+  org: "/orgs/1",
+});
+
+/**
+ * Two organisations, a create tied to the first by a constant that names it, then the same constant
+ * recorded under the second. `confirmOwn` also reads the created book back from the first.
+ */
+const tiedCreateRows = (confirmOwn: boolean): TimedCaptureRow[] => {
+  const alpha = { ...book(1, "Alpha", "2026-10-01T09:00:00Z"), org: "/orgs/1" };
+  const beta = { ...book(10, "Beta", "2026-10-01T10:00:00Z"), org: "/orgs/2" };
+  const made = tiedToOrgOne(2, "Made", 4);
+  const other = tiedToOrgOne(11, "Other", confirmOwn ? 6 : 5);
+  const rows: TimedCaptureRow[] = [
+    ["GET", "/api/orgs/1/books", [alpha]],
+    ["GET", "/api/orgs/2/books", [beta]],
+    ["GET", "/api/orgs/1/books/1", alpha],
+    ["GET", "/api/orgs/2/books/10", beta],
+    ["POST", "/api/orgs/1/books", made, 201, { name: "Made" }],
+  ];
+  if (confirmOwn) rows.push(["GET", "/api/orgs/1/books/2", made]);
+  rows.push(
+    ["POST", "/api/orgs/2/books", other, 201, { name: "Other" }],
+    ["GET", "/api/orgs/2/books/11", other],
+  );
+  return rows;
+};
+
+/** A book whose constant names organisation `acme1`, created at exchange `seconds`. */
+const tiedToAcme = (id: number, name: string, seconds: number): Book => ({
+  ...book(id, name, bookClock(seconds)),
+  team: "/orgs/uid/acme1",
+});
+
+/** The create plan the gate gives a capture of `rows` when the segment after `uid` is a parameter. */
+const acmeCreate = (rows: readonly TimedCaptureRow[]) => {
+  const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+    "after-uid-literal",
+  ]);
+  const plan = writes.find((candidate) => candidate.effect === "create");
+  if (plan === undefined) throw new Error("The gate planned no create");
+  return plan;
+};
 
 describe("reads compared as the served environment answers them", () => {
   /** Item reads in a `{data, revision}` envelope, a rename, then a read recorded at `revision`. */
@@ -439,9 +613,106 @@ describe("checked lines", () => {
       checked_record_ordinals: [6, 8, 9],
     });
   });
+
+  const TWICE = "/api/orgs/%61%63me1/books";
+  const shelved = (entry: Book, shelf: string): Book => ({ ...entry, shelf });
+  const ENCODED_LINE: TimedCaptureRow = [
+    "GET",
+    ENCODED,
+    [shelved(FIRST_BOOK, "a"), shelved(SECOND_BOOK, "b")],
+  ];
+  const TWICE_LINE: TimedCaptureRow = [
+    "GET",
+    TWICE,
+    [shelved(THIRD_BOOK, "a"), shelved(RENAMED, "b")],
+  ];
+  const SHELF_LINE: TimedCaptureRow = [
+    "GET",
+    `${ENCODED}?shelf=a`,
+    [shelved(FIRST_BOOK, "a")],
+  ];
+  /** Lines of one organisation spelled two encoded ways, deletes each whole list confirms, then a plain read of new query values still listing the deleted book. */
+  const deletedThenQueried = (
+    lines: readonly TimedCaptureRow[],
+    read: string,
+  ): TimedCaptureRow[] => [
+    ...lines,
+    ["GET", OTHER, [shelved(SECOND_BOOK, "a")]],
+    ["DELETE", `${TWICE}/1`, "", 204],
+    ["DELETE", `${OTHER}/2`, "", 204],
+    ["GET", TWICE, [shelved(THIRD_BOOK, "a")]],
+    ["GET", OTHER, []],
+    ["GET", read, [shelved(RENAMED, "b")]],
+  ];
+  const deleteOf = (rows: readonly TimedCaptureRow[]) =>
+    environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]).writes.find((candidate) => candidate.effect === "delete");
+
+  it("checks a read on new query values against the line serving ranks first by the values it shares", () => {
+    const rows = deletedThenQueried(
+      [
+        ENCODED_LINE,
+        TWICE_LINE,
+        SHELF_LINE,
+        ["GET", `${TWICE}?shelf=b`, [shelved(RENAMED, "b")]],
+        ["GET", `${ENCODED}?limit=1`, [shelved(FIRST_BOOK, "a")]],
+      ],
+      `${PLAIN}?shelf=b&limit=5`,
+    );
+    // Serving lists the twice-encoded collection, whose `shelf=b` line the read shares a value with.
+    expect(deleteOf(rows)).toMatchObject({
+      served: false,
+      contradicted_by: 10,
+    });
+  });
+
+  it("checks a read on new query values against the line serving takes first in record order", () => {
+    const rows = deletedThenQueried(
+      [TWICE_LINE, ENCODED_LINE, SHELF_LINE],
+      `${PLAIN}?shelf=b`,
+    );
+    // No line shares a value, so serving lists the collection of the line recorded first.
+    expect(deleteOf(rows)).toMatchObject({
+      served: false,
+      contradicted_by: 8,
+    });
+  });
 });
 
 describe("insert rules", () => {
+  it.each([false, true])(
+    "uses the successful retry's page coverage, keeping an unseen update pending (later read: %s)",
+    (laterRead) => {
+      const beta = { id: 1, name: "Beta", note: "first" };
+      const zulu = { id: 2, name: "Zulu", note: "original" };
+      const patched = { ...zulu, note: "updated" };
+      const alpha = { id: 3, name: "Alpha", note: "created" };
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/books?limit=5", [beta, zulu]],
+        ["GET", "/api/books?limit=1", [beta]],
+        ["GET", "/api/books/1", beta],
+        ["GET", "/api/books/2", zulu],
+        ["PATCH", "/api/books/2", patched, 200, { note: "updated" }],
+        ["POST", "/api/books", alpha, 201, { name: "Alpha", note: "created" }],
+        // The initial page includes Zulu. Retrying the create in name order
+        // replaces it with Alpha, so the passing page proves nothing of Zulu.
+        ["GET", "/api/books?limit=2", [alpha, beta]],
+      ];
+      if (laterRead) rows.push(["GET", "/api/books/2", patched]);
+      expect(gated(rows, "post_books")).toMatchObject({
+        served: true,
+        insert: { rule: "sorted", field: "name", direction: "ascending" },
+        checked_record_ordinals: [6],
+      });
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served: laterRead,
+        ...(laterRead ? {} : { reason: "unconfirmed" }),
+        checked_record_ordinals: laterRead ? [7] : [],
+      });
+    },
+  );
+
   it("still learns where a list places a create after an item read confirmed it", () => {
     const alpha = book(3, "Alpha", bookClock(3));
     const rows: TimedCaptureRow[] = [
@@ -495,16 +766,23 @@ describe("reads the served answer no longer matches", () => {
     });
   });
 
-  it("confirms no create whose entity lacks a field every recording of its item view carried", () => {
+  it("confirms a create that lacks a field every item recording carried only when its own read leaves the field out too", () => {
     const detailed = (entry: Book): Book => ({ ...entry, detail: "x" });
-    const rows: TimedCaptureRow[] = [
+    const rows = (readBack: Book): TimedCaptureRow[] => [
       ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
       ["GET", "/api/books/1", detailed(FIRST_BOOK)],
       ["GET", "/api/books/2", detailed(SECOND_BOOK)],
       ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
-      ["GET", "/api/books/3", THIRD_BOOK],
+      ["GET", "/api/books/3", readBack],
     ];
-    expect(gated(rows, "post_books")).toMatchObject({ served: false });
+    // The application omits the field for this book, so serving need not invent it.
+    expect(gated(rows(THIRD_BOOK), "post_books")).toMatchObject({
+      served: true,
+    });
+    // The read shows the field the create's own answer left out: the state cannot render it.
+    expect(gated(rows(detailed(THIRD_BOOK)), "post_books")).toMatchObject({
+      served: false,
+    });
   });
 });
 
@@ -858,6 +1136,27 @@ describe("what a read shows of a write", () => {
       checked_record_ordinals: [3],
     });
   });
+
+  it("confirms a document write whose path encodes a parent the plain read holds", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/uid/acme1/settings", { theme: "light", lang: "en" }],
+      [
+        "PATCH",
+        "/api/orgs/uid/%61cme1/settings",
+        { theme: "dark", lang: "en" },
+        200,
+        { theme: "dark" },
+      ],
+      ["GET", "/api/orgs/uid/acme1/settings", { theme: "dark", lang: "en" }],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "after-uid-literal",
+    ]);
+    expect(writes.find((plan) => plan.effect === "document")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [2],
+    });
+  });
 });
 
 describe("document writes later writes overwrite", () => {
@@ -1066,6 +1365,119 @@ describe("reads named as serving names them", () => {
   });
 });
 
+describe("encoded parent spellings", () => {
+  const type = "/api/orgs/uid/{uid}/books";
+  const collection = "/api/orgs/uid/acme1/books";
+  /** A state holding one book under its parent's plain spelling. */
+  const plainlyHeld = () =>
+    new SimulatedState(
+      [
+        {
+          type,
+          collection,
+          id: "1",
+          fields: { id: 1, name: "Alpha" },
+          view_fields: [],
+          record_ordinals: [],
+        },
+      ],
+      [],
+    );
+
+  it("names the plainly held entity from a path that encodes its parent", () => {
+    expect(
+      itemTarget(plainlyHeld(), type, {
+        path: "/api/orgs/uid/%61cme1/books/1",
+      }),
+    ).toEqual({ collection, id: "1" });
+  });
+
+  it("lists the type's entities only when the path's own collection holds no such id", () => {
+    const state = plainlyHeld();
+    const listed = vi.spyOn(state, "ofType");
+    expect(
+      itemTarget(state, type, { path: "/api/orgs/uid/acme1/books/1" }),
+    ).toEqual({ collection, id: "1" });
+    expect(listed).not.toHaveBeenCalled();
+    expect(
+      itemTarget(state, type, { path: "/api/orgs/uid/%61cme1/books/1" }),
+    ).toEqual({ collection, id: "1" });
+    expect(listed).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers an encoded read from the plain checked line", () => {
+    const tool = {
+      name: "get_orgs_books_by_uid",
+      method: "GET",
+      path_template: "/api/orgs/uid/{uid}/books",
+      record_ordinals: [0],
+    };
+    const record = {
+      ordinal: 0,
+      method: "GET",
+      path: "/api/orgs/uid/acme1/books",
+      query: undefined,
+      status: 200,
+      timing: { start: undefined, end: undefined, endMs: undefined },
+    };
+    const lines = checkedLines({
+      tools: [tool],
+      records: [record],
+      views: new Map([
+        [
+          tool.name,
+          {
+            tool: tool.name,
+            type: "/api/orgs/uid/{uid}/books",
+            shape: "list",
+            pointer: "",
+            fields: ["id"],
+            required_fields: ["id"],
+            checked_record_ordinals: [0],
+            membership: "all",
+            counters: [],
+          },
+        ],
+      ]),
+    });
+    expect(
+      servedLine(lines.get(tool.name), {
+        ...record,
+        ordinal: 1,
+        path: "/api/orgs/uid/%61cme1/books",
+      }),
+    ).toEqual({
+      ordinal: 0,
+      collection: "/api/orgs/uid/acme1/books",
+      named: true,
+    });
+  });
+
+  it("confirms an update whose path encodes a parent the plain reads hold", () => {
+    const alpha = { id: 1, org: "acme1", name: "Alpha" };
+    const renamed = { id: 1, org: "acme1", name: "Renamed" };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/uid/acme1/books", [alpha]],
+      ["GET", "/api/orgs/uid/acme1/books/1", alpha],
+      [
+        "PATCH",
+        "/api/orgs/uid/%61cme1/books/1",
+        renamed,
+        200,
+        { name: "Renamed" },
+      ],
+      ["GET", "/api/orgs/uid/acme1/books/1", renamed],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "after-uid-literal",
+    ]);
+    expect(writes.find((plan) => plan.effect === "update")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [3],
+    });
+  });
+});
+
 describe("writes named as serving names them", () => {
   const orgBook = (
     id: number,
@@ -1209,8 +1621,7 @@ describe("resolved encoded item observations", () => {
       path: "/api/orgs/acme1/books/%61",
       query: undefined,
       status: 204,
-      start: 0,
-      end: 0,
+      timing: { start: undefined, end: undefined, endMs: undefined },
     };
     const target = itemTarget(state, "/api/orgs/{org_id}/books", write);
     const itemView = {
@@ -1223,22 +1634,25 @@ describe("resolved encoded item observations", () => {
       checked_record_ordinals: [1],
       envelope_ordinal: 1,
     };
+    const records = [
+      write,
+      {
+        ordinal: 1,
+        method: "GET",
+        path: "/api/orgs/acme1/books/%61",
+        query: undefined,
+        status: 200,
+        timing: { start: undefined, end: undefined, endMs: undefined },
+      },
+    ];
     const search: ObservationSearch = {
-      records: [
-        write,
-        {
-          ordinal: 1,
-          method: "GET",
-          path: "/api/orgs/acme1/books/%61",
-          query: undefined,
-          status: 200,
-          start: 1,
-          end: 1,
-        },
-      ],
+      records,
+      chronology: new StateRecordChronology(records, "record-order"),
+      overlapsWrite: () => false,
       from: 0,
       viewOf: () => itemView,
       withBody: (_ordinal, use) => use({ id: "%61", name: "After" }),
+      queryOf: () => undefined,
     };
 
     expect(target).toEqual({ collection, id: "%61" });
@@ -1836,7 +2250,54 @@ describe("what an unmodelled write explains", () => {
   });
 });
 
+it("leaves the global served clock unknown when any record completion is unknown", () => {
+  const rows = (duration: number): TimedCaptureRow[] => [
+    ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    // Even an earlier record with an unknown end may finish after the final known record.
+    ["GET", "/api/books/1", FIRST_BOOK, 200, undefined, duration],
+    ["GET", "/api/books/2", SECOND_BOOK],
+  ];
+  expect(
+    environmentStateViewOf(timedCaptureEvidence(rows(5))).write_clock,
+  ).toBe(new Date(bookClock(3)).toISOString());
+  expect(
+    environmentStateViewOf(timedCaptureEvidence(rows(-1))).write_clock,
+  ).toBeNull();
+});
+
 describe("reads and calls on an entity an unmodelled write left unknown", () => {
+  it.each([
+    { duration: 5, target: "1", served: true },
+    { duration: -1, target: "1", served: false },
+    { duration: -1, target: "2", served: true },
+  ])(
+    "requires unmodelled completion before resync and later confirmation: $target duration=$duration",
+    ({ duration, target, served }) => {
+      const rows: TimedCaptureRow[] = [
+        [
+          "GET",
+          "/api/books",
+          [
+            { id: 1, name: "A" },
+            { id: 2, name: "B" },
+          ],
+        ],
+        ["GET", "/api/books/1", { id: 1, name: "A" }],
+        ["GET", "/api/books/2", { id: 2, name: "B" }],
+        ["POST", `/api/books/${target}/archive`, null, 204, {}, duration],
+        // This read may re-establish a baseline only after the related action finished.
+        ["GET", "/api/books/1", { id: 1, name: "A" }],
+        ["PATCH", "/api/books/1", { id: 1, name: "Z" }, 200, { name: "Z" }],
+        ["GET", "/api/books/1", { id: 1, name: "Z" }],
+      ];
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served,
+        checked_record_ordinals: served ? [6] : [],
+        contradicted_by: null,
+      });
+    },
+  );
+
   const named = (name: string) => ({ id: 1, name });
   const other = { id: 2, name: "B" };
   const ARCHIVE: TimedCaptureRow = [
@@ -1847,23 +2308,53 @@ describe("reads and calls on an entity an unmodelled write left unknown", () => 
     {},
   ];
 
-  it("keeps the entity unknown through a failed read that is no absence, for a later read to check", () => {
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/books", [named("A"), other]],
-      ["GET", "/api/books/1", named("A")],
-      ["GET", "/api/books/2", other],
-      ["PATCH", "/api/books/1", named("Z"), 200, { name: "Z" }],
-      ARCHIVE,
-      // The application was briefly unavailable, so this answer shows nothing of the book.
-      ["GET", "/api/books/1", { error: "unavailable" }, 503],
-      ["GET", "/api/books/1", named("Z")],
-    ];
-    expect(gated(rows, "patch_books_by_id")).toMatchObject({
-      served: true,
-      checked_record_ordinals: [6],
-      contradicted_by: null,
-    });
-  });
+  it.each([
+    { label: "scalar", read: "unavailable", served: false },
+    { label: "array", read: [], served: false },
+    { label: "object", read: named("A"), served: true },
+  ])(
+    "requires a usable item baseline after an unmodelled write ($label)",
+    ({ read, served }) => {
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/books", [named("A"), other]],
+        ["GET", "/api/books/1", named("A")],
+        ["GET", "/api/books/2", other],
+        ARCHIVE,
+        ["GET", "/api/books/1", read],
+        ["PATCH", "/api/books/1", named("Z"), 200, { name: "Z" }],
+        ["GET", "/api/books/1", named("Z")],
+      ];
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served,
+        checked_record_ordinals: served ? [6] : [],
+      });
+    },
+  );
+
+  it.each([
+    { status: 503, body: { error: "unavailable" } },
+    { status: 200, body: "unavailable" },
+    { status: 200, body: [] },
+  ])(
+    "keeps pending effects through an unusable item read ($status, $body)",
+    ({ status, body }) => {
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/books", [named("A"), other]],
+        ["GET", "/api/books/1", named("A")],
+        ["GET", "/api/books/2", other],
+        ["PATCH", "/api/books/1", named("Z"), 200, { name: "Z" }],
+        ARCHIVE,
+        // Neither failure nor a successful non-object response shows the book.
+        ["GET", "/api/books/1", body, status],
+        ["GET", "/api/books/1", named("Z")],
+      ];
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served: true,
+        checked_record_ordinals: [6],
+        contradicted_by: null,
+      });
+    },
+  );
 
   it("confirms no update of a volatile field by a read that shows the entity again, as no other read does", () => {
     const seen = (id: number, count: number) => ({
@@ -1928,6 +2419,139 @@ describe("volatile fields", () => {
       ["GET", "/api/books/1", seen(1, "Z", "t9")],
     ];
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+  });
+});
+
+describe("entities an unmodelled write made", () => {
+  const IMPORT: TimedCaptureRow = [
+    "POST",
+    "/api/imports",
+    { queued: true },
+    202,
+    { source: "csv" },
+  ];
+  const RENAME: TimedCaptureRow = [
+    "PATCH",
+    "/api/books/1",
+    renamedBook(FIRST_BOOK, "Renamed Book", 3),
+    200,
+    { name: "Renamed Book" },
+  ];
+  const deletedAfterRead = (before: readonly TimedCaptureRow[]) => [
+    ...BOOK_INIT_ROWS,
+    ...before,
+    ["GET", "/api/books/3", THIRD_BOOK] as TimedCaptureRow,
+    ["DELETE", "/api/books/3", "", 204] as TimedCaptureRow,
+    ["GET", "/api/books/3", BOOK_NOT_FOUND, 404] as TimedCaptureRow,
+  ];
+
+  it("takes a book the state never held only when a write the gate does not model came first", () => {
+    // The rename ends the initial reads, so the third book is no initial one.
+    expect(
+      gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
+    ).toMatchObject({ served: true, checked_record_ordinals: [7] });
+    // Only a modelled rename came first, so nothing explains the third book and the delete finds none.
+    expect(
+      gated(deletedAfterRead([RENAME]), "delete_books_by_id"),
+    ).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+  });
+
+  it("takes a book an import may have made though it was redirected or went unanswered", () => {
+    for (const status of [303, 0]) {
+      const unresolved: TimedCaptureRow = [
+        "POST",
+        "/api/imports",
+        { queued: true },
+        status,
+        { source: "csv" },
+      ];
+      expect(
+        gated(deletedAfterRead([RENAME, unresolved]), "delete_books_by_id"),
+      ).toMatchObject({ served: true, checked_record_ordinals: [7] });
+    }
+  });
+
+  it("counts an entity it takes against the view's allowance", () => {
+    let retained = 0;
+    const read = { ...THIRD_BOOK, notes: "x".repeat(10_000) };
+    const unseen = new UnseenEntities([], {
+      state: new SimulatedState([], []),
+      io: {
+        withBody: (_ordinal, use) => use(read),
+        retain: (bytes) => (retained += bytes),
+      },
+      lastCheck: new Map(),
+      idField: () => "id",
+    });
+    unseen.unplanned(0);
+    retained = 0;
+    const view = { shape: "item", type: "/api/books", pointer: "" };
+    const record = {
+      ordinal: 1,
+      method: "GET",
+      path: "/api/books/3",
+      query: undefined,
+      status: 200,
+      timing: { start: undefined, end: undefined, endMs: undefined },
+    };
+    expect(
+      unseen.adopt(view as unknown as StateItemView, { record, index: 1 }),
+    ).toMatchObject({ id: "3", fields: read });
+    expect(retained).toBeGreaterThan(20_000);
+  });
+
+  it("finds no read's target among the held entities until an unplanned write came before the read", () => {
+    const state = new SimulatedState([], []);
+    const targets = vi.spyOn(state, "ofType");
+    const unseen = new UnseenEntities([], {
+      state,
+      io: { withBody: (_ordinal, use) => use(THIRD_BOOK), retain: () => 0 },
+      lastCheck: new Map(),
+      idField: () => "id",
+    });
+    const view = { shape: "item", type: "/api/books", pointer: "" };
+    const read = (index: number) => ({
+      record: {
+        ordinal: index,
+        method: "GET",
+        path: "/api/books/3",
+        query: undefined,
+        status: 200,
+        timing: { start: undefined, end: undefined, endMs: undefined },
+      },
+      index,
+    });
+    const adopt = (index: number) =>
+      unseen.adopt(view as unknown as StateItemView, read(index));
+    expect(adopt(1)).toBeUndefined();
+    // A write after the read cannot have made what it shows either.
+    unseen.unplanned(2);
+    expect(adopt(1)).toBeUndefined();
+    expect(targets).not.toHaveBeenCalled();
+    expect(adopt(3)).toMatchObject({ id: "3" });
+  });
+
+  it("takes back no book a modelled delete removed, so a list showing it again confirms no delete", () => {
+    expect(
+      gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
+    ).toMatchObject({ served: true });
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", THIRD_BOOK],
+      ["DELETE", "/api/books/3", "", 204],
+      IMPORT,
+      // The import put the deleted book back; the copy must not take it as one the import made.
+      ["GET", "/api/books/3", THIRD_BOOK],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, THIRD_BOOK]],
+    ];
+    expect(gated(rows, "delete_books_by_id")).toMatchObject({
       served: false,
       checked_record_ordinals: [],
     });
@@ -2273,6 +2897,45 @@ describe("what later calls must keep consistent", () => {
     });
   });
 
+  it("does not let a later empty ?page=2 page contradict a create", () => {
+    const alpha = { id: 1, name: "Alpha", org: "1" };
+    const beta = { id: 2, name: "Beta", org: "2" };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/1/books", [alpha]],
+      ["GET", "/api/orgs/1/books/1", alpha],
+      ["GET", "/api/orgs/2/books?page=2", []],
+      ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+      ["GET", "/api/orgs/2/books/2", beta],
+      ["GET", "/api/orgs/2/books?page=2", []],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows));
+    expect(writes.find((plan) => plan.effect === "create")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+  });
+
+  it.each(["offset", "start", "_start"])(
+    "does not let a later empty ?%s=1 page contradict a create",
+    (name) => {
+      const alpha = { id: 1, name: "Alpha", org: "1" };
+      const beta = { id: 2, name: "Beta", org: "2" };
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/orgs/1/books", [alpha]],
+        ["GET", "/api/orgs/1/books/1", alpha],
+        ["GET", `/api/orgs/2/books?${name}=1`, []],
+        ["POST", "/api/orgs/2/books", beta, 201, { name: "Beta" }],
+        ["GET", "/api/orgs/2/books/2", beta],
+        ["GET", `/api/orgs/2/books?${name}=1`, []],
+      ];
+      const { writes } = environmentStateViewOf(timedCaptureEvidence(rows));
+      expect(writes.find((plan) => plan.effect === "create")).toMatchObject({
+        served: true,
+        checked_record_ordinals: [4],
+      });
+    },
+  );
+
   it("checks nothing by a whole line recorded empty under a zero limit once a create fills its collection", () => {
     const alpha = { id: 1, name: "Alpha", org: "1" };
     const beta = { id: 2, name: "Beta", org: "2" };
@@ -2289,6 +2952,145 @@ describe("what later calls must keep consistent", () => {
     expect(writes.find((plan) => plan.effect === "create")).toMatchObject({
       served: true,
       checked_record_ordinals: [4],
+    });
+  });
+});
+
+describe("creates tied to one collection", () => {
+  it("does not let a later create in another collection confirm the plan", () => {
+    expect(gated(tiedCreateRows(false), "post_orgs_books_by_id")).toMatchObject(
+      {
+        served: false,
+        reason: "unconfirmed",
+        collection: "/api/orgs/1/books",
+        checked_record_ordinals: [],
+      },
+    );
+  });
+
+  it("still confirms the plan from a read of the collection it is tied to", () => {
+    expect(gated(tiedCreateRows(true), "post_orgs_books_by_id")).toMatchObject({
+      served: true,
+      collection: "/api/orgs/1/books",
+      checked_record_ordinals: [5],
+    });
+  });
+
+  const acmeRows = (
+    laterPath: string,
+    heldEncoded: boolean,
+  ): TimedCaptureRow[] => {
+    const alpha = {
+      ...book(1, "Alpha", "2026-10-01T09:00:00Z"),
+      team: "/orgs/uid/acme1",
+    };
+    const made = tiedToAcme(2, "Made", 2);
+    const other = tiedToAcme(3, "Other", heldEncoded ? 5 : 3);
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/uid/acme1/books", [alpha]],
+      ["GET", "/api/orgs/uid/acme1/books/1", alpha],
+    ];
+    if (heldEncoded) {
+      const encoded = {
+        ...book(10, "Encoded", "2026-10-01T10:00:00Z"),
+        team: "/orgs/uid/acme1",
+      };
+      rows.push(
+        ["GET", "/api/orgs/uid/%61cme1/books", [encoded]],
+        ["GET", "/api/orgs/uid/%61cme1/books/10", encoded],
+      );
+    }
+    rows.push(
+      ["POST", "/api/orgs/uid/acme1/books", made, 201, { name: "Made" }],
+      ["POST", laterPath, other, 201, { name: "Other" }],
+      ["GET", "/api/orgs/uid/acme1/books/3", other],
+    );
+    return rows;
+  };
+
+  it("confirms a tied create whose later call spells the held collection encoded", () => {
+    expect(
+      acmeCreate(acmeRows("/api/orgs/uid/%61cme1/books", false)),
+    ).toMatchObject({
+      served: true,
+      collection: "/api/orgs/uid/acme1/books",
+      checked_record_ordinals: [4],
+    });
+  });
+
+  it("does not treat an encoded spelling as the tied collection when that spelling is held itself", () => {
+    // Serving keeps the verbatim encoded collection, outside the plain tie. The plain read of the
+    // entity that create did not add is related to the exemplar, so the plan is a side effect.
+    expect(
+      acmeCreate(acmeRows("/api/orgs/uid/%61cme1/books", true)),
+    ).toMatchObject({
+      served: false,
+      reason: "side-effect",
+      collection: "/api/orgs/uid/acme1/books",
+      checked_record_ordinals: [],
+    });
+  });
+
+  it("chooses among emptied spellings of a tied collection in the order serving remembers them", () => {
+    const first = "/api/orgs/uid/%61cme1/books";
+    const second = "/api/orgs/uid/a%63me1/books";
+    const alpha = {
+      ...book(1, "Alpha", "2026-10-01T09:00:00Z"),
+      team: "/orgs/uid/acme1",
+    };
+    const beta = {
+      ...book(10, "Beta", "2026-10-01T10:00:00Z"),
+      team: "/orgs/uid/acme1",
+    };
+    const made = tiedToAcme(2, "Made", 4);
+    const other = tiedToAcme(3, "Other", 8);
+    // The second spelling empties before the first, but serving still offers the first spelling first.
+    const rows: TimedCaptureRow[] = [
+      ["GET", first, [alpha]],
+      ["GET", second, [beta]],
+      ["GET", `${first}/1`, alpha],
+      ["GET", `${second}/10`, beta],
+      ["POST", second, made, 201, { name: "Made" }],
+      ["DELETE", `${second}/10`, "", 204],
+      ["DELETE", `${second}/2`, "", 204],
+      ["DELETE", `${first}/1`, "", 204],
+      ["POST", "/api/orgs/uid/acme1/books", other, 201, { name: "Other" }],
+      ["GET", "/api/orgs/uid/acme1/books/3", other],
+    ];
+    expect(acmeCreate(rows)).toMatchObject({
+      collection: second,
+      checked_record_ordinals: [],
+    });
+  });
+
+  it("keeps a tied collection ahead of another spelling once its first entity is gone, as serving orders them", () => {
+    const first = "/api/orgs/uid/%61cme1/books";
+    const second = "/api/orgs/uid/a%63me1/books";
+    const alpha = {
+      ...book(1, "Alpha", "2026-10-01T09:00:00Z"),
+      team: "/orgs/uid/acme1",
+    };
+    const beta = {
+      ...book(10, "Beta", "2026-10-01T10:00:00Z"),
+      team: "/orgs/uid/acme1",
+    };
+    const made = tiedToAcme(2, "Made", 4);
+    const other = tiedToAcme(3, "Other", 6);
+    // Serving places the created book beside its collection, so the first spelling still leads after its first book goes.
+    const rows: TimedCaptureRow[] = [
+      ["GET", first, [alpha]],
+      ["GET", second, [beta]],
+      ["GET", `${first}/1`, alpha],
+      ["GET", `${second}/10`, beta],
+      ["POST", first, made, 201, { name: "Made" }],
+      ["DELETE", `${first}/1`, "", 204],
+      ["POST", "/api/orgs/uid/acme1/books", other, 201, { name: "Other" }],
+      ["GET", "/api/orgs/uid/acme1/books/3", other],
+    ];
+    expect(acmeCreate(rows)).toMatchObject({
+      served: true,
+      collection: first,
+      checked_record_ordinals: [7],
     });
   });
 });
@@ -2331,3 +3133,309 @@ describe("path fields of a create", () => {
     });
   });
 });
+
+describe("path fields of a create tied to its collection", () => {
+  const held = "/api/orgs/uid/%61cme1/books";
+
+  /** A tied create in the held encoded collection, then one spelled double-encoded whose parent the application stored as `org`. */
+  const parentRows = (org: string): TimedCaptureRow[] => {
+    const alpha = {
+      ...book(1, "Alpha", "2026-10-01T09:00:00Z"),
+      team: "/orgs/uid/acme1",
+      org: "acme1",
+    };
+    const made = { ...tiedToAcme(2, "Made", 2), org: "acme1" };
+    const other = { ...tiedToAcme(3, "Other", 3), org };
+    return [
+      ["GET", held, [alpha]],
+      ["GET", `${held}/1`, alpha],
+      ["POST", held, made, 201, { name: "Made" }],
+      ["POST", "/api/orgs/uid/%2561cme1/books", other, 201, { name: "Other" }],
+      ["GET", `${held}/3`, other],
+    ];
+  };
+
+  it("contradicts a later create whose read shows a parent serving would not write", () => {
+    // Serving selects the held collection and decodes the parent from it, not from the call's spelling.
+    expect(acmeCreate(parentRows("%61cme1"))).toMatchObject({
+      served: false,
+      collection: held,
+      rules: expect.arrayContaining([
+        expect.objectContaining({ field: "org", rule: "path" }),
+      ]),
+      checked_record_ordinals: [],
+      contradicted_by: 4,
+    });
+  });
+
+  it("confirms a later create whose read shows the parent decoded from the selected collection", () => {
+    expect(acmeCreate(parentRows("acme1"))).toMatchObject({
+      served: true,
+      collection: held,
+      checked_record_ordinals: [4],
+    });
+  });
+});
+
+it("withholds a create when a sibling read through an encoded collection reveals an extra change", () => {
+  const alpha = { id: 1, name: "Alpha" };
+  const beta = { id: 2, name: "Beta" };
+  const gamma = { id: 3, name: "Gamma" };
+  const delta = { id: 4, name: "Delta" };
+  const rows: TimedCaptureRow[] = [
+    ["GET", "/api/orgs/%61cme1/books", [alpha]],
+    ["GET", "/api/orgs/beta2/books", [beta]],
+    ["GET", "/api/orgs/%61cme1/books/1", alpha],
+    ["GET", "/api/orgs/beta2/books/2", beta],
+    ["POST", "/api/orgs/acme1/books", gamma, 201, { name: "Gamma" }],
+    ["GET", "/api/orgs/acme1/books/3", gamma],
+    ["GET", "/api/orgs/%61cme1/books/1", { ...alpha, name: "Changed" }],
+    ["POST", "/api/orgs/beta2/books", delta, 201, { name: "Delta" }],
+  ];
+  const state = environmentStateViewOf(timedCaptureEvidence(rows), [
+    "sibling-variance",
+  ]);
+  expect(state.writes.find((plan) => plan.effect === "create")).toMatchObject({
+    served: false,
+    reason: "side-effect",
+  });
+});
+
+it("learns omitted fields using the raw ID resolved by the item owner", () => {
+  const state = new SimulatedState(
+    [
+      {
+        type: "/api/books",
+        collection: "/api/books",
+        id: "%63",
+        fields: { id: "%63", name: "Created" },
+        view_fields: [],
+        record_ordinals: [],
+      },
+    ],
+    [],
+  );
+  const view = {
+    tool: "get_books_by_id",
+    type: "/api/books",
+    shape: "item" as const,
+    pointer: "",
+    fields: ["id", "name", "detail"],
+    required_fields: ["id", "name", "detail"],
+    checked_record_ordinals: [0],
+    envelope_ordinal: 0,
+  };
+  const record = {
+    ordinal: 1,
+    method: "GET",
+    path: "/api/books/%63",
+    query: undefined,
+    status: 200,
+    timing: { start: undefined, end: undefined, endMs: undefined },
+  };
+  const target = itemTarget(state, view.type, record);
+  expect(target.id).toBe("%63");
+  const read = {
+    body: { id: "%63", name: "Created" },
+    base: { id: "seed", name: "Seed", detail: "x" },
+    volatile: new Set<string>(),
+    idField: "id",
+    collection: target.collection,
+    itemId: target.id,
+  };
+  const omitted = new OmittedFields(() => {});
+  const outcome = omitted.check(state, view, record, read, (loosened) =>
+    checkItemRead(state, loosened, record, read),
+  );
+  expect(outcome).toMatchObject({ pass: true, omitted: ["detail"] });
+  if (outcome === undefined) throw new Error("Expected a counted read");
+  omitted.keep(view, outcome);
+  expect(omitted.views([view])[0]).toMatchObject({
+    required_fields: ["id", "name"],
+  });
+});
+
+describe("create exemplar retention", () => {
+  const facts = () => {
+    const snapshot = { id: "held", payload: "p".repeat(1_000_000) };
+    const held = Array.from({ length: 1000 }, () => snapshot);
+    return {
+      entity: { id: "new", url: "/new" },
+      call: {
+        path: "/items",
+        pathValues: new Map<string, string>(),
+        body: { payload: "x".repeat(10_000) },
+      },
+      idField: "id",
+      startMs: undefined,
+      collection: held,
+      type: held,
+    };
+  };
+  it("charges temporary request facts and shared snapshot references without rebilling owned entity payloads", () => {
+    let retained = 0;
+    const context = {
+      io: {
+        retain: (bytes: number) => {
+          retained += bytes;
+        },
+      },
+    } as unknown as EffectContext;
+    const input = facts();
+    expect(retainCreateExemplar(context, input, [])).toBe(input);
+    expect(retained).toBeGreaterThan(28_000);
+    expect(retained).toBeLessThan(40_000);
+  });
+  it("retains no exemplar when every string field is already explained", () => {
+    const retain = vi.fn();
+    const context = { io: { retain } } as unknown as EffectContext;
+    expect(
+      retainCreateExemplar(context, facts(), [
+        { field: "id", rule: "echo" },
+        { field: "url", rule: "echo" },
+      ]),
+    ).toBeUndefined();
+    expect(retain).not.toHaveBeenCalled();
+  });
+  it("does not adopt request facts when the retained budget refuses them", () => {
+    const context = {
+      io: {
+        retain: () => {
+          throw new Error("budget exhausted");
+        },
+      },
+    } as unknown as EffectContext;
+    expect(() => retainCreateExemplar(context, facts(), [])).toThrow(
+      "budget exhausted",
+    );
+  });
+});
+it.each([
+  {
+    label: "point read with simultaneous unknown action",
+    archiveStart: 4,
+    duration: 0,
+    archiveDuration: -1,
+    target: "1",
+    served: false,
+  },
+  {
+    label: "point read with simultaneous point action",
+    archiveStart: 4,
+    duration: 0,
+    archiveDuration: 0,
+    target: "1",
+    served: true,
+  },
+  {
+    label: "point read with unrelated unknown action",
+    archiveStart: 4,
+    duration: 0,
+    archiveDuration: -1,
+    target: "2",
+    served: true,
+  },
+  {
+    label: "same-start later ordinal",
+    archiveStart: 4,
+    duration: 5,
+    target: "1",
+    served: false,
+  },
+  {
+    label: "later start within response interval",
+    archiveStart: 5,
+    duration: 1500,
+    target: "1",
+    served: false,
+  },
+  {
+    label: "unknown response completion",
+    archiveStart: 5,
+    duration: -1,
+    target: "1",
+    served: false,
+  },
+  {
+    label: "known disjoint response interval",
+    archiveStart: 6,
+    duration: 1500,
+    target: "1",
+    served: true,
+  },
+  {
+    label: "unrelated overlapping write",
+    archiveStart: 5,
+    duration: 1500,
+    target: "2",
+    served: true,
+  },
+])(
+  "requires a read free of captured write overlap: $label",
+  ({ archiveStart, duration, target, served, ...options }) => {
+    const rows: TimedCaptureRow[] = [
+      [
+        "GET",
+        "/api/books",
+        [
+          { id: 1, name: "A" },
+          { id: 2, name: "B" },
+        ],
+      ],
+      ["GET", "/api/books/1", { id: 1, name: "A" }],
+      ["GET", "/api/books/2", { id: 2, name: "B" }],
+      ["PATCH", "/api/books/1", { id: 1, name: "Z" }, 200, { name: "Z" }],
+      ["GET", "/api/books/1", { id: 1, name: "Z" }, 200, undefined, duration],
+      [
+        "POST",
+        `/api/books/${target}/archive`,
+        null,
+        204,
+        {},
+        "archiveDuration" in options ? options.archiveDuration : 5,
+      ],
+    ];
+    const entries = rows.map(
+      (
+        [method, path, body = null, status = 200, request, time = 5],
+        index,
+      ) => ({
+        startedDateTime: new Date(
+          Date.parse(bookClock(index === 5 ? archiveStart : index)),
+        ).toISOString(),
+        time,
+        request: {
+          method,
+          url: `http://app.example${path}`,
+          bodySize:
+            request === undefined
+              ? 0
+              : Buffer.byteLength(JSON.stringify(request)),
+          ...(request === undefined
+            ? {}
+            : {
+                postData: {
+                  mimeType: "application/json",
+                  text: JSON.stringify(request),
+                },
+              }),
+        },
+        response: {
+          status,
+          content: { mimeType: "application/json", text: JSON.stringify(body) },
+        },
+      }),
+    );
+    const capture = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture(entries),
+    );
+    const plan = environmentStateViewOf(capture).writes.find(
+      (write) => write.tool === "patch_books_by_id",
+    );
+    expect(plan).toMatchObject({
+      served,
+      checked_record_ordinals: served ? [4] : [],
+      contradicted_by: null,
+    });
+  },
+);

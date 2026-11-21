@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { deflateSync, zstdCompressSync } from "node:zlib";
 
 /** zlib payload matching the embedded dependency JSON shape. */
 export const rustDependencyPayload = (
@@ -16,6 +16,39 @@ export const rustDependencyPayload = (
     format: 1,
   },
 ): Buffer => deflateSync(Buffer.from(JSON.stringify(document)));
+
+/** Compress the ELF section-name table without changing other sections. */
+export const compressRustElfSectionNames = (
+  bytes: Buffer,
+  compressionType = 1,
+): Buffer => {
+  const sectionOffset = Number(bytes.readBigUInt64LE(40));
+  const sectionWidth = bytes.readUInt16LE(58);
+  const namesIndex = bytes.readUInt16LE(62);
+  const nameHeader = sectionOffset + namesIndex * sectionWidth;
+  const namesOffset = Number(bytes.readBigUInt64LE(nameHeader + 24));
+  const namesSize = Number(bytes.readBigUInt64LE(nameHeader + 32));
+  const names = Buffer.from(
+    bytes.subarray(namesOffset, namesOffset + namesSize),
+  );
+  const compressed =
+    compressionType === 2 ? zstdCompressSync(names) : deflateSync(names);
+  const compressionHeader = Buffer.alloc(24);
+  compressionHeader.writeUInt32LE(compressionType, 0);
+  compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
+  compressionHeader.writeBigUInt64LE(1n, 16);
+  compressionHeader.copy(bytes, namesOffset);
+  compressed.copy(bytes, namesOffset + compressionHeader.length);
+  bytes.writeBigUInt64LE(
+    bytes.readBigUInt64LE(nameHeader + 8) | 0x800n,
+    nameHeader + 8,
+  );
+  bytes.writeBigUInt64LE(
+    BigInt(compressionHeader.length + compressed.length),
+    nameHeader + 32,
+  );
+  return bytes;
+};
 
 export const RUSTC_HASH = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const RUSTC_PATH = `/rustc/${RUSTC_HASH}/library/core`;
@@ -46,6 +79,18 @@ export const createRustImage = (options: {
   if (options.format === "elf") writeElf(image);
   else if (options.format === "pe") writePe(image);
   else writeMacho(image);
+  return bytes;
+};
+
+/** Read-only ELF data stays independent of its section-name spelling or availability. */
+export const rustElfSectionNameFixture = (
+  name: "named" | "empty" | "unavailable",
+): Buffer => {
+  const bytes = createRustImage({ format: "elf", omitSection: true });
+  // This fixture's read-only PROGBITS header is at 384. Its PT_LOAD is writable,
+  // so compiler-path recovery must use the section rather than segment fallback.
+  if (name === "empty") bytes.writeUInt32LE(0, 384);
+  if (name === "unavailable") bytes.writeUInt16LE(0, 62);
   return bytes;
 };
 
@@ -247,17 +292,91 @@ const writeMachoSegment = ({
   body.copy(bytes, fileOffset);
 };
 
+/** Unsigned LEB128, as the WebAssembly binary format encodes sizes and counts. */
+const leb128 = (value: number): Buffer => {
+  const bytes: number[] = [];
+  let remaining = value;
+  do {
+    const low = remaining & 0x7f;
+    remaining = Math.floor(remaining / 0x80);
+    bytes.push(remaining === 0 ? low : low | 0x80);
+  } while (remaining !== 0);
+  return Buffer.from(bytes);
+};
+
+export const WASM_MODULE_HEADER = Buffer.from("0061736d01000000", "hex");
+
+/** One framed WebAssembly section. */
+export const wasmSection = (id: number, content: Buffer): Buffer =>
+  Buffer.concat([Buffer.from([id]), leb128(content.length), content]);
+
+/** A custom section with an exact name encoding and opaque payload. */
+export const wasmCustomSection = (
+  name: string | Buffer,
+  payload: Buffer,
+): Buffer => {
+  const encoded = typeof name === "string" ? Buffer.from(name) : name;
+  return wasmSection(
+    0,
+    Buffer.concat([leb128(encoded.length), encoded, payload]),
+  );
+};
+
+/**
+ * Core module shaped like cargo-auditable output: one memory, a rustc path in
+ * an active data segment, and a `.dep-v0` custom section beside an unrelated
+ * one. Extra sections follow the module's own sections.
+ */
+export const createRustWasmModule = (
+  options: {
+    readonly payload?: Buffer;
+    readonly omitSection?: boolean;
+    readonly includeRustc?: boolean;
+    readonly sections?: readonly Buffer[];
+  } = {},
+): Buffer => {
+  const rustc = Buffer.from(RUSTC_PATH);
+  // One active segment at i32.const 1024 in memory 0.
+  const segment = Buffer.concat([
+    Buffer.from([0x01, 0x00, 0x41, 0x80, 0x08, 0x0b]),
+    leb128(rustc.length),
+    rustc,
+  ]);
+  return Buffer.concat([
+    WASM_MODULE_HEADER,
+    wasmSection(1, Buffer.from([0x00])),
+    wasmSection(5, Buffer.from([0x01, 0x00, 0x01])),
+    ...(options.includeRustc === false ? [] : [wasmSection(11, segment)]),
+    ...(options.omitSection === true
+      ? []
+      : [
+          wasmCustomSection(
+            ".dep-v0",
+            options.payload ?? rustDependencyPayload(),
+          ),
+        ]),
+    wasmCustomSection("producers", Buffer.from([0x00])),
+    ...(options.sections ?? []),
+  ]);
+};
+
+/** The densest section framing: three-byte custom sections with empty names. */
+export const createWasmSectionFlood = (count: number): Buffer =>
+  Buffer.concat([
+    WASM_MODULE_HEADER,
+    Buffer.alloc(count * 3, Buffer.from([0x00, 0x01, 0x00])),
+  ]);
+
 /** Read-only ELF data exceeding the distinct rustc-hash retention capacity. */
 export const createRustHashOverflowImage = (): Buffer => {
-  const bytes = createRustImage({ format: "elf", omitSection: true });
-  // Without .dep-v0 the read-only section header is the second one, at 384.
-  // Section names end before byte 800, so the hash block starts there.
-  bytes.writeBigUInt64LE(800n, 384 + 24);
-  bytes.writeBigUInt64LE(3296n, 384 + 32);
-  bytes.fill(0, 800);
+  const bytes = Buffer.alloc(8192);
+  createRustImage({ format: "elf" }).copy(bytes);
+  // Preserve dependency bytes and names; move only the read-only hash section.
+  bytes.writeBigUInt64LE(4096n, 448 + 24);
+  bytes.writeBigUInt64LE(65n * 48n, 448 + 32);
   for (let index = 0; index < 65; index += 1) {
     const hash = index.toString(16).padStart(40, "0");
-    bytes.write(`/rustc/${hash}/`, 800 + index * 48, "latin1");
+    bytes.write(`/rustc/${hash}/`, 4096 + index * 48, "latin1");
   }
   return bytes;
 };

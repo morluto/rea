@@ -1,21 +1,36 @@
 import { setImmediate } from "node:timers/promises";
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
+import { inspectIl2cppMetadataV108 } from "../../../src/il2cpp/Il2cppMetadataV108.js";
+import { Il2cppGhidraSeedWriter } from "../../../src/il2cpp/Il2cppGhidraSeedWriter.js";
+import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
+import { il2cppMetadataSchema } from "../../../src/domain/il2cpp/il2cppMetadata.js";
+import * as zstandard from "../../../src/domain/compression/zstandardExactFrame.js";
 import {
   createElfFixture,
   createIl2cppBinaryFixture,
+  FIXTURE_GENERIC_INSTANCES,
+  FIXTURE_METHOD_ADDRESSES,
 } from "../../fixtures/il2cpp/binary.js";
-import { createIl2cppMetadataFixture } from "../../fixtures/il2cpp/metadata.js";
+import {
+  createIl2cppMetadataFixture,
+  createLinkedIl2cppMetadataFixture,
+} from "../../fixtures/il2cpp/metadata.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -30,6 +45,208 @@ const inspectMetadata = async (path: string, limit?: number) => {
     await provider.close();
   }
 };
+
+it("identifies which selected IL2CPP file is missing", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-missing-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "missing-binary");
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const missingMetadata = await provider.inspect({ path });
+    if (missingMetadata.ok)
+      throw new Error("Expected missing metadata failure");
+    expect(missingMetadata.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_value" }],
+    });
+
+    await writeFile(path, createIl2cppMetadataFixture({ version: 31 }).bytes);
+    const missingBinary = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+    });
+    if (missingBinary.ok) throw new Error("Expected missing binary failure");
+    expect(missingBinary.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["binary_path"], reason: "invalid_value" }],
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
+/** Synthetic v108 header: checks bounded observations, not record-layout compatibility. */
+const version108Header = (stringBytes: Buffer) => {
+  const header = Buffer.alloc(500);
+  header.writeUInt32LE(0xfab11baf, 0);
+  header.writeInt32LE(108, 4);
+  let cursor = header.length;
+  for (let index = 0; index < 41; index++) {
+    const size = index === 2 ? stringBytes.length : 0;
+    header.writeInt32LE(cursor, 8 + index * 12);
+    header.writeInt32LE(size, 12 + index * 12);
+    header.writeInt32LE(size, 16 + index * 12);
+    cursor += size;
+  }
+  return Buffer.concat([header, stringBytes]);
+};
+
+it("retains a bounded v108 header and string observation without claiming decoded rows", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-");
+  const path = join(root, "global-metadata.dat");
+  await writeFile(path, version108Header(Buffer.from("Alpha\0Beta\0")));
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      inventory_status: "not-returned-as-complete",
+      version_108_partial_inventory: {
+        metadata_version: 108,
+        header_bytes: 500,
+        coverage: "header-and-bounded-string-sample-only",
+        sections: expect.arrayContaining([
+          { name: "stringLiterals", offset: 500, size: 0, count: 0 },
+          { name: "stringLiteralData", offset: 500, size: 0, count: 0 },
+          { name: "strings", offset: 500, size: 11, count: 11 },
+        ]),
+        strings: {
+          terminated_count: 2,
+          unterminated_tail_bytes: 0,
+          sample: [
+            { offset: 0, value: "Alpha", truncated: false },
+            { offset: 6, value: "Beta", truncated: false },
+          ],
+        },
+      },
+    },
+  });
+  expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+    '"images":[]',
+  );
+});
+
+it("accepts padding after the assumed v108 header", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-padding-");
+  const path = join(root, "global-metadata.dat");
+  const bytes = version108Header(Buffer.from("Name\0"));
+  const padded = Buffer.concat([
+    bytes.subarray(0, 500),
+    Buffer.alloc(16),
+    bytes.subarray(500),
+  ]);
+  for (let index = 0; index < 41; index++) {
+    padded.writeInt32LE(bytes.readInt32LE(8 + index * 12) + 16, 8 + index * 12);
+  }
+  await writeFile(path, padded);
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      version_108_partial_inventory: {
+        strings: { sample: [{ value: "Name" }] },
+      },
+    },
+  });
+});
+
+it.each([
+  [
+    "extends past the file",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(bytes.length + 1, 12 + 2 * 12);
+    },
+    /assumed section strings .* is invalid/,
+  ],
+  [
+    "starts inside the header",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(499, 8 + 2 * 12);
+    },
+    /assumed section strings .* is invalid/,
+  ],
+  [
+    "overlaps another section",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(501, 8 + 3 * 12);
+      bytes.writeInt32LE(1, 12 + 3 * 12);
+    },
+    /assumed sections strings and events overlap at 501/,
+  ],
+])(
+  "retains source evidence when a v108 section %s",
+  async (_name, mutate, reason) => {
+    const root = await createTestTempDirectory("rea-il2cpp-v108-invalid-");
+    const path = join(root, "global-metadata.dat");
+    const bytes = version108Header(Buffer.from("Name\0"));
+    mutate(bytes);
+    await expect(inspectIl2cppMetadataV108(bytes)).rejects.toMatchObject({
+      reason: "unsupported-version",
+      message: expect.stringMatching(reason),
+    });
+    await writeFile(path, bytes);
+    const result = await inspectMetadata(path);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    expect(result.error.partialObservation).toMatchObject({
+      normalized_result: { artifact: { path, bytes: bytes.length } },
+    });
+    expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+      "version_108_partial_inventory",
+    );
+  },
+);
+
+it("bounds v108 string samples and preserves undecodable bytes and leading BOMs", async () => {
+  const repeated = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from("x\0".repeat(20))),
+  );
+  expect(repeated?.strings.terminated_count).toBe(20);
+  expect(repeated?.strings.sample).toHaveLength(16);
+  const invalid = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from([0xff, 0])),
+  );
+  expect(invalid?.strings.sample).toEqual([
+    { offset: 0, value: null, value_base64: "/w==", truncated: false },
+  ]);
+  const bom = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from([0xef, 0xbb, 0xbf, 0x41, 0])),
+  );
+  expect(bom?.strings.sample).toEqual([
+    { offset: 0, value: "\uFEFFA", value_base64: null, truncated: false },
+  ]);
+});
+
+it("yields during a large v108 string scan and honors cancellation before evidence", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-cancel-");
+  const path = join(root, "global-metadata.dat");
+  await writeFile(path, version108Header(Buffer.alloc(128 * 1024, 65)));
+  const controller = new AbortController();
+  let batches = 0;
+  const provider = new Il2cppMetadataProvider(undefined, async () => {
+    batches++;
+    controller.abort("cancel v108 scan");
+    await setImmediate();
+  });
+  try {
+    const result = await provider.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(batches).toBe(1);
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+      "version_108_partial_inventory",
+    );
+  } finally {
+    await provider.close();
+  }
+});
 
 /** Version 29 file whose methods all share one long name. */
 const sharedNameMetadata = (
@@ -83,7 +300,6 @@ it("bounds repeated literal output during decoding and reuses one span instead o
   await writeFile(path, sharedLiteralMetadata(Buffer.alloc(4096, 65), 20));
   const decode = vi.spyOn(TextDecoder.prototype, "decode");
   const result = await inspectMetadata(path, 12_000);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expanded literals accepted");
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error.partialObservation).toMatchObject({
@@ -196,7 +412,6 @@ it("keeps observed source facts with a complete-report refusal", async () => {
   const bytes = createIl2cppMetadataFixture().bytes;
   await writeFile(path, bytes);
   const result = await inspectMetadata(path, 256);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected report allowance refusal");
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error.partialObservation).toMatchObject({
@@ -265,7 +480,6 @@ it.each([
         { path },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected cancellation");
       expect(result.error).toBeInstanceOf(AnalysisCancelledError);
       expect(result.error.cause).toBe(reason);
@@ -304,25 +518,18 @@ it("bounds concurrent snapshots and retains active decoding until close complete
   const root = await createTestTempDirectory("rea-il2cpp-provider-close-");
   const path = join(root, "global-metadata.dat");
   await writeFile(path, createIl2cppMetadataFixture().bytes);
-  let markEntered!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    markEntered = resolve;
-  });
-  let resume!: () => void;
-  const release = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const decoding = phaseGate();
   const provider = new Il2cppMetadataProvider(undefined, () => {
-    markEntered();
-    return release;
+    return decoding.hold();
   });
   const active = provider.inspect({ path });
-  await entered;
   let closed = false;
-  const closing = provider.close().then(() => {
-    closed = true;
-  });
-  try {
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await decoding.reached(active, "metadata decoding");
+    closing = provider.close().then(() => {
+      closed = true;
+    });
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
@@ -338,39 +545,43 @@ it("bounds concurrent snapshots and retains active decoding until close complete
     }
     await setImmediate();
     expect(closed).toBe(false);
-  } finally {
-    resume();
+    decoding.release();
     await closing;
-  }
-  expect((await active).ok).toBe(true);
-  expect(closed).toBe(true);
-  const afterClose = await provider.inspect({ path });
-  expect(afterClose.ok).toBe(false);
-  if (!afterClose.ok) {
-    expect(afterClose.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-    expect(projectAnalysisError(afterClose.error).retryable).toBe(false);
-  }
+    expect((await active).ok).toBe(true);
+    expect(closed).toBe(true);
+    const afterClose = await provider.inspect({ path });
+    expect(afterClose.ok).toBe(false);
+    if (!afterClose.ok) {
+      expect(afterClose.error).toBeInstanceOf(
+        AnalysisCapabilityUnavailableError,
+      );
+      expect(projectAnalysisError(afterClose.error).retryable).toBe(false);
+    }
+  }, [
+    decoding.release,
+    async () => {
+      await closing;
+    },
+    async () => {
+      await active;
+    },
+    async () => {
+      await provider.close();
+    },
+  ]);
 });
 
 it("keeps occupied capacity retryable while the reader remains open", async () => {
   const root = await createTestTempDirectory("rea-il2cpp-provider-occupied-");
   const path = join(root, "global-metadata.dat");
   await writeFile(path, createIl2cppMetadataFixture().bytes);
-  let markEntered!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    markEntered = resolve;
-  });
-  let resume!: () => void;
-  const release = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const decoding = phaseGate();
   const provider = new Il2cppMetadataProvider(undefined, () => {
-    markEntered();
-    return release;
+    return decoding.hold();
   });
   const active = provider.inspect({ path });
-  await entered;
-  try {
+  await withVerifierCleanup(async () => {
+    await decoding.reached(active, "metadata decoding");
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
@@ -386,11 +597,15 @@ it("keeps occupied capacity retryable while the reader remains open", async () =
         },
       });
     }
-  } finally {
-    resume();
-    await active;
-    await provider.close();
-  }
+  }, [
+    decoding.release,
+    async () => {
+      await active;
+    },
+    async () => {
+      await provider.close();
+    },
+  ]);
 });
 
 it.each([false, true])(
@@ -413,7 +628,6 @@ it.each([false, true])(
         { path },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected the independent failure");
       expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
       expect(result.error.cause).toBe(failure);
@@ -428,7 +642,6 @@ it("retains the exact empty source observation without claiming a decoded invent
   const path = join(root, "empty.dat");
   await writeFile(path, Buffer.alloc(0));
   const result = await inspectMetadata(path);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected unsupported empty metadata");
   expect(result.error.message).toContain("unrecognized-magic");
   expect(result.error.partialObservation).toMatchObject({
@@ -452,7 +665,6 @@ it("retains the exact source when recognized magic has no complete version", asy
   await writeFile(path, bytes);
   const result = await inspectMetadata(path);
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected truncated metadata prefix");
   expect(result.error).toMatchObject({
     _tag: "AnalysisInputError",
@@ -483,13 +695,12 @@ it("keeps the metadata source observation when the selected binary does not link
   const root = await createTestTempDirectory("rea-il2cpp-binary-failure-");
   const path = join(root, "global-metadata.dat");
   const binaryPath = join(root, "GameAssembly.dll");
-  const fixture = createIl2cppMetadataFixture();
+  const fixture = createLinkedIl2cppMetadataFixture();
   await writeFile(path, fixture.bytes);
   await writeFile(binaryPath, Buffer.from("not a native image"));
   const provider = new Il2cppMetadataProvider();
   try {
     const result = await provider.inspect({ path, binary_path: binaryPath });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected the binary to be refused");
     expect(result.error.partialObservation).toMatchObject({
       operation: "observe_il2cpp_metadata_source",
@@ -511,7 +722,7 @@ it("accepts cancellation between binary linking batches and keeps the metadata s
   const root = await createTestTempDirectory("rea-il2cpp-link-cancel-");
   const path = join(root, "global-metadata.dat");
   const binaryPath = join(root, "libil2cpp.so");
-  const fixture = createIl2cppMetadataFixture();
+  const fixture = createLinkedIl2cppMetadataFixture();
   await writeFile(path, fixture.bytes);
   await writeFile(binaryPath, createElfFixture(createIl2cppBinaryFixture()));
   // Yields taken by the metadata decode alone; later ones belong to linking.
@@ -535,7 +746,6 @@ it("accepts cancellation between binary linking batches and keeps the metadata s
       { path, binary_path: binaryPath },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(yields).toBe(decodeYields + 2);
@@ -548,17 +758,205 @@ it("accepts cancellation between binary linking batches and keeps the metadata s
   }
 });
 
+/** Add a compressed ELF64 .shstrtab outside the fixture's PT_LOAD. */
+const withCompressedElfNames = (image: Buffer): Buffer => {
+  const names = Buffer.from("\0.shstrtab\0");
+  const compressionHeader = Buffer.alloc(24);
+  compressionHeader.writeUInt32LE(2, 0); // ELFCOMPRESS_ZSTD
+  compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
+  compressionHeader.writeBigUInt64LE(1n, 16);
+  const payload = Buffer.concat([compressionHeader, zstdCompressSync(names)]);
+  const padding = Buffer.alloc((8 - (image.length % 8)) % 8);
+  const tableOffset = image.length + padding.length;
+  const table = Buffer.alloc(128);
+  const namesHeader = table.subarray(64);
+  namesHeader.writeUInt32LE(1, 0); // ".shstrtab" offset in names
+  namesHeader.writeUInt32LE(3, 4); // SHT_STRTAB
+  namesHeader.writeBigUInt64LE(0x800n, 8); // SHF_COMPRESSED
+  namesHeader.writeBigUInt64LE(BigInt(tableOffset + table.length), 24);
+  namesHeader.writeBigUInt64LE(BigInt(payload.length), 32);
+  namesHeader.writeBigUInt64LE(1n, 48);
+  const bytes = Buffer.concat([image, padding, table, payload]);
+  bytes.writeBigUInt64LE(BigInt(tableOffset), 40);
+  bytes.writeUInt16LE(64, 58);
+  bytes.writeUInt16LE(2, 60);
+  bytes.writeUInt16LE(1, 62);
+  return bytes;
+};
+
+it("retains selected source evidence when cancelled decoding compressed ELF names", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-elf-names-cancel-");
+  const path = join(root, "global-metadata.dat");
+  const binary_path = join(root, "libil2cpp.so");
+  const metadata = createLinkedIl2cppMetadataFixture().bytes;
+  const binary = withCompressedElfNames(
+    createElfFixture(createIl2cppBinaryFixture()),
+  );
+  await Promise.all([
+    writeFile(path, metadata),
+    writeFile(binary_path, binary),
+  ]);
+
+  const controller = new AbortController();
+  const reason = new Error("cancel while decoding ELF names");
+  const decode = zstandard.decodeZstandardFramesCooperative;
+  const checkpoint = vi
+    .spyOn(zstandard, "decodeZstandardFramesCooperative")
+    .mockImplementation((bytes, options, pause) =>
+      decode(bytes, options, async () => {
+        controller.abort(reason);
+        await pause();
+      }),
+    );
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect(
+      { path, binary_path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation during ELF decoding");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.partialObservation).toMatchObject({
+      operation: "observe_il2cpp_metadata_source",
+      normalized_result: {
+        artifact: { path },
+        selected_binary: {
+          path: binary_path,
+          identity_status: "observed",
+          bytes: binary.length,
+          sha256: createHash("sha256").update(binary).digest("hex"),
+        },
+        inventory_status: "not-returned-as-complete",
+      },
+    });
+    checkpoint.mockRestore();
+    const retry = await provider.inspect({ path, binary_path });
+    if (!retry.ok) throw retry.error;
+    expect(retry.value.binary?.format).toBe("elf");
+    expect(retry.value.method_addresses[0]?.address).toBe(
+      `0x${FIXTURE_METHOD_ADDRESSES[0].toString(16)}`,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it.each([false, true])(
+  "refuses unsupported generic metadata before reading an invalid ELF directory (signal=%s)",
+  async (withSignal) => {
+    const root = await createTestTempDirectory("rea-il2cpp-generic-layout-");
+    const path = join(root, "global-metadata.dat");
+    const binary_path = join(root, "libil2cpp.so");
+    const metadata = createLinkedIl2cppMetadataFixture({ version: 39 }).bytes;
+    const binary = withCompressedElfNames(
+      createElfFixture(createIl2cppBinaryFixture()),
+    );
+    binary.writeBigUInt64LE(BigInt(binary.length + 8), 40);
+    await Promise.all([
+      writeFile(path, metadata),
+      writeFile(binary_path, binary),
+    ]);
+    const options = withSignal
+      ? { signal: new AbortController().signal }
+      : undefined;
+    const provider = new Il2cppMetadataProvider();
+    try {
+      const result = await provider.inspect(
+        { path, binary_path, generic_instances: true },
+        options,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisUnsupportedTargetError",
+          reason: expect.stringContaining(
+            "generic method instances are not decoded for metadata version 39",
+          ),
+        },
+      });
+      const ordinary = await provider.inspect({ path, binary_path }, options);
+      expect(ordinary).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          issues: [{ path: ["binary_path"], reason: "invalid_format" }],
+        },
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it("refuses duplicate MethodDef tokens before publishing linked Evidence or Ghidra seeds", async () => {
+  const root = await createTestTempDirectory(
+    "rea-il2cpp-duplicate-method-token-",
+  );
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  const duplicateSeeds = join(root, "duplicate.tsv");
+  const foldedSeeds = join(root, "folded.tsv");
+  const fixture = createLinkedIl2cppMetadataFixture({ version: 31 });
+  const duplicate = Buffer.from(fixture.bytes);
+  const firstTokenAt = fixture.record("methods", 0) + 24;
+  const secondTokenAt = fixture.record("methods", 1) + 24;
+  duplicate.writeUInt32LE(duplicate.readUInt32LE(firstTokenAt), secondTokenAt);
+  await writeFile(path, duplicate);
+  await writeFile(binaryPath, createIl2cppBinaryFixture());
+
+  const service = new Il2cppMetadataService(
+    new Il2cppMetadataProvider(),
+    new Il2cppGhidraSeedWriter(),
+  );
+  try {
+    const refused = await service.inspectWithGhidraSeeds(
+      { path, binary_path: binaryPath, detail: "complete" },
+      { path: duplicateSeeds },
+    );
+    expect(refused.ok).toBe(false);
+    if (refused.ok)
+      throw new Error("Duplicate MethodDef identity was accepted");
+    if (!(refused.error instanceof AnalysisInputError))
+      throw new Error("Duplicate MethodDef identity was not an input refusal");
+    expect(refused.error.issues[0]?.message).toContain("invalid-method-token");
+    expect(refused.error.issues[0]?.message).toContain("share MethodDef token");
+    expect(refused.error.partialObservation).toMatchObject({
+      normalized_result: { artifact: { path } },
+    });
+    await expect(readFile(duplicateSeeds)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const foldedBinary = createIl2cppBinaryFixture();
+    foldedBinary.writeBigUInt64LE(foldedBinary.readBigUInt64LE(0x308), 0x300);
+    await writeFile(path, fixture.bytes);
+    await writeFile(binaryPath, foldedBinary);
+    const accepted = await service.inspectWithGhidraSeeds(
+      { path, binary_path: binaryPath, detail: "complete" },
+      { path: foldedSeeds },
+    );
+    if (!accepted.ok) throw accepted.error;
+    const result = il2cppMetadataSchema.parse(accepted.value.normalized_result);
+    expect(result.method_addresses[0]?.address).toBe(
+      result.method_addresses[1]?.address,
+    );
+    expect(await readFile(foldedSeeds, "utf8")).toContain("# folded");
+  } finally {
+    await service.close();
+  }
+});
+
 it("retains both observed file identities and the selected architecture when native linking fails", async () => {
   const root = await createTestTempDirectory("rea-il2cpp-failed-pair-");
   const path = join(root, "global-metadata.dat"),
     binary_path = join(root, "GameAssembly.dylib");
   const bytes = createIl2cppBinaryFixture({ codeRegistration: false });
-  await writeFile(path, createIl2cppMetadataFixture().bytes);
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
   await writeFile(binary_path, bytes);
   const provider = new Il2cppMetadataProvider();
   try {
     const result = await provider.inspect({ path, binary_path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Unresolved registration accepted");
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: {
@@ -570,6 +968,272 @@ it("retains both observed file identities and the selected architecture when nat
           bytes: bytes.length,
         },
       },
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
+it.each([
+  {
+    architecture: "x86-64",
+    name: "libil2cpp.so",
+    binary: () =>
+      createElfFixture(
+        createIl2cppBinaryFixture({
+          codeRegistration: false,
+          codeReference: true,
+        }),
+        { machine: 62 },
+      ),
+    named: "RIP-relative LEA/MOV",
+    absent: "ADRP+ADD",
+  },
+  {
+    architecture: "arm64",
+    name: "GameAssembly.dylib",
+    binary: () =>
+      createIl2cppBinaryFixture({
+        codeRegistration: false,
+        adrpAdd: [[0xc00, 0x500]],
+      }),
+    named: "ADRP+ADD",
+    absent: "RIP-relative LEA/MOV",
+  },
+])(
+  "names the $architecture instruction form behind an inferred module array",
+  async ({ name, binary, named, absent }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-inferred-form-");
+    const path = join(root, "global-metadata.dat"),
+      binary_path = join(root, name);
+    await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+    await writeFile(binary_path, binary());
+    const provider = new Il2cppMetadataProvider();
+    try {
+      const result = await provider.inspect({ path, binary_path });
+      if (!result.ok) throw result.error;
+      const inferred = result.value.limitations.filter((line) =>
+        line.includes("static CodeRegistration pair was not resolved"),
+      );
+      expect(inferred).toHaveLength(1);
+      expect(inferred[0]).toContain(named);
+      expect(inferred[0]).not.toContain(absent);
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it("states that an inferred type table's count is a run length", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-inferred-types-");
+  const path = join(root, "global-metadata.dat"),
+    binary_path = join(root, "GameAssembly.dylib");
+  // A field typed as type 3 makes the metadata reference the whole
+  // four-entry table, as real builds reference most of theirs.
+  const fixture = createLinkedIl2cppMetadataFixture();
+  const metadata = Buffer.from(fixture.bytes);
+  metadata.writeUInt8(3, fixture.section("fields").offset + 4);
+  await writeFile(path, metadata);
+  await writeFile(
+    binary_path,
+    createIl2cppBinaryFixture({
+      metadataRegistration: false,
+      adrpAdd: [[0xc20, 0x900]],
+    }),
+  );
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path });
+    if (!result.ok) throw result.error;
+    expect(result.value.binary).toMatchObject({
+      types_field: null,
+      types_count: 4,
+      code_gen_modules_field: expect.any(String),
+    });
+    const inferred = result.value.limitations.filter((line) =>
+      line.includes(
+        "No static MetadataRegistration had the type-definition counts",
+      ),
+    );
+    expect(inferred).toHaveLength(1);
+    expect(inferred[0]).toContain("ADRP+ADD");
+    expect(
+      result.value.limitations.some((line) =>
+        line.includes("static CodeRegistration pair was not resolved"),
+      ),
+    ).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports generic method instances only when generic_instances is set", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-provider-generic-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  await writeFile(
+    path,
+    createIl2cppMetadataFixture({ version: 31, genericOwners: true }).bytes,
+  );
+  await writeFile(
+    binaryPath,
+    createIl2cppBinaryFixture({ genericMethods: {} }),
+  );
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const plain = await provider.inspect({ path, binary_path: binaryPath });
+    if (!plain.ok) throw plain.error;
+    // Not requested is unknown, not an empty table.
+    expect(plain.value.generic_method_instances).toBeNull();
+    expect(plain.value.binary?.generic_methods).toBeNull();
+    const result = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      generic_instances: true,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.binary?.generic_methods).toEqual({
+      generic_method_pointers_field: "0x1000005a8",
+      generic_method_pointers_count: 3,
+      generic_method_table: "0x100000bc0",
+      generic_method_table_count: 3,
+      generic_method_table_stride: 16,
+      method_specs_count: 3,
+      generic_insts_count: 2,
+      issues: [],
+    });
+    expect(result.value.generic_method_instances).toEqual(
+      FIXTURE_GENERIC_INSTANCES,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("names the metadata, not the binary, when linking reads a malformed metadata name", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-link-metadata-name-");
+  const path = join(root, "global-metadata.dat"),
+    binaryPath = join(root, "GameAssembly.dylib");
+  const fixture = createLinkedIl2cppMetadataFixture({ version: 39 });
+  // One generic parameter whose name index points past the string table;
+  // only native linking reads it, through a field typed as that parameter.
+  const parameterAt = fixture.bytes.length;
+  const metadata = Buffer.concat([fixture.bytes, Buffer.alloc(13)]);
+  metadata.writeInt32LE(fixture.section("strings").size, parameterAt + 1);
+  metadata.writeInt32LE(parameterAt, 8 + 12 * 12);
+  metadata.writeInt32LE(13, 8 + 12 * 12 + 4);
+  metadata.writeInt32LE(1, 8 + 12 * 12 + 8);
+  metadata.writeUInt8(3, fixture.section("fields").offset + 4);
+  const binary = Buffer.from(createIl2cppBinaryFixture());
+  binary.writeBigUInt64LE(0n, 0x980 + 48);
+  binary.writeUInt32LE(0x13 << 16, 0x980 + 48 + 8);
+  await writeFile(path, metadata);
+  await writeFile(binaryPath, binary);
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path: binaryPath });
+    if (result.ok) throw new Error("Expected the metadata name to be refused");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: expect.stringContaining(
+            `Selected artifact ${path} is corrupt: invalid-string:`,
+          ),
+        },
+      ],
+    });
+
+    const corrected = Buffer.from(metadata);
+    corrected.writeInt32LE(
+      fixture.stringOffset("Player") - fixture.section("strings").offset,
+      parameterAt + 1,
+    );
+    await writeFile(path, corrected);
+    expect((await provider.inspect({ path, binary_path: binaryPath })).ok).toBe(
+      true,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("refuses generic rows that exceed the report budget and keeps the requested pair", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-generic-budget-");
+  const path = join(root, "global-metadata.dat");
+  const binary_path = join(root, "GameAssembly.dylib");
+  await writeFile(
+    path,
+    createIl2cppMetadataFixture({ version: 31, genericOwners: true }).bytes,
+  );
+  await writeFile(
+    binary_path,
+    createIl2cppBinaryFixture({ genericMethods: {} }),
+  );
+  // Budget the exact plain link: it fits, and the generic rows cannot.
+  const plain = new Il2cppMetadataProvider();
+  let limit: number;
+  try {
+    const linked = await plain.inspect({ path, binary_path });
+    if (!linked.ok) throw linked.error;
+    limit = Buffer.byteLength(JSON.stringify(linked.value)) + 64;
+  } finally {
+    await plain.close();
+  }
+  const provider = new Il2cppMetadataProvider(limit);
+  try {
+    expect((await provider.inspect({ path, binary_path })).ok).toBe(true);
+    const result = await provider.inspect({
+      path,
+      binary_path,
+      generic_instances: true,
+    });
+    if (result.ok) throw new Error("Expected report allowance refusal");
+    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(result.error.partialObservation).toMatchObject({
+      operation: "observe_il2cpp_metadata_source",
+      parameters: { binary_path, generic_instances: true },
+      normalized_result: { selected_binary: { path: binary_path } },
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports the exceeded native-link maximum in the public refusal", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-link-limit-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+  // 80 copies of the two-slot module array exceed the 64 candidate arrays
+  // the fallback search compares; x86-64 makes that fallback run.
+  const base = createIl2cppBinaryFixture({
+    codeRegistration: false,
+    codeReference: true,
+  });
+  const crafted = Buffer.concat([
+    base,
+    ...Array.from({ length: 80 }, () => base.subarray(0x500, 0x510)),
+  ]);
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 64);
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 80);
+  crafted.writeUInt32LE(0x01000007, 4);
+  crafted.writeUInt32LE(3, 8);
+  await writeFile(binaryPath, crafted);
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path: binaryPath });
+    if (result.ok) throw new Error("Expected the link budget refusal");
+    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(result.error).toMatchObject({
+      resource: "capacity",
+      reportedLimits: {
+        boundary: "native-index-capacity",
+        maximum: 64,
+      },
+      fixedAllowance: { limit: 64, unit: "entries" },
     });
   } finally {
     await provider.close();

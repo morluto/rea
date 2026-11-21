@@ -5,8 +5,8 @@ import { Buffer } from "node:buffer";
  *
  * All facts are observations of byte patterns at read time: the Dart
  * snapshot hash sits 20 bytes after each snapshot magic, the GNU build-id
- * is an ELF note, and version facts are labeled ASCII strings. Nothing is
- * inferred or looked up externally.
+ * is an ELF note, and version facts are ASCII strings. Nothing is inferred or
+ * looked up externally.
  */
 
 /** First index of `needle` in `haystack` at or after `from`, or -1. */
@@ -34,7 +34,18 @@ const findBytes = (
 export const DART_SNAPSHOT_MAGIC = Uint8Array.from([0xf5, 0xf5, 0xdc, 0xdc]);
 export const SNAPSHOT_HASH_OFFSET = 20;
 export const SNAPSHOT_HASH_LENGTH = 32;
-export const SNAPSHOT_HASH_PATTERN = /^[0-9a-f]{32}$/u;
+const SNAPSHOT_HASH_PATTERN = /^[0-9a-f]{32}$/u;
+
+export const readDartSnapshotHash = (
+  bytes: Uint8Array,
+  snapshotOffset: number,
+): string | null => {
+  const start = snapshotOffset + SNAPSHOT_HASH_OFFSET;
+  const candidate = Buffer.from(
+    bytes.subarray(start, start + SNAPSHOT_HASH_LENGTH),
+  ).toString("latin1");
+  return SNAPSHOT_HASH_PATTERN.test(candidate) ? candidate : null;
+};
 
 export interface SnapshotHashScan {
   /** Snapshot sections found. */
@@ -76,14 +87,8 @@ export class SnapshotHashScanner {
         pendingMagic = magic;
         break;
       }
-      const candidate = Buffer.from(
-        joined.slice(
-          magic + SNAPSHOT_HASH_OFFSET,
-          magic + SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH,
-        ),
-      ).toString("latin1");
-      const isValidHash = SNAPSHOT_HASH_PATTERN.test(candidate);
-      if (isValidHash && !this.candidateSet.has(candidate)) {
+      const candidate = readDartSnapshotHash(joined, magic);
+      if (candidate !== null && !this.candidateSet.has(candidate)) {
         if (this.candidates.length === MAX_SNAPSHOT_HASH_CANDIDATES)
           this.#capped = true;
         else {
@@ -93,7 +98,7 @@ export class SnapshotHashScanner {
       }
       // Only valid hash records count toward source agreement; a complete
       // magic record whose field is not lowercase hex is not a source.
-      if (isValidHash) this.#sources += 1;
+      if (candidate !== null) this.#sources += 1;
       offset = magic + DART_SNAPSHOT_MAGIC.length;
     }
     // Keep a pending magic for the next chunk; otherwise keep only the
@@ -124,6 +129,13 @@ export interface LabeledStringScan {
 }
 
 const DART_VERSION_PATTERN = /^Dart VM version:[^\x00\n]{0,200}$/u;
+/**
+ * Unlabeled Dart `Version::String()` form embedded in release engines:
+ * `<version> (<channel>) (<commit time>)` with optional ` on "<os>_<arch>"`.
+ * Requires a channel token so ordinary dotted version text is ignored.
+ */
+const DART_EMBEDDED_VERSION_PATTERN =
+  /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)? \((?:stable|beta|dev|main)\) \([^)\x00\n]{1,80}\)(?: on "[a-z0-9._-]+")?$/u;
 const TOOLCHAIN_PATTERN =
   /^(?:Android \([^)\x00\n]{0,80}\) clang version [^\x00\n]{0,500}|based on LLVM \d[^\x00\n]{0,80})$/u;
 const MAX_TOOLCHAIN_LINES = 4;
@@ -135,11 +147,11 @@ const MAX_TOOLCHAIN_LINES = 4;
 const CARRY_BYTES = 640;
 
 /**
- * Incremental ASCII string collector that keeps only labeled version and
- * toolchain facts. A match is committed only when a printable run is
- * terminated by a delimiter, so a value split across chunk boundaries is
- * never committed truncated; the carry holds the longest accepted match
- * so boundaries in either pattern survive.
+ * Incremental ASCII string collector that keeps Dart version and toolchain
+ * facts. A match is committed only when a printable run is terminated by a
+ * delimiter, so a value split across chunk boundaries is never committed
+ * truncated; the carry holds the longest accepted match so boundaries in
+ * either pattern survive.
  */
 export class LabeledStringScanner {
   #dartVersion: string | null = null;
@@ -173,15 +185,28 @@ export class LabeledStringScanner {
     this.overflowed = false;
   }
 
+  #recordDartVersion(text: string, accepted: boolean): void {
+    if (!accepted) {
+      this.#dartVersionCapped = true;
+      return;
+    }
+    if (this.#dartVersion === null) this.#dartVersion = text;
+    else if (this.#dartVersion !== text) this.#dartVersionCapped = true;
+  }
+
   #consider(text: string): void {
     // Keep a bounded prefix plus overflow state, never a sliding suffix.
     // Every accepted label must consume its whole printable run so a
     // pattern's shorter grammar cannot publish a fabricated prefix.
     if (text.startsWith("Dart VM version:")) {
-      if (this.overflowed || !DART_VERSION_PATTERN.test(text))
-        this.#dartVersionCapped = true;
-      else if (this.#dartVersion === null) this.#dartVersion = text;
-      else if (this.#dartVersion !== text) this.#dartVersionCapped = true;
+      this.#recordDartVersion(
+        text,
+        !this.overflowed && DART_VERSION_PATTERN.test(text),
+      );
+      return;
+    }
+    if (DART_EMBEDDED_VERSION_PATTERN.test(text)) {
+      this.#recordDartVersion(text, !this.overflowed);
       return;
     }
     if (!text.startsWith("Android (") && !text.startsWith("based on LLVM "))

@@ -1,0 +1,271 @@
+/**
+ * Build a stripped C++ ELF and compare complete FDE ranges with readelf.
+ * Require its linker-produced .eh_frame_hdr to agree with those ranges.
+ * Not part of the default check. Exits non-zero when the host has no ELF
+ * C++ compiler or no readelf.
+ */
+import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { VerifierFixture, onceConfirmed } from "./lib/verifier-fixture.mjs";
+
+/**
+ * Every probe, compiler driver and inspection runs as an owned process tree,
+ * so a timeout or close also stops the children a driver starts. Close it
+ * before removing the compiled outputs.
+ */
+const commands = await createVerifierCommands();
+
+/**
+ * Ctrl-C or SIGTERM aborts the running command instead of ending Node, so the
+ * owned process trees and the compiled outputs are still cleaned up below.
+ */
+const interruption = new AbortController();
+const interrupt = (signal) =>
+  interruption.abort(
+    new Error(`ELF unwind ranges verifier interrupted by ${signal}`),
+  );
+process.on("SIGINT", interrupt);
+process.on("SIGTERM", interrupt);
+
+const run = (command, args, timeout) =>
+  commands.exec(command, args, {
+    maxBuffer: 64 * 1024 * 1024,
+    timeout,
+    signal: interruption.signal,
+  });
+
+const available = async (command) => {
+  // zig has no --version flag; it reports through the `version` subcommand.
+  const probe = command === "zig" ? ["version"] : ["--version"];
+  try {
+    await run(command, probe, 30000);
+    return true;
+  } catch (failure) {
+    // An absent tool or a failing probe means the candidate is unavailable.
+    if (failure?.code === "ENOENT" || typeof failure?.code === "number")
+      return false;
+    throw failure;
+  }
+};
+
+const firstAvailable = async (candidates) => {
+  for (const command of candidates)
+    if (await available(command)) return command;
+  return null;
+};
+
+const sourceText = `
+struct Guard { ~Guard(); };
+Guard::~Guard() {}
+int may_throw(int value) {
+  Guard guard;
+  if (value < 0) throw value;
+  return value + 1;
+}
+int main() {
+  try { return may_throw(1); }
+  catch (int) { return 2; }
+}
+`;
+
+const compileArguments = (compiler, source, output) => {
+  if (compiler === "zig")
+    return [
+      "c++",
+      "-target",
+      "x86_64-linux-musl",
+      "-O0",
+      "-g",
+      "-Wl,--eh-frame-hdr",
+      source,
+      "-o",
+      output,
+    ];
+  if (compiler === "clang++")
+    return [
+      "--target=x86_64-linux-gnu",
+      "-O0",
+      "-g",
+      "-fexceptions",
+      "-Wl,--eh-frame-hdr",
+      source,
+      "-o",
+      output,
+    ];
+  return [
+    "-O0",
+    "-g",
+    "-fexceptions",
+    "-Wl,--eh-frame-hdr",
+    source,
+    "-o",
+    output,
+  ];
+};
+
+const compile = async (compiler, source, output) => {
+  await run(compiler, compileArguments(compiler, source, output), 120000);
+};
+
+const stripArguments = (stripper, input, output) => {
+  if (stripper === "llvm-strip") return ["--strip-all", "-o", output, input];
+  if (stripper === "llvm-objcopy") return ["--strip-all", input, output];
+  if (stripper === "zig") return ["objcopy", "--strip-all", input, output];
+  return ["-o", output, input];
+};
+
+const stripCopy = async (stripper, input, output) => {
+  await run(stripper, stripArguments(stripper, input, output), 30000);
+};
+
+// llvm-readelf has no --debug-dump=frames; llvm-dwarfdump --eh-frame prints
+// `pc=<start>...<end>` FDE ranges under an `.eh_frame contents:` head.
+const frameDump = async (readelf, path) =>
+  (
+    await run(
+      readelf,
+      readelf === "llvm-dwarfdump"
+        ? ["--eh-frame", path]
+        : ["--debug-dump=frames", path],
+      30000,
+    )
+  ).stdout;
+
+const ehFrameRanges = async (readelf, path) => {
+  const stdout = await frameDump(readelf, path);
+  const ranges = [];
+  let inEhFrame = false;
+  for (const line of stdout.split("\n")) {
+    if (/Contents of the \.eh_frame\b|^\.eh_frame contents:/u.test(line)) {
+      inEhFrame = true;
+      continue;
+    }
+    if (/Contents of the \.debug_frame\b|^\.\w+ contents:/u.test(line)) {
+      inEhFrame = false;
+      continue;
+    }
+    if (!inEhFrame) continue;
+    const match =
+      /pc=(0x[0-9a-fA-F]+|[0-9a-fA-F]+)\.{2,3}(0x[0-9a-fA-F]+|[0-9a-fA-F]+)/u.exec(
+        line,
+      );
+    // readelf and llvm-dwarfdump print bare hex; BigInt needs the 0x prefix.
+    if (match !== null) {
+      const hex = (value) =>
+        BigInt(value.startsWith("0x") ? value : `0x${value}`);
+      ranges.push(`${hex(match[1])}..${hex(match[2])}`);
+    }
+  }
+  return ranges.sort();
+};
+
+const inspectedRanges = async (path) => {
+  const ranges = [];
+  let offset = 0;
+  for (;;) {
+    const { stdout: output } = await run(
+      process.execPath,
+      [
+        resolve("scripts/rea.mjs"),
+        "inspect-elf-unwind-ranges",
+        path,
+        "--json",
+        "--offset",
+        String(offset),
+        "--limit",
+        "4096",
+        "--max-ranges",
+        "65536",
+      ],
+      60000,
+    );
+    const report = JSON.parse(output).normalized_result;
+    for (const range of report.ranges)
+      ranges.push(`${BigInt(range.start)}..${BigInt(range.end)}`);
+    if (report.page.next_offset === null) {
+      assert.equal(report.eh_frame.status, "present");
+      assert.equal(ranges.length, report.coverage.total_ranges);
+      assert.equal(
+        report.coverage.eh_frame_hdr_agreement,
+        "agree",
+        "The linker-produced search table must agree with the decoded FDEs, independently of record order",
+      );
+      return ranges.sort();
+    }
+    offset = report.page.next_offset;
+  }
+};
+
+// The root holds every compiled image. The fixture removes it only after the
+// owned commands have settled, and keeps it when their cleanup failed.
+const closeCommands = onceConfirmed(() => commands.close());
+let rootFixture;
+let root;
+let unavailable = false;
+await withVerifierCleanup(async () => {
+  const compiler = await firstAvailable(["zig", "clang++", "g++"]);
+  const readelf = await firstAvailable([
+    "readelf",
+    "greadelf",
+    "llvm-dwarfdump",
+  ]);
+  const stripper = await firstAvailable([
+    "llvm-strip",
+    "llvm-objcopy",
+    "zig",
+    "strip",
+  ]);
+  if (compiler === null || readelf === null || stripper === null) {
+    console.error(
+      "verify:elf:unwind-ranges needs an ELF C++ compiler (zig, clang++, or g++) and readelf (readelf, greadelf, or llvm-dwarfdump), plus a stripper.",
+    );
+    unavailable = true;
+    return;
+  }
+  rootFixture = await VerifierFixture.open({
+    prefix: "rea-elf-unwind-",
+    private: false,
+  });
+  rootFixture.releaseAfter(closeCommands);
+  root = rootFixture.path;
+  const source = join(root, "ranges.cpp");
+  const unstripped = join(root, "ranges.unstripped");
+  const stripped = join(root, "ranges.stripped");
+  await writeFile(source, sourceText);
+  await compile(compiler, source, unstripped);
+  await stripCopy(stripper, unstripped, stripped);
+  const expected = await ehFrameRanges(readelf, unstripped);
+  const observed = await inspectedRanges(stripped);
+  assert.ok(expected.length > 0, `${readelf} listed no .eh_frame FDEs`);
+  // Compare multisets: producer record order need not match search-table order,
+  // and repeated starts must not hide different ends or duplicate records.
+  assert.deepEqual(
+    observed,
+    expected,
+    "Complete FDE start/end ranges must match the independent frame dump",
+  );
+  console.log(
+    JSON.stringify({
+      compiler,
+      readelf,
+      fde_ranges: expected.length,
+      eh_frame_hdr_agreement: "agree",
+    }),
+  );
+}, [
+  closeCommands,
+  async () => {
+    await rootFixture?.release();
+  },
+  async () => {
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", interrupt);
+  },
+]);
+// A signal that lands outside a command, such as during the final rm, is still
+// a failed run. An earlier failure already left through the rejection above.
+if (interruption.signal.aborted) throw interruption.signal.reason;
+if (unavailable) process.exitCode = 1;

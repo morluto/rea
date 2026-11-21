@@ -6,8 +6,8 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
@@ -15,13 +15,13 @@ import {
   isImmutableJsonSnapshot,
 } from "../domain/immutableJson.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisOperationInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  createAnalysisExecutionEvidence,
-  type AnalysisExecution,
-  type ExecutionOptions,
-} from "./AnalysisProvider.js";
+import type {
+  AnalysisExecution,
+  ExecutionOptions,
+} from "../ports/AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 
 /** Validated caller-selected request carrying its operation input. */
 export interface ProviderOperationRequest {
@@ -55,21 +55,15 @@ export const executeProviderOperation = async <
   confidence: "observed" | "derived",
 ): Promise<Result<Evidence, AnalysisError>> => {
   if (options?.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(operation, options.signal));
   const request = schema.safeParse({ operation, input });
   if (!request.success)
     return err(
-      new AnalysisInputError(
+      analysisOperationInputErrorFromIssues(
         operation,
-        { cause: request.error },
-        projectInputIssues(request.error.issues, { operation, input }).map(
-          (issue) =>
-            issue.path[0] === "input"
-              ? { ...issue, path: issue.path.slice(1) }
-              : issue,
-        ),
+        request.error.issues,
+        input,
+        request.error,
       ),
     );
   const executed = await provider.execute(request.data, options);
@@ -91,8 +85,7 @@ export const completeProviderEvidence = (
 ): Result<Evidence, AnalysisCancelledError> => {
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError(evidence.operation, {
-        cause: signal.reason,
+      cancelledBy(evidence.operation, signal, {
         partialObservation: evidence,
         ...(capturedOutput === undefined ? {} : { capturedOutput }),
       }),

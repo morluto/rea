@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import {
   apiSurfaceHar,
@@ -5,8 +6,10 @@ import {
   environmentStateHar,
 } from "./historicalHar.js";
 import { webNetworkCaptureSchema } from "../../src/domain/webNetworkCapture.js";
-import { BINARY_LAYOUT_TEST_PROVIDER } from "./binaryDiagnostics/layout.js";
-import { binaryLayoutFixture } from "./binaryDiagnostics/layout.js";
+import {
+  BINARY_LAYOUT_TEST_PROVIDER,
+  binaryLayoutFixture,
+} from "./binaryDiagnostics/layout.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence, type Evidence } from "../../src/domain/evidence.js";
 import type { JavaScriptApplicationAnalysisResult } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -19,7 +22,7 @@ import { createJavaScriptSemanticGraph } from "../../src/domain/javascript/javas
 import type { BinaryLayout } from "../../src/domain/native/binaryLayout.js";
 import { binaryLayoutSchema } from "../../src/domain/native/binaryLayout.js";
 import { ghidraFunctionDossier } from "../../src/domain/ghidraValues.fixture.js";
-import { functionDossierSchema } from "../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../src/domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../../src/domain/relationshipCoverage.js";
 
 /** Canonical portable Evidence; no native provider is started by this fixture. */
@@ -261,7 +264,7 @@ export const analysisViewCaptureEvidence = (
 ): Evidence =>
   createEvidence(
     capture.artifact.sha256 === null
-      ? undefined
+      ? unknownTarget("not-observed")
       : {
           path: capture.artifact.path,
           sha256: capture.artifact.sha256,
@@ -320,7 +323,7 @@ export type TimedCaptureRow = readonly [
   path: string,
   body?: JsonValue,
   status?: number,
-  request?: JsonValue,
+  request?: JsonValue | undefined,
   time?: number,
 ];
 
@@ -339,6 +342,8 @@ export const timedCaptureEvidence = (
           request: {
             method,
             url: `http://app.example${path}`,
+            bodySize:
+              sent === undefined ? 0 : Buffer.byteLength(JSON.stringify(sent)),
             ...(sent === undefined
               ? {}
               : {

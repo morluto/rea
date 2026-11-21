@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
+import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 
 const files = new Map(
@@ -20,6 +21,7 @@ const files = new Map(
     ],
   ),
 );
+const jsonDocuments = new JavaScriptJsonDocuments();
 
 it.each([
   "../../rea-artifact/shared/window.cjs",
@@ -29,8 +31,6 @@ it.each([
 ])(
   "retains above-root traversal before synthetic URL normalization: %s",
   (declaredPath) => {
-    const actual = new URL(declaredPath, "file:///selected-root/app/main.mjs");
-    expect(actual.pathname.startsWith("/selected-root/")).toBe(false);
     expect(
       resolveArtifactPathByContext({
         declaredPath,
@@ -38,6 +38,7 @@ it.each([
         context: "module-specifier",
         moduleKind: "import",
         files,
+        jsonDocuments,
       }),
     ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
   },
@@ -52,8 +53,6 @@ it.each([
 ])(
   "retains an inside-root URL without banning synthetic-looking names: %s",
   (declaredPath, target) => {
-    const actual = new URL(declaredPath, "file:///selected-root/app/main.mjs");
-    expect(actual.pathname).toBe(`/selected-root/${target}`);
     expect(
       resolveArtifactPathByContext({
         declaredPath,
@@ -61,6 +60,7 @@ it.each([
         context: "module-specifier",
         moduleKind: "import",
         files,
+        jsonDocuments,
       }),
     ).toMatchObject({ resolution_status: "resolved", resolved_path: target });
   },

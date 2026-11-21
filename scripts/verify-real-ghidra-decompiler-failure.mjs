@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +26,10 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const run = createVerifierRun();
 assert.ok(
@@ -50,12 +53,23 @@ const fixtures = fileURLToPath(
   new URL("../tests/conformance/ghidra", import.meta.url),
 );
 const bridge = fileURLToPath(new URL("../bridge/ghidra", import.meta.url));
-const workspace = await mkdtemp(join(tmpdir(), "rea-ghidra-decompiler-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-ghidra-decompiler-",
+});
+const workspace = workspaceFixture.path;
 let cleaned = true;
 let report;
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const injected = "Ghidra decompilation failed: Injected backend failure";
-try {
+// The workspace stays while an owned Ghidra process or server may still use
+// it: this cleanup confirms only once their cleanup was verified.
+workspaceFixture.releaseAfter(() => {
+  if (!cleaned)
+    throw new Error(
+      `Owned Ghidra cleanup is unverified; retaining ${workspace}.`,
+    );
+});
+await withVerifierFixture(workspaceFixture, async () => {
   const targetPath = join(
     workspace,
     process.platform === "darwin" ? "cross-format.dylib" : "cross-format.so",
@@ -142,6 +156,8 @@ try {
     assert.equal(probe.target_sha256, targetDigest);
     assert.equal(probe["ReaGhidraBridge.java"], bridgeDigest);
     for (const check of [
+      "regex_failure_preserves_stage_and_pattern",
+      "regex_failure_leaves_lifecycle_to_provider",
       "pseudocode_unavailable_with_failure",
       "native_api_unavailable_with_failure",
       "native_value_flow_unavailable_with_failure",
@@ -153,6 +169,11 @@ try {
       "failure_limitation_named",
       "pseudocode_request_still_fails",
       "cancellation_still_ends_request",
+      "timed_out_decompile_is_live",
+      "timed_out_pseudocode_names_limit",
+      "timed_out_native_api_names_limit",
+      "timed_out_listing_unchanged",
+      "timed_out_pseudocode_request_names_limit",
       "session_recovers_after_failure",
     ])
       assert.ok(probe.checks.includes(check), check);
@@ -221,7 +242,24 @@ try {
     assert.ok(
       !result.value.limitations.some((item) => item.includes(injected)),
     );
+    const functionLimitCapability = result.value.limitations.find((item) =>
+      item.includes("REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS"),
+    );
+    assert.ok(functionLimitCapability?.includes("per-function limit"));
+    assert.ok(
+      functionLimitCapability.includes(
+        "caller cancellation requests session closure",
+      ),
+    );
+    assert.ok(
+      !result.value.limitations.some((item) =>
+        item.includes(
+          "lets each decompilation run until it completes or the caller cancels",
+        ),
+      ),
+    );
     healthy = {
+      function_limit_capability: functionLimitCapability,
       pseudocode_available: true,
       native_api_available: value.native_api.available,
     };
@@ -271,9 +309,7 @@ try {
     scope:
       "Real Ghidra ELF or Mach-O analysis with an injected decompiler failure; output-contract parsing of the degraded dossier; real read-only TCP provider projection of the healthy path. No target execution; natural decompiler failures, degraded CLI/MCP projection and Windows are unverified.",
   };
-} finally {
-  if (cleaned) await rm(workspace, { recursive: true, force: true });
-}
+});
 console.log(
   JSON.stringify({
     ...report,

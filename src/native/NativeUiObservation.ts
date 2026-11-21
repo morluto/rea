@@ -16,13 +16,14 @@ import {
   nativeUiResultSchema,
 } from "../domain/native/nativeUiObservation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
 import { NativeUiCleanupError } from "./NativeUiCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -35,6 +36,7 @@ import {
   NATIVE_UI_OUTPUT_WEIGHT,
 } from "./NativeUiOutputBudget.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const helper = fileURLToPath(
   new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
@@ -42,6 +44,9 @@ const helper = fileURLToPath(
 const passiveInputSchema = nativeUiObservationInputSchema.transform(
   (input) => ({ ...input, steps: [] }),
 );
+type NativeUiInput =
+  | z.output<typeof passiveInputSchema>
+  | z.output<typeof nativeUiScenarioInputSchema>;
 const responseSchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), result: nativeUiSnapshotSchema }),
   z.strictObject({
@@ -49,6 +54,12 @@ const responseSchema = z.discriminatedUnion("ok", [
     code: z.string(),
     message: z.string(),
   }),
+]);
+const initialSelectionFields = new Map<string, "pid" | "window_id">([
+  ["pid-not-application", "pid"],
+  ["target-mismatch", "pid"],
+  ["window-mismatch", "window_id"],
+  ["ambiguous-window", "window_id"],
 ]);
 /** Narrow process seam preserves the native helper's OS and target failures. */
 export type NativeUiHelper = (
@@ -69,20 +80,31 @@ export const observeNativeUi = async (
     interruption?: NativeUiInterruptionControl;
   },
 ): Promise<Result<z.infer<typeof nativeUiResultSchema>, AnalysisError>> => {
+  const parsed = (
+    operation === "observe_native_ui"
+      ? passiveInputSchema
+      : nativeUiScenarioInputSchema
+  ).safeParse(parameters);
+  if (!parsed.success)
+    return err(new AnalysisInputError(operation, { cause: parsed.error }));
   const runtime =
-    options.runtime ?? createNativeUiHelperRuntime(options.environment);
+    options.runtime ??
+    createNativeUiHelperRuntime(
+      options.environment,
+      parsed.data.native_ui_deadline_ms,
+    );
   const interruption =
     options.interruption ??
     new NativeUiInterruptionControl(
       options.signal,
       runtime.signal,
-      runtime.deadlineMs ?? DEFAULT_NATIVE_UI_DEADLINE_MS,
+      runtime.deadlineMs,
     );
   const ownsInterruption = options.interruption === undefined;
   let result: Result<z.infer<typeof nativeUiResultSchema>, AnalysisError>;
   try {
     try {
-      result = await observeWithHelper(target, operation, parameters, {
+      result = await observeWithHelper(target, operation, parsed.data, {
         interruption,
         invoke: options.invoke ?? runtime.invoke,
       });
@@ -106,11 +128,11 @@ export const observeNativeUi = async (
         return result.ok
           ? err(cleanup)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 result.error,
                 cleanup,
                 operation,
-              ).bindCleanupDependencies([result.error, cleanup]),
+              ),
             );
       }
     }
@@ -123,19 +145,12 @@ export const observeNativeUi = async (
 const observeWithHelper = async (
   target: BinaryTarget,
   operation: "observe_native_ui" | "capture_native_ui_scenario",
-  parameters: unknown,
+  input: NativeUiInput,
   options: {
     interruption: NativeUiInterruptionControl;
     invoke: NativeUiHelper;
   },
 ): Promise<Result<z.infer<typeof nativeUiResultSchema>, AnalysisError>> => {
-  const parsed = (
-    operation === "observe_native_ui"
-      ? passiveInputSchema
-      : nativeUiScenarioInputSchema
-  ).safeParse(parameters);
-  if (!parsed.success)
-    return err(new AnalysisInputError(operation, { cause: parsed.error }));
   if (target.kind !== "executable" || !isMachOFormat(target.format))
     return err(
       new AnalysisCapabilityUnavailableError(
@@ -144,12 +159,29 @@ const observeWithHelper = async (
         "Native UI observation requires an active Mach-O executable or app target",
       ),
     );
-  const input = parsed.data;
   if (!input.screenshot && !input.accessibility)
     return err(
-      new AnalysisInputError(operation, {
-        cause: new Error("Enable screenshot or accessibility capture"),
-      }),
+      new AnalysisInputError(
+        operation,
+        {
+          userMessage:
+            "Enable screenshot or accessibility capture; both cannot be disabled.",
+          remediationAction:
+            "Set screenshot or accessibility to true, then retry.",
+        },
+        [
+          {
+            path: ["screenshot"],
+            reason: "invalid_value",
+            message: "Enable screenshot or accessibility capture",
+          },
+          {
+            path: ["accessibility"],
+            reason: "invalid_value",
+            message: "Enable screenshot or accessibility capture",
+          },
+        ],
+      ),
     );
   const steps = input.steps;
   const interruption = options.interruption;
@@ -179,14 +211,31 @@ const observeWithHelper = async (
           signal,
         ),
       );
-      if (!response.ok)
+      if (!response.ok) {
+        const field = initialSelectionFields.get(response.code);
+        if (launchTime === undefined && field !== undefined)
+          return err(
+            new AnalysisInputError(
+              operation,
+              { userMessage: response.message },
+              [
+                {
+                  path: [field],
+                  reason: "invalid_value",
+                  message: `${response.code}: ${response.message}`,
+                },
+              ],
+            ),
+          );
         return err(
           new AnalysisCapabilityUnavailableError(
             "native-macos",
             operation,
             `${response.code}: ${response.message}`,
+            { userMessage: response.message },
           ),
         );
+      }
       if (
         response.result.window.pid !== input.pid ||
         response.result.window.window_id !== input.window_id ||
@@ -231,12 +280,12 @@ const observeWithHelper = async (
           ? ((signal.aborted && cause.cause === signal.reason
               ? interruption.error(operation)
               : undefined) ??
-              new AnalysisCancelledError(operation, { cause: cause.cause }))
+              cancelledBy(operation, carriedReason(cause.cause)))
           : new ProviderAdapterError("native-macos", operation, {
               cause,
               diagnostics: {
                 helper_path: helper,
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
                 remediation:
                   "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
               },

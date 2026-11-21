@@ -3,7 +3,7 @@ import {
   createAnalysisExecution,
   type AnalysisOperation,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -63,7 +63,10 @@ describe("selector origin of composed workflows", () => {
   it("marks every call-graph expansion as provider-derived and the root selector as caller-supplied", async () => {
     const { calls, tools } = recordingPort();
 
-    const result = await tools.execute("get_call_graph", { address: "main" });
+    const result = await tools.executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
+    });
 
     expect(result.ok, "the graph is built").toBe(true);
     expect(
@@ -92,9 +95,9 @@ describe("selector origin of composed workflows", () => {
   it("marks trace expansions as provider-derived and the start and goal as caller-supplied", async () => {
     const { calls, tools } = recordingPort();
 
-    const result = await tools.execute("trace_call_path", {
-      start: "main",
-      goal: "0x2000",
+    const result = await tools.executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", goal: "0x2000", direction: "forward" },
     });
 
     expect(result.ok, "the trace completes").toBe(true);
@@ -111,8 +114,9 @@ describe("selector origin of composed workflows", () => {
   it("marks the canonical retry of batch_decompile as derived and keeps the unresolved fallback caller-supplied", async () => {
     const { calls, tools } = recordingPort();
 
-    const result = await tools.execute("batch_decompile", {
-      addresses: ["main", "nosuch"],
+    const result = await tools.executeValidated({
+      name: "batch_decompile",
+      input: { addresses: ["main", "nosuch"] },
     });
 
     expect(result.ok, "per-item failures do not fail the batch").toBe(true);
@@ -130,9 +134,18 @@ describe("selector origin of composed workflows", () => {
   it("never copies the origin into the parameters sent to the provider", async () => {
     const { sentParameters, tools } = recordingPort();
 
-    await tools.execute("get_call_graph", { address: "main" });
-    await tools.execute("trace_call_path", { start: "main" });
-    await tools.execute("batch_decompile", { addresses: ["main"] });
+    await tools.executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
+    });
+    await tools.executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", direction: "forward" },
+    });
+    await tools.executeValidated({
+      name: "batch_decompile",
+      input: { addresses: ["main"] },
+    });
 
     expect(
       sentParameters.length,
@@ -164,9 +177,9 @@ describe("trace path completion and cancellation", () => {
       },
     });
 
-    const result = await tools.execute("trace_call_path", {
-      start: "0x1000",
-      goal: "0x2000",
+    const result = await tools.executeValidated({
+      name: "trace_call_path",
+      input: { start: "0x1000", goal: "0x2000", direction: "forward" },
     });
 
     expect(result).toMatchObject({
@@ -205,9 +218,11 @@ describe("trace path completion and cancellation", () => {
         },
       });
 
-      const result = await tools.execute(
-        "trace_call_path",
-        { start: "0x1000", goal: "0x2000" },
+      const result = await tools.executeValidated(
+        {
+          name: "trace_call_path",
+          input: { start: "0x1000", goal: "0x2000", direction: "forward" },
+        },
         abortSignal ? controller.signal : undefined,
       );
 
@@ -242,9 +257,11 @@ describe("trace path completion and cancellation", () => {
       },
     });
 
-    const result = await tools.execute(
-      "trace_call_path",
-      { start: "0x1000", goal: "0x3000" },
+    const result = await tools.executeValidated(
+      {
+        name: "trace_call_path",
+        input: { start: "0x1000", goal: "0x3000", direction: "forward" },
+      },
       controller.signal,
     );
 
@@ -259,3 +276,46 @@ describe("trace path completion and cancellation", () => {
     });
   });
 });
+
+it.each([null, "", "0x1000"] as const)(
+  "validates the observed call-graph root and retains its limitations (%s)",
+  async (address) => {
+    const calls: string[] = [];
+    const tools = new EnhancedTools({
+      execute: async (operation) => {
+        calls.push(operation);
+        return ok(
+          createAnalysisExecution(
+            operation === "procedure_address" ? address : [],
+            provider,
+            {
+              limitations:
+                operation === "procedure_address"
+                  ? ["Root identity caveat"]
+                  : [],
+            },
+          ),
+        );
+      },
+    });
+    const result = await tools.executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
+    });
+    if (address === "0x1000") {
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          limitations: expect.arrayContaining(["Root identity caveat"]),
+        },
+      });
+      expect(calls).toEqual(["procedure_address", "procedure_callees"]);
+    } else {
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisOutputError", operation: "procedure_address" },
+      });
+      expect(calls).toEqual(["procedure_address"]);
+    }
+  },
+);

@@ -1,6 +1,19 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
 import { digestSchema } from "../digests.js";
+
+/** Summary capture admission and discovery share this native-bound host profile. */
+export const pcapCaptureHostSupported = (platform: string): boolean =>
+  platform === "linux" || platform === "win32";
+export const PCAP_CAPTURE_UNSUPPORTED_HOST_REASON =
+  "Packet summaries require an enforceable native memory bound: Linux with util-linux prlimit, or Windows with owned Job Objects. This host's capture boundary remains unsupported.";
+/** Repair for an unsupported capture host; no setting on this host changes it. */
+export const PCAP_CAPTURE_HOST_REMEDIATION =
+  "Run packet-capture summaries on Linux with util-linux prlimit, or on Windows with owned Job Objects.";
 
 /**
  * Caller intent for packet-capture analysis through caller-supplied tshark
@@ -9,8 +22,8 @@ import { digestSchema } from "../digests.js";
 export const pcapInputSchemas = {
   inspect_pcap_client: z.strictObject({}),
   inspect_pcap_capture: z.strictObject({
-    path: localPathStringSchema.describe(
-      "Local pcap or pcapng capture file to inspect",
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute local pcap or pcapng capture file to inspect",
     ),
   }),
 } as const;
@@ -41,9 +54,15 @@ const client = z.strictObject({
   tshark_command: z.string().min(1),
   tshark_source: z.enum(["environment", "path"]),
   tshark_version: z.string().min(1).nullable(),
+  tshark_resolved_path: localPathStringSchema.nullable(),
+  tshark_sha256: digestSchema.nullable(),
+  tshark_identity_status: z.enum(["verified", "unresolved"]),
   capinfos_command: z.string().min(1),
   capinfos_source: z.enum(["environment", "path"]),
   capinfos_version: z.string().min(1).nullable(),
+  capinfos_resolved_path: localPathStringSchema.nullable(),
+  capinfos_sha256: digestSchema.nullable(),
+  capinfos_identity_status: z.enum(["verified", "unresolved"]),
 });
 
 const endpoint = z.strictObject({
@@ -54,6 +73,12 @@ const endpoint = z.strictObject({
 
 const dnsQuery = z.strictObject({
   query: z.string().min(1),
+  query_labels_hex: z
+    .array(z.string().regex(/^(?:[0-9a-f]{2}){1,63}$/u))
+    .nullable()
+    .describe(
+      "Original DNS wire label bytes in order, as lowercase hex strings; the root terminator is excluded. Null means unknown wire identity; display text alone does not establish identity.",
+    ),
   response_addresses: z.array(z.string().min(1)),
   response_address_count: z.int().nonnegative(),
 });
@@ -102,7 +127,7 @@ export const pcapResultSchemas = {
     unattributed_dns_addresses: z.array(z.string().min(1)),
     unattributed_dns_address_count: z.int().nonnegative(),
     unattributed_dns_packet_count: z.int().nonnegative(),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
     diagnostics: z
       .strictObject({ capinfos_stderr: z.string(), tshark_stderr: z.string() })
       .optional(),

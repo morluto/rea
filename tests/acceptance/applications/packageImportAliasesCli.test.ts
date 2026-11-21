@@ -31,8 +31,22 @@ const fallbackAliases = {
     require: ["file:///outside.cjs", "./config.cjs"],
   },
 };
-const resolvedAliases = [...literalAliases, ...Object.keys(fallbackAliases)];
+const resolvedAliases = [
+  "#config",
+  ...literalAliases,
+  ...Object.keys(fallbackAliases),
+];
 const refusedAliases = {
+  "#blocked": {
+    target: null,
+    status: "external",
+    limitation: "an explicit null imports target",
+  },
+  "#exact-file": {
+    target: "./extensionless",
+    status: "not-found",
+    limitation: "import targets are exact files",
+  },
   "#empty": {
     target: [],
     status: "external",
@@ -86,7 +100,6 @@ const allAliases = [...resolvedAliases, ...Object.keys(refusedAliases)];
 const createPackageImportAliasFixture = async () => {
   const root = await createTestTempDirectory("rea-package-import-aliases-");
   const mainSource = [
-    'const config = require("#config");',
     'const nested = require("./node_modules/fixture/index.cjs");',
     'const missing = require("#missing");',
     ...allAliases.map((specifier) => `require(${JSON.stringify(specifier)});`),
@@ -118,6 +131,8 @@ const createPackageImportAliasFixture = async () => {
     "main.cjs": mainSource,
     "main.mjs": moduleSource,
     "config.cjs": "module.exports = 'app-config';",
+    "extensionless.js": "module.exports = 'extension decoy';",
+    "extensionless/index.js": "module.exports = 'index decoy';",
     "node_modules/fixture/package.json": JSON.stringify({
       name: "fixture",
       imports: { "#config": "./local.cjs" },
@@ -191,19 +206,15 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
               resolved_path: null,
               resolution_status: status,
             }),
-            evidence: sourceEvidence(sourcePath, source, limitation),
+            evidence: sourceEvidence(
+              sourcePath,
+              source,
+              specifier === "#encoded-separator" && moduleKind === "import"
+                ? "percent-encoded slash or backslash bytes"
+                : limitation,
+            ),
           }),
         );
-    expect(imports).toContainEqual(
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          specifier: "#config",
-          resolved_path: "config.cjs",
-          resolution_status: "resolved",
-        }),
-        evidence: sourceEvidence("main.cjs", mainSource),
-      }),
-    );
     expect(imports).toContainEqual(
       expect.objectContaining({
         properties: expect.objectContaining({
@@ -226,7 +237,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         }),
         evidence: expect.objectContaining({
           limitations: expect.arrayContaining([
-            expect.stringContaining("does not define package import alias"),
+            expect.stringContaining(
+              "does not define package import alias #missing",
+            ),
+            expect.stringContaining("#config"),
           ]),
         }),
       }),

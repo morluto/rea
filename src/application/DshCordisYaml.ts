@@ -1,3 +1,4 @@
+import { retainYamlSequenceAnnotations } from "./YamlSequenceAnnotations.js";
 import { isDeepStrictEqual } from "node:util";
 import {
   isAlias,
@@ -31,7 +32,7 @@ export class DshCordisYaml {
       customTags: [
         { tag: "tag:yaml.org,2002:js", resolve: (source: string) => source },
       ],
-      logLevel: "silent",
+      logLevel: "error",
     });
     if (this.document.errors.length > 0 || this.document.warnings.length > 0)
       throw new ConfigurationError("Invalid or unsupported Cordis YAML", {
@@ -144,6 +145,22 @@ export class DshCordisYaml {
       if (original.commentBefore !== undefined)
         replacement.commentBefore = original.commentBefore;
     }
+    if (isSeq(original) && isSeq(replacement)) {
+      retainYamlSequenceAnnotations(
+        original,
+        replacement,
+        (node) => this.value(node),
+        (source, target) => {
+          if (source.commentBefore !== undefined)
+            target.commentBefore = source.commentBefore;
+          if (source.comment !== undefined) target.comment = source.comment;
+          if (source.spaceBefore !== undefined)
+            target.spaceBefore = source.spaceBefore;
+          return target;
+        },
+        () => true,
+      );
+    }
     if (pair === undefined) map.set(key, replacement);
     else pair.value = replacement;
   }
@@ -152,10 +169,24 @@ export class DshCordisYaml {
   copy(node: unknown, invalidated?: ReadonlySet<Node>): unknown {
     if (isAlias(node)) {
       const target = this.resolve(node);
-      return invalidated === undefined ||
-        (isNode(target) && invalidated.has(target))
-        ? this.copy(target)
-        : node.clone();
+      if (
+        invalidated !== undefined &&
+        (!isNode(target) || !invalidated.has(target))
+      )
+        return node.clone();
+      const materialized = this.copy(target);
+      if (isNode(materialized)) {
+        for (const name of ["commentBefore", "comment"] as const) {
+          const annotation = node[name];
+          if (annotation === undefined) continue;
+          const existing = materialized[name];
+          materialized[name] =
+            existing === undefined ? annotation : `${existing}\n${annotation}`;
+        }
+        if (node.spaceBefore !== undefined)
+          materialized.spaceBefore = node.spaceBefore;
+      }
+      return materialized;
     }
     if (!isNode(node)) return node;
     const copied = node.clone();
@@ -182,7 +213,7 @@ export class DshCordisYaml {
     if (isNode(copied))
       visit(copied, {
         Pair: (_key, pair) => {
-          if (isAlias(pair.key)) pair.key = this.copy(this.resolve(pair.key));
+          if (isAlias(pair.key)) pair.key = this.copy(pair.key);
         },
         Value: (_key, value) => {
           delete value.anchor;

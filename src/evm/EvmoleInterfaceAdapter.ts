@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { EvmInterface } from "../domain/evm/evmInterface.js";
 
 const offset = z.int().nonnegative();
 const reportedMetadata = z.strictObject({
@@ -48,16 +49,13 @@ export const evmoleInterfaceReplySchema = z.strictObject({
 });
 
 /** Preserve inference strings and unknown absence; selectors use the conventional 0x display prefix. */
-export const projectEvmoleInterface = (raw: unknown) => {
-  const producer = evmoleInterfaceReplySchema.parse(raw);
-  return {
-    raw: producer,
-    functions: (producer.functions ?? []).map((fn) => ({
-      selector: `0x${fn.selector}`,
-      bytecode_offset: fn.bytecodeOffset,
-      dispatch: fn.dispatch,
-      inferred_arguments: fn.arguments ?? null,
-      inferred_state_mutability: fn.stateMutability ?? null,
-    })),
-  };
-};
+export const projectEvmoleFunctions = (
+  producer: z.output<typeof evmoleInterfaceReplySchema>,
+): EvmInterface["functions"] =>
+  (producer.functions ?? []).map((fn) => ({
+    selector: `0x${fn.selector}`,
+    bytecode_offset: fn.bytecodeOffset,
+    dispatch: fn.dispatch,
+    inferred_arguments: fn.arguments ?? null,
+    inferred_state_mutability: fn.stateMutability ?? null,
+  }));

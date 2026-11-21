@@ -9,12 +9,13 @@ import { resolveSourceToBundleReference } from "../../src/application/javascript
 import { requireAuthenticationHeadroom } from "../../src/application/JsonAuthenticationHeadroom.js";
 import * as workflow from "../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { historicalSourceGraphSchema } from "../../src/domain/referenceSourceGraph.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE } from "../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createServer } from "../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../src/server/ToolResultDelivery.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 vi.mock("../../src/application/JsonAuthenticationHeadroom.js", { spy: true });
 vi.mock(
@@ -23,13 +24,10 @@ vi.mock(
 );
 afterEach(() => vi.restoreAllMocks());
 
-it("reserves graph validation/hash memory before the owning parser allocates", async () => {
+it("reports graph headroom before invalid reference data", async () => {
   const root = await createTestTempDirectory("rea-source-headroom-");
   const path = join(root, "graph.json");
-  await writeFile(
-    path,
-    JSON.stringify(SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference),
-  );
+  await writeFile(path, "{}");
   const actual = await vi.importActual<
     typeof import("../../src/application/JsonAuthenticationHeadroom.js")
   >("../../src/application/JsonAuthenticationHeadroom.js");
@@ -40,7 +38,6 @@ it("reserves graph validation/hash memory before the owning parser allocates", a
         availableBytes: 0,
       }),
   );
-  const parser = vi.spyOn(historicalSourceGraphSchema, "safeParse");
   const resources = new ArtifactResourceScope();
   try {
     expect(
@@ -55,9 +52,27 @@ it("reserves graph validation/hash memory before the owning parser allocates", a
         _tag: "AnalysisResourceConstraintError",
         operation: "compare_source_to_bundle",
         resource: "memory",
+        reportedLimits: { input_path: path },
       },
     });
-    expect(parser).not.toHaveBeenCalled();
+    expect(
+      await resolveSourceToBundleReference(
+        { kind: "file", path },
+        undefined,
+        resources,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "compare_source_to_bundle",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: expect.arrayContaining(["reference"]),
+          }),
+        ]),
+      },
+    });
   } finally {
     await resources.close();
   }
@@ -81,7 +96,7 @@ it("attributes file-I/O cancellation to the comparison and preserves its exact c
       controller.signal,
       resources,
     );
-    await held.firstRead;
+    await held.reached(pending, "first file read");
     controller.abort(cause);
     held.release();
     const result = await pending;
@@ -123,9 +138,9 @@ it.each(["validation", "comparison"] as const)(
         "../../src/application/javascript/JavaScriptApplicationWorkflowService.js",
       );
       vi.mocked(
-        workflow.compareSourceToBundleEvidenceValidated,
-      ).mockImplementationOnce((input) => {
-        const compared = actual.compareSourceToBundleEvidenceValidated(input);
+        workflow.executeSourceToBundleComparison,
+      ).mockImplementationOnce(async (...args) => {
+        const compared = await actual.executeSourceToBundleComparison(...args);
         setImmediate(() =>
           controller.abort(new Error("cancel during graph comparison")),
         );
@@ -196,7 +211,10 @@ const connectedComparison = async () => {
     throw new Error("Comparison must not start a native provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "source-cancel", version: "1" });
+  const client = new Client(
+    { name: "source-cancel", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

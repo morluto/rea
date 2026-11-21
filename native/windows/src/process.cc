@@ -479,7 +479,7 @@ napi_value inspect(napi_env env, std::unique_ptr<Runtime>& pending) {
   createRuntime(std::wstring(temp, length), L"rea-native-probe-", pending);
   napi_value filesystem;
   try {
-    filesystem = identity(env, pending->directory.get(), pending->path);
+    filesystem = identity(env, pending->directory.get(), pending->path, pending->filesystem);
   } catch (Failure& primary) {
     cleanupFailedRuntime(pending, primary);
     throw;
@@ -508,6 +508,7 @@ napi_value inspect(napi_env env, std::unique_ptr<Runtime>& pending) {
   set(env, result, "killOnOwnerClose", boolean(env, true));
   set(env, result, "protocolStdin", boolean(env, true));
   set(env, result, "jobMemoryLimit", boolean(env, true));
+  set(env, result, "runtimeWriteTransient", boolean(env, true));
   return result;
 }
 

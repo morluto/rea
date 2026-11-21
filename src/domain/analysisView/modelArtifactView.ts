@@ -1,4 +1,7 @@
-import { modelTypeRowSchema } from "../model/modelArtifactQuery.js";
+import {
+  modelArtifactViewRequestSchema,
+  modelTypeRowSchema,
+} from "../model/modelArtifactQuery.js";
 import { z } from "zod";
 import {
   modelArtifactSchema,
@@ -10,20 +13,22 @@ import {
 } from "../model/modelArtifact.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   boundedViewMessages,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const HEADLINE_TEXT_LIMIT = 512;
 
@@ -100,7 +105,11 @@ const summarizeModel = (
         }) => row,
       ),
     chat_template_present: metadata.some(
-      (row) => row.key === "tokenizer.chat_template",
+      (row) =>
+        row.type === "STRING" &&
+        typeof row.value === "string" &&
+        (row.key === "tokenizer.chat_template" ||
+          row.key.startsWith("tokenizer.chat_template.")),
     ),
   };
 };
@@ -131,23 +140,15 @@ type Checked = {
   types: Map<string, number>;
 };
 const checked = new WeakMap<object, Checked>();
+const readReport = createAnalysisViewResultReader(modelArtifactSchema);
 const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    key !== null &&
-    typeof key === "object" &&
-    isImmutableJsonSnapshot(key);
-  const cached = reusable ? checked.get(key) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(modelArtifactSchema, parent);
+  const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
-  const report = reusable ? (key as ModelArtifact) : parsed.value;
-  if (
-    parent.subject != null &&
-    (parent.subject.local_path !== report.artifact.path ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
-  )
+  const report = parsed.value;
+  const reusable = isImmutableJsonSnapshot(report);
+  const cached = reusable ? checked.get(report) : undefined;
+  const subject = evidenceFileTarget(parent);
+  if (subject != null && subject.sha256 !== report.artifact.sha256)
     return err(
       analysisViewInputError([
         {
@@ -158,6 +159,7 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
         },
       ]),
     );
+  if (cached !== undefined) return ok(cached);
   const summary = summarizeModel(report);
   const {
     artifact: _artifact,
@@ -176,15 +178,15 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     names: new Map(report.tensors.map((row) => [row.name, row.index])),
     keys: new Map(report.metadata.map((row) => [row.key, row.index])),
   };
-  if (reusable) checked.set(key, value);
+  if (reusable) checked.set(report, value);
   return ok(value);
 };
 
 /** Historical pages never reopen weights or report a scoped header digest as full-file identity. */
 export const projectModelArtifactView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "model-artifact")
     return err(
       analysisViewInputError([
@@ -192,10 +194,13 @@ export const projectModelArtifactView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Model Evidence supports summary and model-artifact metadata/tensor pages",
+            "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof modelArtifactViewRequestSchema>
+  >(view, "summary", "model-artifact");
   const parsed = read(parent);
   if (!parsed.ok) return parsed;
   const {
@@ -213,7 +218,7 @@ export const projectModelArtifactView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
     limitations: boundedViewMessages(
-      parent.limitations,
+      [...parent.limitations, ...report.limitations],
       parent.evidenceId,
       "limitations",
     ),
@@ -228,7 +233,7 @@ export const projectModelArtifactView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -239,7 +244,7 @@ export const projectModelArtifactView = (
           "limitations",
         ),
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const rows =
     view.collection === "tensors"
@@ -321,7 +326,7 @@ export const projectModelArtifactView = (
     return result;
   });
   return ok({
-    kind: "model-artifact",
+    kind: "model-artifact" as const,
     view,
     ...shared,
     source: report.artifact,

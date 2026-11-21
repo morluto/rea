@@ -1,84 +1,138 @@
-import { registerGpuCommands } from "./cli/gpuCommands.js";
-import { registerNativeFunctionMatchingCommands } from "./cli/nativeFunctionMatchingCommands.js";
-import { registerCaptureCommands } from "./cli/captureCommands.js";
-import { registerSignalCommands } from "./cli/signalCommands.js";
-import { registerWasmCommands } from "./cli/wasmCommands.js";
-import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
-import { createDirectAnalysis } from "./composition/directAnalysis.js";
-import { registerEvmCommands } from "./cli/evmCommands.js";
-import { registerDesktopApplicationCommands } from "./cli/desktopApplicationCommands.js";
-import { registerGoCommands } from "./cli/goCommands.js";
-import { registerModelCommands } from "./cli/modelCommands.js";
-import { registerIl2cppCommands } from "./cli/il2cppCommands.js";
-import { registerRustCommands } from "./cli/rustCommands.js";
-import { registerSqliteCommands } from "./cli/sqliteCommands.js";
-import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
-import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
-import { registerFridaCommands } from "./cli/fridaCommands.js";
-import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
-import { Cli } from "incur";
-import { normalizeCliArguments } from "./cliOutput.js";
-
-import { createLogger, parseLogLevel } from "./logger.js";
-import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
-import { PRODUCT_IDENTITY } from "./identity.js";
-import { npxRegistrationCommand } from "./application/ClientRegistrationIdentity.js";
-import { registerSetupCommands } from "./cli/setupCommands.js";
-import { registerCoreAnalysisCommands } from "./cli/coreAnalysisCommands.js";
-import { registerUtilityCommands } from "./cli/utilityCommands.js";
-import { registerArtifactCommands } from "./cli/artifactCommands.js";
-import { registerManagedCommands } from "./cli/managedCommands.js";
-import { registerFirmwareCommands } from "./cli/firmwareCommands.js";
-import { registerAndroidCommands } from "./cli/androidCommands.js";
-import { registerApktoolCommands } from "./cli/apktoolCommands.js";
-import { registerPcapCommands } from "./cli/pcapCommands.js";
-import { registerFlutterCommands } from "./cli/flutterCommands.js";
-import { registerJebCommands } from "./cli/jebCommands.js";
-import { registerAdbCommands } from "./cli/adbCommands.js";
-import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
-import { registerEnvironmentCommands } from "./cli/environmentCommands.js";
-import { registerProcessCommands } from "./cli/processCommands.js";
-import { registerBrowserCommands } from "./cli/browserCommands.js";
-import { registerWebScriptCommands } from "./cli/webScriptCommands.js";
-import { registerWebModuleCommands } from "./cli/webModuleCommands.js";
-import { registerWebSourceLocationCommands } from "./cli/webSourceLocationCommands.js";
-import { registerWebRuntimeCommands } from "./cli/webRuntimeCommands.js";
-import { registerWebNetworkCaptureCommands } from "./cli/webNetworkCaptureCommands.js";
-import { registerJavaScriptRecoveryCommands } from "./cli/javascriptRecoveryCommands.js";
-import { registerAdvancedBrowserCommands } from "./cli/browserAdvancedCommands.js";
-import { registerBrowserScenarioCommands } from "./cliBrowserScenarioCommands.js";
-import { registerElectronCommands } from "./cli/electronCommands.js";
-import { registerJavaScriptRuntimeObservationCommands } from "./cliJavaScriptRuntimeCommands.js";
-import { registerApplicationCommands } from "./cli/applicationCommands.js";
-import { presentOmittableDefaults } from "./cli/omittableDefaults.js";
-import type { CliInstance } from "./cli/types.js";
+import type { FridaInstrumentationPort } from "./ports/frida/FridaInstrumentationPort.js";
 import {
-  streamCliCommandResults,
-  type CliResultOutput,
-} from "./cli/cliResultOutput.js";
-import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
-import { registerCutterCommands } from "./cli/cutterCommands.js";
-import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
+  CURRENT_ENTRYPOINT_PATH,
+  isDirectEntrypoint,
+} from "./process/CurrentEntrypointPath.js";
+import {
+  CLI_COMMAND_REGISTRATIONS,
+  CLI_REGISTRATION_ORDER,
+  type CliCommandModules,
+} from "./cli/cliCommandRegistrations.js";
+import type { CliResultOutput } from "./cli/cliResultOutput.js";
+import { createCliShell } from "./cli/cliShell.js";
+import type { CliInstance } from "./cli/types.js";
+import { createDirectAnalysis } from "./composition/directAnalysis.js";
+import * as setupModule from "./cli/setupCommands.js";
+import * as coreAnalysisModule from "./cli/coreAnalysisCommands.js";
+import * as reverseEngineeringModule from "./cli/reverseEngineeringCommands.js";
+import * as cutterModule from "./cli/cutterCommands.js";
+import * as utilityModule from "./cli/utilityCommands.js";
+import * as binaryDiagnosticsModule from "./cli/binaryDiagnosticsCommands.js";
+import * as wasmModule from "./cli/wasmCommands.js";
+import * as apkSignatureModule from "./cli/apkSignatureCommands.js";
+import * as captureModule from "./cli/captureCommands.js";
+import * as signalModule from "./cli/signalCommands.js";
+import * as evmModule from "./cli/evmCommands.js";
+import * as desktopApplicationModule from "./cli/desktopApplicationCommands.js";
+import * as releaseExposureModule from "./cli/releaseExposureCommands.js";
+import * as goModule from "./cli/goCommands.js";
+import * as il2cppModule from "./cli/il2cppCommands.js";
+import * as modelModule from "./cli/modelCommands.js";
+import * as gpuModule from "./cli/gpuCommands.js";
+import * as rustModule from "./cli/rustCommands.js";
+import * as pythonPycModule from "./cli/pythonPycCommands.js";
+import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
+import * as erlangModule from "./cli/erlangCommands.js";
+import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
+import * as mavenGradleMetadataModule from "./cli/mavenGradleMetadataCommands.js";
+import * as sqliteModule from "./cli/sqliteCommands.js";
+import * as artifactModule from "./cli/artifactCommands.js";
+import * as managedModule from "./cli/managedCommands.js";
+import * as firmwareModule from "./cli/firmwareCommands.js";
+import * as uefiModule from "./cli/uefiCommands.js";
+import * as androidModule from "./cli/androidCommands.js";
+import * as pcapModule from "./cli/pcapCommands.js";
+import * as flutterModule from "./cli/flutterCommands.js";
+import * as fridaModule from "./cli/fridaCommands.js";
+import * as apktoolModule from "./cli/apktoolCommands.js";
+import * as jebModule from "./cli/jebCommands.js";
+import * as adbModule from "./cli/adbCommands.js";
+import * as browserModule from "./cli/browserCommands.js";
+import * as webRuntimeModule from "./cli/webRuntimeCommands.js";
+import * as webNetworkCaptureModule from "./cli/webNetworkCaptureCommands.js";
+import * as advancedBrowserModule from "./cli/browserAdvancedCommands.js";
+import * as browserScenarioModule from "./cliBrowserScenarioCommands.js";
+import * as electronModule from "./cli/electronCommands.js";
+import * as javaScriptRuntimeObservationModule from "./cli/javascriptRuntimeCommands.js";
+import * as guidanceModule from "./cli/guidanceCommands.js";
+import * as guidedWorkflowModule from "./cli/guidedWorkflowCommands.js";
+import * as analysisViewModule from "./cli/analysisViewCommands.js";
+import * as evidenceModule from "./cliEvidenceCommands.js";
+import * as environmentModule from "./cli/environmentCommands.js";
+import * as processModule from "./cli/processCommands.js";
+import * as desktopCaptureModule from "./cli/desktopCaptureCommands.js";
+import * as javaScriptRecoveryModule from "./cli/javascriptRecoveryCommands.js";
+import * as webScriptModule from "./cli/webScriptCommands.js";
+import * as webModuleModule from "./cli/webModuleCommands.js";
+import * as webSourceLocationModule from "./cli/webSourceLocationCommands.js";
+import * as applicationModule from "./cli/applicationCommands.js";
+import * as nativeFunctionMatchingModule from "./cli/nativeFunctionMatchingCommands.js";
 
-export { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
+export { closeCliResources } from "./cli/cliResources.js";
 
-/**
- * Describe CLI settings that are invalid before any command runs, as MCP does.
- * Keep this aligned with PROCESS_START_CONFIGURATION_SETTINGS.
- */
-export const cliConfigurationError = (
-  selectedEnvironment: Readonly<Record<string, string | undefined>>,
-): string | undefined => {
-  const value = selectedEnvironment.REA_LOG_LEVEL;
-  if (value === undefined) return undefined;
-  const level = parseLogLevel(value);
-  return level.ok ? undefined : projectAnalysisError(level.error).message;
+const CLI_COMMAND_MODULES: CliCommandModules = {
+  setup: setupModule,
+  coreAnalysis: coreAnalysisModule,
+  reverseEngineering: reverseEngineeringModule,
+  cutter: cutterModule,
+  utility: utilityModule,
+  binaryDiagnostics: binaryDiagnosticsModule,
+  wasm: wasmModule,
+  apkSignature: apkSignatureModule,
+  capture: captureModule,
+  signal: signalModule,
+  evm: evmModule,
+  desktopApplication: desktopApplicationModule,
+  releaseExposure: releaseExposureModule,
+  go: goModule,
+  il2cpp: il2cppModule,
+  model: modelModule,
+  gpu: gpuModule,
+  rust: rustModule,
+  pythonPyc: pythonPycModule,
+  nugetNupkg: nugetNupkgModule,
+  erlang: erlangModule,
+  v8CodeCache: v8CodeCacheModule,
+  mavenGradleMetadata: mavenGradleMetadataModule,
+  sqlite: sqliteModule,
+  artifact: artifactModule,
+  managed: managedModule,
+  firmware: firmwareModule,
+  uefi: uefiModule,
+  android: androidModule,
+  pcap: pcapModule,
+  flutter: flutterModule,
+  frida: fridaModule,
+  apktool: apktoolModule,
+  jeb: jebModule,
+  adb: adbModule,
+  browser: browserModule,
+  webRuntime: webRuntimeModule,
+  webNetworkCapture: webNetworkCaptureModule,
+  advancedBrowser: advancedBrowserModule,
+  browserScenario: browserScenarioModule,
+  electron: electronModule,
+  javaScriptRuntimeObservation: javaScriptRuntimeObservationModule,
+  guidance: guidanceModule,
+  guidedWorkflow: guidedWorkflowModule,
+  analysisView: analysisViewModule,
+  evidence: evidenceModule,
+  environment: environmentModule,
+  process: processModule,
+  desktopCapture: desktopCaptureModule,
+  javaScriptRecovery: javaScriptRecoveryModule,
+  webScript: webScriptModule,
+  webModule: webModuleModule,
+  webSourceLocation: webSourceLocationModule,
+  application: applicationModule,
+  nativeFunctionMatching: nativeFunctionMatchingModule,
 };
 
 /**
- * Build the one-shot Incur CLI without starting Hopper at import time.
+ * Build the complete one-shot Incur CLI without starting Hopper at import time.
  * Analysis commands acquire and close their own sessions; bare `mcp` and
  * `--mcp` are intercepted by the executable dispatcher before this module loads.
+ * One-shot commands load only their own registrars; see `cli/cliLoader.ts`.
  */
 export const createCli = (
   selectedEnvironment: Readonly<
@@ -86,93 +140,23 @@ export const createCli = (
   > = process.env,
   resultOutput?: CliResultOutput,
   fridaInstrumentation?: FridaInstrumentationPort,
-): CliInstance => {
-  const environment = snapshotEnvironment(selectedEnvironment);
-  const analysis = createDirectAnalysis(environment);
-  // The executable reports an invalid level before every command except doctor.
-  // Doctor keeps going so its readiness report can name REA_LOG_LEVEL.
-  const level =
-    environment.REA_LOG_LEVEL === undefined
-      ? undefined
-      : parseLogLevel(environment.REA_LOG_LEVEL);
-  const logger = createLogger(
-    "cli",
-    level?.ok === true ? level.value : "silent",
-  );
-  const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
-    version: PRODUCT_IDENTITY.packageVersion,
-    description: "Reverse engineer anything from your terminal or agent.",
-    mcp: {
-      command: npxRegistrationCommand().join(" "),
-      instructions:
-        "Ask what software, artifact, protocol, or behavior the user wants to understand, then choose the available investigation capabilities that can produce evidence.",
-    },
-    sync: false,
-    update: {
-      // Incur's update:false only suppresses notices. Reject its explicit
-      // installer so ambiguous flags cannot bypass REA's verified workflow.
-      install: () => {
-        throw new Error(
-          "Use 'rea update' to update the identified installation. The '--update' alias accepts only global output flags.",
-        );
-      },
-    },
+): CliInstance =>
+  createCliShell({
+    selectedEnvironment,
+    resultOutput,
+    fridaInstrumentation,
+    createAnalysis: createDirectAnalysis,
+    registrations: CLI_REGISTRATION_ORDER.map((id) => ({
+      registration: CLI_COMMAND_REGISTRATIONS[id],
+      module: CLI_COMMAND_MODULES[id],
+    })),
   });
 
-  registerSetupCommands(cli, logger, environment);
-  registerReverseEngineeringCommands(cli, logger, environment);
-  registerCutterCommands(cli, logger, environment);
-  registerCoreAnalysisCommands(
-    cli,
-    logger,
-    analysis.runDirectAnalysis,
-    environment,
+// Direct execution needs a visible failure pointing to the dispatcher. Imports
+// only expose the registry. A normal exit lets piped stderr drain completely.
+if (isDirectEntrypoint(CURRENT_ENTRYPOINT_PATH, import.meta.url)) {
+  process.stderr.write(
+    "dist/cli.js is the command registry, not the CLI entry point. Run `rea` (scripts/rea.mjs) instead.\n",
   );
-  registerUtilityCommands(cli, logger, environment, analysis);
-  registerWasmCommands(cli, logger, environment);
-  registerCaptureCommands(cli, logger, environment);
-  registerSignalCommands(cli, logger, environment);
-  registerEvmCommands(cli, logger, environment);
-  registerDesktopApplicationCommands(cli, logger);
-  registerGoCommands(cli, logger);
-  registerIl2cppCommands(cli, logger);
-  registerModelCommands(cli, logger);
-  registerGpuCommands(cli, logger);
-  registerRustCommands(cli, logger);
-  registerSqliteCommands(cli, logger, environment);
-  registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
-  registerManagedCommands(cli, logger, analysis.runProviderAnalysis);
-  registerAndroidCommands(cli, logger, environment);
-  registerApktoolCommands(cli, logger, environment);
-  registerPcapCommands(cli, logger, environment);
-  registerFlutterCommands(cli, logger);
-  registerJebCommands(cli, logger, environment);
-  registerAdbCommands(cli, logger, environment);
-  registerFirmwareCommands(cli, logger, environment);
-  registerBinaryDiagnosticsCommands(cli, logger, environment);
-  registerAnalysisViewCommands(cli, logger);
-  registerNativeFunctionMatchingCommands(cli, logger);
-  registerFridaCommands(cli, logger, fridaInstrumentation);
-  registerEvidenceCommands(cli, logger);
-  registerEnvironmentCommands(cli, logger, environment);
-  registerProcessCommands(cli, logger, environment);
-  registerBrowserCommands(cli, logger);
-  registerWebScriptCommands(cli, logger);
-  registerWebModuleCommands(cli, logger, environment);
-  registerWebSourceLocationCommands(cli, logger, environment);
-  registerWebRuntimeCommands(cli, logger);
-  registerWebNetworkCaptureCommands(cli, logger, environment);
-  registerJavaScriptRecoveryCommands(cli, logger, environment);
-  registerAdvancedBrowserCommands(cli, logger);
-  registerBrowserScenarioCommands(cli, logger, environment);
-  registerElectronCommands(cli, logger, environment);
-  registerJavaScriptRuntimeObservationCommands(cli, logger, environment);
-  registerApplicationCommands(cli, logger);
-  presentOmittableDefaults(cli);
-  if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
-  const serveDeclared = excludeDeclaredSensitiveArguments(cli);
-  const serve = cli.serve.bind(cli);
-  cli.serve = (arguments_ = process.argv.slice(2), options) =>
-    serveDeclared(normalizeCliArguments(arguments_), options ?? {}, serve);
-  return cli;
-};
+  process.exitCode = 1;
+}

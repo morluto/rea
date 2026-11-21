@@ -1,8 +1,19 @@
+import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
+import { createTestProcessCaptureResourceScope } from "../../fixtures/processCaptureResourceScope.js";
 import { expect, it, vi } from "vitest";
 
-import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.js";
-import { prepareProcessCapture } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
-import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { AnalysisAccessDeniedError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import {
+  ProcessCaptureResourceScope,
+  prepareProcessCapture,
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import {
+  ProcessCaptureSnapshotFailure,
+  snapshotRoots,
+} from "../../../src/process/capture/FilesystemSnapshot.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { emptyProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
 
 const emptyFilesystemCoverage =
@@ -19,17 +30,21 @@ it("prepares ownership inspection before snapshotting or allocating a target run
     throw new Error("snapshot must not run after failed ownership preflight");
   };
 
-  await expect(
-    prepareProcessCapture(
-      parseProcessScenario({
-        executable: "/bin/true",
-        working_directory: "/tmp",
-      }),
-      undefined,
-      captureSnapshot,
-      { prepareOwnershipInspector, createTemporaryRoot, cleanup },
-    ),
-  ).rejects.toBe(failure);
+  const observed: unknown = await prepareProcessCapture(
+    processScenarioSchema.parse({
+      executable: "/bin/true",
+      working_directory: "/tmp",
+    }),
+    undefined,
+    captureSnapshot,
+    { prepareOwnershipInspector, createTemporaryRoot, cleanup },
+    createTestProcessCaptureResourceScope(),
+  ).catch((cause: unknown) => cause);
+  expect(observed).toBeInstanceOf(ProcessCaptureError);
+  if (!(observed instanceof ProcessCaptureError))
+    throw new Error("Expected typed capture preparation failure");
+  expect(observed.reason).toBe("capture_failed");
+  expect(observed.cause).toBe(failure);
 
   expect(prepareOwnershipInspector).toHaveBeenCalledOnce();
   expect(createTemporaryRoot).not.toHaveBeenCalled();
@@ -52,7 +67,7 @@ it("cleans the temporary root when cancellation arrives during identity capture"
 
   await expect(
     prepareProcessCapture(
-      parseProcessScenario({
+      processScenarioSchema.parse({
         executable: "/bin/true",
         working_directory: "/tmp",
       }),
@@ -64,8 +79,70 @@ it("cleans the temporary root when cancellation arrives during identity capture"
         coverage: emptyFilesystemCoverage,
       }),
       host,
+      createTestProcessCaptureResourceScope(),
     ),
   ).rejects.toThrow(/cancelled/u);
   expect(host.captureOwnershipBaseline).toHaveBeenCalledWith(controller.signal);
   expect(cleanup).toHaveBeenCalledWith(temporaryRoot);
 });
+
+it.each([false, true])(
+  "preserves denied snapshot admission through temporary-root cleanup failure=%s and retry",
+  async (denyCleanup) => {
+    const path = "/selected/denied/child";
+    const primary = new AnalysisAccessDeniedError(
+      "capture_process",
+      path,
+      "EACCES",
+    );
+    const snapshot = {
+      files: [],
+      truncated: false,
+      completeRoots: [],
+      coverage: emptyFilesystemCoverage,
+    };
+    const scope = new ProcessCaptureResourceScope();
+    let failing = denyCleanup;
+    const cleanup = vi.fn(async () => {
+      if (failing) throw new Error("controlled temporary-root removal denial");
+    });
+    const observed = await prepareProcessCapture(
+      processScenarioSchema.parse({
+        executable: "/bin/true",
+        filesystem_observation_paths: [path],
+      }),
+      undefined,
+      async () => {
+        throw new ProcessCaptureSnapshotFailure({ cause: primary, snapshot });
+      },
+      { createTemporaryRoot: async () => "/owned/temporary-root", cleanup },
+      scope,
+    ).catch((cause: unknown) => cause);
+    if (!(observed instanceof AnalysisError)) throw observed;
+    try {
+      expect(projectAnalysisError(observed).code).toBe(
+        denyCleanup ? "cleanup_incomplete" : "access_denied",
+      );
+      expect(observed.partialObservation).toMatchObject({
+        observations: {
+          filesystem_snapshots: {
+            before: { state: "available", value: snapshot },
+          },
+        },
+      });
+      if (denyCleanup) {
+        failing = false;
+        await scope.retryCleanup();
+      }
+      expect(observed.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(observed)).toMatchObject({
+        code: "access_denied",
+        details: { path, system_code: "EACCES", boundary: "filesystem-read" },
+      });
+      expect(cleanup).toHaveBeenCalledTimes(denyCleanup ? 2 : 1);
+    } finally {
+      failing = false;
+      await scope.close();
+    }
+  },
+);

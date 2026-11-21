@@ -2,7 +2,7 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createPeResourcesService } from "../../../src/composition/binaryDiagnostics.js";
-import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("PE resource stable filesystem boundary", () => {
@@ -37,6 +37,30 @@ describe("PE resource stable filesystem boundary", () => {
       });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "reports a native symlink-loop failure as invalid selected-path input",
+    async () => {
+      const root = await createTestTempDirectory("rea-pe-resource-path-loop-");
+      const loop = join(root, "loop");
+      await symlink(loop, loop, "dir");
+      const path = join(loop, "image.exe");
+      const result = await createPeResourcesService().inspect({ path });
+      if (result.ok) throw new Error("Expected symlink-loop failure");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        operation: "inspect_pe_resources",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: expect.stringContaining("ELOOP"),
+          },
+        ],
+        cause: { code: "ELOOP" },
+      });
+    },
+  );
 
   it("returns typed resource and cancellation failures", async () => {
     const root = await createTestTempDirectory("rea-pe-resource-budget-");

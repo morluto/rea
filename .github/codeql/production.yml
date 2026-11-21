@@ -1,0 +1,21 @@
+name: REA production code
+
+# Match the existing default-setup scan's local-input threat model.
+threat-models: [local]
+
+# Retain root traversal, including future production roots. Hidden directories
+# need their own root; use a directory so Python can share this configuration.
+paths:
+  - .
+  - docs/.vitepress
+
+# Keep the default query suite and all production roots, including bridge/,
+# install.sh, runtime scripts, release controllers, and GitHub Actions.
+# Exclude test inputs at extraction time so they cannot taint production callers.
+paths-ignore:
+  - tests
+  - scripts/fixtures
+  - "**/*.test.*"
+  - "**/*.fixture.*"
+  - "**/test_*.py"
+  - "**/*_test.py"

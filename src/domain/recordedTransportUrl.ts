@@ -17,15 +17,31 @@ export interface RecordedTransportUrl {
  */
 export const parseRecordedTransportUrl = (
   value: string,
-  options: { readonly includeQuery?: boolean } = {},
+  options: {
+    readonly includeQuery?: boolean;
+    /** Recorded request context for credential interpretation, never projected identity. */
+    readonly credentialBaseUrl?: string;
+  } = {},
 ): RecordedTransportUrl => {
   const prefix = /^[\x00-\x20]*(?:([A-Za-z][A-Za-z0-9+.-]*):)?\/\//u.exec(
     value,
   );
   const absolute = URL.parse(value);
+  const credentialBase =
+    options.credentialBaseUrl === undefined
+      ? null
+      : URL.parse(options.credentialBaseUrl);
+  if (credentialBase !== null) {
+    // Inherited request authentication is not part of a relative header's text.
+    credentialBase.username = "";
+    credentialBase.password = "";
+  }
   // Resolve references only to recognize credentials (including WHATWG's
   // backslash/control-character spellings), never to supply a projected origin.
-  const parsed = absolute ?? URL.parse(value, "https://rea.invalid");
+  const parsed =
+    credentialBase === null
+      ? (absolute ?? URL.parse(value, "https://rea.invalid"))
+      : URL.parse(value, credentialBase);
   const hasCredentials =
     parsed !== null && (parsed.username !== "" || parsed.password !== "");
   const origin =
@@ -122,7 +138,7 @@ function* queryFields(
 /** Scan one field at a time; selection avoids decoding unrelated values. */
 export function* iterateUrlQueryParameters(
   query: string,
-  selected?: ReadonlyMap<string, string>,
+  selected?: ReadonlyMap<string, unknown> | ReadonlySet<string>,
 ): IterableIterator<[string, string]> {
   for (const [start, nameEnd, end] of queryFields(query)) {
     const name = formComponent(query.slice(start, nameEnd));
@@ -133,6 +149,18 @@ export function* iterateUrlQueryParameters(
       ];
   }
 }
+
+/** A single-valued form query: identical decoded repeats agree; conflicting values remain unknown. */
+export const singleQueryValues = (
+  query: string | undefined,
+): ReadonlyMap<string, string> | undefined => {
+  const values = new Map<string, string>();
+  for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
+    if (values.has(name) && values.get(name) !== value) return undefined;
+    values.set(name, value);
+  }
+  return values;
+};
 
 /** WHATWG form-query names, preserving order, repeats and empty names without decoding values. */
 export function* parseUrlQueryParameterNames(
@@ -165,4 +193,23 @@ export const recordedPathSegments = (
     index += 1;
   }
   return result;
+};
+
+/** Exclude only transport userinfo while retaining the remaining recorded URL spelling. */
+export const redactRecordedTransportUrl = (
+  value: string | null,
+): {
+  readonly url: string | null;
+  readonly url_credentials_redacted: boolean;
+} => {
+  if (value === null) return { url: null, url_credentials_redacted: false };
+  const { credentials } = parseRecordedTransportUrl(value);
+  if (credentials === null)
+    return { url: value, url_credentials_redacted: false };
+  if (credentials === "ambiguous")
+    return { url: null, url_credentials_redacted: true };
+  return {
+    url: value.slice(0, credentials.start) + value.slice(credentials.end),
+    url_credentials_redacted: true,
+  };
 };

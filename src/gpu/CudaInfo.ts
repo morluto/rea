@@ -1,45 +1,52 @@
 import {
   BinaryReader,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { GPU_OBJECT_BYTES, GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
+import { Budget } from "../domain/budget.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
 /** Shared by every metadata record, symbol and temporary index in one CUDA ELF. */
 export class CudaMetadataBudget {
-  #visits = 0;
-  #readBytes = 0;
-  #indexBytes = 0;
+  readonly #visits = new Budget(262144);
+  readonly #readBytes = new Budget(GPU_OBJECT_BYTES);
+  readonly #indexBytes = new Budget(GPU_REPORT_BYTES);
   visit(): void {
-    if (++this.#visits > 262144)
-      throw new BinaryResourceFailure(
-        "structure",
-        262144,
-        "CUDA metadata exceeds 262144 aggregate record/symbol visits",
-      );
+    this.#visits.charge(
+      1,
+      () =>
+        new BinaryResourceFailure(
+          "structure",
+          262144,
+          "CUDA metadata exceeds 262144 aggregate record/symbol visits",
+        ),
+    );
   }
   read(size: number): void {
-    if (size > GPU_OBJECT_BYTES - this.#readBytes)
-      throw new BinaryResourceFailure(
-        "structure",
-        GPU_OBJECT_BYTES,
-        "CUDA metadata exceeds 128 MiB aggregate section reads",
-      );
-    this.#readBytes += size;
+    this.#readBytes.charge(
+      size,
+      () =>
+        new BinaryResourceFailure(
+          "structure",
+          GPU_OBJECT_BYTES,
+          "CUDA metadata exceeds 128 MiB aggregate section reads",
+        ),
+    );
   }
   retain(value: JsonValue): void {
-    const size = jsonValueByteLength(value, GPU_REPORT_BYTES) + 2;
-    if (size > GPU_REPORT_BYTES - this.#indexBytes)
-      throw new BinaryResourceFailure(
-        "structure",
-        GPU_REPORT_BYTES,
-        "CUDA metadata exceeds the 16 MiB temporary index budget",
-      );
-    this.#indexBytes += size;
+    this.#indexBytes.charge(
+      jsonValueByteLength(value, GPU_REPORT_BYTES) + 2,
+      () =>
+        new BinaryResourceFailure(
+          "structure",
+          GPU_REPORT_BYTES,
+          "CUDA metadata exceeds the 16 MiB temporary index budget",
+        ),
+    );
   }
 }
-export interface CudaInfoRecord {
+interface CudaInfoRecord {
   readonly format: number;
   readonly attribute: number;
   readonly value: number;
@@ -53,7 +60,7 @@ export function* readCudaInfo(
   little: boolean,
   budget = new CudaMetadataBudget(),
 ): Generator<CudaInfoRecord> {
-  const reader = new BinaryReader(bytes, little);
+  const reader = new BinaryReader(bytes, little, "cuda-nv-info");
   for (let offset = 0; offset < bytes.length;) {
     budget.visit();
     const head = reader.range(offset, 4, "CUDA nv.info record");
@@ -89,18 +96,22 @@ export const readCudaParameters = (
   for (const record of readCudaInfo(bytes, little, budget)) {
     if (record.format === 3 && record.attribute === 0x19)
       byteDeclarations.add(record.value);
-    if (record.format !== 4 || record.attribute !== 0x17) continue;
+    if (
+      record.format !== 4 ||
+      (record.attribute !== 0x17 && record.attribute !== 0x45)
+    )
+      continue;
     if (record.data.length !== 12) {
       complete = false;
       continue;
     }
-    const r = new BinaryReader(record.data, little);
+    const r = new BinaryReader(record.data, little, "cuda-nv-info");
     if (r.u32(0) !== 0) complete = false;
     const parameter = {
       ordinal: r.u16(4),
       name: null,
       offset: r.u16(6),
-      size: r.u32(8) >>> 18,
+      size: record.attribute === 0x45 ? r.u32(8) : r.u32(8) >>> 18,
       type: null,
       hidden: null,
     };

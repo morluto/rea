@@ -1,23 +1,38 @@
 import { z } from "zod";
 import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
-import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../jsonValue.js";
 import { localPathStringSchema } from "../localPath.js";
+import { plistUidValue } from "./plistUid.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+} from "../parseFailure.js";
 import { projectPlistValue } from "./plistValue.js";
 
 /**
  * The selected file is intact but is another kind of file, so another tool
  * applies. A malformed NSKeyedArchiver archive is not this error.
  */
-export class KeyedArchiveKindError extends TypeError {
+export class KeyedArchiveKindError extends ParseFailureError<"unsupported"> {
   override readonly name = "KeyedArchiveKindError";
 
   constructor(
     message: string,
     /** What the selected file is instead. */
-    readonly kind: "nib-archive" | "property-list",
+    readonly fileKind: "nib-archive" | "property-list",
   ) {
-    super(message);
+    super({
+      kind: "unsupported",
+      format: "keyed-archive",
+      detail: message,
+      undecodedContent: false,
+    });
   }
 }
 
@@ -25,8 +40,8 @@ export class KeyedArchiveKindError extends TypeError {
 export const keyedArchiveInputSchema = z.strictObject({
   path: localPathStringSchema.default("."),
   root: z.string().optional(),
-  offset: z.int().min(0).default(0),
-  limit: z.int().min(1).max(20_000).default(20_000),
+  offset: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).max(20_000).default(20_000),
 });
 const linkSchema = z.strictObject({
   source: z.int().nonnegative().nullable(),
@@ -42,7 +57,7 @@ export const keyedArchiveResultSchema = bundleResourceBoundResultSchema(
     archive_path: z.string(),
     archive_sha256: z.string(),
     archive_format: z.enum(["binary-plist", "xml-plist"]),
-    roots: z.record(z.string(), jsonValueSchema),
+    roots: jsonObjectSchema,
     objects: z.array(
       z.strictObject({
         id: z.int().nonnegative(),
@@ -85,20 +100,13 @@ const record = (
   !wrappedScalars.has(value)
     ? value
     : undefined;
-/**
- * A UID decodes as a one-key `UID` (binary) or `CF$UID` (XML) dictionary with
- * a numeric value. Any other value means an ordinary dictionary, such as a
- * `$top` that holds a root encoded under the key `UID`.
- */
+/** Only producer-marked binary UIDs or the XML UID convention form references. */
 const uid = (
   value: JsonValue | undefined,
   wrappedScalars: WeakSet<object>,
 ): number | undefined => {
   const object = record(value, wrappedScalars);
-  if (object === undefined || Object.keys(object).length !== 1)
-    return undefined;
-  const marker = Object.hasOwn(object, "UID") ? object.UID : object["CF$UID"];
-  return typeof marker === "number" ? marker : undefined;
+  return object === undefined ? undefined : plistUidValue(object);
 };
 
 const archiverMismatch = (
@@ -110,6 +118,12 @@ const archiverMismatch = (
     ? `its $archiver is ${JSON.stringify(archive.$archiver)}`
     : "its $archiver is not a string";
 };
+
+const KEYED_ARCHIVE_FORMAT = "keyed-archive";
+/** Decode allowances for one archive; this release has no runtime override. */
+const MAX_OBJECT_TABLE_ENTRIES = 200_000;
+const MAX_VALUES_PER_SCAN = 200_000;
+const MAX_REFERENCE_EDGES = 200_000;
 
 /** Interpret decoded Foundation values without instantiating archive classes. */
 export const projectKeyedArchive = (
@@ -129,13 +143,30 @@ export const projectKeyedArchive = (
       "property-list",
     );
   if (!Array.isArray(archive.$objects))
-    throw new TypeError("Expected NSKeyedArchiver with an $objects array");
+    throw malformedInput(
+      KEYED_ARCHIVE_FORMAT,
+      "Expected NSKeyedArchiver with an $objects array",
+      { field: "$objects" },
+    );
   const table = archive.$objects;
-  if (table.length > 200_000)
-    throw new RangeError("Archive exceeds 200000 object-table entries");
+  if (table.length > MAX_OBJECT_TABLE_ENTRIES)
+    throw decodeLimit(
+      KEYED_ARCHIVE_FORMAT,
+      `Archive exceeds ${String(MAX_OBJECT_TABLE_ENTRIES)} object-table entries`,
+      {
+        name: "keyed-archive-object-table-entries",
+        maximum: MAX_OBJECT_TABLE_ENTRIES,
+      },
+    );
   const top = record(archive.$top, wrappedScalars);
   if (top === undefined || Object.keys(top).length === 0)
-    throw new TypeError("Keyed archive has no $top roots");
+    throw malformedInput(
+      KEYED_ARCHIVE_FORMAT,
+      "Keyed archive has no $top roots",
+      {
+        field: "$top",
+      },
+    );
   if (selection.root !== undefined && !Object.hasOwn(top, selection.root))
     throw new AnalysisInputError("inspect_keyed_archive", undefined, [
       {
@@ -151,6 +182,9 @@ export const projectKeyedArchive = (
       : { [selection.root]: top[selection.root] ?? null };
   const references: z.infer<typeof linkSchema>[] = [];
   type Pending = { value: JsonValue; path: (string | number)[] };
+  // Nesting needs no bound here: projectPlistValue above refuses the whole
+  // archive past MAX_PLIST_DEPTH, and every scanned value sits at least two
+  // levels below the archive root ($top or $objects, then its key or index).
   // `initial` is popped from the end, so callers list it in reverse order.
   const scan = (source: number | null, initial: Pending[]) => {
     const pending = initial;
@@ -158,10 +192,16 @@ export const projectKeyedArchive = (
     while (pending.length > 0) {
       const item = pending.pop();
       if (item === undefined) break;
-      if (++visited > 200_000 || item.path.length > 128)
-        throw new RangeError(
-          "Archive exceeds 200000 values per object or 128 nesting levels",
+      if (++visited > MAX_VALUES_PER_SCAN)
+        throw decodeLimit(
+          KEYED_ARCHIVE_FORMAT,
+          `Archive exceeds ${String(MAX_VALUES_PER_SCAN)} values per object`,
+          {
+            name: "keyed-archive-values-per-object",
+            maximum: MAX_VALUES_PER_SCAN,
+          },
         );
+
       const target = uid(item.value, wrappedScalars);
       if (target !== undefined) {
         const index =
@@ -195,8 +235,15 @@ export const projectKeyedArchive = (
               pending.push({ value: child, path: [...item.path, key] });
           }
       }
-      if (references.length > 200_000)
-        throw new RangeError("Archive exceeds 200000 reference edges");
+      if (references.length > MAX_REFERENCE_EDGES)
+        throw decodeLimit(
+          KEYED_ARCHIVE_FORMAT,
+          `Archive exceeds ${String(MAX_REFERENCE_EDGES)} reference edges`,
+          {
+            name: "keyed-archive-reference-edges",
+            maximum: MAX_REFERENCE_EDGES,
+          },
+        );
     }
   };
   // Root names belong to the `$top` map, not to the encoded value. Scanning

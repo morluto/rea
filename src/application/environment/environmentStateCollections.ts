@@ -1,9 +1,9 @@
-import { collectionPathOf } from "../../domain/analysisView/environmentStateRules.js";
 import {
-  callSegments,
-  collectionMatch,
-  type StateServing,
-} from "./environmentStateAnswer.js";
+  collectionPathOf,
+  selectedCollection,
+} from "../../domain/analysisView/environmentStateRules.js";
+import type { StateServing } from "./environmentStateAnswer.js";
+import { callSegments } from "./environmentStateCallLines.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import type { EnvironmentManifestTool } from "./environmentSource.js";
 
@@ -31,20 +31,13 @@ export const createdCollection = (
   type: string,
 ): string | undefined => {
   const segments = callSegments(tool, args);
-  if (segments === undefined || segments.some(({ text }) => text.length === 0))
+  // A supplied path argument may not be empty; an empty literal segment, from a
+  // repeated separator in the route, is part of the collection's spelling.
+  if (
+    segments === undefined ||
+    segments.some(({ text, supplied }) => supplied && text.length === 0)
+  )
     return undefined;
   // The spelling the call supplies verbatim wins, as item calls choose their entity, then the first known: held ones lead.
-  let held: string | undefined;
-  let verbatim = -1;
-  for (const collection of creatableCollectionsOf(serving, type)) {
-    const matched = collectionMatch(collection, segments);
-    if (matched !== undefined && matched > verbatim) {
-      held = collection;
-      verbatim = matched;
-    }
-  }
-  return (
-    held ??
-    `/${segments.map(({ text, supplied }) => (supplied ? encodeURIComponent(text) : text)).join("/")}`
-  );
+  return selectedCollection(segments, creatableCollectionsOf(serving, type));
 };

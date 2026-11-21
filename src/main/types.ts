@@ -1,7 +1,8 @@
+import type { Readable } from "node:stream";
 import type { McpServerFactory } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
-import type { OptionalProviderLoadResult } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadResult } from "../ports/OptionalObservationProviders.js";
 
 /** Teardown handle every MCP transport returns to the runtime. */
 export interface McpServerHandle {
@@ -14,6 +15,7 @@ export interface McpServerHandle {
 export interface McpServeOptions {
   readonly onerror?: (error: Error) => void;
   readonly logger?: Logger;
+  readonly signal?: AbortSignal;
 }
 
 /** Start one transport around the server factory; a listener binds asynchronously. */
@@ -27,6 +29,8 @@ export interface RuntimeDependencies {
   readonly transport?: "stdio" | "http";
   readonly captureShutdown?: (shutdown: () => Promise<void>) => void;
   readonly env: NodeJS.ProcessEnv;
+  /** Stdio startup owns this raw input until the SDK starts; HTTP never reads it. */
+  readonly stdin?: Readable | undefined;
   readonly serve: McpServe;
   readonly writeStderr: (text: string) => void;
   readonly setExitCode: (code: number) => void;

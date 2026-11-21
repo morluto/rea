@@ -6,13 +6,14 @@ import { buildBinary } from "plist";
 import { describe, expect, it } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
-import { interfaceBuilderDecodeBudgetFailure } from "./InterfaceBuilderDecodeBudget.js";
-import { preflightPropertyListDecode } from "./PropertyListDecodeBudget.js";
-import { unknownDateLimitation } from "../../domain/apple/plistValue.js";
+import { preflightPropertyListDecode } from "../../domain/apple/propertyListDecodeBudget.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { scanBinaryPlistScalars } from "./PlistScalars.js";
-import { binaryPlistWithOverlappingDateAndData } from "../../../tests/fixtures/binaryPlistObjectTable.js";
+import {
+  readBinaryPlistObjectOffset,
+  readBinaryPlistObjectTableLayout,
+  writeBinaryPlistObjectOffset,
+} from "../../../tests/fixtures/binaryPlistObjectTable.js";
 import { embedSubmillisecondDateInWideIntegerPayload } from "../../../tests/fixtures/binaryPlistScalarAlias.js";
 
 const example = "<!DOCTYPE document [ harmless example ]>";
@@ -78,10 +79,9 @@ describe("inert XML declaration examples in Interface Builder archives", () => {
     ({ xml }) => {
       expect(() => parseXmlPropertyList(xml)).not.toThrow();
       expect(
-        preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024),
-      ).toMatchObject({
-        binaryPrototypeKeyObserved: false,
-      });
+        preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024)
+          .estimatedBytes,
+      ).toBeGreaterThan(0);
     },
   );
 
@@ -127,12 +127,58 @@ describe("inert XML declaration examples in Interface Builder archives", () => {
         undefined,
         {
           budget: "the aggregate Interface Builder decode budget",
-          fail: interfaceBuilderDecodeBudgetFailure,
         },
       ),
     ).toThrow(
       "XML plist internal entity expansion exceeds the aggregate Interface Builder decode budget",
     );
+  });
+
+  it.each([" []", " [ ]", " [\n\t]"])(
+    "admits an empty DOCTYPE internal subset%j, which declares nothing to expand",
+    async (subset) => {
+      const xml = archive("Build").replace(
+        "<plist",
+        `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"${subset}><plist`,
+      );
+      expect(() => parseXmlPropertyList(xml)).not.toThrow();
+      expect(() =>
+        preflightPropertyListDecode(
+          Buffer.from(xml),
+          16 * 1024 * 1024,
+          undefined,
+          {
+            budget: "the aggregate Interface Builder decode budget",
+          },
+        ),
+      ).not.toThrow();
+
+      const root = await createTestTempDirectory("rea-ib-empty-subset-");
+      const bundle = join(root, "Example.app");
+      await mkdir(bundle);
+      await writeFile(join(bundle, "Panel.nib"), Buffer.from(xml));
+      const result = await analyzeInterfaceBuilderBundle({
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+      });
+      expect(result.graph.nodes.map(({ name }) => name)).toContain("Build");
+      expect(result.graph.coverage).toContainEqual(
+        expect.objectContaining({
+          facet: "archive_decode",
+          status: "complete",
+        }),
+      );
+    },
+  );
+
+  it("still refuses a non-empty subset that follows whitespace", () => {
+    const xml = archive("&harmless;").replace(
+      "<plist",
+      '<!DOCTYPE plist [ <!ENTITY harmless "value"> ]><plist',
+    );
+    expect(() =>
+      preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024),
+    ).toThrow(/internal entity expansion/u);
   });
 
   it("does not mistake a bracket in a quoted external identifier for an internal subset", () => {
@@ -154,8 +200,9 @@ describe("inert XML declaration examples in Interface Builder archives", () => {
     const xml = archive("Build").replace("<plist", `${declaration}<plist`);
     expect(() => parseXmlPropertyList(xml)).not.toThrow();
     expect(
-      preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024),
-    ).toMatchObject({ binaryPrototypeKeyObserved: false });
+      preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024)
+        .estimatedBytes,
+    ).toBeGreaterThan(0);
   });
 });
 
@@ -163,7 +210,50 @@ it("retains explicit date uncertainty for an overlapping binary plist object", a
   const root = await createTestTempDirectory("rea-ib-binary-date-overlap-");
   const bundle = join(root, "Example.app");
   await mkdir(bundle);
-  const bytes = binaryPlistWithOverlappingDateAndData();
+  const bytes = Buffer.from(
+    buildBinary({
+      "com.apple.ibtool.document.objects": {
+        button: {
+          customClass: "UIButton",
+          date: new Date(0),
+          data: Buffer.alloc(0),
+        },
+      },
+      "com.apple.ibtool.document.connections": {},
+      "com.apple.ibtool.document.hierarchy": [],
+      "com.apple.ibtool.document.classes": {},
+    }),
+  );
+  // The fixture date is 978307200 seconds before the 2001 plist epoch.
+  const encodedDate = Buffer.alloc(9);
+  encodedDate[0] = 0x33;
+  encodedDate.writeDoubleBE(-978307200, 1);
+  const dateOffset = bytes.indexOf(encodedDate);
+  expect(dateOffset).toBeGreaterThanOrEqual(0);
+  expect(bytes.indexOf(encodedDate, dateOffset + 1)).toBe(-1);
+  const table = readBinaryPlistObjectTableLayout(bytes);
+  let dataObjectId: number | undefined;
+  for (let objectId = 0; objectId < table.objectCount; objectId += 1) {
+    const offset = readBinaryPlistObjectOffset(bytes, table, objectId);
+    if (bytes[offset] === 0x40) dataObjectId = objectId;
+  }
+  if (dataObjectId === undefined)
+    throw new Error("fixture lost its empty data");
+  // Keep both objects reachable through a recognized archive while sharing source bytes.
+  bytes.writeDoubleBE(0.0005, dateOffset + 1);
+  bytes[dateOffset + 2] = 0x40;
+  writeBinaryPlistObjectOffset(bytes, table, dataObjectId, dateOffset + 2);
+  expect(readBinaryPlistObjectOffset(bytes, table, dataObjectId)).toBe(
+    dateOffset + 2,
+  );
+  expect(
+    preflightPropertyListDecode(bytes, 1024 * 1024, undefined, {
+      numberProjection: true,
+    }),
+  ).toMatchObject({
+    datePrecisionOverlapCount: 1,
+    reachableDateOffsets: [dateOffset],
+  });
   await writeFile(join(bundle, "Panel.nib"), bytes);
 
   const result = await analyzeInterfaceBuilderBundle({
@@ -171,9 +261,23 @@ it("retains explicit date uncertainty for an overlapping binary plist object", a
     targetSha256: "a".repeat(64),
   });
 
+  expect(result.documents).toContainEqual(
+    expect.objectContaining({
+      relative_path: "Panel.nib",
+      archive_sha256: createHash("sha256").update(bytes).digest("hex"),
+    }),
+  );
+  expect(
+    result.graph.nodes.find(
+      ({ attributes }) => attributes.interface_builder_object_id === "button",
+    )?.attributes,
+  ).toMatchObject({
+    date: { $plist_type: "date", iso8601: null },
+    data: { $plist_type: "data", base64: "" },
+  });
   expect(result.limitations).toContainEqual(
-    expect.stringContaining(
-      "Panel.nib: 1 date value(s) are reported with unknown timestamps because their sub-millisecond source records overlap",
+    expect.stringMatching(
+      /Panel\.nib: 1 date.*unknown timestamps.*sub.millisecond.*overlap/iu,
     ),
   );
 });
@@ -245,13 +349,37 @@ describe("binary Interface Builder plist dates", () => {
     );
   });
 
+  it("reports a reference cycle as an invalid archive, not a budget omission", async () => {
+    // One array (offset 8) whose only reference is itself; 1-byte offsets
+    // and references, offset table at 10.
+    const trailer = Buffer.alloc(32);
+    trailer[6] = 1;
+    trailer[7] = 1;
+    trailer.writeBigUInt64BE(1n, 8);
+    trailer.writeBigUInt64BE(10n, 24);
+    const cycle = Buffer.concat([
+      Buffer.from("bplist00"),
+      Buffer.from([0xa1, 0x00, 0x08]),
+      trailer,
+    ]);
+    const result = await nib(cycle, "cycle");
+    expect(result.limitations.join("\n")).toContain(
+      "Panel.nib: binary plist object references form a cycle",
+    );
+    expect(JSON.stringify(result)).not.toContain(
+      "aggregate_decode_budget_exhausted",
+    );
+  });
+
   it("counts a sub-millisecond date as unknown and keeps the canonical control known", async () => {
     const submillisecond = Buffer.from(control);
     const offset = submillisecond.indexOf(marker);
     submillisecond.writeDoubleBE(0.1005, offset + 1);
     const unknown = await nib(submillisecond, "subms");
-    expect(unknown.limitations).toContain(
-      `Panel.nib: ${unknownDateLimitation(1)}`,
+    expect(unknown.limitations).toContainEqual(
+      expect.stringMatching(
+        /Panel\.nib.*\b1 date value.*decoder could not represent.*timestamps/iu,
+      ),
     );
     expect(JSON.stringify(unknown)).not.toContain("2001-01-01T00:00:00.100Z");
 

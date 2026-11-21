@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import {
   freezeJsonSnapshot,
@@ -114,5 +115,109 @@ it("retains schema normalization when an owned source contains a hidden reported
   expect(parsed.data).toEqual(webNetworkCaptureSchema.parse(sealed));
   expect(
     Object.hasOwn(parsed.data.container.reported as object, "hidden"),
+  ).toBe(false);
+});
+
+it.each([
+  {
+    name: "malformed base64",
+    content_base64: "!!!!",
+    bytes: 0,
+    sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  },
+  {
+    name: "noncanonical pad bits",
+    content_base64: "AR==",
+    bytes: 1,
+    sha256: createHash("sha256")
+      .update(Buffer.from([1]))
+      .digest("hex"),
+  },
+  {
+    name: "mismatched byte count",
+    content_base64: "YQ==",
+    bytes: 2,
+    sha256: "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+  },
+  {
+    name: "mismatched digest",
+    content_base64: "YQ==",
+    bytes: 1,
+    sha256: "0".repeat(64),
+  },
+])(
+  "refuses $name in retained binary facts before projection",
+  ({ name: _name, ...binary }) => {
+    const report = capture();
+    const record = {
+      ...report.records[0]!,
+      binary_fields: [
+        {
+          pointer: "/response/content/text",
+          representation: "har-base64-content",
+          state: "retained",
+          ...binary,
+        },
+      ],
+    };
+    const parsed = webNetworkCaptureSchema.safeParse({
+      ...report,
+      records: [record],
+    });
+    expect(parsed.success).toBe(false);
+  },
+);
+
+it.each([
+  { name: "empty", bytes: Buffer.alloc(0) },
+  { name: "Unicode", bytes: Buffer.from("雪�") },
+  { name: "multiple windows", bytes: Buffer.alloc(100_001, 0xff) },
+])(
+  "retains $name canonical binary identity across bounded digest windows",
+  ({ bytes }) => {
+    const report = capture();
+    const source = {
+      ...report,
+      records: [
+        {
+          ...report.records[0]!,
+          binary_fields: [
+            {
+              pointer: "/body",
+              representation: "producer-bytes",
+              state: "retained",
+              content_base64: bytes.toString("base64"),
+              bytes: bytes.length,
+              sha256: createHash("sha256").update(bytes).digest("hex"),
+            },
+          ],
+        },
+      ],
+    };
+    const parsed = webNetworkCaptureSchema.parse(source);
+    expect(parsed).toEqual(source);
+  },
+);
+
+it("refuses multiple binary declarations for one source coordinate", () => {
+  const report = capture();
+  const binary = (text: string) => ({
+    pointer: "/response/content/text",
+    representation: "har-base64-content",
+    state: "retained",
+    content_base64: Buffer.from(text).toString("base64"),
+    bytes: Buffer.byteLength(text),
+    sha256: createHash("sha256").update(text).digest("hex"),
+  });
+  expect(
+    webNetworkCaptureSchema.safeParse({
+      ...report,
+      records: [
+        {
+          ...report.records[0]!,
+          binary_fields: [binary("first"), binary("second")],
+        },
+      ],
+    }).success,
   ).toBe(false);
 });

@@ -8,6 +8,16 @@ import { z } from "zod";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import type { FixedAllowanceKind } from "../../../src/domain/fixedAllowanceRemediation.js";
+
+/** Guidance for a 64 MiB plist ceiling, from the refusal's owning formatter. */
+const fixedCeilingRemediation = (name: string, kind: FixedAllowanceKind) =>
+  analysisRefusalRemediation({
+    kind: "fixed_ceiling",
+    operation: "inspect_plist",
+    ceiling: { name, kind, limit: 64 * 1024 * 1024, unit: "bytes" },
+  });
 
 const environment = {
   REA_LOG_LEVEL: "silent",
@@ -68,7 +78,7 @@ describe.skipIf(process.platform !== "darwin")(
             operation: "inspect_plist",
             issues: [
               {
-                path: ["path"],
+                path: ["relativePath"],
                 reason: "invalid_value",
                 message: expect.stringContaining(
                   `Cannot inspect ${join(app, selected)}: ${reason}`,
@@ -126,14 +136,17 @@ describe.skipIf(process.platform !== "darwin")(
         expect(result.exitCode).toBe(1);
         expect(result.json).toMatchObject({
           code: "capability_unavailable",
-          message: expect.stringContaining("(CLI: --relative-path)"),
+          message: expect.stringMatching(
+            /select another plist.*with the path input\.$/iu,
+          ),
           remediation: {
-            action: expect.stringContaining(
-              "Select another plist in the target with the path input (CLI: --relative-path).",
-            ),
+            action: expect.stringMatching(/select another plist.*path input/iu),
           },
           details: {
             operation: "inspect_plist",
+            // The message names the contract field; the CLI renders its flag.
+            related_parameters: ["path"],
+            related_cli_flags: { path: "--relative-path" },
             reason: expect.stringContaining(
               `no readable default plist at ${join(directory, "Contents/Info.plist")}: no file exists there.`,
             ),
@@ -148,12 +161,18 @@ describe.skipIf(process.platform !== "darwin")(
   "native plist CLI decode diagnostics",
   () => {
     cliTest.for([
-      "not a property list",
-      "<plist><dict><key>value</key><integer> 42 </integer></dict></plist>",
-      "<plist><dict><key>value</key><true>x</true></dict></plist>",
-    ])(
+      ["not a property list", "Property List error:"],
+      [
+        "<plist><dict><key>value</key><integer> 42 </integer></dict></plist>",
+        "Unknown character",
+      ],
+      [
+        "<plist><dict><key>value</key><true>x</true></dict></plist>",
+        "Encountered non-empty <true>",
+      ],
+    ] as const)(
       "preserves native decode diagnostics for %s",
-      async (source, { cli }) => {
+      async ([source, diagnostic], { cli }) => {
         const app = await fixtureApp();
         const malformed = join(app, "Contents/Broken.plist");
         await writeFile(malformed, source);
@@ -171,15 +190,11 @@ describe.skipIf(process.platform !== "darwin")(
         expect(selected.json).toMatchObject({
           code: "invalid_request",
           details: {
-            issues: [
-              { message: expect.stringContaining("Property List error:") },
-            ],
+            issues: [{ message: expect.stringContaining(diagnostic) }],
             captured_output: { exit_code: 1 },
           },
         });
-        expect(capturedDiagnostic(selected.json)).toContain(
-          "Property List error:",
-        );
+        expect(capturedDiagnostic(selected.json)).toContain(diagnostic);
         const directory = await createTestTempDirectory(
           "rea-plist-default-diagnostic-",
         );
@@ -196,13 +211,11 @@ describe.skipIf(process.platform !== "darwin")(
         expect(fallback.json).toMatchObject({
           code: "capability_unavailable",
           details: {
-            reason: expect.stringContaining("Property List error:"),
+            reason: expect.stringContaining(diagnostic),
             captured_output: { exit_code: 1 },
           },
         });
-        expect(capturedDiagnostic(fallback.json)).toContain(
-          "Property List error:",
-        );
+        expect(capturedDiagnostic(fallback.json)).toContain(diagnostic);
         expect(await readFile(malformed, "utf8")).toBe(source);
         expect(await readFile(defaultPlist, "utf8")).toBe(source);
       },
@@ -214,36 +227,168 @@ describe.skipIf(process.platform !== "darwin")(
   "native plist CLI direct target selection",
   () => {
     cliTest.for([
-      "<plist><dict><key>value</key><integer> 42 </integer></dict></plist>",
-      "<plist><dict><key>value</key><true>x</true></dict></plist>",
-    ])(
-      "classifies the selected malformed plist as input: %s",
-      async (source, { cli }) => {
+      [
+        "<plist><dict><key>value</key><integer> 42 </integer></dict></plist>",
+        "Unknown character",
+      ],
+      [
+        "<plist><dict><key>value</key><true>x</true></dict></plist>",
+        "Encountered non-empty <true>",
+      ],
+      [
+        "<plist><dict><key>__proto__</key><true>x</true></dict></plist>",
+        "Encountered non-empty <true>",
+      ],
+      ["<plist><null/></plist>", "Encountered unknown tag null"],
+      ["<plist/>", "Encountered empty plist tag"],
+      [
+        "<plist><integer>1</integer><integer>2</integer></plist>",
+        "plist can only include one object",
+      ],
+    ] as const)(
+      "names the input that selected the malformed plist: %s",
+      async ([source, diagnostic], { cli }) => {
         const root = await createTestTempDirectory("rea-plist-target-input-");
         const path = join(root, "chosen.plist");
         await writeFile(path, source);
-        for (const args of [[], ["--relative-path", path]]) {
-          const result = await cli.run({
-            arguments: ["inspect-plist", path, ...args, "--json"],
-            environment,
-          });
-          expect(result.exitCode).toBe(1);
-          expect(result.json).toMatchObject({
-            code: "invalid_request",
-            details: {
-              issues: [
-                {
-                  path: ["path"],
-                  message: expect.stringContaining("Property List error:"),
-                },
-              ],
-              captured_output: { exit_code: 1 },
+        // The target alone selects the plist, so the target is what failed.
+        const direct = await cli.run({
+          arguments: ["inspect-plist", path, "--json"],
+          environment,
+        });
+        expect(direct.exitCode).toBe(1);
+        expect(direct.json).toMatchObject({
+          code: "target_unavailable",
+          details: {
+            path,
+            reason: expect.stringContaining(diagnostic),
+            captured_output: { exit_code: 1 },
+          },
+        });
+        expect(direct.json).not.toHaveProperty("details.issues");
+        expect(capturedDiagnostic(direct.json)).toContain(diagnostic);
+        const selected = await cli.run({
+          arguments: ["inspect-plist", path, "--relative-path", path, "--json"],
+          environment,
+        });
+        expect(selected.exitCode).toBe(1);
+        expect(selected.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["relativePath"],
+                message: expect.stringContaining(diagnostic),
+              },
+            ],
+            captured_output: { exit_code: 1 },
+          },
+        });
+        expect(capturedDiagnostic(selected.json)).toContain(diagnostic);
+        expect(await readFile(path, "utf8")).toBe(source);
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform !== "darwin")(
+  "native plist CLI source admission",
+  () => {
+    cliTest(
+      "accepts native nested plist syntax without imposing an XML grammar allowlist",
+      async ({ cli }) => {
+        const root = await createTestTempDirectory(
+          "rea-plist-nested-admission-",
+        );
+        const path = join(root, "chosen.plist");
+        const source = "<plist><plist><integer>1</integer></plist></plist>";
+        await writeFile(path, source);
+        const result = await cli.run({
+          arguments: ["inspect-plist", path, "--json"],
+          environment,
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(result.json).toMatchObject({
+          normalized_result: {
+            source_path: path,
+            provenance: expect.arrayContaining([
+              expect.objectContaining({
+                tool: "plutil",
+                command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+              }),
+            ]),
+          },
+        });
+        expect(await readFile(path, "utf8")).toBe(source);
+      },
+    );
+    cliTest(
+      "retains a valid prototype key after native validation",
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-plist-valid-key-");
+        const path = join(root, "chosen.plist");
+        const source =
+          "<plist><dict><key>__proto__</key><integer>42</integer><key>kept</key><string>value</string></dict></plist>";
+        await writeFile(path, source);
+        const result = await cli.run({
+          arguments: ["inspect-plist", path, "--json"],
+          environment,
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(result.json).toMatchObject({
+          normalized_result: {
+            value: { ["__proto__"]: 42, kept: "value" },
+            provenance: [
+              expect.objectContaining({ tool: "file" }),
+              expect.objectContaining({
+                tool: "plutil",
+                command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+              }),
+            ],
+          },
+        });
+        expect(JSON.stringify(result.json)).toContain('"__proto__":42');
+        expect(JSON.stringify(result.json)).not.toContain(
+          "keyed __proto__ was omitted",
+        );
+        expect(await readFile(path, "utf8")).toBe(source);
+      },
+    );
+    cliTest(
+      "retains original unknown scalar facts after successful native validation",
+      async ({ cli }) => {
+        const root = await createTestTempDirectory(
+          "rea-plist-source-admission-",
+        );
+        const path = join(root, "chosen.plist");
+        const source =
+          "<plist><dict><key>value</key><real>1e999</real></dict></plist>";
+        await writeFile(path, source);
+        const result = await cli.run({
+          arguments: ["inspect-plist", path, "--json"],
+          environment,
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(result.json).toMatchObject({
+          normalized_result: {
+            format: "xml",
+            source_path: path,
+            value: {
+              value: {
+                $plist_type: "unknown",
+                element: "real",
+                literal: "1e999",
+                reason: "unrepresentable",
+              },
             },
-          });
-          expect(capturedDiagnostic(result.json)).toContain(
-            "Property List error:",
-          );
-        }
+            provenance: expect.arrayContaining([
+              expect.objectContaining({
+                tool: "plutil",
+                command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+              }),
+            ]),
+          },
+        });
         expect(await readFile(path, "utf8")).toBe(source);
       },
     );
@@ -280,13 +425,25 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action:
-              "The 64 MiB (67108864-byte) native binary plist decode allowance (no runtime override) is a fixed allowance. Worker memory limits, inherited limits, and additional host memory do not raise it. Select another complete input within the allowance when that preserves the needed observation. Repeating the unchanged request fails the same way.",
+            action: fixedCeilingRemediation(
+              "The native binary plist decode allowance",
+              "parser",
+            ),
           },
           details: {
             operation: "inspect_plist",
             resource: "memory",
-            reported_limits: { maximum_decoded_bytes: 64 * 1024 * 1024 },
+            reported_limits: {
+              boundary: "plist-decode-bytes",
+              maximum: 64 * 1024 * 1024,
+            },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance: "The native binary plist decode allowance",
+              allowance_kind: "parser",
+              limit: 64 * 1024 * 1024,
+              unit: "bytes",
+            },
           },
         });
         expect(Buffer.compare(await readFile(path), source)).toBe(0);
@@ -309,13 +466,21 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: expect.stringContaining(
-              "Select a suitable complete artifact within the fixed 64 MiB (67108864-byte) native plist input allowance (no runtime override).",
+            action: fixedCeilingRemediation(
+              "The native plist input allowance",
+              "input",
             ),
           },
           details: {
             resource: "file-size",
             reported_limits: { maximum_input_bytes: 64 * 1024 * 1024 },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance: "The native plist input allowance",
+              allowance_kind: "input",
+              limit: 64 * 1024 * 1024,
+              unit: "bytes",
+            },
           },
         });
         expect(JSON.stringify(result.json)).not.toMatch(hostMemoryAdvice);

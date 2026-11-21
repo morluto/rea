@@ -1,36 +1,38 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
   retryClientConfigurationCleanup,
 } from "./ClientConfigurationCleanup.js";
 import { access } from "node:fs/promises";
-import { resolve } from "node:path";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
-import { PRODUCT_IDENTITY } from "../identity.js";
 import {
-  invokingPackageRunner,
-  packageRunnerRegistrationCommand,
-  type PackageRunner,
-} from "./ClientRegistrationIdentity.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  AnalysisCleanupLeaseGroup,
+  type AnalysisCleanupLease,
+} from "../resources/index.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
 } from "../domain/runtimeVersion.js";
-import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
+import {
+  runDoctor,
+  systemDoctorHost,
+  type DoctorHost,
+  type DoctorScope,
+} from "./Doctor.js";
 import {
   installLinuxHopper,
   LinuxHopperTemporaryCleanupOwner,
-  readLinuxDistribution,
   systemLinuxHopperInstallHost,
-  type LinuxHopperInstallHost,
 } from "./LinuxHopper.js";
 import { installMacHopper, systemMacHopperInstallHost } from "./MacHopper.js";
-import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperPublisher.js";
+import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import {
   clientEvidencePaths,
-  supportedClients,
+  resolveSupportedClients,
   type SetupClient,
 } from "./SupportedClients.js";
 import {
@@ -46,8 +48,10 @@ import {
   inspectClientConfiguration,
 } from "./SetupClientConfiguration.js";
 import { failedConfigurationMessage } from "./SetupClients.js";
-import { setupInstallFailure } from "./SetupInstallFailure.js";
-import { RegularFileCleanupFailure } from "./RegularFileRead.js";
+import {
+  setupInstallFailure,
+  type SetupHopperInstallResult,
+} from "./SetupInstallFailure.js";
 import {
   explicitSetupRegistrationEnvironment,
   providerRegistrationEnvironment,
@@ -61,28 +65,13 @@ import type {
   SetupInitialState,
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
-import type { DoctorScope } from "./Doctor.js";
-import { aubeShimLauncher } from "../process/AubeBinShim.js";
+import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
+import { bindRegularFileCleanup } from "../process/RegularFileRead.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
-import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
-
-/** Resolve the executable and arguments used in a managed MCP registration. */
-export const setupRegistrationCommand = (
-  platform: NodeJS.Platform,
-  packageRunner: PackageRunner | undefined,
-  entrypointPath: string | undefined,
-): readonly string[] => {
-  if (packageRunner !== undefined)
-    return packageRunnerRegistrationCommand(packageRunner, platform);
-  if (entrypointPath === undefined || entrypointPath.length === 0) return [];
-  if (platform === "win32") return [process.execPath, entrypointPath, "mcp"];
-  // An aube install launches the script inside one version's store directory;
-  // its bin shim keeps the same path across upgrades.
-  const launcher =
-    aubeShimLauncher(entrypointPath, PRODUCT_IDENTITY.cliBinary) ??
-    entrypointPath;
-  return [launcher, "mcp"];
-};
+import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
+import { systemDesktopBuildSetupHost } from "../desktop/DesktopBuildSetupHost.js";
+import { clientEnvironment } from "./SetupPlan.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * The launcher setup registers, and why it must not be registered when it
@@ -93,11 +82,11 @@ const setupRegistration = (
   homeDirectory: string,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Pick<SetupHost, "registrationCommand" | "registrationCommandBlocker"> => {
-  const registrationCommand = setupRegistrationCommand(
+  const registrationCommand = currentClientRegistrationCommand({
     platform,
-    invokingPackageRunner(environment, platform),
-    CURRENT_ENTRYPOINT_PATH,
-  );
+    entrypointPath: CURRENT_ENTRYPOINT_PATH,
+    environment,
+  });
   const registrationCommandBlocker =
     registrationCommand.length === 0
       ? "REA could not determine the current executable entrypoint. Run setup through the installed REA CLI or a supported package runner before configuring clients."
@@ -115,36 +104,26 @@ const setupRegistration = (
 export const filterClientsNeedingConfigure = async (
   host: SetupHost,
   detectedClients: readonly SetupClient[],
-  providerEnvironment: SetupProviderEnvironment,
+  environment: Parameters<typeof clientEnvironment>[0],
   command: readonly string[],
 ): Promise<readonly SetupClient[]> => {
   const needs = await Promise.all(
     detectedClients.map((client) =>
-      host.clientNeedsConfigure(client, providerEnvironment, command),
+      host.clientNeedsConfigure(
+        client,
+        clientEnvironment(environment, client.name),
+        command,
+      ),
     ),
   );
   return detectedClients.filter((_, index) => needs[index]);
 };
 
-export const hostRemediation = async (
-  host: SetupHost,
-  installHopper: boolean,
-): Promise<string | undefined> => {
-  if (!supportsNodeVersion(host.nodeVersion))
-    return `Install ${SUPPORTED_NODE_VERSION_PROSE} and rerun setup.`;
-  if (!installHopper) return undefined;
-  if (host.platform !== "darwin" && host.platform !== "linux")
-    return "REA supports Hopper on macOS and selected 64-bit Linux distributions.";
-  if (host.platform === "darwin") {
-    const version = await host.macosVersion();
-    return version === undefined || major(version) < 12
-      ? "Upgrade to macOS 12 or newer."
-      : undefined;
-  }
-  if ((await host.linuxDistribution())?.hopperSetupSupported === true)
-    return undefined;
-  return "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, and Omarchy; configure an existing supported provider instead.";
-};
+/** Refuse a Node.js runtime REA does not support before any setup work. */
+export const hostRemediation = (host: SetupHost): string | undefined =>
+  supportsNodeVersion(host.nodeVersion)
+    ? undefined
+    : `Install ${SUPPORTED_NODE_VERSION_PROSE} and rerun setup.`;
 
 /** Production setup effects for Hopper, agent configuration, and the canonical skill directory. */
 export const systemSetupHost = (
@@ -156,11 +135,42 @@ export const systemSetupHost = (
   const { homeDirectory } = doctorHost;
   const macHopperHost =
     platform === "darwin"
-      ? systemMacHopperInstallHost(homeDirectory, environment)
+      ? systemMacHopperInstallHost(homeDirectory, environment, () =>
+          doctorHost.macosVersion(),
+        )
       : undefined;
   const resources = new ArtifactResourceScope();
-  const linuxHopperHost = systemLinuxHopperInstallHost(environment);
+  const linuxDistribution = () => doctorHost.linuxDistribution();
+  const linuxHopperHost = systemLinuxHopperInstallHost(
+    environment,
+    linuxDistribution,
+  );
   const pendingLinuxHopperCleanup = new LinuxHopperTemporaryCleanupOwner();
+  const macCleanup = {
+    rejectedPrefix: "Hopper host cleanup failed",
+    close: async () => macHopperHost?.close?.(),
+  };
+  const temporaryCleanup = {
+    rejectedPrefix: "Linux Hopper cleanup retry failed",
+    close: () => pendingLinuxHopperCleanup.retry(linuxHopperHost.cleanup),
+  };
+  const publisherCleanup = {
+    rejectedPrefix: "Linux Hopper publisher cleanup failed",
+    close: async () => {
+      await linuxHopperHost.close?.();
+    },
+  };
+  const registration = setupRegistration(platform, homeDirectory, environment);
+  const cleanup = new SetupCleanupOwner([
+    macCleanup,
+    {
+      rejectedPrefix: "Doctor host cleanup failed",
+      close: async () => doctorHost.close?.(),
+    },
+    temporaryCleanup,
+    publisherCleanup,
+    { close: () => resources.close() },
+  ]);
   return {
     platform,
     homeDirectory,
@@ -172,25 +182,21 @@ export const systemSetupHost = (
       : {}),
     skillDestinations: (clientIds) =>
       skillDestinations(homeDirectory, clientIds, environment, platform),
-    ...setupRegistration(platform, homeDirectory, environment),
+    ...registration,
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
-    linuxDistribution: readLinuxDistribution,
-    close: () =>
-      closeSetupResources(resources, macHopperHost, doctorHost, () =>
-        closeLinuxHopperInstallHost(linuxHopperHost, pendingLinuxHopperCleanup),
-      ),
+    linuxDistribution,
+    close: () => cleanup.close(),
     initialSetupState: async (
       scope?: DoctorScope,
     ): Promise<SetupInitialState> => {
       const diagnosis = await runDoctor(undefined, doctorHost, scope);
       const providerEnvironment: SetupProviderEnvironment = {
         ...providerRegistrationEnvironment(diagnosis.providerInspections ?? []),
-        ...doctorHost.providerRegistrationEnvironment?.(),
-        ...explicitSetupRegistrationEnvironment(environment),
         ...(diagnosis.hopperPath === undefined
           ? {}
           : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
+        ...explicitSetupRegistrationEnvironment(environment),
       };
       const requestedProvider = analysisProviderSelectorSchema.safeParse(
         environment.REA_ANALYSIS_PROVIDER,
@@ -215,65 +221,90 @@ export const systemSetupHost = (
         doctor: diagnosis,
       };
     },
-    installHopper: async (replaceExisting) => {
-      if (platform === "linux") {
-        const result = await installLinuxHopper(linuxHopperHost);
-        if (result.cleanupFailure !== undefined)
-          pendingLinuxHopperCleanup.retain(result.cleanupFailure);
-        if (result.status === "installed")
-          return { status: "installed", launcherPath: result.launcherPath };
-        const failure = setupInstallFailure(
-          result.reason,
-          result.packageFailure,
-          "linux",
-        );
-        const detail =
-          result.verificationFailure?.message ??
-          result.pythonRuntimeFailure?.message;
-        return detail !== undefined
-          ? {
-              ...failure,
-              remediation: `${detail} ${failure.remediation}`,
+    installHopper: (replaceExisting, signal) =>
+      resources.run<SetupHopperInstallResult>(async () => {
+        const publisher = platform === "linux" ? publisherCleanup : macCleanup;
+        const cancellation = signal === undefined ? {} : { signal };
+        cleanup.admit(publisher);
+        try {
+          if (platform === "linux") {
+            const result = await installLinuxHopper(
+              linuxHopperHost,
+              cancellation,
+            );
+            if (result.cleanupFailure !== undefined) {
+              pendingLinuxHopperCleanup.retain(result.cleanupFailure);
+              cleanup.admit(temporaryCleanup);
             }
-          : failure;
-      }
-      if (macHopperHost === undefined)
-        return setupInstallFailure("unsupported_host");
-      const result = await installMacHopper({ replaceExisting }, macHopperHost);
-      if (result.status === "installed")
-        return {
-          status: "installed",
-          launcherPath: result.launcherPath,
-          ...(result.openFailure === undefined
-            ? {}
-            : {
-                warning: `Hopper was installed, but macOS could not open it: ${result.openFailure}. Open ${result.launcherPath} manually to complete first-run setup.`,
-              }),
-          ...(result.cleanupFailure === undefined
-            ? {}
-            : { cleanupFailure: result.cleanupFailure }),
-        };
-      const failure = setupInstallFailure(result.reason);
-      const diagnostic = setupInstallerDiagnostic(result.diagnostic);
-      return {
-        ...failure,
-        remediation: [
-          failure.remediation,
-          ...(diagnostic === undefined
-            ? []
-            : [`Installer detail: ${diagnostic}`]),
-          ...(result.cleanupFailure === undefined
-            ? []
-            : [result.cleanupFailure]),
-        ].join(" "),
-      };
-    },
+            if (result.status === "installed")
+              return { status: "installed", launcherPath: result.launcherPath };
+            const failure = setupInstallFailure(result.reason, {
+              packageFailure: result.packageFailure,
+              platform: "linux",
+              download: result.download,
+            });
+            // A failed vendor request is already described by its owned facts.
+            const detail =
+              result.download !== undefined
+                ? undefined
+                : (result.verificationFailure?.message ??
+                  result.pythonRuntimeFailure?.message ??
+                  (result.operationFailure === undefined
+                    ? undefined
+                    : `${result.operationFailure.operation}${result.operationFailure.path === undefined ? "" : ` at ${result.operationFailure.path}`}: ${result.operationFailure.systemCode === undefined ? "" : `${result.operationFailure.systemCode}: `}${result.operationFailure.detail}`));
+            return detail !== undefined
+              ? {
+                  ...failure,
+                  remediation: `${detail} ${failure.remediation}`,
+                }
+              : failure;
+          }
+          if (macHopperHost === undefined)
+            return setupInstallFailure("unsupported_host");
+          const result = await installMacHopper(
+            { replaceExisting, ...cancellation },
+            macHopperHost,
+          );
+          if (result.status === "installed")
+            return {
+              status: "installed",
+              launcherPath: result.launcherPath,
+              ...(result.openFailure === undefined
+                ? {}
+                : {
+                    warning: `Hopper was installed, but macOS could not open it: ${result.openFailure}. Open ${result.launcherPath} manually to complete first-run setup.`,
+                  }),
+              ...(result.cleanupFailure === undefined
+                ? {}
+                : { cleanupFailure: result.cleanupFailure }),
+            };
+          const failure = setupInstallFailure(result.reason, {
+            download: result.download,
+          });
+          const diagnostic = setupInstallerDiagnostic(result.diagnostic);
+          return {
+            ...failure,
+            remediation: [
+              failure.remediation,
+              ...(diagnostic === undefined
+                ? []
+                : [`Installer detail: ${diagnostic}`]),
+              ...(result.cleanupFailure === undefined
+                ? []
+                : [result.cleanupFailure]),
+            ].join(" "),
+          };
+        } finally {
+          cleanup.admit(publisher);
+        }
+      }),
     detectedClients: () => detectClients(homeDirectory, platform, environment),
     supportedClients: () =>
-      Promise.resolve(supportedClients(homeDirectory, platform, environment)),
+      resolveSupportedClients(homeDirectory, platform, environment),
     ...clientConfigurationOperations(
       resources,
       doctorHost.resolveProviderRequestBudget,
+      platform,
     ),
     skillNeedsInstall: (clientIds) =>
       canonicalSkillNeedsInstall(
@@ -300,8 +331,21 @@ export const systemSetupHost = (
         resources,
       ),
     doctor: (scope) => runDoctor(undefined, doctorHost, scope),
+    desktopBuild: desktopBuildHost(doctorHost, environment, resources),
   };
 };
+
+const desktopBuildHost = (
+  doctorHost: DoctorHost,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  resources: ArtifactResourceScope,
+) =>
+  systemDesktopBuildSetupHost(
+    environment,
+    doctorHost.platform,
+    doctorHost.clientRegistrations,
+    resources,
+  );
 
 const setupInstallerDiagnostic = (
   value: string | undefined,
@@ -321,6 +365,7 @@ const setupInstallerDiagnostic = (
 const clientConfigurationOperations = (
   resources: ArtifactResourceScope,
   resolveProviderRequestBudget: DoctorHost["resolveProviderRequestBudget"],
+  platform: NodeJS.Platform,
 ) => ({
   configureClient: (
     client: SetupClient,
@@ -335,6 +380,7 @@ const clientConfigurationOperations = (
             providerEnvironment,
             command,
             resolveProviderRequestBudget,
+            platform,
           ),
     ),
   clientNeedsConfigure: (
@@ -350,6 +396,7 @@ const clientConfigurationOperations = (
             providerEnvironment,
             command,
             resolveProviderRequestBudget,
+            platform,
           )),
     ),
   inspectClientConfiguration: (
@@ -363,45 +410,10 @@ const clientConfigurationOperations = (
         providerEnvironment,
         command,
         resolveProviderRequestBudget,
+        platform,
       ),
     ),
 });
-
-const closeSetupResources = async (
-  resources: ArtifactResourceScope,
-  macHopperHost: ReturnType<typeof systemMacHopperInstallHost> | undefined,
-  doctorHost: DoctorHost,
-  retryLinuxHopperCleanup: () => Promise<string | undefined>,
-): Promise<string | undefined> => {
-  const [resourceCleanup, hopperCleanup, doctorCleanup, linuxCleanup] =
-    await Promise.allSettled([
-      resources.close(),
-      Promise.resolve().then(() => macHopperHost?.close()),
-      Promise.resolve().then(() => doctorHost.close?.()),
-      retryLinuxHopperCleanup(),
-    ]);
-  const failures: string[] = [];
-  if (hopperCleanup.status === "rejected")
-    failures.push(
-      `Hopper host cleanup failed: ${errorMessage(hopperCleanup.reason)}`,
-    );
-  else if (hopperCleanup.value !== undefined)
-    failures.push(hopperCleanup.value);
-  if (doctorCleanup.status === "rejected")
-    failures.push(
-      `Doctor host cleanup failed: ${errorMessage(doctorCleanup.reason)}`,
-    );
-  else if (doctorCleanup.value !== undefined)
-    failures.push(doctorCleanup.value);
-  if (linuxCleanup.status === "rejected")
-    failures.push(
-      `Linux Hopper cleanup retry failed: ${errorMessage(linuxCleanup.reason)}`,
-    );
-  else if (linuxCleanup.value !== undefined) failures.push(linuxCleanup.value);
-  if (resourceCleanup.status === "rejected")
-    failures.push(errorMessage(resourceCleanup.reason));
-  return failures.length === 0 ? undefined : failures.join("; ");
-};
 
 const runClientConfigurationOperation = async <Value>(
   resources: ArtifactResourceScope,
@@ -426,6 +438,7 @@ const runClientConfigurationOperation = async <Value>(
           `Could not safely access client configuration at ${cause.path}: ${errorMessage(cleanup.primary)}.${rollbackMessage}`,
           cause,
           cleanup.cleanup,
+          cleanup.cleanupLeases,
         );
       }
     });
@@ -442,49 +455,40 @@ const configurationCleanupError = (
   cleanup:
     | { readonly reason: string; readonly resources: readonly string[] }
     | undefined,
-): ConfigurationError =>
-  new ConfigurationError(message, {
+  leases?: readonly AnalysisCleanupLease[],
+): ConfigurationError => {
+  const error = new ConfigurationError(message, {
     cause,
     settings: [{ setting: "client configuration", constraint: message }],
     ...(cleanup === undefined ? {} : { cleanup }),
   });
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
-const closeLinuxHopperInstallHost = async (
-  host: LinuxHopperInstallHost,
-  temporaryOwner: LinuxHopperTemporaryCleanupOwner,
-): Promise<string | undefined> => {
-  const reasons: string[] = [];
-  const temporary = await temporaryOwner.retry(host.cleanup);
-  if (temporary !== undefined) reasons.push(temporary);
-  try {
-    await host.close?.();
-  } catch (cause: unknown) {
-    reasons.push(
-      `Linux Hopper publisher cleanup failed: ${errorMessage(cause)}`,
-    );
-  }
-  return reasons.length === 0 ? undefined : reasons.join("; ");
+  if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
+  else bindRegularFileCleanup(cause, error);
+  return error;
 };
 
 /** Detect supported agents from their config files or stable installation markers. */
 export const detectClients = async (
   home: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<readonly SetupClient[]> => {
   const detected: SetupClient[] = [];
-  for (const candidate of supportedClients(home, platform, environment)) {
-    if (candidate.configPathError !== undefined) continue;
+  for (const candidate of await resolveSupportedClients(
+    home,
+    platform,
+    environment,
+  )) {
+    if (
+      candidate.configPathError !== undefined ||
+      candidate.registrationApplicability === true
+    )
+      continue;
     if (await clientEvidencePresent(candidate)) detected.push(candidate);
   }
   return detected;
 };
 
-const major = (version: string): number =>
-  Number.parseInt(version.split(".")[0] ?? "0", 10);
 const clientEvidencePresent = async (client: SetupClient): Promise<boolean> => {
   for (const path of clientEvidencePaths(client))
     if (await exists(path)) return true;

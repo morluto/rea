@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
 
+import { AnalysisInputError } from "./analysisErrorCore.js";
+import {
+  createAnalysisProfile,
+  type AnalysisProfileCommitment,
+} from "./analysisProfile.js";
 import { buildCallPath } from "./callPath.js";
 import { combineFunctionRelationshipCoverage } from "./functionCallCoverage.js";
 import { callPathResultSchema, type CallPathInput } from "./callPathSchemas.js";
-import { createEvidence, type Evidence } from "./evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "./evidence.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { RelationshipCoverage } from "./relationshipCoverage.js";
+import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
 
 const observe = (
   address: string,
@@ -16,6 +26,8 @@ const observe = (
     readonly dossierLimitations?: readonly string[];
     readonly relationshipCoverage?: RelationshipCoverage;
     readonly calleeUnavailable?: string;
+    readonly analysisProfile?: AnalysisProfileCommitment;
+    readonly target?: EvidenceSubjectTarget;
   } = {},
 ): Evidence => {
   const value = {
@@ -62,7 +74,11 @@ const observe = (
         }),
   } satisfies JsonValue;
   return createEvidence(
-    { path: "/tmp/a", sha256: "a".repeat(64), format: "mach-o" },
+    options.target ?? {
+      path: "/tmp/a",
+      sha256: "a".repeat(64),
+      format: "mach-o",
+    },
     { id: provider, name: provider, version: "1" },
     {
       operation: "analyze_function",
@@ -70,6 +86,9 @@ const observe = (
       result: value,
       confidence: "derived",
       authority: "shipped-artifact",
+      ...(options.analysisProfile === undefined
+        ? {}
+        : { analysisProfile: options.analysisProfile }),
       ...(options.evidenceLimitations === undefined
         ? {}
         : { limitations: options.evidenceLimitations }),
@@ -92,6 +111,63 @@ const run = (
   });
 
 describe("call path reconstruction", () => {
+  it.each([undefined, null, { mapping_sha256: "bad" }])(
+    "rejects an unestablished peer context %j in either input order",
+    (context) => {
+      const provider = {
+        id: "rea-workflow",
+        name: "rea-workflow",
+        version: "1",
+      };
+      const start = observe("0x1000", ["0x2000"], provider.id, {
+        analysisProfile: createAnalysisProfile(provider, {
+          function_coordinate_context: createFunctionCoordinateContext({
+            image_base: "0x1000",
+          }),
+        }),
+      });
+      const middle = observe(
+        "0x2000",
+        ["0x4000"],
+        provider.id,
+        context === undefined
+          ? {}
+          : {
+              analysisProfile: createAnalysisProfile(provider, {
+                function_coordinate_context: context,
+              }),
+            },
+      );
+      for (const functions of [
+        [start, middle],
+        [middle, start],
+      ]) {
+        expect(() => run(functions)).toThrow(AnalysisInputError);
+        expect(() => run(functions)).toThrowError(
+          expect.objectContaining({
+            issues: [
+              expect.objectContaining({
+                path: ["functions"],
+                reason: "invalid_value",
+              }),
+            ],
+          }),
+        );
+      }
+      if (context !== undefined)
+        expect(() => run([middle], { start: { address: "0x2000" } })).toThrow(
+          expect.objectContaining({
+            issues: [
+              expect.objectContaining({
+                path: ["functions"],
+                reason: "invalid_value",
+              }),
+            ],
+          }),
+        );
+    },
+  );
+
   it("returns deterministic shortest-first cited paths", () => {
     const result = run([
       observe("0x1000", ["0x3000", "0x2000"]),
@@ -113,6 +189,7 @@ describe("call path reconstruction", () => {
     expect(
       result.paths.map((path) => path.nodes.map(({ address }) => address)),
     ).toEqual([["0x1000", "0x2000", "0x4000"]]);
+    expect(result.paths[0]?.edges).toHaveLength(2);
     expect(
       result.paths[0]?.edges.every((edge) => edge.evidence_links.length > 0),
     ).toBe(true);
@@ -128,7 +205,15 @@ describe("call path reconstruction", () => {
   });
 
   it("only reports not_found for exhaustive closure", () => {
-    const notFound = run([observe("0x1000", []), observe("0x4000", [])]);
+    const notFound = run([
+      observe("0x1000", [], "rea-workflow", {
+        relationshipCoverage: {
+          status: "complete",
+          discovery: { callees: { status: "complete" } },
+        },
+      }),
+      observe("0x4000", []),
+    ]);
     expect(notFound.status).toBe("not_found");
     expect(
       callPathResultSchema.safeParse({
@@ -138,8 +223,8 @@ describe("call path reconstruction", () => {
     ).toBe(false);
     const unknown = run([observe("0x1000", ["0x2000"])]);
     expect(unknown.status).toBe("unknown");
-    expect(unknown.limitations).toContain(
-      "No analyze_function Evidence covers reachable function 0x2000",
+    expect(unknown.limitations).toContainEqual(
+      expect.stringMatching(/no analyze_function.*0x2000/iu),
     );
 
     const limitedEmpty = run([
@@ -159,12 +244,6 @@ describe("call path reconstruction", () => {
     );
   });
 
-  it("searches the complete supplied graph", () => {
-    expect(
-      run([observe("0x1000", ["0x2000"]), observe("0x2000", [])]).status,
-    ).toBe("not_found");
-  });
-
   it("returns all shortest paths inline without paging", () => {
     const result = run([
       observe("0x1000", ["0x2000", "0x3000"]),
@@ -175,6 +254,19 @@ describe("call path reconstruction", () => {
       "0x2000",
       "0x3000",
     ]);
+  });
+});
+
+it("keeps an exhaustive supplied graph distinct from unknown discovery", () => {
+  expect(
+    run([observe("0x1000", ["0x2000"]), observe("0x2000", [])]),
+  ).toMatchObject({
+    status: "unknown",
+    search_scope: {
+      exhaustive: true,
+      discovery: "unknown",
+      observed_status: "not_found",
+    },
   });
 });
 
@@ -192,7 +284,7 @@ describe("call path topology and capacity", () => {
     expect(result.status).toBe("unknown");
     expect(result.search_scope.exhaustive).toBe(false);
     expect(result.limitations).toEqual(limitations);
-  }, 30_000);
+  });
 
   it("retains every shortest path through merging branches and cycles", () => {
     const result = run([
@@ -362,6 +454,7 @@ describe("directional call relationship coverage", () => {
         status: "partial",
         limitations: [limitation],
         limited_directions: directions,
+        discovery: { callees: { status: "complete" } },
       };
       const result = run([
         observe("0x1000", ["0x2000"], "rea-workflow", { relationshipCoverage }),
@@ -446,14 +539,14 @@ describe("call path search extent", () => {
       label: "expanded cycle without the goal",
       graph: { "0x1000": ["0x2000"], "0x2000": ["0x1000", "0x2000"] },
       goal: "0x4000",
-      status: "not_found",
+      status: "unknown",
       explored: { nodes: 2, edges: 3, depth_reached: 1 },
     },
     {
       label: "unreachable goal with its own dossier",
       graph: { "0x1000": ["0x2000"], "0x2000": [], "0x4000": ["0x5000"] },
       goal: "0x4000",
-      status: "not_found",
+      status: "unknown",
       explored: { nodes: 2, edges: 1, depth_reached: 1 },
     },
     {
@@ -562,10 +655,18 @@ describe("explicit call relationship coverage", () => {
       "Callers: Upstream xrefs do not establish direct caller relationships.";
     const result = run([
       observe("0x1000", ["0x2000"], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          discovery: { callees: { status: "complete" } },
+        },
       }),
       observe("0x2000", [], "rea-workflow", {
-        relationshipCoverage: { status: "unknown", reason },
+        relationshipCoverage: {
+          status: "unknown",
+          reason,
+          discovery: { callees: { status: "complete" } },
+        },
       }),
     ]);
     expect(result).toMatchObject({
@@ -615,7 +716,10 @@ describe("explicit call relationship coverage", () => {
     const reason = "An unrelated function's callees were not observed.";
     const result = run([
       observe("0x1000", [], "rea-workflow", {
-        relationshipCoverage: { status: "complete" },
+        relationshipCoverage: {
+          status: "complete",
+          discovery: { callees: { status: "complete" } },
+        },
       }),
       observe("0x2000", ["0x5000"], "rea-workflow", {
         relationshipCoverage: { status: "unknown", reason },
@@ -664,14 +768,18 @@ describe("call path evidence admission", () => {
       run([observe("0x001000", [])], {
         start: { address: "0X00001000" },
       }),
-    ).toMatchObject({ status: "not_found", start: "0x1000" });
+    ).toMatchObject({
+      status: "unknown",
+      start: "0x1000",
+      search_scope: { observed_status: "not_found" },
+    });
     expect(() =>
       run([observe("0x1000", [])], { start: { address: "1000" } }),
     ).toThrow();
     const one = observe("0x1000", []);
-    expect(() => run([one, one])).toThrow(/Duplicate/u);
+    expect(() => run([one, one])).toThrow(AnalysisInputError);
     expect(() => run([one, observe("0x2000", [], "other")])).toThrow(
-      /providers/u,
+      AnalysisInputError,
     );
   });
 
@@ -695,10 +803,40 @@ describe("call path evidence admission", () => {
     ).toThrow();
   });
 
-  it("requires an observed start function", () => {
-    expect(() => run([observe("0x2000", [])])).toThrow(
-      /supplied for start 0x1000/u,
+  it("refuses functions from the same bytes opened at different entry points", () => {
+    const raw = (entryPoint: string): EvidenceSubjectTarget => ({
+      path: "/tmp/a.bin",
+      sha256: "a".repeat(64),
+      format: "raw-binary",
+      architecture: "arm64",
+      selection: { kind: "entry-point", entry_point: entryPoint },
+    });
+    const start = observe("0x1000", ["0x4000"], "rea-workflow", {
+      target: raw("0x0"),
+    });
+    expect(
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", { target: raw("0x0") }),
+      ]).status,
+    ).toBe("found");
+    let refused: unknown;
+    try {
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", { target: raw("0x100") }),
+      ]);
+    } catch (cause: unknown) {
+      refused = cause;
+    }
+    expect(refused).toBeInstanceOf(AnalysisInputError);
+    expect(JSON.stringify((refused as AnalysisInputError).issues)).toContain(
+      "Call-path Evidence mixes artifact subjects",
     );
+  });
+
+  it("requires an observed start function", () => {
+    expect(() => run([observe("0x2000", [])])).toThrow(AnalysisInputError);
   });
 });
 

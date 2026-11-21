@@ -1,0 +1,102 @@
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { expect, it } from "vitest";
+import { locateReferenceSourceGitDirectory } from "../../../src/application/ReferenceSourceGitDirectory.js";
+import { readReferenceSourceVcs } from "../../../src/application/ReferenceSourceVcsAdapter.js";
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+
+it.skipIf(process.platform === "win32").each(["gitdir", "commondir"] as const)(
+  "rejects non-directory traversal in a %s pointer without publishing decoy Git facts",
+  async (pointer) => {
+    const root = await createTestTempDirectory("rea-reference-git-path-");
+    const source = join(root, "source");
+    const metadata = join(root, "metadata");
+    await mkdir(source);
+    await mkdir(metadata);
+    await writeFile(join(root, "blocker"), "regular file\n");
+    await writeFile(join(metadata, "HEAD"), `${"1".repeat(40)}\n`);
+    await writeFile(join(metadata, "config"), "[core]\nignorecase = true\n");
+    const selected = `${join(root, "blocker")}/../metadata`;
+    if (pointer === "gitdir") {
+      await writeFile(join(source, ".git"), `gitdir: ${selected}\n`);
+    } else {
+      await mkdir(join(source, ".git"));
+      await writeFile(join(source, ".git", "HEAD"), `${"2".repeat(40)}\n`);
+      await writeFile(join(source, ".git", "commondir"), `${selected}\n`);
+    }
+    await expect(stat(selected)).rejects.toMatchObject({ code: "ENOTDIR" });
+    await expect(
+      locateReferenceSourceGitDirectory(source, (path) =>
+        readFile(path, "utf8"),
+      ),
+    ).rejects.toMatchObject({ code: "ENOTDIR", path: selected });
+    await withArtifactResourceScope(async (resources) => {
+      expect(await readReferenceSourceVcs(source, resources)).toMatchObject({
+        ok: true,
+        value: { kind: "unknown", head: null, dirty: null },
+      });
+    });
+    const imported = await importReferenceSource({
+      root: source,
+      caller: "git-path-test",
+      policy: { secretPatterns: [] },
+    });
+    expect(imported).toMatchObject({
+      ok: false,
+      error: {
+        code: "io",
+        cause: { code: "ENOTDIR", path: selected },
+      },
+    });
+  },
+);
+
+it.each(["gitdir", "commondir"] as const)(
+  "keeps provenance unknown when a %s pointer is not valid UTF-8",
+  async (pointer) => {
+    const root = await createTestTempDirectory("rea-reference-git-encoding-");
+    const source = join(root, "source");
+    const metadata = join(root, "metadata-�");
+    await mkdir(source);
+    await mkdir(metadata);
+    const head = "1".repeat(40);
+    await writeFile(
+      join(metadata, "HEAD"),
+      pointer === "gitdir" ? `${head}\n` : "ref: refs/heads/main\n",
+    );
+    await mkdir(join(metadata, "refs", "heads"), { recursive: true });
+    await writeFile(join(metadata, "refs", "heads", "main"), `${head}\n`);
+    const path =
+      pointer === "gitdir"
+        ? join(source, ".git")
+        : join(source, ".git", "commondir");
+    if (pointer === "commondir") {
+      await mkdir(join(source, ".git"));
+      await writeFile(join(source, ".git", "HEAD"), "ref: refs/heads/main\n");
+    }
+    const prefix = `${pointer === "gitdir" ? "gitdir: " : ""}${join(root, "metadata-")}`;
+    const read = () =>
+      withArtifactResourceScope((resources) =>
+        readReferenceSourceVcs(source, resources),
+      );
+    await writeFile(path, `${prefix}�\n`);
+    expect(await read()).toMatchObject({
+      ok: true,
+      value: { kind: "git", head },
+    });
+    await writeFile(
+      path,
+      Buffer.concat([
+        Buffer.from(prefix),
+        Buffer.from([0xff]),
+        Buffer.from("\n"),
+      ]),
+    );
+    expect(await read()).toMatchObject({
+      ok: true,
+      value: { kind: "unknown", head: null },
+    });
+  },
+);

@@ -1,10 +1,8 @@
-import type { Evidence } from "../evidence.js";
-import type { FunctionDossier } from "../hopperValues.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
+import type { FunctionDossier } from "../native/functionDossier.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import {
-  isAutoName,
-  normalizeCfg,
-} from "../functionComparisonNormalization.js";
+import { normalizeCfg } from "../functionComparisonNormalization.js";
+import { hasStableNativeSymbol } from "./nativeSymbol.js";
 import { assessFunctionCallCoverage } from "../functionCallCoverage.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
@@ -13,8 +11,9 @@ export const functionStructuralCandidate = (
   evidence: Evidence,
   dossier: FunctionDossier,
 ): string | null => {
+  const architecture = evidenceFileTarget(evidence)?.architecture;
   if (
-    evidence.subject?.architecture == null ||
+    architecture == null ||
     dossier.facet_availability?.cfg?.available !== true ||
     dossier.facet_availability?.callees?.available !== true ||
     dossier.facet_availability?.strings_names?.available !== true ||
@@ -30,7 +29,7 @@ export const functionStructuralCandidate = (
     cfg === null ||
     cfg.length === 0 ||
     dossier.callees.some(
-      (callee) => isAutoName(callee.name) || callee.name.length === 0,
+      (callee) => !hasStableNativeSymbol(callee.name, callee.symbol),
     )
   )
     return null;
@@ -46,7 +45,7 @@ export const functionStructuralCandidate = (
   return digestCanonicalValue({
     algorithm: "observed-cfg-calls-strings-v1",
     profile: evidence.analysis_profile.digest,
-    architecture: evidence.subject.architecture,
+    architecture,
     cfg,
     calls,
     strings,

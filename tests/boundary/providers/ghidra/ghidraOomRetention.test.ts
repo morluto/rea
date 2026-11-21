@@ -1,15 +1,17 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { parseConfig } from "../../../../src/config/parseConfig.js";
-import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { elf } from "../../../../src/domain/binaryTarget.fixture.js";
+import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import { ok } from "../../../../src/domain/result.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
+import type { GhidraClientOptions } from "../../../../src/ghidra/GhidraClientTypes.js";
 import type { GhidraJavaObservation } from "../../../../src/ghidra/GhidraJavaProbe.js";
 import type {
   GhidraLaunchSession,
@@ -25,7 +27,12 @@ type Mode = ConstructorParameters<typeof GhidraFixtureLauncher>[0];
 /** Real provider, client, process capture and projection; only the JVM is simulated. */
 const failedOperation = async (
   mode: Mode,
-  options: { readonly startupTimeoutMs?: number } = {},
+  options: {
+    readonly startupTimeoutMs?: number;
+    readonly readMemoryCgroup?: GhidraClientOptions["readMemoryCgroup"];
+    /** Complete one operation first so the session is known to have run. */
+    readonly afterSuccess?: boolean;
+  } = {},
 ) => {
   const fixture = new GhidraFixtureLauncher(mode);
   const launcher: GhidraLauncher = {
@@ -59,7 +66,7 @@ const failedOperation = async (
     {
       platform: process.platform,
       architecture: process.arch,
-      readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+      readText: () => "application.version=12.2\napplication.java.min=25\n",
       executable: () => true,
       probeJava: () =>
         ok<GhidraJavaObservation>({
@@ -70,14 +77,19 @@ const failedOperation = async (
               : process.platform === "win32"
                 ? "Windows 11"
                 : "Linux",
-          version: "21.0.12",
-          major: 21,
+          version: "25.0.1",
+          major: 25,
           home: "/fixture/jdk",
           bits: 64,
           runtime: "jdk",
         }),
     },
-    (clientOptions) => new GhidraClient({ ...clientOptions, launcher }),
+    (clientOptions) =>
+      new GhidraClient({
+        ...clientOptions,
+        launcher,
+        readMemoryCgroup: options.readMemoryCgroup ?? (async () => undefined),
+      }),
   );
   const profile = await provider.resolveAnalysisProfile(target);
   if (!profile.ok) throw profile.error;
@@ -87,6 +99,10 @@ const failedOperation = async (
   onTestFinished(async () => {
     await client.close();
   });
+  if (options.afterSuccess === true) {
+    const earlier = await client.execute("list_documents", {});
+    if (!earlier.ok) throw earlier.error;
+  }
   const result = await client.execute("list_procedures", {});
   if (result.ok) throw new Error("Expected a Ghidra failure");
   return analysisErrorProjectionSchema.parse(
@@ -123,13 +139,14 @@ describe.skipIf(process.platform === "win32")(
             observed_oome: [
               {
                 stream: "stderr",
+                area: "heap",
                 line: expect.stringContaining("java.lang.OutOfMemoryError"),
               },
             ],
           },
         },
       });
-    }, 30_000);
+    });
 
     it.each([
       ["process exit", "flood_then_exit_tools"],
@@ -152,7 +169,6 @@ describe.skipIf(process.platform === "win32")(
           diagnostics: { failure_output: { observed_oome: [] } },
         });
       },
-      30_000,
     );
 
     it("does not mistake a budget-cut identifier prefix for an OOME", async () => {
@@ -175,7 +191,7 @@ describe.skipIf(process.platform === "win32")(
           },
         },
       });
-    }, 30_000);
+    });
 
     it("keeps a startup timeout after budget-exhausting output", async () => {
       const projected = await failedOperation("flood_silent", {
@@ -186,6 +202,107 @@ describe.skipIf(process.platform === "win32")(
       expect(projected.remediation.action).not.toContain(
         "GHIDRA_HEADLESS_MAXMEM",
       );
-    }, 30_000);
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "Ghidra killed by SIGKILL without an OutOfMemoryError",
+  () => {
+    it("reports a kill during a cgroup OOM kill as a memory constraint", async () => {
+      const observations = [0, 1].map((oomKills) => ({
+        path: "/",
+        oomKills,
+        memoryMax: 3_221_225_472,
+      }));
+      let reads = 0;
+      const projected = await failedOperation("sigkill_tools", {
+        readMemoryCgroup: async () => observations[reads++],
+      });
+      expect(reads).toBe(2);
+      expect(projected.remediation.action).toMatch(/Then retry\.$/u);
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          resource: "memory",
+          reported_limits: {
+            cgroup_memory_max: 3_221_225_472,
+            configured_jvm_max_heap: "4G",
+          },
+          diagnostics: {
+            exit_signal: "SIGKILL",
+            memory_cgroup: {
+              path: "/",
+              oom_kill_before: 0,
+              oom_kill_after: 1,
+              memory_max: 3_221_225_472,
+            },
+          },
+        },
+      });
+      expect(projected.remediation.action).not.toContain("rea doctor");
+    });
+
+    it("keeps the cgroup evidence while a sampled file's failed close is retained", async () => {
+      let released = false;
+      const stuck = new OwnedFileHandle({
+        fd: 1_000_000,
+        close: async () => {
+          if (!released) throw new Error("close denied");
+        },
+      } as unknown as FileHandle);
+      let reads = 0;
+      const projected = await failedOperation("sigkill_tools", {
+        readMemoryCgroup: async ({ retainFailedClose }) => {
+          // The post-kill sample leaves an owner pending for session cleanup.
+          if (reads === 1) retainFailedClose("/proc/self/cgroup", stuck);
+          return { path: "/", oomKills: reads++, memoryMax: 3_221_225_472 };
+        },
+      });
+      released = true;
+      expect(reads).toBe(2);
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          diagnostics: {
+            exit_signal: "SIGKILL",
+            memory_cgroup: { oom_kill_before: 0, oom_kill_after: 1 },
+          },
+        },
+      });
+    });
+
+    it("names the signal when no cgroup attributes the kill", async () => {
+      const projected = await failedOperation("sigkill_tools");
+      expect(projected.code).toBe("execution_failure");
+      expect(projected.message).toContain("SIGKILL");
+      expect(projected.message).not.toContain("rea doctor");
+      expect(projected.details).toMatchObject({
+        diagnostics: { exit_signal: "SIGKILL" },
+      });
+      expect(projected.details?.diagnostics).not.toHaveProperty(
+        "memory_cgroup",
+      );
+    });
+
+    it("keeps the reopen guidance when an established session is killed", async () => {
+      let reads = 0;
+      const projected = await failedOperation("sigkill_after_first_tool", {
+        afterSuccess: true,
+        readMemoryCgroup: async () => ({
+          path: "/",
+          oomKills: reads++,
+          memoryMax: "max",
+        }),
+      });
+      expect(projected).toMatchObject({
+        code: "resource_constraint",
+        details: { reported_limits: { cgroup_memory_max: "max" } },
+      });
+      expect(projected.remediation.action).toContain(
+        "Call open_binary for the same target to start a new Ghidra session",
+      );
+      expect(projected.remediation.action).toContain("GHIDRA_HEADLESS_MAXMEM");
+    });
   },
 );

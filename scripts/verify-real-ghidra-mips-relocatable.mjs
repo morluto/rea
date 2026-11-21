@@ -1,18 +1,15 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildMipsRelocatableFixture } from "../tests/conformance/ghidra/mips-fixture.mjs";
 import {
@@ -20,7 +17,15 @@ import {
   inspectMipsRelocatableReadelf,
 } from "../tests/conformance/ghidra/mips-relocatable-checks.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 // Optional cross-target lane for ET_REL objects. No tool acquisition, no
 // linking and no target execution.
@@ -45,10 +50,21 @@ if (installation.status !== "available")
   throw new Error(
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-mips-rel-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("mips-relocatable");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-mips-rel-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -64,6 +80,12 @@ const env = {
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
 }
+// The public CLI launch uses this command owner. A timeout stops its process group.
+const commands = await createVerifierCommands();
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
 
 /** Load every relocated word through the public read_bytes operation. */
 async function loadedWords(call, independent, segments, byteOrder) {
@@ -95,11 +117,13 @@ async function verifyFixture(byteOrder, kernelModule) {
     workspace,
     byteOrder,
     kernelModule,
+    execOwned,
   );
   const independent = await inspectMipsRelocatableReadelf(
     fixture.path,
     byteOrder,
     fixture.float_abi,
+    execOwned,
   );
   const resolved = await parseBinaryTarget(fixture.path);
   if (!resolved.ok) throw resolved.error;
@@ -122,13 +146,20 @@ async function verifyFixture(byteOrder, kernelModule) {
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
-  const call = async (name, args = {}) =>
-    requireMcpOperationResult(
-      await client.callTool({ name, arguments: args }, { timeout: 180000 }),
+  const call = async (name, args = {}) => {
+    throwIfInterrupted();
+    return requireMcpOperationResult(
+      await client.callTool(
+        { name, arguments: args },
+        { timeout: 180000, signal: commandInterruption.signal },
+      ),
       name,
     );
+  };
   try {
-    await client.connect(transport);
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
+    );
     const target = await call("open_binary", {
       path: fixture.path,
       provider_id: "ghidra",
@@ -194,7 +225,7 @@ async function verifyFixture(byteOrder, kernelModule) {
       "Missing call to the external function",
     );
     const dossier = functionDossierSchema.parse(
-      await call("analyze_function", { procedure: entry }),
+      await call("analyze_function", { procedure: entry, detail: "complete" }),
     );
     for (const name of [
       "rea_mips_rel_leaf",
@@ -207,6 +238,7 @@ async function verifyFixture(byteOrder, kernelModule) {
     const scaled = functionDossierSchema.parse(
       await call("analyze_function", {
         procedure: named("rea_mips_rel_scaled"),
+        detail: "complete",
       }),
     );
     assert.match(scaled.pseudocode, /\bpowf\(1\.5,2\.5\)/u);
@@ -219,7 +251,7 @@ async function verifyFixture(byteOrder, kernelModule) {
     assert.equal(parameters.mips_elf.type, 1);
     assert.equal(
       parameters.mips_support_lane,
-      "elf32-rel-o32-arch32r2-standard-v1",
+      "elf32-rel-o32-arch32r2-standard",
     );
     assert.equal(
       parameters.mips_soft_float_storage,
@@ -250,7 +282,7 @@ async function verifyFixture(byteOrder, kernelModule) {
     assert.deepEqual(await call("list_procedures"), procedures);
     await call("close_binary");
     // Same public operation through CLI, not a private injected provider.
-    const cli = await execute(
+    const cli = await execOwned(
       process.execPath,
       [
         entrypoint,
@@ -264,8 +296,8 @@ async function verifyFixture(byteOrder, kernelModule) {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const evidence = parseEvidence(JSON.parse(cli.stdout));
-    assert.equal(evidence.subject?.architecture, "mips");
-    assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+    assert.equal(evidence.subject?.identity.architecture, "mips");
+    assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
     assert.equal(
       functionDossierSchema.parse(evidence.normalized_result).procedure.address,
       dossier.procedure.address,
@@ -314,19 +346,60 @@ try {
 } catch (cause) {
   primaryFailure = cause;
 }
+// Close the command owner before the parent-tree check. A failed close stays
+// registered for retry and the diagnostic workspace is retained.
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw retainWorkspace(
+    `MIPS relocatable command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [primaryFailure, cleanupFailure],
+              "MIPS relocatable verification and command cleanup both failed",
+            ),
+    },
+  );
 const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw new Error(
+let lineageFailure;
+try {
+  assertVerifierCleanupComplete(completed.process_lineage);
+} catch (cause) {
+  lineageFailure = cause;
+}
+if (lineageFailure !== undefined)
+  throw retainWorkspace(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
-    { cause: primaryFailure },
+    {
+      cause:
+        primaryFailure === undefined
+          ? lineageFailure
+          : new AggregateError(
+              [primaryFailure, lineageFailure],
+              "MIPS relocatable verification failed and cleanup was unverified",
+            ),
+    },
   );
 if (primaryFailure !== undefined)
-  throw new Error(
+  throw retainWorkspace(
     `MIPS relocatable verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );
-await rm(workspace, { recursive: true, force: true });
+const interrupted = commandInterruption.reason();
+if (interrupted !== undefined)
+  throw retainWorkspace(
+    `MIPS relocatable verification interrupted; retained diagnostic workspace: ${workspace}`,
+    { cause: interrupted },
+  );
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
+await workspaceFixture.release();
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

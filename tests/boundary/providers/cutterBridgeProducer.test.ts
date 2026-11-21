@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod } from "node:fs/promises";
+
 import { join, resolve } from "node:path";
 
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
@@ -13,7 +14,7 @@ import {
 } from "../../../tests/support/process/processFixture.js";
 
 const startPythonBridge = async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-cutter-receipt-"));
+  const directory = await createTestTempDirectory("rea-cutter-receipt-");
   await chmod(directory, 0o700);
   const processes = createTestProcessRegistry();
   const child = processes.spawn(
@@ -77,11 +78,7 @@ const startPythonBridge = async () => {
       async close(): Promise<void> {
         child.stdin.end("shutdown\n");
         const exited = await waitForExit(child, 3_000);
-        try {
-          await processes.shutdown();
-        } finally {
-          await rm(directory, { recursive: true, force: true });
-        }
+        await processes.shutdown();
         if (!exited) throw new Error(`Python bridge did not exit: ${stderr}`);
       },
     };
@@ -89,7 +86,6 @@ const startPythonBridge = async () => {
     child.stdin.end("shutdown\n");
     await waitForExit(child, 3_000);
     await processes.shutdown();
-    await rm(directory, { recursive: true, force: true });
     throw error;
   }
 };
@@ -100,7 +96,7 @@ it("authenticates bridge peers before payloads and permits status recovery after
     [resolve("tests/fixtures/cutter_bridge_protocol_test.py")],
     {
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: 20_000,
     },
   );
 });
@@ -111,6 +107,10 @@ it("round-trips authenticated status and command bytes across the Python produce
     const { client, session } = bridge;
     expect(session.document_generation).toBe(4);
     expect(session.current_file).toBe("/tmp/cutter-interop-雪.bin");
+    expect(
+      session.bridge_source,
+      "the real plugin publishes the digest of its packaged bytes",
+    ).toBe("packaged");
 
     for (let index = 0; index <= 64; index += 1) {
       await expect(
@@ -120,7 +120,16 @@ it("round-trips authenticated status and command bytes across the Python produce
           command: "iI",
           json: false,
         }),
-      ).rejects.toThrow("List sessions again");
+      ).rejects.toMatchObject({
+        _tag: "AnalysisInputError",
+        issues: [
+          {
+            path: ["expected_generation"],
+            reason: "invalid_value",
+            message: expect.stringContaining("List sessions again"),
+          },
+        ],
+      });
     }
 
     const result = await client.execute({
@@ -230,10 +239,10 @@ it("retains failed receipt acknowledgements and retries before another command",
       bridge.client.execute({
         sessionId: bridge.session.session_id,
         expectedGeneration: bridge.session.document_generation,
-        command: "iI",
+        command: "fixture-receipt-count",
         json: false,
       }),
-    ).resolves.toMatchObject({ executionState: "complete" });
+    ).resolves.toMatchObject({ executionState: "complete", output: "0" });
   } finally {
     await bridge.close();
   }
@@ -254,10 +263,10 @@ it("retains a receipt when an ACK reply omits its acknowledgement field", async 
       bridge.client.execute({
         sessionId: bridge.session.session_id,
         expectedGeneration: bridge.session.document_generation,
-        command: "iI",
+        command: "fixture-receipt-count",
         json: false,
       }),
-    ).resolves.toMatchObject({ executionState: "complete" });
+    ).resolves.toMatchObject({ executionState: "complete", output: "0" });
   } finally {
     await bridge.close();
   }

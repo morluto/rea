@@ -221,7 +221,7 @@ const refineRevision = (value: UnknownRevision, context: z.RefinementCtx) => {
     });
 };
 
-const residualUnknownValidatedSchema = residualUnknownObjectSchema.superRefine(
+export const residualUnknownSchema = residualUnknownObjectSchema.superRefine(
   (value, context) => {
     if (computeRevisionDigest(value) !== value.revision_digest)
       context.addIssue({
@@ -232,8 +232,6 @@ const residualUnknownValidatedSchema = residualUnknownObjectSchema.superRefine(
     refineRevision(value, context);
   },
 );
-
-export const residualUnknownSchema = residualUnknownValidatedSchema;
 
 const generatedRevisionSchema = residualUnknownObjectSchema
   .omit({ revision_digest: true })

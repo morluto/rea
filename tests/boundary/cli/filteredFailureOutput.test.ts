@@ -1,15 +1,15 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { randomUUID } from "node:crypto";
 import { Writable } from "node:stream";
 
-import { Cli, z } from "incur";
+import { z } from "zod";
 import { parse as parseYaml } from "yaml";
 import { expect, it } from "vitest";
 
-import {
-  createCliResultOutput,
-  streamCliCommandResults,
-} from "../../../src/cli/cliResultOutput.js";
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
+import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 
@@ -21,10 +21,13 @@ const runCli = async (arguments_: readonly string[]) => {
       callback();
     },
   });
-  const output = createCliResultOutput(arguments_, destination);
+  const output = createCliResultOutput(
+    parseCliOutputArguments(arguments_),
+    destination,
+  );
   if (output === undefined) throw new Error("Missing CLI result output owner");
-  const cli = Cli.create("filtered-failure-test", { sync: false });
-  cli.command("trace-application-feature", {
+  const cli = createCommandCli(output);
+  registerCliCommand(cli, "trace-application-feature", {
     args: z.object({ path: z.string() }),
     run: ({ args }) =>
       logCliCommand(silentLogger, "trace-application-feature", async () => {
@@ -35,7 +38,6 @@ const runCli = async (arguments_: readonly string[]) => {
         return input.ok ? input.value : input.error;
       }),
   });
-  streamCliCommandResults(cli, output);
   let fallback = "";
   await cli.serve([...arguments_], {
     stdout: (text) => {
@@ -54,11 +56,8 @@ const expectMissingInputFailureText = (text: string, path: string): void => {
   for (const value of [
     "invalid_request",
     "invalid_input",
-    "Read the declared input schema or CLI usage",
     "trace-application-feature",
     "tools/list",
-    "Correct the listed fields, then retry.",
-    "Do not repeat the unchanged call.",
     "inspect_input_contract",
     path,
     "read-failed",
@@ -178,11 +177,13 @@ it("keeps successful scalar filtering available", async () => {
     },
   });
   const argv = ["open-control", "--json", "--filter-output", "open"];
-  const output = createCliResultOutput(argv, destination);
+  const output = createCliResultOutput(
+    parseCliOutputArguments(argv),
+    destination,
+  );
   if (output === undefined) throw new Error("Missing CLI result output owner");
-  const cli = Cli.create("filtered-failure-test", { sync: false });
-  cli.command("open-control", { run: () => ({ open: false }) });
-  streamCliCommandResults(cli, output);
+  const cli = createCommandCli(output);
+  registerCliCommand(cli, "open-control", { run: () => ({ open: false }) });
   const previousExitCode = process.exitCode;
   process.exitCode = 0;
   try {

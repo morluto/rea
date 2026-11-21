@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -11,14 +11,17 @@ import {
   ghidraProfileLanguageOverride,
   sameGhidraLanguageOverride,
 } from "./GhidraAnalysisProfile.js";
-import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
+import {
+  createSimulatedInstallDirectory,
+  ghidraProfileInstallationHost as host,
+} from "./GhidraInstallation.fixture.js";
 import {
   admitGhidraLanguageOverride,
   parseGhidraLanguageDefinitions,
   readGhidraLanguageCatalog,
 } from "./GhidraLanguageCatalog.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 // Abbreviated from Ghidra 12.1.4 Processors/x86/data/languages/x86.ldefs.
 const X86_LDEFS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -51,7 +54,7 @@ const MIPS_LDEFS = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 const pe: BinaryTarget = {
-  path: "/fixture.exe",
+  path: process.platform === "win32" ? "C:\\fixture.exe" : "/fixture.exe",
   sha256: "a".repeat(64),
   kind: "executable",
   format: "pe",
@@ -59,6 +62,26 @@ const pe: BinaryTarget = {
   availableArchitectures: ["x86"],
   executableRole: "application",
   managed: false,
+};
+
+const fixedImportTarget = (
+  format: "raw-binary" | "dos-mz" | "dos-com",
+): BinaryTarget => {
+  const executable = {
+    path: pe.path,
+    sha256: pe.sha256,
+    kind: "executable",
+    architecture: "x86",
+    availableArchitectures: ["x86"],
+  } as const;
+  return format === "raw-binary"
+    ? {
+        ...executable,
+        format,
+        entryPoint: "0x0",
+        entryPointSource: "0x0",
+      }
+    : { ...executable, format };
 };
 
 const legacyMips: BinaryTarget = {
@@ -79,15 +102,32 @@ const legacyMips: BinaryTarget = {
 };
 
 let installDir = "";
+let disposeInstallDir: (() => Promise<void>) | undefined;
 beforeAll(async () => {
-  installDir = await mkdtemp(join(tmpdir(), "rea-ghidra-languages-"));
+  const directory = await createSimulatedInstallDirectory(
+    "rea-ghidra-languages-",
+  );
+  installDir = directory.path;
+  disposeInstallDir = directory.dispose;
   const languages = join(installDir, "Ghidra/Processors/x86/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "x86.ldefs"), X86_LDEFS);
 });
 afterAll(async () => {
-  await rm(installDir, { recursive: true, force: true });
+  await disposeInstallDir?.();
 });
+
+const lowScoreDosCom = async (target: BinaryTarget): Promise<BinaryTarget> => {
+  const directory = await createTestTempDirectory("rea-com-profile-");
+  const path = join(directory, "fixture.com");
+  const bytes = Buffer.from("b83412c3", "hex");
+  await writeFile(path, bytes);
+  return {
+    ...target,
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+};
 
 const provider = (environment: Record<string, string>) => {
   const parsed = parseConfig({
@@ -117,6 +157,25 @@ describe("Ghidra language override configuration", () => {
       languageId: "x86:LE:16:Real Mode",
     });
   });
+
+  it.each([
+    "ARM:LEBE:32:v8LEInstruction",
+    "ARM:LEBE:32:v7LEInstruction",
+    "M16C/60:LE:16:default",
+    "M16C/80:LE:16:default",
+  ])("accepts the stock Ghidra language ID %s", (languageId) => {
+    const parsed = parseConfig({ REA_GHIDRA_LANGUAGE_ID: languageId });
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.ghidraLanguageOverride).toEqual({ languageId });
+  });
+
+  it.each(["ARM:BELE:32:v8", "/x86:LE:32:default", "x86:LE:32:default "])(
+    "still refuses the malformed language ID %j",
+    (languageId) => {
+      const parsed = parseConfig({ REA_GHIDRA_LANGUAGE_ID: languageId });
+      expect(parsed.ok).toBe(false);
+    },
+  );
 
   it("requires a language for a compiler spec, as analyzeHeadless does", () => {
     const parsed = parseConfig({ REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp" });
@@ -303,7 +362,7 @@ describe("Ghidra language override profile", () => {
       loader: "auto-from-header",
       language_id: "x86:LE:32:default",
       compiler_spec_id: "borlandcpp",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     expect(ghidraProfileLanguageOverride(parameters)).toEqual({
       languageId: "x86:LE:32:default",
@@ -328,7 +387,7 @@ describe("Ghidra language override profile", () => {
       expect(resolved.value.profile?.parameters).toMatchObject({
         language_id: "MIPS:LE:32:default",
         compiler_spec_id: "default",
-        language_selection: "configured-v1",
+        language_selection: "configured",
       });
     } finally {
       await rm(mipsLanguages, { recursive: true, force: true });
@@ -362,6 +421,8 @@ describe("Ghidra language override profile", () => {
     });
     expect(parameters).not.toHaveProperty("language_selection");
     expect(ghidraProfileLanguageOverride(parameters)).toBeUndefined();
+    expect(automatic.value.profile?.digest).toEqual(expect.any(String));
+    expect(configured.value.profile?.digest).toEqual(expect.any(String));
     expect(automatic.value.profile?.digest).not.toBe(
       configured.value.profile?.digest,
     );
@@ -381,6 +442,31 @@ describe("Ghidra language override profile", () => {
     });
   });
 
+  it.each(["raw-binary", "dos-mz", "dos-com"] as const)(
+    "attributes a fixed %s import override conflict to the named settings",
+    async (format) => {
+      const target = fixedImportTarget(format);
+      const resolved = await provider({
+        REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+        REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp",
+      }).resolveAnalysisProfile(target);
+      if (resolved.ok) throw new Error("Expected an override policy conflict");
+      expect(projectAnalysisError(resolved.error)).toMatchObject({
+        code: "configuration_invalid",
+        details: {
+          settings: [
+            { setting: "REA_GHIDRA_LANGUAGE_ID" },
+            { setting: "REA_GHIDRA_COMPILER_SPEC_ID" },
+          ],
+        },
+      });
+      const admitted =
+        format === "dos-com" ? await lowScoreDosCom(target) : target;
+      const automatic = await provider({}).resolveAnalysisProfile(admitted);
+      expect(automatic.ok).toBe(true);
+    },
+  );
+
   it("compares committed and configured selections exactly", () => {
     expect(sameGhidraLanguageOverride(undefined, undefined)).toBe(true);
     expect(
@@ -391,3 +477,35 @@ describe("Ghidra language override profile", () => {
     ).toBe(false);
   });
 });
+
+it
+  .skipIf(process.platform === "win32" || process.getuid?.() === 0)
+  .each(["Ghidra/Processors", "Ghidra/Processors/x86/data/languages"])(
+  "preserves a physical refusal reading the language catalog directory %s",
+  async (relativePath) => {
+    const root = await createTestTempDirectory(
+      "rea-ghidra-catalog-permission-",
+    );
+    const languages = join(root, "Ghidra/Processors/x86/data/languages");
+    await mkdir(languages, { recursive: true });
+    await writeFile(join(languages, "x86.ldefs"), X86_LDEFS);
+    const resources = new ArtifactResourceScope();
+    const blocked = join(root, relativePath);
+    try {
+      const original = await readGhidraLanguageCatalog(root, resources);
+      expect(original.length).toBeGreaterThan(0);
+      await chmod(blocked, 0);
+      await expect(readdir(blocked)).rejects.toMatchObject({ code: "EACCES" });
+      await expect(
+        readGhidraLanguageCatalog(root, resources),
+      ).rejects.toMatchObject({ code: "EACCES", path: blocked });
+      await chmod(blocked, 0o755);
+      expect(await readGhidraLanguageCatalog(root, resources)).toEqual(
+        original,
+      );
+    } finally {
+      await chmod(blocked, 0o755);
+      await resources.close();
+    }
+  },
+);

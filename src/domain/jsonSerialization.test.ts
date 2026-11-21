@@ -5,11 +5,16 @@ import {
   bufferedJsonParts,
   canonicalJsonParts,
   jsonParts,
+  jsonByteLength,
+  jsonTextCodeUnits,
   equalJsonText,
 } from "./jsonSerialization.js";
 
 /** Compact and pretty streamed JSON must equal native JSON. */
 const expectNativeJson = (value: unknown): void => {
+  const text = JSON.stringify(value);
+  expect(jsonByteLength(value)).toBe(Buffer.byteLength(text, "utf8"));
+  expect(jsonTextCodeUnits(value)).toBe(text.length);
   expect([...bufferedJsonParts(jsonParts(value))].join("")).toBe(
     JSON.stringify(value),
   );
@@ -30,6 +35,7 @@ describe("streamed JSON representation", () => {
 
   it("preserves surrogate pairs across string and buffer boundaries", () => {
     const value = { text: `${"x".repeat(8190)}😀${'中文\n"'.repeat(20000)}` };
+    expectNativeJson(value);
     const parts = [...bufferedJsonParts(jsonParts(value))];
     expect(
       Buffer.concat(parts.map((part) => Buffer.from(part))).toString(),
@@ -79,6 +85,20 @@ describe("iterative JSON encoding", () => {
     expect(() => [...jsonParts({ value: new Date(0) })]).toThrow(
       "ordinary JSON objects",
     );
+  });
+
+  it("emits deep pretty JSON indentation in bounded parts", () => {
+    const depth = 10_000;
+    let value: unknown = 0;
+    for (let index = 0; index < depth; index += 1) value = [value];
+    let characters = 0;
+    let largestPart = 0;
+    for (const part of jsonParts(value, true)) {
+      characters += part.length;
+      largestPart = Math.max(largestPart, part.length);
+    }
+    expect(characters).toBe(2 * depth * depth + 4 * depth + 1);
+    expect(largestPart).toBeLessThanOrEqual(16 * 1024);
   });
 
   it("yields bounded parts before reading later members", () => {

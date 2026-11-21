@@ -61,6 +61,6 @@ cliTest
       },
     });
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await readFile(target)).toEqual(original);
+    expect(Buffer.compare(await readFile(target), original)).toBe(0);
   },
 );

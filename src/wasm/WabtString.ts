@@ -1,3 +1,5 @@
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
+
 /** Locate a WAT string's exclusive end without decoding or copying its payload. */
 export const watStringEnd = (form: string, start: number): number => {
   for (
@@ -9,7 +11,7 @@ export const watStringEnd = (form: string, start: number): number => {
     while (escapes > start && form[escapes - 1] === "\\") escapes--;
     if ((end - escapes) % 2 === 0) return end + 1;
   }
-  throw new Error("Incomplete WABT string.");
+  throw new WabtAdmissionError("incomplete_string");
 };
 
 /** Decode a producer WAT string only where its bytes are interpreted. */
@@ -45,7 +47,8 @@ export const watString = (form: string, start: number) => {
                 : escape === "\\"
                   ? 92
                   : undefined;
-      if (value === undefined) throw new Error("Unsupported WABT name escape.");
+      if (value === undefined)
+        throw new WabtAdmissionError("unsupported_escape");
       bytes[length++] = value;
       index += 2;
     }

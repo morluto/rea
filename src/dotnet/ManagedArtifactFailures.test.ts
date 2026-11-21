@@ -1,14 +1,55 @@
-import { describe, expect, it } from "vitest";
+import * as inventoryProducer from "../domain/managed/managedMetadataInventory.js";
+import { describe, expect, it, vi } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import {
   buildManagedPeFixture,
   buildNativePeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
+
+it("preserves a readable native declaration when inventory issue count exceeds call-argument capacity", () => {
+  const original = inventoryProducer.readManagedMetadataInventory;
+  const issue = {
+    code: "invalid-row" as const,
+    scope: "metadata.CustomAttribute:fixture",
+    offset: 0,
+    detail: "Controlled invalid constructor",
+  };
+  const issueCount = 150_000;
+  const producer = vi
+    .spyOn(inventoryProducer, "readManagedMetadataInventory")
+    .mockImplementation((...args) => ({
+      ...original(...args),
+      issues: Array.from({ length: issueCount }, () => issue),
+    }));
+  try {
+    const bytes = buildManagedPeFixture({
+      targetFramework: null,
+      pinvoke: { importName: "Observe" },
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.pinvoke_imports[0]?.import_name).toBe("Observe");
+    expect(result.coverage.state).toBe("partial");
+    expect(result.coverage.issues.length).toBeGreaterThanOrEqual(issueCount);
+    expect(
+      result.coverage.issues.reduce(
+        (count, observed) => count + Number(observed.scope === issue.scope),
+        0,
+      ),
+    ).toBe(issueCount);
+    expect(result.coverage.issues[0]).toEqual(issue);
+    expect(result.coverage.issues[issueCount - 1]).toEqual(issue);
+  } finally {
+    producer.mockRestore();
+  }
+});
 
 describe("managed artifact failure classification", () => {
   it("distinguishes native, malformed, and unsupported metadata", () => {

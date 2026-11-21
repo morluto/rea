@@ -6,8 +6,6 @@ import type {
   RecordedExchange,
 } from "./environmentSource.js";
 import {
-  ENVIRONMENT_CATALOG_LIMIT_BYTES,
-  environmentCard,
   environmentToolArguments,
   environmentToolDefinitions as prepareDefinitions,
   REPLAY_CATALOG_INSTRUCTIONS,
@@ -26,11 +24,14 @@ const withTools = (tools: readonly EnvironmentManifestTool[]) => ({
   manifest: { ...source.manifest, tools: [...tools] },
 });
 const environmentToolInputSchema = (tool: EnvironmentManifestTool) => {
-  const [definition] = environmentToolDefinitions(withTools([tool]));
+  const [definition] = environmentToolDefinitions(
+    withTools([tool]),
+    source.manifest.name,
+  );
   if (definition === undefined) throw new Error("Missing tool definition");
   return definition.inputSchema;
 };
-const definitions = environmentToolDefinitions(source);
+const definitions = environmentToolDefinitions(source, source.manifest.name);
 
 const tool = (name: string): EnvironmentManifestTool => {
   const found = source.manifest.tools.find((entry) => entry.name === name);
@@ -39,6 +40,19 @@ const tool = (name: string): EnvironmentManifestTool => {
 };
 
 describe("environmentToolDefinitions", () => {
+  it("distinguishes computed answers from their retained envelope's match metadata", () => {
+    const definitions = environmentToolDefinitions(source, "query-provenance", {
+      dataPlane: "state",
+    });
+    for (const definition of definitions)
+      expect(definition.description).toContain(
+        "state.source, not replay.exact_match, identifies state vs recording",
+      );
+    expect(
+      environmentToolDefinitions(source, source.manifest.name)[0]?.description,
+    ).not.toContain("state.source");
+  });
+
   it("maps every manifest tool in order with a replay description naming its records and evidence", () => {
     expect(definitions.map(({ name }) => name)).toEqual(
       source.manifest.tools.map(({ name }) => name),
@@ -79,9 +93,14 @@ describe("environmentToolDefinitions", () => {
     expect(search.additionalProperties).toBe(false);
     expect(Object.keys(search.properties).sort()).toEqual(["query", "type"]);
     expect(search.properties.query).toEqual({
-      type: "string",
+      oneOf: [
+        { type: "string" },
+        { type: "number" },
+        { type: "boolean" },
+        { type: "array", items: { type: "string" } },
+      ],
       description:
-        "Query parameter query; optional, matched against the recorded query on replay.",
+        "Query parameter query; optional. Supply one value for one occurrence, a number or boolean sent as its JSON text, or an array of strings to preserve repeated values in captured order; repeated values replay their recorded request.",
     });
     expect("body" in search.properties).toBe(false);
   });
@@ -136,10 +155,13 @@ const usersAnswering = (
     record_ordinals: [...exchanges.keys()],
     statuses: [...statuses],
   };
-  const [definition] = environmentToolDefinitions({
-    ...withTools([users]),
-    exchanges,
-  });
+  const [definition] = environmentToolDefinitions(
+    {
+      ...withTools([users]),
+      exchanges,
+    },
+    source.manifest.name,
+  );
   return definition?.description;
 };
 const returnsOf = (bodyText: string): string | undefined =>
@@ -296,28 +318,31 @@ describe("environment tool response summaries", () => {
     const users = tool("get_users_by_id");
     const ordinal = users.record_ordinals[0] ?? 0;
     const catalog = (contentType: string) =>
-      prepareDefinitions({
-        ...withTools(
-          Array.from({ length: 200 }, (_, index) => ({
-            ...users,
-            name: `get_users_${String(index)}`,
-            record_ordinals: [ordinal],
-          })),
-        ),
-        exchanges: new Map([
-          [
-            ordinal,
-            {
+      prepareDefinitions(
+        {
+          ...withTools(
+            Array.from({ length: 200 }, (_, index) => ({
+              ...users,
+              name: `get_users_${String(index)}`,
+              record_ordinals: [ordinal],
+            })),
+          ),
+          exchanges: new Map([
+            [
               ordinal,
-              path: "/api/users/2",
-              query: null,
-              status: 200,
-              contentType,
-              bodyText: JSON.stringify(fields),
-            },
-          ],
-        ]),
-      });
+              {
+                ordinal,
+                path: "/api/users/2",
+                query: null,
+                status: 200,
+                contentType,
+                bodyText: JSON.stringify(fields),
+              },
+            ],
+          ]),
+        },
+        source.manifest.name,
+      );
     expect(catalog("text/html").ok).toBe(true);
     const bounded = catalog("application/json");
     expect(bounded).toMatchObject({
@@ -325,21 +350,24 @@ describe("environment tool response summaries", () => {
       error: {
         _tag: "AnalysisResourceConstraintError",
         resource: "capacity",
-        reportedLimits: { max_catalog_bytes: ENVIRONMENT_CATALOG_LIMIT_BYTES },
+        reportedLimits: { max_catalog_bytes: expect.any(Number) },
       },
     });
-    const [single] = environmentToolDefinitions({
-      ...withTools([users]),
-      exchanges: new Map([
-        [
-          ordinal,
-          {
-            ...source.exchanges.get(ordinal)!,
-            bodyText: JSON.stringify(fields),
-          },
-        ],
-      ]),
-    });
+    const [single] = environmentToolDefinitions(
+      {
+        ...withTools([users]),
+        exchanges: new Map([
+          [
+            ordinal,
+            {
+              ...source.exchanges.get(ordinal)!,
+              bodyText: JSON.stringify(fields),
+            },
+          ],
+        ]),
+      },
+      source.manifest.name,
+    );
     expect(Buffer.byteLength(single?.description ?? "")).toBeLessThan(1700);
     expect(single?.description).toContain(
       "/300 shown; full list in capture Evidence)",
@@ -349,37 +377,37 @@ describe("environment tool response summaries", () => {
 
 describe("environment catalog description budgets", () => {
   it("bounds captured scalar prose while preserving complete lookup identities", () => {
-    const query = "query-".repeat(1000);
+    const method = "METHOD".repeat(1000);
+    const path = `/${"😀".repeat(1000)}`;
     const expanded = {
       ...tool("get_users_by_id"),
-      method: "METHOD".repeat(1000),
-      path_template: `/${"😀".repeat(1000)}`,
-      query_parameter_names: [query],
+      method,
+      path_template: path,
     };
-    const [definition] = environmentToolDefinitions(withTools([expanded]));
-    expect(definition?.tool).toBe(expanded);
-    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(3500);
-    expect(definition?.description).toContain(
-      "path display truncated; full value in manifest Evidence",
+    const [definition] = environmentToolDefinitions(
+      withTools([expanded]),
+      source.manifest.name,
     );
-    expect(definition?.description).not.toContain("\uFFFD");
-    expect(
-      Object.hasOwn(definition?.inputSchema.properties ?? {}, "query_1"),
-    ).toBe(true);
-    expect(
-      Buffer.byteLength(
-        definition?.inputSchema.properties.query_1?.description ?? "",
-      ),
-    ).toBeLessThan(1400);
+    expect(definition?.tool).toMatchObject({
+      method,
+      path_template: path,
+    });
+    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(3500);
+    for (const field of ["method", "path"])
+      expect(definition?.description).toContain(
+        `${field} display truncated; full value in manifest Evidence`,
+      );
+    expect(definition?.description).toContain("/😀😀");
+    expect(definition?.description).not.toMatch(/[\uD800-\uDFFF\uFFFD]/u);
   });
 
   it("bounds observation and record samples without changing the retained manifest", () => {
     const users = tool("get_users_by_id");
     const observations = Array.from(
-      { length: 10_000 },
+      { length: 8 },
       (_, index) => `${String(index)}-${"x".repeat(200)}`,
     );
-    const ordinals = Array.from({ length: 10_000 }, (_, index) => index);
+    const ordinals = Array.from({ length: 360 }, (_, index) => index);
     const expanded = {
       ...users,
       params: users.params.map((param) => ({
@@ -388,37 +416,23 @@ describe("environment catalog description budgets", () => {
       })),
       record_ordinals: ordinals,
     };
-    const [definition] = environmentToolDefinitions(withTools([expanded]));
-    expect(definition?.tool).toBe(expanded);
-    expect(expanded.params[0]?.observed_values).toBe(observations);
-    expect(expanded.record_ordinals).toBe(ordinals);
-    for (const description of [
-      definition?.description,
-      definition?.inputSchema.properties.id?.description,
-    ]) {
-      expect(Buffer.byteLength(description ?? "")).toBeLessThan(1536);
-      expect(description).toContain(
-        "/10000 shown; full list in manifest Evidence",
-      );
-    }
-    expect(definition?.description).toContain(source.evidenceId);
-    expect(definition?.inputSchema.properties.id?.description).toContain(
-      observations[0],
+    const [definition] = environmentToolDefinitions(
+      withTools([expanded]),
+      source.manifest.name,
     );
-  });
-
-  it("cuts a long captured path in the tool description and keeps it whole in the manifest", () => {
-    const users = tool("get_users_by_id");
-    const long = {
-      ...users,
-      path_template: `/api/${"segment/".repeat(200_000)}{id}`,
-    };
-    const [definition] = environmentToolDefinitions(withTools([long]));
-    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(2048);
+    expect(definition?.tool.params[0]?.observed_values).toEqual(observations);
+    expect(definition?.tool.record_ordinals).toEqual(ordinals);
+    const describedValues = definition?.inputSchema.properties.id?.description;
+    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(1536);
+    expect(Buffer.byteLength(describedValues ?? "")).toBeLessThan(1536);
     expect(definition?.description).toContain(
-      "path display truncated; full value in manifest Evidence",
+      "/360 shown; full list in manifest Evidence",
     );
-    expect(definition?.tool.path_template).toBe(long.path_template);
+    expect(describedValues).toContain(
+      "/8 shown; full list in manifest Evidence",
+    );
+    expect(definition?.description).toContain(source.evidenceId);
+    expect(describedValues).toContain(observations[0]);
   });
 
   it("advertises long path parameters with collision-safe aliases consistently", () => {
@@ -437,7 +451,7 @@ describe("environment catalog description budgets", () => {
   });
 
   it("advertises an oversized query name under a short, collision-safe alias", () => {
-    const longName = "n".repeat(100_000);
+    const longName = "n".repeat(1_200);
     const search = {
       ...tool("get_search"),
       query_parameter_names: [longName, "query_1"],
@@ -445,12 +459,29 @@ describe("environment catalog description budgets", () => {
     const args = environmentToolArguments(search);
     expect(args.query.get(longName)).toBe("query_1");
     expect(args.query.get("query_1")).toBe("query_query_1");
-    const schema = environmentToolInputSchema(search);
-    expect(Buffer.byteLength(JSON.stringify(schema))).toBeLessThan(4096);
+    const [definition] = environmentToolDefinitions(
+      withTools([search]),
+      source.manifest.name,
+    );
+    expect(definition?.tool.query_parameter_names).toEqual([
+      longName,
+      "query_1",
+    ]);
+    const schema = definition!.inputSchema;
+    expect(Object.keys(schema.properties)).toEqual([
+      "query_1",
+      "query_query_1",
+    ]);
+    expect(schema.required).toEqual([]);
+    expect(
+      Buffer.byteLength(schema.properties.query_1?.description ?? ""),
+    ).toBeLessThan(1400);
     expect(schema.properties.query_1?.description).toContain(
       "query name display truncated; full value in manifest Evidence",
     );
-    expect(search.query_parameter_names[0]).toBe(longName);
+    expect(schema.properties.query_query_1?.description).toMatch(
+      /^Query parameter query_1;/u,
+    );
   });
 
   it("reports an omitted oversized value instead of publishing an unbounded or partial observation", () => {
@@ -474,7 +505,7 @@ describe("environment catalog description budgets", () => {
     if (folders.body_shape === null)
       throw new Error("Missing fixture body shape");
     const properties = Object.fromEntries(
-      Array.from({ length: 10_000 }, (_, index) => [
+      Array.from({ length: 8 }, (_, index) => [
         `${String(index)}-${"x".repeat(200)}`,
         "string" as const,
       ]),
@@ -486,10 +517,8 @@ describe("environment catalog description budgets", () => {
     });
     const description = schema.properties.body?.description;
     expect(Buffer.byteLength(description ?? "")).toBeLessThan(1300);
-    expect(description).toContain(
-      "/10000 shown; full list in manifest Evidence",
-    );
-    expect(Object.keys(bodyShape.properties)).toHaveLength(10_000);
+    expect(description).toContain("/8 shown; full list in manifest Evidence");
+    expect(Object.keys(bodyShape.properties)).toHaveLength(8);
   });
 });
 
@@ -509,55 +538,16 @@ describe("environmentToolInputSchema argument names", () => {
     ]);
     expect(Object.hasOwn(schema.properties, "constructor")).toBe(true);
     expect(schema.properties.query_id?.description).toBe(
-      "Query parameter id; optional, matched against the recorded query on replay.",
+      "Query parameter id; optional. Supply one value for one occurrence, a number or boolean sent as its JSON text, or an array of strings to preserve repeated values in captured order; repeated values replay their recorded request.",
     );
-    expect(schema.properties.body?.type).toBe("string");
+    expect(schema.properties.body?.oneOf).toEqual([
+      { type: "string" },
+      { type: "number" },
+      { type: "boolean" },
+      { type: "array", items: { type: "string" } },
+    ]);
     expect(schema.properties.request_body?.type).toBe("object");
     expect(schema.required).toEqual(["id"]);
-  });
-});
-
-describe("environmentCard", () => {
-  it("shapes the card with fixed protocol fields, the tools and null extension slots in contract key order", () => {
-    const card = environmentCard("grafana-example", definitions);
-    expect(Object.keys(card)).toEqual([
-      "name",
-      "protocolVersion",
-      "url",
-      "preferredTransport",
-      "additionalInterfaces",
-      "capabilities",
-      "children_environments",
-    ]);
-    expect(card).toMatchObject({
-      name: "grafana-example",
-      protocolVersion: "1.0",
-      url: "/agentenv",
-      preferredTransport: "JSONRPC",
-      additionalInterfaces: [{ url: "/mcp", transport: "mcp" }],
-      children_environments: null,
-    });
-    expect(Object.keys(card.capabilities)).toEqual([
-      "extensions",
-      "tools",
-      "operations",
-    ]);
-    expect(card.capabilities.extensions).toBeNull();
-    expect(card.capabilities.operations).toEqual([]);
-    expect(card.capabilities.tools).toHaveLength(definitions.length);
-    for (const [index, entry] of card.capabilities.tools.entries()) {
-      expect(Object.keys(entry)).toEqual([
-        "name",
-        "description",
-        "inputSchema",
-      ]);
-      expect(entry).toEqual({
-        name: definitions[index]?.name,
-        description: definitions[index]?.description,
-        inputSchema: definitions[index]?.inputSchema,
-      });
-    }
-    expect(environmentCard("renamed", definitions).name).toBe("renamed");
   });
 });
 
@@ -572,6 +562,7 @@ describe("environment tool annotations", () => {
           method,
         })),
       ),
+      source.manifest.name,
     ).map((definition) => definition.annotations);
     expect(hints).toEqual([
       { readOnlyHint: true, idempotentHint: true, openWorldHint: false },

@@ -1,19 +1,26 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { withVerifierArtifactScope } from "../../lib/verifier-artifact-scope.mjs";
 import { inspectAppleDispatchMetadata } from "../../../dist/native/AppleDispatchMetadata.js";
 import {
   artifactCliEvidence,
+  artifactMcpCall,
   artifactMcpResult,
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
 import { nativeDispatchMetadataResultSchema } from "../../../dist/domain/native/objcSwiftMetadata.js";
+import { analysisErrorProjectionSchema } from "../../../dist/domain/analysisErrorProjectionSchema.js";
+import { cliOperationFailurePayload } from "../../../dist/cliLogging.js";
+import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
@@ -53,8 +60,7 @@ const fixupCoverage = (metadata) =>
 const inspect = async (path) => {
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw target.error;
-  const resources = new ArtifactResourceScope();
-  try {
+  return withVerifierArtifactScope(async (resources) => {
     return {
       target: target.value,
       metadata: (
@@ -63,10 +69,7 @@ const inspect = async (path) => {
         )
       ).result,
     };
-  } finally {
-    // Retry any descriptor whose close failed, surfacing unresolved cleanup.
-    await resources.close();
-  }
+  });
 };
 
 const checkObjc = (metadata, mode) => {
@@ -100,6 +103,12 @@ const checkObjc = (metadata, mode) => {
   const protocol = metadata.objc_protocols.find(
     ({ name }) => name === "ReaDispatchProtocol",
   );
+  const protocolProperty = protocol?.properties.find(
+    ({ name }) => name === "fixtureName",
+  );
+  assert.equal(protocolProperty?.name, "fixtureName");
+  assert.equal(protocolProperty?.type_encoding, '@"NSString"');
+  assert.equal(protocolProperty?.atomicity, "nonatomic");
   assert.equal(protocol?.methods[0]?.is_required, true);
   assert.equal(protocol?.methods[0]?.is_optional, false);
   assert.equal(protocol?.optional_methods[0]?.is_required, false);
@@ -161,6 +170,31 @@ const checkObjc = (metadata, mode) => {
 
 const checkSwift = (metadata, mode) => {
   assert.equal(fixupCoverage(metadata)?.status, "complete");
+  for (const context of ["ReaNestedA", "ReaNestedB"]) {
+    const type = `${context}.Implementation`;
+    const protocol = `${context}.Requirement`;
+    assert.ok(
+      metadata.swift_conformances.some(
+        (item) =>
+          item.type_name === type &&
+          item.protocol_name === protocol &&
+          item.module === "ReaWitnessFixture" &&
+          item.decode.status === "decoded",
+      ),
+      `Nested Swift conformance ${type}: ${protocol} missing (${mode.mode})`,
+    );
+    assert.ok(
+      metadata.swift_dispatch_slots.some(
+        (item) =>
+          item.table_kind === "witness_table" &&
+          item.owner === `${type}: ${protocol}` &&
+          item.implementation_address !== null &&
+          item.decode.status === "decoded",
+      ),
+      `Nested Swift witness ${type}: ${protocol} missing (${mode.mode})`,
+    );
+  }
+
   if (
     !metadata.swift_dispatch_slots.some(
       (slot) =>
@@ -204,6 +238,10 @@ const EXPECTED_SWIFT_DECLS = [
   ["struct", "ReaDeclFixtureOuter.Inner", false],
   ["struct", "ReaDeclFixtureGeneric", true],
   ["actor", "ReaDeclFixtureActor", false],
+  ["enum", "ReaNestedA", false],
+  ["struct", "ReaNestedA.Implementation", false],
+  ["enum", "ReaNestedB", false],
+  ["struct", "ReaNestedB.Implementation", false],
 ];
 
 /** Stable declaration facts compared across the symbols and stripped builds. */
@@ -261,10 +299,123 @@ const checkSwiftSymbolAddresses = async (path, declarations) => {
   }
 };
 
-const root = await mkdtemp(join(tmpdir(), "rea-dispatch-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-dispatch-" });
+const root = fixture.path;
 let report;
-try {
+await withVerifierFixture(fixture, async () => {
   const results = [];
+  const commands = 4097;
+  const commandTable = Buffer.alloc(32 + commands * 16);
+  commandTable.writeUInt32LE(0xfeedfacf);
+  commandTable.writeUInt32LE(0x0100000c, 4);
+  commandTable.writeUInt32LE(2, 12);
+  commandTable.writeUInt32LE(commands, 16);
+  commandTable.writeUInt32LE(commands * 16, 20);
+  for (let cursor = 32; cursor < commandTable.length; cursor += 16) {
+    commandTable.writeUInt32LE(0x2a, cursor); // LC_SOURCE_VERSION
+    commandTable.writeUInt32LE(16, cursor + 4);
+  }
+  const commandTablePath = join(root, "many-commands.macho");
+  await writeFile(commandTablePath, commandTable);
+  const cli = await artifactCliEvidence(
+    "inspect-native-dispatch-metadata",
+    commandTablePath,
+    ["--max-input-bytes", String(commandTable.length)],
+  );
+  const cliResult = nativeDispatchMetadataResultSchema.parse(
+    cli.normalized_result,
+  );
+  assert.deepEqual(cliResult.input_admission, {
+    maximum_bytes: commandTable.length,
+    source: "caller",
+    retained_bytes: commandTable.length,
+  });
+  assert.equal(
+    cliResult.result.target_selection.byte_length,
+    commandTable.length,
+  );
+  assert.deepEqual(cliResult.result.objc_classes, []);
+  await withArtifactMcp(commandTablePath, async (client) => {
+    const mcpResult = nativeDispatchMetadataResultSchema.parse(
+      await artifactMcpResult(client, "inspect_native_dispatch_metadata", {
+        max_input_bytes: commandTable.length,
+      }),
+    );
+    assert.deepEqual(mcpResult, cliResult);
+  });
+  results.push({
+    variant: "many-load-commands",
+    commands,
+    target_sha256: cliResult.target_sha256,
+  });
+  for (const { section, size, reason } of [
+    {
+      section: "__objc_classlist",
+      size: 12,
+      reason: "Misaligned Objective-C class-list size",
+    },
+    {
+      section: "__swift5_types",
+      size: 6,
+      reason: "Misaligned Swift type section",
+    },
+  ]) {
+    const bytes = Buffer.alloc(4096);
+    bytes.writeUInt32LE(0xfeedfacf);
+    bytes.writeUInt32LE(0x0100000c, 4);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(1, 16);
+    bytes.writeUInt32LE(152, 20);
+    bytes.writeUInt32LE(0x19, 32); // LC_SEGMENT_64
+    bytes.writeUInt32LE(152, 36);
+    bytes.write("__DATA", 40);
+    bytes.writeBigUInt64LE(0x100000000n, 56);
+    bytes.writeBigUInt64LE(4096n, 64);
+    bytes.writeBigUInt64LE(4096n, 80);
+    bytes.writeUInt32LE(7, 88);
+    bytes.writeUInt32LE(5, 92);
+    bytes.writeUInt32LE(1, 96);
+    bytes.write(section, 104);
+    bytes.write("__DATA", 120);
+    bytes.writeBigUInt64LE(0x100000200n, 136);
+    bytes.writeBigUInt64LE(BigInt(size), 144);
+    bytes.writeUInt32LE(512, 152);
+    const path = join(root, `malformed-${section}.macho`);
+    await writeFile(path, bytes);
+    const target = await parseBinaryTarget(path);
+    assert.ok(
+      target.ok,
+      "Malformed section fixture must pass target admission",
+    );
+    let cliFailure;
+    try {
+      await artifactCliEvidence("inspect-native-dispatch-metadata", path);
+      assert.fail("Malformed metadata unexpectedly succeeded");
+    } catch (cause) {
+      assert.equal(cause.code, 1);
+      cliFailure = analysisErrorProjectionSchema.parse(
+        cliOperationFailurePayload(JSON.parse(cause.snapshot.stdout.text)),
+      );
+    }
+    assert.equal(cliFailure.code, "unsupported_target");
+    assert.equal(cliFailure.category, "unsupported_target");
+    assert.deepEqual(cliFailure.details, {
+      operation: "inspect_native_dispatch_metadata",
+      path: target.value.path,
+      reason,
+    });
+    await withArtifactMcp(path, async (client) => {
+      const failure = requireMcpToolError(
+        await artifactMcpCall(client, {
+          name: "inspect_native_dispatch_metadata",
+          arguments: {},
+        }),
+      );
+      assert.equal(failure.code, cliFailure.code);
+      assert.deepEqual(failure.details, cliFailure.details);
+    });
+    results.push({ variant: `malformed-${section}`, reason });
+  }
   for (const mode of LINK_MODES) {
     const objcPath = join(root, `fixture-${mode.mode}`);
     await exec("/usr/bin/xcrun", [
@@ -336,6 +487,26 @@ try {
         await checkSwiftSymbolAddresses(swiftPath, declarations);
         unstrippedDeclarations = declarations;
       } else assert.deepEqual(declarations, unstrippedDeclarations);
+      if (mode.mode === "chained" && variant === "stripped") {
+        const cli = await artifactCliEvidence(
+          "inspect-native-dispatch-metadata",
+          swiftPath,
+        );
+        const cliResult = nativeDispatchMetadataResultSchema.parse(
+          cli.normalized_result,
+        );
+        assert.equal(cliResult.target_sha256, target.sha256);
+        checkSwift(cliResult.result, mode);
+        await withArtifactMcp(swiftPath, async (client) => {
+          const mcpResult = nativeDispatchMetadataResultSchema.parse(
+            await artifactMcpResult(client, "inspect_native_dispatch_metadata"),
+          );
+          assert.equal(mcpResult.target_sha256, target.sha256);
+          checkSwift(mcpResult.result, mode);
+          assert.deepEqual(mcpResult.result, cliResult.result);
+        });
+      }
+
       results.push({
         variant: `swift-${mode.mode}-${variant}`,
         target_sha256: target.sha256,
@@ -347,7 +518,5 @@ try {
     }
   }
   report = { ok: true, target_executed: false, fixtures: results };
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+});
 process.stdout.write(`${JSON.stringify(report)}\n`);

@@ -5,7 +5,7 @@ import {
   selectReplayExchange,
 } from "./environmentReplay.js";
 
-it("matches a late repeated query and a distant path coordinate without full tuple/segment arrays", () => {
+it("matches every repeated query occurrence and a distant path coordinate", () => {
   const source = environmentServeSourceWithBody("{}", "application/json");
   const original = source.manifest.tools.find(
     (tool) => tool.name === "get_users_by_id",
@@ -22,22 +22,25 @@ it("matches a late repeated query and a distant path coordinate without full tup
     path: `/${"literal/".repeat(20000)}wanted`,
     query: `?${"q=miss&".repeat(20000)}q=hit`,
   };
+  const exchanges = new Map([[ordinal, retained]]);
+  const selected = selectReplayExchange(tool, exchanges, {
+    id: "wanted",
+    q: [...Array.from({ length: 20000 }, () => "miss"), "hit"],
+  });
+  expect(selected?.exchange).toBe(retained);
+  expect(selected?.exact).toBe(true);
   expect(
-    selectReplayExchange(tool, new Map([[ordinal, retained]]), {
-      id: "wanted",
-      q: "hit",
-    }),
-  ).toEqual({ exchange: retained, exact: true });
+    selectReplayExchange(tool, exchanges, { id: "wanted", q: "hit" })?.exact,
+  ).toBe(false);
 });
 
 it("bounds content-type display without changing body interpretation or retained source", () => {
-  const contentType = `application/json;${"x".repeat(100000)}`;
+  const contentType = `${" ".repeat(1024)}application/json; charset=UTF-8`;
   const source = environmentServeSourceWithBody('{"value":1}', contentType);
   const tool = source.manifest.tools.find(
     (tool) => tool.name === "get_users_by_id",
   )!;
   const result = replayEnvironmentTool(source, tool, { id: "2" });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.body).toEqual({ value: 1 });
   expect(
@@ -47,4 +50,34 @@ it("bounds content-type display without changing body interpretation or retained
   expect(source.exchanges.get(tool.record_ordinals[0]!)?.contentType).toBe(
     contentType,
   );
+});
+
+it("keeps observed query order distinct from calls supplying only selected fields", () => {
+  const source = environmentServeSourceWithBody("{}", "application/json");
+  const original = source.manifest.tools.find(
+    (tool) => tool.name === "get_users_by_id",
+  )!;
+  const ordinal = original.record_ordinals[0]!;
+  const tool = { ...original, query_parameter_names: ["ignored", "q"] };
+  const retained = {
+    ...source.exchanges.get(ordinal)!,
+    query: "?ignored=%FF+value&ignored=%FF+value&%71=hi%74",
+  };
+  const exchanges = new Map([[ordinal, retained]]);
+  const args = { id: "2", q: "hit" };
+  expect(selectReplayExchange(tool, exchanges, args)?.exact).toBe(true);
+  const ignored = "ignored=%EF%BF%BD%20value";
+  for (const observed of [
+    "?q=hit",
+    `?${ignored}&q=hit`,
+    `?q=hit&${ignored}&${ignored}`,
+  ])
+    expect(
+      selectReplayExchange(tool, exchanges, args, observed)?.exact,
+      observed,
+    ).toBe(false);
+  expect(
+    selectReplayExchange(tool, exchanges, args, `?${ignored}&${ignored}&q=hit`)
+      ?.exact,
+  ).toBe(true);
 });

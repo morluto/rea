@@ -1,20 +1,22 @@
 import { lstat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   Il2cppSeedWriterPort,
   Il2cppSeedOutput,
   Il2cppSeedReceipt,
-} from "../application/il2cpp/Il2cppSeedWriterPort.js";
-import { writeTextParts } from "../application/JsonFiles.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+} from "../ports/il2cpp/Il2cppSeedWriterPort.js";
+import {
+  writeTextParts,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceFileError } from "../domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -41,9 +43,7 @@ export class Il2cppGhidraSeedWriter implements Il2cppSeedWriterPort {
     options?: ExecutionOptions,
   ): Promise<Result<void, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     if (!isAbsolute(output.path))
       return err(
         invalid(
@@ -69,6 +69,13 @@ export class Il2cppGhidraSeedWriter implements Il2cppSeedWriterPort {
     } catch (cause) {
       if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
         return ok(undefined);
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOTDIR")
+        return err(
+          invalid(
+            "ghidra_seeds",
+            `--ghidra-seeds ${output.path} has a parent path component that is not a directory; choose an output path inside an existing directory.`,
+          ),
+        );
       return err(
         new EvidenceFileError("write", "io", { path: output.path, cause }),
       );
@@ -138,6 +145,7 @@ export class Il2cppGhidraSeedWriter implements Il2cppSeedWriterPort {
       folded: seeds.folded,
       no_body: seeds.no_body,
       unknown: seeds.unknown,
+      generic_instances: seeds.generic_instances,
     });
   }
   async close(): Promise<void> {

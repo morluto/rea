@@ -48,6 +48,8 @@ const queryStatus = (
 ): JavaScriptSemanticQueryResult["status"] => {
   if (input.graph.coverage.status === "unavailable") return "unsupported";
   if (input.candidateRelations > 0) return "ambiguous";
+  if (input.unknowns.length > 0 || input.graph.coverage.truncated)
+    return "partial";
   if (
     input.totalSeeds === 0 ||
     (input.hasExpectation && input.expectedMatches === 0)

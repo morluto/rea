@@ -1,12 +1,11 @@
-import { createHash } from "node:crypto";
+import { captureBudgets } from "./CaptureBudgets.js";
 import { LosslessNumber } from "lossless-json";
 import { parseCaptureJson } from "./CaptureJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { isCanonicalBase64 } from "../../domain/stringPatterns.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  type WebNetworkCapture,
-  type WebNetworkCaptureRecord,
+import type {
+  WebNetworkCapture,
+  WebNetworkCaptureRecord,
 } from "../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import {
@@ -15,7 +14,8 @@ import {
   capturePointer,
 } from "./CaptureRedaction.js";
 import { createHarValidator } from "./HarSchema.js";
-import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
+import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type DecodedCapture = Omit<
   WebNetworkCapture,
@@ -32,16 +32,24 @@ export const decodeHarCapture = (
   sensitiveValues: readonly string[],
 ): DecodedCapture => {
   const raw = parseCaptureJson(text, "HAR");
-  const validation = projectHar(raw, [], false);
-  const adaptedPlaywrightEntries = new Set(
-    createHarValidator()(validation.reported),
-  );
+  const validation = projectHar(raw, [], "validation");
+  const adaptations = createHarValidator()(validation.reported);
+  const ipv6Adaptation = adaptations.bracketedIpv6;
+  const timingAdaptation = adaptations.failedRequests;
+  const failedRequests = new Set(timingAdaptation?.entries);
+  const adaptedIpv6Entries = new Set(ipv6Adaptation?.entries);
+  const ipv6Limitations =
+    ipv6Adaptation === null
+      ? []
+      : [
+          `This capture declares ${ipv6Adaptation.producer} and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.`,
+        ];
   if (
     !captureObject(raw) ||
     !captureObject(raw.log) ||
     !Array.isArray(raw.log.entries)
   )
-    throw new CaptureFormatError("format", "HAR must contain log.entries.");
+    throw new CaptureFormatError("malformed", "HAR must contain log.entries.");
   if (raw.log.version !== "1.2")
     throw new CaptureFormatError(
       "unsupported",
@@ -55,11 +63,11 @@ export const decodeHarCapture = (
   const container = projectHar(
     { ...raw, log: { ...raw.log, entries: null } },
     sensitiveValues,
-    true,
+    "container",
   );
   const records = entries.map((entry, ordinal): WebNetworkCaptureRecord => {
     // Validate each original record even when a structural ancestor excludes it.
-    const projected = projectHar(entry, sensitiveValues, true);
+    const projected = projectRecordedHarEntry(entry, sensitiveValues);
     const projection: Projection = recordsExcluded
       ? {
           reported: null,
@@ -75,10 +83,11 @@ export const decodeHarCapture = (
         : { kind: "json-pointer", pointer: `/log/entries/${ordinal}` },
       ...projection,
       limitations: [
-        "HAR text is producer-decoded Unicode. Original body bytes remain unknown unless content explicitly uses valid base64; declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
-        ...(adaptedPlaywrightEntries.has(ordinal)
+        "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+        ...(adaptedIpv6Entries.has(ordinal) ? ipv6Limitations : []),
+        ...(timingAdaptation !== null && failedRequests.has(ordinal)
           ? [
-              "This capture declares Playwright 1.58.2 and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.",
+              `This capture declares ${timingAdaptation.producer} and records a failed request with unavailable timings (-1). The original failure and timing sentinels are retained; only the validation copy substitutes nonnegative timings. Producer declarations are not authenticated.`,
             ]
           : []),
         ...(recordsExcluded
@@ -102,13 +111,23 @@ export const decodeHarCapture = (
   };
 };
 
-/** Evidence projection when `redact` is true; the upstream schema validation copy otherwise. */
+/** Project producer-owned HAR entry facts without pretending another format is a HAR document. */
+export const projectRecordedHarEntry = (
+  value: unknown,
+  sensitiveValues: readonly string[],
+): Projection => projectHar(value, sensitiveValues, "entry");
+
+/** Relative HTTP paths belong only to entries, never similarly named container extensions. */
 const projectHar = (
   value: unknown,
   sensitiveValues: readonly string[],
-  redact: boolean,
+  scope: "validation" | "container" | "entry",
 ): Projection => {
-  const redactor = new CaptureRedaction(sensitiveValues);
+  const redact = scope !== "validation";
+  const redactor = new CaptureRedaction(
+    sensitiveValues,
+    scope === "entry" ? value : undefined,
+  );
   const numeric_literals: Projection["numeric_literals"] = [];
   const binary_fields: Projection["binary_fields"] = [];
   const projectNumber = (item: LosslessNumber, pointer: string): JsonValue => {
@@ -129,14 +148,14 @@ const projectHar = (
     depth: number,
     parent?: Readonly<Record<string, unknown>>,
   ): JsonValue => {
-    if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
+    if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
-        "HAR exceeds the 64-level complete-evidence nesting budget. This release has no runtime override.",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
+        `HAR exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         pointer,
       );
     if (
-      redact &&
+      scope === "entry" &&
       parent !== undefined &&
       redactor.harCredential(pointer, parent)
     )
@@ -144,13 +163,13 @@ const projectHar = (
     if (item instanceof LosslessNumber) return projectNumber(item, pointer);
     if (typeof item === "string") {
       if (
-        redact &&
+        scope === "entry" &&
         pointer === "/response/content/text" &&
         parent?.encoding === "base64"
       ) {
         const bytes = decodeHarBase64(item, pointer);
         const contentBase64 = bytes.toString("base64");
-        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        const sha256 = sha256Hex(bytes);
         const hidden =
           redactor.sensitiveBytes(bytes) ||
           sensitiveValues.some(
@@ -191,7 +210,9 @@ const projectHar = (
         ? redactor.text(
             item,
             pointer,
-            redactor.harTransportUrl(pointer, parent),
+            scope === "entry"
+              ? redactor.harTransportUrl(pointer, parent)
+              : undefined,
           )
         : item;
     }
@@ -227,7 +248,7 @@ const projectHar = (
         }),
       );
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "HAR parser returned a non-JSON value.",
       pointer,
     );
@@ -267,7 +288,7 @@ const decodeHarBase64 = (value: string, pointer: string): Buffer => {
   const compact = value.replace(/[\t\n\r ]/g, "");
   if (!isCanonicalBase64(compact))
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "HAR content declares base64 but its text is not valid canonical base64 (ASCII whitespace is allowed).",
       pointer,
     );

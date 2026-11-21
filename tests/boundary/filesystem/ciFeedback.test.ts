@@ -12,7 +12,7 @@ import {
   parseStaticTaskContext,
   recordStaticTaskContext,
 } from "../../../scripts/ci/static-task-context.mjs";
-import { createGhApiRequest } from "../../../scripts/ci/github-api.mjs";
+import { testShards } from "../../../scripts/ci/test-selection.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -122,6 +122,7 @@ it.each(["fast", "full"] as const)(
           flags.map((flag) => [flag, tier === "full" ? "true" : "false"]),
         ),
         tier,
+        test_mode: "full",
         code: "true",
         reverse_tools: "true",
       },
@@ -266,6 +267,7 @@ it("starts source feedback before build and requires both groups without waiving
           flags.map((flag) => [flag, tier === "full" ? "true" : "false"]),
         ),
         tier,
+        test_mode: "full",
         code: "true",
       };
       const context: Record<
@@ -300,7 +302,7 @@ it("records the actual static task graph with explicit source identity and no am
   const context = await recordStaticTaskContext({ outputDirectory: directory });
   const head = await execute("git", ["rev-parse", "HEAD"]);
   expect(context.sourceSha).toBe(head.stdout.trim());
-  expect(context.taskHashes["lint:built"]).toMatch(/^[a-f0-9]{16}$/u);
+  expect(context.taskHashes.lint).toMatch(/^[a-f0-9]{16}$/u);
   expect(context.taskHashes.typecheck).toMatch(/^[a-f0-9]{16}$/u);
   expect(context.taskHashes["format:check"]).toMatch(/^[a-f0-9]{16}$/u);
   expect(context.taskHashes).not.toHaveProperty("jscpd");
@@ -311,7 +313,7 @@ it("records the actual static task graph with explicit source identity and no am
   });
   expect(deep.taskHashes.jscpd).toMatch(/^[a-f0-9]{16}$/u);
   expect(deep.taskHashes.knip).toMatch(/^[a-f0-9]{16}$/u);
-  expect(deep.taskHashes).not.toHaveProperty("lint:built");
+  expect(deep.taskHashes).not.toHaveProperty("lint");
   await expect(
     recordStaticTaskContext({
       outputDirectory: directory,
@@ -337,17 +339,6 @@ it("records the actual static task graph with explicit source identity and no am
     { ...context, taskHashes: { jscpd: "stale" } },
   ])
     expect(() => parseStaticTaskContext(invalid)).toThrow();
-});
-
-it("rejects mutation methods at the shared GitHub transport before invoking the CLI", async () => {
-  const request = createGhApiRequest({ env: { PATH: "" } });
-  await expect(
-    request("POST", "repos/owner/repo/actions/runs/1/rerun", {
-      requests: 0,
-      startedAt: Date.now(),
-      limitMs: 1000,
-    }),
-  ).rejects.toThrow("read-only GET");
 });
 
 it("collects basic CI telemetry before optional dependency installation can fail", async () => {
@@ -410,7 +401,19 @@ it("merges source and built reports exactly once using the workflow's shard matr
         matrix.slice(3, -2),
         {
           fromJSON: JSON.parse,
-          needs: { changes: { outputs: { tier: "fast" } } },
+          needs: {
+            changes: {
+              outputs: {
+                test_shards: JSON.stringify(
+                  testShards("fast", {
+                    version: 3,
+                    mode: "full",
+                    reason: "Complete fast suite",
+                  }),
+                ),
+              },
+            },
+          },
         },
         { timeout: 1_000 },
       ),

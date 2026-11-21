@@ -1,16 +1,50 @@
+import { err, ok, type Result } from "../domain/result.js";
+import { parseProcessCaptureEvidence } from "./process/ProcessEvidence.js";
+import {
+  reconstructionObligationProofSchema,
+  type ReconstructionObligationProof,
+} from "../domain/reconstructionObligationProof.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { ReconstructionObligation } from "../domain/reconstructionObligationLedgerSchemas.js";
 
 type ProofAuthority = ReconstructionObligation["required_fixture_authority"];
 type OriginalAuthority =
   ReconstructionObligation["required_original_authority"];
-interface ExpectedProof {
+type ExpectedProof = {
   readonly obligationId: string;
-  readonly fixtureId?: string;
-  readonly caseKind?: string;
-  readonly verifierId?: string;
-  readonly claimId?: string;
-}
+  readonly obligationVersion: number;
+  readonly ownerSha256: string;
+} & (
+  | {
+      readonly kind: "fixture";
+      readonly fixtureId: string;
+      readonly caseKind: ReconstructionObligation["required_case_kinds"][number];
+    }
+  | {
+      readonly kind: "verifier";
+      readonly verifierId: string;
+      readonly claimId: string;
+    }
+);
+
+type ProofRejection =
+  | "unobserved-proof"
+  | "unrecognized-proof"
+  | "invalid-proof"
+  | "insufficient-authority"
+  | "obligation-mismatch"
+  | "owner-mismatch"
+  | "revision-mismatch"
+  | "claim-mismatch"
+  | "failed-proof";
+
+type ParsedProof = Result<
+  {
+    readonly authority: Evidence["authority"];
+    readonly result: ReconstructionObligationProof;
+  },
+  ProofRejection
+>;
 
 const proofEvidenceAuthorities: Readonly<
   Record<ProofAuthority, readonly Evidence["authority"][]>
@@ -60,33 +94,64 @@ export const proofAuthoritySatisfies = (
   return accepted[required].includes(actual);
 };
 
-/** Check that Evidence can authenticate the declared reconstruction authority. */
-export const evidenceAuthoritySupportsProof = (
+/** Parse retained proof once; authenticity is checked by bundle admission. */
+export const parseReconstructionProofEvidence = (
   evidence: Evidence,
-  authority: ProofAuthority,
-  expected: ExpectedProof,
-): boolean => {
+): ParsedProof => {
+  if (evidence.confidence !== "observed") return err("unobserved-proof");
   if (
-    evidence.confidence !== "observed" ||
-    !proofEvidenceAuthorities[authority].includes(evidence.authority) ||
     evidence.predicate_type !== "rea.reconstruction-proof" ||
     evidence.operation !== "verify_reconstruction_obligations"
   )
-    return false;
-  const result = evidence.normalized_result;
-  if (typeof result !== "object" || result === null || Array.isArray(result))
-    return false;
-  const includes = (key: string, value: string | undefined): boolean =>
-    value === undefined ||
-    (Array.isArray(result[key]) && result[key].includes(value));
-  return (
-    result.passed === true &&
-    includes("obligation_ids", expected.obligationId) &&
-    includes("fixture_ids", expected.fixtureId) &&
-    includes("case_kinds", expected.caseKind) &&
-    includes("verifier_ids", expected.verifierId) &&
-    includes("claim_ids", expected.claimId)
+    return err("unrecognized-proof");
+  const parsed = reconstructionObligationProofSchema.safeParse(
+    evidence.normalized_result,
   );
+  return parsed.success
+    ? ok({ authority: evidence.authority, result: parsed.data })
+    : err("invalid-proof");
+};
+
+/** Qualify one exact claim, without joining unrelated identities or results. */
+export const qualifyReconstructionProof = (
+  proof: ParsedProof,
+  authority: ProofAuthority,
+  expected: ExpectedProof,
+): Result<null, ProofRejection> => {
+  if (!proof.ok) return proof;
+  if (!proofEvidenceAuthorities[authority].includes(proof.value.authority))
+    return err("insufficient-authority");
+  const obligations = proof.value.result.bindings.filter(
+    (binding) => binding.obligation_id === expected.obligationId,
+  );
+  if (obligations.length === 0) return err("obligation-mismatch");
+  const owners = obligations.filter(
+    (binding) => binding.owner_sha256 === expected.ownerSha256,
+  );
+  if (owners.length === 0) return err("owner-mismatch");
+  const revisions = owners.filter(
+    (binding) => binding.obligation_version === expected.obligationVersion,
+  );
+  if (revisions.length === 0) return err("revision-mismatch");
+  const outcomes = revisions.flatMap((binding) =>
+    expected.kind === "fixture"
+      ? binding.fixtures
+          .filter(
+            (fixture) =>
+              fixture.fixture_id === expected.fixtureId &&
+              fixture.case_kind === expected.caseKind,
+          )
+          .map(({ passed }) => passed)
+      : binding.verifiers
+          .filter(
+            (verifier) =>
+              verifier.verifier_id === expected.verifierId &&
+              verifier.claim_id === expected.claimId,
+          )
+          .map(({ passed }) => passed),
+  );
+  if (outcomes.length === 0) return err("claim-mismatch");
+  return outcomes.every((passed) => passed) ? ok(null) : err("failed-proof");
 };
 
 /** Check that Evidence observes the original at the required boundary. */
@@ -102,8 +167,8 @@ export const evidenceSupportsOriginalAuthority = (
     );
   if (authority === "process")
     return (
-      evidence.operation === "capture_process_scenario" &&
-      evidence.predicate_type === "rea.process-capture"
+      evidence.authority === "controlled-replay" &&
+      parseProcessCaptureEvidence(evidence).ok
     );
   return evidence.authority === "external-service";
 };

@@ -1,4 +1,4 @@
-import { admitManagedProjection } from "./ManagedDecodeBudget.js";
+import { admitManagedProjection } from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedNativeBoundaryInspectionSchema,
@@ -8,18 +8,23 @@ import {
 import {
   readManagedMetadataInventory,
   readManagedResourceDirectory,
-} from "./ManagedMetadataInventory.js";
+} from "../domain/managed/managedMetadataInventory.js";
 import {
   readManagedMetadataLayout,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   readManagedPeLayout,
   type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedPeReader.js";
+import {
+  appendManagedParseIssues,
+  ManagedReaderFailure,
+  managedMetadataFailureStatus,
+  type ManagedMetadataHeaderFacts,
+} from "../domain/managed/managedReaderFailure.js";
 import {
   buildNativeBoundaryInspection,
   cliNative,
@@ -45,9 +50,11 @@ const emptyInspection = (
   {
     cli = null,
     issues = [],
+    metadataHeader = null,
   }: {
     readonly cli?: ManagedCliHeader | null;
     readonly issues?: readonly ManagedParseIssue[];
+    readonly metadataHeader?: ManagedMetadataHeaderFacts | null;
   } = {},
 ): ManagedNativeBoundaryInspection => {
   return managedNativeBoundaryInspectionSchema.parse(
@@ -60,12 +67,14 @@ const emptyInspection = (
       },
       module: null,
       metadata: {
-        status: issues.some((issue) => issue.code === "resource-limit")
+        status: issues.some(
+          (issue) => managedMetadataFailureStatus(issue) === "partial",
+        )
           ? "partial"
           : classification === "malformed"
             ? "malformed"
             : "absent",
-        version: null,
+        version: metadataHeader?.version ?? null,
         table_row_counts: {},
       },
       identity_scope: {
@@ -96,6 +105,7 @@ const readBoundaryInventory = (
   pe: ManagedPeLayout,
   cli: NonNullable<ManagedPeLayout["cli"]>,
   issues: ManagedParseIssue[],
+  maxRepresentationBytes?: number,
 ): {
   readonly layout: ManagedMetadataLayout;
   readonly inventory: Inventory;
@@ -109,6 +119,7 @@ const readBoundaryInventory = (
     bytes,
     metadataOffset,
     cli.metadata.size,
+    maxRepresentationBytes,
   );
   const memberLists = readTypeMemberListFacts(bytes, layout);
   const inventory = readManagedMetadataInventory(
@@ -124,6 +135,7 @@ const readBoundaryInventory = (
 export const inspectManagedNativeBoundariesBytes = (
   bytes: Buffer,
   target: BinaryTarget,
+  maxRepresentationBytes?: number,
 ): ManagedNativeBoundaryInspection => {
   // An unmappable PE layout is invalid input for every managed operation.
   const pe = readManagedPeLayout(bytes);
@@ -138,26 +150,31 @@ export const inspectManagedNativeBoundariesBytes = (
   let layout: ManagedMetadataLayout;
   let inventory: Inventory;
   try {
-    ({ layout, inventory } = readBoundaryInventory(bytes, pe, pe.cli, issues));
+    ({ layout, inventory } = readBoundaryInventory(
+      bytes,
+      pe,
+      pe.cli,
+      issues,
+      maxRepresentationBytes,
+    ));
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return emptyInspection(target, bytes, "malformed", {
       cli: pe.cli,
       issues: [cause.issue],
+      metadataHeader: cause.metadataHeader,
     });
   }
   try {
-    const heapExtent = Math.max(layout.strings.size, layout.blob.size);
-    issues.push(...inventory.issues);
-    const moduleRefs = parseModuleRefs(bytes, layout, heapExtent, issues);
+    appendManagedParseIssues(issues, inventory.issues);
+    const moduleRefs = parseModuleRefs(bytes, layout, issues);
     const members = new Map([
-      ...parseFields(bytes, layout, heapExtent, issues),
-      ...parseMethods(bytes, layout, heapExtent, issues),
+      ...parseFields(bytes, layout, issues),
+      ...parseMethods(bytes, layout, issues),
     ]);
     const imports = parseImplMaps({
       bytes,
       layout,
-      heapExtent,
       modules: moduleRefs,
       members,
       issues,
@@ -187,6 +204,7 @@ export const inspectManagedNativeBoundariesBytes = (
     return emptyInspection(target, bytes, "malformed", {
       cli: pe.cli,
       issues: [...issues, cause.issue],
+      metadataHeader: cause.metadataHeader,
     });
   }
 };

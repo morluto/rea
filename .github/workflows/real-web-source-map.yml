@@ -46,8 +46,12 @@ jobs:
           build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - name: Install the pinned compiler into an isolated fixture directory
         run: npm install --prefix "$RUNNER_TEMP/rea-web-source-map-compiler" --no-audit --no-fund --package-lock=false esbuild@0.25.10
-      - run: npm run verify:browser:source-maps
+      # Own a fresh bus so Chromium never depends on an inherited session address.
+      - run: dbus-run-session -- npm run verify:browser:source-maps
         env:
+          # Retain browser launch argv/PID/stderr in the verifier's captured
+          # CLI failure diagnostics without changing its deadline or retrying.
+          DEBUG: pw:browser
           REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome
           REA_BROWSER_NO_SANDBOX: "true"
           REA_WEB_SOURCE_MAP_COMPILER: ${{ runner.temp }}/rea-web-source-map-compiler/node_modules/esbuild/lib/main.js

@@ -1,4 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { FlutterBuildAnalysisService } from "../../../src/application/flutter/FlutterBuildAnalysisService.js";
@@ -8,31 +14,81 @@ import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flu
 import {
   analysisViewResultSchema,
   dartAotSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { flutterResultSchemas } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { aotFixtureImage } from "../../../src/flutter/FlutterBuild.fixture.js";
+import {
+  REFERENCE_HASH,
+  appendElfRanges,
+  aotFixtureImage,
+  strippedAotFixtureImage,
+} from "../../../src/flutter/FlutterBuild.fixture.js";
 import { createFlutterApk } from "../../fixtures/flutterApk.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
-it("honors explicit ABI and old full requests, validates SDK schemas and reuses complete Evidence after APK removal", async () => {
+const dynamicSegmentOffset = (image: Buffer): number =>
+  Number(image.readBigUInt64LE(64 + 56 + 8));
+
+/** Two exact ABI sources shared by full/retained and selected-summary workflows. */
+const aotViewFixture = async () => {
   const path = await createFlutterApk("views.apk", [
     { path: "lib/arm64-v8a/libapp.so", bytes: aotFixtureImage() },
     { path: "lib/x86_64/libapp.so", bytes: aotFixtureImage("b".repeat(32)) },
   ]);
   const provider = createFlutterBuildAnalysisProvider();
-  const execute = vi.spyOn(provider, "execute");
   const harness = await createApplicationMcpHarness({
     serverOptions: { flutterAnalysis: provider },
   });
   onTestFinished(harness.close);
+  return { path, provider, harness };
+};
+
+it("retains the selected pool policy through MCP summary projection", async () => {
+  const { path, harness } = await aotViewFixture();
+  const { client, session } = harness;
+  const definition = (await client.listTools()).tools.find(
+    (tool) => tool.name === "inspect_dart_aot",
+  );
+  if (definition === undefined) throw new Error("Missing AOT output schema");
+  const filteredReply = await client.callTool(
+    {
+      name: "inspect_dart_aot",
+      arguments: {
+        path,
+        detail: "summary",
+        pool_policy: { contains: "package:animations/", uri_limit: 1 },
+      },
+    },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
+  );
+  expect(filteredReply.isError).not.toBe(true);
+  const filteredView = dartAotSummaryViewResultSchema.parse(
+    parseEvidence(filteredReply.structuredContent).normalized_result,
+  );
+  expect(filteredView.summary.string_pool.policy).toMatchObject({
+    contains: "package:animations/",
+    uri_limit: 1,
+  });
+  expect(filteredView.summary.string_pool.returned_counts.package_uris).toBe(1);
+  const filteredParent = session.evidenceById(filteredView.parent_evidence_id);
+  expect(filteredParent?.parameters.pool_policy).toEqual({
+    contains: "package:animations/",
+    uri_limit: 1,
+  });
+});
+
+it("honors explicit ABI and old full requests, validates SDK schemas and reuses complete Evidence after APK removal", async () => {
+  const { path, provider, harness } = await aotViewFixture();
+  const execute = vi.spyOn(provider, "execute");
   const { client, session } = harness;
   const catalog = (await client.listTools()).tools;
   const definition = catalog.find((tool) => tool.name === "inspect_dart_aot");
-  if (definition?.outputSchema === undefined)
-    throw new Error("Missing AOT output schema");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  if (definition === undefined) throw new Error("Missing AOT output schema");
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
@@ -43,15 +99,14 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
       { path, detail: "summary" },
     ),
   ).toBe(false);
-  const reply = await client.callTool({
-    name: "inspect_dart_aot",
-    arguments: { path, abi: "x86_64", detail: "summary" },
-  });
+  const reply = await client.callTool(
+    {
+      name: "inspect_dart_aot",
+      arguments: { path, abi: "x86_64", detail: "summary" },
+    },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
+  );
   expect(reply.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, reply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
   const view = dartAotSummaryViewResultSchema.parse(receipt.normalized_result);
   const parent = session.evidenceById(view.parent_evidence_id);
@@ -141,15 +196,15 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
       .exportEvidenceBundle()
       .records.find((record) => record.evidence_id === parent.evidence_id),
   ).toEqual(parent);
-  const portable = inspectAnalysisView({
+  const portable = await inspectAnalysisView({
     source: { kind: "inline", evidence: parent },
     view: { kind: "summary" },
   });
   if (!portable.ok) throw portable.error;
   expect(portable.value.normalized_result).toEqual(view);
-}, 30000);
+});
 
-it("preserves null snapshot facts and pool lower bounds after exhaustion, rejecting malformed and conflicting identities", () => {
+it("preserves null snapshot facts and pool lower bounds after exhaustion, rejecting malformed and conflicting identities", async () => {
   const report = {
     target: { path: "/source.apk", bytes: 10, sha256: "a".repeat(64) },
     abi: "arm64-v8a",
@@ -163,6 +218,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       sections: [],
     },
     string_pool: {
+      policy: {},
       coverage: "partial",
       package_uris: ["package:opaque/a.dart"],
       package_uri_count_at_least: 1000,
@@ -180,7 +236,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
   ) =>
     createEvidence(
       sha === null
-        ? undefined
+        ? unknownTarget("not-observed")
         : { path: "/source.apk", sha256: sha, format: "apk" },
       { id: "flutter", name: "Flutter", version: null },
       {
@@ -190,8 +246,10 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
         limitations: ["Original uncertainty"],
       },
     );
-  for (const parent of [evidence(), evidence(report, null)]) {
-    const summary = inspectAnalysisView({
+  for (const stored of [evidence(), evidence(report, null)]) {
+    const parent = parseEvidence(JSON.parse(JSON.stringify(stored)));
+    expect(parent.evidence_id).toBe(stored.evidence_id);
+    const summary = await inspectAnalysisView({
       source: { kind: "inline", evidence: parent },
       view: { kind: "summary" },
     });
@@ -200,10 +258,11 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       summary.value.normalized_result,
     );
     expect(result.summary.libapp.snapshot_hash).toBeNull();
+    expect(result.summary.libapp).not.toHaveProperty("snapshot_profile");
     expect(result.summary.string_pool.package_uri_count_at_least).toBe(1000);
     expect(result.summary.string_pool.returned_counts.package_uris).toBe(1);
     expect(result.limitations).toEqual(parent.limitations);
-    const page = inspectAnalysisView({
+    const page = await inspectAnalysisView({
       source: { kind: "inline", evidence: parent },
       view: {
         kind: "dart-aot",
@@ -220,15 +279,18 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       string_pool: { coverage: "partial", package_uri_count_at_least: 1000 },
       coverage: { total: 1, exhausted: true },
     });
+    expect(page.value.normalized_result).not.toHaveProperty(
+      "libapp.snapshot_profile",
+    );
   }
   expect(
-    inspectAnalysisView({
+    await inspectAnalysisView({
       source: { kind: "inline", evidence: evidence(report, "c".repeat(64)) },
       view: { kind: "summary" },
     }),
   ).toMatchObject({ ok: false, error: { _tag: "EvidenceIntegrityError" } });
   expect(
-    inspectAnalysisView({
+    await inspectAnalysisView({
       source: {
         kind: "inline",
         evidence: evidence({
@@ -243,7 +305,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   expect(
-    inspectAnalysisView({
+    await inspectAnalysisView({
       source: { kind: "inline", evidence: evidence() },
       view: { kind: "android", facet: "manifest", offset: 0, limit: 1 },
     }),
@@ -297,3 +359,96 @@ it("rejects unavailable retention, invalid delivery and cancellation before prod
   expect(executed.ok ? undefined : executed.error.cause).toBe(reason);
   expect(execute).not.toHaveBeenCalled();
 });
+
+it.each([
+  { ignoredValue: 0n, retainedSections: false },
+  { ignoredValue: 0xffffffffffffffffn, retainedSections: false },
+  { ignoredValue: 0n, retainedSections: true },
+])(
+  "accepts bounded PT_DYNAMIC through MCP (ignored value: $ignoredValue, retained sections: $retainedSections)",
+  async ({ ignoredValue, retainedSections }) => {
+    const image = strippedAotFixtureImage();
+    const dynamic = dynamicSegmentOffset(image);
+    image.writeBigUInt64LE(ignoredValue, dynamic + 5 * 16 + 8);
+    const selected = retainedSections
+      ? appendElfRanges(image, "section", [
+          { type: 1, offset: 0x1000, size: 52 },
+          { type: 1, offset: 0x2000, size: 0x600 },
+        ])
+      : image;
+    const path = await createFlutterApk("dt-null.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: selected },
+    ]);
+    const provider = createFlutterBuildAnalysisProvider();
+    onTestFinished(() => provider.close());
+    const harness = await createApplicationMcpHarness({
+      serverOptions: { flutterAnalysis: provider },
+    });
+    onTestFinished(harness.close);
+    const reply = await harness.client.callTool({
+      name: "inspect_dart_aot",
+      arguments: { path, detail: "complete" },
+    });
+    expect(reply.isError).not.toBe(true);
+    const report = flutterResultSchemas.inspect_dart_aot.parse(
+      parseEvidence(reply.structuredContent).normalized_result,
+    );
+    expect(report.libapp).toMatchObject({
+      coverage: "complete",
+      snapshot_hash: REFERENCE_HASH,
+      snapshot_hash_sources: 2,
+      sha256: createHash("sha256").update(selected).digest("hex"),
+    });
+    expect(report.libapp.sections).toHaveLength(4);
+    expect(report.string_pool).toMatchObject({
+      coverage: "complete",
+      package_uris: ["package:example/main.dart"],
+    });
+  },
+);
+
+it.each([
+  {
+    label: "non-null unrepresentable value",
+    truncate: false,
+    reason: "Dynamic entry is not representable",
+  },
+  {
+    label: "truncated terminator entry",
+    truncate: true,
+    reason: "Stripped ELF lacks a complete dynamic symbol-table description",
+  },
+])(
+  "refuses unusable dynamic tables for $label",
+  async ({ truncate, reason }) => {
+    const image = strippedAotFixtureImage();
+    const dynamic = dynamicSegmentOffset(image);
+    if (truncate) {
+      image.writeBigUInt64LE(5n * 16n + 15n, 64 + 56 + 0x20);
+    } else {
+      image.writeBigUInt64LE(0xffffffffffffffffn, dynamic + 16 + 8);
+    }
+    const path = await createFlutterApk("dt-null-invalid.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: image },
+    ]);
+    const provider = createFlutterBuildAnalysisProvider();
+    onTestFinished(() => provider.close());
+    const harness = await createApplicationMcpHarness({
+      serverOptions: { flutterAnalysis: provider },
+    });
+    onTestFinished(harness.close);
+    const reply = await harness.client.callTool({
+      name: "inspect_dart_aot",
+      arguments: { path, detail: "summary" },
+    });
+    expect(reply.isError, JSON.stringify(reply)).toBe(true);
+    const error = parseMcpToolError(reply).error;
+    expect(error).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_dart_aot",
+        reason: expect.stringContaining(reason),
+      },
+    });
+  },
+);

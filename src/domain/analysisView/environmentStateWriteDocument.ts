@@ -1,8 +1,10 @@
+import { jsonTextCodeUnits } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   at as valueAt,
-  decodedSegment,
   isObject,
+  requestJson,
+  pathSegmentMatches,
   pointerTo,
   same,
   segmentsOf,
@@ -18,7 +20,6 @@ import {
   callOf,
   fail,
   refuse,
-  requestObject,
   UNKNOWN,
   type EffectContext,
   type EffectResult,
@@ -27,16 +28,14 @@ import {
 } from "./environmentStateWriteEffects.js";
 import { documentPointerOf } from "./environmentStateWriteExplain.js";
 
-/** Whether a write's path names the held document's, a segment verbatim or once percent-decoded, as serving matches a call. */
+/** Whether a write's path names the held document's: each segment verbatim, or either spelling once percent-decoded, as serving matches a supplied value. */
 const namesDocument = (path: string, held: string): boolean => {
   const written = segmentsOf(path);
   const recorded = segmentsOf(held);
   return (
     written.length === recorded.length &&
-    recorded.every(
-      (segment, index) =>
-        segment === written[index] ||
-        decodedSegment(segment) === written[index],
+    recorded.every((segment, index) =>
+      pathSegmentMatches(segment, written[index]!),
     )
   );
 };
@@ -106,7 +105,10 @@ export const applyDocument = (
   if (initial !== undefined && !namesDocument(step.record.path, initial.path))
     return UNKNOWN;
   const value = context.state.document(tool);
-  const body = requestObject(context, step.record);
+  const parsed = step.pinned
+    ? requestJson(context.io.requestBody(step.record.ordinal))
+    : undefined;
+  const body = isObject(parsed) ? parsed : undefined;
   const pointer =
     value === undefined || body === undefined
       ? undefined
@@ -142,7 +144,7 @@ export const applyDocument = (
         : "recorded",
     pointer: null,
   }));
-  context.io.retain(64 + JSON.stringify(written.value).length * 2);
+  context.io.retain(64 + jsonTextCodeUnits(written.value) * 2);
   context.state.setDocument(tool, written.value);
   const fields = writtenPointers(draft, body!, {
     before: value!,

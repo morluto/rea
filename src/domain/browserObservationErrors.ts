@@ -33,7 +33,7 @@ export type BrowserObservationFailureReason =
   | "window_not_found"
   | "window_metadata_missing"
   | "process_ownership_unavailable"
+  | "application_already_running"
   | "cleanup_failed"
   | "cancelled"
-  | "timeout"
-  | "secret_unavailable";
+  | "timeout";

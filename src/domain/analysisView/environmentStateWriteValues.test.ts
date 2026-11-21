@@ -4,12 +4,16 @@ import {
   containsDelimited,
   delimitedOffsets,
   formatClock,
+  generatedIntegerDigits,
   integerOf,
   isUuid,
   readClock,
   replaceDelimited,
+  respellClock,
+  seededInteger,
   seededToken,
   seededUuid,
+  sequenceNumber,
   slugOf,
   spelledLike,
   type ClockFormat,
@@ -30,41 +34,129 @@ const iso = (
 const seeds = (count: number): string[] =>
   Array.from({ length: count }, (_, index) => `seed-${String(index)}`);
 
-it.each<[string, number, ClockFormat]>([
+it.each<[string, number, ClockFormat, number?, boolean?]>([
+  [
+    "0000-02-29T00:00:00.000123456Z",
+    Date.parse("0000-02-29T00:00:00Z"),
+    iso("T", 9, "Z"),
+    123456,
+  ],
+  [
+    "0099-01-01T00:00:00Z",
+    Date.parse("0099-01-01T00:00:00Z"),
+    iso("T", 0, "Z"),
+  ],
+  [
+    "0100-01-01T00:00:00Z",
+    Date.parse("0100-01-01T00:00:00Z"),
+    iso("T", 0, "Z"),
+  ],
   ["2026-03-04T05:06:07Z", WHOLE_SECOND, iso("T", 0, "Z")],
   ["2026-03-04 05:06:07.123Z", WITH_MS, iso(" ", 3, "Z")],
-  ["2026-03-04T05:06:07.123456Z", WITH_MS, iso("T", 6, "Z")],
+  ["2026-03-04T05:06:07.123456Z", WITH_MS, iso("T", 6, "Z"), 456000],
   ["2026-03-04T07:06:07.123+02:00", WITH_MS, iso("T", 3, "+02:00")],
   ["2026-03-03T23:36:07-0530", WHOLE_SECOND, iso("T", 0, "-0530")],
-  ["2026-03-04T05:06:07", WHOLE_SECOND, iso("T", 0, "")],
+  [
+    "2000-01-01T12:00:00+23:59",
+    Date.UTC(1999, 11, 31, 12, 1),
+    iso("T", 0, "+23:59"),
+  ],
+  ["2026-03-04T05:06:07.1", WHOLE_SECOND + 100, iso("T", 1, "")],
+  ["2026-03-04T05:06:07.000Z", WHOLE_SECOND, iso("T", 3, "Z"), 0, true],
+  ["2026-03-04T05:06:07.123000000", WITH_MS, iso("T", 9, ""), 0, true],
   ["2024-02-29 00:00:00Z", Date.UTC(2024, 1, 29), iso(" ", 0, "Z")],
-])("reads the ISO clock %s with its spelling", (text, ms, format) => {
-  expect(readClock(text)).toEqual({ ms, format });
-});
+])(
+  "reads and formats the ISO clock %s with its spelling",
+  (text, ms, format, subMillisecond = 0, fixedWidth = false) => {
+    expect(readClock(text)).toEqual({
+      ms,
+      subMillisecond,
+      format,
+      fixedWidth,
+    });
+    expect(formatClock(ms, format, subMillisecond)).toBe(text);
+  },
+);
 
 it.each([
   "2026-02-30T00:00:00Z",
-  "2026-02-29T00:00:00Z",
-  "2026-13-01T00:00:00Z",
-  "2026-03-04T24:00:00Z",
-  "2026-03-04T05:60:00Z",
-  "2026-03-04T05:06:60Z",
+  "2026-03-04T05:06:07+24:00",
   "2026-03-04",
   "2026-03-04T05:06Z",
-  "2026-03-04T05:06:07+05",
   "2026-03-04T05:06:07.1234567890Z",
-  "2026-03-04t05:06:07Z",
   "next tuesday",
 ])("refuses %s as a clock", (text) => {
   expect(readClock(text)).toBeUndefined();
 });
 
+it.each(["0000", "0099", "0100"])(
+  "retains first-century ISO year %s without Date.UTC's adjustment",
+  (year) => {
+    const value = `${year}-01-01T00:00:00Z`;
+    expect(respellClock(value, iso(" ", 3, "Z"))).toBe(
+      `${year}-01-01 00:00:00.000Z`,
+    );
+  },
+);
+
+it.each(["𐐀42𐐁", "𝟙42𝟚", "é42é", "A42B"])(
+  "keeps token42 embedded in complete Unicode letters or digits: %s",
+  (text) => {
+    expect(delimitedOffsets(text, "42")).toEqual([]);
+    expect(replaceDelimited(text, "42", "43")).toBe(text);
+  },
+);
+
+it("preserves UTF-16 offsets while accepting emoji as a delimiter", () => {
+  expect(delimitedOffsets("😀42😀", "42")).toEqual([2]);
+  expect(replaceDelimited("😀42😀", "42", "43")).toBe("😀43😀");
+});
+
+it.each<[string, number[], string]>([
+  ["A\uDC0042", [2], "A\uDC0043"],
+  ["é\uDFFF42", [2], "é\uDFFF43"],
+  ["\uDC0042", [1], "\uDC0043"],
+  ["A\uDC0042\uD800B", [2], "A\uDC0043\uD800B"],
+  ["A\uD80042", [2], "A\uD80043"],
+  ["42\uDC00A", [0], "43\uDC00A"],
+  ["\uD800\uDC0042", [], "\uD800\uDC0042"],
+])(
+  "classifies only the immediate code point beside raw UTF-16 text %j",
+  (text, offsets, replaced) => {
+    expect(delimitedOffsets(text, "42")).toEqual(offsets);
+    expect(replaceDelimited(text, "42", "43")).toBe(replaced);
+  },
+);
+
+it.each(["0000-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])(
+  "keeps %s when conversion cannot fit the four-digit year format",
+  (value) => {
+    const clock = readClock(value)!;
+    expect(respellClock(value, iso("T", 0, "Z"))).toBe(value);
+    expect(formatClock(clock.ms, iso("T", 0, "Z"))).toBeUndefined();
+    expect(formatClock(clock.ms, clock.format)).toBe(value);
+  },
+);
+
 it.each<[JsonValue | undefined, ReturnType<typeof readClock>]>([
   [
     WHOLE_SECOND / 1000,
-    { ms: WHOLE_SECOND, format: { kind: "epoch", unit: "s" } },
+    {
+      ms: WHOLE_SECOND,
+      subMillisecond: 0,
+      format: { kind: "epoch", unit: "s" },
+      fixedWidth: true,
+    },
   ],
-  [WITH_MS, { ms: WITH_MS, format: { kind: "epoch", unit: "ms" } }],
+  [
+    WITH_MS,
+    {
+      ms: WITH_MS,
+      subMillisecond: 0,
+      format: { kind: "epoch", unit: "ms" },
+      fixedWidth: true,
+    },
+  ],
   [999_999_999, undefined],
   [99_999_999_999, undefined],
   [10_000_000_000_000, undefined],
@@ -74,20 +166,6 @@ it.each<[JsonValue | undefined, ReturnType<typeof readClock>]>([
   [undefined, undefined],
 ])("reads the epoch value %j", (value, expected) => {
   expect(readClock(value)).toEqual(expected);
-});
-
-it.each<JsonValue>([
-  "2026-03-04T05:06:07Z",
-  "2026-03-04 05:06:07.123Z",
-  "2026-03-04T07:06:07.123+02:00",
-  "2026-03-03T23:36:07-0530",
-  "2026-03-04T05:06:07.1",
-  "2026-03-04T05:06:07.123000000",
-  WHOLE_SECOND / 1000,
-  WITH_MS,
-])("formats %j back to its own spelling", (value) => {
-  const clock = readClock(value)!;
-  expect(formatClock(clock.ms, clock.format)).toBe(value);
 });
 
 it.each<[ClockFormat, JsonValue]>([
@@ -188,17 +266,13 @@ it("finds a delimited token in any string nested in objects and arrays", () => {
 });
 
 it("searches arrays and objects too wide to spread into one call", () => {
-  const wide = Array.from({ length: 500_000 }, () => 0);
-  expect(containsDelimited(wide, "2")).toBe(false);
-  expect(containsDelimited({ wide: [...wide, "see /issues/2"] }, "2")).toBe(
-    true,
+  const wide = Array<JsonValue>(500_000).fill(0);
+  const object = Object.fromEntries(
+    wide.map((value, index) => [String(index), value]),
   );
-  expect(
-    containsDelimited(
-      Object.fromEntries(wide.map((value, index) => [String(index), value])),
-      "2",
-    ),
-  ).toBe(false);
+  wide[0] = "see /issues/2";
+  expect(containsDelimited({ wide }, "2")).toBe(true);
+  expect(containsDelimited(object, "2")).toBe(false);
 });
 
 it("derives a deterministic version 4 UUID per seed", () => {
@@ -253,4 +327,108 @@ it("draws tokens from the whole alphabet the recorded token uses", () => {
   expect(seededToken("seed-a", "k9x2m7q4z1w8")).not.toBe(
     seededToken("seed-b", "k9x2m7q4z1w8"),
   );
+});
+
+it("reads a sequence written as digit groups of one width, but not a date, version or address", () => {
+  expect(sequenceNumber("000-005")).toBe(5);
+  expect(sequenceNumber("00-01-12")).toBe(112);
+  expect(sequenceNumber(7)).toBe(7);
+  for (const other of ["2026-10-21", "2026-08", "12.04", "1.2.3", "10.0.0.9"])
+    expect(sequenceNumber(other)).toBeUndefined();
+  expect(sequenceNumber("A-005")).toBeUndefined();
+  expect(sequenceNumber("000-")).toBeUndefined();
+});
+
+it("reads a count that outgrew its mask only as the exemplar's spelling of it", () => {
+  expect(sequenceNumber("100-00", "99-99")).toBe(10_000);
+  expect(sequenceNumber("1000-000", "000-005")).toBe(1_000_000);
+  expect(sequenceNumber("100-00")).toBeUndefined();
+  for (const other of ["2026-10-21", "20261-02", "100-0"])
+    expect(sequenceNumber(other, "000-005")).toBeUndefined();
+  expect(sequenceNumber("100-00", "2026-10")).toBeUndefined();
+});
+
+it("spells a sequence value in the recorded value's digit groups, the overflow leading", () => {
+  expect(spelledLike("000-005", 6)).toBe("000-006");
+  expect(spelledLike("000-999", 1000)).toBe("001-000");
+  expect(spelledLike("999-999", 1_000_000)).toBe("1000-000");
+  expect(spelledLike("12", 13)).toBe("13");
+  expect(spelledLike(12, 13)).toBe(13);
+});
+
+it("respells a clock in another format, padding its fraction digits to the format's width but dropping none", () => {
+  const utc = iso("T", 6, "+00:00");
+  expect(respellClock("2026-10-21T17:06:13.710410Z", utc)).toBe(
+    "2026-10-21T17:06:13.710410+00:00",
+  );
+  expect(respellClock("2026-10-21 17:06:13Z", utc)).toBe(
+    "2026-10-21T17:06:13.000000+00:00",
+  );
+  expect(respellClock("2026-10-21T17:06:13.710410Z", iso("T", 0, "Z"))).toBe(
+    "2026-10-21T17:06:13.710410Z",
+  );
+  // An epoch spelling is formatted from the instant.
+  expect(
+    respellClock("2026-10-21T17:06:13Z", { kind: "epoch", unit: "s" }),
+  ).toBe(Date.UTC(2026, 9, 21, 17, 6, 13) / 1000);
+  expect(respellClock("not a clock", utc)).toBe("not a clock");
+});
+
+it("respells a clock at another offset with its own fraction digits, across a date change", () => {
+  expect(
+    respellClock("2026-10-21T17:06:13.710410Z", iso("T", 6, "+02:00")),
+  ).toBe("2026-10-21T19:06:13.710410+02:00");
+  expect(
+    respellClock("2026-10-21T23:30:00.000321Z", iso(" ", 6, "+05:30")),
+  ).toBe("2026-10-22 05:00:00.000321+05:30");
+  expect(
+    respellClock("2026-10-21T01:00:00.5+01:00", iso("T", 3, "-03:00")),
+  ).toBe("2026-10-20T21:00:00.500-03:00");
+  // An epoch value's milliseconds are its fraction digits.
+  const epochMs = Date.UTC(2026, 9, 21, 17, 6, 13, 250);
+  expect(respellClock(epochMs, iso("T", 0, "Z"))).toBe(
+    "2026-10-21T17:06:13.25Z",
+  );
+  expect(respellClock(epochMs, iso("T", 3, "+00:00"))).toBe(
+    "2026-10-21T17:06:13.250+00:00",
+  );
+});
+
+const TRIMMED_9: ClockFormat = {
+  kind: "iso",
+  separator: "T",
+  fraction: 9,
+  zone: "Z",
+  trimmed: true,
+};
+
+it("spells a trimmed format without trailing fraction zeros, and without the point when none remain", () => {
+  expect(formatClock(WITH_MS, TRIMMED_9)).toBe("2026-03-04T05:06:07.123Z");
+  expect(formatClock(WHOLE_SECOND, TRIMMED_9)).toBe("2026-03-04T05:06:07Z");
+  expect(respellClock("2026-03-04T05:06:07.120000Z", TRIMMED_9)).toBe(
+    "2026-03-04T05:06:07.12Z",
+  );
+});
+
+it("seeds integers as long as the recorded one, keeping its JSON kind and a safe number", () => {
+  const number = seededInteger("seed", 1656166527623168);
+  expect(typeof number).toBe("number");
+  expect(Number.isSafeInteger(number)).toBe(true);
+  expect(String(number)).toMatch(/^[1-8]\d{15}$/u);
+  expect(seededInteger("seed", 1656166527623168)).toBe(number);
+  expect(seededInteger("other", 1656166527623168)).not.toBe(number);
+  expect(seededInteger("seed", "1234567890123456789")).toMatch(
+    /^[1-9]\d{18}$/u,
+  );
+});
+
+it.each<[JsonValue, string | undefined]>([
+  [1656166527623168, "1656166527623168"],
+  ["1234567890123456789", "1234567890123456789"],
+  [123456789, undefined],
+  ["0123456789012", undefined],
+  [-1656166527623168, undefined],
+  [1.5e15 + 0.5, undefined],
+])("reads %j as a generated integer's digits", (value, expected) => {
+  expect(generatedIntegerDigits(value)).toBe(expected);
 });

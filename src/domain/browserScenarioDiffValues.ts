@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { browserScenarioCaptureSchema } from "./browserScenarioCapture.js";
+import { retainedBrowserScenarioCaptureSchema } from "./browserScenarioCapture.js";
+import { presentCompleteObservation } from "./schemaAnnotations.js";
 
 /** Scenario artifact families compared after step alignment. */
 export const browserScenarioArtifactKindSchema = z.enum([
@@ -74,11 +75,15 @@ const normalizationInputSchema = z
 
 /** Input for step-aligned comparison of two browser scenario captures. */
 export const compareBrowserScenariosInputSchema = z.strictObject({
-  before_scenario: browserScenarioCaptureSchema.describe(
-    "Earlier complete normalized_result from capture_browser_scenario.",
+  before_scenario: presentCompleteObservation(
+    retainedBrowserScenarioCaptureSchema.describe(
+      "Earlier complete normalized_result from capture_browser_scenario.",
+    ),
   ),
-  after_scenario: browserScenarioCaptureSchema.describe(
-    "Later complete normalized_result from capture_browser_scenario.",
+  after_scenario: presentCompleteObservation(
+    retainedBrowserScenarioCaptureSchema.describe(
+      "Later complete normalized_result from capture_browser_scenario.",
+    ),
   ),
   normalization: normalizationInputSchema
     .default({ rules: [] })
@@ -129,7 +134,9 @@ export const BROWSER_SCENARIO_BUILT_IN_NORMALIZATION_RULES = [
   "ignore_event_step_index",
   "compare_screenshot_content_digest",
   "compare_normalized_text_content",
+  "compare_storage_entries_as_unordered_collection",
   "ignore_capture_local_network_transaction_ids",
+  "ignore_network_request_timing",
   "attribute_network_transactions_to_request_step",
   "compare_network_transactions_as_unordered_collection",
   "preserve_redirect_transaction_ancestry",

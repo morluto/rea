@@ -1,9 +1,16 @@
 import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
-import { dexDescriptorSchema } from "../domain/android/androidAnalysis.js";
-
+import {
+  androidMethodSelectorSchema,
+  dexStaticValueSchema,
+} from "../domain/android/androidAnalysis.js";
+import {
+  dexDescriptorSchema,
+  dexTypeSchema,
+} from "../domain/android/dexTypes.js";
 const count = z.int().nonnegative();
 /** Typed allocation failures authored before upstream erases the JVM exception. */
 const jadxMemoryFailureSchema = z.strictObject({
@@ -19,22 +26,37 @@ const jadxInputFailureSchema = z.strictObject({
   field: z.enum(["class_name", "method_name", "overload_index"]),
   message: z.string().min(1),
 });
+const jadxReferenceLimitSchema = z.strictObject({
+  kind: z.literal("reference-output-limit"),
+  stage: z.enum(["method_inventory", "caller_inventory"]),
+  limit_bytes: z.int().positive().safe(),
+});
 const bridgeFailureSchema = z.discriminatedUnion("kind", [
   jadxInputFailureSchema,
   jadxMemoryFailureSchema,
+  jadxReferenceLimitSchema,
 ]);
+
+/**
+ * HotSpot's heap-exhaustion `OutOfMemoryError` reasons. Before the bridge
+ * answers there is no named failure, so a launcher's retained stderr is the
+ * only evidence. Other reasons (metaspace, direct buffers, native threads) are
+ * not remedied by the worker heap setting.
+ */
+const JADX_HEAP_EXHAUSTION =
+  /java\.lang\.OutOfMemoryError: (?:Java heap space|GC overhead limit exceeded)/u;
+
+/** Whether a launcher's retained stderr reports JVM heap exhaustion. */
+export const jadxHeapExhausted = (text: string): boolean =>
+  JADX_HEAP_EXHAUSTION.test(text);
 
 /** Arbitrary upstream failure text stays text unless it matches a named bridge contract. */
 export const parseJadxFailure = (
   text: string,
 ): z.infer<typeof bridgeFailureSchema> | undefined => {
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  const parsed = bridgeFailureSchema.safeParse(candidate);
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) return undefined;
+  const parsed = bridgeFailureSchema.safeParse(decoded.value);
   return parsed.success ? parsed.data : undefined;
 };
 /** Values observed inside the exact JVM producing the analysis. */
@@ -61,98 +83,153 @@ export const jadxAppSchema = z.object({
   target_sdk: z.string(),
   permissions: z.array(z.string()),
 });
-export const jadxClassPageSchema = z.object({
-  scope: z.literal("top_level"),
-  total_classes: count,
-  next_offset: count,
-  offset: count,
-  limit: count,
-  items: z.array(z.string()),
+const jadxClassPageSchema = z
+  .object({
+    scope: z.literal("top_level"),
+    total_classes: count,
+    next_offset: count,
+    offset: count,
+    limit: count,
+    items: z.array(z.string()),
+  })
+  .catchall(jsonValueSchema);
+export type JadxClassPage = z.infer<typeof jadxClassPageSchema>;
+
+/** Validate a decoded page without dropping observed JSON members such as __proto__. */
+export const parseJadxClassPage = (value: JsonValue): JadxClassPage => {
+  jadxClassPageSchema.parse(value);
+  return value as JadxClassPage;
+};
+
+const jadxMethodMetadataSchema = z.object({
+  name: z.string(),
+  raw_name: z.string().min(1),
+  signature: z.string(),
+  dex_descriptor: dexDescriptorSchema,
+  is_constructor: z.boolean(),
+  def_pos: z.int(),
 });
+
 export const jadxClassSchema = z.object({
-  full_name: z.string(),
+  full_name: z.string().min(1),
+  raw_name: z.string().min(1),
   name: z.string(),
   method_count: count,
   field_count: count,
   inner_class_count: count,
-  methods: z.array(
+  methods: z.array(jadxMethodMetadataSchema),
+  fields: z.array(
     z.object({
       name: z.string(),
-      signature: z.string(),
-      dex_descriptor: dexDescriptorSchema,
-      is_constructor: z.boolean(),
+      raw_name: z.string().min(1),
+      type: z.string(),
+      dex_type: dexTypeSchema,
       def_pos: z.int(),
+      dex_static_value: dexStaticValueSchema.optional(),
     }),
   ),
-  fields: z.array(
-    z.object({ name: z.string(), type: z.string(), def_pos: z.int() }),
-  ),
   inner_classes: z.array(z.string()),
+  /** Original binary names, index-aligned with the display names above. */
+  inner_class_raw_names: z.array(z.string()),
 });
-export const jadxMethodSchema = z.object({
+/** Reference-only prototypes are not an external class definition or field inventory. */
+export const jadxExternalReferenceSummarySchema = z.object({
+  reference_target: z.literal("external"),
+  class_name: z.string().min(1),
+  observed_method_count: count,
+  prototypes: z.array(jadxMethodMetadataSchema).min(1),
+});
+const jadxMethodIdentity = {
   class_name: z.string(),
   method_name: z.string(),
   full_name: z.string(),
   overload_index: count,
   overload_count: count,
   dex_descriptor: dexDescriptorSchema,
-  mode: z.enum(["java", "smali"]),
-  fell_back: z.boolean(),
-  markers: z.array(z.string()),
-  body: z.string(),
-});
+};
+export const jadxMethodSchema = z.discriminatedUnion("mode", [
+  z.object({
+    ...jadxMethodIdentity,
+    mode: z.enum(["java", "smali"]),
+    fell_back: z.boolean(),
+    markers: z.array(z.string()),
+    body: z.string(),
+  }),
+  z.strictObject({
+    ...jadxMethodIdentity,
+    mode: z.literal("unavailable"),
+    body_unavailable_reason: z.string().min(1),
+  }),
+]);
 export const jadxXrefsSchema = z.object({
   target: z.string(),
+  reference_target: z.literal("external").optional(),
+  reference_scope: z.literal("direct_dex_invokes").optional(),
+  dex_descriptor: dexDescriptorSchema.optional(),
   overload_index: count.optional(),
   reported_signature: z.string().optional(),
   total: count,
   count,
   resolve_line: z.literal(false),
   items: z.array(
-    z.object({
-      kind: z.string(),
-      name: z.string(),
-      full_name: z.string(),
-      containing_class: z.string(),
-      top_class: z.string(),
-      def_pos: z.int(),
-      direct_invokes_exhaustive: z.boolean().optional(),
-      direct_invokes: z
-        .array(
-          z.object({
-            dex_entry: z.string().min(1),
-            source_raw_method_id: z.string().min(1),
-            dex_code_unit_offset: count,
-            dex_method_index: count,
-            opcode: z.string().regex(/^INVOKE_/u),
-          }),
-        )
-        .optional(),
-    }),
+    z
+      .object({
+        kind: z.string(),
+        name: z.string(),
+        full_name: z.string(),
+        containing_class: z.string(),
+        top_class: z.string(),
+        def_pos: z.int(),
+        source_selector: androidMethodSelectorSchema.optional(),
+        direct_invokes_exhaustive: z.boolean().optional(),
+        direct_invokes: z
+          .array(
+            z.object({
+              dex_entry: z.string().min(1),
+              source_raw_method_id: z.string().min(1),
+              dex_code_unit_offset: count,
+              dex_method_index: count,
+              opcode: z.string().regex(/^INVOKE_/u),
+            }),
+          )
+          .optional(),
+      })
+      // The bridge emits or removes the site list and its coverage together.
+      .refine(
+        (item) =>
+          item.direct_invokes_exhaustive === undefined ||
+          item.direct_invokes !== undefined,
+        {
+          message: "Invoke coverage requires a direct invoke site list",
+          path: ["direct_invokes_exhaustive"],
+        },
+      ),
   ),
 });
-const toolResponse = z.object({
-  content: z
-    .array(z.object({ type: z.literal("text"), text: z.string() }))
-    .length(1),
-  isError: z.boolean().optional(),
-});
+const toolResponse = z
+  .object({
+    content: z.tuple([
+      z
+        .object({ type: z.literal("text"), text: z.string() })
+        .catchall(jsonValueSchema),
+    ]),
+    isError: z.boolean().exactOptional(),
+  })
+  .catchall(jsonValueSchema);
 
 /** Parse the upstream text-only envelope, preserving errors at the producing boundary. */
 export const parseJadxEnvelope = (
-  response: unknown,
+  response: JsonValue,
   operation: AndroidOperation,
-): { text: string; failed: boolean } => {
+): z.infer<typeof toolResponse> => {
   const parsed = toolResponse.safeParse(response);
-  if (!parsed.success || parsed.data.content[0] === undefined)
+  if (!parsed.success)
     throw new AnalysisOutputError(
       operation,
       "JADX returned an unsupported MCP content envelope",
     );
-  return {
-    text: parsed.data.content[0].text,
-    failed: parsed.data.isError === true,
-  };
+  // The schema establishes the shape; its object copy would omit __proto__.
+  return response as z.infer<typeof toolResponse>;
 };
 
 /** Decode an upstream JSON text payload without trusting its contents. */
@@ -160,8 +237,21 @@ export const parseJadxJson = (
   text: string,
   operation: AndroidOperation,
 ): z.infer<typeof jsonValueSchema> => {
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw new AnalysisOutputError(
+        operation,
+        `JADX returned JSON with duplicate member ${JSON.stringify(decoded.duplicate.name)}`,
+      );
+    throw new AnalysisOutputError(
+      operation,
+      "JADX returned malformed JSON text",
+      { cause: decoded.cause },
+    );
+  }
   try {
-    return jsonValueSchema.parse(JSON.parse(text));
+    return jsonValueSchema.parse(decoded.value);
   } catch (cause) {
     throw new AnalysisOutputError(
       operation,

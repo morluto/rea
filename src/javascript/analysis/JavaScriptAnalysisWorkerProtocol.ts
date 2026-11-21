@@ -1,9 +1,12 @@
+import { javaScriptMemberMutationAllowanceSchema } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { javaScriptSemanticPrecisionSchema } from "../../domain/javascript/javascriptSemanticPrecision.js";
 import { z } from "zod";
 import { ANALYSIS_RESOURCE_KINDS } from "../../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { digestSchema } from "../../domain/digests.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
+  JAVASCRIPT_STATIC_FACT_BYTES,
   JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
 } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { javaScriptAnalysisTransferDescriptorSchema } from "./JavaScriptAnalysisTransfer.js";
@@ -11,7 +14,7 @@ import { javaScriptAnalysisTransferDescriptorSchema } from "./JavaScriptAnalysis
 /** Independent worker execution budget; source length is not an admission rule. */
 export const JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS = {
   ...JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
-  checkpointBytes: 8 * 1024 * 1024,
+  checkpointBytes: JAVASCRIPT_STATIC_FACT_BYTES,
   protocolBytes: 64 * 1024,
 } as const;
 
@@ -24,6 +27,8 @@ export const javaScriptCheckpointCeilingRemediation = (
 /** Caller-selected artifact identity, separate from the decoded source-text digest. */
 export const javaScriptWorkerRequestSchema = z.strictObject({
   id: z.uuid(),
+  semantic_precision: javaScriptSemanticPrecisionSchema.optional(),
+  member_mutation_allowance: javaScriptMemberMutationAllowanceSchema,
   unknown_budget: z.int().min(0).max(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM),
   node_budget: z.int().min(0).max(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM),
   text_sha256: digestSchema,
@@ -36,6 +41,9 @@ export const javaScriptWorkerRequestSchema = z.strictObject({
     kind: z.literal("javascript"),
     unpacked: z.boolean(),
   }),
+  /** Type of the source's inventoried package scope, observed by the parent. */
+  package_type: z.enum(["module", "commonjs", "unspecified", "unknown"]),
+  purpose: z.enum(["analysis", "preload-discovery"]),
 });
 
 /** Parent admission after validated static observations have been retained. */

@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import {
   readNpmRelease,
-  requireMatchingNpmRelease,
   stableUpdateVersion,
   waitForNpmRelease,
 } from "../../../scripts/ci/npm-release.mjs";
+import { requireMatchingNpmRelease } from "../../../scripts/ci/npm-release-state.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const metadata = (
@@ -114,7 +114,7 @@ it("waits only for confirmed propagation absence and does not retry errors", asy
     ),
   ).resolves.toEqual(published);
   expect(calls).toBe(2);
-  expect(pauses).toEqual([15_000]);
+  expect(pauses).toEqual([30_000]);
   let failures = 0;
   await expect(
     waitForNpmRelease(
@@ -129,4 +129,48 @@ it("waits only for confirmed propagation absence and does not retry errors", asy
     ),
   ).rejects.toThrow("unavailable");
   expect(failures).toBe(1);
+});
+
+it("covers the observed 55-minute publication delay with a finite retry budget", async () => {
+  const published = await readNpmRelease("6.5.0", async () =>
+    Response.json(metadata("6.5.0", "sha512-target", { latest: "6.5.0" })),
+  );
+  let waited = 0;
+  const pause = async (milliseconds: number) => {
+    waited += milliseconds;
+  };
+  await expect(
+    waitForNpmRelease(
+      "6.5.0",
+      async () => (waited < 55 * 60_000 ? { status: "absent" } : published),
+      pause,
+    ),
+  ).resolves.toEqual(published);
+  expect(waited).toBe(55 * 60_000);
+
+  waited = 0;
+  await expect(
+    waitForNpmRelease("6.5.0", async () => ({ status: "absent" }), pause),
+  ).rejects.toThrow("after 151 attempts over 75 minutes");
+  expect(waited).toBe(75 * 60_000);
+});
+
+it.each([
+  {
+    name: "array versions",
+    value: { name: "rea-agents", versions: [], "dist-tags": {} },
+  },
+  {
+    name: "invalid tag facts",
+    value: { name: "rea-agents", versions: {}, "dist-tags": { latest: 42 } },
+  },
+  {
+    name: "different package",
+    value: { name: "other", versions: {}, "dist-tags": {} },
+  },
+  { name: "null registry response", value: null },
+])("does not turn $name into publication absence", async ({ value }) => {
+  await expect(
+    readNpmRelease("6.5.0", async () => Response.json(value)),
+  ).rejects.toThrow();
 });

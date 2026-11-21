@@ -6,16 +6,18 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperationFailure.js";
+import {
+  translateArtifactFailure,
+  DirectoryArtifactReader,
+} from "../../../src/resources/index.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../src/resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
-import { scanCanonicalArtifactInventory as scanCanonicalArtifactInventoryOwned } from "../../../src/artifacts/inventory/scanCanonical.js";
+import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
@@ -59,11 +61,15 @@ describe("artifact inventory snapshot", () => {
         });
       },
     };
-    const failure = await scanCanonicalArtifactInventoryOwned(
-      root,
-      { resourceScope },
-      () => reader,
-    ).catch((cause: unknown) => cause);
+    const failure = await resourceScope
+      .run(() =>
+        scanCanonicalArtifactInventoryInScope(
+          root,
+          { resourceScope },
+          () => reader,
+        ),
+      )
+      .catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(ArtifactReaderFailure);
     if (!(failure instanceof ArtifactReaderFailure))
       throw failure instanceof Error
@@ -81,9 +87,10 @@ describe("artifact inventory snapshot", () => {
           kind: "artifact-inventory",
           inventory: {
             manifest: { occurrence_count: 2 },
-            occurrences: expect.arrayContaining([
-              expect.objectContaining({ logical_path: "observed.txt" }),
-            ]),
+            occurrences: [
+              { logical_path: "." },
+              { logical_path: "observed.txt" },
+            ],
           },
         },
       },
@@ -125,6 +132,7 @@ it("unwinds every nested traversal and preserves its primary failure", async () 
           throw new ArtifactReaderFailure(
             "integrity",
             "primary nested member failure",
+            { integrityCheck: "container-identity" },
           );
         },
         async return() {
@@ -156,11 +164,15 @@ it("unwinds every nested traversal and preserves its primary failure", async () 
     close: () => directory.close(),
   };
 
-  const failure = await scanCanonicalArtifactInventoryOwned(
-    bundle,
-    { resourceScope },
-    () => reader,
-  ).catch((cause: unknown) => cause);
+  const failure = await resourceScope
+    .run(() =>
+      scanCanonicalArtifactInventoryInScope(
+        bundle,
+        { resourceScope },
+        () => reader,
+      ),
+    )
+    .catch((cause: unknown) => cause);
   expect(failure).toMatchObject({
     reason: "integrity",
     message: "primary nested member failure",

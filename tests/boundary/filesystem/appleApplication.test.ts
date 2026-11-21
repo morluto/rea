@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -12,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { minimalMachoImage } from "../../fixtures/nativeHeaders.js";
 import {
   createNonApplicationZipInventory,
   requireSuccessfulProjection,
@@ -50,15 +53,15 @@ async function createCompleteAppleProjection() {
   for (let index = 0; index < NATIVE_COUNT; index++) {
     await writer.add(
       `Payload/Complete.app/Frameworks/Native${String(index).padStart(3, "0")}.dylib`,
-      new Uint8ArrayReader(
-        Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
-      ),
+      new Uint8ArrayReader(Uint8Array.from(minimalMachoImage())),
     );
   }
   await writeFile(path, await writer.close());
 
   const inventory = parseEvidence(
-    await runProviderAnalysis(path, "inventory_artifact", {}),
+    await runProviderAnalysis(path, "inventory_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
   );
   const fragments = fragmentInventoryEvidence(inventory, 3);
   const result = projectAppleApplicationEvidence({
@@ -94,7 +97,9 @@ describe("Apple application projection", () => {
     await writeFile(path, await writer.close());
 
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(inventory.normalized_result).toMatchObject({
       coverage: { scope: "container-entries", status: "complete" },
@@ -126,15 +131,11 @@ describe("Apple application projection", () => {
     );
     await writer.add(
       "Payload/Fixture.app/Fixture",
-      new Uint8ArrayReader(
-        Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
-      ),
+      new Uint8ArrayReader(Uint8Array.from(minimalMachoImage())),
     );
     await writer.add(
       "Payload/Fixture.app/Frameworks/React.framework/React",
-      new Uint8ArrayReader(
-        Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
-      ),
+      new Uint8ArrayReader(Uint8Array.from(minimalMachoImage())),
     );
     await writer.add(
       "Payload/Fixture.app/main.js",
@@ -147,7 +148,9 @@ describe("Apple application projection", () => {
     await writeFile(path, await writer.close());
 
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const first = projectAppleApplicationEvidence({
       inventory_evidence: [inventory],
@@ -204,8 +207,8 @@ describe("Apple application projection", () => {
       application_roots: [],
       bundles: [],
     });
-    expect(projection.limitations).toContain(
-      "No application bundle (Payload/*.app or *.app/Contents) was present in the supplied inventory pages.",
+    expect(projection.limitations).toContainEqual(
+      expect.stringMatching(/no application bundle.*inventory/iu),
     );
   });
 
@@ -216,7 +219,9 @@ describe("Apple application projection", () => {
     await writer.add("AndroidManifest.xml", new TextReader("<manifest/>"));
     await writeFile(path, await writer.close());
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(
       projectAppleApplicationEvidence({ inventory_evidence: [inventory] }),
@@ -250,7 +255,9 @@ async function projectArchive(
     );
   await writeFile(path, await writer.close());
   const inventory = parseEvidence(
-    await runProviderAnalysis(path, "inventory_artifact", {}),
+    await runProviderAnalysis(path, "inventory_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
   );
   return appleApplicationProjectionResultSchema.parse(
     requireSuccessfulProjection(
@@ -352,7 +359,9 @@ describe("macOS application projection", () => {
     await writeFile(path, await writer.close());
 
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const projection = appleApplicationProjectionResultSchema.parse(
       requireSuccessfulProjection(
@@ -403,7 +412,9 @@ describe("macOS application projection", () => {
     );
 
     const inventory = parseEvidence(
-      await runProviderAnalysis(app, "inventory_artifact", {}),
+      await runProviderAnalysis(app, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const result = projectAppleApplicationEvidence({
       inventory_evidence: [inventory],
@@ -411,9 +422,9 @@ describe("macOS application projection", () => {
     const projection = appleApplicationProjectionResultSchema.parse(
       requireSuccessfulProjection(result).normalized_result,
     );
-    expect(requireSuccessfulProjection(result).subject?.format).toBe(
-      "directory",
-    );
+    expect(
+      fileIdentity(requireSuccessfulProjection(result).subject).format,
+    ).toBe("directory");
     expect(projection).toMatchObject({
       root_format: "directory",
       platforms: ["macos"],
@@ -469,14 +480,14 @@ describe("Apple application projection completeness", () => {
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add(
       `${applicationRoot}/Fixture`,
-      new Uint8ArrayReader(
-        Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
-      ),
+      new Uint8ArrayReader(Uint8Array.from(minimalMachoImage())),
     );
     await writeFile(path, await writer.close());
 
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const result = projectAppleApplicationEvidence({
       inventory_evidence: [inventory],

@@ -269,3 +269,18 @@ describe("JavaScript semantic analysis: configuration value escapes", () => {
     expect(configurationReads(body)).toEqual([]);
   });
 });
+
+it.each([
+  ["if (flag) child = spawn('tool');", "partial"],
+  ["child = spawn('tool');", "complete"],
+] as const)(
+  "keeps child-process incoming parameter uncertainty after %s",
+  (assignment, resolution) => {
+    const ir = analyzeJavaScriptSemantics(
+      `import { spawn } from 'node:child_process'; function stop(child, flag) { ${assignment} child.kill(); }`,
+    );
+    expect(ir.childProcessInteractions).toEqual([
+      expect.objectContaining({ kind: "signal", resolution }),
+    ]);
+  },
+);

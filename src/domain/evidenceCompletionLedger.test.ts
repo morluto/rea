@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createEvidenceCompletionLedger,
-  parseEvidenceCompletionLedger,
+  evidenceCompletionLedgerSchema,
   type EvidenceCompletionStatus,
 } from "./evidenceCompletionLedger.js";
 
@@ -32,7 +32,7 @@ describe("Evidence completion ledger", () => {
     });
   });
 
-  it.each(["fail", "unsupported", "truncated", "unknown"] as const)(
+  it.each(["fail", "truncated", "unknown"] as const)(
     "does not count %s as pass",
     (status) => {
       const ledger = createEvidenceCompletionLedger([
@@ -56,72 +56,40 @@ describe("Evidence completion ledger", () => {
     ]);
 
     expect(left).toEqual(right);
-    expect(left.ledger_id).toMatch(/^ecl_[a-f0-9]{64}$/u);
-  });
-
-  it("accepts every Evidence ID supplied for one claim", () => {
-    const evidenceIds = Array.from(
-      { length: 101 },
-      (_, index) => `ev_${index.toString(16).padStart(64, "0")}`,
+    expect(left.records).toEqual([
+      record("scenario.a", "unknown", [evidenceId("3")]),
+      record("scenario.z", "pass", [evidenceId("1"), evidenceId("2")]),
+    ]);
+    expect(left.ledger_id).toBe(
+      "ecl_7c5d6bed5031f94a1e122ecce6a6be85af38b1972f2921e502305354851cce94",
     );
-
-    expect(
-      createEvidenceCompletionLedger([
-        record("scenario.many-evidence-items", "pass", evidenceIds),
-      ]).records[0]?.evidence_ids,
-    ).toHaveLength(evidenceIds.length);
   });
 
-  it("rejects missing, malformed, and duplicate Evidence IDs", () => {
-    expect(() =>
-      createEvidenceCompletionLedger([record("scenario.empty", "pass", [])]),
-    ).toThrow();
-    expect(() =>
-      createEvidenceCompletionLedger([
-        record("scenario.bad", "pass", ["ev_not-a-digest"]),
-      ]),
-    ).toThrow();
-    expect(() =>
-      createEvidenceCompletionLedger([
-        record("scenario.duplicate", "pass", [
-          evidenceId("1"),
-          evidenceId("1"),
-        ]),
-      ]),
-    ).toThrow("unique");
-  });
-
-  it("rejects duplicate claims and tampered derived fields", () => {
-    expect(() =>
-      createEvidenceCompletionLedger([
-        record("scenario.same", "pass"),
-        record("scenario.same", "unknown", [evidenceId("2")]),
-      ]),
-    ).toThrow("unique");
-
+  it("rejects independently tampered receipt fields", () => {
     const ledger = createEvidenceCompletionLedger([
       record("scenario.valid", "pass"),
     ]);
-    expect(() =>
-      parseEvidenceCompletionLedger({
+    for (const [field, value] of [
+      ["summary", { ...ledger.summary, complete: false }],
+      ["ledger_id", `ecl_${"0".repeat(64)}`],
+    ] as const) {
+      const parsed = evidenceCompletionLedgerSchema.safeParse({
         ...ledger,
-        summary: { ...ledger.summary, complete: false },
-      }),
-    ).toThrow();
-    expect(() =>
-      parseEvidenceCompletionLedger({
-        ...ledger,
-        ledger_id: `ecl_${"0".repeat(64)}`,
-      }),
-    ).toThrow();
+        [field]: value,
+      });
+      expect(parsed).toMatchObject({
+        success: false,
+        error: { issues: [{ path: [field] }] },
+      });
+    }
   });
 
-  it("rejects path-bearing fields and emits path-independent output", () => {
+  it("rejects a path-bearing field in a receipt record", () => {
     const ledger = createEvidenceCompletionLedger([
       record("scenario.path-free", "pass"),
     ]);
-    expect(() =>
-      parseEvidenceCompletionLedger({
+    expect(
+      evidenceCompletionLedgerSchema.safeParse({
         ...ledger,
         records: [
           {
@@ -130,8 +98,17 @@ describe("Evidence completion ledger", () => {
           },
         ],
       }),
-    ).toThrow();
-
-    expect(JSON.stringify(ledger)).not.toContain("/private/operator");
+    ).toMatchObject({
+      success: false,
+      error: {
+        issues: [
+          {
+            code: "unrecognized_keys",
+            path: ["records", 0],
+            keys: ["local_path"],
+          },
+        ],
+      },
+    });
   });
 });

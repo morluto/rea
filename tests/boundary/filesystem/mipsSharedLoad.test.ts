@@ -6,7 +6,9 @@ import { it } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { readMipsElfMetadata } from "../../../src/application/MipsElfMetadata.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { expectBinaryTargetError } from "../../fixtures/binaryTargetAdmission.js";
 import {
+  ghidraMipsElfImageBase,
   ghidraMipsProfileParameters,
   ghidraMipsUnsupportedReason,
 } from "../../../src/ghidra/GhidraMipsProfile.js";
@@ -52,10 +54,31 @@ const fixture = (little: boolean, count = 2): Buffer => {
   }
   return bytes;
 };
-const resolve = async (bytes: Buffer) => {
+const writeFixture = async (bytes: Buffer) => {
   const directory = await createTestTempDirectory("rea-mips-shared-test-");
   const path = join(directory, "shared.elf");
   await writeFile(path, bytes);
+  return path;
+};
+const inspectSource = async (path: string) => {
+  const handle = await open(path, "r");
+  try {
+    return await readMipsElfMetadata(
+      handle,
+      {
+        elfClass: 32,
+        byteOrder: "little",
+        type: 3,
+        flags: 0x74001005,
+      },
+      () => undefined,
+    );
+  } finally {
+    await handle.close();
+  }
+};
+const resolve = async (bytes: Buffer) => {
+  const path = await writeFixture(bytes);
   const result = await parseBinaryTarget(path);
   assert.ok(result.ok);
   assert.equal(result.value.kind, "executable");
@@ -82,6 +105,8 @@ for (const little of [true, false]) {
       relocationCount: 2,
       relocationTypes: [0, 3],
       symbolRelativeCount: 0,
+      loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+      prelinkBase: null,
     });
     assert.equal(ghidraMipsUnsupportedReason(target), null);
     assert.deepEqual(ghidraMipsProfileParameters(target).mips_elf, {
@@ -99,6 +124,24 @@ for (const little of [true, false]) {
       },
     });
   });
+  it(`retains the dynamic PIE flag and refuses the shared-library lane (${little ? "LE" : "BE"})`, async () => {
+    const bytes = fixture(little);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    view.setUint32(36, 0x70001005, little); // Standard MIPS32r2 o32, without MIPS16 ASE.
+    view.setUint32(100, 40, little);
+    view.setUint32(104, 40, little);
+    view.setUint32(280, 0x6ffffffb, little); // DT_FLAGS_1
+    view.setUint32(284, 0x08000000, little); // DF_1_PIE
+    const target = await resolve(bytes);
+    assert.ok(
+      target.mips.sharedLoad?.status === "complete" &&
+        target.mips.sharedLoad.declaresPie,
+    );
+    assert.match(
+      ghidraMipsUnsupportedReason(target) ?? "",
+      /position-independent executables/u,
+    );
+  });
   it(`retains and refuses symbol-bearing REL32 without repairing the mode tag (${little ? "LE" : "BE"})`, async () => {
     const bytes = fixture(little);
     if (little) bytes.writeUInt32LE(0x103, relOffset + 12);
@@ -110,7 +153,122 @@ for (const little of [true, false]) {
       /Symbol-bearing R_MIPS_REL32/u,
     );
   });
+  it(`records a prelink trailer Ghidra would prefer over PT_LOAD (${little ? "LE" : "BE"})`, async () => {
+    const base = Buffer.alloc(4);
+    if (little) base.writeUInt32LE(0x40000000);
+    else base.writeUInt32BE(0x40000000);
+    const target = await resolve(
+      Buffer.concat([fixture(little), base, Buffer.from("PRE\0", "latin1")]),
+    );
+    assert.equal(target.mips.sharedLoad?.status, "complete");
+    if (target.mips.sharedLoad?.status === "complete")
+      assert.equal(target.mips.sharedLoad.prelinkBase, 0x40000000);
+  });
+
+  it.each([false, true])(
+    `leaves RELR dynamic declarations unverified with existing REL=%s (${little ? "LE" : "BE"})`,
+    async (withRel) => {
+      const bytes = fixture(little);
+      const write = (value: number, offset: number) =>
+        little
+          ? bytes.writeUInt32LE(value, offset)
+          : bytes.writeUInt32BE(value, offset);
+      const start = withRel ? 280 : 256;
+      write(35, start); // DT_RELRSZ
+      write(4, start + 4);
+      write(36, start + 8); // DT_RELR
+      write(2048, start + 12);
+      write(37, start + 16); // DT_RELRENT
+      write(4, start + 20);
+      write(0, start + 24);
+      write(64, 100);
+      write(64, 104);
+      const target = await resolve(bytes);
+      assert.equal(target.mips.sharedLoad?.status, "unavailable");
+      assert.match(ghidraMipsUnsupportedReason(target) ?? "", /RELR/u);
+    },
+  );
+
+  it(`does not ignore an isolated zero-valued RELR declaration (${little ? "LE" : "BE"})`, async () => {
+    const bytes = fixture(little);
+    if (little) bytes.writeUInt32LE(37, 280);
+    else bytes.writeUInt32BE(37, 280);
+    if (little) {
+      bytes.writeUInt32LE(40, 100);
+      bytes.writeUInt32LE(40, 104);
+    } else {
+      bytes.writeUInt32BE(40, 100);
+      bytes.writeUInt32BE(40, 104);
+    }
+    const target = await resolve(bytes);
+    assert.equal(target.mips.sharedLoad?.status, "unavailable");
+    assert.match(ghidraMipsUnsupportedReason(target) ?? "", /RELR/u);
+  });
+
+  it.each([false, true])(
+    `includes SHT_RELR in source coverage with existing REL=%s (${little ? "LE" : "BE"})`,
+    async (withRel) => {
+      const bytes = fixture(little);
+      const write = (value: number, offset: number) =>
+        little
+          ? bytes.writeUInt32LE(value, offset)
+          : bytes.writeUInt32BE(value, offset);
+      if (!withRel) write(0, 256);
+      write(1024, 32);
+      if (little) {
+        bytes.writeUInt16LE(40, 46);
+        bytes.writeUInt16LE(2, 48);
+      } else {
+        bytes.writeUInt16BE(40, 46);
+        bytes.writeUInt16BE(2, 48);
+      }
+      write(19, 1068); // SHT_RELR
+      write(2048, 1080);
+      write(4, 1084);
+      write(4, 1100);
+      const target = await resolve(bytes);
+      assert.equal(target.mips.sharedLoad?.status, "unavailable");
+      assert.match(
+        ghidraMipsUnsupportedReason(target) ?? "",
+        /section relocation declarations/u,
+      );
+    },
+  );
 }
+
+it.each([3, 21])(
+  "keeps every load address and applies Ghidra's first-20-headers base rule only in the profile (%s headers)",
+  async (count) => {
+    const bytes = fixture(true);
+    const base = 0x800000;
+    bytes.writeUInt32LE(0x70001007, 36); // Plain MIPS32 PIC: the standard shared lane.
+    bytes.copy(bytes, 1024, 256, 288);
+    bytes.writeUInt16LE(count, 44);
+    bytes.writeUInt32LE(base, 60);
+    bytes.writeUInt32LE(1024, 88);
+    bytes.writeUInt32LE(base + 1024, 92);
+    bytes.writeUInt32LE(base + relOffset, 1028);
+    bytes.writeUInt32LE(base + 512, relOffset + 8);
+    bytes.writeUInt32LE(1, 116);
+    bytes.writeUInt32LE(0x400000, 124);
+    if (count === 21) {
+      bytes.writeUInt32LE(1, 52 + 20 * 32);
+      bytes.writeUInt32LE(0x200000, 52 + 20 * 32 + 8);
+    }
+    const target = await resolve(bytes);
+    assert.equal(target.mips.sharedLoad?.status, "complete");
+    if (target.mips.sharedLoad?.status === "complete")
+      assert.deepEqual(target.mips.sharedLoad.loadAddresses, [
+        { headerIndex: 0, virtualAddress: base },
+        { headerIndex: 2, virtualAddress: 0x400000 },
+        ...(count === 21
+          ? [{ headerIndex: 20, virtualAddress: 0x200000 }]
+          : []),
+      ]);
+    // The lower address at header index 20 is past Ghidra's cutoff.
+    assert.equal(ghidraMipsElfImageBase(target), "400000");
+  },
+);
 
 it("examines relocation records beyond a read chunk before deciding completeness", async () => {
   const count = 8194;
@@ -122,6 +280,8 @@ it("examines relocation records beyond a read chunk before deciding completeness
     relocationCount: count,
     relocationTypes: [0, 3],
     symbolRelativeCount: 1,
+    loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+    prelinkBase: null,
   });
   assert.match(ghidraMipsUnsupportedReason(target) ?? "", /mode tag/u);
 });
@@ -131,16 +291,25 @@ it("does not treat uncaptured ABI declaration headers as an inspected absence", 
   bytes.writeUInt32LE(bytes.length + 1, 32);
   bytes.writeUInt16LE(40, 46);
   bytes.writeUInt16LE(1, 48);
-  const target = await resolve(bytes);
-  assert.equal(target.mips.abiFlags, null);
-  assert.equal(target.mips.sharedLoad?.status, "unavailable");
+  const path = await writeFixture(bytes);
+  const admitted = await parseBinaryTarget(path);
   assert.match(
-    ghidraMipsUnsupportedReason(target) ?? "",
-    /unavailable headers remain unknown/u,
+    expectBinaryTargetError(admitted).reason,
+    /truncated ELF section header table/u,
+  );
+  // The specialized inspector still retains unknown source facts if used on
+  // damaged evidence; normal target admission refuses its impossible extent.
+  const declarations = await inspectSource(path);
+  assert.ok(declarations.ok);
+  assert.equal(declarations.value.abiFlags, null);
+  assert.equal(declarations.value.sharedLoad?.status, "unavailable");
+  assert.match(
+    declarations.value.limitations.join(" "),
+    /extends beyond the captured file/u,
   );
 });
 
-const malformed: [string, (bytes: Buffer) => void, RegExp][] = [
+const malformed: [string, (bytes: Buffer) => void, RegExp, boolean?][] = [
   [
     "overlapping load ranges",
     (b) => {
@@ -163,11 +332,13 @@ const malformed: [string, (bytes: Buffer) => void, RegExp][] = [
     "declared dynamic tail outside file",
     (b) => b.writeUInt32LE(b.length, 100),
     /beyond the file/u,
+    true,
   ],
   [
     "unavailable load bytes",
     (b) => b.writeUInt32LE(b.length + 1, 68),
     /PT_LOAD range/u,
+    true,
   ],
   ["missing terminator", (b) => b.writeUInt32LE(1, 280), /DT_NULL/u],
   [
@@ -198,9 +369,24 @@ const malformed: [string, (bytes: Buffer) => void, RegExp][] = [
 ];
 it.each(malformed)(
   "preserves useful partial header facts for %s",
-  async (_name, mutate, reason) => {
+  async (_name, mutate, reason, rejectsExtent) => {
     const bytes = fixture(true);
     mutate(bytes);
+    if (rejectsExtent) {
+      const path = await writeFixture(bytes);
+      const admitted = await parseBinaryTarget(path);
+      assert.match(
+        expectBinaryTargetError(admitted).reason,
+        /truncated ELF program \d/u,
+      );
+      const declarations = await inspectSource(path);
+      assert.ok(declarations.ok);
+      assert.equal(declarations.value.sharedLoad?.status, "unavailable");
+      if (declarations.value.sharedLoad?.status !== "unavailable")
+        throw new Error("Expected retained unknown relocation coverage");
+      assert.match(declarations.value.sharedLoad.reason, reason);
+      return;
+    }
     const target = await resolve(bytes);
     assert.equal(target.mips.flags, 0x74001005);
     assert.equal(target.mips.abiFlags, null);
@@ -218,6 +404,8 @@ it("retains unverified relocation type instead of claiming every examined record
     relocationCount: 2,
     relocationTypes: [0, 5],
     symbolRelativeCount: 0,
+    loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+    prelinkBase: null,
   });
   assert.match(
     ghidraMipsUnsupportedReason(target) ?? "",

@@ -1,4 +1,4 @@
-import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../contracts/catalog/catalogIdentity.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { ok } from "../domain/result.js";
 import type { DoctorHost } from "./Doctor.js";
@@ -10,7 +10,7 @@ export const createDoctorHostFixture = (
   platform: "darwin",
   homeDirectory: "/fixture/home",
   architecture: "x64",
-  runtime: { id: "node", version: "24.18.0" },
+  runtime: { id: "node", version: "24.22.1" },
   macosVersion: () => Promise.resolve("14.0"),
   linuxDistribution: () => Promise.resolve(undefined),
   validTarget: (path) => Promise.resolve(path.includes("Hopper")),

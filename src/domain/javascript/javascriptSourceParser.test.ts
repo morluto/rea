@@ -4,10 +4,44 @@ import * as t from "@babel/types";
 import {
   parseJavaScriptSource,
   parseRecoveredJavaScript,
-  parserPluginsForPath,
   javaScriptRuntimeContext,
+  javaScriptProgramStrictness,
+  javaScriptThisOwner,
 } from "./javascriptSourceParser.js";
-import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+
+it.each([
+  ["class C extends (this.marker, Object) {}", true],
+  ["class C { [this.marker]() {} }", true],
+  ["class C { [this.marker] = 1 }", true],
+  ["({[this.marker]() {}})", true],
+  ["class C { value = this.marker }", false],
+  ["class C { static value = this.marker }", false],
+  ["class C { static { this.marker } }", false],
+  ["class C { method() { this.marker } }", false],
+  ["function f() { return class C extends (this.marker, Object) {} }", false],
+  ["class C { value = class D { [this.marker]() {} } }", false],
+  ["(() => class C { [this.marker]() {} })()", true],
+] as const)(
+  "owns definition-time this separately from class bodies: %s",
+  (source, expected) => {
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected parsed fixture");
+    const parents = new WeakMap<t.Node, t.Node>();
+    let selected: t.ThisExpression | undefined;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node, parent) {
+        if (parent !== null) parents.set(node, parent);
+        if (t.isThisExpression(node)) selected = node;
+      },
+    });
+    if (selected === undefined) throw new Error("Missing this fixture");
+    expect(
+      javaScriptThisOwner(selected, parsed.program, parents) === "global",
+    ).toBe(expected);
+  },
+);
 
 it.each([
   ['import type {T} from "example";', "fixture.cts", "commonjs"],
@@ -37,14 +71,29 @@ it.each([
   (source, path, context) => {
     const parsed = parseJavaScriptSource(source, path);
     if (parsed === null) throw new Error("Expected parsed source");
-    const recovered = parseRecoveredJavaScript(source, path, {
-      plugins: parserPluginsForPath(path),
-    }).file;
+    const recovered = parseRecoveredJavaScript(source, path, {}).file;
     expect(javaScriptRuntimeContext(parsed.program)).toBe(context);
     expect(javaScriptRuntimeContext(recovered.program)).toBe(context);
     expect(javaScriptRuntimeContext(t.cloneNode(parsed.program, true))).toBe(
       "unknown",
     );
+  },
+);
+
+it.each([
+  ["const args=[]; export = args;", "fixture.ts", "sloppy"],
+  ['"use strict"; const args=[]; export = args;', "fixture.ts", "strict"],
+  ['import type {T} from "example";', "fixture.ts", "unknown"],
+  ["const args=[];", "fixture.mjs", "strict"],
+  ["const args=[];", "fixture.cjs", "sloppy"],
+] as const)(
+  "owns program strictness independently of parser syntax: %s (%s)",
+  (source, path, strictness) => {
+    const parsed = parseJavaScriptSource(source, path);
+    if (parsed === null) throw new Error("Expected parsed source");
+    expect(javaScriptProgramStrictness(parsed.program)).toBe(strictness);
+    const recovered = parseRecoveredJavaScript(source, path, {}).file;
+    expect(javaScriptProgramStrictness(recovered.program)).toBe(strictness);
   },
 );
 
@@ -66,9 +115,17 @@ ipcMain.handle("layout:ready",()=>pick);`;
   for (const path of ["main.js", "main.cjs", "main.mjs", "main.jsx"]) {
     const result = analyze(source, path);
     expect(result?.errors).toBe(0);
-    expect(result?.facts.electron.ipc).toContainEqual(
-      expect.objectContaining({ channel: "layout:ready", operation: "handle" }),
-    );
+    if (path === "main.mjs") {
+      expect(result?.facts.electron.ipc).toEqual([]);
+    } else {
+      expect(result?.facts.electron.ipc).toContainEqual(
+        expect.objectContaining({
+          channel: "layout:ready",
+          operation: "handle",
+          ...(path === "main.cjs" ? {} : { loader_authority: "candidate" }),
+        }),
+      );
+    }
   }
 });
 

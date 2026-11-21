@@ -1,5 +1,5 @@
 import { setImmediate } from "node:timers/promises";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 
 /** Reject cancelled application work before computing or publishing more results. */
 export const assertJavaScriptAnalysisActive = (signal?: AbortSignal): void => {
@@ -7,6 +7,7 @@ export const assertJavaScriptAnalysisActive = (signal?: AbortSignal): void => {
     throw new ArtifactReaderFailure(
       "cancelled",
       "JavaScript application analysis cancelled",
+      { cause: signal.reason },
     );
 };
 

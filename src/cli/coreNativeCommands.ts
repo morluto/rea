@@ -1,16 +1,29 @@
-import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
-import { z } from "incur";
-
-import type { DirectAnalysis } from "../composition/directAnalysis.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import type { Logger } from "pino";
 import {
-  directAnalysisOptionsFromCli,
-  nativeOpenOptionFields,
-  snapshotSelectionOption,
-} from "./options.js";
+  addressOrProcedureGuidance,
+  dataTypeSelectorGuidance,
+  equalSelectorGuidance,
+} from "./analysisSelector.js";
+import type { DirectAnalysis } from "../composition/directAnalysis.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
+import type { Logger } from "pino";
+import { nativeTarget } from "./options.js";
 import type { CliInstance } from "./types.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import {
+  registerContractCommand,
+  runDirectOnTarget,
+} from "./contractCommand.js";
+
+const executable = nativeTarget("Local executable path");
+const nativeApplication = nativeTarget("Local native executable or app path");
+
+/** The CLI has no Hopper document selection; it opens one target per call. */
+const noDocument = {
+  document:
+    "The CLI opens one target per invocation and selects no Hopper document",
+} as const;
 
 /** Register native load-image, memory, and annotation CLI commands. */
 export const registerCoreNativeCommands = (
@@ -18,413 +31,281 @@ export const registerCoreNativeCommands = (
   logger: Logger,
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
-  registerAnnotationCommand(cli, logger, runDirectAnalysis);
-  cli.command(CLI_COMMANDS.searchBytes, {
-    description: "Find masked byte patterns in initialized provider memory",
-    args: z.object({
-      path: z.string().describe("Local executable path"),
-      pattern: z.string().describe("Hexadecimal byte pairs with ?? wildcards"),
-    }),
-    options: z.object({
-      mask: z.string().optional().describe("Equal-length hexadecimal bit mask"),
-      start: z.string().optional().describe("Inclusive start address"),
-      end: z.string().optional().describe("Inclusive end address"),
-      cursor: z
-        .string()
-        .optional()
-        .describe("Continuation from the same query's next_cursor"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(1000)
-        .default(100)
-        .describe("Maximum matches on this page"),
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.searchBytes, () =>
-        runDirectAnalysis(
-          args.path,
-          "search_bytes",
-          {
-            pattern: args.pattern,
-            limit: options.limit,
-            ...(options.mask === undefined ? {} : { mask: options.mask }),
-            ...(options.start === undefined ? {} : { start: options.start }),
-            ...(options.end === undefined ? {} : { end: options.end }),
-            ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
-  cli.command(CLI_COMMANDS.inspectNativeLoadImage, {
-    description:
-      "Verify loaded native bytes, source mappings, relocations and entry",
-    args: z.object({ path: z.string().describe("Local executable path") }),
-    options: z.object({
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.inspectNativeLoadImage, () =>
-        runDirectAnalysis(
-          args.path,
-          "inspect_native_load_image",
-          {},
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
-  cli.command(CLI_COMMANDS.readBytes, {
-    description: "Read exact provider memory bytes at one analysis address",
-    args: z.object({
-      path: z.string().describe("Local executable path"),
-      address: z.string().describe("Exact provider memory address"),
-    }),
-    options: z.object({
-      length: z
-        .number()
-        .int()
-        .min(1)
-        .default(256)
-        .describe("Requested byte count"),
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.readBytes, () =>
-        runDirectAnalysis(
-          args.path,
-          "read_bytes",
-          { address: args.address, length: options.length },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
-  cli.command(CLI_COMMANDS.addressToFileOffset, {
-    description: "Resolve an analysis address to its original file byte offset",
-    args: z.object({
-      path: z.string().describe("Local executable path"),
-      address: z.string().describe("Exact provider memory address"),
-    }),
-    options: z.object({
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.addressToFileOffset, () =>
-        runDirectAnalysis(
-          args.path,
-          "address_to_file_offset",
-          { address: args.address },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
-  cli.command(CLI_COMMANDS.traceNativeValues, {
-    description: "Trace bounded native def-use and call dependencies",
-    args: z.object({
-      path: z.string().describe("Local native executable or app path"),
-      procedure: z
-        .string()
-        .describe("Explicit native procedure symbol or address"),
-    }),
-    options: z.object({
-      maxDepth: z
-        .number()
-        .int()
-        .min(0)
-        .max(16)
-        .default(3)
-        .describe("Maximum call traversal depth"),
-      maxFunctions: z
-        .number()
-        .int()
-        .min(1)
-        .max(64)
-        .default(16)
-        .describe("Maximum function decompilations"),
-      maxCallSites: z
-        .number()
-        .int()
-        .min(1)
-        .max(4096)
-        .default(256)
-        .describe("Maximum static call-site resolutions"),
-      maxNodes: z
-        .number()
-        .int()
-        .min(1)
-        .max(20000)
-        .default(5000)
-        .describe("Maximum retained graph nodes"),
-      maxEdges: z
-        .number()
-        .int()
-        .min(1)
-        .max(40000)
-        .default(10000)
-        .describe("Maximum retained graph edges"),
-      offset: z
-        .number()
-        .int()
-        .min(0)
-        .default(0)
-        .describe("First graph node index"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(5000)
-        .default(1000)
-        .describe("Maximum nodes on this page"),
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.traceNativeValues, () =>
-        runDirectAnalysis(
-          args.path,
-          "trace_native_values",
-          {
-            procedure: args.procedure,
-            max_depth: options.maxDepth,
-            max_functions: options.maxFunctions,
-            max_call_sites: options.maxCallSites,
-            max_nodes: options.maxNodes,
-            max_edges: options.maxEdges,
-            offset: options.offset,
-            limit: options.limit,
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
-  cli.command(CLI_COMMANDS.inspectNativeDataType, {
-    description: "Inspect one recovered database type or typed data object",
-    args: z.object({
-      path: z.string().describe("Local native executable or app path"),
-    }),
-    options: z.object({
-      type: z.string().optional().describe("Exact database type category path"),
-      address: z.string().optional().describe("Exact native address"),
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.inspectNativeDataType, () =>
-        runDirectAnalysis(
-          args.path,
-          "inspect_native_data_type",
-          {
-            ...(options.type === undefined ? {} : { type: options.type }),
-            ...(options.address === undefined
-              ? {}
-              : { address: options.address }),
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
-  for (const [command, operation] of [
-    [CLI_COMMANDS.inspectNativeInstruction, "inspect_native_instruction"],
-    [CLI_COMMANDS.resolveNativeCallTargets, "resolve_native_call_targets"],
-  ] as const) {
-    cli.command(command, {
+  const run = runDirectOnTarget(runDirectAnalysis, logger);
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "annotate_native_function"),
+    {
       description:
-        operation === "inspect_native_instruction"
-          ? "Inspect one native instruction with decoded operand facts"
-          : "Resolve one static native call site",
-      args: z.object({
-        path: z.string().describe("Local native executable or app path"),
-        address: z.string().describe("Exact native address"),
-      }),
-      options: z.object({
-        ...nativeOpenOptionFields,
-      }),
-      run: ({ args, options }) =>
-        logCliCommand(logger, command, () =>
-          runDirectAnalysis(
-            args.path,
-            operation,
-            { address: args.address },
-            directAnalysisOptionsFromCli(logger, options),
-          ),
-        ),
-    });
-  }
-  registerNativeApiCommand(cli, logger, runDirectAnalysis);
-  registerNativeUiActionCommand(cli, logger, runDirectAnalysis);
-  registerNativeDispatchMetadataCommand(cli, logger, runDirectAnalysis);
-};
-
-const registerNativeDispatchMetadataCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.inspectNativeDispatchMetadata, {
-    description: "Inspect typed Objective-C and Swift dispatch metadata",
-    args: z.object({
-      path: z.string().describe("Target path used to bind the result evidence"),
+        "Edit function annotations and return refreshed analysis. In Ghidra ephemeral mode the edit is discarded when this command exits. REA_GHIDRA_CHECKPOINT_DIR keeps edits only for stock ELF/PE/Mach-O imports on Linux/macOS without analysis overrides; otherwise use one MCP session for dependent edits and reads",
+      sessionTarget: executable,
+      positionals: ["procedure"],
+      fields: {
+        procedure: {
+          description:
+            "Function name or address; Ghidra resolves interior addresses to the containing function and edits its entry",
+        },
+        name: { description: "Analyst function name" },
+        comment: { description: "Regular entry comment; empty text clears it" },
+        inline_comment: {
+          name: "inline-comment",
+          description: "Inline entry comment; empty text clears it",
+        },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "search_bytes"),
+    {
+      description:
+        "Find masked bytes; unbounded searches skip unloaded blocks and overlays",
+      sessionTarget: executable,
+      positionals: ["pattern"],
+      omit: noDocument,
+      fields: {
+        start: {
+          description:
+            "Inclusive start address; use an overlay address space to search it",
+        },
+        end: {
+          description:
+            "Inclusive end address; use an overlay address space to search it",
+        },
+        cursor: {
+          description: "Continuation from the same query's next_cursor",
+        },
+        limit: { description: "Maximum matches on this page" },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "inspect_native_load_image"),
+    {
+      description:
+        "Inspect native load observations and supported snapshot verification",
+      sessionTarget: executable,
+      evidenceDelivery: true,
+    },
+    run,
+  );
+  registerProcedureSelectorCommands(cli, logger, run);
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "read_bytes"),
+    {
+      description:
+        "Read provider memory bytes; Ghidra memory may include loader fixups and differ from file bytes",
+      sessionTarget: executable,
+      positionals: ["address"],
+      omit: noDocument,
+      fields: {
+        address: { description: "Exact provider memory address" },
+        length: { description: "Requested byte count" },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "address_to_file_offset"),
+    {
+      description:
+        "Map one analysis address to a file offset; memory bytes may differ and ranges may not be contiguous",
+      sessionTarget: executable,
+      positionals: ["address"],
+      omit: noDocument,
+      fields: { address: { description: "Exact provider memory address" } },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "trace_native_values"),
+    {
+      description: "Trace bounded native def-use and call dependencies",
+      sessionTarget: nativeApplication,
+      positionals: ["procedure"],
+      evidenceDelivery: true,
+      fields: {
+        procedure: {
+          description: "Explicit native procedure symbol or address",
+        },
+        max_depth: { description: "Maximum call traversal depth" },
+        max_functions: { description: "Maximum function decompilations" },
+        max_call_sites: { description: "Maximum static call-site resolutions" },
+        max_nodes: { description: "Maximum retained graph nodes" },
+        max_edges: { description: "Maximum retained graph edges" },
+        offset: { description: "First graph node index" },
+        limit: { description: "Maximum nodes on this page" },
+      },
+    },
+    runDirectOnTarget(runDirectAnalysis, logger, {
+      requireSourceEvidence: true,
     }),
-    options: z.object({
-      maxRecords: z
-        .number()
-        .int()
-        .min(1)
-        .max(20_000)
-        .default(5_000)
-        .describe("Maximum symbol records to inspect"),
-      maxInputBytes:
-        enhancedInputSchemas.inspect_native_dispatch_metadata.shape
-          .max_input_bytes,
-      snapshot: snapshotSelectionOption.describe(
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "inspect_native_data_type"),
+    {
+      description: `Inspect one recovered database type or typed data object. ${dataTypeSelectorGuidance}`,
+      sessionTarget: nativeApplication,
+      omit: noDocument,
+      fields: {
+        type: {
+          description: `Exact database type category path. ${dataTypeSelectorGuidance}`,
+        },
+        address: {
+          description: `Exact native address. ${dataTypeSelectorGuidance}`,
+        },
+      },
+    },
+    run,
+  );
+  for (const [command, operation, description] of [
+    [
+      cliCommandFor("inspect_native_instruction"),
+      "inspect_native_instruction",
+      "Inspect a code or data address, its containing Ghidra listing object, and typed incoming references where supported",
+    ],
+    [
+      cliCommandFor("resolve_native_call_targets"),
+      "resolve_native_call_targets",
+      "Resolve one static native call site",
+    ],
+  ] as const)
+    registerContractCommand(
+      cli,
+      logger,
+      contractNamed(OFFICIAL_TOOL_CONTRACTS, operation),
+      {
+        command,
+        description,
+        sessionTarget: nativeApplication,
+        positionals: ["address"],
+        omit: noDocument,
+        fields: { address: { description: "Exact native address" } },
+      },
+      run,
+    );
+  const evidenceTarget = "Target path used to bind the result evidence";
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "trace_native_ui_action"),
+    {
+      description:
+        "Trace a compiled UI action selector to its native handler and direct callees",
+      sessionTarget: nativeTarget(evidenceTarget),
+      positionals: ["action"],
+      fields: {
+        action: {
+          description:
+            "A unique compiled UI action selector or interface object ID",
+        },
+        max_depth: { description: "Maximum relationship depth" },
+        max_nodes: { description: "Maximum returned graph nodes" },
+        max_edges: { description: "Maximum returned graph edges" },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "inspect_native_dispatch_metadata"),
+    {
+      description: "Inspect typed Objective-C and Swift dispatch metadata",
+      sessionTarget: nativeTarget(
+        evidenceTarget,
         "Load or update the local analysis snapshot",
       ),
-      ...nativeOpenOptionFields,
-    }),
-    run: async ({ args, options }) =>
-      logCliCommand(logger, "inspect-native-dispatch-metadata", () =>
-        runDirectAnalysis(
-          args.path,
-          "inspect_native_dispatch_metadata",
-          {
-            max_records: options.maxRecords,
-            ...(options.maxInputBytes === undefined
-              ? {}
-              : { max_input_bytes: options.maxInputBytes }),
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
+      fields: {
+        max_records: { description: "Maximum symbol records to inspect" },
+        objc_class_import_addresses: {
+          name: "objcClassImportAddress",
+          description:
+            "Exact pointer-slot address from the selected name inventory, used to report decoded Objective-C class import bindings (repeatable)",
+        },
+        objc_class_import_addresses_complete: {
+          description:
+            "The addresses include every selected class-label row; otherwise binding coverage stays partial when the record budget truncates the scan",
+        },
+      },
+    },
+    run,
+  );
 };
 
-const registerNativeUiActionCommand = (
+/**
+ * Register the native commands whose procedure is given positionally or,
+ * for symbols beginning with a dash, as `--procedure`.
+ */
+const registerProcedureSelectorCommands = (
   cli: CliInstance,
   logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+  run: ReturnType<typeof runDirectOnTarget>,
 ): void => {
-  cli.command(CLI_COMMANDS.traceNativeUiAction, {
-    description:
-      "Trace a compiled UI action selector to its native handler and direct callees",
-    args: z.object({
-      path: z.string().describe("Target path used to bind the result evidence"),
-      action: z
-        .string()
-        .min(1)
-        .describe(
-          "A unique compiled UI action selector or interface object ID",
-        ),
-    }),
-    options: z.object({
-      maxDepth: z
-        .number()
-        .int()
-        .min(0)
-        .max(32)
-        .default(8)
-        .describe("Maximum relationship depth"),
-      maxNodes: z
-        .number()
-        .int()
-        .min(1)
-        .max(2_000)
-        .default(250)
-        .describe("Maximum returned graph nodes"),
-      maxEdges: z
-        .number()
-        .int()
-        .min(1)
-        .max(5_000)
-        .default(500)
-        .describe("Maximum returned graph edges"),
-      ...nativeOpenOptionFields,
-    }),
-    run: async ({ args, options }) =>
-      logCliCommand(logger, "trace-native-ui-action", () =>
-        runDirectAnalysis(
-          args.path,
-          "trace_native_ui_action",
-          {
-            action: args.action,
-            max_depth: options.maxDepth,
-            max_nodes: options.maxNodes,
-            max_edges: options.maxEdges,
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
-};
-
-const registerNativeApiCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.inspectNativeApi, {
-    description: "Reconstruct one native function API boundary with evidence",
-    args: z.object({
-      path: z.string().describe("App or program path"),
-      address: z.string().describe("Procedure name or address"),
-    }),
-    options: z.object({
-      snapshot: snapshotSelectionOption,
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-native-api", () =>
-        runDirectAnalysis(
-          args.path,
-          "inspect_native_api",
-          { procedure: args.address },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
-};
-
-const registerAnnotationCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.annotateNativeFunction, {
-    description: "Edit function annotations and return refreshed analysis",
-    args: z.object({
-      path: z.string().describe("Local executable path"),
-      procedure: z
-        .string()
-        .describe("Exact function entry address or unique name"),
-    }),
-    options: z.object({
-      name: z.string().min(1).optional().describe("Analyst function name"),
-      comment: z
-        .string()
-        .optional()
-        .describe("Regular entry comment; empty text clears it"),
-      "inline-comment": z
-        .string()
-        .optional()
-        .describe("Inline entry comment; empty text clears it"),
-      ...nativeOpenOptionFields,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.annotateNativeFunction, () =>
-        runDirectAnalysis(
-          args.path,
-          "annotate_native_function",
-          {
-            procedure: args.procedure,
-            ...(options.name === undefined ? {} : { name: options.name }),
-            ...(options.comment === undefined
-              ? {}
-              : { comment: options.comment }),
-            ...(options["inline-comment"] === undefined
-              ? {}
-              : { inline_comment: options["inline-comment"] }),
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "procedure_references"),
+    {
+      description: `Inspect incoming or outgoing references for one native procedure. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: nativeTarget("Local executable path", true),
+      positionals: ["procedure"],
+      selectorOptions: {
+        procedure: {
+          name: "procedure",
+          description: `Procedure name or provider address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
+          kind: "native",
+        },
+      },
+      evidenceDelivery: true,
+      omit: noDocument,
+      fields: {
+        procedure: {
+          description: `Procedure name or provider address. ${addressOrProcedureGuidance}`,
+        },
+        direction: {
+          description: "Reference direction. Defaults to outgoing.",
+        },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ENHANCED_TOOL_CONTRACTS, "inspect_native_api"),
+    {
+      description: `Reconstruct one native function API boundary with evidence. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+      sessionTarget: nativeTarget("App or program path", true),
+      positionals: ["procedure"],
+      selectorOptions: {
+        procedure: {
+          name: "procedure",
+          description: `Procedure selector; use this option for symbols beginning with a dash. ${addressOrProcedureGuidance}`,
+          kind: "native",
+        },
+      },
+      fields: {
+        procedure: {
+          name: "address",
+          description: `Procedure name or address. ${addressOrProcedureGuidance}`,
+        },
+      },
+    },
+    run,
+  );
 };
