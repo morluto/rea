@@ -35,6 +35,7 @@ import {
   ArtifactResourceScope,
   writeTextFile,
 } from "../resources/index.js";
+import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import {
   isClientConfigurationCleanupFailure,
   retryClientConfigurationCleanup,
@@ -218,12 +219,15 @@ const publishEdit = async (
   text: string,
   input: ConfigSnapshot | undefined,
 ): Promise<Result<void, ConfigurationError>> => {
+  const transactionPath = await resolveClientConfigTransactionPath(path);
+  if (transactionPath === undefined)
+    return err(configFileError(path, "could not resolve the edit destination"));
   if (input !== undefined) {
-    const backup = await preserveOriginal(path, input.text);
+    const backup = await preserveOriginal(transactionPath, input.text);
     if (!backup.ok) return backup;
   }
   const publication = await ClientConfigurationPublication.write(
-    path,
+    transactionPath,
     text,
     input?.text,
     { requestedPath: path, state: input?.state },

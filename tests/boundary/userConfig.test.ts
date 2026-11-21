@@ -198,6 +198,43 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it
+  .skipIf(process.platform === "win32")
+  .for(["default", "native-parent"] as const)(
+  "creates the first saved config through a parent directory alias (%s)",
+  async (layout) => {
+    const home = tempHome();
+    const physical = join(home, "physical");
+    const lexical = join(home, "lexical");
+    const nested = layout === "native-parent";
+    const link = nested ? join(lexical, "alias") : join(home, ".config");
+    const target = nested ? join(physical, "child") : physical;
+    await mkdir(target, { recursive: true });
+    await mkdir(lexical);
+    await symlink(target, link);
+    const environment: NodeJS.ProcessEnv = nested
+      ? { HOME: home, XDG_CONFIG_HOME: `${link}/..` }
+      : { HOME: home };
+    const settings = { JAVA_HOME: "/initial-java" };
+    const selectedDirectory = join(physical, "rea");
+
+    await expect(
+      readFile(join(selectedDirectory, "rea.json")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await updateUserConfig(environment, settings, [])).toEqual({
+      settings,
+      removed: [],
+    });
+    expect(
+      JSON.parse(await readFile(join(selectedDirectory, "rea.json"), "utf8")),
+    ).toEqual(settings);
+    expect(await readdir(selectedDirectory)).toEqual(["rea.json"]);
+    expect(await readdir(lexical)).toEqual(nested ? ["alias"] : []);
+  },
+);
+
 describe("updateUserConfig", () => {
   it("creates the config file with sorted settings and a trailing newline", async () => {
     const root = tempHome();
