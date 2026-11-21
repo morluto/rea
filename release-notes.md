@@ -385,6 +385,7 @@
 * **web:** consolidate storage fingerprint comparison proofs ([#13084](https://github.com/morluto/rea/issues/13084)) ([251f863](https://github.com/morluto/rea/commit/251f863f30388f02017d0e34c790e529e8a7c183))
 * **web:** consolidate WebSocket payload comparison proofs ([#13086](https://github.com/morluto/rea/issues/13086)) ([ccfdd61](https://github.com/morluto/rea/commit/ccfdd6157282d3eaaeb7e6cfe9779bbe445b6ac9))
 * **web:** consolidate XHTML SVG namespace proofs ([#13105](https://github.com/morluto/rea/issues/13105)) ([c451857](https://github.com/morluto/rea/commit/c451857d380a809ba276b9c16f01865bd29494b0))
+* **web:** exercise real browser release during scenario cleanup ([#13113](https://github.com/morluto/rea/issues/13113)) ([3c4450a](https://github.com/morluto/rea/commit/3c4450ac7e81bbd82d7d2eff847c9b92476679ec))
 * **web:** isolate captured module artifact checks ([#13075](https://github.com/morluto/rea/issues/13075)) ([4304a66](https://github.com/morluto/rea/commit/4304a6697446f2342a7052b580306c521d944a73))
 * **web:** make CDP discovery deadline checks deterministic ([#13109](https://github.com/morluto/rea/issues/13109)) ([5521bff](https://github.com/morluto/rea/commit/5521bff467d110a774cfc7390f418f1d0f41ed7e))
 * **website:** consolidate generated site verification checks ([#12783](https://github.com/morluto/rea/issues/12783)) ([e174349](https://github.com/morluto/rea/commit/e17434945f0d1108018363db379eb1c65c7eeb81))
