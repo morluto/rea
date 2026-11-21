@@ -319,7 +319,7 @@ class WidenedSummaryCoverage {
 interface WidenedStoreEffects {
   readonly frontier: ReadonlySet<t.Node>;
   readonly slot: WidenedSummarySlot;
-  readonly paths: readonly AmbientPath[];
+  readonly paths: ReadonlyMap<string, AmbientPath>;
   readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
   readonly projectedSpread: boolean;
 }
@@ -550,8 +550,7 @@ export const createAmbientPathResolver = (
           );
         }
         if (effects !== undefined) {
-          for (const path of effects.paths)
-            result.set(JSON.stringify(path), path);
+          for (const [key, path] of effects.paths) result.set(key, path);
           for (const reason of effects.unknownReasons)
             unknownReasons.add(reason);
           if (observes === "ambient-effects" && effects.projectedSpread)
@@ -1161,7 +1160,8 @@ export const createAmbientPathResolver = (
       summary?.retain({
         frontier: summaryWalk.frontier,
         slot: coverage.register(summaryWalk.roots.keys()),
-        paths,
+        // The summary owns the canonical keys produced by retain().
+        paths: result,
         unknownReasons: [...unknownReasons],
         projectedSpread,
       });
