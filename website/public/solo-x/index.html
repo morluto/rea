@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Solo X — Focus Gate</title>
+    <meta
+      name="description"
+      content="Protótipo web original de foco, tarefas, streaks e XP inspirado na análise estática do Solo X."
+    />
+    <meta name="theme-color" content="#111614" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Navegação principal">
+        <a class="brand" href="./" aria-label="Solo X início">
+          <span class="brand-mark">SX</span>
+          <span>
+            <strong>SOLO X</strong>
+            <small>focus protocol</small>
+          </span>
+        </a>
+
+        <nav class="side-nav">
+          <button class="nav-item is-active" type="button" data-screen-target="dashboard">
+            <span aria-hidden="true">⌂</span>
+            <span>Visão geral</span>
+          </button>
+          <button class="nav-item" type="button" data-screen-target="tasks">
+            <span aria-hidden="true">✓</span>
+            <span>Missões</span>
+          </button>
+          <button class="nav-item" type="button" data-screen-target="insights">
+            <span aria-hidden="true">◒</span>
+            <span>Progresso</span>
+          </button>
+          <button class="nav-item" type="button" data-screen-target="settings">
+            <span aria-hidden="true">⚙</span>
+            <span>Preferências</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+        <div class="sidebar-tip">
+          <span class="tip-icon" aria-hidden="true">✦</span>
+          <strong>Uma sessão por vez.</strong>
+          <p>Seu foco acumula XP. O resto pode esperar.</p>
+        </div>
+        <button class="profile-button" type="button" data-screen-target="settings">
+          <span class="avatar">D</span>
+          <span>
+            <strong>Operador</strong>
+            <small>nível 4 · ativo</small>
+          </span>
+          <span class="profile-chevron" aria-hidden="true">›</span>
+        </button>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">SÁBADO, 14 DE NOVEMBRO</p>
+            <h1 data-page-title>Seu painel de foco</h1>
+          </div>
+          <div class="topbar-actions">
+            <div class="streak-pill" title="Dias consecutivos">
+              <span aria-hidden="true">🔥</span>
+              <strong data-streak>7</strong>
+              <span>dias</span>
+            </div>
+            <button class="icon-button" type="button" data-screen-target="settings" aria-label="Abrir preferências">⌘</button>
+          </div>
+        </header>
+
+        <div class="screens">
+          <section class="screen" data-screen="dashboard">
+            <div class="hero-card">
+              <div class="hero-copy">
+                <p class="eyebrow">PROTOCOLO DE HOJE</p>
+                <h2>Construa seu próximo nível.</h2>
+                <p>Entre no Focus Gate, escolha uma missão e transforme minutos em progresso visível.</p>
+                <button class="primary-button" type="button" data-open-focus>
+                  <span aria-hidden="true">▶</span>
+                  Começar Focus Gate
+                </button>
+              </div>
+              <div class="hero-orbit" aria-hidden="true">
+                <div class="orbit orbit-one"></div>
+                <div class="orbit orbit-two"></div>
+                <div class="orbit-core"><span>04</span><small>RANK</small></div>
+                <span class="orbit-star star-one">✦</span>
+                <span class="orbit-star star-two">✧</span>
+              </div>
+            </div>
+
+            <div class="stats-grid" aria-label="Resumo de progresso">
+              <article class="stat-card">
+                <span class="stat-icon stat-icon-lime" aria-hidden="true">✦</span>
+                <div><small>XP TOTAL</small><strong data-xp>1.280</strong></div>
+                <span class="stat-trend">+120 hoje</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-icon stat-icon-coral" aria-hidden="true">◷</span>
+                <div><small>FOCO TOTAL</small><strong><span data-focus-minutes>126</span> min</strong></div>
+                <span class="stat-trend">+24% mês</span>
+              </article>
+              <article class="stat-card">
+                <span class="stat-icon stat-icon-blue" aria-hidden="true">✓</span>
+                <div><small>MISSÕES</small><strong><span data-completed-tasks>12</span>/18</strong></div>
+                <span class="stat-trend">em andamento</span>
+              </article>
+            </div>
+
+            <div class="dashboard-grid">
+              <article class="panel focus-panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">FOCUS GATE</p>
+                    <h2>Pronto para entrar?</h2>
+                  </div>
+                  <span class="status-dot"><i></i> disponível</span>
+                </div>
+                <div class="timer-preview">
+                  <div class="timer-ring"><span data-timer-display>25:00</span><small>minutos</small></div>
+                  <div class="timer-copy">
+                    <strong data-focus-status>Escolha uma missão para começar</strong>
+                    <p>Sem distrações. Ao terminar, você recebe XP e registra a sessão.</p>
+                    <div class="timer-actions">
+                      <button class="secondary-button" type="button" data-open-focus>Configurar sessão</button>
+                      <button class="ghost-button" type="button" data-timer-action="pause" hidden>Pausar</button>
+                      <button class="ghost-button danger-text" type="button" data-timer-action="stop" hidden>Encerrar</button>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="panel quest-panel">
+                <div class="panel-heading">
+                  <div><p class="eyebrow">MISSÕES DIÁRIAS</p><h2>Pequenos ganhos</h2></div>
+                  <button class="text-button" type="button" data-screen-target="tasks">Ver todas <span aria-hidden="true">→</span></button>
+                </div>
+                <div class="task-list" data-task-list></div>
+              </article>
+            </div>
+
+            <article class="panel activity-panel">
+              <div class="panel-heading">
+                <div><p class="eyebrow">ATIVIDADE RECENTE</p><h2>Seu ritmo está consistente</h2></div>
+                <span class="panel-meta">últimos 7 dias</span>
+              </div>
+              <div class="activity-chart" data-activity-chart></div>
+            </article>
+          </section>
+
+          <section class="screen is-hidden" data-screen="tasks">
+            <div class="screen-intro">
+              <p class="eyebrow">CENTRAL DE MISSÕES</p>
+              <h2>Transforme intenção em ação.</h2>
+              <p>Conclua missões simples para manter seu streak e ganhar XP.</p>
+            </div>
+            <div class="task-board" data-task-board></div>
+          </section>
+
+          <section class="screen is-hidden" data-screen="insights">
+            <div class="screen-intro">
+              <p class="eyebrow">PROGRESSO</p>
+              <h2>Seu foco, em perspectiva.</h2>
+              <p>Os dados ficam salvos apenas neste navegador.</p>
+            </div>
+            <div class="insights-grid">
+              <article class="panel insight-large">
+                <div class="panel-heading"><div><p class="eyebrow">XP E RANK</p><h2 data-rank-label>Operador IV</h2></div><span class="rank-badge">04</span></div>
+                <div class="rank-progress"><span data-rank-progress></span></div>
+                <p class="muted"><strong data-rank-xp>1.280</strong> XP acumulado · faltam <strong data-rank-remaining>220</strong> XP para o próximo rank.</p>
+                <div class="rank-road"><span>IV</span><i></i><span>V</span><i></i><span>VI</span><i></i><span>VII</span></div>
+              </article>
+              <article class="panel">
+                <div class="panel-heading"><div><p class="eyebrow">RESUMO</p><h2>Constância</h2></div></div>
+                <div class="summary-list">
+                  <div><span>Melhor streak</span><strong data-best-streak>7 dias</strong></div>
+                  <div><span>Sessões concluídas</span><strong data-session-count>0</strong></div>
+                  <div><span>Média por sessão</span><strong data-average-session>0 min</strong></div>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="screen is-hidden" data-screen="settings">
+            <div class="screen-intro">
+              <p class="eyebrow">PREFERÊNCIAS</p>
+              <h2>Adapte o protocolo.</h2>
+              <p>Esta versão web é local e não envia seus dados.</p>
+            </div>
+            <div class="settings-card panel">
+              <label class="setting-row"><span><strong>Som de conclusão</strong><small>Reproduzir um aviso ao terminar uma sessão.</small></span><input type="checkbox" checked data-setting="sound" /></label>
+              <label class="setting-row"><span><strong>Modo compacto</strong><small>Reduzir o espaçamento dos cartões.</small></span><input type="checkbox" data-setting="compact" /></label>
+              <div class="setting-row"><span><strong>Dados locais</strong><small>Apague o progresso salvo neste navegador.</small></span><button class="danger-button" type="button" data-reset>Redefinir demo</button></div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="modal-backdrop is-hidden" data-focus-modal>
+      <section class="focus-modal" role="dialog" aria-modal="true" aria-labelledby="focus-modal-title">
+        <button class="modal-close" type="button" data-close-focus aria-label="Fechar">×</button>
+        <p class="eyebrow">FOCUS GATE</p>
+        <h2 id="focus-modal-title">Defina sua próxima sessão.</h2>
+        <p class="modal-description">Escolha uma missão e proteja esse espaço do seu dia.</p>
+        <label class="field-label" for="focus-task">Missão</label>
+        <select id="focus-task" data-focus-task>
+          <option value="deep-work">Deep work</option>
+          <option value="study">Estudo sem distrações</option>
+          <option value="creative">Bloco criativo</option>
+        </select>
+        <span class="field-label">Duração</span>
+        <div class="duration-options">
+          <button class="duration-button is-selected" type="button" data-duration="25">25 min</button>
+          <button class="duration-button" type="button" data-duration="45">45 min</button>
+          <button class="duration-button" type="button" data-duration="60">60 min</button>
+        </div>
+        <button class="primary-button modal-start" type="button" data-start-focus>Iniciar sessão <span aria-hidden="true">→</span></button>
+      </section>
+    </div>
+
+    <div class="toast" role="status" aria-live="polite" data-toast></div>
+  </body>
+</html>
