@@ -906,7 +906,7 @@ const clientEvidencePresent = async (
   let unavailable:
     | { readonly path: string; readonly detail: string }
     | undefined;
-  for (const path of paths) {
+  for (const path of new Set(paths)) {
     try {
       await (discoveryPaths.has(path) ? stat(path) : lstat(path));
       return ok(true);

@@ -27,6 +27,65 @@ const openCodeRegistration = {
 };
 const openCodePeer = { type: "local", command: ["unrelated", "mcp"] };
 
+for (const distinctAlias of [false, true]) {
+  cliTest.skipIf(distinctAlias && process.platform === "win32")(
+    distinctAlias
+      ? "project uninstall still refuses distinct paths to the same configuration file"
+      : "project uninstall edits a configuration in a selected .opencode directory once",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-project-path-occurrences-",
+      );
+      const project = join(root, ".opencode");
+      const path = join(project, "opencode.json");
+      const alias = join(project, "opencode.jsonc");
+      const original = await put(path, {
+        mcp: { servers: { rea: openCodeRegistration, peer: openCodePeer } },
+      });
+      if (distinctAlias) await symlink(path, alias);
+      const result = await cli.run({
+        arguments: ["uninstall", "--project", project, "--json"],
+        environment: await registrationEnvironment(join(root, "home")),
+        cwd: root,
+      });
+      if (distinctAlias) {
+        expect(result.exitCode, result.stdout).toBe(1);
+        expect(result.json).toMatchObject({
+          status: "failed",
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              name: "opencode",
+              detail: expect.stringContaining(
+                "Multiple selected configuration paths alias",
+              ),
+            }),
+          ]),
+        });
+        expect(await readFile(path, "utf8")).toBe(original);
+        await expect(readFile(`${path}.rea.backup`)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        return;
+      }
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(result.json).toMatchObject({
+        status: "complete",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            name: "opencode",
+            status: "removed",
+            configuration_path: path,
+          }),
+        ]),
+      });
+      expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+        mcp: { servers: { peer: openCodePeer } },
+      });
+      expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+    },
+  );
+}
+
 cliTest(
   "uninstall selects an explicit project, including disabled owned rows, while leaving ancestor and user files intact",
   async ({ cli }) => {

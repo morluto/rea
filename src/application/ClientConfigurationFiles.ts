@@ -46,6 +46,11 @@ export type ClientConfigurationSource = ClientConfigurationDocument &
       }
   );
 
+type ProjectConfigurationSource = ClientConfigurationSource & {
+  readonly sourcePath: string;
+  readonly scope: "project";
+};
+
 const invalidEnvironment = (
   path: string,
   error: ConfigurationError,
@@ -541,8 +546,8 @@ export interface EffectiveClientRegistrationConfiguration {
   readonly activationConfigPath?: string;
   readonly declarations: readonly ServerDeclaration[];
   readonly projectInspection?: "evaluated" | "untrusted";
-  /** Every admitted project file, in native load order, when proving ownership. */
-  readonly projectSources?: readonly ClientConfigurationSource[];
+  /** One source per admitted project pathname, ordered by its final native occurrence. */
+  readonly projectSources?: readonly ProjectConfigurationSource[];
   /** Readiness can fail while parsed launcher identity remains available. */
   readonly environmentError?: ClientConfigurationFileError;
   /** Project candidate spellings already owned by the same physical user files. */
@@ -607,9 +612,13 @@ export const readEffectiveClientRegistrationConfiguration = async (
     ({ userPath }) =>
       userPath === undefined || userPath === client.openCodeExplicitConfigPath,
   );
-  const userAliases = paths.value.flatMap(({ path, userPath }) =>
-    userPath === undefined ? [] : [path],
-  );
+  const userAliases = [
+    ...new Set(
+      paths.value.flatMap(({ path, userPath }) =>
+        userPath === undefined ? [] : [path],
+      ),
+    ),
+  ];
   const admitted = new Set(
     layers.flatMap(({ path, userPath }) =>
       userPath === undefined ? [path] : [],
@@ -685,7 +694,10 @@ export const readEffectiveClientRegistrationConfiguration = async (
     user.value.map((source) => [source.sourcePath, source]),
   );
   const sources = [...user.value];
-  const projectSources: ClientConfigurationSource[] = [];
+  const projectSources = new Map<
+    string,
+    ProjectConfigurationSource | undefined
+  >();
   for (const { path, userPath } of layers) {
     if (userPath !== undefined) {
       // Preserve this occurrence in native order while retaining the user
@@ -694,21 +706,28 @@ export const readEffectiveClientRegistrationConfiguration = async (
       if (source !== undefined) sources.push(source);
       continue;
     }
-    const original = candidates.get(path)?.original;
-    const configuration =
-      original === undefined
-        ? await readConfigurationFile(path, client.format, resources)
-        : ok(original);
-    if (!configuration.ok)
-      return err({ ...configuration.error, scope: "project" });
-    if (configuration.value === undefined) continue;
-    const source = {
-      ...configuration.value,
-      sourcePath: path,
-      scope: "project" as const,
-    };
+    let source = projectSources.get(path);
+    if (!projectSources.has(path)) {
+      const original = candidates.get(path)?.original;
+      const configuration =
+        original === undefined
+          ? await readConfigurationFile(path, client.format, resources)
+          : ok(original);
+      if (!configuration.ok)
+        return err({ ...configuration.error, scope: "project" });
+      if (configuration.value !== undefined)
+        source = {
+          ...configuration.value,
+          sourcePath: path,
+          scope: "project",
+        };
+    }
+    // Read the pathname once, replay its snapshot in native order, and keep
+    // only the final occurrence for ownership and mutation.
+    projectSources.delete(path);
+    projectSources.set(path, source);
+    if (source === undefined) continue;
     sources.push(source);
-    projectSources.push(source);
   }
 
   const original = projectRegistration(sources, client.format, platform);
@@ -765,7 +784,13 @@ export const readEffectiveClientRegistrationConfiguration = async (
   const projectFacts = {
     declarations: active,
     projectInspection: "evaluated" as const,
-    ...(project.mode === "ownership" ? { projectSources } : {}),
+    ...(project.mode === "ownership"
+      ? {
+          projectSources: [...projectSources.values()].filter(
+            (source) => source !== undefined,
+          ),
+        }
+      : {}),
     ...(preservesOriginalRegistration
       ? { preservesOriginalRegistration: true as const }
       : {}),
@@ -962,12 +987,13 @@ const presentProjectSources = async (
       ),
     ),
   );
-  const project: { path: string; userPath?: string }[] = [];
-  for (const candidate of clientProjectConfigurationPaths(
+  const nativePaths = clientProjectConfigurationPaths(
     client,
     projectDirectory,
     platform,
-  )) {
+  );
+  const project = new Map<string, { path: string; userPath?: string }>();
+  for (const candidate of new Set(nativePaths)) {
     try {
       await lstat(candidate);
     } catch (cause: unknown) {
@@ -980,13 +1006,19 @@ const presentProjectSources = async (
       });
     }
     const userPath = user.get(await physicalPathKey(candidate, platform));
-    project.push(
+    project.set(
+      candidate,
       userPath === undefined
         ? { path: candidate }
         : { path: candidate, userPath },
     );
   }
-  return ok(project);
+  return ok(
+    nativePaths.flatMap((path) => {
+      const source = project.get(path);
+      return source === undefined ? [] : [source];
+    }),
+  );
 };
 
 const readPiTrustDocument = async (

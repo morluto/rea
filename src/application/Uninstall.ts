@@ -1316,15 +1316,15 @@ const resolveProjectUninstallClients = async (
   const selected: UninstallClient[] = [];
   for (const userClient of supported) {
     if (userClient.name !== "pi" && userClient.name !== "opencode") continue;
-    const localPaths = clientProjectConfigurationPaths(
-      userClient,
-      directory,
-      platform,
-    ).filter((path) => withinLexicalDirectory(path, directory, platform));
+    const localPaths = new Set(
+      clientProjectConfigurationPaths(userClient, directory, platform).filter(
+        (path) => withinLexicalDirectory(path, directory, platform),
+      ),
+    );
     // An unresolved candidate must reach the configuration owner; only a
     // definitively absent file supplies no write target.
     const exists = await Promise.all(
-      localPaths.map(async (path) => {
+      [...localPaths].map(async (path) => {
         try {
           await lstat(path);
           return true;
@@ -1361,7 +1361,7 @@ const resolveProjectUninstallClients = async (
       continue;
     }
     for (const path of configuration.projectUserAliases ?? []) {
-      if (!localPaths.includes(path)) continue;
+      if (!localPaths.has(path)) continue;
       reportIssue(
         path,
         `The selected project configuration at ${path} aliases user configuration. No change was made.`,
@@ -1374,12 +1374,7 @@ const resolveProjectUninstallClients = async (
     };
     for (const source of configuration.projectSources ?? []) {
       const path = source.sourcePath;
-      if (
-        path === undefined ||
-        !localPaths.includes(path) ||
-        !registrationPresent(source)
-      )
-        continue;
+      if (!localPaths.has(path) || !registrationPresent(source)) continue;
       const client = { ...userClient, configPath: path };
       selected.push(client);
       const prepared = await prepareProjectRemoval(

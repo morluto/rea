@@ -24,11 +24,11 @@ const localServer = (command: string) => ({
 const readReaServer = (document: ClientConfigurationDocument | undefined) =>
   document === undefined ? undefined : effectiveClientServer(document, "rea");
 
-const fixture = async (explicitProjectFile = false) => {
+const fixture = async (explicitProjectFile = false, name = "child") => {
   const root = await createTestTempDirectory("rea-opencode-project-layout-");
   const home = join(root, "home");
   const repository = join(root, "repository");
-  const projectDirectory = join(repository, "child");
+  const projectDirectory = join(repository, name);
   await mkdir(join(repository, ".git"), { recursive: true });
   await mkdir(projectDirectory);
   const client = supportedClients(
@@ -57,6 +57,24 @@ const fixture = async (explicitProjectFile = false) => {
       ),
   };
 };
+
+it("keeps the last native occurrence while returning each project file once for ownership", async () => {
+  const { root, projectDirectory, read } = await fixture(false, ".opencode");
+  const outer = join(root, ".opencode", "opencode.json");
+  const repeated = join(projectDirectory, "opencode.json");
+  await writeConfiguration(outer, {
+    mcp: { servers: { rea: localServer("outer") } },
+  });
+  await writeConfiguration(repeated, {
+    mcp: { servers: { rea: localServer("repeated") } },
+  });
+  const result = await read("ownership");
+  if (!result.ok) throw Error(result.error.detail);
+  expect(readReaServer(result.value.document)).toEqual(localServer("repeated"));
+  expect(
+    result.value.projectSources?.map(({ sourcePath }) => sourcePath),
+  ).toEqual([outer, repeated]);
+});
 
 it("loads OpenCode V2 ancestors beyond Git and layers all direct files before .opencode files", async () => {
   const { root, projectDirectory, read } = await fixture();
