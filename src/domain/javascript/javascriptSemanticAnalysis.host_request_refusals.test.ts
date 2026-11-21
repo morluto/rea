@@ -29,6 +29,57 @@ const requestsFor = (call: string) =>
     .map(({ method }) => method);
 
 it.each([
+  ["a backslash authority", String.raw`http:\\user@host/x`],
+  ["a mixed-slash authority", String.raw`http:/\user@host/x`],
+])("excludes credential-bearing fetch with %s", (_name, url) => {
+  expect(requestsFor(`fetch(${JSON.stringify(url)})`)).toEqual([]);
+});
+
+it.each([
+  ["an unclosed fetch host", "fetch", "https://["],
+  ["an invalid fetch host escape", "fetch", "http://%"],
+  ["an unclosed WebSocket host", "WebSocket", "wss://["],
+])("excludes %s", (_name, method, url) => {
+  const call = method === "fetch" ? "fetch" : "new WebSocket";
+  expect(requestsFor(`${call}(${JSON.stringify(url)})`)).toEqual([]);
+});
+
+it("keeps a possibly relative same-scheme fetch and a valid slash authority", () => {
+  expect(
+    requestsFor(`fetch(${JSON.stringify(String.raw`http:\user@host/x`)})`),
+  ).toEqual(["fetch"]);
+  expect(
+    requestsFor(`fetch(${JSON.stringify(String.raw`http:\\host/x`)})`),
+  ).toEqual(["fetch"]);
+});
+
+it("leaves an unparseable non-special scheme outside the refusal", () => {
+  expect(requestsFor('fetch("custom://[")')).toEqual(["fetch"]);
+});
+
+it.each([
+  ["fetch", "httpſ://api.example/x"],
+  ["WebSocket", "wſ://api.example/x"],
+])(
+  "keeps a base-dependent %s URL with a non-ASCII scheme lookalike",
+  (method, url) => {
+    expect(new URL(url, "https://page.example/base").origin).toBe(
+      "https://page.example",
+    );
+    const call = method === "fetch" ? "fetch" : "new WebSocket";
+    expect(requestsFor(`${call}(${JSON.stringify(url)})`)).toEqual([method]);
+  },
+);
+
+it.each([
+  ["fetch", "HTTPS://["],
+  ["WebSocket", "WSS://["],
+])("still excludes a malformed uppercase %s authority", (method, url) => {
+  const call = method === "fetch" ? "fetch" : "new WebSocket";
+  expect(requestsFor(`${call}(${JSON.stringify(url)})`)).toEqual([]);
+});
+
+it.each([
   ["a URL with a user name", 'fetch("https://user@api.example.test/x")'],
   ["a URL with a password", 'fetch("https://:pw@api.example.test/x")'],
   [

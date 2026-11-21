@@ -260,3 +260,54 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps relative URLs and excludes refused absolute request URLs through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-request-url-authority-");
+    const cases = [
+      [
+        "backslashes",
+        `fetch(${JSON.stringify(String.raw`http:\\user@host/x`)})`,
+        false,
+      ],
+      [
+        "mixed",
+        `fetch(${JSON.stringify(String.raw`http:/\user@host/x`)})`,
+        false,
+      ],
+      ["fetch-host", 'fetch("https://[")', false],
+      ["fetch-escape", 'fetch("http://%")', false],
+      ["socket-host", 'new WebSocket("wss://[")', false],
+      [
+        "single",
+        `fetch(${JSON.stringify(String.raw`http:\user@host/x`)})`,
+        true,
+      ],
+      ["clean", `fetch(${JSON.stringify(String.raw`http:\\host/x`)})`, true],
+      ["relative", 'fetch("/api")', true],
+      ["same-scheme", 'fetch("https:user@host/x")', true],
+      ["fetch-long-s", 'fetch("httpſ://api.example/x")', true],
+      ["socket-long-s", 'new WebSocket("wſ://api.example/x")', true],
+      ["fetch-uppercase", 'fetch("HTTPS://[")', false],
+      ["socket-uppercase", 'new WebSocket("WSS://[")', false],
+    ] as const;
+    for (const [name, source] of cases)
+      await writeFile(join(root, `${name}.cjs`), `${source};\n`);
+    const { semantic_graph: graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      root,
+    );
+    for (const [name, , retained] of cases) {
+      expect(
+        graph.nodes.filter(
+          (node) =>
+            node.kind === "request" &&
+            node.identity.module_path === `${name}.cjs`,
+        ),
+        name,
+      ).toHaveLength(retained ? 1 : 0);
+    }
+  },
+);

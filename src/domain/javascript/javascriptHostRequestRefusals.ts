@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 
+import { htmlUrlText } from "../artifactPathSyntax.js";
 import {
   isObjectPrototypeSetter,
   objectDataPropertyValue,
@@ -26,23 +27,20 @@ const literalString = (node: t.Node | undefined): string | undefined => {
 };
 
 /**
- * Whether an absolute URL literal names a user or password. Without `//` after
- * the scheme, a browser page with the same scheme reads the rest as a relative
- * path: on an http page, "http:user@host/x" names no user.
+ * Parse only a URL whose authority is explicit regardless of the page base.
+ * A single slash after a special scheme can still name a same-scheme relative
+ * path; two slashes or backslashes introduce an authority. `null` means that
+ * explicit URL cannot be parsed, while `undefined` keeps an unknown base.
  */
-const carriesCredentials = (url: string): boolean => {
-  // The URL parser first trims leading and trailing C0 controls and spaces,
-  // then drops every tab and newline, so judge the string it actually reads.
-  const parsedText = url
-    .replace(/^[\u0000- ]+|[\u0000- ]+$/gu, "")
-    .replace(/[\t\n\r]/gu, "");
-  if (
-    !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(parsedText) ||
-    !URL.canParse(parsedText)
-  )
-    return false;
-  const parsed = new URL(parsedText);
-  return parsed.username !== "" || parsed.password !== "";
+const explicitAuthorityUrl = (url: string): URL | null | undefined => {
+  const text = htmlUrlText(url);
+  // URL schemes are ASCII; Unicode case folding would also accept `ſ` as s.
+  const special =
+    /^(?:[hH][tT][tT][pP][sS]?|[wW][sS][sS]?):[\x2F\x5C]{2}/u.test(text);
+  if (!special && !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(text))
+    return undefined;
+  if (!URL.canParse(text)) return special ? null : undefined;
+  return new URL(text);
 };
 
 /**
@@ -112,7 +110,13 @@ const fetchRefused = (node: t.Node): boolean => {
   // A spread can move every later literal to a slot the host ignores.
   if (input === undefined || t.isSpreadElement(input)) return false;
   const url = literalString(input);
-  if (url !== undefined && carriesCredentials(url)) return true;
+  const absolute = url === undefined ? undefined : explicitAuthorityUrl(url);
+  if (
+    absolute === null ||
+    (absolute !== undefined &&
+      (absolute.username !== "" || absolute.password !== ""))
+  )
+    return true;
   if (init === undefined || t.isSpreadElement(init)) return false;
   const options = unwrapJavaScriptExpression(init).node;
   if (!t.isObjectExpression(options)) return false;
@@ -178,6 +182,7 @@ const webSocketRefused = (node: t.Node): boolean => {
   if (url !== undefined) {
     // The URL parser treats any "#" as the start of the fragment.
     if (url.includes("#")) return true;
+    if (explicitAuthorityUrl(url) === null) return true;
     if (URL.canParse(url) && !WEBSOCKET_SCHEMES.has(new URL(url).protocol))
       return true;
   }
