@@ -1509,6 +1509,7 @@ const verifyProjectFallback = async (
     platform,
     {
       projectDirectory: project.directory,
+      mode: "ownership",
       candidates: [...project.pending.values()].map(
         ({ client, originalDocument, candidate }) => ({
           path: client.configPath,
@@ -1523,31 +1524,35 @@ const verifyProjectFallback = async (
     return failed(
       "Pi project trust could not be established for removal. No change was made.",
     );
-  const { document, configPath } = observed.value;
+  const {
+    document,
+    configPath,
+    environmentError,
+    preservesOriginalRegistration,
+  } = observed.value;
   const remaining =
     document === undefined
       ? undefined
       : effectiveClientServer(document, PRODUCT_IDENTITY.mcpServerKey);
-  if (document !== undefined && remaining !== undefined) {
-    const parsed = parseClientRegistrationPolicy(remaining, project.userClient);
-    if (
-      !parsed.ok ||
-      (clientRegistrationActivation(
-        parsed.value,
-        project.userClient,
-        document,
-      ) !== "disabled" &&
-        !(
-          observed.value.preservesOriginalRegistration === true &&
-          clientRegistrationOwnership(remaining, project.userClient) ===
-            "foreign"
-        ))
-    )
-      return failed(
+  // A retained row may use another transport or have unknown launcher
+  // identity. Its verified equality, independent of readiness, proves this
+  // edit cannot change it. A surviving owned row still blocks removal.
+  if (
+    remaining !== undefined &&
+    preservesOriginalRegistration === true &&
+    clientRegistrationOwnership(remaining, project.userClient) !== "owned"
+  )
+    return undefined;
+  if (environmentError !== undefined) return failed(environmentError.detail);
+  if (document === undefined || remaining === undefined) return undefined;
+  const parsed = parseClientRegistrationPolicy(remaining, project.userClient);
+  return parsed.ok &&
+    clientRegistrationActivation(parsed.value, project.userClient, document) ===
+      "disabled"
+    ? undefined
+    : failed(
         `Removing this registration would leave another or unresolved REA registration at ${configPath}. No change was made. Review that registration, then rerun uninstall.`,
       );
-  }
-  return undefined;
 };
 
 /** Match the planned bytes and path identities before applying its next edit. */

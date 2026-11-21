@@ -26,6 +26,7 @@ const openCodeRegistration = {
   command: ["npx", "-y", "rea-agents", "mcp"],
 };
 const openCodePeer = { type: "local", command: ["unrelated", "mcp"] };
+const openCodeRemote = { type: "remote", url: "https://example.invalid/mcp" };
 
 for (const distinctAlias of [false, true]) {
   cliTest.skipIf(distinctAlias && process.platform === "win32")(
@@ -159,57 +160,58 @@ cliTest(
   },
 );
 
-cliTest(
-  "uninstall removes a shadowed OpenCode copy and a Pi registration while retaining the effective foreign row",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory(
-      "rea-project-shadowed-uninstall-",
-    );
-    const home = join(root, "home");
-    const project = join(root, "selected");
-    const lower = join(project, "opencode.json");
-    const higher = join(project, "opencode.jsonc");
-    const pi = join(project, ".pi", "mcp.json");
-    const environment = await registrationEnvironment(home);
-    await put(join(home, ".pi", "agent", "trust.json"), { [project]: true });
-    const lowerOriginal = await put(lower, {
-      mcp: { servers: { rea: openCodeRegistration, peer: openCodePeer } },
-    });
-    const higherOriginal = await put(higher, {
-      mcp: {
-        servers: {
-          rea: {
-            ...openCodePeer,
-            command: ["npx", "-y", "other-package", "mcp"],
-          },
-        },
-      },
-    });
-    const piOriginal = await put(pi, {
-      mcpServers: { rea: piRegistration, peer: { command: "unrelated" } },
-    });
-
-    const result = await cli.run({
-      arguments: ["uninstall", "--project", project, "--json"],
-      environment,
-      cwd: root,
-    });
-    expect(result.exitCode, result.stdout).toBe(0);
-    expect(result.json).toMatchObject({ status: "complete" });
-    expect(JSON.parse(await readFile(lower, "utf8"))).toEqual({
-      mcp: { servers: { peer: openCodePeer } },
-    });
-    expect(JSON.parse(await readFile(pi, "utf8"))).toEqual({
-      mcpServers: { peer: { command: "unrelated" } },
-    });
-    expect(await readFile(`${lower}.rea.backup`, "utf8")).toBe(lowerOriginal);
-    expect(await readFile(`${pi}.rea.backup`, "utf8")).toBe(piOriginal);
-    expect(await readFile(higher, "utf8")).toBe(higherOriginal);
-    await expect(readFile(`${higher}.rea.backup`)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+for (const { kind, retained } of [
+  {
+    kind: "foreign local",
+    retained: { type: "local", command: ["npx", "-y", "other-package", "mcp"] },
   },
-);
+  { kind: "remote", retained: openCodeRemote },
+]) {
+  cliTest(
+    `uninstall removes shadowed OpenCode and Pi registrations while retaining the effective ${kind} row`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-project-shadowed-uninstall-",
+      );
+      const home = join(root, "home");
+      const project = join(root, "selected");
+      const lower = join(project, "opencode.json");
+      const higher = join(project, "opencode.jsonc");
+      const pi = join(project, ".pi", "mcp.json");
+      const environment = await registrationEnvironment(home);
+      await put(join(home, ".pi", "agent", "trust.json"), { [project]: true });
+      const lowerOriginal = await put(lower, {
+        mcp: { servers: { rea: openCodeRegistration, peer: openCodePeer } },
+      });
+      const higherOriginal = await put(higher, {
+        mcp: { servers: { rea: retained } },
+      });
+      const piOriginal = await put(pi, {
+        mcpServers: { rea: piRegistration, peer: { command: "unrelated" } },
+      });
+
+      const result = await cli.run({
+        arguments: ["uninstall", "--project", project, "--json"],
+        environment,
+        cwd: root,
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(result.json).toMatchObject({ status: "complete" });
+      expect(JSON.parse(await readFile(lower, "utf8"))).toEqual({
+        mcp: { servers: { peer: openCodePeer } },
+      });
+      expect(JSON.parse(await readFile(pi, "utf8"))).toEqual({
+        mcpServers: { peer: { command: "unrelated" } },
+      });
+      expect(await readFile(`${lower}.rea.backup`, "utf8")).toBe(lowerOriginal);
+      expect(await readFile(`${pi}.rea.backup`, "utf8")).toBe(piOriginal);
+      expect(await readFile(higher, "utf8")).toBe(higherOriginal);
+      await expect(readFile(`${higher}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+}
 
 cliTest(
   "uninstall skips a project candidate beneath a regular file before reading unrelated user data",
@@ -411,10 +413,10 @@ cliTest(
   },
 );
 
-for (const foreign of [false, true]) {
+for (const fallback of ["none", "foreign local", "remote"] as const) {
   cliTest(
-    foreign
-      ? "project uninstall preserves the whole selected set when removing copies would expose a foreign fallback"
+    fallback !== "none"
+      ? `project uninstall preserves the whole selected set when removing copies would expose a ${fallback} fallback`
       : "project uninstall removes all owned files after checking their combined fallback",
     async ({ cli }) => {
       const root = await createTestTempDirectory(
@@ -431,9 +433,16 @@ for (const foreign of [false, true]) {
         mcp: { servers: { rea: openCodeRegistration, second: openCodePeer } },
       });
       const lowerPath = join(root, "opencode.json");
-      const lower = foreign
-        ? await put(lowerPath, { mcp: { servers: { rea: openCodePeer } } })
-        : undefined;
+      const lower =
+        fallback === "none"
+          ? undefined
+          : await put(lowerPath, {
+              mcp: {
+                servers: {
+                  rea: fallback === "remote" ? openCodeRemote : openCodePeer,
+                },
+              },
+            });
       const run = () =>
         cli.run({
           arguments: ["uninstall", "--project", selected, "--json"],
@@ -442,7 +451,7 @@ for (const foreign of [false, true]) {
         });
 
       const result = await run();
-      if (foreign) {
+      if (fallback !== "none") {
         expect(result.exitCode, result.stdout).toBe(1);
         expect(result.json).toMatchObject({ status: "failed" });
         expect(await readFile(firstPath, "utf8")).toBe(first);
