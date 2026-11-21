@@ -2668,14 +2668,16 @@ it.each(["search_procedures", "search_strings"] as const)(
 );
 
 describe("GhidraClient reply ceiling", () => {
-  it("shuts the bridge down under the session's ceilings after its seed is refused", async () => {
+  it("refuses an invalid reply seed but still shuts down under the admitted ceiling", async () => {
     // Cleanup must not depend on the current settings: a seed refused after
     // startup would otherwise refuse the shutdown request before writing it.
     let seedRefused = false;
+    const refusal = new ConfigurationError(
+      "invalid bridge.max_reply_bytes seed",
+    );
     const replyCeiling: BridgeMaxReplyBytes = {
       get maximumBytes(): number {
-        if (seedRefused)
-          throw new ConfigurationError("invalid bridge.max_reply_bytes seed");
+        if (seedRefused) throw refusal;
         return 1024 * 1024;
       },
       source: "runtime",
@@ -2689,14 +2691,23 @@ describe("GhidraClient reply ceiling", () => {
         },
       },
     );
-    const client = clientFor(new FixtureLauncher(), {
+    const launcher = new FixtureLauncher();
+    const client = clientFor(launcher, {
       bridgeMaxReplyBytes: replyCeiling,
       logger,
     });
     await expect(client.start()).resolves.toMatchObject({ ok: true });
     seedRefused = true;
+    const result = await client.callTool("search_strings", {
+      pattern: "refused",
+    });
+    if (result.ok) throw new Error("Expected a reply ceiling refusal");
+    expect(result.error.kind).toBe("admission");
+    expect(result.error.cause).toBe(refusal);
 
     await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+    expect(launcher.requests).not.toContain("search_strings");
+    expect(launcher.requests).toContain("shutdown");
     expect(logs.join("")).not.toContain(
       "Ghidra bridge shutdown was not confirmed",
     );
