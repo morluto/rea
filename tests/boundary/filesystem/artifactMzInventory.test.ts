@@ -169,6 +169,55 @@ describe("MZ artifact classification", () => {
   });
 });
 
+describe("MZ artifact architecture", () => {
+  it("reports the CPU of DOS and PE images, including a PE record beyond the bounded prefix", async () => {
+    const directory = await createTestTempDirectory("rea-mz-architecture-");
+    await writeFile(join(directory, "LEGACY.EXE"), dosFixture());
+    await writeFile(join(directory, "NATIVE.EXE"), peFixture(128));
+    await writeFile(
+      join(directory, "DISTANT.EXE"),
+      peFixture(ARTIFACT_CLASSIFICATION_PREFIX_BYTES + 64),
+    );
+    const inventory = artifactInventoryResultSchema.parse(
+      await scanCanonicalArtifactInventory(directory),
+    );
+    const architectureAt = (logicalPath: string) => {
+      const occurrence = inventory.occurrences.find(
+        ({ logical_path }) => logical_path === logicalPath,
+      );
+      return inventory.nodes.find(
+        ({ artifact_id }) => artifact_id === occurrence?.artifact_id,
+      )?.architecture;
+    };
+    expect(architectureAt("LEGACY.EXE")).toBe("x86");
+    expect(architectureAt("NATIVE.EXE")).toBe("x86_64");
+    // The record window that admitted the PE beyond the prefix names its CPU.
+    expect(architectureAt("DISTANT.EXE")).toBe("x86_64");
+  });
+
+  it("reports the CPU of a ZIP member whose PE signature straddles the bounded prefix", async () => {
+    const root = await createTestTempDirectory("rea-mz-architecture-zip-");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(
+      "native.exe",
+      new Uint8ArrayReader(peFixture(ARTIFACT_CLASSIFICATION_PREFIX_BYTES - 2)),
+      { level: 0 },
+    );
+    const path = join(root, "fixture.zip");
+    await writeFile(path, Buffer.from(await writer.close()));
+
+    const inventory = await inventoryArtifact(path);
+    const occurrence = inventory.occurrences.find(
+      ({ logical_path }) => logical_path === "native.exe",
+    );
+    expect(
+      inventory.nodes.find(
+        ({ artifact_id }) => artifact_id === occurrence?.artifact_id,
+      ),
+    ).toMatchObject({ format: "pe", architecture: "x86_64" });
+  });
+});
+
 const dosFixture = (): Buffer => {
   const bytes = Buffer.alloc(512);
   bytes.write("MZ", 0, "ascii");
