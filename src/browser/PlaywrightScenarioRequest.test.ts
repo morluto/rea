@@ -7,6 +7,7 @@ import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { responsePointerValue } from "./BrowserScenarioResponseValues.js";
 import { performPlaywrightScenarioAction } from "./PlaywrightScenarioActions.js";
+import { phaseArrival } from "../../tests/support/lifecycleHarness.js";
 import { waitFor } from "../../tests/support/testWait.js";
 
 const ORIGIN = "https://app.example.test";
@@ -147,8 +148,6 @@ const fakePage = (options: {
   /** The origin the page reports when the request is sent, if it moved after the check. */
   readonly sendingOrigin?: string;
   readonly cookies?: readonly { name: string; value: string }[];
-  readonly cookieDelayMs?: number;
-  readonly evaluateDelayMs?: number;
   readonly storage?: Record<string, string>;
 }) => {
   const url = options.url ?? `${ORIGIN}/dashboard`;
@@ -158,29 +157,18 @@ const fakePage = (options: {
   vi.stubGlobal("location", {
     origin: options.sendingOrigin ?? new URL(url).origin,
   });
+  const context = { cookies: async () => options.cookies ?? [] };
   return {
     on: vi.fn(),
     off: vi.fn(),
     route: async () => {},
     unroute: async () => {},
     url: () => url,
-    context: () => ({
-      cookies: async () => {
-        if (options.cookieDelayMs !== undefined)
-          await new Promise((resolve) =>
-            setTimeout(resolve, options.cookieDelayMs),
-          );
-        return options.cookies ?? [];
-      },
-    }),
+    context: () => context,
     evaluate: async <Arg, Result>(
       fn: (arg: Arg) => Result | Promise<Result>,
       arg: Arg,
     ): Promise<Result> => {
-      if (options.evaluateDelayMs !== undefined)
-        await new Promise((resolve) =>
-          setTimeout(resolve, options.evaluateDelayMs),
-        );
       // Like Playwright, run the callback from its source text with a cloned
       // argument, so it cannot reach this module's imports or closures.
       const pageFunction = new Function(
@@ -273,44 +261,61 @@ describe("request step execution", () => {
   });
 });
 
+const useRequestClock = () => {
+  vi.useFakeTimers();
+  onTestFinished(() => void vi.useRealTimers());
+};
+
 describe("request dispatch boundary", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it("sends nothing when browser evaluation starts after the absolute deadline", async () => {
+    useRequestClock();
     const calls = stubFetch(200);
-    const parsed = scenario([requestStep({ timeout_ms: 5 })]);
+    const page = fakePage({});
+    const evaluate = page.evaluate.bind(page);
+    vi.spyOn(page, "evaluate").mockImplementation((fn, arg) => {
+      // Advance the page clock at evaluation without expiring the host's monotonic clock.
+      vi.setSystemTime(Date.now() + 20);
+      return evaluate(fn, arg);
+    });
+    const parsed = scenario([requestStep({ timeout_ms: 20 })]);
     await expect(
-      perform(
-        fakePage({ evaluateDelayMs: 30 }),
-        parsed.actions[0]!,
-        resolved(parsed),
-      ),
-    ).rejects.toThrow("ran out of time");
+      perform(page, parsed.actions[0]!, resolved(parsed)),
+    ).rejects.toThrow("The request ran out of time before it was sent");
     expect(calls).toEqual([]);
   });
 
-  it("aborts the page fetch when its deadline elapses", async () => {
-    const signals: AbortSignal[] = [];
+  it("aborts a dispatched fetch when the remaining budget expires", async () => {
+    useRequestClock();
+    const dispatched = phaseArrival<AbortSignal>();
     vi.stubGlobal(
       "fetch",
       async (_url: string, init: RequestInit) =>
-        await new Promise<Response>((_resolve, reject) => {
+        new Promise<Response>((_resolve, reject) => {
           const signal = init.signal!;
-          signals.push(signal);
           signal.addEventListener("abort", () => reject(signal.reason), {
             once: true,
           });
+          dispatched.arrive(signal);
         }),
     );
     const parsed = scenario([requestStep({ timeout_ms: 20 })]);
-    await expect(
-      perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
-    ).rejects.toThrow();
-    expect(signals).toHaveLength(1);
-    await waitFor(() => expect(signals[0]!.aborted).toBe(true));
-    expect(signals[0]!.reason).toMatchObject({ name: "TimeoutError" });
+    const result = perform(
+      fakePage({}),
+      parsed.actions[0]!,
+      resolved(parsed),
+    ).catch((cause: unknown) => cause);
+    const signal = await dispatched.reached(result, "page fetch");
+    await vi.advanceTimersByTimeAsync(19);
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal.reason).toMatchObject({ name: "TimeoutError" });
+    expect(await result).toMatchObject({
+      message: expect.stringContaining("The request ran out of time."),
+    });
   });
 
   it("guards dispatch after cancellation while evaluation was queued, and removes its route", async () => {
@@ -572,35 +577,44 @@ describe("request step confinement", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("sends nothing when its time runs out while header values are read, or the step is cancelled", async () => {
-    const calls = stubFetch(200);
-    const parsed = scenario([
-      requestStep({
-        timeout_ms: 5,
-        headers: [{ name: "X-T", value: { source: "cookie", name: "t" } }],
-      }),
-    ]);
-    const cookies = [{ name: "t", value: "token-value-1" }];
-    await expect(
-      perform(
-        fakePage({ cookies, cookieDelayMs: 30 }),
+  it.each(["deadline", "cancellation"])(
+    "installs no dispatch route after %s during header reads",
+    async (end) => {
+      useRequestClock();
+      const cancel = new AbortController();
+      const page = fakePage({
+        cookies: [{ name: "t", value: "token-value-1" }],
+      });
+      const context = page.context();
+      const readCookies = context.cookies.bind(context);
+      vi.spyOn(context, "cookies").mockImplementation(async (urls) => {
+        if (end === "deadline") await vi.advanceTimersByTimeAsync(20);
+        else cancel.abort("cancelled during header read");
+        return readCookies(urls);
+      });
+      const route = vi.spyOn(page, "route");
+      const calls = stubFetch(200);
+      const parsed = scenario([
+        requestStep({
+          timeout_ms: 20,
+          headers: [{ name: "X-T", value: { source: "cookie", name: "t" } }],
+        }),
+      ]);
+      const failure = await perform(
+        page,
         parsed.actions[0]!,
         resolved(parsed),
-      ),
-    ).rejects.toThrow("ran out of time");
-    const cancelled = new AbortController();
-    cancelled.abort();
-    await expect(
-      performPlaywrightScenarioAction({
-        page: fakePage({ cookies }),
-        action: scenario([requestStep({})]).actions[0]!,
-        secrets: resolved(parsed),
-        startOrigin: ORIGIN,
-        signal: cancelled.signal,
-      }),
-    ).rejects.toThrow("ran out of time");
-    expect(calls).toEqual([]);
-  });
+        cancel.signal,
+      ).catch((cause: unknown) => cause);
+      expect(route).not.toHaveBeenCalled();
+      expect(failure).toMatchObject({
+        message: expect.stringContaining(
+          "ran out of time before its request was sent",
+        ),
+      });
+      expect(calls).toEqual([]);
+    },
+  );
 
   it("appends query entries after the path's literal query without re-encoding it", async () => {
     const calls = stubFetch(200);
