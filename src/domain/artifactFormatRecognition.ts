@@ -11,6 +11,7 @@ import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
+import { hasCompoundFileSignature } from "./windows/compoundFile.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
 import { hasWxapkgEncryptedMagic, hasWxapkgHeader } from "./wxapkgFormat.js";
 import { hasZipSignature } from "./zipPackageFormat.js";
@@ -33,6 +34,7 @@ export type RecognizedArtifactFormat = Extract<
   | "esp-flash-image"
   | "esp-image"
   | "fit"
+  | "compound-file"
   | "ntfs-mft"
   | "plist"
 >;
@@ -147,6 +149,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
         : { state: "refused", format: "esp-image", reason: ESP8266_REFUSAL };
     },
     when("fit", hasFitImagesNode),
+    when("compound-file", hasCompoundFileSignature),
     when("ntfs-mft", hasMftFileRecordHeader),
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
