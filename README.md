@@ -72,7 +72,7 @@ instructions by operating system, agent, and analysis provider.
 
 ### Connect your agent (MCP)
 
-With [Node.js and npm](#what-you-can-analyze) installed, run this from a trusted
+With [Node.js and npm](docs/reference/supported-targets.md) installed, run this from a trusted
 directory outside the project you plan to analyze.
 
 ```bash
@@ -195,10 +195,7 @@ or build and test an implementation. The CLI uses the same workflows.
 REA covers native binaries, JavaScript and Electron apps, websites, .NET
 assemblies, Android apps, firmware, and recorded runtime and network activity.
 
-REA requires Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+, plus npm.
-[Supported targets and requirements](docs/reference/supported-targets.md) lists
-the formats REA accepts, what it returns, and any additional tools or host
-requirements.
+[Supported targets and requirements](docs/reference/supported-targets.md)
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -207,44 +204,9 @@ and host OS. See [choosing a deep analysis provider](docs/reference/supported-ta
 
 ## Build RL environments
 
-Give an AI agent a local environment to practice tasks such as finding an issue or creating a folder, without running the original app. Use it for reinforcement learning (RL) or to test how well an agent completes tasks.
-
-REA turns recorded API requests and responses into tools the agent can call. The environment uses the recorded data and supports changes only when the recording confirms their effects.
-
-With REA set up in your agent, replace the example URL and folder tasks below with your own:
-
-```text
-Use REA to build an RL environment from my test web app at
-http://127.0.0.1:3000.
-Cover listing, creating, renaming, and deleting folders. You may create and
-remove test folders. Leave existing data unchanged.
-Save it in a folder named my-env. Check which operations work and tell me
-how to run it.
-```
-
-<details>
-<summary>Use the command line instead</summary>
-
-Use these commands if you already have a file containing the app’s recorded browser requests and responses. Running the result also requires AgentEnv and Docker.
-
-```sh
-rea environment-build ./session.har ./my-env --name my-env --json
-agent-env run ./my-env
-```
-
-</details>
-
-REA exports a runnable environment with a basic test to check that it starts and responds. Use it with your RL framework to define task goals, add reward checks, and run training.
-
-[Build an environment](https://rea.tools/guides/rl-environments/) ·
-[Environment reference](docs/agent-environments.md) ·
-[Watch the demo on X](https://x.com/reatools/status/2112574822584918075?s=20)
-
-### Desktop app environments
-
-REA can also build an environment of a Linux desktop app, which an agent uses through screenshots, the mouse and the keyboard. From a one-line request, such as "Build me a Gnote environment where the agent adds olive oil to the shopping list note", your agent installs the app on a local build computer, writes the task, exports the environment and checks the task in a fresh computer. The machine that builds it needs Linux on amd64 or arm64, Docker and the agentenv framework version the guide pins.
-
-[Set up desktop app environments](docs/desktop-build-computer.md)
+Build a local environment from a recorded web session or a Linux desktop app
+so an agent can practice a task and check its result.
+[Build an RL environment with REA](https://rea.tools/guides/rl-environments/).
 
 ## FAQ
 
@@ -341,6 +303,12 @@ For exact options, prerequisites and result contracts:
 
 Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
+## Community & Support
+
+- **Discord** — Ask questions and share what you’re investigating. [![Join the REA Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — Follow [@reatools](https://x.com/reatools) for updates and announcements.
+- **Feedback & Ideas** — Want a new feature or support for a file format? [Open a GitHub issue](https://github.com/morluto/rea/issues) or [join our Discord](https://discord.gg/GkcryMnJDM) and let us know.
+
 ## Star history
 
 🎉 **400,000 GitHub stars — thank you!**
@@ -355,6 +323,15 @@ Thanks to everyone using REA, reporting bugs, requesting features, testing build
   </picture>
 </a>
 
+## Contributing
+
+We'd love your help with REA! [Open an issue](https://github.com/morluto/rea/issues) to
+report a bug or suggest a feature, or [send a pull request](https://github.com/morluto/rea/pulls)
+to improve the code or docs.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks. See the
+[testing guide](docs/development/testing.md) for verification lanes.
+
 ## Disclaimer
 
 See [DISCLAIMER.md](DISCLAIMER.md) for responsible-use guidance.
@@ -364,15 +341,6 @@ distribution channels, and platforms; each copy retains its applicable licenses.
 
 REA is for lawful research, education, interoperability, software preservation,
 and analysis of software you own or are authorized to examine.
-
-## Contributing
-
-We'd love your help with REA! [Open an issue](https://github.com/morluto/rea/issues) to
-report a bug or suggest a feature, or [send a pull request](https://github.com/morluto/rea/pulls)
-to improve the code or docs.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks. See the
-[testing guide](docs/development/testing.md) for verification lanes.
 
 ## License
 
