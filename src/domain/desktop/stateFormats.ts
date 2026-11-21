@@ -358,12 +358,23 @@ export const textView = (
   text: string,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): JsonValue => {
-  const lines = text.split(desktopLineBreak);
-  if (lines.at(-1) === "") lines.pop();
+  const lines: string[] = [];
+  let lineCount = 0;
+  let start = 0;
+  for (const delimiter of text.matchAll(desktopLineBreak)) {
+    if (lines.length < policy.text_lines)
+      lines.push(text.slice(start, delimiter.index));
+    lineCount += 1;
+    start = delimiter.index + delimiter[0].length;
+  }
+  if (start < text.length) {
+    if (lines.length < policy.text_lines) lines.push(text.slice(start));
+    lineCount += 1;
+  }
   return {
-    lines: lines.slice(0, policy.text_lines),
-    line_count: lines.length,
-    truncated: lines.length > policy.text_lines,
+    lines,
+    line_count: lineCount,
+    truncated: lineCount > policy.text_lines,
   };
 };
 
