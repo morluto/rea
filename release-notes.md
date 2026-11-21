@@ -105,6 +105,7 @@
 * **uninstall:** keep emptied DSH inserts from applying overrides ([#13036](https://github.com/morluto/rea/issues/13036)) ([76da8fd](https://github.com/morluto/rea/commit/76da8fd8baa9ffe61be1d772a3cc1d0ac65dbf8b))
 * **v8:** admit the six-word code cache header of V8 8.8 through 11.7 ([cc19240](https://github.com/morluto/rea/commit/cc19240ca963a263f8c33a061782385e76344e0f))
 * **verification:** bind DeepSeek skill evidence to its installed directory ([#13238](https://github.com/morluto/rea/issues/13238)) ([e3ce2b5](https://github.com/morluto/rea/commit/e3ce2b53d4225eed98977727534f97c0e0e06433))
+* **verification:** read back Qwen skill output before analysis ([#13240](https://github.com/morluto/rea/issues/13240)) ([63ff46e](https://github.com/morluto/rea/commit/63ff46e9ee3c1ea678c33891032c0e70eec67987))
 * **verify:** cancel owned DeepSeek Harness commands ([#13035](https://github.com/morluto/rea/issues/13035)) ([42a34f8](https://github.com/morluto/rea/commit/42a34f8a7fea243b1f8e9b3574c814b1d52438b9))
 * **verify:** require confirmed DeepSeek process cleanup ([#13043](https://github.com/morluto/rea/issues/13043)) ([4aed56e](https://github.com/morluto/rea/commit/4aed56eccb68e49f411e472134feafd6b2a7996f))
 * **verify:** require DeepSeek Harness terminal JSON ([#13034](https://github.com/morluto/rea/issues/13034)) ([9b1631a](https://github.com/morluto/rea/commit/9b1631a1d73e44156b5347838198da358341fc34))
