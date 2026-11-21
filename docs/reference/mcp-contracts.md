@@ -1317,6 +1317,20 @@ constraint, and `details.path` names that file. A `.dext`, `.kext`,
 resource root reports its `layout` as `contents`, `root`,
 `versioned-framework` or `flattened-framework`.
 
+When the caller opens a directory, `inspect_macho` and `inspect_signature`
+include `normalized_result.bundle_provenance`. It records the canonical bundle
+directory, selected layout, lookup path and SHA-256 of the Info.plist bytes
+read during resolution, and the declared executable name. For versioned
+frameworks, `version_directory` records where the program directory resolved.
+The `framework` object reports the directory's name without `.framework` and
+whether it exactly matches the declared name. A mismatch does not override
+`CFBundleExecutable`. The Mach-O summary includes these fields under
+`summary.bundle_provenance`. The binary is still the Evidence subject.
+These facts describe the selection at open time. Reopening refreshes them
+from the new admission, including when the executable bytes stay the same.
+A retained report includes those facts when a later inspection or cleanup step fails.
+Direct file selections and older Evidence can omit this object.
+
 `open_bundle_resources` selects a separate read-only app resource session
 without resolving `CFBundleExecutable`, including when it is absent or
 unresolvable. `binary_session` reports `session_kind: "bundle_resources"` and the
