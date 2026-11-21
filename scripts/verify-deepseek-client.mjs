@@ -426,7 +426,9 @@ await withVerifierCleanup(async () => {
         },
       ],
     );
+  },
+  () => {
+    const reason = commands.finish();
     if (passed && reason !== undefined) throw reason;
   },
-  () => commands.finish(),
 ]);
