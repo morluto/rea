@@ -95,8 +95,11 @@ const selectedRegistrationEnvironment = async (
   const client = (
     await resolveSupportedClients(home, platform, processEnvironment)
   ).find(({ name }) => name === selected);
-  if (client === undefined || client.format === "unsupported")
+  if (client === undefined)
     return { environment: {}, unresolved: new Set(), unknown: true };
+  // A manual connector has no local registration overlay. Local diagnostics
+  // still describe this host; registration status reports the manual step.
+  if (client.format === "unsupported") return undefined;
   const registered = await readSelectedRegistration(
     client,
     resourceScope,

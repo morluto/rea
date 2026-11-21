@@ -893,43 +893,69 @@ test("retries a retained registration-file close after a failed retry", async ()
   }
 });
 
-test("does not use terminal readiness when a selected registration is malformed", async () => {
-  const home = await createTestTempDirectory(
-    "rea-doctor-malformed-registration-",
-  );
+test("scopes local provider readiness independently of manual registration status", async () => {
+  const home = await createTestTempDirectory("rea-doctor-registration-scope-");
+  const hopper = join(home, "hopper");
+  await writeFile(hopper, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await mkdir(join(home, ".grokbot"));
   await mkdir(join(home, ".config/opencode"), { recursive: true });
   await writeFile(join(home, ".config/opencode/opencode.json"), "not JSON");
-  const host = createSystemDoctorHost({
-    HOME: home,
-    GHIDRA_INSTALL_DIR: "/opt/ghidra",
+  const doctorHost = () =>
+    createSystemDoctorHost(
+      {
+        HOME: home,
+        HOPPER_LAUNCHER_PATH: hopper,
+        GHIDRA_INSTALL_DIR: "/opt/ghidra",
+      },
+      undefined,
+      { platform: "darwin", architecture: "arm64" },
+    );
+  const terminal = await runDoctorOwned(undefined, doctorHost());
+  const manual = await runDoctorOwned(undefined, doctorHost(), {
+    clients: ["grok_bot"],
   });
-  try {
-    const inspections = await host.providerInspections?.(["opencode"]);
-    expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
-      configured: null,
-      available: null,
-      checks: [expect.objectContaining({ classification: "unknown" })],
-    });
-    const report = await runDoctor(undefined, host, {
-      clients: ["opencode"],
-      providers: ["ghidra"],
-    });
-    expect(report.scope_checks).toContainEqual(
-      expect.objectContaining({
-        name: "ghidra",
-        ok: false,
-        classification: "unknown",
-      }),
-    );
-    expect(report.scope_checks).not.toContainEqual(
-      expect.objectContaining({
-        name: "provider:ghidra",
-        classification: "missing_analysis_engine",
-      }),
-    );
-  } finally {
-    await host.close?.();
-  }
+  expect(terminal.hopperPath).toBe(hopper);
+  expect(manual.hopperPath).toBe(hopper);
+  expect(manual.scope_checks).toContainEqual(
+    expect.objectContaining({
+      name: "registration:grok_bot",
+      ok: false,
+      remediation: expect.stringContaining("hosted computer"),
+    }),
+  );
+
+  const malformed = await runDoctorOwned(undefined, doctorHost(), {
+    clients: ["opencode"],
+    providers: ["ghidra"],
+  });
+  expect(malformed.hopperPath).toBeUndefined();
+  expect(malformed.checks).toContainEqual(
+    expect.objectContaining({
+      name: "hopper",
+      ok: false,
+      classification: "unknown",
+    }),
+  );
+  expect(
+    malformed.providerInspections?.find(({ id }) => id === "ghidra"),
+  ).toMatchObject({
+    configured: null,
+    available: null,
+    checks: [expect.objectContaining({ classification: "unknown" })],
+  });
+  expect(malformed.scope_checks).toContainEqual(
+    expect.objectContaining({
+      name: "ghidra",
+      ok: false,
+      classification: "unknown",
+    }),
+  );
+  expect(malformed.scope_checks).not.toContainEqual(
+    expect.objectContaining({
+      name: "provider:ghidra",
+      classification: "missing_analysis_engine",
+    }),
+  );
 });
 
 test("keeps a known provider configuration when only its Java setting is unresolved", async () => {
