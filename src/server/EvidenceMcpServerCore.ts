@@ -57,6 +57,10 @@ import {
 } from "./ToolResultDelivery.js";
 import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
 import {
+  acceptStringifiedStructuredArguments,
+  rejectedInputForIssues,
+} from "./toolRegistrationOptions.js";
+import {
   carriesTargetContentMarker,
   encodeToolResult,
   measureMcpResultWithinBudget,
@@ -94,7 +98,7 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
           if (context?.tool === tool && result.issues !== undefined)
             context.validation = {
               issues: result.issues as readonly z.core.$ZodIssue[],
-              input: value,
+              input: rejectedInputForIssues(result.issues) ?? value,
             };
           if (result.issues === undefined)
             context?.captureCallerParameters(tool, value, result.value);
@@ -338,13 +342,30 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     const { name, ...config } = DISCOVER_TOOLS;
     // Transport discovery has no target or analysis lifecycle. Domain tools
     // continue through registerTool and their original named handlers. Its
-    // advertisement still follows the selected input presentation.
+    // advertisement still follows the selected input presentation, and its
+    // registration recovers JSON-text structured arguments like every other
+    // tool: the recovery override owns that boundary, so discovery registers
+    // through it instead of the SDK's raw registration path.
+    const recoveredDiscovery =
+      config.inputSchema === undefined
+        ? undefined
+        : acceptStringifiedStructuredArguments(config.inputSchema, {
+            tool: name,
+            maximumElements: this.maximumInputElements,
+          });
+    const discoveryConfig =
+      recoveredDiscovery === undefined ||
+      recoveredDiscovery === config.inputSchema
+        ? config
+        : { ...config, inputSchema: recoveredDiscovery };
     super.registerTool(
       name,
-      { ...config, ...this.presentInput(name, config) },
+      { ...discoveryConfig, ...this.presentInput(name, discoveryConfig) },
       (input, context) => {
         context.mcpReq.signal.throwIfAborted();
-        return catalog.discover(input);
+        return catalog.discover(
+          input as Parameters<typeof catalog.discover>[0],
+        );
       },
     );
   }
@@ -444,9 +465,20 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredTool {
     if (canReferenceInlineEvidence(config.inputSchema))
       this.registerEvidenceReferenceAlternative(name);
-    const presented = this.presentInput(name, config);
+    const recovered =
+      config.inputSchema === undefined
+        ? undefined
+        : acceptStringifiedStructuredArguments(config.inputSchema, {
+            tool: name,
+            maximumElements: this.maximumInputElements,
+          });
+    const normalized: typeof config =
+      recovered === undefined || recovered === config.inputSchema
+        ? config
+        : { ...config, inputSchema: recovered as InputArgs };
+    const presented = this.presentInput(name, normalized);
     const registeredConfig = {
-      ...config,
+      ...normalized,
       ...(presented.description === undefined
         ? {}
         : { description: presented.description }),
