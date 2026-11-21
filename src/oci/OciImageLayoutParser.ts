@@ -254,8 +254,13 @@ const readJsonDocument = async (
     );
   } catch (cause: unknown) {
     if (cause instanceof ParseFailureError) throw cause;
+    // DirectoryArtifactReader.inspectFile wraps a callback failure as a plain
+    // "io" error; reader-owned failures such as "integrity", "cancelled" or
+    // "limit" (and any failure carrying cleanup) keep their reader facts.
     if (
       cause instanceof ArtifactReaderFailure &&
+      cause.reason === "io" &&
+      cause.cleanup === undefined &&
       cause.cause instanceof ParseFailureError
     )
       throw cause.cause;

@@ -5,6 +5,7 @@ import {
   truncate,
   unlink,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -1724,6 +1725,84 @@ it("keeps a reader failure on a referenced blob instead of a JSON finding", asyn
     });
   } finally {
     inspectFile.mockRestore();
+  }
+});
+
+it("preserves a reader integrity failure that wraps a blob JSON parse failure", async () => {
+  const root = await createTestTempDirectory("rea-oci-blob-integrity-");
+  await writeOciImageLayoutFixture(root);
+  const brokenJson = "{not-json\n";
+  const manifestDigest = await putOciBlob(root, brokenJson);
+  const parsed = parseOciDigest(manifestDigest);
+  if (parsed === undefined) throw new Error("expected sha256 manifest digest");
+  const manifestEntryPath = `blobs/${parsed.algorithm}/${parsed.hex}`;
+  const manifestDiskPath = join(root, "blobs", parsed.algorithm, parsed.hex);
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests: [
+        {
+          mediaType: "application/vnd.oci.image.manifest.v1+json",
+          digest: manifestDigest,
+          size: Buffer.byteLength(brokenJson),
+        },
+      ],
+    })}\n`,
+  );
+
+  // Control: an unmutated malformed JSON blob is reported as a finding.
+  const plainReport = await inspectLayout(root);
+  expect(plainReport.findings).toContainEqual(
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      digest: manifestDigest,
+    }),
+  );
+
+  class MutatingOnReadReader extends DirectoryArtifactReader {
+    override inspectFile<Value>(
+      entry: Parameters<DirectoryArtifactReader["inspectFile"]>[0],
+      inspect: (file: FileHandle) => Promise<Value>,
+      signal?: AbortSignal,
+    ): Promise<Value> {
+      return super.inspectFile(
+        entry,
+        async (file) => {
+          try {
+            return await inspect(file);
+          } finally {
+            if (entry.path === manifestEntryPath)
+              await writeFile(manifestDiskPath, "{mutated-malformed-json\n");
+          }
+        },
+        signal,
+      );
+    }
+  }
+
+  const reader = new MutatingOnReadReader(root);
+  try {
+    await expect(
+      parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({ path: root }),
+      ),
+    ).rejects.toSatisfy((cause: unknown) => {
+      expect(cause).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(cause instanceof ArtifactReaderFailure)) return false;
+      expect(cause.reason).toBe("integrity");
+      expect(cause.integrityCheck).toBe("member-identity");
+      expect(cause.cause).toBeInstanceOf(ParseFailureError);
+      expect(cause.partialObservation).toMatchObject({
+        kind: "file-snapshot-hash",
+        path: "oci-layout",
+      });
+      return true;
+    });
+  } finally {
+    await reader.close();
   }
 });
 
