@@ -193,6 +193,7 @@ try {
         "-fPIE",
         "-pie",
         "-fstack-protector-all",
+        "-fcf-protection=full",
         "-Wl,-z,relro,-z,now",
         "-Wl,-z,noexecstack",
       ],
@@ -570,6 +571,29 @@ try {
   assert.equal(protectedReport.mitigations.executable_stack_indicator, false);
   assert.equal(plain.mitigations.stack_canary_indicator, false);
   assert.equal(plain.mitigations.relro, null);
+  // CET images carry .plt, .plt.got and .plt.sec. Upstream emulates each in
+  // its own 1 GiB Unicorn instance; under the default address-space limit the
+  // .plt.sec stubs must still be recovered rather than dropped with a warning.
+  const pltSec = protectedReport.sections.find(
+    (section) => section.name.display === ".plt.sec",
+  );
+  assert.ok(pltSec, "the protected fixture must emit .plt.sec");
+  assert.ok(
+    !protectedReport.diagnostics.stderr.includes("Could not populate PLT"),
+    protectedReport.diagnostics.stderr,
+  );
+  const pltSecStart = BigInt(pltSec.address);
+  const pltSecEnd = pltSecStart + BigInt(pltSec.size);
+  for (const name of ["snprintf", "__stack_chk_fail"]) {
+    const entry = protectedReport.linkage.plt.find(
+      (item) => item.display_name === name,
+    );
+    assert.ok(entry, `missing ${name} PLT entry`);
+    assert.ok(
+      BigInt(entry.address) >= pltSecStart && BigInt(entry.address) < pltSecEnd,
+      `${name} PLT entry ${entry.address} lies outside .plt.sec`,
+    );
+  }
   const relocatable = reports.get("relocatable");
   assert.equal(relocatable.entry_point.meaning, "not-applicable");
   assert.ok(relocatable.relocations.length > 0);
