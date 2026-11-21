@@ -500,7 +500,6 @@ const observePeerDuringDetachFailure = async (refuseClose = false) => {
         ? { code: -32_000, message: "Detach rejected" }
         : undefined,
   });
-  trackBrowser(browser);
   const provider = new CdpBrowserProvider();
   const cleanup = controlledCleanup({ refused: refuseClose });
   const originalClose = CdpConnection.prototype.close;
@@ -533,6 +532,7 @@ const observePeerDuringDetachFailure = async (refuseClose = false) => {
       await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     } finally {
       closeSpy.mockRestore();
+      await browser.close();
     }
   });
   await started.reached(observing, "peer session observation start");
