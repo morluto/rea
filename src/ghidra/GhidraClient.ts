@@ -70,6 +70,7 @@ import {
   GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
   type GhidraDiagnosticsScope,
 } from "./GhidraDiagnostics.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
 import {
@@ -99,6 +100,7 @@ import {
   withArtifactRegularFile,
   readArtifactFileChunks,
 } from "../resources/index.js";
+import { stageGhidraDebugCompanion } from "./GhidraDebugCompanion.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import {
   assertRegularFileActive,
@@ -1019,6 +1021,17 @@ export class GhidraClient {
   async #startWithin(
     deadline: ProviderStartupDeadline,
   ): Promise<GhidraStartResult> {
+    if (
+      this.#options.existingProject === true &&
+      this.#options.debugCompanion !== undefined
+    )
+      return err(
+        this.#failure(
+          "admission",
+          "Existing Ghidra project sessions cannot stage a dSYM debug companion",
+          new GhidraAdmissionError("existing_project_debug_companion"),
+        ),
+      );
     // Admit the bridge ceilings before acquiring anything: an invalid launch
     // seed is a configuration refusal, not a failure after Ghidra started.
     // The admitted ceilings are kept for this session's cleanup requests.
@@ -1104,6 +1117,51 @@ export class GhidraClient {
       // Snapshot finalization has settled and no launcher exists yet. Preserve
       // its producer outcome rather than reclassifying from a later deadline.
       return this.#startupFailure(failure);
+    }
+    if (this.#options.debugCompanion !== undefined) {
+      let companionAdmission: JsonValue;
+      if (packedProgram === undefined) {
+        try {
+          companionAdmission = await stageGhidraDebugCompanion(
+            this.#options.debugCompanion,
+            this.#runtimeRoot.path,
+            this.#snapshotPath,
+            { signal: deadline.signal, resourceScope: this.#fileResources },
+          );
+        } catch (cause: unknown) {
+          // Classify the producer's outcome before any later deadline state, so
+          // a real staging failure is never hidden by an unrelated abort.
+          const failure =
+            cause instanceof ArtifactReaderFailure &&
+            cause.reason === "cancelled"
+              ? this.#interruptionFailure(
+                  deadline,
+                  artifactFileCancellationCause(cause),
+                )
+              : this.#failure(
+                  "start",
+                  "Ghidra debug companion staging failed",
+                  cause,
+                );
+          return this.#startupFailure(failure);
+        }
+      } else {
+        companionAdmission = {
+          dsym: {
+            source_path: this.#options.debugCompanion.sourcePath,
+            member_sha256: this.#options.debugCompanion.memberSha256,
+            uuid: this.#options.debugCompanion.uuid,
+            staged_member: null,
+          },
+        };
+      }
+      this.#targetAdmission =
+        this.#targetAdmission === undefined
+          ? companionAdmission
+          : {
+              ...(this.#targetAdmission as Record<string, JsonValue>),
+              ...(companionAdmission as Record<string, JsonValue>),
+            };
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     this.#token = randomBytes(32).toString("hex");

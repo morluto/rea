@@ -18,11 +18,14 @@ import {
   OwnedRegularFileOperationFailure,
 } from "../filesystem/OwnedRegularFile.js";
 import {
-  bindRegularFileCleanup,
+  regularFileCleanupLeases,
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
 } from "../process/RegularFileRead.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
   type ArtifactResourceScope,
   ArtifactReaderFailure,
 } from "../resources/index.js";
@@ -46,6 +49,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { hashStableRegularFileDescriptor } from "../filesystem/StableFileHash.js";
 import {
+  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   cancelledBy,
   carriedReason,
@@ -61,6 +65,10 @@ import {
   type PeCodeViewRecord,
   type UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
+import {
+  admitDebugCompanion,
+  debugCompanionRejectedError,
+} from "./DebugCompanionAdmission.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
 import {
@@ -153,6 +161,8 @@ export interface BinaryTargetResolverOptions {
   readonly formatHint?: TargetFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
+  /** Caller-selected dSYM bundle; admitted only for Mach-O executable targets. */
+  readonly dsymPath?: string;
   /** Inputs for format=esp-flash-image; rejected with any other format. */
   readonly espFlash?: EspFlashSelection;
   readonly signal?: AbortSignal;
@@ -170,7 +180,10 @@ export const parseBinaryTarget = async (
   input: string,
   options: BinaryTargetResolverOptions = {},
 ): Promise<
-  Result<BinaryTarget, BinaryTargetError | AnalysisCancelledError>
+  Result<
+    BinaryTarget,
+    BinaryTargetError | AnalysisCancelledError | AnalysisArtifactChangedError
+  >
 > => {
   const { signal } = options;
   const admitted = localPathStringSchema.safeParse(input);
@@ -288,7 +301,7 @@ export const parseBinaryTarget = async (
           partialObservation: cause.partialObservation,
         },
       );
-      bindRegularFileCleanup(cause, error);
+      bindTargetCleanupLeases(cause, error);
       return err(error);
     }
     return targetResolutionFailure(cause, candidate, stage, signal);
@@ -297,7 +310,7 @@ export const parseBinaryTarget = async (
 
 type TargetResolution = Result<
   BinaryTarget,
-  BinaryTargetError | AnalysisCancelledError
+  BinaryTargetError | AnalysisCancelledError | AnalysisArtifactChangedError
 >;
 
 /** Classify and hash the one descriptor admitted by the lifetime owner. */
@@ -335,6 +348,7 @@ const readOpenedBinaryTarget = async (
   const hostArchitecture =
     options.hostArchitecture ?? HOST_PLATFORM.architecture;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
+  const dsymPath = options.dsymPath;
   throwIfTargetResolutionCancelled(signal);
   // Flash inputs pair with one format; check before any hint branch.
   const flashPairing = espFlashSelectionError({
@@ -347,6 +361,16 @@ const readOpenedBinaryTarget = async (
       new BinaryTargetError(path, flashPairing, {
         constraint: "load_selection_rejected",
       }),
+    );
+  if (dsymPath !== undefined && formatHint !== undefined)
+    return rejectDebugCompanion(
+      path,
+      "dsym_path applies only to detected Mach-O executable targets, not to explicit format selections",
+      {
+        dsym_path: dsymPath,
+        format_hint: formatHint,
+        rejection: "explicit_format_hint",
+      },
     );
   if (formatHint === "raw-binary") {
     if (targetKind !== undefined && targetKind !== "executable")
@@ -505,20 +529,41 @@ const readOpenedBinaryTarget = async (
     targetKind === undefined || targetKind === "database"
       ? await detectDatabaseEngine(path, handle, signal)
       : null;
-  if (
+  const databaseTarget =
     targetKind === "database" ||
     (targetKind === undefined &&
       artifactFormat !== "ines" &&
       artifactFormat !== "uefi" &&
       artifactFormat !== "plist" &&
-      databaseEngine !== null)
-  )
+      databaseEngine !== null);
+  if (databaseTarget && dsymPath !== undefined)
+    return rejectDebugCompanion(
+      path,
+      "dsym_path applies only to Mach-O executable targets; this target is an analysis database",
+      {
+        dsym_path: dsymPath,
+        target_kind: "database",
+        target_format: "analysis-database",
+        rejection: "non_macho_target",
+      },
+    );
+  if (databaseTarget)
     return ok({
       ...(await identity()),
       kind: "database",
       format: "analysis-database",
       databaseEngine,
     });
+  if (artifactFormat !== undefined && dsymPath !== undefined)
+    return rejectDebugCompanion(
+      path,
+      `dsym_path applies only to Mach-O executable targets; this target is ${artifactFormat}`,
+      {
+        dsym_path: dsymPath,
+        target_format: artifactFormat,
+        rejection: "non_macho_target",
+      },
+    );
   if (artifactFormat !== undefined) {
     const identity = await artifactIdentity();
     if (artifactFormat === "esp-flash-image")
@@ -549,12 +594,24 @@ const readOpenedBinaryTarget = async (
       (await hasTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
       ))
-    )
+    ) {
+      if (dsymPath !== undefined)
+        return rejectDebugCompanion(
+          path,
+          "dsym_path applies only to Mach-O executable targets; this target is an archive with a trailing ZIP",
+          {
+            dsym_path: dsymPath,
+            target_kind: "archive",
+            target_format: zipRootPackageFormat(classificationPath),
+            rejection: "trailing_zip_archive",
+          },
+        );
       return ok({
         ...(await artifactIdentity()),
         kind: "archive",
         format: zipRootPackageFormat(classificationPath),
       });
+    }
     const reason =
       typeof detected.error === "string"
         ? detected.error
@@ -570,6 +627,46 @@ const readOpenedBinaryTarget = async (
       }),
     );
   }
+  if (dsymPath !== undefined) {
+    if (
+      detected.value.format !== "mach-o" &&
+      detected.value.format !== "mach-o-universal"
+    )
+      return rejectDebugCompanion(
+        path,
+        `dsym_path applies only to Mach-O executable targets; this target is ${detected.value.format}`,
+        {
+          dsym_path: dsymPath,
+          target_format: detected.value.format,
+          rejection: "non_macho_target",
+        },
+      );
+    const companion = await admitDebugCompanion({
+      dsymPath,
+      targetPath: path,
+      targetHandle: handle,
+      targetSize: metadata.size,
+      architecture: detected.value.architecture,
+      ...(detected.value.format === "mach-o-universal"
+        ? {
+            targetSlice: detected.value.universalSlice,
+            targetSlices: detected.value.universalSlices,
+          }
+        : {}),
+      ...(options.resources === undefined
+        ? {}
+        : { resources: options.resources }),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (!companion.ok)
+      return err(debugCompanionRejectedError(path, companion.error));
+    return ok({
+      ...(await identity()),
+      kind: "executable",
+      ...detected.value,
+      debugCompanion: { ...companion.value },
+    });
+  }
   return ok({
     ...(await identity()),
     kind: "executable",
@@ -577,9 +674,25 @@ const readOpenedBinaryTarget = async (
   });
 };
 
+const rejectDebugCompanion = (
+  path: string,
+  reason: string,
+  diagnostics: Readonly<Record<string, JsonValue>>,
+): TargetResolution =>
+  err(
+    new BinaryTargetError(path, reason, {
+      constraint: "debug_companion_rejected",
+      related: { parameters: ["dsym_path"] },
+      diagnostics,
+    }),
+  );
+
 /** Retain a later interruption without changing the selected admission failure. */
 const retainTargetCancellation = <
-  Failure extends BinaryTargetError | AnalysisCancelledError,
+  Failure extends
+    | BinaryTargetError
+    | AnalysisCancelledError
+    | AnalysisArtifactChangedError,
 >(
   failure: Failure,
   signal: AbortSignal | undefined,
@@ -606,36 +719,180 @@ const finalizedTargetResolution = (
   );
 };
 
+const targetCleanupLeases = new WeakMap<
+  AnalysisError,
+  readonly AnalysisCleanupLease[]
+>();
+
+const bindTargetCleanupLeases = (
+  cause: unknown,
+  error: AnalysisError,
+): readonly AnalysisCleanupLease[] => {
+  const leases = regularFileCleanupLeases(cause) ?? [];
+  if (leases.length > 0) {
+    new AnalysisCleanupLeaseGroup(error, leases);
+    targetCleanupLeases.set(error, leases);
+  }
+  return leases;
+};
+
+const composeTargetCleanupError = (input: {
+  readonly path: string;
+  readonly reason: string;
+  readonly cause: RetainedRegularFileCleanupFailure | ArtifactReaderFailure;
+  readonly primary:
+    | BinaryTargetError
+    | AnalysisCancelledError
+    | AnalysisArtifactChangedError
+    | undefined;
+  readonly ownCleanup:
+    | { readonly reason: string; readonly resources: readonly string[] }
+    | undefined;
+  readonly extraDiagnostics?: Readonly<Record<string, JsonValue>>;
+}): BinaryTargetError => {
+  const { path, reason, cause, primary, ownCleanup, extraDiagnostics } = input;
+  if (
+    primary !== undefined &&
+    primary.cleanupIncomplete &&
+    ownCleanup !== undefined
+  ) {
+    const ownError = new BinaryTargetError(path, reason, {
+      cause,
+      cleanup: ownCleanup,
+    });
+    const ownLeases = bindTargetCleanupLeases(cause, ownError);
+    const primaryLeases =
+      targetCleanupLeases.get(primary) ??
+      regularFileCleanupLeases(primary.cause) ??
+      [];
+    const combinedLeases = [...new Set([...primaryLeases, ...ownLeases])];
+    const mergedCleanup = {
+      reason:
+        primary.cleanup?.reason !== undefined
+          ? `${primary.cleanup.reason}; ${ownCleanup.reason}`
+          : ownCleanup.reason,
+      resources: [
+        ...new Set([...primary.cleanupResources, ...ownCleanup.resources]),
+      ],
+    };
+    const error = new BinaryTargetError(path, reason, {
+      cause,
+      cleanupPrimary: primary,
+      cleanup: mergedCleanup,
+      ...childFailureDiagnostics(
+        {
+          primary_error: { error: primary },
+          cleanup_error: { error: ownError },
+        },
+        extraDiagnostics ?? {},
+      ),
+    });
+    if (combinedLeases.length > 0) {
+      new AnalysisCleanupLeaseGroup(error, combinedLeases);
+      targetCleanupLeases.set(error, combinedLeases);
+    }
+    return error;
+  }
+  const error = new BinaryTargetError(path, reason, {
+    cause,
+    cleanupPrimary: primary,
+    ...(ownCleanup === undefined ? {} : { cleanup: ownCleanup }),
+    ...childFailureDiagnostics(
+      primary === undefined ? {} : { primary_error: { error: primary } },
+      extraDiagnostics ?? {},
+    ),
+  });
+  bindTargetCleanupLeases(cause, error);
+  return error;
+};
+
+const companionDirectoryCleanupError = (
+  failure: ArtifactReaderFailure,
+  candidate: string,
+  signal: AbortSignal | undefined,
+): BinaryTargetError => {
+  const underlying =
+    failure.cause instanceof ArtifactReaderFailure
+      ? failure.cause.cause
+      : failure.cause;
+  let primary =
+    underlying instanceof BinaryTargetError ||
+    underlying instanceof AnalysisCancelledError ||
+    underlying instanceof AnalysisArtifactChangedError
+      ? underlying
+      : undefined;
+  if (
+    primary instanceof BinaryTargetError ||
+    primary instanceof AnalysisArtifactChangedError
+  )
+    retainTargetCancellation(primary, signal);
+  else if (primary === undefined && signal?.aborted === true)
+    primary = cancelledBy("resolve_binary_target", signal);
+  return composeTargetCleanupError({
+    path: failure.cleanup?.resources[0] ?? candidate,
+    reason: "The debug companion directory handle could not be closed",
+    cause: failure,
+    primary,
+    ownCleanup: failure.cleanup,
+  });
+};
+
 /** Descriptor cleanup retains the physical result and binds its exact release lease. */
 const targetFileCleanupError = (
-  failure: RetainedRegularFileCleanupFailure<TargetResolution>,
+  failure: RetainedRegularFileCleanupFailure,
   candidate: string,
   stage: TargetFilesystemStage,
   signal: AbortSignal | undefined,
+  reason = "The target file handle could not be closed",
 ): BinaryTargetError => {
   const cancellation = regularFileCancellation(failure);
   const completed =
-    failure.outcome.kind === "completed" ? failure.outcome.value : undefined;
+    failure.outcome.kind === "completed" &&
+    failure.outcome.value !== null &&
+    typeof failure.outcome.value === "object" &&
+    "ok" in failure.outcome.value
+      ? (failure.outcome.value as TargetResolution)
+      : undefined;
   const completedTarget =
     completed?.ok === true ? jsonValueSchema.parse(completed.value) : undefined;
-  let primary: BinaryTargetError | AnalysisCancelledError | undefined;
+  let primary:
+    | BinaryTargetError
+    | AnalysisCancelledError
+    | AnalysisArtifactChangedError
+    | undefined;
   if (failure.outcome.kind === "failed") {
-    const physical = failure.outcome.cause;
+    const rawPhysical = failure.outcome.cause;
+    const physical =
+      rawPhysical instanceof OwnedRegularFileOperationFailure
+        ? rawPhysical.operationCause
+        : rawPhysical;
     primary =
       physical instanceof BinaryTargetError ||
-      physical instanceof AnalysisCancelledError
+      physical instanceof AnalysisCancelledError ||
+      physical instanceof AnalysisArtifactChangedError
         ? physical
-        : cancellation !== undefined
-          ? cancelledBy(
-              "resolve_binary_target",
-              carriedReason(cancellation.reason),
+        : physical instanceof RetainedRegularFileCleanupFailure
+          ? targetFileCleanupError(
+              physical,
+              candidate,
+              stage,
+              signal,
+              "The debug companion file handle could not be closed",
             )
-          : (classifyTargetFilesystemFailure(candidate, physical, stage) ??
-            new BinaryTargetError(
-              failure.path,
-              "Target read failed before file cleanup",
-              { cause: physical },
-            ));
+          : physical instanceof ArtifactReaderFailure &&
+              physical.cleanup !== undefined
+            ? companionDirectoryCleanupError(physical, candidate, signal)
+            : cancellation !== undefined
+              ? cancelledBy(
+                  "resolve_binary_target",
+                  carriedReason(cancellation.reason),
+                )
+              : (classifyTargetFilesystemFailure(candidate, physical, stage) ??
+                new BinaryTargetError(
+                  failure.path,
+                  "Target read failed before file cleanup",
+                  { cause: physical },
+                ));
   } else if (completed?.ok === false) primary = completed.error;
   else if (cancellation !== undefined)
     primary = cancelledBy(
@@ -645,28 +902,32 @@ const targetFileCleanupError = (
         ? {}
         : { diagnostics: { completed_target: completedTarget } },
     );
-  if (primary instanceof BinaryTargetError)
+  else if (signal?.aborted === true)
+    primary = cancelledBy(
+      "resolve_binary_target",
+      signal,
+      completedTarget === undefined
+        ? {}
+        : { diagnostics: { completed_target: completedTarget } },
+    );
+  if (
+    primary instanceof BinaryTargetError ||
+    primary instanceof AnalysisArtifactChangedError
+  )
     retainTargetCancellation(primary, signal);
-  const error = new BinaryTargetError(
-    failure.path,
-    "The target file handle could not be closed",
-    {
-      cause: failure,
-      cleanupPrimary: primary,
-      cleanup: {
-        reason: errorMessage(failure.cleanupCause),
-        resources: [failure.path],
-      },
-      ...childFailureDiagnostics(
-        primary === undefined ? {} : { primary_error: { error: primary } },
-        completedTarget === undefined
-          ? {}
-          : { completed_target: completedTarget },
-      ),
+  return composeTargetCleanupError({
+    path: failure.path,
+    reason,
+    cause: failure,
+    primary,
+    ownCleanup: {
+      reason: errorMessage(failure.cleanupCause),
+      resources: [failure.path],
     },
-  );
-  bindRegularFileCleanup(failure, error);
-  return error;
+    ...(completedTarget === undefined
+      ? {}
+      : { extraDiagnostics: { completed_target: completedTarget } }),
+  });
 };
 
 const targetResolutionFailure = (
@@ -682,9 +943,27 @@ const targetResolutionFailure = (
       : cause;
   if (
     physical instanceof AnalysisCancelledError ||
+    physical instanceof AnalysisArtifactChangedError ||
     physical instanceof BinaryTargetError
   )
     return err(retainTargetCancellation(physical, signal));
+  if (cause instanceof OwnedRegularFileOperationFailure) {
+    if (physical instanceof RetainedRegularFileCleanupFailure)
+      return err(
+        targetFileCleanupError(
+          physical,
+          candidate,
+          stage,
+          signal,
+          "The debug companion file handle could not be closed",
+        ),
+      );
+    if (
+      physical instanceof ArtifactReaderFailure &&
+      physical.cleanup !== undefined
+    )
+      return err(companionDirectoryCleanupError(physical, candidate, signal));
+  }
   if (!(cause instanceof OwnedRegularFileOperationFailure)) {
     const cancellation = regularFileCancellation(cause);
     if (cancellation !== undefined)

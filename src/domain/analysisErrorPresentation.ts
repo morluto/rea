@@ -209,6 +209,11 @@ export const analysisErrorRemediationAction = (
     return "Correct the reported load argument (format, architecture, or entry_point) and retry.";
   if (
     error instanceof BinaryTargetError &&
+    error.constraint === "debug_companion_rejected"
+  )
+    return "Correct dsym_path so it names a .dSYM bundle whose DWARF member carries the target image's LC_UUID, or omit dsym_path to analyze without debug types.";
+  if (
+    error instanceof BinaryTargetError &&
     error.constraint === "file_format_rejected"
   )
     return "Review the reported file-format reason and select a supported, well-formed target.";
@@ -608,6 +613,8 @@ const presentedRelatedInputs = (
       return { operations: ["inspect_plist"] };
     if (error.constraint === "load_selection_rejected")
       return { parameters: ["format", "architecture", "entry_point"] };
+    if (error.constraint === "debug_companion_rejected")
+      return { parameters: ["dsym_path"] };
     if (error.constraint === "wasm_requires_static_inspection")
       return { operations: ["inspect_wasm_artifact"] };
   }

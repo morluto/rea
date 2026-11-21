@@ -1224,6 +1224,40 @@ describe("Opening options of session-targeted contract commands", () => {
       const format = target.options.find(({ key }) => key === "target-format")!;
       expect(admits(format.schema, "raw-binary")).toBe(true);
       expect(admits(format.schema, "esp-flash-image")).toBe(false);
+      expect(openingKeys(description)).toContain("dsym-path");
+      expect(
+        target.admitOpening(description.contract.name, {
+          [target.key]: "rel/app",
+          "dsym-path": "/abs/app.dSYM",
+        }),
+      ).toEqual({
+        ok: true,
+        value: { dsym_path: "/abs/app.dSYM" },
+      });
+      const relativeDsym = target.admitOpening(description.contract.name, {
+        [target.key]: "rel/app",
+        "dsym-path": "rel/app.dSYM",
+      });
+      expect(relativeDsym.ok).toBe(false);
+      if (!relativeDsym.ok)
+        expect(relativeDsym.error.issues).toEqual([
+          expect.objectContaining({ path: ["dsym-path"] }),
+        ]);
+      const dsymWithFormat = target.admitOpening(description.contract.name, {
+        [target.key]: "rel/app",
+        "target-format": "raw-binary",
+        architecture: "x86",
+        "entry-point": "0x100",
+        "dsym-path": "/abs/app.dSYM",
+      });
+      expect(dsymWithFormat.ok).toBe(false);
+      if (!dsymWithFormat.ok)
+        expect(dsymWithFormat.error.issues).toEqual([
+          expect.objectContaining({
+            path: ["dsym-path"],
+            message: expect.stringContaining("detected Mach-O"),
+          }),
+        ]);
     },
   );
 

@@ -176,6 +176,7 @@ const BINARY_TARGET_CLASSIFICATIONS = {
   ),
   file_format_rejected: classified("target_unavailable", "unsupported_target"),
   load_selection_rejected: classified("invalid_request", "invalid_input"),
+  debug_companion_rejected: classified("invalid_request", "invalid_input"),
   bundle_type_unsupported: classified(
     "target_unavailable",
     "unsupported_target",
@@ -203,7 +204,9 @@ const binaryTargetClassification = (
   readPermissionDenied: boolean,
 ): AnalysisErrorClassification => {
   const base = BINARY_TARGET_CLASSIFICATIONS[constraint];
-  return readPermissionDenied && constraint !== "load_selection_rejected"
+  return readPermissionDenied &&
+    constraint !== "load_selection_rejected" &&
+    constraint !== "debug_companion_rejected"
     ? { ...base, code: "access_denied" }
     : base;
 };

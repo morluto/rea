@@ -1,10 +1,9 @@
+import { machoCpuSubtypeBase } from "./machoCpuIdentity.js";
 import {
-  ARM64_32_HOST_SUBTYPE_PREFERENCE,
-  ARM64_HOST_SUBTYPE_PREFERENCE,
-  machoCpuSubtypeBase,
-  X86_64_HOST_SUBTYPE_PREFERENCE,
-  X86_HOST_SUBTYPE_PREFERENCE,
-} from "./machoCpuIdentity.js";
+  MACHO_ARCHITECTURE_POLICIES,
+  machoSubtypeRank,
+  type MachoArchitecturePolicy,
+} from "./machoArchitecturePolicy.js";
 import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { err, ok, type Result } from "../result.js";
 import type {
@@ -12,54 +11,6 @@ import type {
   MachoSliceSelectionRefusal,
 } from "./machoSliceSelection.js";
 import type { LipoArchitecture } from "./lipo.js";
-
-/** Apple tool names for the domain-owned host subtype preference. */
-const preferredSubtypes = <Subtype extends number>(
-  order: readonly Subtype[],
-  names: { readonly [Key in Subtype]: string },
-): { readonly subtype: Subtype; readonly name: string }[] =>
-  order.map((subtype) => ({ subtype, name: names[subtype] }));
-
-interface MachoArchitecturePolicy {
-  readonly cpuType: number;
-  readonly subtypes: readonly {
-    readonly subtype: number;
-    readonly name: string;
-  }[];
-  readonly variantName?: RegExp;
-}
-
-/** One preference order for FAT subtype identities and Apple tool slice names. */
-export const MACHO_ARCHITECTURE_POLICIES: Readonly<
-  Record<string, MachoArchitecturePolicy>
-> = {
-  x86: {
-    cpuType: 7,
-    subtypes: preferredSubtypes(X86_HOST_SUBTYPE_PREFERENCE, { 3: "i386" }),
-  },
-  x86_64: {
-    cpuType: 0x01000007,
-    subtypes: preferredSubtypes(X86_64_HOST_SUBTYPE_PREFERENCE, {
-      3: "x86_64",
-    }),
-  },
-  arm: { cpuType: 12, subtypes: [], variantName: /^arm$/u },
-  arm64: {
-    cpuType: 0x0100000c,
-    subtypes: preferredSubtypes(ARM64_HOST_SUBTYPE_PREFERENCE, {
-      0: "arm64",
-      2: "arm64e",
-      1: "arm64v8",
-    }),
-    variantName: /^arm64e\.[A-Za-z0-9_]+$/u,
-  },
-  arm64_32: {
-    cpuType: 0x0200000c,
-    subtypes: preferredSubtypes(ARM64_32_HOST_SUBTYPE_PREFERENCE, {
-      1: "arm64_32",
-    }),
-  },
-};
 
 /**
  * Each policy's subtypes by Apple tool name. The table is this module's
@@ -78,17 +29,6 @@ const SUBTYPES_BY_NAME: ReadonlyMap<
 
 const subtypeNamed = (policy: MachoArchitecturePolicy, name: string) =>
   SUBTYPES_BY_NAME.get(policy)?.get(name);
-
-/** Unlisted subtypes follow the preferred slices in FAT table order. */
-const machoSubtypeRank = (
-  policy: MachoArchitecturePolicy,
-  subtype: number,
-): number => {
-  const rank = policy.subtypes.findIndex(
-    (candidate) => candidate.subtype === machoCpuSubtypeBase(subtype),
-  );
-  return rank < 0 ? policy.subtypes.length : rank;
-};
 
 /** codesign's architecture name for one FAT CPU identity, when known. */
 const codeSignArchitectureName = (

@@ -161,6 +161,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [RISC-V ELF analysis through Ghidra](providers/ghidra-riscv.md)
 - [Windows Ghidra P0](providers/windows-ghidra-p0.md)
 - [Headerless raw-binary analysis with Ghidra](providers/raw-binary.md)
+- [Mach-O dSYM companion](providers/dsym.md)
 - [IDA provider](providers/ida-provider.md)
 - [JEB instrumentation and analysis](providers/jeb-analysis.md)
 - [GameCube DOL analysis through Ghidra](ghidra-dol.md)

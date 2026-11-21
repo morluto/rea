@@ -159,6 +159,8 @@ const NATIVE_OPEN_HELP = {
     "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
   entryPoint:
     "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
+  dsymPath:
+    "Absolute path to a .dSYM bundle whose DWARF member carries the Mach-O target's LC_UUID; omission analyzes without debug types",
   provider:
     "Bind deep analysis to a provider ID or use deterministic auto selection",
   snapshot: "Load and update a local analysis snapshot",
@@ -197,6 +199,10 @@ export const nativeTarget = (
       entry_point: {
         name: "entry-point",
         description: NATIVE_OPEN_HELP.entryPoint,
+      },
+      dsym_path: {
+        name: "dsym-path",
+        description: NATIVE_OPEN_HELP.dsymPath,
       },
       provider_id: { name: "provider", description: NATIVE_OPEN_HELP.provider },
     },

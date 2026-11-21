@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { openBinaryInputSchema } from "./sessionLifecycleInputs.js";
+import {
+  openBinaryInputSchema,
+  openBinaryTargetSelection,
+} from "./sessionLifecycleInputs.js";
 
 describe("open_binary raw-binary input contract", () => {
   it("accepts header detection without architecture", () => {
@@ -52,5 +55,81 @@ describe("open_binary raw-binary input contract", () => {
         entry_point: "0x8000000",
       }).success,
     ).toBe(false);
+  });
+  it("accepts absolute dsym_path without format and rejects relative or explicit-format pairings", () => {
+    expect(
+      openBinaryInputSchema.safeParse({
+        path: "/tmp/app",
+        dsym_path: "/tmp/app.dSYM",
+      }).success,
+    ).toBe(true);
+    expect(
+      openBinaryInputSchema.safeParse({
+        path: "/tmp/app",
+        dsym_path: "rel/app.dSYM",
+      }).success,
+    ).toBe(false);
+    for (const explicitInput of [
+      {
+        path: "/tmp/ecu.bin",
+        format: "raw-binary",
+        architecture: "arm",
+        entry_point: "0x8000000",
+        dsym_path: "/tmp/app.dSYM",
+      },
+      {
+        path: "/tmp/program.com",
+        format: "dos-com",
+        dsym_path: "/tmp/app.dSYM",
+      },
+      {
+        path: "/tmp/boot.dol",
+        format: "gamecube-dol",
+        dsym_path: "/tmp/app.dSYM",
+      },
+      {
+        path: "/tmp/flash.bin",
+        format: "esp-flash-image",
+        dsym_path: "/tmp/app.dSYM",
+      },
+    ]) {
+      expect(openBinaryInputSchema.safeParse(explicitInput)).toMatchObject({
+        success: false,
+        error: {
+          issues: [
+            expect.objectContaining({
+              path: ["dsym_path"],
+              message: expect.stringContaining("detected Mach-O"),
+            }),
+          ],
+        },
+      });
+    }
+    expect(
+      openBinaryInputSchema.safeParse({
+        path: "/tmp/ecu.bin",
+        format: "raw-binary",
+        dsym_path: "/tmp/app.dSYM",
+      }),
+    ).toMatchObject({
+      success: false,
+      error: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["dsym_path"],
+            message: expect.stringContaining("detected Mach-O"),
+          }),
+          expect.objectContaining({
+            path: ["architecture"],
+          }),
+        ]),
+      },
+    });
+  });
+  it("forwards dsym_path to target selection only when provided", () => {
+    expect(openBinaryTargetSelection({})).toEqual({});
+    expect(openBinaryTargetSelection({ dsym_path: "/tmp/app.dSYM" })).toEqual({
+      dsymPath: "/tmp/app.dSYM",
+    });
   });
 });
