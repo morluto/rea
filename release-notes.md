@@ -390,6 +390,7 @@
 * **web:** consolidate script metadata admission and projection proofs ([#13091](https://github.com/morluto/rea/issues/13091)) ([6878e24](https://github.com/morluto/rea/commit/6878e24cc75aba57f04e1d60aec9d39d19c3659d))
 * **web:** consolidate service-worker policy lifecycle checks ([#13112](https://github.com/morluto/rea/issues/13112)) ([bb18055](https://github.com/morluto/rea/commit/bb18055d1234266a5d852f26f9b8d07e7ce4ac71))
 * **web:** consolidate storage fingerprint comparison proofs ([#13084](https://github.com/morluto/rea/issues/13084)) ([251f863](https://github.com/morluto/rea/commit/251f863f30388f02017d0e34c790e529e8a7c183))
+* **web:** consolidate UI response observation lifecycle checks ([#13121](https://github.com/morluto/rea/issues/13121)) ([648d1f8](https://github.com/morluto/rea/commit/648d1f8f9d45822fbb729492a9519d12d4cf6fa6))
 * **web:** consolidate WebSocket payload comparison proofs ([#13086](https://github.com/morluto/rea/issues/13086)) ([ccfdd61](https://github.com/morluto/rea/commit/ccfdd6157282d3eaaeb7e6cfe9779bbe445b6ac9))
 * **web:** consolidate XHTML SVG namespace proofs ([#13105](https://github.com/morluto/rea/issues/13105)) ([c451857](https://github.com/morluto/rea/commit/c451857d380a809ba276b9c16f01865bd29494b0))
 * **web:** control scenario request deadline phases ([#13119](https://github.com/morluto/rea/issues/13119)) ([6ecafb5](https://github.com/morluto/rea/commit/6ecafb590e4c506ac932877580f07b60ed7d9e91))
