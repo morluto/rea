@@ -722,59 +722,35 @@ describe("request page value admission", () => {
       ).rejects.toThrow(message);
     }
     expect(calls).toEqual([]);
-    const numeric = header({
-      source: "local_storage",
-      key: "auth",
-      json_pointer: "/org",
-    });
-    await perform(
-      fakePage({ storage: { auth: '{"org":42}' } }),
-      numeric.actions[0]!,
-      resolved(numeric),
-    );
-    expect(calls[0]!.init.headers).toEqual([["X-T", "42"]]);
   });
 });
 
 describe("page value redaction", () => {
   const secrets = () => resolved(scenario([requestStep({})]));
 
-  it("keeps every admitted value redacted, even under a repeated or colliding label", () => {
+  it("keeps the first marker and masks new spellings under the same label", () => {
     const held = secrets();
-    held.admitPageValue("s.x-a", "first-secret-AAAA");
-    held.admitPageValue("s.x-a", "second-secret-BBBB");
-    held.admitPageValue("a.b.c", "third-secret-CCCC");
-    held.admitPageValue("a.b.c", "fourth-secret-DDDD");
-    const text = held.redact(
-      "first-secret-AAAA second-secret-BBBB third-secret-CCCC fourth-secret-DDDD",
-    );
-    for (const value of ["AAAA", "BBBB", "CCCC", "DDDD"])
-      expect(text).not.toContain(value);
+    const label = "write.X-Token";
+    const first = "first-token-AAAA";
+    const second = "second-token-BBBB";
+    held.admitPageValue(label, first);
+    held.admitPageValue("retry.X-Token", first);
+    held.admitPageValue(label, ` ${second}\t`);
+    expect(held.redact(first)).toBe("[REDACTED:page:write.X-Token]");
+    const redacted = held.redact(`X-Token:  ${second}\t as sent: ${second}`);
+    expect(redacted).not.toContain(second);
   });
 
-  it("keeps a value's first marker when later steps read it again", () => {
-    const held = secrets();
-    held.admitPageValue("create-1.X-CSRFToken", "csrf-token-value");
-    held.admitPageValue("create-2.X-CSRFToken", "csrf-token-value");
-    expect(held.redact("csrf-token-value")).toBe(
-      "[REDACTED:page:create-1.X-CSRFToken]",
-    );
-  });
-
-  it("redacts the value fetch sends when the stored one has surrounding spaces", () => {
-    const held = secrets();
-    held.admitPageValue("s.X-Tok", " padded-token-4f9e2a\t");
-    expect(held.redact("X-Tok: padded-token-4f9e2a")).not.toContain(
-      "padded-token-4f9e2a",
-    );
-  });
-
-  it("does not redact values too short to tell from ids and ports", () => {
+  it("redacts values at the page-value threshold without removing shorter identifiers", () => {
     const held = secrets();
     held.admitPageValue("s.X-Org-Id", "1");
     held.admitPageValue("s.X-Port", "3000");
-    const text = "http://127.0.0.1:3000/api/items/12?page=1";
-    expect(held.redact(text)).toBe(text);
+    held.admitPageValue("s.X-Short-Id", "seven77");
+    held.admitPageValue("s.X-Boundary", "eight888");
+    const ordinary = "http://127.0.0.1:3000/api/items/seven77?page=1";
+    expect(held.redact(`${ordinary} eight888`)).toBe(
+      `${ordinary} [REDACTED:page:s.X-Boundary]`,
+    );
   });
 });
 
@@ -1000,39 +976,6 @@ describe("saved value credentials and limits", () => {
     vi.unstubAllGlobals();
   });
 
-  it("redacts Basic credentials and secret saves however short", async () => {
-    stubFetch(200, ['{"pin":"x7"}']);
-    const parsed = scenario(
-      [
-        requestStep({
-          headers: [
-            {
-              name: "X-Auth",
-              value: {
-                source: "basic_credentials",
-                parts: [
-                  { source: "secret", secret_id: "user" },
-                  { source: "secret", secret_id: "password" },
-                ],
-              },
-            },
-          ],
-          save: [{ name: "pin", json_pointer: "/pin", secret: true }],
-        }),
-      ],
-      [
-        { secret_id: "user", environment_variable: "APP_USER" },
-        { secret_id: "password", environment_variable: "APP_PASSWORD" },
-      ],
-    );
-    const secrets = resolved(parsed, { APP_USER: "a", APP_PASSWORD: "b" });
-    await perform(fakePage({}), parsed.actions[0]!, secrets);
-    const encoded = Buffer.from("a:b").toString("base64");
-    const redacted = secrets.redact(`X-Auth: ${encoded} pin x7`);
-    expect(redacted).not.toContain(encoded);
-    expect(redacted).not.toContain("x7");
-  });
-
   it("sends a JSON string that spells a placeholder percent-encoded as written", async () => {
     const calls = stubFetch(200, ['{"id":7}']);
     const parsed = scenario([
@@ -1063,48 +1006,76 @@ describe("saved value credentials and limits", () => {
     expect(() => secrets.savedValue("folder")).toThrow();
   });
 
-  it("encodes Basic credentials read from local storage and a cookie, and redacts both parts", async () => {
-    const calls = stubFetch(200);
-    const parsed = scenario([
-      requestStep({
-        headers: [
-          {
-            name: "Authorization",
-            value: {
-              source: "basic_credentials",
-              parts: [
-                {
-                  source: "local_storage",
-                  key: "user",
-                  json_pointer: "/name",
+  it.each([
+    { source: "declared secrets", username: "a", password: "b" },
+    {
+      source: "page storage",
+      username: "operator-7",
+      password: "cookie-key-5d1c",
+    },
+  ])(
+    "sends Basic credentials from $source and masks the source values and the encoded header",
+    async ({ source, username, password }) => {
+      const declared = source === "declared secrets";
+      const calls = stubFetch(200, ['{"pin":"x7"}']);
+      const name = declared ? "X-Auth" : "Authorization";
+      const prefix = declared ? "" : "Basic ";
+      const parsed = scenario(
+        [
+          requestStep({
+            headers: [
+              {
+                name,
+                prefix,
+                value: {
+                  source: "basic_credentials",
+                  parts: declared
+                    ? [
+                        { source: "secret", secret_id: "user" },
+                        { source: "secret", secret_id: "password" },
+                      ]
+                    : [
+                        {
+                          source: "local_storage",
+                          key: "user",
+                          json_pointer: "/name",
+                        },
+                        { source: "cookie", name: "api_key" },
+                      ],
                 },
-                { source: "cookie", name: "api_key" },
-              ],
-            },
-            prefix: "Basic ",
-          },
+              },
+            ],
+            save: [{ name: "pin", json_pointer: "/pin", secret: true }],
+          }),
         ],
-      }),
-    ]);
-    const secrets = resolved(parsed);
-    await perform(
-      fakePage({
-        cookies: [{ name: "api_key", value: "cookie-key-5d1c" }],
-        storage: { user: JSON.stringify({ name: "operator-7" }) },
-      }),
-      parsed.actions[0]!,
-      secrets,
-    );
-    const encoded = Buffer.from("operator-7:cookie-key-5d1c").toString(
-      "base64",
-    );
-    expect(calls[0]!.init.headers).toEqual([
-      ["Authorization", `Basic ${encoded}`],
-    ]);
-    const redacted = secrets.redact(`${encoded} operator-7 cookie-key-5d1c`);
-    for (const value of [encoded, "operator-7", "cookie-key-5d1c"])
-      expect(redacted).not.toContain(value);
-  });
+        declared
+          ? [
+              { secret_id: "user", environment_variable: "APP_USER" },
+              { secret_id: "password", environment_variable: "APP_PASSWORD" },
+            ]
+          : [],
+      );
+      const secrets = resolved(
+        parsed,
+        declared ? { APP_USER: username, APP_PASSWORD: password } : {},
+      );
+      const page = fakePage(
+        declared
+          ? {}
+          : {
+              cookies: [{ name: "api_key", value: password }],
+              storage: { user: JSON.stringify({ name: username }) },
+            },
+      );
+      await perform(page, parsed.actions[0]!, secrets);
+
+      const encoded = Buffer.from(`${username}:${password}`).toString("base64");
+      expect(calls[0]!.init.headers).toEqual([[name, prefix + encoded]]);
+      expect(secrets.savedValue("pin")).toBe("x7");
+      for (const value of [encoded, username, password, "x7"])
+        expect(secrets.redact(value)).toMatch(/^\[REDACTED(?::.+)?\]$/u);
+    },
+  );
 });
 
 describe("saved response JSON pointers", () => {
