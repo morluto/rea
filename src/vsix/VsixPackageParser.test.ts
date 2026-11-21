@@ -69,6 +69,37 @@ const NESTED_ZIP = Uint8Array.from([
 ]);
 const SHELL = new TextEncoder().encode("#!/bin/sh\necho hi\n");
 
+it("hashes bundled shared libraries without execute bits", async () => {
+  const bytes = await vsixPackageFixture({
+    extraBinaryMembers: {
+      "extension/bin/native.dll": MZ,
+      "extension/lib/libnative.so": ELF,
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.interesting_members).toEqual(
+    expect.arrayContaining([
+      {
+        path: "extension/bin/native.dll",
+        kind: "executable",
+        bytes: MZ.length,
+        sha256: digestOf(MZ),
+        classification: "observed",
+      },
+      {
+        path: "extension/lib/libnative.so",
+        kind: "executable",
+        bytes: ELF.length,
+        sha256: digestOf(ELF),
+        classification: "observed",
+      },
+    ]),
+  );
+  expect(report.member_kind_counts.executable).toBe(2);
+});
+
 it("reads identity from both manifests, activation, contributes and hashed members", async () => {
   const bytes = await vsixPackageFixture({
     includeSignature: true,

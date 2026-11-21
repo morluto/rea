@@ -113,7 +113,16 @@ export const vsixPackagePathKind = (name: string): VsixMemberKind => {
     base.endsWith(".bat")
   )
     return "shell_script";
-  if (base.endsWith(".exe") || base.endsWith(".com")) return "executable";
+  // Shared libraries carry native code like an executable; .so may be
+  // versioned (libfoo.so.1.2).
+  if (
+    base.endsWith(".exe") ||
+    base.endsWith(".com") ||
+    base.endsWith(".dll") ||
+    base.endsWith(".dylib") ||
+    /\.so(?:\.\d+)*$/u.test(base)
+  )
+    return "executable";
   if (
     base.endsWith(".zip") ||
     base.endsWith(".vsix") ||

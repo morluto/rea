@@ -159,6 +159,15 @@ it("derives member kinds from ZIP names", () => {
   expect(vsixPackagePathKind("extension/mod.wasm")).toBe("wasm");
   expect(vsixPackagePathKind("extension/tools/run.sh")).toBe("shell_script");
   expect(vsixPackagePathKind("extension/bin/helper.exe")).toBe("executable");
+  expect(vsixPackagePathKind("extension/bin/native.DLL")).toBe("executable");
+  expect(vsixPackagePathKind("extension/lib/libnative.so")).toBe("executable");
+  expect(vsixPackagePathKind("extension/lib/libnative.so.1.2")).toBe(
+    "executable",
+  );
+  expect(vsixPackagePathKind("extension/lib/libnative.dylib")).toBe(
+    "executable",
+  );
+  expect(vsixPackagePathKind("extension/lib/also.sol")).toBe("unknown");
   expect(vsixPackagePathKind("extension/vendor/payload.zip")).toBe(
     "nested_archive",
   );
