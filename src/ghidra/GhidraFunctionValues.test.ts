@@ -631,6 +631,102 @@ describe("Ghidra compact reference provenance", () => {
   );
 });
 
+describe("Ghidra native instruction flow classification evidence", () => {
+  it("preserves observed instruction flow classification evidence and handles emptiness and omission", () => {
+    const base = compactInstruction();
+    const evidenceListing = [
+      { source: "ghidra-listing-flow-type", value: "UNCONDITIONAL_CALL" },
+    ];
+    const evidencePcode = [
+      { source: "ghidra-listing-flow-type", value: "TERMINAL" },
+      { source: "ghidra-instruction-pcode", value: "RETURN" },
+    ];
+    for (const evidence of [undefined, [], evidenceListing, evidencePcode]) {
+      const wire = {
+        ...base,
+        flow: {
+          ...base.flow,
+          ...(evidence === undefined
+            ? {}
+            : { classification_evidence: evidence }),
+        },
+      };
+      const parsed = parseFunctionValueFixture(
+        "inspect_native_instruction",
+        wire,
+      );
+      if (!parsed.ok) throw parsed.error;
+      if (
+        typeof parsed.value !== "object" ||
+        parsed.value === null ||
+        !("flow" in parsed.value) ||
+        typeof parsed.value.flow !== "object" ||
+        parsed.value.flow === null
+      )
+        throw new TypeError("expected parsed value with flow object");
+      if (evidence === undefined) {
+        expect(parsed.value.flow).not.toHaveProperty("classification_evidence");
+      } else {
+        expect(parsed.value.flow).toMatchObject({
+          classification_evidence: evidence,
+        });
+      }
+    }
+  });
+
+  it.each([
+    {
+      label: "empty source string",
+      entry: { source: "", value: "RETURN" },
+    },
+    {
+      label: "empty value string",
+      entry: { source: "ghidra", value: "" },
+    },
+    {
+      label: "numeric value instead of string",
+      entry: { source: "ghidra", value: 123 },
+    },
+    {
+      label: "unexpected extra properties",
+      entry: { source: "ghidra", value: "RETURN", unexpected: true },
+    },
+  ])(
+    "rejects malformed classification_evidence entry ($label)",
+    ({ entry }) => {
+      const wire = {
+        ...compactInstruction(),
+        flow: {
+          ...compactInstruction().flow,
+          classification_evidence: [entry],
+        },
+      };
+      expect(
+        parseFunctionValueFixture("inspect_native_instruction", wire),
+      ).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisOutputError" },
+      });
+    },
+  );
+
+  it("rejects non-array classification_evidence", () => {
+    const wire = {
+      ...compactInstruction(),
+      flow: {
+        ...compactInstruction().flow,
+        classification_evidence: "invalid",
+      },
+    };
+    expect(
+      parseFunctionValueFixture("inspect_native_instruction", wire),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+  });
+});
+
 describe("Ghidra jump-table mapping contract", () => {
   it("preserves evidenced defaults separately from cases and unresolved targets", () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
@@ -1116,6 +1212,44 @@ describe("Ghidra native instruction decoder context for ARM TMode and MIPS ISA_M
     expect(
       parseFunctionValueFixture("inspect_native_instruction", emptySource).ok,
     ).toBe(false);
+
+    for (const invalidEntry of [
+      { register: "ISA_MODE", value: "", source: "ghidra" },
+      { register: "ISA_MODE", value: 1, source: "ghidra" },
+      { register: "ISA_MODE", value: "1", source: "ghidra", extra: true },
+    ]) {
+      expect(
+        parseFunctionValueFixture("inspect_native_instruction", {
+          ...compactInstruction(),
+          decoder_context: [invalidEntry],
+        }),
+      ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    }
+
+    expect(
+      parseFunctionValueFixture("inspect_native_instruction", {
+        ...compactInstruction(),
+        decoder_context: "invalid",
+      }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+  });
+
+  it("handles omitted and empty decoder_context arrays", () => {
+    const omitted = parseFunctionValueFixture(
+      "inspect_native_instruction",
+      compactInstruction(),
+    );
+    expect(omitted.ok).toBe(true);
+    if (omitted.ok) expect(omitted.value).not.toHaveProperty("decoder_context");
+
+    const empty = parseFunctionValueFixture("inspect_native_instruction", {
+      ...compactInstruction(),
+      decoder_context: [],
+    });
+    expect(empty).toMatchObject({
+      ok: true,
+      value: { decoder_context: [] },
+    });
   });
 });
 

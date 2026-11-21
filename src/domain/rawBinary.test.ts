@@ -104,6 +104,7 @@ describe("raw-binary admission", () => {
       entryPoint: "0xfffffffc",
       fileBytes: 8,
     });
+    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected overflow rejection");
     expect(result.error.reason).toContain("arm address width");
     expect(result.error.constraint).toBe("load_selection_rejected");
@@ -162,6 +163,59 @@ describe("raw-binary admission", () => {
       expect(admitted.value.entryPoint).toBe("0x1001");
     },
   );
+});
+
+describe("raw-binary 32-bit x86 and 64-bit address boundary checks", () => {
+  it("rejects a 32-bit x86 mapping that exceeds the architecture width", () => {
+    const result = admitRawBinary({
+      architecture: "x86",
+      entryPoint: "0xfffffffc",
+      fileBytes: 8,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected overflow rejection");
+    expect(result.error.reason).toContain("x86 address width");
+    expect(result.error.constraint).toBe("load_selection_rejected");
+  });
+
+  it.each(["x86_64", "arm64"] as const)(
+    "rejects a 64-bit mapping that exceeds the %s architecture width",
+    (architecture) => {
+      const result = admitRawBinary({
+        architecture,
+        entryPoint: "0xfffffffffffffffc",
+        fileBytes: 8,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected 64-bit overflow rejection");
+      expect(result.error.reason).toContain(`${architecture} address width`);
+      expect(result.error.constraint).toBe("load_selection_rejected");
+    },
+  );
+
+  it("admits boundary single-byte mapping at the maximum 64-bit address", () => {
+    const admitted = admitRawBinary({
+      architecture: "x86_64",
+      entryPoint: "0xffffffffffffffff",
+      fileBytes: 1,
+    });
+    expect(admitted).toEqual({
+      ok: true,
+      value: {
+        architecture: "x86_64",
+        entryPoint: "0xffffffffffffffff",
+        entryPointSource: "0xffffffffffffffff",
+      },
+    });
+    const overflow = admitRawBinary({
+      architecture: "x86_64",
+      entryPoint: "0xffffffffffffffff",
+      fileBytes: 2,
+    });
+    expect(overflow.ok).toBe(false);
+    if (overflow.ok) throw new Error("expected overflow");
+    expect(overflow.error.reason).toContain("x86_64 address width");
+  });
 });
 
 describe("m68k raw-binary admission", () => {
