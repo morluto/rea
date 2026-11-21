@@ -166,47 +166,6 @@ it("reports a missing Linux ps as one candidate's unavailability and keeps the o
   });
 });
 
-it("selects the sole available provider and honors explicit selection precedence", async () => {
-  const alpha = candidate("alpha");
-  const beta = candidate("beta", { available: false });
-  const sole = await new AnalysisProviderRegistry([
-    beta.provider,
-    alpha.provider,
-  ]).select(DATABASE_TARGET);
-  expect(sole).toMatchObject({
-    ok: true,
-    value: {
-      binding: {
-        identity: { id: "alpha" },
-        selectionSource: "auto-single-candidate",
-      },
-    },
-  });
-
-  const selected = new AnalysisProviderRegistry(
-    [alpha.provider, candidate("beta").provider],
-    "beta",
-  );
-  expect(await selected.select(DATABASE_TARGET)).toMatchObject({
-    ok: true,
-    value: {
-      binding: {
-        identity: { id: "beta" },
-        selectionSource: "environment",
-      },
-    },
-  });
-  expect(await selected.select(DATABASE_TARGET, "alpha")).toMatchObject({
-    ok: true,
-    value: {
-      binding: {
-        identity: { id: "alpha" },
-        selectionSource: "request",
-      },
-    },
-  });
-});
-
 describe("inspection without deep binding", () => {
   it("retains discovery facts without resolving a deep profile for covered automatic inspection", async () => {
     const alpha = candidate("alpha", { profile: "error" });
@@ -290,51 +249,6 @@ describe("inspection without deep binding", () => {
 });
 
 describe("analysis provider registry: selection failures", () => {
-  it("offers only admitted providers for ambiguous automatic selection", async () => {
-    const alpha = candidate("alpha");
-    const beta = candidate("beta");
-    const ghidra = candidate("ghidra", {
-      available: false,
-      unconfigured: true,
-    });
-    const kuna = candidate("kuna", {
-      available: false,
-      unconfigured: true,
-    });
-    const registry = new AnalysisProviderRegistry([
-      alpha.provider,
-      beta.provider,
-      ghidra.provider,
-      kuna.provider,
-    ]);
-
-    const ambiguous = await registry.select(DATABASE_TARGET);
-    expect(ambiguous.ok).toBe(false);
-    if (!ambiguous.ok)
-      expect(projectAnalysisError(ambiguous.error)).toMatchObject({
-        details: {
-          selection_reason: "ambiguous",
-          candidate_ids: ["alpha", "beta"],
-          rejections: [
-            { provider_id: "ghidra", code: "not_configured" },
-            { provider_id: "kuna", code: "not_configured" },
-          ],
-        },
-      });
-
-    for (const selected of [
-      await registry.select(DATABASE_TARGET, "alpha"),
-      await registry.select(DATABASE_TARGET, "beta"),
-    ])
-      expect(selected).toMatchObject({ ok: true });
-    expect([
-      ...alpha.created,
-      ...beta.created,
-      ...ghidra.created,
-      ...kuna.created,
-    ]).toEqual([]);
-  });
-
   it("returns actionable unknown, unavailable, and unsupported failures", async () => {
     const unavailable = candidate("alpha", { available: false });
     const registry = new AnalysisProviderRegistry([unavailable.provider]);
@@ -523,6 +437,10 @@ describe("analysis provider registry: explicit selection diagnostics", () => {
     expect(await registry.select(DATABASE_TARGET)).toMatchObject({
       ok: true,
       value: {
+        binding: {
+          identity: { id: "beta" },
+          selectionSource: "environment",
+        },
         candidates: [
           {
             provider: { id: "alpha" },
@@ -542,6 +460,10 @@ describe("analysis provider registry: explicit selection diagnostics", () => {
     expect(await registry.select(DATABASE_TARGET, "alpha")).toMatchObject({
       ok: true,
       value: {
+        binding: {
+          identity: { id: "alpha" },
+          selectionSource: "request",
+        },
         candidates: [
           {
             provider: { id: "alpha" },
@@ -617,17 +539,20 @@ describe("analysis provider registry: rejection diagnostics", () => {
     const alpha = candidate("alpha");
     const beta = candidate("beta");
     const gamma = candidate("gamma", { available: false });
+    const ghidra = candidate("ghidra", {
+      available: false,
+      unconfigured: true,
+    });
     const registry = new AnalysisProviderRegistry([
       beta.provider,
+      ghidra.provider,
       gamma.provider,
       alpha.provider,
     ]);
 
     const ambiguous = await registry.select(DATABASE_TARGET);
-    expect(ambiguous.ok).toBe(false);
-    if (ambiguous.ok) return;
+    if (ambiguous.ok) throw new Error("Expected automatic selection ambiguity");
     expect(ambiguous.error).toBeInstanceOf(ProviderSelectionError);
-    if (!(ambiguous.error instanceof ProviderSelectionError)) return;
     expect(ambiguous.error).toMatchObject({
       reason: "ambiguous",
       requestedProviderId: "auto",
@@ -639,9 +564,26 @@ describe("analysis provider registry: rejection diagnostics", () => {
           code: "runtime_missing",
           remediation: "Repair the fixture provider.",
         },
+        {
+          providerId: "ghidra",
+          origin: "availability",
+          code: "not_configured",
+        },
       ],
     });
-    expect([...alpha.created, ...beta.created, ...gamma.created]).toEqual([]);
+    expect(projectAnalysisError(ambiguous.error)).toMatchObject({
+      details: {
+        selection_reason: "ambiguous",
+        candidate_ids: ["alpha", "beta"],
+        rejections: [
+          { provider_id: "gamma", code: "runtime_missing" },
+          { provider_id: "ghidra", code: "not_configured" },
+        ],
+      },
+    });
+    expect(
+      [alpha, beta, gamma, ghidra].flatMap(({ created }) => created),
+    ).toEqual([]);
   });
 
   it("keeps unresolved profiles and unavailable candidates in an unbound result", async () => {
