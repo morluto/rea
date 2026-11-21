@@ -139,6 +139,7 @@ export const existingMaintenanceScope = async (
       // profile is absent, so maintenance reads ownership evidence instead of
       // product applicability. Owned rows stay the only ones selected below.
       evidence: "ownership",
+      scope: "user",
       ...(resources === undefined ? {} : { resources }),
       ...(systemPaths === undefined ? {} : { systemPaths }),
     },

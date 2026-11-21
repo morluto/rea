@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { constants } from "node:fs";
 import { copyFile, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import {
   classifyClientRegistrationCommand,
@@ -193,6 +193,57 @@ it.skipIf(process.platform === "win32")(
       "owned",
     );
     expect(await claudeCodeState(home, entrypoint)).toBe("stale");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "directs a project package runner to the managed launcher that doctor accepts",
+  async () => {
+    const home = await createTestTempDirectory("rea-aube-project-");
+    const { entrypoint } = await installWithMise(
+      join(home, "installs", "rea"),
+      "6.7.0",
+    );
+    const project = join(home, "project");
+    await mkdir(project);
+    const configPath = join(project, "opencode.json");
+    const registerProject = (command: readonly string[]) =>
+      writeFile(
+        configPath,
+        JSON.stringify({
+          mcp: { servers: { rea: { type: "local", command } } },
+        }),
+      );
+    const readProject = async () =>
+      (
+        await readClientRegistrationStatuses(home, entrypoint, {
+          platform: "linux",
+          environment: {},
+          selectedClientIds: ["opencode"],
+        })
+      ).find(({ client }) => client === "opencode");
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(project);
+    try {
+      await registerProject(["npx", "-y", "rea-agents@1.0.0", "mcp"]);
+      expect(await readProject()).toMatchObject({
+        state: "stale",
+        scope: "project",
+        config_path: configPath,
+        remediation: expect.stringContaining(
+          `Replace the launcher in ${configPath} with its managed launcher`,
+        ),
+      });
+      await registerProject([process.execPath, entrypoint, "mcp"]);
+      expect(await readProject()).toMatchObject({ state: "stale" });
+      await registerProject(registerCommand(entrypoint));
+      expect(await readProject()).toMatchObject({
+        state: "aligned",
+        scope: "project",
+        remediation: null,
+      });
+    } finally {
+      cwd.mockRestore();
+    }
   },
 );
 
