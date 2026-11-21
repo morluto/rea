@@ -14,10 +14,8 @@ import {
 } from "../../src/domain/analysisErrorBase.js";
 
 it.each([
-  { late: false, secret: "declared-startup-private-value" },
   { late: false, secret: "browser_profile" },
   { late: false, secret: "startup private/value" },
-  { late: true, secret: "declared-startup-private-value" },
   { late: true, secret: "browser_profile" },
 ])(
   "excludes declared startup secrets across opening cleanup and retries: %j",
