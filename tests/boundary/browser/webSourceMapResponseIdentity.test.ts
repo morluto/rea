@@ -135,7 +135,7 @@ it("preserves redirected response identity across decoding failures and valid UT
   }
 });
 
-it("retains completed body identity when the deadline lands as the response stream ends", async () => {
+it("keeps earlier maps and the timed-out map body identity when its stream ends at the deadline", async () => {
   const body = JSON.stringify({
     version: 3,
     sources: ["a.js"],
@@ -161,19 +161,30 @@ it("retains completed body identity when the deadline lands as the response stre
   );
 
   try {
-    const result = await fetchWebSourceMaps(
-      [request(1)],
+    const earlier = request(1);
+    const timedOut = request(2);
+    const result = await fetchWebSourceMapsOk(
+      [earlier, timedOut],
       { ...input, source_map_fetch_timeout_ms: 1_000 },
       undefined,
-      { fetch: async () => new Response(stream) },
+      {
+        fetch: async (url) =>
+          new Response(String(url) === earlier.fetchUrl ? body : stream),
+      },
     );
-    if (!result.ok) throw result.error;
-    expect(result.value).toMatchObject({
-      status: "unavailable",
-      requested: 1,
-      processed: 1,
+    expect(result).toMatchObject({
+      status: "partial",
+      requested: 2,
+      processed: 2,
       items: [
         {
+          status: "included",
+          script_key: earlier.scriptKey,
+          artifact: { text: body, sha256: digest(body) },
+          original_sources: [{ source: `${origin}/a.js` }],
+        },
+        {
+          script_key: timedOut.scriptKey,
           status: "fetch_failed",
           artifact: null,
           response_identity: {

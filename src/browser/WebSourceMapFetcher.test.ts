@@ -652,55 +652,59 @@ it("keeps actual stalled HTTP headers and body deadlines local to their maps", a
   }
 });
 
-it.each([302, 503])(
-  "retains HTTP %s response cleanup without hanging on an independent tee branch",
-  async (status) => {
-    const [body, sibling] = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new Uint8Array([1]));
-      },
-    }).tee();
+it("retains redirect and HTTP error response locks until their tee siblings release", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const deadline = 100;
+  const attempts = [302, 503].map((status) => {
+    const [body, sibling] = new ReadableStream<Uint8Array>().tee();
     const pending = fetchWebSourceMaps(
       [request],
-      {
-        ...input,
-        allowed_origins: [new URL(request.fetchUrl).origin],
-        source_map_fetch_timeout_ms: 100,
-      },
+      { ...approvedInput, source_map_fetch_timeout_ms: deadline },
       undefined,
       {
-        fetch: async () =>
-          new Response(body, {
+        fetch: async (url) => {
+          if (String(url) !== request.fetchUrl)
+            throw new Error("Redirect followed before releasing its body");
+          return new Response(body, {
             status,
             ...(status === 302 ? { headers: { location: "/next" } } : {}),
-          }),
+          });
+        },
       },
     );
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const result = await Promise.race([
-        pending,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("response cleanup waited for sibling")),
-            1000,
-          );
-        }),
-      ]);
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          cleanupIncomplete: true,
-          cleanupResources: [request.fetchUrl],
-        },
+    return { status, body, sibling, pending };
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(deadline);
+    for (const { status, body, sibling, pending } of attempts) {
+      const result = await Promise.race([pending, null]);
+      if (result === null || result.ok)
+        throw new Error(
+          `Expected retained cleanup for HTTP ${status} at the deadline`,
+        );
+      expect(result.error).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [request.fetchUrl],
       });
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
+      expect(body.locked).toBe(true);
       await sibling.cancel();
-      await pending;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(body.locked).toBe(false);
     }
-  },
-);
+  } finally {
+    try {
+      await Promise.all(
+        attempts.map(async ({ body, sibling, pending }) => {
+          await Promise.allSettled([body.cancel(), sibling.cancel()]);
+          await pending;
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+});
 
 it("cancels an admitted response unread when the deadline expires before the timer fires", async () => {
   const timeoutMs = 50;
