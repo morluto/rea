@@ -71,6 +71,11 @@ automatically. Alternatively, build it using the Linux/MinGW lane above.
   parent handles with `NtCreateFile`. A protected DACL and current-user owner
   are installed at creation. Readback permits exactly the current user and SYSTEM. Child
   files inherit this boundary; private files are also checked by handle.
+  The DACL is part of each create request rather than applied afterward,
+  because a later DACL change cannot revoke a handle another process opened
+  first. The DACL therefore denies other accounts from the moment an object
+  exists. It admits processes running as the same user, so REA claims privacy
+  from other accounts, not same-user immutability.
 - Snapshots stream through a 64 KiB buffer on a Node async worker. Cancellation
   is checked between reads, cleanup waits for settlement, and the digest
   commits to the bytes written. Descriptor and snapshot handles remain held

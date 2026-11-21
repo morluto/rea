@@ -1,9 +1,10 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
-import type {
-  DoctorProviderCheck,
-  DoctorProviderInspection,
+import {
+  windowsNativeFailureClassification,
+  type DoctorProviderCheck,
+  type DoctorProviderInspection,
 } from "../ports/DoctorProviderInspection.js";
 import {
   admitGhidraInstallation,
@@ -75,12 +76,9 @@ export const projectGhidraDoctorInspection = (
                 ? readiness.reason
                 : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS/ReFS only.",
               remediation: !readiness.available ? readiness.remediation : null,
-              classification:
-                !readiness.available && readiness.code === "runtime_unavailable"
-                  ? ("runtime_failure" as const)
-                  : !readiness.available && readiness.code === "runtime_missing"
-                    ? ("missing_dependency" as const)
-                    : ("unsupported_host" as const),
+              classification: readiness.available
+                ? ("unsupported_host" as const)
+                : windowsNativeFailureClassification(readiness.code),
             },
           ]
         : []),

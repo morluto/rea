@@ -6,7 +6,24 @@ import { defaultHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscover
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
-import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
+import {
+  runDoctor,
+  systemDoctorHost,
+  type DoctorHost,
+  type DoctorReport,
+} from "./Doctor.js";
+import {
+  privateRuntimeRootCapability,
+  type PrivateRuntimeRootCapability,
+} from "../process/PrivateRuntimeRoot.js";
+import {
+  inspectWindowsNativeReadiness,
+  windowsNativeCapabilities,
+} from "../process/WindowsAuthority.js";
+import {
+  windowsNativeFailureRemediation,
+  type WindowsNativeLoadResult,
+} from "../windows/WindowsNativeLoader.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
 import { MAC_HOPPER_SYSTEM_LAUNCHER } from "../hopperPaths/MacHopperPaths.js";
@@ -245,7 +262,7 @@ describe("doctor native analysis configuration", () => {
     const result = await runDoctor(
       undefined,
       configurationHost({
-        CALLER_SETTING: "private\0value",
+        CALLER_SETTING: "caller-sentinel\0value",
         REA_HOPPER_STARTUP_TIMEOUT_MS: "0",
       }),
       { providers: ["hopper"] },
@@ -272,7 +289,7 @@ describe("doctor native analysis configuration", () => {
         ({ name }) => name === "hopper-startup-timeout",
       ),
     ).toHaveLength(1);
-    expect(JSON.stringify(result.checks)).not.toContain("private");
+    expect(JSON.stringify(result.checks)).not.toContain("caller-sentinel");
   });
 
   it("keeps a lowercase provider preference ready for the selected engine", async () => {
@@ -534,6 +551,156 @@ it.skipIf(process.platform !== "darwin")(
   },
 );
 
+const windowsRuntimeRoot = (observation: WindowsNativeLoadResult) =>
+  windowsNativeCapabilities(
+    "win32",
+    inspectWindowsNativeReadiness("win32", observation),
+  ).private_runtime_dacl;
+
+const windowsRuntimeRootHost = (
+  capability: PrivateRuntimeRootCapability,
+): DoctorHost =>
+  host({
+    platform: "win32",
+    architecture: "x64",
+    macosVersion: () => Promise.resolve(undefined),
+    executable: () => Promise.resolve(false),
+    installationLaunchers: () => Promise.resolve([]),
+    clientRegistrations: () => Promise.resolve([]),
+    providerInspections: () =>
+      Promise.resolve([
+        {
+          id: "ida",
+          configured: true,
+          available: true,
+          providerVersion: null,
+          registrationEnvironment: {},
+          checks: [],
+        },
+      ]),
+    privateRuntimeRoot: () => capability,
+  });
+
+const runtimeRootCheck = (report: DoctorReport) =>
+  report.checks.find(({ name }) => name === "private-runtime-root");
+
+describe("doctor private runtime root", () => {
+  it("reports POSIX owner-only mode without claiming verified-DACL privacy", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        privateRuntimeRoot: () => privateRuntimeRootCapability("darwin"),
+      }),
+    );
+    expect(runtimeRootCheck(result)).toEqual({
+      name: "private-runtime-root",
+      ok: true,
+      classification: "healthy",
+      detail:
+        "Private runtime roots are created by mkdtemp with owner-only mode 0700. REA does not read back ACLs on this host, so this is POSIX permission privacy, not verified-DACL privacy.",
+      details: { proof: "posix-mkdtemp-owner-only" },
+    });
+  });
+
+  it("reports Windows private-DACL availability after native verification", async () => {
+    const result = await runDoctor(
+      undefined,
+      windowsRuntimeRootHost(
+        windowsRuntimeRoot({ available: true, authority: {} as never }),
+      ),
+    );
+    expect(runtimeRootCheck(result)).toEqual({
+      name: "private-runtime-root",
+      ok: true,
+      classification: "healthy",
+      detail:
+        "The Windows native self-test created a private runtime root and read its security descriptor back by handle: the current user owns it, and a protected DACL admits only the current user and SYSTEM. Other processes running as the same user are outside this boundary.",
+      details: { proof: "native-authority" },
+    });
+    expect(result.environment_healthy).toBe(true);
+  });
+
+  it.each([
+    {
+      failureStage: "self-test",
+      retryable: true,
+      reason:
+        "REA Windows native self-test failed: Create private object relative to its admitted parent failed (Win32 5)",
+      code: "runtime_unavailable",
+      classification: "runtime_failure",
+    },
+    {
+      failureStage: "artifact",
+      reason:
+        "REA Windows native controls are unavailable: Missing packaged Windows native file native/windows/build/manifest.json (ENOENT).",
+      code: "runtime_missing",
+      classification: "missing_dependency",
+    },
+    {
+      failureStage: "host",
+      reason: "REA Windows native controls require Node-API 8 or newer.",
+      code: "unsupported_host",
+      classification: "unsupported_host",
+    },
+  ] as const)(
+    "fails the audit with the $failureStage failure and its recovery",
+    async ({ failureStage, reason, code, classification, ...rest }) => {
+      const result = await runDoctor(
+        undefined,
+        windowsRuntimeRootHost(
+          windowsRuntimeRoot({
+            available: false,
+            failureStage,
+            reason,
+            ...rest,
+          }),
+        ),
+      );
+      expect(runtimeRootCheck(result)).toEqual({
+        name: "private-runtime-root",
+        ok: false,
+        classification,
+        detail: reason,
+        details: { proof: "not-proven", code, failure_stage: failureStage },
+        remediation: windowsNativeFailureRemediation(failureStage),
+      });
+      expect(result.healthy).toBe(false);
+      expect(result.environment_healthy).toBe(false);
+    },
+  );
+
+  it("keeps an unproven runtime root informational for a selected provider", async () => {
+    const result = await runDoctor(
+      undefined,
+      windowsRuntimeRootHost(
+        windowsRuntimeRoot({
+          available: false,
+          failureStage: "self-test",
+          retryable: true,
+          reason: "REA Windows native self-test failed: access denied",
+        }),
+      ),
+      { providers: ["ida"] },
+    );
+    expect(result.healthy).toBe(true);
+    expect(result.environment_healthy).toBe(false);
+    expect(result.informational_checks).toContainEqual(
+      expect.objectContaining({ name: "private-runtime-root", ok: false }),
+    );
+  });
+
+  it("asks the process-owned capability through the system host", async () => {
+    const system = systemDoctorHost({ platform: "linux" });
+    try {
+      expect(system.privateRuntimeRoot?.()).toEqual(
+        privateRuntimeRootCapability("linux"),
+      );
+    } finally {
+      await system.close?.();
+    }
+  });
+});
+
 describe("doctor", () => {
   it("returns exact recovery for every failed diagnostic", async () => {
     const result = await runDoctor(
@@ -600,6 +767,7 @@ describe("doctor", () => {
       detail: "win32 arm64",
     });
   });
+
   it("detects a manual configured Hopper before Homebrew", async () => {
     let brewProbes = 0;
     const result = await runDoctor(

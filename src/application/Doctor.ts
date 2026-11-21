@@ -29,6 +29,10 @@ import {
 } from "../config/parseConfig.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import {
+  privateRuntimeRootCapability,
+  type PrivateRuntimeRootCapability,
+} from "../process/PrivateRuntimeRoot.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
@@ -102,6 +106,8 @@ export interface DoctorHost {
    */
   readonly nativeConfiguration?: NativeAnalysisConfigurationInspection;
   readonly configuredIlspyCmdPath?: string;
+  /** How this process makes runtime roots private; undefined skips that check. */
+  privateRuntimeRoot?(): PrivateRuntimeRootCapability;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   validTarget(path: string): Promise<boolean>;
@@ -818,6 +824,7 @@ export const systemDoctorHost = (
     ...(environment.REA_ILSPY_CMD_PATH === undefined
       ? {}
       : { configuredIlspyCmdPath: environment.REA_ILSPY_CMD_PATH }),
+    privateRuntimeRoot: () => privateRuntimeRootCapability(platform),
     macosVersion: () =>
       readMacosVersion(hostExecFileOutput, commandEnvironment),
     linuxDistribution: () => readLinuxDistribution(architecture),
