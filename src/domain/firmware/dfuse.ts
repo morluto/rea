@@ -1,3 +1,4 @@
+import { boundedList, describeBoundedList } from "../boundedList.js";
 import { crc32 } from "node:zlib";
 
 import type { DfuSeMetadata } from "../artifactFormatMetadata.js";
@@ -117,7 +118,10 @@ const formatFailure = (
 
 /** At most NAMED_ELEMENTS descriptions, then a count of the rest of `total`. */
 const named = (items: readonly string[], total = items.length): string =>
-  `${items.slice(0, NAMED_ELEMENTS).join("; ")}${total > NAMED_ELEMENTS ? `; and ${String(total - NAMED_ELEMENTS)} more` : ""}`;
+  describeBoundedList(
+    boundedList(items, NAMED_ELEMENTS, total - items.length),
+    "; ",
+  );
 
 class RetainingDfuSeDecoder implements RegionDecoder<DfuSeImage> {
   readonly #bytes: Uint8Array;
@@ -212,7 +216,7 @@ const parseDfuSe = (
       ...(overlaps.length === 0
         ? []
         : [
-            `${String(overlaps.length)} DfuSe element(s) overlap an earlier element of the same alternate setting; each stays a separate entry and no bytes were merged: ${named(overlaps)}.`,
+            `${String(overlaps.length)} DfuSe element(s) overlap an element earlier in address order within the same alternate setting; each stays a separate entry and no bytes were merged: ${named(overlaps)}.`,
           ]),
       ...(walk.unlistedCount === 0
         ? []

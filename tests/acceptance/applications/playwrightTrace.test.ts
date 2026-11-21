@@ -8,13 +8,50 @@ import {
   playwrightTracePathFixture,
 } from "../../fixtures/playwrightTrace.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { playwrightTraceSchema } from "../../../src/domain/playwrightTrace/playwrightTrace.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 
 type McpCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];
+
+cliTest(
+  "reports the fixed trace nesting limit through CLI and MCP",
+  async ({ cli }) => {
+    const trace =
+      '{"type":"context-options","version":10}\n' +
+      `{"type":"console","args":${"[".repeat(65)}${"]".repeat(65)}}\n`;
+    const fixture = await playwrightTraceFixture({ trace, network: "" });
+    const expected = {
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reason: expect.stringContaining("fixed JSON nesting allowance"),
+        reported_limits: {
+          boundary: "nesting-depth",
+          maximum: 64,
+          nesting_levels: 64,
+        },
+        refusal: { kind: "fixed_ceiling", limit: 64, unit: "nesting levels" },
+      },
+    };
+    const result = await cli.run({
+      arguments: ["inspect-playwright-trace", fixture.path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.json).toMatchObject(expected);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application",
+    });
+    const response = await call("inspect_playwright_trace", {
+      path: fixture.path,
+    });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response).error).toMatchObject(expected);
+  },
+);
 
 cliTest(
   "preserves original ZIP paths across CLI/MCP, resource lookup and exact member filters",
@@ -72,7 +109,7 @@ cliTest(
       (await call("inspect_playwright_trace", { path: fixture.path, view }))
         .structuredContent,
     ).toEqual(selected);
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: ["inspect-playwright-trace", fixture.path, "--json"],
     });
@@ -101,7 +138,7 @@ const checkCliPublication = async ({
   call: McpCall;
 }) => {
   const source = { kind: "retained-evidence", evidence_id: parent.evidence_id };
-  const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+  const run = cli.run.bind(cli);
   const fullCli = await run({
     arguments: ["inspect-playwright-trace", fixture.path, "--json"],
   });
@@ -163,7 +200,6 @@ cliTest(
     const fixture = await playwrightTraceFixture({ resources: true });
     const { client, call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application,session",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
     });
     const schemas = await advertisedMcpToolSchemas(
@@ -171,10 +207,12 @@ cliTest(
       "inspect_playwright_trace",
     );
     expect(
-      schemas.ajv.validate(schemas.inputSchema, { path: fixture.path }),
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
+        path: fixture.path,
+      }),
     ).toBe(true);
     expect(
-      schemas.ajv.validate(schemas.inputSchema, {
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
         path: fixture.path,
         view: {
           kind: "playwright-trace",
@@ -419,7 +457,7 @@ cliTest(
     expect(
       parseEvidence(full.structuredContent).normalized_result,
     ).toMatchObject({ items: [{ text: message }] });
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: ["inspect-playwright-trace", fixture.path, "--json"],
     });
@@ -429,5 +467,73 @@ cliTest(
         .summary.network,
     ).toBe(3);
     expect(requests).toBe(0);
+  },
+);
+
+cliTest(
+  "retains partial MCP Evidence when a trace stream fails after earlier streams were read",
+  async () => {
+    const fixture = await playwrightTraceFixture({ level: 0 });
+    const bytes = await readFile(fixture.path);
+    // A stored network byte breaks only that member's ZIP CRC.
+    const offset = bytes.indexOf(Buffer.from('"method":"GET"'));
+    expect(offset).toBeGreaterThan(0);
+    bytes[offset + 10] = 80;
+    await writeFile(fixture.path, bytes);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+      PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
+    });
+    const failed = parseMcpToolError(
+      await call("inspect_playwright_trace", {
+        path: fixture.path,
+        detail: "complete",
+      }),
+    );
+    const reference = failed.error.details?.partial_observation;
+    expect(reference).toEqual({
+      kind: "retained-evidence",
+      evidence_id: expect.any(String),
+    });
+    const { evidence_id } = reference as { evidence_id: string };
+    const page = await call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id },
+      view: { kind: "playwright-trace", collection: "events", fields: [] },
+    });
+    expect(page.isError, JSON.stringify(page.content)).not.toBe(true);
+    expect(
+      parseEvidence(page.structuredContent).normalized_result,
+    ).toMatchObject({
+      coverage: { total: 20, exhausted: true },
+      source_coverage: { interpretation: "partial" },
+    });
+  },
+);
+
+cliTest(
+  "refuses a selected page without summary delivery before opening the archive",
+  async ({ cli }) => {
+    const missing = join(process.cwd(), "missing-playwright-trace.zip");
+    const view = JSON.stringify({
+      kind: "playwright-trace",
+      collection: "streams",
+    });
+    for (const delivery of [[], ["--detail", "complete"]]) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-playwright-trace",
+          missing,
+          "--view",
+          view,
+          ...delivery,
+          "--json",
+        ],
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["view"], reason: "invalid_value" }] },
+      });
+    }
   },
 );

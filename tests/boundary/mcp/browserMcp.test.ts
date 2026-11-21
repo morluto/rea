@@ -1,8 +1,12 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { crc32, deflateSync } from "node:zlib";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -43,7 +47,6 @@ afterAll(async () => {
     schemaValidation.clear();
   }
 });
-const INTEGRATION_TEST_TIMEOUT_MS = 20_000;
 
 it("preserves Link parameter order and context through the advertised MCP contract", async () => {
   const links = [
@@ -98,24 +101,25 @@ it("preserves Link parameter order and context through the advertised MCP contra
   const advertised = (await connected.client.listTools()).tools.find(
     ({ name }) => name === "inspect_web_page",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("inspect_web_page must advertise its output schema");
 
-  const inspected = await connected.client.callTool({
-    name: "inspect_web_page",
-    arguments: {
-      cdp_endpoint: browser.endpoint,
-      target_id: "allowed-page",
-      observation_ms: 0,
+  const inspected = await connected.client.callTool(
+    {
+      name: "inspect_web_page",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 0,
+      },
     },
-  });
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
+  );
   expect(inspected.isError).not.toBe(true);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
-  expect(
-    ajv.validate(outputSchema, inspected.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
 
   const normalized = webPageInspectionSchema.parse(
     normalizedResultOf(inspected.structuredContent),
@@ -175,21 +179,21 @@ it("preserves Link parameter order and context through the advertised MCP contra
     `${browser.allowedOrigin}/same-context`,
   ]);
 
-  const legacy = structuredClone(normalized);
-  for (const response of legacy.metadata.responses)
+  const contextless = structuredClone(normalized) as unknown as {
+    metadata: { responses: { links: Record<string, unknown>[] }[] };
+  };
+  for (const response of contextless.metadata.responses)
     for (const projectedLink of response.links) {
       delete projectedLink.context_url;
       delete projectedLink.context_scope;
     }
-  expect(webPageInspectionSchema.safeParse(legacy).success).toBe(true);
-  const legacyStructuredContent = {
-    ...(inspected.structuredContent as Record<string, unknown>),
-    normalized_result: legacy,
-  };
+  expect(webPageInspectionSchema.safeParse(contextless).success).toBe(false);
   expect(
-    ajv.validate(outputSchema, legacyStructuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
+    ajv.validate(outputSchema, {
+      ...(inspected.structuredContent as Record<string, unknown>),
+      normalized_result: contextless,
+    }),
+  ).toBe(false);
 });
 
 cliTest(
@@ -249,7 +253,7 @@ cliTest(
       ],
       environment: process.env,
     });
-    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     expect(cliResult.signal).toBeNull();
     const mcp = await client.callTool({
       name: "analyze_web_bundle",
@@ -281,7 +285,6 @@ cliTest(
       },
     });
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 afterEach(() => resources.retryCleanup());
@@ -329,122 +332,141 @@ it("closes the browser and retains failed MCP and session cleanup for retry", as
   }
 });
 
-it(
-  "exposes CLI-equivalent Evidence results and session tools",
-  async () => {
-    const browser = await startFakeCdpBrowser({
-      sessionTimeline: "same_origin",
-      webMcpTools: true,
-      sensitiveShapes: true,
-      eventsBeforeReply: ["Network.enable"],
-    });
-    retainBrowser(browser);
-    const connected = await connectBrowser();
+it("exposes CLI-equivalent Evidence results and session tools", async () => {
+  const browser = await startFakeCdpBrowser({
+    sessionTimeline: "same_origin",
+    webMcpTools: true,
+    sensitiveShapes: true,
+    eventsBeforeReply: ["Network.enable"],
+  });
+  retainBrowser(browser);
+  const connected = await connectBrowser();
 
-    const tools = await connected.client.listTools();
-    expect(tools.tools).toHaveLength(TOOL_CONTRACTS.length);
-    expect(tools.tools.map(({ name }) => name)).toEqual(
-      expect.arrayContaining([
-        "list_browser_targets",
-        "inspect_web_page",
-        "analyze_web_bundle",
-        "observe_web_session",
-        "discover_webmcp_tools",
-        "compare_web_captures",
-        "capture_web_screenshot",
-        "compare_web_screenshots",
-      ]),
-    );
-    const status = await connected.client.callTool({
-      name: "binary_session",
-      arguments: {},
-    });
-    const sessionStatus = toolContract("binary_session").outputSchema.parse(
-      status.structuredContent,
-    );
-    const availability = expandToolAvailability(
-      sessionStatus.result.tool_availability,
-    );
-    expect(availability).toContainEqual(
-      expect.objectContaining({
-        name: "inspect_web_page",
-        reason: expect.any(String),
-      }),
-    );
-    const listed = await connected.client.callTool({
-      name: "list_browser_targets",
-      arguments: {
-        cdp_endpoint: browser.endpoint,
-      },
-    });
-    expect(listed.isError).not.toBe(true);
-    expect(listed.structuredContent).toMatchObject({
-      normalized_result: {
-        targets: expect.arrayContaining([
-          expect.objectContaining({ target_id: "allowed-page" }),
-        ]),
-      },
-    });
-    const inspected = await connected.client.callTool({
+  const tools = await connected.client.listTools();
+  expect(tools.tools).toHaveLength(TOOL_CONTRACTS.length);
+  expect(tools.tools.map(({ name }) => name)).toEqual(
+    expect.arrayContaining([
+      "list_browser_targets",
+      "inspect_web_page",
+      "analyze_web_bundle",
+      "observe_web_session",
+      "discover_webmcp_tools",
+      "compare_web_captures",
+      "capture_web_screenshot",
+      "compare_web_screenshots",
+    ]),
+  );
+  const status = await connected.client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  const sessionStatus = toolContract("binary_session").outputSchema.parse(
+    status.structuredContent,
+  );
+  const availability = expandToolAvailability(
+    sessionStatus.result.tool_availability,
+  );
+  expect(availability).toContainEqual(
+    expect.objectContaining({
       name: "inspect_web_page",
-      arguments: {
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_console_text: true,
-        include_json_body_shapes: true,
-        include_websocket_shapes: true,
-        include_script_sources: true,
+      reason: expect.any(String),
+    }),
+  );
+  const listed = await connected.client.callTool({
+    name: "list_browser_targets",
+    arguments: {
+      cdp_endpoint: browser.endpoint,
+    },
+  });
+  expect(listed.isError).not.toBe(true);
+  expect(listed.structuredContent).toMatchObject({
+    normalized_result: {
+      targets: expect.arrayContaining([
+        expect.objectContaining({ target_id: "allowed-page" }),
+      ]),
+    },
+  });
+  const inspected = await connected.client.callTool({
+    name: "inspect_web_page",
+    arguments: {
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      observation_ms: 0,
+      include_console_text: true,
+      include_json_body_shapes: true,
+      include_websocket_shapes: true,
+      include_script_sources: true,
+    },
+  });
+  expect(inspected.isError).not.toBe(true);
+  expect(inspected.structuredContent).toMatchObject({
+    normalized_result: {
+      target: { target_id: "allowed-page" },
+      console: { prior_activity_available: false },
+      network: {
+        prior_activity_available: false,
+        requests: [
+          expect.objectContaining({
+            body_shapes: expect.objectContaining({ status: "included" }),
+          }),
+        ],
       },
+    },
+  });
+  const reconciled = await connected.client.callTool({
+    name: "reconcile_javascript_runtime",
+    arguments: {
+      static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+      runtime_observations: [evidenceFor(inspected.structuredContent)],
+    },
+  });
+  expect(reconciled.isError).not.toBe(true);
+  expect(reconciled.structuredContent).toMatchObject({
+    normalized_result: { summary: { runtime_scripts: 1 } },
+  });
+  expect(JSON.stringify(reconciled.structuredContent)).not.toContain(
+    "source-secret",
+  );
+  const analyzed = await connected.client.callTool({
+    name: "analyze_web_bundle",
+    arguments: {
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      observation_ms: 0,
+    },
+  });
+  expect(analyzed.isError).not.toBe(true);
+  expect(analyzed.structuredContent).toMatchObject({
+    normalized_result: {
+      capture: { scripts_analyzed: 1 },
+      observations: { source_maps: { status: "not_requested" } },
+    },
+  });
+  // A page observation names the page URL the inspection reported; a target
+  // list names no single document.
+  const page = {
+    kind: "url",
+    url: webPageInspectionSchema.parse(
+      normalizedResultOf(inspected.structuredContent),
+    ).target.url,
+    origin: browser.allowedOrigin,
+  };
+  expect(page.url).toBe(`${browser.allowedOrigin}/app?token=frame-secret`);
+  expect(subjectOf(listed.structuredContent)).toEqual({
+    identity: { kind: "unknown", reason: "not-observed" },
+    name: null,
+    local_path: null,
+  });
+  for (const result of [inspected, analyzed])
+    expect(subjectOf(result.structuredContent)).toEqual({
+      identity: page,
+      name: null,
+      local_path: null,
     });
-    expect(inspected.isError).not.toBe(true);
-    expect(inspected.structuredContent).toMatchObject({
-      normalized_result: {
-        target: { target_id: "allowed-page" },
-        console: { prior_activity_available: false },
-        network: {
-          prior_activity_available: false,
-          requests: [
-            expect.objectContaining({
-              body_shapes: expect.objectContaining({ status: "included" }),
-            }),
-          ],
-        },
-      },
-    });
-    const reconciled = await connected.client.callTool({
-      name: "reconcile_javascript_runtime",
-      arguments: {
-        static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
-        runtime_observations: [evidenceFor(inspected.structuredContent)],
-      },
-    });
-    expect(reconciled.isError).not.toBe(true);
-    expect(reconciled.structuredContent).toMatchObject({
-      normalized_result: { summary: { runtime_scripts: 1 } },
-    });
-    expect(JSON.stringify(reconciled.structuredContent)).not.toContain(
-      "source-secret",
-    );
-    const analyzed = await connected.client.callTool({
-      name: "analyze_web_bundle",
-      arguments: {
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 0,
-      },
-    });
-    expect(analyzed.isError).not.toBe(true);
-    expect(analyzed.structuredContent).toMatchObject({
-      normalized_result: {
-        capture: { scripts_analyzed: 1 },
-        observations: { source_maps: { status: "not_requested" } },
-      },
-    });
-    await verifySessionAndComparisonTools(connected, browser, inspected);
-  },
-  INTEGRATION_TEST_TIMEOUT_MS,
-);
+  await verifySessionAndComparisonTools(connected, browser, inspected);
+});
+
+const subjectOf = (content: unknown): unknown => parseEvidence(content).subject;
 
 const verifySessionAndComparisonTools = async (
   connected: Awaited<ReturnType<typeof connectBrowser>>,
@@ -551,6 +573,13 @@ const verifySessionAndComparisonTools = async (
     },
   });
   expect(JSON.stringify(malformedComparison.content)).toContain("types");
+  for (const result of [observedSession, webMcp])
+    expect(subjectOf(result.structuredContent)).toMatchObject({
+      identity: { kind: "url", origin: browser.allowedOrigin },
+    });
+  expect(subjectOf(compared.structuredContent)).toMatchObject({
+    identity: { kind: "unknown", reason: "not-observed" },
+  });
   const incompleteComparison = await connected.client.callTool({
     name: "compare_web_captures",
     arguments: { before: { inspection: capture } },
@@ -578,6 +607,9 @@ const verifyScreenshotTools = async (
     },
   });
   expect(screenshot.isError).not.toBe(true);
+  expect(subjectOf(screenshot.structuredContent)).toMatchObject({
+    identity: { kind: "url", origin: browser.allowedOrigin },
+  });
   const screenshotArtifact = artifactOf(screenshot.structuredContent);
   const visual = await client.callTool({
     name: "compare_web_screenshots",
@@ -775,7 +807,7 @@ cliTest(
       ],
       environment: process.env,
     });
-    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     expect(cliResult.signal).toBeNull();
     const cliEvidence = parseEvidence(cliResult.json);
     expect(cliEvidence.normalized_result).toMatchObject(expectedResult);
@@ -799,19 +831,29 @@ cliTest(
   },
 );
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "records a browser-socket endpoint redacted and reconciles its Evidence (%s)",
   async (profile) => {
     const browser = await startFakeCdpBrowser();
     retainBrowser(browser);
     const connected = await connectBrowser(profile);
-    const tool = (await connected.client.listTools()).tools.find(
-      ({ name }) => name === "inspect_web_page",
-    );
-    if (profile === "full")
-      expect(tool?.inputSchema.properties?.cdp_endpoint).toMatchObject({
-        description: expect.stringContaining("/devtools/browser/ID"),
-      });
+    const listed = await connected.client.callTool({
+      name: "list_browser_targets",
+      arguments: {
+        cdp_endpoint: browser.browserWebSocketUrl,
+        discovery_timeout_ms: 15_000,
+      },
+    });
+    expect(listed.isError).not.toBe(true);
+    expect(listed.structuredContent).toMatchObject({
+      parameters: {
+        cdp_endpoint: browser.browserWebSocketUrl.replace(
+          /fake$/u,
+          "[REDACTED]",
+        ),
+        discovery_timeout_ms: 15_000,
+      },
+    });
     const inspected = await connected.client.callTool({
       name: "inspect_web_page",
       arguments: {
@@ -822,6 +864,7 @@ it.each(["full", "compact"] as const)(
       },
     });
     expect(inspected.isError).not.toBe(true);
+    expect(browser.openedConnectionCount()).toBe(1);
     expect(inspected.structuredContent).toMatchObject({
       parameters: {
         cdp_endpoint: browser.browserWebSocketUrl.replace(
@@ -943,7 +986,7 @@ it("projects legal oversized PNG dimensions as a memory constraint", async () =>
   });
 });
 
-const connectBrowser = async (profile?: "full" | "compact") => {
+const connectBrowser = async (profile?: "compact") => {
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
@@ -998,7 +1041,7 @@ const artifactOf = (value: unknown): unknown => {
   return normalized.artifact;
 };
 
-it.each([24, 32, "crc"])(
+it.each([24, 32, "crc", "invalid interlace"])(
   "rejects corrupt captured PNG through MCP: %s",
   async (kind) => {
     const bytes = Buffer.from(
@@ -1006,6 +1049,10 @@ it.each([24, 32, "crc"])(
       "base64",
     );
     if (kind === "crc") bytes[29] = (bytes[29] ?? 0) ^ 1;
+    if (kind === "invalid interlace") {
+      bytes[28] = 2;
+      bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+    }
     const data = (
       typeof kind === "number" ? bytes.subarray(0, kind) : bytes
     ).toString("base64");

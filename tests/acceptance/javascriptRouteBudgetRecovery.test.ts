@@ -29,7 +29,6 @@ cliTest(
         }),
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(unpublished.exitCode, unpublished.stderr).toBe(1);
     expect(unpublished.json).toMatchObject({
@@ -60,7 +59,6 @@ cliTest(
         bundle,
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(analyzed.exitCode, analyzed.stderr).toBe(0);
     const request = (fields?: readonly string[]) =>

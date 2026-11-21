@@ -108,7 +108,6 @@ describe.skipIf(process.platform !== "darwin")(
         expect(attached.stdout).not.toContain(raw);
         expect(attached.stdout).not.toContain(compressed);
       },
-      120_000,
     );
 
     cliTest(

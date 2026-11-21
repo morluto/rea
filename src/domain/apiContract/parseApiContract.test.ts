@@ -1,8 +1,13 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { apiContractSchema, type ApiContractArtifact } from "./apiContract.js";
+import {
+  API_CONTRACT_FACT_BYTES,
+  apiContractSchema,
+  type ApiContractArtifact,
+} from "./apiContract.js";
 import { parseApiContractSteps } from "./parseApiContract.js";
+import { AnalysisCancelledError } from "../analysisErrorCore.js";
 
 const artifact: ApiContractArtifact = {
   path: "/contract.json",
@@ -23,7 +28,6 @@ const parse = (value: unknown, source = artifact) => {
 };
 const report = (value: unknown, source = artifact) => {
   const result = parse(value, source);
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   return apiContractSchema.parse(result.value);
 };
@@ -306,9 +310,125 @@ it("handles 3.2 QUERY and case-sensitive additional methods, diagnosing invalid 
 
 it("bounds expanded identities and source pointers before building a giant row", () => {
   const result = parse(
-    document({ [`/${"a".repeat(1_100_000)}`]: { get: {} } }),
+    document({
+      "/retained": { get: {} },
+      [`/${"a".repeat(1_100_000)}`]: { get: {} },
+    }),
   );
   expect(result.ok).toBe(false);
-  if (!result.ok)
-    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  if (result.ok) throw new Error("Expected a retained-facts refusal");
+  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  const partial = apiContractSchema.parse(result.error.partialObservation);
+  expect(partial.operations.map((row) => row.path)).toEqual(["/retained"]);
+  expect(partial.source_coverage).toMatchObject({
+    status: "partial",
+    path_entries_examined: 1,
+  });
+});
+
+it("keeps the invalid-info diagnostic when the paths diagnostic exhausts the allowance", () => {
+  const retainedBeforePaths =
+    "3.0.4".length * 12 +
+    4096 +
+    artifact.path.length * 12 +
+    1024 +
+    "/info".length * 12;
+  const title = "t".repeat(
+    Math.floor((API_CONTRACT_FACT_BYTES - retainedBeforePaths) / 12),
+  );
+  const result = parse({ openapi: "3.0.4", info: { title } });
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a retained-facts refusal");
+  const partial = apiContractSchema.parse(result.error.partialObservation);
+  expect(partial.diagnostics.map(({ code }) => code)).toEqual(["invalid-info"]);
+  expect(partial.info).toEqual({ title, version: null });
+  expect(partial.source_coverage.path_entries_examined).toBe(0);
+});
+
+it("retains an interpreted path when cancellation interrupts traversal", () => {
+  const input = document({
+    "/first": { get: { operationId: "first" } },
+    "/second": { get: { operationId: "second" } },
+  });
+  const steps = parseApiContractSteps(input, artifact);
+  for (let checkpoint = 0; checkpoint < 3; checkpoint++)
+    expect(steps.next().done).toBe(false);
+  const cancellation = new AnalysisCancelledError("inspect_api_contract");
+  const stopped = steps.throw(cancellation);
+  if (!stopped.done || stopped.value.ok)
+    throw new Error("Expected cancellation");
+  expect(stopped.value.error).toBe(cancellation);
+  const partial = apiContractSchema.parse(cancellation.partialObservation);
+  const complete = report(input);
+  expect(partial.operations).toEqual(complete.operations.slice(0, 1));
+  expect(partial.summary.operation_slots).toBe(1);
+  expect(partial.source_coverage).toMatchObject({
+    status: "partial",
+    path_entries_examined: 1,
+  });
+  expect(complete.source_coverage.status).toBe("complete-within-scope");
+});
+
+it("does not count a partially traversed Path Item as examined on cancellation", () => {
+  const input = document({
+    "/first": { get: {} },
+    "/second": {
+      post: {},
+      ...Object.fromEntries(
+        Array.from({ length: 128 }, (_, index) => [`x-${index}`, "metadata"]),
+      ),
+    },
+  });
+  const complete = report(input);
+  expect(complete.source_coverage.path_entries_examined).toBe(2);
+  let reachedCompletion = false;
+  let observedMidPathCancellation = false;
+  let observedCompletedFirstPath = false;
+  for (let checkpoint = 1; checkpoint <= 256; checkpoint++) {
+    const steps = parseApiContractSteps(input, artifact);
+    let done = false;
+    for (let advance = 0; advance < checkpoint; advance++) {
+      const next = steps.next();
+      if (next.done) {
+        expect(next.value).toEqual({ ok: true, value: complete });
+        done = true;
+        break;
+      }
+    }
+    if (done) {
+      reachedCompletion = true;
+      break;
+    }
+    const reason = { stage: "path-traversal", checkpoint };
+    const cancellation = new AnalysisCancelledError("inspect_api_contract", {
+      cause: reason,
+    });
+    const stopped = steps.throw(cancellation);
+    if (!stopped.done || stopped.value.ok)
+      throw new Error("Expected cancellation");
+    expect(stopped.value.error).toBe(cancellation);
+    expect(stopped.value.error.cause).toBe(reason);
+    if (cancellation.partialObservation === undefined) continue;
+    const partial = apiContractSchema.parse(cancellation.partialObservation);
+    expect(partial.artifact).toEqual(complete.artifact);
+    expect(partial.contract_id).toBe(complete.contract_id);
+    expect(partial.info).toEqual(complete.info);
+    expect(partial.operations).toEqual(
+      complete.operations.slice(0, partial.operations.length),
+    );
+    expect(partial.summary.operation_slots).toBe(partial.operations.length);
+    expect(partial.source_coverage.status).toBe("partial");
+    // Every actual yield precedes completion of the second (last) Path Item.
+    expect(partial.source_coverage.path_entries_examined).toBeLessThan(2);
+    expect(partial.source_coverage.path_entries_examined).toBeLessThanOrEqual(
+      partial.operations.length,
+    );
+    if (partial.source_coverage.path_entries_examined === 1) {
+      if (partial.operations.length === 1) observedCompletedFirstPath = true;
+      if (partial.operations.length === 2) observedMidPathCancellation = true;
+    }
+  }
+  expect(reachedCompletion).toBe(true);
+  expect(observedCompletedFirstPath).toBe(true);
+  expect(observedMidPathCancellation).toBe(true);
 });

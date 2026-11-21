@@ -35,6 +35,7 @@ it
     "zero height",
     "invalid chunk type",
     "invalid checksum",
+    "invalid truecolor depth",
     "truncated header",
     "valid",
   ] as const)(
@@ -49,6 +50,7 @@ it
     if (kind === "zero width") png.writeUInt32BE(0, 16);
     if (kind === "zero height") png.writeUInt32BE(0, 20);
     if (kind === "invalid chunk type") png[12] = 0xc9;
+    if (kind === "invalid truecolor depth") png[24] = 4;
     if (kind !== "invalid checksum")
       png.writeUInt32BE(crc32(png.subarray(12, 29)), 29);
     else png[29] = png[29]! ^ 0xff;
@@ -57,6 +59,7 @@ it
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'; exit 0; fi
 if [ "$1" = -s ] && [ "$3" = exec-out ]; then /bin/cat "$(dirname "$0")/frame.png"; exit 0; fi
 exit 1
@@ -97,8 +100,10 @@ exit 1
       expect(
         adbResultSchemas.capture_adb_screen.parse(output.normalized_result),
       ).toMatchObject({ width: 1, height: 1 });
-      expect(output.limitations).toContain(
-        "PNG signature, IHDR framing, checksum, and dimensions are validated; encoding and image contents are not validated",
+      expect(output.limitations).toContainEqual(
+        expect.stringMatching(
+          /PNG signature.*IHDR.*encoding fields.*validated.*pixel data.*undecoded/iu,
+        ),
       );
       expect(
         (await readFile(join(outputPath, "screen.png"))).equals(frame),
@@ -128,6 +133,7 @@ it.skipIf(process.platform === "win32").each([
   const adb = await workspace.write(
     "adb",
     `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 printf '%s\\n' "$3" >> "$root/calls"
 if [ "$1" = version ]; then
@@ -191,6 +197,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'; exit 0; fi
 if [ "$1" = -s ] && [ "$3" = shell ] && [ "$4" = test ]; then
@@ -225,16 +232,19 @@ exit 1
   },
 );
 
+const MISSING_ADB =
+  process.platform === "win32" ? "C:\\nonexistent\\adb" : "/nonexistent/adb";
+
 it.each([
   [
     ["inspect-adb-client", "--json"],
-    "/nonexistent/adb",
-    "The selected adb binary was not found: /nonexistent/adb. Set REA_ADB_PATH",
+    MISSING_ADB,
+    `The selected adb binary was not found: ${MISSING_ADB}. Set REA_ADB_PATH`,
   ],
   [
     ["list-adb-devices", "--json"],
-    "/nonexistent/adb",
-    "The selected adb binary was not found: /nonexistent/adb. Set REA_ADB_PATH",
+    MISSING_ADB,
+    `The selected adb binary was not found: ${MISSING_ADB}. Set REA_ADB_PATH`,
   ],
   [
     ["list-adb-devices", "--json"],
@@ -258,6 +268,7 @@ it.skipIf(process.platform === "win32")(
     const file = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
 `,
     );
@@ -272,6 +283,14 @@ printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
         result,
         `Execution of the selected adb binary was denied (EACCES): ${binary}. Set REA_ADB_PATH to an absolute path to the adb executable file, not a directory`,
       );
+      const { details } = JSON.parse(result.stdout) as {
+        details: { diagnostics: Record<string, unknown> };
+      };
+      expect(details.diagnostics).toMatchObject({
+        selected_binary: binary,
+        path_source: "environment",
+        filesystem_error: "EACCES",
+      });
     }
     // A parent component that is a file, a symlink loop and a missing path
     // fail before any process starts, so no exit code is reported.
@@ -395,7 +414,13 @@ it("retains safe structured constraints for ADB selectors", async () => {
       expected: "regex",
     },
     {
-      argv: ["start-adb-activity", "S", "x", "--component", "a".repeat(513)],
+      argv: [
+        "start-adb-activity",
+        "S",
+        "x",
+        "--component",
+        `${"a".repeat(256)}/${"b".repeat(256)}`,
+      ],
       path: "component",
       maximum: 512,
     },
@@ -408,6 +433,16 @@ it("retains safe structured constraints for ADB selectors", async () => {
       argv: ["start-adb-activity", "S", "x", "--data-uri", "a".repeat(2049)],
       path: "data-uri",
       maximum: 2048,
+    },
+    {
+      argv: ["read-adb-setting", "S", "system", "k".repeat(257)],
+      path: "key",
+      maximum: 256,
+    },
+    {
+      argv: ["read-adb-setting", "S", "system", "bad key"],
+      path: "key",
+      expected: "regex",
     },
   ];
   for (const { argv, path, expected, maximum } of cases) {
@@ -443,7 +478,7 @@ it("retains safe structured constraints for ADB selectors", async () => {
 });
 
 it.each(["string:key", ":", "string"])(
-  "classifies malformed activity extra %j before contacting adb",
+  "rejects a malformed activity extra %j before contacting adb",
   async (extra) => {
     const result = await serve(
       [
@@ -458,15 +493,11 @@ it.each(["string:key", ":", "string"])(
       { REA_ADB_PATH: "/path/that/does/not/exist" },
     );
 
-    const error = JSON.parse(result.stdout);
-    expect(error).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-      retryable: false,
-      remediation: { action: expect.any(String) },
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "VALIDATION_ERROR",
     });
-    expect(error.remediation.action).not.toBe("");
-    expect(error.message).not.toBe("");
+    expect(result.stdout).not.toContain("Android Debug Bridge");
   },
 );
 
@@ -527,6 +558,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
   exit 0
@@ -568,24 +600,32 @@ exit 1
 );
 
 it.each([
-  ["bogus:key:value", "invalid_request"],
+  ["bogus:key:value", "VALIDATION_ERROR"],
   ["string:key:value", "capability_unavailable"],
   ["string:key:", "capability_unavailable"],
-  ["int:key:", "invalid_request"],
-  ["boolean:key:yes", "invalid_request"],
-  ["int:key:1.5", "invalid_request"],
-  ["long:key:1.5", "invalid_request"],
-  ["float:key:garbage", "invalid_request"],
+  ["int:key:", "VALIDATION_ERROR"],
+  ["boolean:key:yes", "VALIDATION_ERROR"],
+  ["int:key:1.5", "VALIDATION_ERROR"],
+  ["long:key:1.5", "VALIDATION_ERROR"],
+  ["float:key:garbage", "VALIDATION_ERROR"],
   ["float:key:1e-3", "capability_unavailable"],
   ["float:key:1E-3", "capability_unavailable"],
   ["float:key:.5", "capability_unavailable"],
   ["float:key:1.", "capability_unavailable"],
   ["boolean:key:false", "capability_unavailable"],
   ["int:key:-3", "capability_unavailable"],
+  ["int:key:2147483647", "capability_unavailable"],
+  ["int:key:2147483648", "VALIDATION_ERROR"],
+  ["int:key:-2147483648", "capability_unavailable"],
+  ["int:key:-2147483649", "VALIDATION_ERROR"],
+  ["long:key:9223372036854775807", "capability_unavailable"],
+  ["long:key:9223372036854775808", "VALIDATION_ERROR"],
+  ["long:key:-9223372036854775808", "capability_unavailable"],
+  ["long:key:-9223372036854775809", "VALIDATION_ERROR"],
   ["long:key:9007199254740993", "capability_unavailable"],
   ["float:key:-1.25", "capability_unavailable"],
 ] as const)(
-  "preserves downstream validation for well-delimited activity extra %j",
+  "admits an activity extra with the runtime contract before contacting adb: %j",
   async (extra, code) => {
     const result = await serve(
       [
@@ -613,6 +653,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 printf '%s\\n' "$*" >> "$root/calls"
 if [ "$1" = version ]; then
@@ -745,6 +786,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = "version" ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\nInstalled as %s\\n' "$0"
   exit 0
@@ -771,5 +813,44 @@ exit 0
     });
     await expect(readFile(workspace.path("invoked"))).rejects.toThrow();
     await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves exact transport identity through CLI JSON projection",
+  async () => {
+    const workspace = await createTestWorkspace("rea-adb-identity-cli-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const line =
+      "exact-serial device model:Pixel transport_id:18446744073709551615";
+    const binary = await workspace.write(
+      "adb",
+      `#!${process.execPath}\nif(process.argv[2]==='version')process.stdout.write('Android Debug Bridge version 1.0.41\\nVersion 35.0.2-inert\\n');\nelse if(process.argv[2]==='start-server');\nelse if(process.argv[2]==='devices'&&process.argv[3]==='-l')process.stdout.write(${JSON.stringify(line + "\n")});\nelse throw Error('No other command authorized');\n`,
+    );
+    await chmod(binary, 0o755);
+    const result = await serve(["list-adb-devices", "--json"], {
+      REA_ADB_PATH: binary,
+    });
+    expect(result.exitCode).toBe(0);
+    const evidence = JSON.parse(result.stdout);
+    expect(evidence.normalized_result).toMatchObject({
+      devices: [
+        {
+          serial: "exact-serial",
+          model: "Pixel",
+          transport_id: null,
+          transport_id_text: "18446744073709551615",
+          transport_id_status: "reported",
+        },
+      ],
+    });
+    expect(evidence.raw_result).toMatchObject({
+      transport_id_observations: [
+        { source_line: line, source_token: "18446744073709551615" },
+      ],
+    });
+    expect(
+      toolContract("list_adb_devices").outputSchema.safeParse(evidence).success,
+    ).toBe(true);
   },
 );

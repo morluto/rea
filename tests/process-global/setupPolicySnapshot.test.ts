@@ -33,6 +33,7 @@ import {
   inspectClientConfiguration,
 } from "../../src/application/SetupClientConfiguration.js";
 import type { SetupClient } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 afterEach(() => {
@@ -47,6 +48,7 @@ it.each(["inspect", "configure"] as const)(
     const configPath = join(home, ".gemini", "settings.json");
     const client: SetupClient = {
       name: "gemini_cli",
+      registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
       configPath,
       format: "json",
       geminiSettings: {
@@ -81,7 +83,13 @@ it.each(["inspect", "configure"] as const)(
 it("rechecks registration ownership after preflight before creating any backup", async () => {
   const home = await createTestTempDirectory("rea-setup-ownership-recheck-");
   const configPath = join(home, "settings.json");
-  const client: SetupClient = { name: "test", configPath, format: "json" };
+  const client: SetupClient = {
+    name: "test",
+    // Source-only ownership fixture models Cursor JSON registration.
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    configPath,
+    format: "json",
+  };
   await writeFile(
     configPath,
     '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}',
@@ -121,6 +129,7 @@ it("blocks an inherited foreign row before planning creation of a missing write 
   );
   const client: SetupClient = {
     name: "opencode",
+    registrationProfile: supportedClientRegistrationProfile("opencode"),
     format: "opencode",
     configPath,
     configPaths: [lower, configPath],
@@ -145,6 +154,7 @@ it.each(["other", "rea"])(
     const configPath = join(home, "opencode.json");
     const client: SetupClient = {
       name: "opencode",
+      registrationProfile: supportedClientRegistrationProfile("opencode"),
       format: "opencode",
       configPath,
       configPaths: [lower, configPath],

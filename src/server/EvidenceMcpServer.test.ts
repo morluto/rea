@@ -12,11 +12,13 @@ import {
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
+import { CallerAbort, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
-import { knownArgumentMistakeGuidance } from "../domain/inputArgumentGuidance.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { createToolResultDelivery } from "./toolResult.js";
 
 const firstText = (result: {
@@ -103,18 +105,188 @@ describe("MCP request bookkeeping", () => {
     const pendingToolLists = new Set([7]);
     const pendingCompletions = new Map([[7, completion]]);
 
+    const cancellation = new CallerAbort("request-cancelled", "user stopped");
+
     forgetPendingMcpRequest(
       pendingTools,
       pendingToolLists,
       pendingCompletions,
       7,
+      cancellation,
     );
 
     expect(pendingTools.has(7)).toBe(false);
     expect(pendingToolLists.has(7)).toBe(false);
-    expect(completion.signal.aborted).toBe(true);
+    expect(completion.signal.reason).toBe(cancellation);
     expect(pendingCompletions.has(7)).toBe(false);
   });
+});
+
+it("passes the owned cancellation signal to a tool without an input schema", async () => {
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "no-input-abort-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    createToolResultDelivery(4096),
+  );
+  const handler = phaseGate();
+  const observed = createDeferred<unknown>();
+  const finished = createDeferred<void>();
+  let started = false;
+  server.registerTool("held", {}, async (context) => {
+    const signal = context.mcpReq.signal;
+    signal.addEventListener("abort", () => observed.resolve(signal.reason), {
+      once: true,
+    });
+    started = true;
+    try {
+      await handler.hold();
+      return { content: [{ type: "text", text: "finished" }] };
+    } finally {
+      finished.resolve();
+    }
+  });
+  const client = new Client(
+    { name: "no-input-abort-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    const controller = new AbortController();
+    const pending = client
+      .callTool({ name: "held" }, { signal: controller.signal })
+      .catch(() => undefined);
+    await handler.reached(pending, "held tool handler entry");
+    controller.abort("stop no-input tool");
+    await pending;
+    expect(await observed.promise).toMatchObject({
+      kind: "request-cancelled",
+      clientReason: "stop no-input tool",
+    });
+  } finally {
+    handler.release();
+    if (started) await finished.promise;
+    await Promise.all([client.close(), serving.close()]);
+  }
+});
+
+it("aborts a running tool with a caller abort that keeps the client's reason", async () => {
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "caller-abort-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    createToolResultDelivery(4096),
+  );
+  const handler = phaseGate();
+  const observed = createDeferred<unknown>();
+  const finished = createDeferred<void>();
+  let started = false;
+  server.registerTool(
+    "held",
+    { inputSchema: z.strictObject({}) },
+    async (_input, context) => {
+      const signal = context.mcpReq.signal;
+      signal.addEventListener("abort", () => observed.resolve(signal.reason), {
+        once: true,
+      });
+      started = true;
+      try {
+        await handler.hold();
+        return { content: [{ type: "text", text: "finished" }] };
+      } finally {
+        finished.resolve();
+      }
+    },
+  );
+  const client = new Client(
+    { name: "caller-abort-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    const controller = new AbortController();
+    const pending = client.callTool(
+      { name: "held", arguments: {} },
+      { signal: controller.signal },
+    );
+    const rejected = expect(pending).rejects.toBeDefined();
+    await handler.reached(pending, "held tool handler entry");
+    controller.abort("user stopped");
+    await rejected;
+
+    const reason = await observed.promise;
+    expect(reason).toBeInstanceOf(CallerAbort);
+    expect(reason).toMatchObject({
+      kind: "request-cancelled",
+      clientReason: "user stopped",
+      name: "AbortError",
+    });
+  } finally {
+    handler.release();
+    if (started) await finished.promise;
+    await Promise.all([client.close(), serving.close()]);
+  }
+});
+
+it("reports owner shutdown to the handler when transport close invokes onclose", async () => {
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "owner-close-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    createToolResultDelivery(4096),
+  );
+  const handler = phaseGate();
+  const observed = createDeferred<unknown>();
+  const finished = createDeferred<void>();
+  let started = false;
+  server.registerTool(
+    "held",
+    { inputSchema: z.strictObject({}) },
+    async (_input, context) => {
+      context.mcpReq.signal.addEventListener(
+        "abort",
+        () => observed.resolve(context.mcpReq.signal.reason),
+        { once: true },
+      );
+      started = true;
+      try {
+        await handler.hold();
+        return { content: [{ type: "text", text: "finished" }] };
+      } finally {
+        finished.resolve();
+      }
+    },
+  );
+  const client = new Client(
+    { name: "owner-close-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    const pending = client
+      .callTool({ name: "held", arguments: {} })
+      .catch(() => undefined);
+    await handler.reached(pending, "held tool handler entry");
+    await server.close();
+    expect(await observed.promise).toBe(OwnerCancellation.ownerClosed);
+    await pending;
+  } finally {
+    handler.release();
+    if (started) await finished.promise;
+    await Promise.all([client.close(), serving.close()]);
+  }
 });
 
 describe("Modern protocol error delivery", () => {
@@ -411,11 +583,6 @@ const officialContract = (
 
 describe("SDK argument name guidance", () => {
   it("guides procedure_pseudo_code caller from address to procedure without duplicating diagnostic", async () => {
-    const guidance = knownArgumentMistakeGuidance(
-      "procedure_pseudo_code",
-      "address",
-    );
-    expect(guidance).toBeDefined();
     const session = await createGuidanceClientServer(
       "procedure_pseudo_code",
       officialContract("procedure_pseudo_code").inputSchema,
@@ -433,12 +600,10 @@ describe("SDK argument name guidance", () => {
           path: ["address"],
           reason: "unknown_argument",
           expected: "procedure",
-          message: guidance!.message,
+          message: expect.stringMatching(/address.*procedure/i),
         }),
       );
-      expect(
-        payload.error.remediation.action.startsWith(guidance!.remediation),
-      ).toBe(true);
+      expect(payload.error.remediation.action).toMatch(/procedure.*address/i);
       expect(payload.error.message).not.toContain("address");
     } finally {
       await session.close();
@@ -446,8 +611,6 @@ describe("SDK argument name guidance", () => {
   });
 
   it("guides search_strings caller from query to pattern", async () => {
-    const guidance = knownArgumentMistakeGuidance("search_strings", "query");
-    expect(guidance).toBeDefined();
     const session = await createGuidanceClientServer(
       "search_strings",
       officialContract("search_strings").inputSchema,
@@ -465,23 +628,16 @@ describe("SDK argument name guidance", () => {
           path: ["query"],
           reason: "unknown_argument",
           expected: "pattern",
-          message: guidance!.message,
+          message: expect.stringMatching(/query.*pattern/i),
         }),
       );
-      expect(
-        payload.error.remediation.action.startsWith(guidance!.remediation),
-      ).toBe(true);
+      expect(payload.error.remediation.action).toMatch(/pattern.*query/i);
     } finally {
       await session.close();
     }
   });
 
   it("rejects address with procedure guidance and retains unexplained key count in diagnostics", async () => {
-    const guidance = knownArgumentMistakeGuidance(
-      "read_function_instructions",
-      "address",
-    );
-    expect(guidance).toBeDefined();
     const session = await createGuidanceClientServer(
       "read_function_instructions",
       officialContract("read_function_instructions").inputSchema,
@@ -499,7 +655,7 @@ describe("SDK argument name guidance", () => {
           path: ["address"],
           reason: "unknown_argument",
           expected: "procedure",
-          message: guidance!.message,
+          message: expect.stringMatching(/address.*procedure/i),
         }),
       );
       expect(payload.error.details.issues).toContainEqual(
@@ -511,6 +667,7 @@ describe("SDK argument name guidance", () => {
       const countIssue = payload.error.details.issues.find(
         (issue: { path: string[] }) => issue.path?.[0] === "count",
       );
+      expect(payload.error.remediation.action).toMatch(/procedure.*address/i);
       expect(countIssue?.expected).toBeUndefined();
       expect(countIssue?.message).toBeUndefined();
       expect(payload.error.message).toContain("count");

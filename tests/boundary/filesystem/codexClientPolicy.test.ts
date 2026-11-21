@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -16,6 +17,7 @@ import {
   codexToolPolicy,
   codexToolPolicySource,
 } from "../../fixtures/codexToolPolicy.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it.each(["tables", "inline table"] as const)(
   "preserves Codex %s policy and status through refresh",
@@ -25,10 +27,16 @@ it.each(["tables", "inline table"] as const)(
     await mkdir(dirname(configPath));
     const original = codexToolPolicySource(layout);
     await writeFile(configPath, original);
-    const client = { name: "codex", configPath, format: "toml" } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      configPath,
+      format: "toml",
+    } as const;
     const status = async () =>
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client }) => client === "codex");
@@ -40,7 +48,7 @@ it.each(["tables", "inline table"] as const)(
         currentClientRegistrationCommand(),
       ),
     ).toEqual({ status: "already_current" });
-    const overrides = { REA_MCP_INPUT_SCHEMA_PROFILE: "full" };
+    const overrides = { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" };
     expect(
       await configureClientConfiguration(
         client,
@@ -103,7 +111,12 @@ it.each([
       "",
     ].join("\n");
     await writeFile(configPath, original);
-    const client = { name: "codex", configPath, format: "toml" } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      configPath,
+      format: "toml",
+    } as const;
     const inspection = await inspectClientConfiguration(
       client,
       {},
@@ -121,6 +134,7 @@ it.each([
       ),
     ).toEqual({ status: "failed", reason: "readback" });
     const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     expect(statuses.find(({ client }) => client === "codex")).toMatchObject({
@@ -153,12 +167,14 @@ it.each([{ tools: ["binary_session"] }, { tools: ["*"] }, { tools: [] }])(
     await writeFile(configPath, original);
     const client = {
       name: "copilot_cli",
+      registrationProfile: supportedClientRegistrationProfile("copilot_cli"),
       configPath,
       format: "copilot_cli",
     } as const;
     const status = async () =>
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client }) => client === "copilot_cli");

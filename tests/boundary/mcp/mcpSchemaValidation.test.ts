@@ -1,5 +1,78 @@
-import { expect, it } from "vitest";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
+import { expect, it, vi } from "vitest";
+import {
+  createMcpSchemaValidation,
+  SHARED_COMPILED_VALIDATORS,
+} from "../../fixtures/mcpSchemaValidation.js";
+
+it("compiles a listed tool's validator only when it first validates", () => {
+  // The SDK requests a validator for every listed tool before its first call.
+  const compile = vi.spyOn(AjvJsonSchemaValidator.prototype, "getValidator");
+  const validation = createMcpSchemaValidation();
+  try {
+    const listed = [
+      { type: "string" },
+      { type: "integer" },
+      { type: "boolean" },
+    ];
+    const validators = listed.map((schema) => validation.getValidator(schema));
+    expect(compile).not.toHaveBeenCalled();
+    expect(validators[1]?.(7).valid).toBe(true);
+    expect(validators[1]?.("seven").valid).toBe(false);
+    expect(compile).toHaveBeenCalledTimes(1);
+  } finally {
+    compile.mockRestore();
+    validation.clear();
+  }
+});
+
+it("shares compiled validators across fixtures and evicts the least recently used", () => {
+  const compile = vi.spyOn(AjvJsonSchemaValidator.prototype, "getValidator");
+  const first = createMcpSchemaValidation();
+  const second = createMcpSchemaValidation();
+  // A per-test title keeps schemas compiled by other tests in this worker
+  // out of the shared cache counts.
+  const nonce = crypto.randomUUID();
+  const schema = (index: number) => ({
+    title: `${nonce}-${index}`,
+    type: "integer",
+  });
+  try {
+    expect(first.getValidator(schema(0))(1).valid).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(1);
+    // Another fixture, and the same fixture after clear(), reuse the result.
+    expect(second.getValidator(schema(0))("one").valid).toBe(false);
+    first.clear();
+    expect(first.getValidator(schema(0))(2).valid).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(1);
+
+    // Fill the remaining capacity, touch the oldest entry, then overflow:
+    // the least recently used entry (schema 1) goes, schema 0 stays.
+    for (let index = 1; index < SHARED_COMPILED_VALIDATORS; index += 1) {
+      expect(first.getValidator(schema(index))(index).valid).toBe(true);
+    }
+    expect(compile).toHaveBeenCalledTimes(SHARED_COMPILED_VALIDATORS);
+    // A fixture's own validator keeps its compiled function, so a new fixture
+    // is what reaches the shared cache again.
+    const touch = createMcpSchemaValidation();
+    expect(touch.getValidator(schema(0))(3).valid).toBe(true);
+    touch.clear();
+    expect(
+      second.getValidator(schema(SHARED_COMPILED_VALIDATORS))(4).valid,
+    ).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(SHARED_COMPILED_VALIDATORS + 1);
+    const fresh = createMcpSchemaValidation();
+    expect(fresh.getValidator(schema(0))(5).valid).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(SHARED_COMPILED_VALIDATORS + 1);
+    expect(fresh.getValidator(schema(1))(6).valid).toBe(true);
+    expect(compile).toHaveBeenCalledTimes(SHARED_COMPILED_VALIDATORS + 2);
+    fresh.clear();
+  } finally {
+    compile.mockRestore();
+    first.clear();
+    second.clear();
+  }
+});
 
 it("reuses equal schemas and recompiles changed schemas sharing an id", () => {
   const validation = createMcpSchemaValidation();

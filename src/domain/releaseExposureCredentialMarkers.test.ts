@@ -1,0 +1,78 @@
+import { describe, expect, it } from "vitest";
+
+import { scanCredentialMarkers } from "./releaseExposureCredentialMarkers.js";
+
+const PLANTED = "release-exposure-planted-secret-7c2e9a";
+const AWS_KEY = "AKIAPLANT9EXPOSUREXX";
+
+describe("release exposure credential markers", () => {
+  it("reports rule id and location without the matched bytes", () => {
+    const scan = scanCredentialMarkers(
+      [
+        "-----BEGIN PRIVATE KEY-----",
+        PLANTED,
+        "-----END PRIVATE KEY-----",
+        `token ${AWS_KEY}`,
+        "github_pat_11AAAAAABBBBCCCCDDDDEE",
+        "ordinary configuration",
+      ].join("\n"),
+      "resources/config.txt",
+    );
+    expect(scan.hits.map((hit) => hit.rule_id)).toEqual([
+      "pem.private_key",
+      "aws.access_key_id",
+      "github.fine_grained_pat",
+    ]);
+    expect(scan.hits.map((hit) => hit.line)).toEqual([1, 4, 5]);
+    const serialized = JSON.stringify(scan);
+    expect(serialized).not.toContain(PLANTED);
+    expect(serialized).not.toContain(AWS_KEY);
+    expect(serialized).not.toContain("github_pat_11AAAAAABBBBCCCCDDDDEE");
+    expect(serialized).not.toContain("BEGIN PRIVATE KEY");
+  });
+
+  it("counts hits past the storage cap without retaining them", () => {
+    const line = "npm_" + "a".repeat(36);
+    const scan = scanCredentialMarkers(
+      Array.from({ length: 40 }, () => line).join("\n"),
+      "tokens.txt",
+    );
+    expect(scan.hits).toHaveLength(32);
+    expect(scan.omitted_hits).toBe(8);
+    expect(JSON.stringify(scan)).not.toContain(line);
+  });
+});
+
+describe("release exposure credential marker boundaries", () => {
+  const GOOGLE_KEY = `AIza${"A".repeat(34)}-`;
+  const GITLAB_PAT = `glpat-${"a".repeat(19)}-`;
+  const SLACK_TOKEN = `xoxb-${"a".repeat(9)}-`;
+
+  const ruleIds = (text: string) =>
+    scanCredentialMarkers(text, "config.json").hits.map((hit) => hit.rule_id);
+
+  it.each([
+    ["google.api_key", GOOGLE_KEY],
+    ["gitlab.pat", GITLAB_PAT],
+    ["slack.token", SLACK_TOKEN],
+  ])("reports a %s that ends in a hyphen", (ruleId, token) => {
+    expect(ruleIds(JSON.stringify({ token }))).toEqual([ruleId]);
+    expect(ruleIds(`${token} next`)).toEqual([ruleId]);
+    expect(ruleIds(token)).toEqual([ruleId]);
+  });
+
+  it("reports a full-length GitHub refresh token", () => {
+    const refreshToken = `ghr_${"a".repeat(76)}`;
+    expect(ruleIds(JSON.stringify({ token: refreshToken }))).toEqual([
+      "github.refresh_token",
+    ]);
+    expect(ruleIds(`ghr_${"a".repeat(36)}`)).toEqual([]);
+    expect(ruleIds(`gho_${"a".repeat(36)}`)).toEqual(["github.token"]);
+  });
+
+  it("keeps a Google API key to its exact length", () => {
+    expect(ruleIds(`${GOOGLE_KEY}-`)).toEqual([]);
+    expect(ruleIds(`${GOOGLE_KEY}A`)).toEqual([]);
+    expect(ruleIds(`AIza${"A".repeat(35)}-suffix`)).toEqual([]);
+  });
+});

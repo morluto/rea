@@ -1,15 +1,15 @@
+import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const execute = promisify(execFile);
 const MARKER = "REA_TEST_RESOLVED ";
 // Dependencies and composition modules used by one command family; startup
 // must not resolve them just to register the complete command catalog.
@@ -56,11 +56,11 @@ const DEFERRED_IMPORTS = [
   },
   {
     name: "catalog-identity",
-    path: "/dist/catalogIdentity.js",
+    path: "/dist/contracts/catalog/catalogIdentity.js",
   },
   {
     name: "server-identity",
-    path: "/dist/serverIdentity.js",
+    path: "/dist/process/ServerIdentity.js",
   },
   {
     name: "tool-contracts",
@@ -161,10 +161,16 @@ const resolvedMarkers = (stderr: string): ReadonlySet<string> =>
 const resolvedPackages = async (
   arguments_: readonly string[],
 ): Promise<ReadonlySet<string>> => {
-  const { stderr } = await execute(
-    process.execPath,
-    [`--import=${RESOLUTION_HOOK}`, ...arguments_],
-    { cwd: process.cwd(), maxBuffer: 16 * 1_024 * 1_024 },
+  const commands = await createVerifierCommands();
+  onTestFinished(() => commands.close());
+  const { stderr } = await withVerifierCleanup(
+    () =>
+      commands.exec(
+        process.execPath,
+        [`--import=${RESOLUTION_HOOK}`, ...arguments_],
+        { cwd: process.cwd(), maxBuffer: 16 * 1_024 * 1_024, timeout: 15_000 },
+      ),
+    [() => commands.close()],
   );
   return resolvedMarkers(stderr);
 };
@@ -211,7 +217,7 @@ describe("CLI startup imports", () => {
     await expect(
       resolvedPackages(
         evaluate(
-          `const { readReferenceSourceVcs } = await import("./dist/application/ReferenceSourceVcsAdapter.js"); const { ArtifactResourceScope } = await import("./dist/artifacts/ArtifactResourceScope.js"); const resources = new ArtifactResourceScope(); try { await readReferenceSourceVcs(${JSON.stringify(source)}, resources); } finally { await resources.close(); }`,
+          `const { readReferenceSourceVcs } = await import("./dist/application/ReferenceSourceVcsAdapter.js"); const { ArtifactResourceScope } = await import("./dist/resources/ArtifactResourceScope.js"); const resources = new ArtifactResourceScope(); try { await readReferenceSourceVcs(${JSON.stringify(source)}, resources); } finally { await resources.close(); }`,
         ),
       ),
     ).resolves.toContain("isomorphic-git");
@@ -300,7 +306,10 @@ describe("MCP startup imports", () => {
     transport.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
-    const client = new Client({ name: "rea-startup-imports", version: "1" });
+    const client = new Client(
+      { name: "rea-startup-imports", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();

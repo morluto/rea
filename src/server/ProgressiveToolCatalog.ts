@@ -12,7 +12,7 @@ import {
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
   type CatalogIdentity,
-} from "../catalogDiscovery.js";
+} from "../contracts/catalog/catalogDiscovery.js";
 
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {
@@ -122,7 +122,9 @@ export class ProgressiveToolCatalog {
       })),
       next_step:
         selected.length === 0
-          ? "No matches. Try fewer or different task keywords, or browse without query."
+          ? matches.length === 0
+            ? "No matches. Try fewer or different task keywords, or browse without query."
+            : "No remaining matches at this offset. Use offset 0 to restart this query, or select an earlier offset."
           : "Call the returned tool by its original name using input_schema. Your client must refresh tools/list first; if it cannot, reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.",
     };
     // This reply borrows read-only SDK schema projections for synchronous
@@ -143,7 +145,7 @@ export class ProgressiveToolCatalog {
           },
           {
             remediationAction:
-              "Reduce limit or request fewer exact names, then retry. For one oversized input contract, reconnect with REA_MCP_INPUT_SCHEMA_PROFILE=compact.",
+              "Reduce limit or request fewer exact names, then retry.",
           },
         ),
         false,

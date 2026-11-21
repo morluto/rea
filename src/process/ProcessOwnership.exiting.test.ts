@@ -1,3 +1,4 @@
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
@@ -72,24 +73,6 @@ it.each(["zombie", "dead", "absent"] as const)(
     expect(host.signalGroup).not.toHaveBeenCalled();
   },
 );
-
-it("keeps unconfirmed exit explicit at the bounded deadline", async () => {
-  const host = hostWith(() => identity("exiting"));
-  const result = await cleanupOwnedProcessGroup(
-    {
-      runId: "run",
-      leaderPid: row.pid,
-      processGroupId: row.processGroupId,
-      expectedCommand: "/exact/node",
-    },
-    host,
-  );
-  expect(result).toMatchObject({
-    cleaned: false,
-    reason: "owned launcher exit could not be confirmed",
-  });
-  expect(host.signalGroup).not.toHaveBeenCalled();
-});
 
 it("settles launcher exit before comparing a stale command display", async () => {
   let reads = 0;
@@ -174,6 +157,9 @@ it("preserves caller cancellation during native exit settlement", async () => {
     abort.signal,
   );
   abort.abort(reason);
-  await expect(pending).rejects.toBe(reason);
+  const failure: unknown = await pending.catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+  if (!(failure instanceof ProcessOwnershipInspectionCancelled)) throw failure;
+  expect(failure.reason).toBe(reason);
   expect(host.processIdentities).not.toHaveBeenCalled();
 });

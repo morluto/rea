@@ -20,9 +20,11 @@ import {
   withSigningBlock,
   zipWith,
 } from "../../tests/fixtures/apkSignature/v1SignatureBlock.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { apkSignatureResultSchema } from "../domain/apkSignature/apkSignatureReport.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
+import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
 import { apkSignatureFailure } from "./apkSignatureFailures.js";
 import { apkSchemeValue } from "../../tests/fixtures/apkSignature/signingScheme.js";
 
@@ -303,8 +305,10 @@ describe("ApkSignatureProvider v1 signers", () => {
     if (!result.ok) throw new Error(result.error.message);
     const report = apkSignatureResultSchema.parse(result.value.result);
     expect(report.posture.v1_signers_match_block_signers).toBeNull();
-    expect(result.value.limitations).toContain(
-      "v1_signers_match_block_signers is null: the v3 signer's declared rotation lineage could not be decoded, so the original certificate v1 is expected to carry is unknown.",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /v3.*rotation lineage.*could not be decoded.*original certificate.*unknown/iu,
+      ),
     );
   });
 
@@ -382,10 +386,16 @@ describe("ApkSignatureProvider v1 signers", () => {
     const result = await provider.inspect({
       path: await write("v1-many.apk", await zipWith(names)),
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-    expect(result.error.message).toContain("more than 32 v1 signature blocks");
+    if (result.ok)
+      throw new Error("Accepted an archive above the v1 signer limit");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reported_limits: { max_v1_signers: 32 },
+        refusal: { kind: "fixed_ceiling", allowance_kind: "count" },
+      },
+    });
   });
 });
 
@@ -595,10 +605,21 @@ const registerSigningStructureFailureCases = () => {
     const result = await provider.inspect({
       path: await write("huge.apk", syntheticSigned([{ id: V2, value }])),
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-    expect(result.error.message).toContain("output budget");
+    if (result.ok)
+      throw new Error("Accepted a report above the projection limit");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reported_limits: { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "report",
+          limit: APK_SIGNATURE_LIMITS.outputBytes,
+          unit: "bytes",
+        },
+      },
+    });
   });
 };
 

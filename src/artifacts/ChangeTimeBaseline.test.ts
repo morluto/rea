@@ -2,10 +2,8 @@ import type { Stats } from "node:fs";
 
 import { expect, it } from "vitest";
 
-import {
-  changeTimeMayStillDrift,
-  settleChangeTimeBaseline,
-} from "../filesystem/ChangeTimeBaseline.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import { settleChangeTimeBaseline } from "../filesystem/ChangeTimeBaseline.js";
 
 const DRIFT_MS = 2_000;
 
@@ -85,13 +83,20 @@ it("exits on the window closing rather than on a repeated value", async () => {
   expect(seams.sleeps.length).toBe(2);
 });
 
-it("settles an unreadable ChangeTime rather than trusting it", () => {
-  expect(
-    changeTimeMayStillDrift(statsAt(Number.NaN), { platform: "win32" }),
-  ).toBe(true);
-  expect(
-    changeTimeMayStillDrift(statsAt(Number.NaN), { platform: "linux" }),
-  ).toBe(false);
+it("re-observes an unreadable Windows ChangeTime but does not wait on other hosts", async () => {
+  const windows = scriptedRead([Number.NaN, 1_000]);
+  const seams = advancingSeams(5_000, 100);
+  const settled = await settleChangeTimeBaseline(windows.read, seams);
+  expect(settled.ctimeMs).toBe(1_000);
+  expect(windows.reads()).toBe(2);
+  expect(seams.sleeps).toHaveLength(1);
+
+  const linux = scriptedRead([Number.NaN, 1_000]);
+  const unreadable = await settleChangeTimeBaseline(linux.read, {
+    platform: "linux",
+  });
+  expect(unreadable.ctimeMs).toBeNaN();
+  expect(linux.reads()).toBe(1);
 });
 
 it("gives up settling instead of stalling admission forever", async () => {
@@ -224,4 +229,73 @@ it("throws the caller's typed cancellation rather than the raw reason", async ()
       cancellationError: (reason) => new Cancelled(String(reason)),
     }),
   ).rejects.toBeInstanceOf(Cancelled);
+});
+
+it("uses a Windows settle override before rejecting an invalid launch seed", async () => {
+  const delays: number[] = [];
+  let reads = 0;
+  const observed = await runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "windows.change_time_drift_ms": 50,
+        "windows.change_time_settle_poll_ms": 10,
+        "windows.change_time_settle_max_polls": 4,
+      },
+    },
+    () =>
+      settleChangeTimeBaseline(
+        async () => {
+          reads += 1;
+          return statsAt(1_000);
+        },
+        {
+          now: () => 1_010,
+          sleep: async (delay) => {
+            delays.push(delay);
+          },
+          environment: {
+            REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "nope",
+            REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "0",
+            REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "1001",
+          },
+          platform: "win32",
+        },
+      ),
+  );
+  expect(observed.ctimeMs).toBe(1_000);
+  expect(reads).toBe(5);
+  expect(delays).toEqual([10, 10, 10, 10]);
+});
+
+it("does not consume Windows limits on other hosts and preserves cancellation during the read", async () => {
+  const controller = new AbortController();
+  const reason = new Error("cancelled during baseline read");
+  await expect(
+    settleChangeTimeBaseline(
+      async () => {
+        controller.abort(reason);
+        return statsAt(1_000);
+      },
+      {
+        platform: "linux",
+        environment: { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "invalid" },
+        signal: controller.signal,
+      },
+    ),
+  ).rejects.toBe(reason);
+});
+
+it("preserves cancellation during a Windows read even when the timestamp is stable", async () => {
+  const controller = new AbortController();
+  const reason = new Error("cancelled during read");
+  await expect(
+    settleChangeTimeBaseline(
+      async () => {
+        controller.abort(reason);
+        return statsAt(1);
+      },
+      { platform: "win32", now: () => 10000, signal: controller.signal },
+    ),
+  ).rejects.toBe(reason);
 });

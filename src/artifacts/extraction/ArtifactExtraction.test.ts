@@ -5,12 +5,14 @@ import { createHash } from "node:crypto";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { openRegularFile } from "../../filesystem/RegularFile.js";
-import { ZipArtifactReader } from "../ZipArtifactReader.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import {
+  ZipArtifactReader,
+  DirectoryArtifactReader,
+} from "../../resources/index.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { asarHeaderBytes } from "../../../tests/fixtures/asarHeader.js";
 import { extractArtifact } from "./ArtifactExtraction.js";

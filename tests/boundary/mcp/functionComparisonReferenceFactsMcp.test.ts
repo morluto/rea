@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import type { NativeSymbolMetadata } from "../../../src/domain/native/nativeSymbol.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -20,6 +21,7 @@ import { functionDossierSchema } from "../../../src/domain/native/functionDossie
 import { reconstructionVerificationResultSchema } from "../../../src/domain/reconstructionVerificationSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const example = FUNCTION_COMPARISON_EXAMPLE.left;
 const dossier = functionDossierSchema.parse(example.normalized_result);
@@ -170,7 +172,13 @@ const evidence = (
       },
       confidence: "derived",
       authority: "shipped-artifact",
-      relationshipCoverage: { status: "complete" },
+      relationshipCoverage: {
+        status: "complete",
+        discovery: {
+          callers: { status: "complete" },
+          callees: { status: "complete" },
+        },
+      },
     },
   );
 
@@ -1027,7 +1035,10 @@ it("distinguishes same-entry renames from different entries through retained MCP
     name: "comparison-schema",
     version: "1",
   });
-  const schemaClient = new Client({ name: "comparison-schema", version: "1" });
+  const schemaClient = new Client(
+    { name: "comparison-schema", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -1047,11 +1058,9 @@ it("distinguishes same-entry renames from different entries through retained MCP
   const advertised = (await schemaClient.listTools()).tools.find(
     ({ name }) => name === "compare_functions",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("compare_functions output schema is missing");
-  const outputSchema = z
-    .record(z.string(), z.unknown())
-    .parse(advertised.outputSchema);
+  const outputSchema = canonicalOutputSchema(advertised.name);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const validate = ajv.compile(outputSchema);

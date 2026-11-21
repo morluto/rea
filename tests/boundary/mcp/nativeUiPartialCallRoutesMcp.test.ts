@@ -4,9 +4,9 @@ import { z } from "zod";
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -22,6 +22,7 @@ import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const identity = { id: "typed", name: "Typed provider", version: "1" };
 const fallback = { id: "fallback", name: "Fallback provider", version: "1" };
@@ -227,7 +228,10 @@ function publicTrace(plan: Plan, maxNodes = 12, maxEdges = 500) {
     },
   };
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "native-ui-partial-routes", version: "1" });
+  const client = new Client(
+    { name: "native-ui-partial-routes", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push({
@@ -409,8 +413,8 @@ it.each(["unavailable", "output"] as const)(
         resolution: "unresolved",
         reason:
           failure === "unavailable"
-            ? "This analysis is unavailable for the current target. Choose another analysis or target."
-            : expect.stringContaining("unreadable result"),
+            ? expect.stringMatching(/unavailable.*target/iu)
+            : expect.stringContaining("result REA could not read"),
         limitations: expect.arrayContaining([
           "The provider could not complete callee enumeration.",
         ]),
@@ -767,7 +771,7 @@ it("reports malformed partial CallReference as unreadable route evidence", async
     expect.objectContaining({
       relation: "provider_call",
       resolution: "unresolved",
-      reason: expect.stringContaining("unreadable result"),
+      reason: expect.stringContaining("result REA could not read"),
     }),
   );
 });

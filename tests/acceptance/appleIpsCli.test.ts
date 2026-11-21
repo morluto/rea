@@ -29,7 +29,6 @@ cliTest(
         "--json",
       ],
       environment: { NODE_OPTIONS: "--max-old-space-size=256" },
-      timeoutMs: 30000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = toolContract("inspect_apple_ips").outputSchema.parse(
@@ -44,7 +43,6 @@ cliTest(
     ).toBe(createHash("sha256").update(name).digest("hex"));
     expect(evidence.normalized_result.coverage.status).toBe("complete");
   },
-  45000,
 );
 
 cliTest(

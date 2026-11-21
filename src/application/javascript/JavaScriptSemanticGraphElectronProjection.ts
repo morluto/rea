@@ -7,6 +7,7 @@ import {
   type SemanticGraphProjectionState,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { inferredSemanticEvidenceAt } from "./JavaScriptSemanticGraphEvidence.js";
+import { ELECTRON_CANDIDATE_LIMITATION } from "./ElectronBoundaryGraphContext.js";
 
 /** Give discovered process-boundary paths budget before bulk library definitions. */
 export function* projectElectronSemanticCallPaths(
@@ -20,6 +21,18 @@ export function* projectElectronSemanticCallPaths(
     let previous: ReturnType<typeof retainSemanticGraphNode> = null;
     let previousKind: ElectronCallPath["steps"][number]["kind"] | undefined;
     for (const [index, step] of path.steps.entries()) {
+      const inferred = inferredSemanticEvidenceAt(file, step.location);
+      const candidateEvidence =
+        path.loader_authority === "candidate"
+          ? {
+              ...inferred,
+              confidence: "low" as const,
+              limitations: [
+                ...inferred.limitations,
+                ELECTRON_CANDIDATE_LIMITATION,
+              ],
+            }
+          : undefined;
       const node = retainSemanticGraphNode(state, file, {
         kind:
           step.kind === "function"
@@ -31,6 +44,9 @@ export function* projectElectronSemanticCallPaths(
         location: step.location,
         label: step.label,
         functionNodeId: null,
+        ...(candidateEvidence === undefined
+          ? {}
+          : { evidence: candidateEvidence }),
         properties: {
           path_id: pathId,
           entry: path.entry,
@@ -39,6 +55,9 @@ export function* projectElectronSemanticCallPaths(
             : { entry_path: [...path.entry_path] }),
           channel: path.channel,
           terminal: path.terminal,
+          ...(path.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
           step_kind: step.kind,
           resolution: "candidate",
           conditions: path.conditions.map((c) => ({
@@ -61,7 +80,7 @@ export function* projectElectronSemanticCallPaths(
               ? "aliases"
               : "calls",
         resolution: "candidate",
-        evidence: inferredSemanticEvidenceAt(file, step.location),
+        evidence: candidateEvidence ?? inferred,
         properties: {
           path_id: pathId,
           entry: path.entry,
@@ -70,6 +89,9 @@ export function* projectElectronSemanticCallPaths(
             : { entry_path: [...path.entry_path] }),
           channel: path.channel,
           basis: "lexical-wrapper-substitution",
+          ...(path.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
         },
       });
       previous = node;

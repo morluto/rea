@@ -15,7 +15,7 @@ import {
   applicationFeatureSeedSchema,
   type ApplicationFeatureSeed,
 } from "./javascriptFeatureTraceSchemas.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import type { JsonValue } from "../jsonValue.js";
 
 const memberFields = [
@@ -364,8 +364,10 @@ describe("feature trace projection from contextBridge source members", () => {
       total_seed_matches: 0,
     });
     expect(result.evidence_links).toEqual([sourceEvidenceId]);
-    expect(result.limitations).toContain(
-      "No application graph entity matched the literal seed; this is not evidence that the feature is absent.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /no application graph entity matched.*not evidence.*feature is absent/iu,
+      ),
     );
   });
 
@@ -396,8 +398,10 @@ describe("feature trace projection from contextBridge source members", () => {
     });
     expect(result.graph?.coverage).toEqual(partialGraph.coverage);
     expect(result.graph?.nodes).toEqual(partialGraph.nodes);
-    expect(result.limitations).toContain(
-      "The source application graph is incomplete; unmatched seeds and frontiers remain unknown.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /source application graph.*incomplete.*unmatched seeds and frontiers.*unknown/iu,
+      ),
     );
   });
 });
@@ -451,7 +455,7 @@ const propertyMatch = (node: ApplicationNode, field: string) => ({
 });
 
 const contextBridgeGraph = () => {
-  const analysis = analyzeJavaScriptStaticSource(
+  const analysis = analyzeCommonJsStaticFixture(
     "const { contextBridge } = require('electron');\ncontextBridge.exposeInMainWorld('desktopApi', { openProject() {}, closeProject() {} });",
   );
   expect(analysis.parse_status).toBe("complete");

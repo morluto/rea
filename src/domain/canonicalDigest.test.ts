@@ -59,21 +59,17 @@ describe("incremental canonical digest", () => {
       [Number.NaN, "nan"],
       [Number.POSITIVE_INFINITY, "infinity"],
       [Number.NEGATIVE_INFINITY, "infinity"],
+      [cyclic, "circular"],
+      [recursiveJson, "circular"],
     ] as const) {
-      expect(() => digestCanonicalValue(value)).toThrow(CanonicalDigestError);
+      let failure: unknown;
       try {
         digestCanonicalValue(value);
       } catch (cause) {
-        expect(cause).toMatchObject({ _tag: "CanonicalDigestError", code });
+        failure = cause;
       }
-    }
-    for (const value of [cyclic, recursiveJson]) {
-      expect(() => digestCanonicalValue(value)).toThrow(CanonicalDigestError);
-      try {
-        digestCanonicalValue(value);
-      } catch (cause) {
-        expect(cause).toMatchObject({ code: "circular" });
-      }
+      expect(failure).toBeInstanceOf(CanonicalDigestError);
+      expect(failure).toMatchObject({ _tag: "CanonicalDigestError", code });
     }
     expect(() => digestCanonicalValue(1n)).toThrow();
   });

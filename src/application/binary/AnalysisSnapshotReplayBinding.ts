@@ -1,4 +1,5 @@
 import type { Evidence } from "../../domain/evidence.js";
+import { createInvestigationEvidenceClosureChecker } from "../investigation/InvestigationEvidence.js";
 
 /** Authenticated observation identity and its immediate source records. */
 export interface SnapshotReplayBinding {
@@ -9,11 +10,15 @@ export interface SnapshotReplayBinding {
 /** Preserve direct links using the snapshot's authenticated immutable records. */
 export const snapshotReplayBinding = (
   evidence: Evidence,
-  records: ReadonlyMap<string, Evidence>,
+  lookup: (id: string) => Evidence | undefined,
+  checkClosure = createInvestigationEvidenceClosureChecker({
+    evidenceForAnalysis: lookup,
+  }),
 ): SnapshotReplayBinding | null => {
+  if (!checkClosure(evidence.evidence_links)) return null;
   const sources: Evidence[] = [];
   for (const id of evidence.evidence_links) {
-    const source = records.get(id);
+    const source = lookup(id);
     // An external link without its source cannot be represented by sourceEvidence.
     if (source === undefined) return null;
     sources.push(source);

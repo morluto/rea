@@ -18,11 +18,11 @@ processTest.skipIf(process.platform === "win32")(
         import.meta.url,
       ),
     );
-    const result = await processes.run(
-      process.execPath,
-      [probe, readerModule, root],
-      { timeoutMs: 3_000 },
-    );
+    const result = await processes.run(process.execPath, [
+      probe,
+      readerModule,
+      root,
+    ]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe("changed");
   },

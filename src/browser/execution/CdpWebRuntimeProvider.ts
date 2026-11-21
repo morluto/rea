@@ -1,13 +1,13 @@
 import { z } from "zod";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import type { WebRuntimePort } from "../../application/WebRuntimePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { WebRuntimePort } from "../../ports/WebRuntimePort.js";
 import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -123,8 +123,7 @@ export class CdpWebRuntimeProvider implements WebRuntimePort {
           result.ok
             ? options.signal?.aborted === true
               ? analysisErrorWithCleanupFailure(
-                  new AnalysisCancelledError(operation, {
-                    cause: options.signal.reason,
+                  cancelledBy(operation, options.signal, {
                     partialObservation: result.value,
                   }),
                   failure,
@@ -137,8 +136,7 @@ export class CdpWebRuntimeProvider implements WebRuntimePort {
     const completed = result.ok ? ok(confirmCleanup(result.value)) : result;
     if (completed.ok && options.signal?.aborted === true)
       return err(
-        new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
+        cancelledBy(operation, options.signal, {
           partialObservation: completed.value,
         }),
       );

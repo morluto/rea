@@ -16,10 +16,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { parseConfig } from "../../src/config/parseConfig.js";
-import { classifyBinaryTargetFilesystemFailure } from "../../src/application/BinaryTargetResolver.js";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
 import { runProviderAnalysis } from "../../src/application/DirectAnalysis.js";
+import { classifyBinaryTargetFilesystemFailure } from "../../src/domain/binaryTargetFilesystemFailure.js";
 
 afterEach(() => statFailures.clear());
 

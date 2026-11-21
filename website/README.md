@@ -10,9 +10,9 @@ English sources are in `website/public/`; translations are standard gettext PO
 catalogs in `website/locales/`. The site uses HTML, CSS and small
 scripts for copying code, following code comparisons and playing the dinosaur
 speed reconstruction. Small Python commands maintain shared HTML, prepare
-downloads and check the site. There is no frontend framework, bundler or npm
-dependency. A build generates all editions in `website/_site/`. The resulting
-files work as ordinary static files; language switching needs no JavaScript.
+downloads and check the site. The site uses ordinary static files without a
+frontend framework or bundler. A build generates all editions in
+`website/_site/`. Language switching needs no JavaScript.
 
 Korean editions load the variable Noto Sans KR webfont through Google Fonts
 (`fonts.googleapis.com` and `fonts.gstatic.com`) so the preferred Korean font
@@ -26,12 +26,15 @@ visual system and review process. Read it before adding or revising a page.
 
 ## Local preview
 
-From the repository root:
+From the repository root, use the Node.js version pinned in `.nvmrc`.
+Preparing and checking the site uses the repository's locked YAML parser
+without building the REA package.
 
 ```sh
 python3 -m venv website/.venv
 source website/.venv/bin/activate
 python3 -m pip install -r website/requirements.txt
+npm ci --omit=dev --ignore-scripts
 python3 scripts/website.py serve
 ```
 
@@ -161,7 +164,7 @@ This network audit runs separately so third-party uptime does not block every PR
 Keep its report outside public assets.
 
 Links are only part of a content review. When updating setup or support claims,
-compare them with [installation.md](../docs/installation.md), the relevant
+compare them with [installation.md](../docs/getting-started/installation.md), the relevant
 provider guide and the released package. A case study's pinned version and date
 describe its recorded investigation; update them only when repeating that work.
 
@@ -494,8 +497,10 @@ It generates these public files in ignored `_site/`:
 - `.well-known/agent-skills/index.json`: the draft v0.2.0 skills discovery index.
   Its archive contains the maintained
   `.agents/skills/reverse-engineer-anything/SKILL.md` and Markdown references.
-  The name and description come from YAML frontmatter; SHA-256 covers the
-  complete, reproducible ZIP, so reference changes invalidate the digest too.
+  The name and description come from the same authored manifest reader used
+  during packaging. The website archives the original manifest as it appears in
+  the repository. SHA-256 covers the complete, reproducible ZIP, so reference
+  changes invalidate the digest too.
 - `.well-known/ard.json`: an ARD manifest with representative analyst queries.
 - `.well-known/ai-catalog.json`: an AI Catalog 1.0 document listing that same
   downloadable skill. These advertise installation instructions for the local

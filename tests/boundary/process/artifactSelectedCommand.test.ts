@@ -1,3 +1,5 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import { SIMULATED_LINUX_X64 } from "../../fixtures/simulatedHost.js";
 import {
   chmod,
   mkdir,
@@ -7,6 +9,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
+import { createArtifactAnalysisResources } from "../../../src/providers/artifactResourceFailure.js";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
@@ -30,10 +33,11 @@ import { PacketCaptureService } from "../../../src/application/captures/PacketCa
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import type { LinuxResourceLimits } from "../../../src/process/LinuxResourceLimits.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 // Real children and filesystem, with simulated Linux admission/limits. These
 // scripts do not establish native TShark, sigrok or prlimit behavior.
@@ -181,14 +185,6 @@ const createSelectedEngineFixture = async (
     input,
     kind === "firmware" ? "fixture-input-data" : "module.exports = 42;",
   );
-  const platform = Object.getOwnPropertyDescriptor(process, "platform");
-  const arch = Object.getOwnPropertyDescriptor(process, "arch");
-  if (platform === undefined || arch === undefined)
-    throw new Error("Missing host descriptors");
-  const restoreHost = () => {
-    Object.defineProperty(process, "platform", platform);
-    Object.defineProperty(process, "arch", arch);
-  };
   const launches: {
     cwd?: string;
     pid?: number;
@@ -204,7 +200,6 @@ const createSelectedEngineFixture = async (
     REA_SELECTED_ENVIRONMENT: "initial",
   };
   const launcher: typeof spawnOwnedProviderProcess = async (options) => {
-    restoreHost();
     const child = await spawnOwnedProviderProcess(options);
     launches.push({
       command: options.command,
@@ -221,12 +216,13 @@ const createSelectedEngineFixture = async (
   onTestFinished(() => fileSizeCeiling.mockRestore());
   const service =
     kind === "firmware"
-      ? new FirmwareAnalysisService(new FirmwareProvider(environment, launcher))
+      ? new FirmwareAnalysisService(
+          new FirmwareProvider(environment, launcher, SIMULATED_LINUX_X64),
+        )
       : new JavaScriptRecoveryService(
-          new WakaruProvider(environment, launcher),
+          new WakaruProvider(environment, launcher, SIMULATED_LINUX_X64),
         );
   onTestFinished(async () => {
-    restoreHost();
     await service.close();
     for (const launch of launches) {
       if (launch.pid !== undefined)
@@ -238,23 +234,13 @@ const createSelectedEngineFixture = async (
     }
   });
   let sequence = 0;
-  const execute = async () => {
-    Object.defineProperty(process, "platform", {
-      ...platform,
-      value: "linux",
-    });
-    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
-    try {
-      return service instanceof FirmwareAnalysisService
-        ? await service.execute("inspect_firmware_regions", { path: input })
-        : await service.recover({
-            path: input,
-            output_directory: join(directory, `output-${sequence++}`),
-          });
-    } finally {
-      restoreHost();
-    }
-  };
+  const execute = async () =>
+    service instanceof FirmwareAnalysisService
+      ? service.execute("inspect_firmware_regions", { path: input })
+      : service.recover({
+          path: input,
+          output_directory: join(directory, `output-${sequence++}`),
+        });
   return {
     bin,
     command,
@@ -456,7 +442,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(replacement, script, { mode: 0o755 });
     await symlink(physical, selected);
     await writeFile(`${selected}.role`, "limiter");
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "pcap",
       "inspect_pcap_capture",
       readStableArtifact,
@@ -464,31 +450,21 @@ it.skipIf(process.platform === "win32")(
       { message: "busy", details: {} },
     );
     onTestFinished(() => resources.close());
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    if (platform === undefined) throw new Error("Missing host descriptor");
-    let prepared: Awaited<ReturnType<typeof preparePcapNativeBound>>;
-    try {
-      Object.defineProperty(process, "platform", {
-        ...platform,
-        value: "linux",
-      });
-      prepared = await preparePcapNativeBound(
-        { REA_TSHARK_PRLIMIT_COMMAND: selected },
-        resources,
-        async (_selected, args) => {
-          const stdout =
-            args[0] === "--help"
-              ? " --as[=limit] --fsize[=limit] --cpu[=limit] --core[=limit]"
-              : "prlimit from util-linux 2.38.1";
-          return {
-            stdout,
-            capturedOutput: { stdout, stderr: "", truncated: false },
-          };
-        },
-      );
-    } finally {
-      Object.defineProperty(process, "platform", platform);
-    }
+    const prepared = await preparePcapNativeBound(
+      "linux",
+      { REA_TSHARK_PRLIMIT_COMMAND: selected },
+      resources,
+      async (_selected, args) => {
+        const stdout =
+          args[0] === "--help"
+            ? " --as[=limit] --fsize[=limit] --cpu[=limit] --core[=limit]"
+            : "prlimit from util-linux 2.38.1";
+        return {
+          stdout,
+          capturedOutput: { stdout, stderr: "", truncated: false },
+        };
+      },
+    );
     let refuseCleanup = false;
     let retained: ProviderProcessSupervisor | undefined;
     onTestFinished(async () => {
@@ -498,6 +474,7 @@ it.skipIf(process.platform === "win32")(
     const execute = () =>
       runPcapCommand({
         operation: "inspect_pcap_capture",
+        platform: HOST_PLATFORM.platform,
         command: "/bin/echo",
         arguments: ["selected limiter"],
         limits: { timeoutMs: 10_000, maxOutputBytes: 1024 },
@@ -551,6 +528,6 @@ it.skipIf(process.platform === "win32")(
     await expect(retained?.stop()).resolves.toMatchObject({
       status: "verified-cleanup",
     });
-    expect(failed.resolveCleanup().cleanupIncomplete).toBe(false);
+    expect(releaseOwnedCleanup(failed).cleanupIncomplete).toBe(false);
   },
 );

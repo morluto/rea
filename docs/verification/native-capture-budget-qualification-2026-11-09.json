@@ -1,0 +1,168 @@
+{
+  "schema": "rea-native-budget-qualification/v1",
+  "date": "2026-11-09",
+  "host": "macOS 26.3 arm64",
+  "node": "24.22.1",
+  "scope": "Real application service/provider boundaries, not public MCP/CLI recovery. Controlled owned fixtures only.",
+  "frida": {
+    "package_version": "17.23.2",
+    "cases": [
+      {
+        "session_bytes": 1,
+        "messages": [],
+        "messages_truncated": true,
+        "effective_limits": {
+          "session_bytes": 1,
+          "message_type_bytes": 4096,
+          "message_text_bytes": 32768,
+          "json_nodes": 250000,
+          "json_depth": 64
+        },
+        "limitations": [
+          "Artifact identity is unavailable for this observation.",
+          "The target operating system and architecture were not reported by this observation.",
+          "Frida capture reached capture_limits.session_bytes (1 bytes including JSON/base64 expansion and metadata). Select a larger capture_limits.session_bytes before starting a new explicitly chosen session or instrument_with_frida experiment; no REA restart is required. Already discarded observations cannot be recovered. Session bytes and MCP/client delivery budgets remain independent."
+        ],
+        "cleanup_error": null
+      },
+      {
+        "session_bytes": 4096,
+        "messages": [
+          {
+            "script_id": "2c901ff4-07b7-4a97-9784-bdc9f676c911",
+            "type": "send",
+            "payload": null,
+            "payload_truncated": true,
+            "payload_capture_limit": "payload_bytes"
+          }
+        ],
+        "messages_truncated": false,
+        "effective_limits": {
+          "session_bytes": 4096,
+          "message_type_bytes": 4096,
+          "message_text_bytes": 32768,
+          "json_nodes": 250000,
+          "json_depth": 64
+        },
+        "limitations": [
+          "Artifact identity is unavailable for this observation.",
+          "The target operating system and architecture were not reported by this observation.",
+          "Frida capture reached capture_limits.session_bytes (4096 bytes including JSON/base64 expansion and metadata). Select a larger capture_limits.session_bytes before starting a new explicitly chosen session or instrument_with_frida experiment; no REA restart is required. Already discarded observations cannot be recovered. Session bytes and MCP/client delivery budgets remain independent."
+        ],
+        "cleanup_error": null
+      },
+      {
+        "session_bytes": 262144,
+        "messages": [
+          {
+            "script_id": "6283235c-f8c4-40db-ad61-3375003e4362",
+            "type": "send",
+            "payload": {
+              "rea_budget_probe": "ok"
+            }
+          }
+        ],
+        "messages_truncated": false,
+        "effective_limits": {
+          "session_bytes": 262144,
+          "message_type_bytes": 4096,
+          "message_text_bytes": 32768,
+          "json_nodes": 250000,
+          "json_depth": 64
+        },
+        "limitations": [
+          "Artifact identity is unavailable for this observation.",
+          "The target operating system and architecture were not reported by this observation."
+        ],
+        "cleanup_error": null
+      }
+    ]
+  },
+  "lldb": {
+    "version": "lldb-2100.0.17.108",
+    "cases": [
+      {
+        "output_bytes": 2,
+        "target_sha256": "819c94d6cdf0aff72ff5cea9769a7caf900d223af23ef11d66a13baa8baf71aa",
+        "outcome": "exited",
+        "events": 1,
+        "stdout": {
+          "text": "re",
+          "bytes": 20,
+          "truncated": true,
+          "complete": true
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "truncated": false,
+          "complete": true
+        },
+        "terminated": true
+      },
+      {
+        "output_bytes": 64,
+        "target_sha256": "819c94d6cdf0aff72ff5cea9769a7caf900d223af23ef11d66a13baa8baf71aa",
+        "outcome": "exited",
+        "events": 1,
+        "stdout": {
+          "text": "rea_budget_probe_ok\n",
+          "bytes": 20,
+          "truncated": false,
+          "complete": true
+        },
+        "stderr": {
+          "text": "",
+          "bytes": 0,
+          "truncated": false,
+          "complete": true
+        },
+        "terminated": true
+      }
+    ],
+    "cleanup": {
+      "ok": true
+    }
+  },
+  "working_controls": {
+    "frida_existing_smoke": {
+      "ok": true,
+      "provider": "frida",
+      "host_platform": "darwin",
+      "target_mode": "local_spawn",
+      "target_pid": 47641,
+      "target_name": "node",
+      "script_message_observed": true,
+      "cleanup_error": null
+    },
+    "ghidra_java_compile": {
+      "ghidra_version": "12.1.4",
+      "javac": "javac 21.0.12.1",
+      "class_path_jars": 195,
+      "sources": [
+        "bridge/ghidra/ReaGhidraAnalysisOptions.java",
+        "bridge/ghidra/ReaGhidraApplySeeds.java",
+        "bridge/ghidra/ReaGhidraBridge.java",
+        "bridge/ghidra/ReaGhidraBundleActivator.java",
+        "bridge/ghidra/ReaGhidraExtensions.java",
+        "bridge/ghidra/ReaGhidraMipsSoftFloat.java",
+        "bridge/ghidra/ReaGhidraNoReturnFix.java",
+        "bridge/ghidra/ReaGhidraPrepareCom.java",
+        "bridge/ghidra/ReaGhidraPrepareDol.java",
+        "bridge/ghidra/ReaGhidraPrepareRaw.java",
+        "bridge/ghidra/ReaGhidraRiscvCallingConvention.java"
+      ]
+    }
+  },
+  "probe_source_sha256": {
+    "frida-budget-probe.mjs": "43dd424e0750bc8f60468210d99caedaa1e0fa16148db3c2290a8ff593254ccb",
+    "lldb-budget-probe.mjs": "f11e899698d6c219078b1e4a6b52d97bfd308ab9ee8fade6902cb2bdfd1826af"
+  },
+  "limitations": [
+    "Each raised capture budget starts a new controlled process; discarded live observations are not recovered retroactively.",
+    "Initial 4 KiB Frida marker assertion failed because a fixed 128 KiB metadata reserve leaves no payload allowance; tagged truncation is preserved.",
+    "Initial 1-second LLDB observation elapsed before any event; a 10-second-window rerun isolated output retention.",
+    "Successful observer receipts showed empty owned process groups; this is not a kernel process-family memory or performance qualification.",
+    "Windows/Linux, full AgentEnv, remote Frida and public native-tool transport recovery are unverified."
+  ]
+}
