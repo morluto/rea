@@ -157,11 +157,7 @@ export interface DoctorHost {
     selectedClientIds?: readonly string[],
     providerSettings?: Readonly<Record<string, string>>,
     ownedProviderSetting?: OwnedProviderSetting,
-    observeProviderSetting?: (
-      client: string,
-      name: string,
-      value: string,
-    ) => void,
+    observeProbeSetting?: (client: string, name: string, value: string) => void,
   ): Promise<readonly ClientRegistrationStatus[]>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
   /** Desktop build host facts; read only when that scope is selected. */
@@ -670,6 +666,9 @@ const registrationCheck = (
   ok: false,
   classification: registration.state === "unknown" ? "unknown" : "config_drift",
   detail: registration.config_path,
+  ...(registration.scope === undefined
+    ? {}
+    : { details: { scope: registration.scope } }),
   remediation: registration.remediation,
 });
 
@@ -731,6 +730,7 @@ export interface SystemDoctorHostOptions {
   readonly savedDefaults?: ReadonlySet<string> | undefined;
   readonly signal?: AbortSignal;
   readonly platform?: NodeJS.Platform;
+  readonly registrationScope?: "user" | "all";
   readonly architecture?: NodeJS.Architecture;
   readonly environment?: NodeJS.ProcessEnv;
   readonly execFileOutput?: typeof execFileOutput;
@@ -1122,20 +1122,21 @@ export const systemDoctorHost = (
       selectedClientIds,
       providerSettings,
       ownedProviderSetting,
-      observeProviderSetting,
+      observeProbeSetting,
     ) =>
       runInChildResourceScope(resources, "client-registrations", (child) =>
         readClientRegistrationStatuses(homeDirectory, undefined, {
           platform,
           environment,
           resources: child,
+          ...(options.registrationScope === undefined
+            ? {}
+            : { scope: options.registrationScope }),
           ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
           ...(ownedProviderSetting === undefined
             ? {}
             : { ownedProviderSetting }),
-          ...(observeProviderSetting === undefined
-            ? {}
-            : { observeProviderSetting }),
+          ...(observeProbeSetting === undefined ? {} : { observeProbeSetting }),
           ...(providerSettings === undefined
             ? {}
             : {

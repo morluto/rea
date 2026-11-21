@@ -1783,7 +1783,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/browser/modules/NativeModuleResolver.test.ts",
-          "returns cleanup_incomplete when owned cleanup fails after an engine error",
+          "retries retained browser cleanup before launching the next resolution",
         ),
       ),
       retry: covered(

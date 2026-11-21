@@ -129,7 +129,9 @@ export const systemSetupHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   savedDefaults?: ReadonlySet<string>,
 ): SetupHost => {
-  const doctorHost = selectedDoctorHost ?? systemDoctorHost({ environment });
+  const doctorHost =
+    selectedDoctorHost ??
+    systemDoctorHost({ environment, registrationScope: "user" });
   const platform = doctorHost.platform;
   const { homeDirectory } = doctorHost;
   const macHopperHost =

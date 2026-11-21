@@ -714,6 +714,60 @@ test.each(["literal", "expression"] as const)(
   },
 );
 
+test.each(["native", "legacy user alias"] as const)(
+  "reports %s project provider settings without admitting them for probes",
+  async (layout) => {
+    const home = await createTestTempDirectory("rea-doctor-project-settings-");
+    const project = join(home, "project");
+    const direct = join(project, "opencode.json");
+    await mkdir(project);
+    const launcher = {
+      type: "local",
+      command: [process.execPath, CURRENT_ENTRYPOINT_PATH, "mcp"],
+    };
+    const setting = {
+      REA_KUNA_COMMAND: join(project, "unavailable-provider"),
+    };
+    if (layout === "legacy user alias") {
+      await writeFile(direct, JSON.stringify({ mcp: { rea: launcher } }));
+      await writeFile(
+        join(home, "opencode.json"),
+        JSON.stringify({ mcp: { rea: { ...launcher, environment: setting } } }),
+      );
+    } else {
+      await writeFile(
+        direct,
+        JSON.stringify({
+          mcp: { servers: { rea: { ...launcher, environment: setting } } },
+        }),
+      );
+    }
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(project);
+    const host = createSystemDoctorHost({
+      HOME: home,
+      USERPROFILE: home,
+      ...(layout === "legacy user alias" ? { OPENCODE_CONFIG: direct } : {}),
+    });
+    try {
+      const inspections = await host.providerInspections?.(["opencode"]);
+      expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
+        configured: null,
+        available: null,
+        registrationEnvironment: {},
+        checks: [
+          expect.objectContaining({
+            classification: "unknown",
+            code: "project_provider_settings_unapproved",
+          }),
+        ],
+      });
+    } finally {
+      cwd.mockRestore();
+      await host.close?.();
+    }
+  },
+);
+
 test("keeps reading this terminal when no client is selected", async () => {
   const home = await createTestTempDirectory("rea-opencode-doctor-ambient-");
   await opencodeRegistration(home, { GHIDRA_INSTALL_DIR: "/opt/ghidra" });
