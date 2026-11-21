@@ -745,9 +745,7 @@ the pass cannot prove is reported as `unverified` rather than confabulated. The
 pass bounds its own read budget (`max_file_bytes`), exemplar budget (`max_facts`)
 and structural depth (`max_depth`) so an inflated input cannot exhaust the pass
 itself. The canonicalization is lossless for behavior-relevant data: it only
-changes what the analyzer ingests, never the target. See
-[antidote canonicalization](../specs/artifacts/antidote-canonicalize/spec.md) for
-the normalizer interface and per-format coverage.
+changes what the analyzer ingests, never the target.
 
 ## Retained application Evidence inputs
 

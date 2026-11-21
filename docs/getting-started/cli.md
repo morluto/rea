@@ -572,8 +572,7 @@ output control), drops non-semantic padding and unreferenced decoys to an
 exemplar, a count and a digest, keeps behavior-relevant and link-relevant
 structure, and reports truncated or unverified state explicitly. It is lossless
 for behavior-relevant data and bounds its own work with `--max-file-bytes`,
-`--max-facts` and `--max-depth`. See
-[antidote canonicalization](../specs/artifacts/antidote-canonicalize/spec.md).
+`--max-facts` and `--max-depth`.
 
 List ELF and Mach-O initializer and finalizer functions without executing the
 image:
