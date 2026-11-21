@@ -45,6 +45,7 @@ import {
 } from "../resources/index.js";
 import {
   inspectGhidraInstallation,
+  ghidraJavaEnvironment,
   type GhidraInstallationHost,
   type GhidraInstallationOptions,
 } from "../ghidra/GhidraInstallation.js";
@@ -236,7 +237,8 @@ export const buildUefiEntryPointScaffolding = (
   typeName?: string,
   machineWidth: UefiMachineWidth = "64",
 ): UefiEntryPointScaffolding => {
-  const safeName = sanitizeCComment(rawName);
+  const boundedRawName = ellipsisExcerpt(rawName, 256);
+  const safeName = sanitizeCComment(boundedRawName);
   const statusType =
     machineWidth === "32"
       ? "uint32_t"
@@ -273,7 +275,11 @@ export const buildUefiEntryPointScaffolding = (
     };
   }
 
-  if (normType === "peim" || (normType === undefined && phase === "PEI")) {
+  if (
+    normType === "peim" ||
+    normType === "combined-peim-driver" ||
+    (normType === undefined && phase === "PEI")
+  ) {
     return {
       typedefs: [
         ...statusTypedefs,
@@ -1269,11 +1275,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           phaseCounts[phaseKey]++;
         }
 
-        let cIdentifier = mod.cleanName.replace(/[^a-zA-Z0-9_]/g, "_");
-        if (/^[0-9]/.test(cIdentifier)) {
-          cIdentifier = `_${cIdentifier}`;
-        }
-
         const idPrefix =
           mod.guid ?? `noguid_${sha256Hex(modBytes).slice(0, 8)}`;
         const maxCleanNameLen = 160;
@@ -1285,6 +1286,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         )
           ? `_${boundedRawCleanName}`
           : boundedRawCleanName;
+
+        let cIdentifier = boundedName.replace(/[^a-zA-Z0-9_]/g, "_");
+        if (/^[0-9]/.test(cIdentifier)) {
+          cIdentifier = `_${cIdentifier}`;
+        }
+        if (cIdentifier.length === 0) {
+          cIdentifier = "_Module";
+        }
         let moduleRelDir = `${mod.phase}/${idPrefix}_${boundedName}`;
         let occurrence = 0;
         while (allocatedRelDirs.has(moduleRelDir.toLowerCase())) {
@@ -1609,12 +1618,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   mkdir(ghidraConfig, { recursive: true }),
                   mkdir(ghidraTemp, { recursive: true }),
                 ]);
+                const baseJavaEnv = ghidraJavaEnvironment(
+                  ghidraInspection?.javaHome ?? undefined,
+                  process.env,
+                  HOST_PLATFORM.platform,
+                );
                 const ghidraEnv: NodeJS.ProcessEnv = {
-                  ...process.env,
-                  _JAVA_OPTIONS: "",
-                  JAVA_TOOL_OPTIONS: "",
+                  ...baseJavaEnv,
                   JDK_JAVA_OPTIONS: `-Duser.home="${ghidraHome}" -Djava.io.tmpdir="${ghidraTemp}"`,
-                  GHIDRA_JAVA_OPTIONS: "",
                   HOME: ghidraHome,
                   TMPDIR: ghidraTemp,
                   XDG_CONFIG_HOME: ghidraConfig,
@@ -1880,9 +1891,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         "| Phase | Name | GUID | Size (Bytes) | Disassembly Status | C Scaffold | Disassembly |",
         "|---|---|---|---|---|---|---|",
         ...stagedModules.map((m) => {
-          const safeCellName = formatMarkdownCodeSpan(m.name);
-          const safeGuid = formatMarkdownCodeSpan(m.guid ?? "N/A");
+          const safeDisplayName = ellipsisExcerpt(m.name, 256);
+          const safeCellName = formatMarkdownCodeSpan(
+            safeDisplayName.replace(/\|/g, "\\|"),
+          );
+          const safeGuid = formatMarkdownCodeSpan(
+            (m.guid ?? "N/A").replace(/\|/g, "\\|"),
+          );
           const safeLinkName = m.name
+            .slice(0, 256)
             .replace(/[\r\n]+/g, " ")
             .replace(/[[\]|`]/g, "_");
           return `| ${m.phase} | ${safeCellName} | ${safeGuid} | ${m.code_bytes} | ${m.disassembly_status} | [${safeLinkName}.c](${m.relative_c_file}) | ${m.relative_asm_file ? `[${safeLinkName}.asm](${m.relative_asm_file})` : "N/A"} |`;
@@ -2616,7 +2633,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           manifestModulesByFallbackRelPath.get(crossPlatformLookupKey) ??
           manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey);
 
-        let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
+        let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "MISC";
         const manifestPhase = fromManifest?.phase?.toUpperCase();
         if (
           manifestPhase &&
@@ -2637,10 +2654,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           phase = "SMM";
         } else if (segments.some((s) => s === "app" || s === "application")) {
           phase = "APP";
-        } else if (segments.some((s) => s === "misc")) {
-          phase = "MISC";
         } else if (segments.some((s) => s === "dxe")) {
           phase = "DXE";
+        } else if (segments.some((s) => s === "misc")) {
+          phase = "MISC";
         }
 
         let guid: string | null = null;
