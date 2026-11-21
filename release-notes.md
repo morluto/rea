@@ -348,6 +348,7 @@
 * **web:** consolidate accessibility and storage comparison proofs ([#13085](https://github.com/morluto/rea/issues/13085)) ([3f494e1](https://github.com/morluto/rea/commit/3f494e18fa6aac74199bda740a11c6c94e242d5c))
 * **web:** consolidate artifact cleanup ownership proofs ([#13077](https://github.com/morluto/rea/issues/13077)) ([82224d9](https://github.com/morluto/rea/commit/82224d9f6ccd845a87ff9ff45643c560e4c625f5))
 * **web:** consolidate capture completeness proofs ([#13089](https://github.com/morluto/rea/issues/13089)) ([2d9c208](https://github.com/morluto/rea/commit/2d9c2088173067c8004eb379b47e03f1a374b502))
+* **web:** consolidate CDP binary body proofs ([#13097](https://github.com/morluto/rea/issues/13097)) ([1585513](https://github.com/morluto/rea/commit/15855137b79de905bb63e4a6afdf08c8410ed865))
 * **web:** consolidate CDP context retention proofs ([#13090](https://github.com/morluto/rea/issues/13090)) ([cc24a0b](https://github.com/morluto/rea/commit/cc24a0b4c0416f4643967398f8c7dfb6a298de8f))
 * **web:** consolidate CDP request identity and redirect proofs ([#13096](https://github.com/morluto/rea/issues/13096)) ([9a16142](https://github.com/morluto/rea/commit/9a16142fad208c1c8c1abef5bb401172b09f086f))
 * **web:** consolidate CDP response body lifecycle proofs ([#13094](https://github.com/morluto/rea/issues/13094)) ([e76b521](https://github.com/morluto/rea/commit/e76b521461b64907795435eba9db5b79e0af2e3e))
