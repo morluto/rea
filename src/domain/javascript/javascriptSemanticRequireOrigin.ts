@@ -1577,14 +1577,20 @@ const hasClosedLocalReceiverSources = (
     )
   )
     return false;
-  const pending = [root];
-  const seen = new Set<t.Node>();
+  const pending: t.Node[] = [];
+  const scheduled = new Set<t.Node>();
+  const enqueue = (source: t.Node): boolean => {
+    const node = unwrapJavaScriptExpression(source).node;
+    if (scheduled.has(node)) return true;
+    if (scheduled.size >= state.precision.alias_selections) return false;
+    scheduled.add(node);
+    pending.push(node);
+    return true;
+  };
+  if (!enqueue(root)) return false;
   const bindings = new Set<string>();
   while (pending.length > 0) {
-    const node = unwrapJavaScriptExpression(pending.pop()!).node;
-    if (seen.has(node)) continue;
-    if (seen.size >= state.precision.alias_selections) return false;
-    seen.add(node);
+    const node = pending.pop()!;
     if (t.isIdentifier(node)) {
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (
@@ -1610,14 +1616,17 @@ const hasClosedLocalReceiverSources = (
       ])
         for (const source of sources) {
           if (semanticReferenceIterationUnknown(source, state)) return false;
-          if (!semanticReferenceSourcesInactive(source, state))
-            pending.push(source.node);
+          if (
+            !semanticReferenceSourcesInactive(source, state) &&
+            !enqueue(source.node)
+          )
+            return false;
         }
     } else if (
       t.isMemberExpression(node) ||
       t.isOptionalMemberExpression(node)
     ) {
-      pending.push(node.object);
+      if (!enqueue(node.object)) return false;
     } else if (t.isObjectExpression(node)) {
       for (const property of node.properties) {
         if (
@@ -1626,19 +1635,18 @@ const hasClosedLocalReceiverSources = (
             "__proto__"
         )
           return false;
-        pending.push(property.value);
+        if (!enqueue(property.value)) return false;
       }
     } else if (t.isArrayExpression(node)) {
       for (const element of node.elements) {
         if (t.isSpreadElement(element)) return false;
-        if (element !== null) pending.push(element);
+        if (element !== null && !enqueue(element)) return false;
       }
     } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
-      pending.push(
-        ...(t.isConditionalExpression(node)
-          ? [node.consequent, node.alternate]
-          : [node.left, node.right]),
-      );
+      const [left, right] = t.isConditionalExpression(node)
+        ? [node.consequent, node.alternate]
+        : [node.left, node.right];
+      if (!enqueue(left) || !enqueue(right)) return false;
     } else if (!readExactJavaScriptLiteral(node).found) {
       return false;
     }
