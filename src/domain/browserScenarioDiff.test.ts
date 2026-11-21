@@ -848,7 +848,7 @@ describe("scenario comparison recovery guidance", () => {
 });
 
 describe("browser scenario comparison", () => {
-  it("records canonical literal normalization and ignores declared volatile fields", () => {
+  it("applies committed cascading rules in canonical order and ignores volatile fields", () => {
     const before = scenarioCapture({
       domText: "<main data-build='build-123'>Settings</main>",
       elapsedMs: 11,
@@ -862,9 +862,9 @@ describe("browser scenario comparison", () => {
     const rules = [
       {
         rule_id: "new-build",
-        artifacts: ["dom"] as const,
+        artifacts: ["url", "dom"] as const,
         match: "build-456",
-        replacement: "[BUILD]",
+        replacement: "build-123",
       },
       {
         rule_id: "old-build",
@@ -899,11 +899,11 @@ describe("browser scenario comparison", () => {
     expect(compared.artifact_diffs.total).toBe(0);
     expect(compared.normalization).toMatchObject({
       rules: [
-        { rule_id: "new-build", artifacts: ["dom"] },
+        { rule_id: "new-build", artifacts: ["dom", "url"] },
         { rule_id: "old-build", artifacts: ["dom"] },
       ],
     });
-    expect(reordered.normalization.sha256).toBe(compared.normalization.sha256);
+    expect(reordered).toEqual(compared);
   });
 
   it("exposes action mismatches and normalized artifact-level changes", () => {
@@ -1049,89 +1049,84 @@ describe("browser scenario comparison validation", () => {
     expect(result.artifact_diffs.total).toBe(130);
   });
 
-  it("reports missing aligned steps without claiming equality", () => {
-    const before = scenarioCapture({});
-    const after = scenarioCapture({ stepId: "open-profile" });
-
+  it("aligns reordered unique steps while distinguishing missing and ambiguous IDs", () => {
+    const capture = scenarioCapture({});
+    const action = capture.steps[1];
+    if (action === undefined) throw new Error("Expected scenario action step");
+    const withSteps = (ids: readonly string[]) => ({
+      ...capture,
+      scenario: { ...capture.scenario, action_count: ids.length },
+      steps: [
+        capture.steps[0],
+        ...ids.map((step_id, index) => ({
+          ...action,
+          step_id,
+          step_index: index + 1,
+          event_sequence_start: 1,
+          event_sequence_end: 0,
+        })),
+      ],
+      events: { ...capture.events, retained: 0, items: [] },
+    });
     const compared = compareBrowserScenarios(
       compareBrowserScenariosInputSchema.parse({
-        before_scenario: before,
-        after_scenario: after,
+        before_scenario: withSteps([
+          "keep-z",
+          "ambiguous-before",
+          "keep-a",
+          "before-only",
+          "ambiguous-before",
+          "ambiguous-after",
+        ]),
+        after_scenario: withSteps([
+          "keep-a",
+          "ambiguous-after",
+          "keep-z",
+          "after-only",
+          "ambiguous-after",
+          "ambiguous-before",
+        ]),
       }),
     );
 
     expect(compared.overall_status).toBe("unknown");
     expect(compared.alignment).toMatchObject({
       status: "partial",
-      aligned_steps: 1,
-      before_only: ["open-settings"],
-      after_only: ["open-profile"],
-      failures: expect.arrayContaining([
-        expect.objectContaining({
-          code: "missing_before_step",
-          step_id: "open-profile",
-        }),
-        expect.objectContaining({
-          code: "missing_after_step",
-          step_id: "open-settings",
-        }),
+      aligned_steps: 3,
+      before_only: ["before-only"],
+      after_only: ["after-only"],
+    });
+    expect(
+      compared.alignment.failures.map(({ code, step_id }) => [code, step_id]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["duplicate_before_step_id", "ambiguous-before"],
+        ["duplicate_after_step_id", "ambiguous-after"],
+        ["missing_before_step", "after-only"],
+        ["missing_after_step", "before-only"],
       ]),
-    });
-  });
-
-  const duplicateLastStepCapture = () => {
-    const base = scenarioCapture({});
-    return {
-      ...base,
-      scenario: { ...base.scenario, action_count: 2 },
-      steps: [...base.steps, { ...base.steps[1]!, step_index: 2 }],
-    };
-  };
-
-  it("keeps a duplicated step id unaligned without classifying it as absent", () => {
-    const compared = compareBrowserScenarios(
-      compareBrowserScenariosInputSchema.parse({
-        before_scenario: duplicateLastStepCapture(),
-        after_scenario: scenarioCapture({}),
-      }),
     );
-
-    expect(compared.overall_status).toBe("unknown");
-    expect(compared.alignment).toMatchObject({
-      status: "partial",
-      aligned_steps: 1,
-      before_only: [],
-      after_only: [],
-      failures: [
-        expect.objectContaining({
-          code: "duplicate_before_step_id",
-          step_id: "open-settings",
-        }),
-      ],
-    });
-  });
-
-  it("mirrors the duplicate classification when the later capture repeats the id", () => {
-    const compared = compareBrowserScenarios(
-      compareBrowserScenariosInputSchema.parse({
-        before_scenario: scenarioCapture({}),
-        after_scenario: duplicateLastStepCapture(),
-      }),
-    );
-
-    expect(compared.overall_status).toBe("unknown");
-    expect(compared.alignment).toMatchObject({
-      status: "partial",
-      aligned_steps: 1,
-      before_only: [],
-      after_only: [],
-      failures: [
-        expect.objectContaining({
-          code: "duplicate_after_step_id",
-          step_id: "open-settings",
-        }),
-      ],
-    });
+    expect(compared.alignment.failures).toHaveLength(4);
+    expect(compared.steps).toMatchObject([
+      {
+        step_id: "scenario_start",
+        before_step_index: 0,
+        after_step_index: 0,
+        status: "unchanged",
+      },
+      {
+        step_id: "keep-z",
+        before_step_index: 1,
+        after_step_index: 3,
+        status: "unchanged",
+      },
+      {
+        step_id: "keep-a",
+        before_step_index: 3,
+        after_step_index: 1,
+        status: "unchanged",
+      },
+    ]);
   });
 
   it("rejects duplicate normalization rule IDs", () => {
