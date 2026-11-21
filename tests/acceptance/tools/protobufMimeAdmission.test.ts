@@ -172,7 +172,7 @@ cliTest(
 );
 
 cliTest(
-  "sanitizes visible HAR gRPC transport while its authoritative MIME is excluded through MCP",
+  "sanitizes visible HAR transport credentials independently of MIME interpretation",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-protobuf-har-transport-");
     const path = join(root, "capture.har");
@@ -180,19 +180,31 @@ cliTest(
       Buffer.from("authorization: Bearer fixture-only\r\n"),
       128,
     );
-    const original = protobufHar(
-      trailer,
-      hiddenMime,
-      [],
-      [{ name: "Content-Type", value: "application/grpc-web" }],
-    );
+    const transport = { name: "Content-Type", value: "application/grpc-web" };
+    const raw = { name: "Content-Type", value: "application/protobuf" };
+    const archive = JSON.parse(
+      protobufHar(trailer, hiddenMime, [trailer, trailer, body], [transport]),
+    ) as {
+      log: {
+        entries: {
+          response: {
+            content: { mimeType: string };
+            headers: { name: string; value: string }[];
+          };
+        }[];
+      };
+    };
+    for (const entry of archive.log.entries.slice(1))
+      entry.response.content.mimeType = raw.value;
+    archive.log.entries[2]!.response.headers.unshift(raw);
+    const original = JSON.stringify(archive);
     await writeFile(path, original);
     const call = await cli.sharedMcpCall!();
     for (const framing of ["auto", "raw"] as const) {
       const reply = await call("inspect_web_network_capture", {
         capture_path: path,
         format: "har",
-        record_ordinals: [0],
+        record_ordinals: [0, 1, 2, 3],
         sensitive_values: ["excluded-declaration"],
         protobuf: { framing },
       });
@@ -200,26 +212,51 @@ cliTest(
       const report = webNetworkCaptureSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,
       );
-      expect(report.protobuf_coverage?.status).toBe("partial");
-      expect(report.records[0]?.protobuf).toBeUndefined();
-      expect(report.records[0]?.reported).toMatchObject({
-        response: {
-          headers: [{ name: "Content-Type", value: "application/grpc-web" }],
-          content: { mimeType: null, text: null },
-        },
+      expect(report.protobuf_coverage).toEqual({
+        status: "partial",
+        selected_records: 4,
+        inspected_records: 4,
       });
-      expect(report.records[0]?.binary_fields).toContainEqual(
+      expect(report.records.map((record) => record.ordinal)).toEqual([
+        0, 1, 2, 3,
+      ]);
+      for (const [ordinal, record] of report.records.slice(0, 3).entries()) {
+        expect(
+          record.protobuf,
+          `record ${ordinal} (${framing})`,
+        ).toBeUndefined();
+        expect(record.reported).toMatchObject({
+          response: {
+            headers: archive.log.entries[ordinal]!.response.headers,
+            content: { mimeType: ordinal === 0 ? null : raw.value, text: null },
+          },
+        });
+        expect(record.binary_fields).toContainEqual(
+          expect.objectContaining({
+            pointer: "/response/content/text",
+            state: "redacted",
+            content_base64: null,
+            sha256: null,
+          }),
+        );
+        expect(record.redactions).toContainEqual({
+          pointer: "/response/content/text",
+          reason: "transport-credential",
+        });
+      }
+      expect(report.records[3]?.protobuf?.[0]).toMatchObject({
+        content_type: raw.value,
+        framing: "raw",
+        fields: [{ number: 1, value: "1" }],
+      });
+      expect(report.records[3]?.binary_fields).toContainEqual(
         expect.objectContaining({
           pointer: "/response/content/text",
-          state: "redacted",
-          content_base64: null,
-          sha256: null,
+          state: "retained",
+          content_base64: body.toString("base64"),
+          sha256: bodySha,
         }),
       );
-      expect(report.records[0]?.redactions).toContainEqual({
-        pointer: "/response/content/text",
-        reason: "transport-credential",
-      });
     }
     expect(await readFile(path, "utf8")).toBe(original);
   },

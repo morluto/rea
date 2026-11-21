@@ -620,72 +620,93 @@ const trailerCases = [
 
 captureTest.for(
   (["grpc-web", "grpc-web-text"] as const).flatMap((framing) =>
-    trailerCases.map(([name, headerName, value, status]) => ({
+    [trailerCases.slice(0, 1), trailerCases.slice(1)].map((cases) => ({
       framing,
-      name,
-      headerName,
-      value,
-      status,
+      cases,
+      coverage: cases[0]![3],
     })),
   ),
 )(
-  "preserves $framing trailer case $name through CLI and MCP without changing capture bytes",
-  async ({ framing, name, headerName, value, status }, { cli, mcp }) => {
+  "preserves $framing trailer source and $coverage coverage through CLI and MCP",
+  async ({ framing, cases, coverage }, { cli, mcp }) => {
     const root = await createTestTempDirectory("rea-grpc-web-trailers-");
-    const path = join(root, `${framing}-${name}.har`);
-    const trailer = Buffer.from(
-      `${headerName}: ${value}\r\n`,
-      name === "opaque" ? "latin1" : "utf8",
-    );
-    const body = Buffer.concat([
-      protobufFrame(Buffer.from([8, 1])),
-      protobufFrame(trailer, 128),
-    ]);
-    const original = protobufHar(
-      framing === "grpc-web-text" ? Buffer.from(body.toString("base64")) : body,
-      `application/${framing}`,
-    );
+    const path = join(root, `${framing}.har`);
+    const fixtures = cases.map(([name, headerName, value, status]) => {
+      const trailer = Buffer.from(
+        `${headerName}: ${value}\r\n`,
+        name === "opaque" ? "latin1" : "utf8",
+      );
+      const data = name === "nul" ? [] : [protobufFrame(Buffer.from([8, 1]))];
+      const body = Buffer.concat([...data, protobufFrame(trailer, 128)]);
+      const wire =
+        framing === "grpc-web-text"
+          ? Buffer.from(body.toString("base64"))
+          : body;
+      return { name, status, body, wire, trailer };
+    });
+    const [first, ...siblings] = fixtures.map(({ wire }) => wire);
+    const original = protobufHar(first!, `application/${framing}`, siblings);
     await writeFile(path, original);
-    const options = {
+    const ordinals = fixtures.map((_, ordinal) => ordinal);
+    const response = await cli.run({
       arguments: [
         "inspect-web-network-capture",
         path,
         "har",
-        "--record",
-        "0",
+        ...ordinals.flatMap((ordinal) => ["--record", String(ordinal)]),
         "--protobuf-framing",
         "auto",
         "--json",
       ],
-    };
-    const response = await cli.run({
-      ...options,
-      freshProcess: name === "valid",
+      freshProcess: coverage === "complete",
     });
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
     const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
-    expect(report.protobuf_coverage?.status, name).toBe(status);
-    expect(report.records[0]?.protobuf?.[0]).toMatchObject({
-      status,
-      framing,
-      examined_bytes: body.length,
-      frames: [
-        { kind: "data", status: "complete", examined_bytes: 2 },
-        { kind: "trailer", status, examined_bytes: trailer.length },
-      ],
-      fields: [{ number: 1, wire_type: "varint", value: "1" }],
+    expect(report.protobuf_coverage).toEqual({
+      status: coverage,
+      selected_records: fixtures.length,
+      inspected_records: fixtures.length,
     });
-    if (name === "opaque") {
-      expect(report.records[0]?.protobuf?.[0]?.frames[1]?.trailers).toEqual([
-        { name: "grpc-status", value: "0" },
-        { name: "x-after", value: "kept" },
-      ]);
+    expect(report.records.map(({ ordinal }) => ordinal)).toEqual(ordinals);
+    for (const [
+      ordinal,
+      { name, status, body, wire, trailer },
+    ] of fixtures.entries()) {
+      const record = report.records[ordinal]!;
+      expect(record.protobuf?.[0], name).toMatchObject({
+        status,
+        framing,
+        examined_bytes: body.length,
+        frames: [
+          ...(name === "nul"
+            ? []
+            : [{ kind: "data", status: "complete", examined_bytes: 2 }]),
+          { kind: "trailer", status, examined_bytes: trailer.length },
+        ],
+        fields:
+          name === "nul"
+            ? []
+            : [{ number: 1, wire_type: "varint", value: "1" }],
+      });
+      expect(record.binary_fields, name).toContainEqual(
+        expect.objectContaining({
+          pointer: "/response/content/text",
+          state: "retained",
+          content_base64: wire.toString("base64"),
+          bytes: wire.length,
+        }),
+      );
+      if (name === "opaque")
+        expect(record.protobuf?.[0]?.frames[1]?.trailers).toEqual([
+          { name: "grpc-status", value: "0" },
+          { name: "x-after", value: "kept" },
+        ]);
     }
     const reply = await mcp.call("inspect_web_network_capture", {
       capture_path: path,
       format: "har",
-      record_ordinals: [0],
+      record_ordinals: ordinals,
       protobuf: { framing: "auto" },
     });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
