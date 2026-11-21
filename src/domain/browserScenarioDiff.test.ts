@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { compareBrowserScenarios } from "./browserScenarioDiff.js";
+import { networkContentCoverageReason } from "./browserScenarioDiffEvidence.js";
+import { scenarioNetworkCoverageReason } from "./browserScenarioNetworkComparison.js";
 import {
   compareBrowserScenariosInputSchema,
   browserScenarioDiffSchema,
@@ -328,13 +330,14 @@ it("retains network coverage guidance alongside independent console changes", ()
   expect(matching.overall_status).toBe("unchanged");
   expect(matching.artifact_diffs.total).toBe(0);
   const missing = capture({ unknownPredecessor: true });
+  const responseSelected = capture({ responseBody: true });
 
   for (const { before, quietAfter, changedAfter, reason } of [
     {
       before: original,
-      quietAfter: capture({ responseBody: true }),
+      quietAfter: responseSelected,
       changedAfter: capture({ responseBody: true, text: "settings-failed" }),
-      reason: /Network content selections differ/gu,
+      reason: networkContentCoverageReason(original, responseSelected),
     },
     {
       before: missing,
@@ -343,9 +346,11 @@ it("retains network coverage guidance alongside independent console changes", ()
         unknownPredecessor: true,
         text: "settings-failed",
       }),
-      reason: /Redirect predecessor evidence is missing/gu,
+      reason: scenarioNetworkCoverageReason(missing),
     },
   ]) {
+    if (reason === undefined)
+      throw new Error("Expected incomplete network coverage");
     const quiet = compare(before, quietAfter);
     expect(quiet.overall_status).toBe("unknown");
     const changed = compare(before, changedAfter);
@@ -363,7 +368,7 @@ it("retains network coverage guidance alongside independent console changes", ()
         ["events", consoleStatus],
       ]);
       for (const diff of diffs) {
-        expect(diff.reason?.match(reason)).toHaveLength(1);
+        expect(diff.reason).toBe(reason);
         expect(diff.before_sha256).not.toBeNull();
         expect(diff.after_sha256).not.toBeNull();
         if (diff.status === "changed")
