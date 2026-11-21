@@ -333,41 +333,42 @@ it("keeps admitted page errors intact and reports each distinct event budget", a
   });
 });
 
-it("caps live descendant listeners and reuses capacity after closure", () => {
-  const listeners = new Map<string, (value: unknown) => void>();
-  const page = {
-    on: (name: string, listener: (value: unknown) => void) =>
-      listeners.set(name, listener),
-    off: vi.fn(),
-  } as unknown as Page;
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: "/fixture/chrome" },
-    start_url: { url: "https://example.test" },
-    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+it("reuses a released listener slot after reporting the live owner limit", async () => {
+  const { capture, page } = textEventCapture(new Set(["websockets"]));
+  const socket = () =>
+    Object.assign(new EventEmitter(), { url: () => "wss://example.test/" });
+  const admitted = Array.from({ length: 2047 }, socket);
+  for (const source of admitted) page.emit("websocket", source);
+  const rejected = socket();
+  page.emit("websocket", rejected);
+  expect(admitted.at(-1)?.listenerCount("close")).toBe(1);
+  expect(rejected.eventNames()).toEqual([]);
+  expect(capture.result()).toMatchObject({
+    retained: 2047,
+    dropped: 1,
+    omissions: {
+      by_kind: [
+        {
+          kind: "websocket-opened",
+          count: 1,
+          reasons: ["max-listener-owners"],
+        },
+      ],
+    },
   });
-  const secrets = resolveScenarioSecrets(scenario, {});
-  const events = new PlaywrightScenarioEvents({
-    page,
-    enabled: new Set(["websockets"]),
-    secrets,
-  });
-  const sockets = Array.from({ length: 2049 }, () => ({
-    url: () => "wss://example.test/",
-    on: vi.fn<(name: string, listener: () => void) => void>(),
-    off: vi.fn(),
-  }));
-  for (const socket of sockets.slice(0, 2048))
-    listeners.get("websocket")?.(socket);
-  expect(sockets[2046]?.on).toHaveBeenCalledTimes(3);
-  expect(sockets[2047]?.on).not.toHaveBeenCalled();
-  expect(events.result().dropped).toBe(1);
-  const close = sockets[0]?.on.mock.calls.find(
-    ([name]) => name === "close",
-  )?.[1];
-  close?.();
-  expect(sockets[0]?.off).toHaveBeenCalledTimes(3);
-  listeners.get("websocket")?.(sockets[2048]);
-  expect(sockets[2048]?.on).toHaveBeenCalledTimes(3);
+
+  const first = admitted[0]!;
+  first.emit("close");
+  expect(first.eventNames()).toEqual([]);
+  const replacement = socket();
+  page.emit("websocket", replacement);
+  expect(replacement.listenerCount("close")).toBe(1);
+  expect(capture.result().items.slice(-2)).toMatchObject([
+    { kind: "websocket-closed", sequence: 2049 },
+    { kind: "websocket-opened", sequence: 2050 },
+  ]);
+  await capture.finish();
+  expect(replacement.eventNames()).toEqual([]);
 });
 
 interface SourceTransactionCaptureOptions {
@@ -689,23 +690,36 @@ it.each([false, true])(
   },
 );
 
-it("protects earlier non-network event text after a response secret is learned, without network selection", async () => {
-  const listeners = new Map<string, (value: unknown) => void>();
-  const socketListeners = new Map<string, (value: unknown) => void>();
-  const page = {
-    on: (name: string, listener: (value: unknown) => void) =>
-      listeners.set(name, listener),
-    off: vi.fn(),
-  } as unknown as Page;
-  const parsed = browserScenarioSchema.parse({
+const textEventCapture = (
+  enabled: ConstructorParameters<typeof PlaywrightScenarioEvents>[0]["enabled"],
+  maxAllocation?: number,
+) => {
+  const scenario = browserScenarioSchema.parse({
     browser: { mode: "launch", executable_path: "/fixture/browser" },
     start_url: { url: "https://example.test/" },
     actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+    capture: { limits: { max_event_allocation_bytes: maxAllocation } },
   });
-  const secrets = resolveScenarioSecrets(parsed, {});
+  const secrets = resolveScenarioSecrets(scenario, {});
+  const page = new EventEmitter();
   const capture = new PlaywrightScenarioEvents({
-    page,
-    enabled: new Set([
+    page: page as unknown as Page,
+    enabled,
+    limits: scenario.capture.limits,
+    secrets,
+  });
+  return { capture, page, secrets };
+};
+
+const consoleMessage = (text: string, url = "") => ({
+  type: () => "log",
+  text: () => text,
+  location: () => ({ url }),
+});
+
+it("retains each non-network receipt with its response secret redacted", async () => {
+  const { capture, page, secrets } = textEventCapture(
+    new Set([
       "console",
       "page-errors",
       "websockets",
@@ -714,75 +728,73 @@ it("protects earlier non-network event text after a response secret is learned, 
       "popups",
       "downloads",
     ]),
-    secrets,
-  });
+  );
   const value = "late-secret-829a";
-  const url = `https://example.test/?token=${value}`;
-  listeners.get("console")!({
-    type: () => "log",
-    text: () => value,
-    location: () => ({ url }),
-  });
+  const suffix = `example.test/?token=${value}&visible=kept`;
+  const url = `https://${suffix}`;
+  const source = (sourceUrl: string) =>
+    Object.assign(new EventEmitter(), { url: () => sourceUrl });
+  const socket = source(`wss://${suffix}`);
+  page.emit("console", consoleMessage(value, url));
   const error = new Error(value);
   error.stack = value;
-  listeners.get("pageerror")!(error);
-  listeners.get("websocket")!({
-    url: () => url,
-    on: (name: string, listener: (value: unknown) => void) =>
-      socketListeners.set(name, listener),
-    off: vi.fn(),
-  });
-  socketListeners.get("framesent")!({ payload: value });
-  listeners.get("framenavigated")!({ url: () => url, name: () => value });
-  listeners.get("worker")!({ url: () => url, on: vi.fn(), off: vi.fn() });
-  listeners.get("popup")!({ url: () => url, on: vi.fn(), off: vi.fn() });
-  listeners.get("download")!({
+  page.emit("pageerror", error);
+  page.emit("websocket", socket);
+  socket.emit("framesent", { payload: value });
+  page.emit("framenavigated", { url: () => url, name: () => value });
+  page.emit("worker", source(url));
+  page.emit("popup", source(url));
+  page.emit("download", {
     url: () => url,
     suggestedFilename: () => value,
     cancel: async () => undefined,
   });
-  expect(capture.result().items.length).toBeGreaterThanOrEqual(8);
-  expect(JSON.stringify(capture.result().items)).toContain(value);
+  expect(capture.result().items[0]).toMatchObject({ text: value });
+
   secrets.save("late.token", "token", value, true);
   await capture.finish();
+  const marker = "[REDACTED:page:late.token]";
+  const knownUrl = (origin: string) => ({
+    origin,
+    query_parameter_names: ["token", "visible"],
+    redacted: true,
+    url: expect.stringContaining("visible=kept"),
+  });
+  const http = knownUrl("https://example.test");
+  const ws = knownUrl("wss://example.test");
+  expect(capture.result().items).toMatchObject([
+    { kind: "console", text: marker, url: http },
+    { kind: "page-error", message: marker, stack: marker },
+    { kind: "websocket-opened", url: ws },
+    {
+      kind: "websocket-frame-sent",
+      payload_text: marker,
+      payload_bytes: Buffer.byteLength(value),
+      url: ws,
+    },
+    { kind: "frame-navigated", name: marker, url: http },
+    { kind: "worker-created", url: http },
+    { kind: "popup-opened", url: http },
+    { kind: "download-cancelled", suggested_filename: marker, url: http },
+  ]);
   expect(JSON.stringify(capture.result().items)).not.toContain(value);
-  expect(JSON.stringify(capture.result().items)).toContain("REDACTED");
-  const finished = JSON.stringify(capture.result());
-  await capture.finish();
-  expect(JSON.stringify(capture.result())).toBe(finished);
 });
 
-it("accounts for late non-network redaction expansion and reports omissions once", async () => {
-  const listeners = new Map<string, (value: unknown) => void>();
-  const page = {
-    on: (name: string, listener: (value: unknown) => void) =>
-      listeners.set(name, listener),
-    off: vi.fn(),
-  } as unknown as Page;
-  const parsed = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: "/fixture/browser" },
-    start_url: { url: "https://example.test/" },
-    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
-    capture: { limits: { max_event_allocation_bytes: 20_000 } },
-  });
-  const secrets = resolveScenarioSecrets(parsed, {});
-  const capture = new PlaywrightScenarioEvents({
-    page,
-    enabled: new Set(["console"]),
-    limits: parsed.capture.limits,
-    secrets,
-  });
-  listeners.get("console")!({
-    type: () => "log",
-    text: () => "x".repeat(1000),
-    location: () => ({ url: "" }),
-  });
-  expect(capture.result().retained).toBe(1);
+it("reports late redaction overflow once and preserves an unaffected receipt", async () => {
+  const { capture, page, secrets } = textEventCapture(
+    new Set(["console"]),
+    20_000,
+  );
+  page.emit("console", consoleMessage("x".repeat(1000)));
+  page.emit("console", consoleMessage("safe"));
+  expect(capture.result().retained).toBe(2);
   secrets.save("late.token", "token", "x", true);
   await capture.finish();
-  expect(capture.result()).toMatchObject({
-    retained: 0,
+  const result = capture.result();
+  expect(result).toMatchObject({
+    retained: 1,
     dropped: 1,
+    items: [{ kind: "console", text: "safe", sequence: 2 }],
     omissions: {
       by_kind: [
         { kind: "console", count: 1, reasons: ["max-event-allocation-bytes"] },
@@ -790,64 +802,40 @@ it("accounts for late non-network redaction expansion and reports omissions once
       network_transactions: [],
     },
   });
+  const finished = JSON.stringify(result);
   await capture.finish();
-  expect(capture.result().dropped).toBe(1);
+  expect(JSON.stringify(capture.result())).toBe(finished);
 });
 
 it.each(["page", "basic"])(
-  "preserves pre-read %s facts while backfilling only response-marked values",
+  "preserves earlier %s facts while applying each redaction scope",
   async (kind) => {
+    const fromPage = kind === "page";
     for (const responseSave of [false, true]) {
-      const listeners = new Map<string, (value: unknown) => void>();
-      const page = {
-        on: (name: string, listener: (value: unknown) => void) =>
-          listeners.set(name, listener),
-        off: vi.fn(),
-      } as unknown as Page;
-      const parsed = browserScenarioSchema.parse({
-        browser: { mode: "launch", executable_path: "/fixture/browser" },
-        start_url: { url: "https://example.test/" },
-        actions: [
-          { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
-        ],
-      });
-      const secrets = resolveScenarioSecrets(parsed, {});
-      const capture = new PlaywrightScenarioEvents({
-        page,
-        enabled: new Set(["console"]),
-        secrets,
-      });
-      const value =
-        kind === "page"
-          ? "csrf-page-value-729d"
-          : Buffer.from("user:password").toString("base64");
-      const message = `${value} response-value-82ea`;
-      const emit = () =>
-        listeners.get("console")!({
-          type: () => "log",
-          text: () => message,
-          location: () => ({ url: "" }),
-        });
-      emit();
-      if (kind === "page") secrets.admitPageValue("request.cookie", value);
+      const { capture, page, secrets } = textEventCapture(new Set(["console"]));
+      const value = fromPage
+        ? "csrf-page-value-729d"
+        : Buffer.from("user:password").toString("base64");
+      const responseValue = "response-value-82ea";
+      const message = consoleMessage(`${value} ${responseValue}`);
+      page.emit("console", message);
+      if (fromPage) secrets.admitPageValue("request.cookie", value);
       else secrets.basicCredential("request.auth", "user", "password");
-      emit();
+      page.emit("console", message);
       if (responseSave)
-        secrets.save("response.token", "token", "response-value-82ea", true);
+        secrets.save("response.token", "token", responseValue, true);
       await capture.finish();
-      const events = capture.result().items;
-      expect(events).toHaveLength(2);
-      expect(events[0]).toMatchObject({
-        kind: "console",
-        text: expect.stringContaining(value),
-      });
-      expect(events[1]).toMatchObject({
-        kind: "console",
-        text: expect.not.stringContaining(value),
-      });
-      expect(JSON.stringify(events).includes("response-value-82ea")).toBe(
-        !responseSave,
-      );
+
+      const runtimeMarker = fromPage
+        ? "[REDACTED:page:request.cookie]"
+        : "[REDACTED:page:request.auth]";
+      const later = responseSave
+        ? "[REDACTED:page:response.token]"
+        : responseValue;
+      expect(capture.result().items).toMatchObject([
+        { kind: "console", text: `${value} ${later}` },
+        { kind: "console", text: `${runtimeMarker} ${later}` },
+      ]);
     }
   },
 );
