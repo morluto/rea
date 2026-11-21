@@ -521,18 +521,13 @@ const finalState = {
   },
 };
 
-/** An application whose four state reads settle only when `release` runs. */
+/** An application whose state read settles only when `release` runs. */
 const gatedStateApplication = () => {
   let release = (): void => undefined;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const evaluate = vi
-    .fn()
-    .mockImplementationOnce(() => gate.then(() => finalState.windows))
-    .mockImplementationOnce(() => gate.then(() => finalState.metrics))
-    .mockImplementationOnce(() => gate.then(() => finalState.electronVersion))
-    .mockImplementationOnce(() => gate.then(() => finalState.hookSnapshot));
+  const evaluate = () => gate.then(() => finalState);
   return {
     application: { evaluate } as unknown as ElectronApplication,
     release,

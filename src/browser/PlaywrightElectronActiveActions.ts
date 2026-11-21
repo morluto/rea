@@ -421,6 +421,13 @@ export const watchSingleInstanceLockRefusal = (
   return refusal.signal;
 };
 
+const electronApplicationStateSchema = z.strictObject({
+  windows: z.array(electronActiveWindowSchema),
+  metrics: z.array(electronActiveProcessMetricSchema),
+  electronVersion: z.string(),
+  hookSnapshot: hookSnapshotSchema,
+});
+
 /** Read the current Electron windows, metrics, and hook snapshot. */
 export const readApplicationState = async (
   application: ElectronApplication,
@@ -430,9 +437,10 @@ export const readApplicationState = async (
   readonly electronVersion: string;
   readonly hookSnapshot: ElectronHookSnapshot;
 }> => {
-  const windowMetadataPromise: Promise<ElectronWindowMetadata[]> = application
-    .evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows().map(
+  const state = await application.evaluate(({ BrowserWindow, app }) => {
+    const candidate = Reflect.get(globalThis, "__reaElectronActiveSnapshot");
+    return {
+      windows: BrowserWindow.getAllWindows().map(
         (window: {
           readonly id: number;
           readonly webContents: {
@@ -451,11 +459,7 @@ export const readApplicationState = async (
           destroyed: window.isDestroyed(),
         }),
       ),
-    )
-    .then((value) => z.array(electronActiveWindowSchema).parse(value));
-  const processMetricsPromise: Promise<ElectronMetrics> = application
-    .evaluate(({ app }) =>
-      app
+      metrics: app
         .getAppMetrics()
         .map(
           (metric: {
@@ -470,48 +474,30 @@ export const readApplicationState = async (
             service_name: metric.serviceName ?? null,
           }),
         ),
-    )
-    .then((value) => z.array(electronActiveProcessMetricSchema).parse(value));
-  const electronVersionPromise: Promise<string> = application
-    .evaluate(() => process.versions.electron)
-    .then((value) => z.string().parse(value));
-  const hookSnapshotPromise: Promise<ElectronHookSnapshot> = application
-    .evaluate(() => {
-      const candidate = Reflect.get(globalThis, "__reaElectronActiveSnapshot");
-      return typeof candidate === "function"
-        ? candidate()
-        : {
-            events: [],
-            retention_budget_bytes: 0,
-            estimated_retained_bytes: 0,
-            event_serialized_byte_upper_bound: 0,
-            retained: 0,
-            dropped: 0,
-            dropped_ipc: 0,
-            dropped_runtime: 0,
-            dropped_event_families: [],
-            dropped_event_roles: [],
-            observed: 0,
-            observed_ipc: 0,
-            observed_runtime: 0,
-            hook_error: true,
-            single_instance_lock_refused: null,
-          };
-    })
-    .then((value) => hookSnapshotSchema.parse(value));
-  const [windowMetadata, processMetrics, electronVersion, hookSnapshot] =
-    await Promise.all([
-      windowMetadataPromise,
-      processMetricsPromise,
-      electronVersionPromise,
-      hookSnapshotPromise,
-    ]);
-  return {
-    windows: windowMetadata,
-    metrics: processMetrics,
-    electronVersion,
-    hookSnapshot,
-  };
+      electronVersion: process.versions.electron,
+      hookSnapshot:
+        typeof candidate === "function"
+          ? candidate()
+          : {
+              events: [],
+              retention_budget_bytes: 0,
+              estimated_retained_bytes: 0,
+              event_serialized_byte_upper_bound: 0,
+              retained: 0,
+              dropped: 0,
+              dropped_ipc: 0,
+              dropped_runtime: 0,
+              dropped_event_families: [],
+              dropped_event_roles: [],
+              observed: 0,
+              observed_ipc: 0,
+              observed_runtime: 0,
+              hook_error: true,
+              single_instance_lock_refused: null,
+            },
+    };
+  });
+  return electronApplicationStateSchema.parse(state);
 };
 
 /**
