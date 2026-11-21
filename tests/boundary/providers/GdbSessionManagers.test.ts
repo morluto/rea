@@ -93,64 +93,70 @@ describe("persistent debugger session managers", () => {
     expect(manager.status(started.value.session_id)).toBeUndefined();
   });
 
-  it.each([
-    ["debugger.command_deadline_ms", "REA_DEBUGGER_COMMAND_DEADLINE_MS", 5000],
-    [
-      "debugger.max_command_output_bytes",
-      "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
-      4096,
-    ],
-  ] as const)(
-    "restores a GDB session after resetting invalid %s",
-    async (setting, environmentName, value) => {
-      directory = await mkdtemp(join(tmpdir(), "rea-gdb-setting-"));
-      const provider = join(directory, "fake-gdb.mjs");
-      await writeFile(provider, gdbFixture(directory));
-      await chmod(provider, 0o700);
-      const environment = {
-        REA_GDB_COMMAND: provider,
-        [environmentName]: "invalid",
-      };
-      const settings = new AnalysisSettings(environment);
-      const set = () =>
-        settings.update({ changes: [{ setting, action: "set", value }] });
-      const reset = () =>
-        settings.update({ changes: [{ setting, action: "reset" }] });
-      const affectsControlCommands = setting === "debugger.command_deadline_ms";
-      if (affectsControlCommands) expect(set().ok).toBe(true);
-      const manager = new GdbSessionManager({
-        spawnProcess: fixtureOwner.spawnProcess,
-        platform: "linux",
-        environment,
-      });
-      managers.push(manager);
-      const started = await settings.run(() => manager.start());
-      if (!started.ok) throw started.error;
-      const execute = () =>
-        settings.run(() =>
-          manager.execute(started.value.session_id, "show version"),
-        );
-      const expectRefusedCommand = async () =>
-        expect(await execute()).toMatchObject({
-          ok: false,
-          error: { _tag: "ConfigurationError" },
-        });
-      if (!affectsControlCommands) {
-        await expectRefusedCommand();
-        expect(set().ok).toBe(true);
-      }
-      expect((await execute()).ok).toBe(true);
-      expect(reset().ok).toBe(true);
-      await expectRefusedCommand();
-      expect(set().ok).toBe(true);
-      expect((await execute()).ok).toBe(true);
-
-      if (!affectsControlCommands) expect(reset().ok).toBe(true);
+  it("recovers GDB commands after either runtime cap is reset to an invalid seed", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-setting-"));
+    const provider = join(directory, "fake-gdb.mjs");
+    await writeFile(provider, gdbFixture(directory));
+    await chmod(provider, 0o700);
+    const environment = {
+      REA_GDB_COMMAND: provider,
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "invalid",
+      REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "invalid",
+      REA_DEBUGGER_MAX_PENDING_COMMANDS: "1",
+    };
+    const deadline = {
+      setting: "debugger.command_deadline_ms",
+      seed: "REA_DEBUGGER_COMMAND_DEADLINE_MS",
+      value: 5000,
+    };
+    const output = {
+      setting: "debugger.max_command_output_bytes",
+      seed: "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
+      value: 4096,
+    };
+    const settings = new AnalysisSettings(environment);
+    const set = ({ setting, value }: typeof deadline) =>
       expect(
-        await settings.run(() => manager.close(started.value.session_id)),
-      ).toMatchObject({ ok: true, value: { target_state: "none_observed" } });
-    },
-  );
+        settings.update({ changes: [{ setting, action: "set", value }] }).ok,
+      ).toBe(true);
+    const reset = ({ setting }: typeof deadline) =>
+      expect(
+        settings.update({ changes: [{ setting, action: "reset" }] }).ok,
+      ).toBe(true);
+    set(deadline);
+    const manager = new GdbSessionManager({
+      spawnProcess: fixtureOwner.spawnProcess,
+      platform: "linux",
+      environment,
+    });
+    managers.push(manager);
+    const started = await settings.run(() => manager.start());
+    if (!started.ok) throw started.error;
+    const { session_id: sessionId } = started.value;
+    const execute = (command: string) =>
+      settings.run(() => manager.execute(sessionId, command));
+    const expectRefusedCommand = async (seed: string) =>
+      expect(await execute("refused")).toMatchObject({
+        ok: false,
+        error: { _tag: "ConfigurationError", settings: [{ setting: seed }] },
+      });
+    await expectRefusedCommand(output.seed);
+    set(output);
+    for (const cap of [deadline, output]) {
+      reset(cap);
+      await expectRefusedCommand(cap.seed);
+      set(cap);
+      const retried = await execute("show version");
+      if (!retried.ok) throw retried.error;
+      expect(retried.value.result.mi).toMatch(/^\d+\^done/u);
+    }
+
+    reset(output);
+    expect(await settings.run(() => manager.close(sessionId))).toMatchObject({
+      ok: true,
+      value: { target_state: "none_observed" },
+    });
+  });
 
   // A malformed ^done is not a success record: the typed MI parser refuses it
   // where a ^done prefix match would have accepted the setting.
