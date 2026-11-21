@@ -2122,6 +2122,137 @@ it("refuses index entry text that accumulates past max_descriptor_bytes", async 
   expect(report.indexes).toHaveLength(4);
 });
 
+it("refuses rejected descriptor text that accumulates past max_descriptor_bytes", async () => {
+  const root = await createTestTempDirectory(
+    "rea-oci-rejected-descriptor-bytes-",
+  );
+  const written = await writeOciImageLayoutFixture(root);
+  const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
+  const OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
+  const expectDescriptorBytesLimit = async () => {
+    const reader = new DirectoryArtifactReader(root);
+    try {
+      await expect(
+        parseOciImageLayout(
+          reader,
+          inspectOciImageLayoutInputSchema.parse({
+            path: root,
+            max_descriptor_bytes: 1024,
+          }),
+        ),
+      ).rejects.toSatisfy((cause: unknown) => {
+        expect(cause).toBeInstanceOf(ParseFailureError);
+        if (!(cause instanceof ParseFailureError)) return false;
+        expect(cause.failure).toMatchObject({
+          kind: "limit",
+          limit: { name: "max_descriptor_bytes", maximum: 1024 },
+        });
+        return true;
+      });
+    } finally {
+      await reader.close();
+    }
+  };
+
+  // Rejected manifests[] entries (digest present, mediaType missing) across
+  // entries and nested indexes accumulate past max_descriptor_bytes.
+  const nested = [];
+  for (let index = 0; index < 3; index += 1) {
+    const body = `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_INDEX,
+      manifests: [
+        { digest: `sha256:${String(index)}-a-${"f".repeat(150)}`, size: 1 },
+        { digest: `sha256:${String(index)}-b-${"f".repeat(150)}`, size: 1 },
+      ],
+    })}\n`;
+    nested.push({
+      mediaType: OCI_INDEX,
+      digest: await putOciBlob(root, body),
+      size: Buffer.byteLength(body),
+    });
+  }
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({ schemaVersion: 2, mediaType: OCI_INDEX, manifests: nested })}\n`,
+  );
+  await expectDescriptorBytesLimit();
+
+  // Rejected subject, manifest config, and manifest layers[] descriptors with
+  // large digests also spend max_descriptor_bytes.
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_INDEX,
+      manifests: [],
+      subject: { digest: `sha256:${"s".repeat(1024)}`, size: 1 },
+    })}\n`,
+  );
+  await expectDescriptorBytesLimit();
+
+  const emptyConfig = await putOciBlob(root, "{}");
+  for (const manifestBody of [
+    JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MANIFEST,
+      config: { digest: `sha256:${"c".repeat(1024)}`, size: 2 },
+      layers: [],
+    }),
+    JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MANIFEST,
+      config: { ...OCI_EMPTY_CONFIG, digest: emptyConfig },
+      layers: [{ digest: `sha256:${"l".repeat(1024)}`, size: 1 }],
+    }),
+  ]) {
+    const manifestDigest = await putOciBlob(root, manifestBody);
+    await writeFile(
+      join(root, "index.json"),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        mediaType: OCI_INDEX,
+        manifests: [
+          {
+            mediaType: OCI_MANIFEST,
+            digest: manifestDigest,
+            size: Buffer.byteLength(manifestBody),
+          },
+        ],
+      })}\n`,
+    );
+    await expectDescriptorBytesLimit();
+  }
+
+  // A small rejected entry within max_descriptor_bytes still yields the
+  // malformed_blob_json finding.
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_INDEX,
+      manifests: [
+        {
+          mediaType: OCI_MANIFEST,
+          digest: written.manifestDigest,
+          size: written.manifestSize,
+        },
+        { digest: "sha256:small", size: 1 },
+      ],
+    })}\n`,
+  );
+  const report = await inspectLayout(root, { max_descriptor_bytes: 1024 });
+  expect(report.findings).toContainEqual(
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      message: expect.stringContaining(
+        "manifests[1] lacks a string mediaType (digest sha256:small)",
+      ),
+    }),
+  );
+  expect(report.indexes[0]?.entries).toHaveLength(1);
+});
+
 it("refuses a layout whose shared config expands past max_config_bytes", async () => {
   const root = await createTestTempDirectory("rea-oci-config-bytes-");
   await writeSharedLayerLayout(root, 5, 1);

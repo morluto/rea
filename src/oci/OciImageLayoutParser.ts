@@ -195,16 +195,20 @@ const descriptorMetadataDefects = (value: unknown): string[] => {
   return defects;
 };
 
+/** Untrusted digest text that `descriptorDefect` embeds for a rejected record. */
+const rejectedDescriptorDigest = (value: unknown): string | null =>
+  isRecord(value) ? nonempty(value.digest) : null;
+
 /** What a descriptor that `descriptorOf` cannot model is missing. */
 const descriptorDefect = (value: unknown): string => {
   if (!isRecord(value)) return "is not a JSON object";
+  const digest = rejectedDescriptorDigest(value);
   const missing = [
     ...((nonempty(value.mediaType) ?? nonempty(value.media_type))
       ? []
       : ["a string mediaType"]),
-    ...(nonempty(value.digest) ? [] : ["a string digest"]),
+    ...(digest !== null ? [] : ["a string digest"]),
   ];
-  const digest = nonempty(value.digest);
   return `lacks ${missing.join(" and ")}${digest === null ? "" : ` (digest ${digest})`}`;
 };
 
@@ -990,9 +994,23 @@ const inventoryOciImageLayout = async (
       );
   };
 
-  // Index entries keep their text, annotations included, in the report, so
-  // every retained entry spends max_descriptor_bytes before it is added.
+  // Index entries keep their text, annotations included, in the report, and
+  // rejected descriptors embed their untrusted digest in findings, so both
+  // spend max_descriptor_bytes before being retained.
   let descriptorBytesRetained = 0;
+  const spendDescriptorBytes = (bytes: number): void => {
+    descriptorBytesRetained += bytes;
+    if (descriptorBytesRetained > input.max_descriptor_bytes)
+      throw decodeLimit(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `OCI image layout index entries exceed the ${String(input.max_descriptor_bytes)}-byte budget.`,
+        {
+          name: "max_descriptor_bytes",
+          maximum: input.max_descriptor_bytes,
+          required: descriptorBytesRetained,
+        },
+      );
+  };
   const chargeDescriptorBytes = (
     descriptor: OciImageLayoutIndex["entries"][number],
   ): void => {
@@ -1005,17 +1023,11 @@ const inventoryOciImageLayout = async (
       bytes +=
         Buffer.byteLength(annotation.name) +
         Buffer.byteLength(annotation.value);
-    descriptorBytesRetained += bytes;
-    if (descriptorBytesRetained > input.max_descriptor_bytes)
-      throw decodeLimit(
-        OCI_IMAGE_LAYOUT_FORMAT,
-        `OCI image layout index entries exceed the ${String(input.max_descriptor_bytes)}-byte budget.`,
-        {
-          name: "max_descriptor_bytes",
-          maximum: input.max_descriptor_bytes,
-          required: descriptorBytesRetained,
-        },
-      );
+    spendDescriptorBytes(bytes);
+  };
+  const chargeRejectedDescriptorText = (value: unknown): void => {
+    const digest = rejectedDescriptorDigest(value);
+    if (digest !== null) spendDescriptorBytes(Buffer.byteLength(digest));
   };
 
   // A referenced index, manifest or config that could not be read leaves its
@@ -1152,6 +1164,7 @@ const inventoryOciImageLayout = async (
     const descriptor = descriptorOf(value);
     if (descriptor === undefined) {
       referenceGraphTruncated = true;
+      chargeRejectedDescriptorText(value);
       recordFinding(
         findings,
         "malformed_blob_json",
@@ -1243,6 +1256,7 @@ const inventoryOciImageLayout = async (
       const descriptor = descriptorOf(item);
       if (descriptor === undefined) {
         referenceGraphTruncated = true;
+        chargeRejectedDescriptorText(item);
         recordFinding(
           findings,
           "malformed_blob_json",
@@ -1330,6 +1344,7 @@ const inventoryOciImageLayout = async (
     const configDescriptor = descriptorOf(document.value.config);
     if (configDescriptor === undefined) {
       referenceGraphTruncated = true;
+      chargeRejectedDescriptorText(document.value.config);
       recordFinding(
         findings,
         "malformed_blob_json",
@@ -1357,6 +1372,7 @@ const inventoryOciImageLayout = async (
       const descriptor = descriptorOf(item);
       if (descriptor === undefined) {
         referenceGraphTruncated = true;
+        chargeRejectedDescriptorText(item);
         recordFinding(
           findings,
           "malformed_blob_json",
