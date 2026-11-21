@@ -1,0 +1,98 @@
+[
+  {
+    "id": "wasm-01",
+    "prompt": "Validate /tmp/mod.wasm and show me its imports, exports and the decoded WAT.",
+    "expected": ["inspect_wasm_artifact"],
+    "tags": ["static", "wasm"]
+  },
+  {
+    "id": "sqlite-01",
+    "prompt": "Open /tmp/app.db and list its tables, columns and indexes without modifying anything.",
+    "expected": ["inspect_sqlite_database"],
+    "tags": ["static", "sqlite"]
+  },
+  {
+    "id": "go-01",
+    "prompt": "Which Go version and module dependencies was /tmp/server built with?",
+    "expected": ["inspect_go_binary"],
+    "tags": ["static", "go"]
+  },
+  {
+    "id": "rust-01",
+    "prompt": "Which crates and versions are embedded in the Rust binary /tmp/tool?",
+    "expected": ["inspect_rust_binary"],
+    "tags": ["static", "rust"]
+  },
+  {
+    "id": "electron-fuses-01",
+    "prompt": "Which Electron fuses are enabled in /Applications/Foo.app?",
+    "expected": ["inspect_electron_fuses"],
+    "tags": ["static", "electron"]
+  },
+  {
+    "id": "js-app-01",
+    "prompt": "I extracted an Electron app's ASAR to /tmp/app. Map its modules, imports and IPC boundaries.",
+    "expected": ["analyze_javascript_application"],
+    "tags": ["static", "electron"]
+  },
+  {
+    "id": "pcap-summary-01",
+    "prompt": "Summarize the saved capture /tmp/a.pcapng: packet counts, endpoints, DNS names and TLS SNI.",
+    "expected": ["inspect_pcap_capture"],
+    "tags": ["network", "confusable"]
+  },
+  {
+    "id": "packet-fields-01",
+    "prompt": "Use tshark to extract http.host and ip.src from every frame in /tmp/a.pcap and show repeated values.",
+    "expected": ["inspect_packet_capture"],
+    "tags": ["network", "confusable"]
+  },
+  {
+    "id": "callers-01",
+    "prompt": "Which functions call the function at 0x401000?",
+    "expected": ["procedure_callers"],
+    "tags": ["native", "confusable"]
+  },
+  {
+    "id": "callees-01",
+    "prompt": "Which functions does the function at 0x401000 call?",
+    "expected": ["procedure_callees"],
+    "tags": ["native", "confusable"]
+  },
+  {
+    "id": "comment-01",
+    "prompt": "Add an analysis comment at 0x401230 recording that this routine validates the license key.",
+    "expected": ["set_comment"],
+    "tags": ["native", "confusable", "mutating"]
+  },
+  {
+    "id": "inline-comment-01",
+    "prompt": "Put an inline comment on the instruction at 0x401230 saying 'key length check'.",
+    "expected": ["set_inline_comment"],
+    "tags": ["native", "confusable", "mutating"]
+  },
+  {
+    "id": "adb-01",
+    "prompt": "List the Android devices currently attached over adb.",
+    "expected": ["list_adb_devices"],
+    "tags": ["android"]
+  },
+  {
+    "id": "android-class-01",
+    "prompt": "Find every class with 'Payment' in its name in /tmp/app.apk.",
+    "expected": ["search_android_classes"],
+    "tags": ["android"]
+  },
+  {
+    "id": "session-01",
+    "prompt": "What target, provider and capabilities does REA currently have available?",
+    "expected": ["binary_session"],
+    "tags": ["session"]
+  },
+  {
+    "id": "open-01",
+    "prompt": "Load /tmp/crackme into the analysis engine so I can start reversing it.",
+    "expected": ["open_binary"],
+    "tags": ["native", "session"]
+  }
+]
