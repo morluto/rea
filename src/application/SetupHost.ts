@@ -12,7 +12,10 @@ import {
   type AnalysisCleanupLease,
 } from "../resources/index.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import {
+  currentClientRegistrationCommand,
+  defaultClientRegistrationBlocker,
+} from "./ClientRegistrationIdentity.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
@@ -56,10 +59,6 @@ import {
   explicitSetupRegistrationEnvironment,
   providerRegistrationEnvironment,
 } from "./SetupRegistrationEnvironment.js";
-import {
-  msixPackagesDirectory,
-  packagePrivateLauncherBlocker,
-} from "./MsixPackageStorage.js";
 import type {
   SetupHost,
   SetupInitialState,
@@ -87,15 +86,12 @@ const setupRegistration = (
     entrypointPath: CURRENT_ENTRYPOINT_PATH,
     environment,
   });
-  const registrationCommandBlocker =
-    registrationCommand.length === 0
-      ? "REA could not determine the current executable entrypoint. Run setup through the installed REA CLI or a supported package runner before configuring clients."
-      : platform === "win32"
-        ? packagePrivateLauncherBlocker(
-            registrationCommand,
-            msixPackagesDirectory(homeDirectory, environment),
-          )
-        : undefined;
+  const registrationCommandBlocker = defaultClientRegistrationBlocker(
+    registrationCommand,
+    platform,
+    homeDirectory,
+    environment,
+  );
   return registrationCommandBlocker === undefined
     ? { registrationCommand }
     : { registrationCommand, registrationCommandBlocker };
@@ -305,6 +301,7 @@ export const systemSetupHost = (
       resources,
       doctorHost.resolveProviderRequestBudget,
       platform,
+      environment,
     ),
     skillNeedsInstall: (clientIds) =>
       canonicalSkillNeedsInstall(
@@ -366,6 +363,7 @@ const clientConfigurationOperations = (
   resources: ArtifactResourceScope,
   resolveProviderRequestBudget: DoctorHost["resolveProviderRequestBudget"],
   platform: NodeJS.Platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
 ) => ({
   configureClient: (
     client: SetupClient,
@@ -381,6 +379,7 @@ const clientConfigurationOperations = (
             command,
             resolveProviderRequestBudget,
             platform,
+            launcherEnvironment,
           ),
     ),
   clientNeedsConfigure: (
@@ -397,6 +396,7 @@ const clientConfigurationOperations = (
             command,
             resolveProviderRequestBudget,
             platform,
+            launcherEnvironment,
           )),
     ),
   inspectClientConfiguration: (
@@ -411,6 +411,7 @@ const clientConfigurationOperations = (
         command,
         resolveProviderRequestBudget,
         platform,
+        launcherEnvironment,
       ),
     ),
 });
