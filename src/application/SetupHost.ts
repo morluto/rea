@@ -1,5 +1,5 @@
 import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
-import { userConfigRegistrationEnvironment } from "./UserConfigurationLocation.js";
+import { userConfigRegistrationFallback } from "./UserConfigurationLocation.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
@@ -207,7 +207,7 @@ export const systemSetupHost = (
           savedDefaults,
         ),
         ...(savedDefaults !== undefined && savedDefaults.size > 0
-          ? userConfigRegistrationEnvironment(environment, platform)
+          ? userConfigRegistrationFallback(environment, platform)
           : {}),
       };
       const requestedProvider = analysisProviderSelectorSchema.safeParse(

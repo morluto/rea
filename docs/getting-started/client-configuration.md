@@ -1241,8 +1241,9 @@ shows the value and its source. For Hopper on macOS and Linux, it reports
 the launcher path the provider would try when no value is set.
 `rea config --unset NAME` removes the saved value. Environment variables override the file, and absent settings
 use provider discovery. When setup relies on saved defaults from a non-default
-`XDG_CONFIG_HOME`, it records that directory in the server environment. Each
-MCP start reads the saved file again. Setup uses its saved IDA request budget
+`XDG_CONFIG_HOME`, it records that directory only if the client registration
+does not already define `XDG_CONFIG_HOME`. Each MCP start reads the saved
+file from the selected directory. Setup uses its saved IDA request budget
 when recommending client deadlines and preserves any existing client deadline.
 When one client is selected, doctor uses that registration's configuration
 location for provider probes. The JSON report lists the effective settings

@@ -29,6 +29,7 @@ import {
   snapshotEnvironment,
 } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
+import { mergeRegistrationEnvironment } from "./UserConfigurationLocation.js";
 import type { McpToolTimeoutInputs } from "../config/mcpStartupPolicy.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
@@ -50,6 +51,7 @@ export interface ProviderRequestBudgetResolver {
 
 export interface ClientRegistrationEnvironmentDetails {
   readonly values: Readonly<Record<string, string>>;
+  readonly configHomeFallbackApplied?: true;
   readonly unresolvedSettings: ReadonlySet<string>;
   readonly timeoutInputs: McpToolTimeoutInputs | undefined;
 }
@@ -181,17 +183,20 @@ export const clientRegistrationEnvironmentDetails = (
     );
   // Validate known settings with the runtime's parser, but retain the original
   // string overrides, including unknown client-specific keys and no defaults.
-  const environment = mergeEnvironmentOverrides(
+  const merged = mergeRegistrationEnvironment(
     existing.data,
     overrides,
     platform,
   );
-  return validatedDetails(
-    environment,
+  const validated = validatedDetails(
+    merged.values,
     validation,
     platform,
-    expressionSettings(client?.name, environment),
+    expressionSettings(client?.name, merged.values),
   );
+  return validated.ok && merged.configHomeFallbackApplied === true
+    ? ok({ ...validated.value, configHomeFallbackApplied: true })
+    : validated;
 };
 
 /** Consume a resolved setting inside its reader without including its value in diagnostics. */

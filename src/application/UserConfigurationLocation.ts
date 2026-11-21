@@ -3,6 +3,7 @@ import {
   selectedHomeDirectorySettings,
 } from "../config/homeDirectory.js";
 import { USER_CONFIG_FILE_NAME } from "../config/userConfig.js";
+import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import {
   appendCallerPath,
   isQualifiedCallerPath,
@@ -60,7 +61,7 @@ export const userConfigLocationSettings = (
 };
 
 /** A session-independent locator for clients that rely on saved defaults. */
-export const userConfigRegistrationEnvironment = (
+export const userConfigRegistrationFallback = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
 ): Readonly<Record<string, string>> => {
@@ -70,4 +71,49 @@ export const userConfigRegistrationEnvironment = (
       configFileAt(defaultConfigHome(environment, platform), platform)
     ? {}
     : { XDG_CONFIG_HOME: selected };
+};
+
+/** The locator is a fallback. All other proposed settings are overrides. */
+export const registrationEnvironmentProposal = (
+  proposed: Readonly<Record<string, string>>,
+): {
+  readonly configHomeFallback?: string;
+  readonly overrides: Readonly<Record<string, string>>;
+} => {
+  if (!Object.hasOwn(proposed, "XDG_CONFIG_HOME"))
+    return { overrides: proposed };
+  const { XDG_CONFIG_HOME: configHomeFallback, ...overrides } = proposed;
+  return configHomeFallback === undefined
+    ? { overrides }
+    : { configHomeFallback, overrides };
+};
+
+export const mergeRegistrationEnvironment = <Value>(
+  existing: Readonly<Record<string, Value>>,
+  proposed: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
+): {
+  readonly values: Readonly<Record<string, Value | string>>;
+  readonly configHomeFallbackApplied?: true;
+} => {
+  const { configHomeFallback, overrides } =
+    registrationEnvironmentProposal(proposed);
+  const values = mergeEnvironmentOverrides<Value | string>(
+    existing,
+    overrides,
+    platform,
+  );
+  if (
+    configHomeFallback === undefined ||
+    Object.keys(values).some(
+      (name) =>
+        (platform === "win32" ? name.toUpperCase() : name) ===
+        "XDG_CONFIG_HOME",
+    )
+  )
+    return { values };
+  return {
+    values: { ...values, XDG_CONFIG_HOME: configHomeFallback },
+    configHomeFallbackApplied: true,
+  };
 };

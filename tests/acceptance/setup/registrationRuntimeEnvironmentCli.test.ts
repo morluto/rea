@@ -597,7 +597,9 @@ for (const scenario of scenarios)
 cliTest(
   "OpenCode CLI validates dependent settings after merging JSON and JSONC",
   async ({ cli }) => {
-    const directory = join(home, ".config/opencode");
+    const terminalRoot = join(home, "terminal-config");
+    const clientRoot = join(home, "client-config");
+    const directory = join(terminalRoot, "opencode");
     await mkdir(directory, { recursive: true });
     const lower = join(directory, "opencode.json");
     const upper = join(directory, "opencode.jsonc");
@@ -613,6 +615,7 @@ cliTest(
       });
     const lowerContent = content({
       REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+      XDG_CONFIG_HOME: clientRoot,
     });
     const upperContent = content({
       ...missingHopperAndGhidraEnvironment(home),
@@ -620,14 +623,25 @@ cliTest(
     });
     await writeFile(lower, lowerContent);
     await writeFile(upper, upperContent);
+    const saved = join(terminalRoot, "rea", "rea.json");
+    await mkdir(dirname(saved), { recursive: true });
+    await writeFile(
+      saved,
+      JSON.stringify({ REA_IDA_MCP_CONFIG: join(home, "unused-ida.json") }),
+    );
     const environment = {
       HOME: home,
       USERPROFILE: home,
-      XDG_CONFIG_HOME: join(home, ".config"),
+      XDG_CONFIG_HOME: terminalRoot,
       ...missingHopperAndGhidraEnvironment(home),
     };
     const run = (args: readonly string[]) =>
-      cli.run({ arguments: [...args, "--json"], cwd: home, environment });
+      cli.run({
+        arguments: [...args, "--json"],
+        cwd: home,
+        environment,
+        freshProcess: true,
+      });
     const setup = await run([
       "setup",
       "--client",
@@ -819,7 +833,7 @@ cliTest(
           REA_ANALYSIS_PROVIDER: ida
           ${expression}
 ${lookup}`;
-    const run = (arguments_: string[]) =>
+    const run = (arguments_: string[], terminalConfigHome?: string) =>
       cli.run({
         arguments: [
           ...arguments_,
@@ -832,7 +846,7 @@ ${lookup}`;
         environment: {
           HOME: home,
           USERPROFILE: home,
-          XDG_CONFIG_HOME: undefined,
+          XDG_CONFIG_HOME: terminalConfigHome,
           DSH_HOME: dirname(cordis),
           ...missingHopperAndGhidraEnvironment(home),
         },
@@ -859,6 +873,17 @@ ${lookup}`;
       });
     }
 
+    const unresolvedLocator = registration(
+      "          XDG_CONFIG_HOME: !!js process.env.XDG_CONFIG_HOME\n",
+    );
+    await writeFile(cordis, unresolvedLocator);
+    const unresolvedSetup = await run(["setup", "--yes"], configRoot);
+    expect(unresolvedSetup.exitCode).toBe(1);
+    expect(unresolvedSetup.json).toMatchObject({
+      remediation: expect.stringContaining("XDG_CONFIG_HOME"),
+    });
+    expect(await readFile(cordis, "utf8")).toBe(unresolvedLocator);
+
     // With no explicit IDA file or config root, the saved lookup needs the home setting.
     const unknown = registration();
     await writeFile(cordis, unknown);
@@ -881,6 +906,80 @@ ${lookup}`;
       remediation: expect.stringContaining(homeSetting),
     });
     expect(await readFile(cordis, "utf8")).toBe(unknown);
+  },
+);
+
+cliTest(
+  "setup preserves the client-selected saved configuration when the terminal selects a different one",
+  async ({ cli }) => {
+    const terminalRoot = join(home, "terminal-config");
+    const clientRoot = join(home, "client-config");
+    const codex = join(home, ".codex", "config.toml");
+    for (const [root, timeoutMs] of [
+      [terminalRoot, 900_000],
+      [clientRoot, 1_800_000],
+    ] as const) {
+      const config = join(root, "rea", "rea.json");
+      const ida = join(root, "ida.json");
+      await mkdir(dirname(config), { recursive: true });
+      await writeFile(
+        ida,
+        JSON.stringify({
+          url: "http://127.0.0.1:12345/mcp",
+          protocol: "native",
+          timeoutMs,
+        }),
+      );
+      await writeFile(config, JSON.stringify({ REA_IDA_MCP_CONFIG: ida }));
+    }
+    await mkdir(dirname(codex), { recursive: true });
+    await writeFile(
+      codex,
+      `[mcp_servers.rea]
+command = "npx"
+args = ["-y", "rea-agents@1.0.0", "mcp"]
+
+[mcp_servers.rea.env]
+REA_ANALYSIS_PROVIDER = "ida"
+XDG_CONFIG_HOME = ${JSON.stringify(clientRoot)}
+`,
+    );
+    const run = (command: string[]) =>
+      cli.run({
+        arguments: [...command, "--client", "codex", "--skill=false", "--json"],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          CODEX_HOME: dirname(codex),
+          XDG_CONFIG_HOME: terminalRoot,
+          ...missingHopperAndGhidraEnvironment(home),
+        },
+        freshProcess: true,
+      });
+    const setup = await run(["setup", "--yes"]);
+    expect(setup.exitCode, setup.stdout).toBe(0);
+    expect(setup.json).toMatchObject({
+      plannedActions: [
+        expect.objectContaining({
+          id: "configure_client:codex",
+          detail: expect.stringContaining(
+            "If the registration has no XDG_CONFIG_HOME",
+          ),
+        }),
+      ],
+    });
+    const registration = effectiveClientServer(
+      parseClientConfiguration(await readFile(codex, "utf8"), "toml"),
+      "rea",
+    );
+    expect(registration).toMatchObject({
+      tool_timeout_sec: 1920,
+      env: { XDG_CONFIG_HOME: clientRoot },
+    });
+    expect((await run(["doctor"])).json).toMatchObject({
+      identity: { registrations: [{ client: "codex", state: "aligned" }] },
+    });
   },
 );
 
