@@ -383,6 +383,11 @@ Danke an alle, die REA nutzen, Fehler melden, Funktionswünsche äußern, Builds
 
 Hinweise zur verantwortungsvollen Nutzung findest du in [DISCLAIMER.md](../../DISCLAIMER.md).
 
+> [!WARNING]
+> **Hinweis zu Kontosperren und ausschließlicher Nutzung mit Genehmigung:** KI-Anbieter und Plattformen (wie Anthropic, OpenAI, Cursor u. a.) setzen automatische Sicherheitsfilter und Missbrauchserkennung ein. Werden KI-Agenten angewiesen, proprietäre Software zu dekompilieren, geschütztes geistiges Eigentum zu extrahieren oder DRM- und Anti-Cheat-Mechanismen zu umgehen, verletzt dies die Nutzungsrichtlinien der KI-Anbieter und kann zur sofortigen und dauerhaften Sperrung von Konten und API-Schlüsseln führen.
+>
+> Nutzen Sie REA ausschließlich für Software in Ihrem Besitz, gemeinfreie Werke (Public Domain) oder Ziele, für die Sie eine ausdrückliche Genehmigung haben. Die unbefugte Reverse-Engineering-Analyse proprietärer Software überträgt keine Urheberrechte am generierten Code und kann gegen Urheberrechtsgesetze und Lizenzbedingungen verstoßen.
+
 REA dient der rechtmäßigen Forschung, Bildung, Interoperabilität, Softwareerhaltung und Analyse von Software, die dir gehört oder die du mit entsprechender Genehmigung untersuchen darfst.
 
 The project's position on illegal or unauthorized use covers all REA

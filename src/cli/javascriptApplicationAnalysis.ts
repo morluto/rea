@@ -196,7 +196,11 @@ export const javaScriptApplicationCliProjection = (target: string) =>
         name: "artifactFormat",
         description: "Application artifact format",
       },
-      source_paths: { name: "sourcePath" },
+      source_paths: {
+        name: "sourcePath",
+        description:
+          "Exact inventoried file path relative to the application root",
+      },
       integrity_policy: {
         description:
           "Behavior when declared application integrity does not match",
