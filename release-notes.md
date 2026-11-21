@@ -55,6 +55,7 @@
 * **desktop:** respect TryExec when selecting Linux launchers ([b185803](https://github.com/morluto/rea/commit/b185803bc8262e41adaa34943e278ba38924939e))
 * **desktop:** skip only ASCII whitespace before a desktop entry key ([#13126](https://github.com/morluto/rea/issues/13126)) ([a44e705](https://github.com/morluto/rea/commit/a44e705ad820d24e95577b4f61a3dc633ca4fcb8))
 * **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
+* **electron:** preserve inspection frame identity and diagnostics ([#13232](https://github.com/morluto/rea/issues/13232)) ([04d399d](https://github.com/morluto/rea/commit/04d399d67539fa9fbf07a2ce6d93b058808c7101))
 * **electron:** preserve waits and cancellation through renderer shutdown ([#12972](https://github.com/morluto/rea/issues/12972)) ([2533a8b](https://github.com/morluto/rea/commit/2533a8b32bf2d8e4c052f6ea5c7e616a93660a9f))
 * **electron:** resolve exact local IPC channel values ([#13005](https://github.com/morluto/rea/issues/13005)) ([e66a27c](https://github.com/morluto/rea/commit/e66a27c2f2bb294a0506e6d2d6cf9d2f0125b9e2))
 * **elf:** clear the ARM Thumb bit before naming unwind ranges ([#9692](https://github.com/morluto/rea/issues/9692)) ([ce3506e](https://github.com/morluto/rea/commit/ce3506e298e1a42d111a08613821ce8868f411cd))
