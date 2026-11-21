@@ -368,11 +368,24 @@ const envBindings = (
   return bindings;
 };
 
-const historyOf = (value: unknown): OciImageLayoutImage["history"] => {
-  if (!Array.isArray(value)) return [];
+const historyOf = (
+  value: unknown,
+  defects: string[],
+): OciImageLayoutImage["history"] => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    defects.push("history is not an array; it is not modeled");
+    return [];
+  }
   const history: OciImageLayoutImage["history"] = [];
-  for (const item of value) {
-    if (!isRecord(item)) continue;
+  let invalid = 0;
+  let first = -1;
+  for (const [position, item] of value.entries()) {
+    if (!isRecord(item)) {
+      invalid += 1;
+      if (first === -1) first = position;
+      continue;
+    }
     history.push({
       created: nonempty(item.created),
       created_by:
@@ -390,6 +403,10 @@ const historyOf = (value: unknown): OciImageLayoutImage["history"] => {
       comment: typeof item.comment === "string" ? item.comment : null,
     });
   }
+  if (invalid > 0)
+    defects.push(
+      `history has ${String(invalid)} member${invalid === 1 ? "" : "s"} that ${invalid === 1 ? "is" : "are"} not a JSON object, first at [${String(first)}]; ${invalid === 1 ? "it is" : "they are"} omitted`,
+    );
   return history;
 };
 
@@ -596,7 +613,7 @@ const parseConfig = (
         defects,
       ),
       rootfs_diff_ids: diffIdsOf(rootfs, defects),
-      history: historyOf(value.history),
+      history: historyOf(value.history, defects),
     },
     defects,
   };

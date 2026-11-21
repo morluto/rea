@@ -2283,6 +2283,46 @@ it("reports Env members that name nothing and keeps the named ones", async () =>
   ]);
 });
 
+it("reports malformed history and keeps the readable records", async () => {
+  const root = await createTestTempDirectory("rea-oci-history-members-");
+  const written = await writeLayoutWithConfigPatch(root, (doc) => {
+    doc.history = [false, { created_by: "RUN true", empty_layer: false }, 3];
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    {
+      kind: "malformed_blob_json",
+      digest: written.configDigest,
+      path: null,
+      message: `Config ${written.configDigest} history has 2 members that are not a JSON object, first at [0]; they are omitted.`,
+    },
+  ]);
+  expect(report.images[0]).toMatchObject({
+    architecture: "amd64",
+    os: "linux",
+    rootfs_diff_ids: [written.layerDigest],
+    history: [expect.objectContaining({ created_by: "RUN true" })],
+  });
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("reports a non-array history and keeps the other image facts", async () => {
+  const root = await createTestTempDirectory("rea-oci-history-shape-");
+  const written = await writeLayoutWithConfigPatch(root, (doc) => {
+    doc.history = { created_by: "RUN true" };
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings.map((finding) => finding.message)).toEqual([
+    `Config ${written.configDigest} history is not an array; it is not modeled.`,
+  ]);
+  expect(report.images[0]).toMatchObject({
+    user: "nobody",
+    rootfs_diff_ids: [written.layerDigest],
+    history: [],
+  });
+  expect(report.coverage.status).toBe("partial");
+});
+
 it("treats null config leaf fields as omitted", async () => {
   const root = await createTestTempDirectory("rea-oci-null-leaves-");
   await writeLayoutWithConfigPatch(root, (doc) => {
