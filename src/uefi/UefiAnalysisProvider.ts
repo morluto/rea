@@ -1124,7 +1124,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         await writeFile(tempEfiPath, modBytes);
         try {
           if (input.include_disassembly) {
-            if (totalStagedAsmBytes >= MAX_DISASSEMBLY_TOTAL_BYTES) {
+            const remainingAsmBytes =
+              MAX_DISASSEMBLY_TOTAL_BYTES - totalStagedAsmBytes;
+            if (remainingAsmBytes <= 0) {
               disassemblyStatus = "omitted";
               if (
                 !effectiveLimitations.includes(
@@ -1136,6 +1138,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 );
               }
             } else {
+              const maxAsmBuffer = Math.min(
+                MAX_DISASSEMBLY_MODULE_BYTES,
+                remainingAsmBytes,
+              );
               let asmOutput: string | null = null;
               let llvmErrorMsg: string | null = null;
               let objdumpErrorMsg: string | null = null;
@@ -1147,7 +1153,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     signal,
                     stopSignal: "SIGTERM",
                     timeout: 15_000,
-                    maxBuffer: MAX_DISASSEMBLY_MODULE_BYTES,
+                    maxBuffer: maxAsmBuffer,
                   },
                 );
                 asmOutput = stdout;
@@ -1165,7 +1171,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       signal,
                       stopSignal: "SIGTERM",
                       timeout: 15_000,
-                      maxBuffer: MAX_DISASSEMBLY_MODULE_BYTES,
+                      maxBuffer: maxAsmBuffer,
                     },
                   );
                   asmOutput = stdout;
@@ -1181,16 +1187,32 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 }
               }
               if (asmOutput !== null) {
-                const asmName = `${mod.cleanName}.asm`;
-                asmRelPath = `${moduleRelDir}/${asmName}`;
                 const asmBytes = Buffer.from(asmOutput, "utf8");
-                asmSha256 = sha256Hex(asmBytes);
-                publicationEntries.push({
-                  relativePath: asmRelPath,
-                  bytes: asmBytes,
-                });
-                totalStagedAsmBytes += asmBytes.length;
-                disassemblyStatus = "ok";
+                if (
+                  totalStagedAsmBytes + asmBytes.length <=
+                  MAX_DISASSEMBLY_TOTAL_BYTES
+                ) {
+                  const asmName = `${mod.cleanName}.asm`;
+                  asmRelPath = `${moduleRelDir}/${asmName}`;
+                  asmSha256 = sha256Hex(asmBytes);
+                  publicationEntries.push({
+                    relativePath: asmRelPath,
+                    bytes: asmBytes,
+                  });
+                  totalStagedAsmBytes += asmBytes.length;
+                  disassemblyStatus = "ok";
+                } else {
+                  disassemblyStatus = "omitted";
+                  if (
+                    !effectiveLimitations.includes(
+                      "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                    )
+                  ) {
+                    effectiveLimitations.push(
+                      "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                    );
+                  }
+                }
               } else {
                 disassemblyStatus = "failed";
                 const sanitizeDiag = (msg: string | null): string => {
@@ -1225,7 +1247,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           let cGenerator: "ghidra" | "scaffold" = "scaffold";
 
           if (ghidraBin !== null) {
-            if (totalStagedCBytes >= MAX_DECOMPILE_TOTAL_BYTES) {
+            const remainingCBytes =
+              MAX_DECOMPILE_TOTAL_BYTES - totalStagedCBytes;
+            if (remainingCBytes <= 0) {
               if (
                 !effectiveLimitations.includes(
                   "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
@@ -1282,10 +1306,41 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 });
                 if (existsSync(ghidraOutC)) {
                   const cStat = await stat(ghidraOutC);
-                  if (cStat.size <= MAX_DECOMPILE_MODULE_BYTES) {
-                    cContent = await readFile(ghidraOutC, "utf8");
-                    totalStagedCBytes += Buffer.byteLength(cContent, "utf8");
-                    cGenerator = "ghidra";
+                  const maxCBytes = Math.min(
+                    MAX_DECOMPILE_MODULE_BYTES,
+                    remainingCBytes,
+                  );
+                  if (cStat.size <= maxCBytes) {
+                    const candidateC = await readFile(ghidraOutC, "utf8");
+                    const candidateCBytes = Buffer.byteLength(
+                      candidateC,
+                      "utf8",
+                    );
+                    if (
+                      totalStagedCBytes + candidateCBytes <=
+                      MAX_DECOMPILE_TOTAL_BYTES
+                    ) {
+                      cContent = candidateC;
+                      totalStagedCBytes += candidateCBytes;
+                      cGenerator = "ghidra";
+                    } else if (
+                      !effectiveLimitations.includes(
+                        "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                      )
+                    ) {
+                      effectiveLimitations.push(
+                        "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                      );
+                    }
+                  } else if (
+                    cStat.size > remainingCBytes &&
+                    !effectiveLimitations.includes(
+                      "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                    )
+                  ) {
+                    effectiveLimitations.push(
+                      "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                    );
                   }
                 }
               } catch (ghidraErr: unknown) {

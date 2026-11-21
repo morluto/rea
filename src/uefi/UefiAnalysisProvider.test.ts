@@ -2213,6 +2213,39 @@ it("preserves AnalysisTimeoutError when aborted via timeout deadline", async () 
   }
 });
 
+it("omits disassembly and records limitation when staging disassembly exceeds remaining budget", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-asm-budget-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  const mzHeader = Buffer.alloc(128, 0);
+  mzHeader[0] = 0x4d;
+  mzHeader[1] = 0x5a;
+  await writeFile(join(inDir, "mod1.efi"), mzHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: true,
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(["ok", "failed", "omitted"]).toContain(
+      result.modules[0]?.disassembly_status,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
 it.each([
   { erase: 0xff as const, dirty: 0x00 },
   { erase: 0x00 as const, dirty: 0xff },
