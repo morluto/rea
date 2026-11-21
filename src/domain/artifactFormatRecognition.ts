@@ -9,6 +9,7 @@ import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { hasAndroidVbmetaMagic } from "./firmware/androidVbmeta.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
@@ -26,6 +27,7 @@ export type RecognizedArtifactFormat = Extract<
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
+  | "android-vbmeta"
   | "intel-hex"
   | "srec"
   | "uf2"
@@ -107,6 +109,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     ),
     when("uimage", hasUImageMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    when("android-vbmeta", hasAndroidVbmetaMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);
       if (ota === undefined) return undefined;

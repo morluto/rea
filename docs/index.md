@@ -59,6 +59,8 @@ For runtime instrumentation, see the [Frida guide](guides/runtime/frida-instrume
   or [capture a Linux desktop application](desktop-application-capture.md).
 - [Use the CLI and retain Evidence](getting-started/cli.md) or
   [look up MCP result and session contracts](reference/mcp-contracts.md).
+- [Inspect an Android vbmeta image](guides/firmware/android-vbmeta.md) for the
+  partitions Verified Boot names, and the key and digest recorded for each.
 
 Browse the [documentation directory](README.md) for formats, provider
 prerequisites, and contributor references.

@@ -129,6 +129,7 @@ const TARGETS: TargetFixtures = {
   uimage: { ...archive, format: "uimage" },
   "android-boot-image": { ...archive, format: "android-boot-image" },
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
+  "android-vbmeta": { ...archive, format: "android-vbmeta" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
   dmg: { ...archive, format: "dmg" },

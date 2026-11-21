@@ -439,6 +439,17 @@ See [Android boot images](../android-boot-image.md) for header versions 0 throug
 4, vendor ramdisk table entries, stored compression, and the unverified AVB
 footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
+Inspect a standalone Android Verified Boot vbmeta image:
+
+```sh
+rea inspect-artifact ./vbmeta.img --json
+rea extract-artifact ./vbmeta.img --json
+```
+
+See [Android Verified Boot vbmeta images](../guides/firmware/android-vbmeta.md)
+for the header, descriptors, stored public key, and the fact that nothing is
+verified.
+
 Inspect local model declarations without loading weights:
 
 ```bash

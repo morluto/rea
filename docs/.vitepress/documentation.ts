@@ -404,6 +404,11 @@ export const documentationSections = [
         route: "/android-ota-payload",
       },
       {
+        text: "Android Verified Boot vbmeta images",
+        source: "guides/firmware/android-vbmeta.md",
+        route: "/android-vbmeta",
+      },
+      {
         text: "Flattened devicetree inspection",
         source: "devicetree.md",
         route: "/devicetree",

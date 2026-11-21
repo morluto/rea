@@ -71,8 +71,11 @@ stays a file; extract it and run `inspect-devicetree` on the extracted file.
 The reader checks the final 64 bytes for an `AVBf` footer when those bytes
 begin at or after the end of the last declared image component, even if they
 start before the page-rounded image end. A matching footer records its version,
-original image size, and vbmeta offset and size. The footer and vbmeta remain
-unverified metadata. If no footer is recognized, the reader reports undecoded
+original image size, and vbmeta offset and size. The footer and the embedded
+vbmeta remain unverified metadata; this reader does not decode that vbmeta.
+A standalone `vbmeta.img` is a separate `AVB0` image. See
+[Android Verified Boot vbmeta images](guides/firmware/android-vbmeta.md).
+If no footer is recognized, the reader reports undecoded
 trailing bytes beyond the page-rounded image end. A vbmeta range that overlaps
 the header, a component, or the footer is malformed.
 

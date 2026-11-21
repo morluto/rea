@@ -1062,6 +1062,177 @@ export type AndroidBootImageEntryMetadata = z.infer<
   typeof androidBootImageEntryMetadataSchema
 >;
 
+const vbmetaHex = z.string().regex(/^[0-9a-f]*$/u);
+/** An unsigned 64-bit value that is metadata only, as a decimal string. */
+const vbmetaU64Decimal = z.string().regex(/^(?:0|[1-9][0-9]*)$/u);
+const vbmetaSha256 = z.string().regex(/^[0-9a-f]{64}$/u);
+const vbmetaAlgorithmName = z.enum([
+  "NONE",
+  "SHA256_RSA2048",
+  "SHA256_RSA4096",
+  "SHA256_RSA8192",
+  "SHA512_RSA2048",
+  "SHA512_RSA4096",
+  "SHA512_RSA8192",
+  "UNKNOWN",
+]);
+
+const vbmetaDescriptorCommon = {
+  offset: offset,
+  num_bytes_following: offset,
+};
+
+const androidVbmetaPropertyDescriptorSchema = z.strictObject({
+  ...vbmetaDescriptorCommon,
+  tag: z.literal(0),
+  tag_name: z.literal("PROPERTY"),
+  key: z.string().nullable(),
+  key_bytes_hex: vbmetaHex,
+  value: z.string().nullable(),
+  value_bytes_hex: vbmetaHex,
+});
+
+const androidVbmetaHashtreeDescriptorSchema = z.strictObject({
+  ...vbmetaDescriptorCommon,
+  tag: z.literal(1),
+  tag_name: z.literal("HASHTREE"),
+  partition_name: z.string().nullable(),
+  partition_name_bytes_hex: vbmetaHex,
+  dm_verity_version: uint32,
+  image_size: vbmetaU64Decimal,
+  tree_offset: vbmetaU64Decimal,
+  tree_size: vbmetaU64Decimal,
+  data_block_size: uint32,
+  hash_block_size: uint32,
+  fec_num_roots: uint32,
+  fec_offset: vbmetaU64Decimal,
+  fec_size: vbmetaU64Decimal,
+  hash_algorithm: z.string().nullable(),
+  hash_algorithm_bytes_hex: z.string().regex(/^[0-9a-f]{64}$/u),
+  salt_hex: vbmetaHex,
+  root_digest_hex: vbmetaHex,
+  flags: uint32,
+  flag_names: z.array(z.string()),
+});
+
+const androidVbmetaHashDescriptorSchema = z.strictObject({
+  ...vbmetaDescriptorCommon,
+  tag: z.literal(2),
+  tag_name: z.literal("HASH"),
+  partition_name: z.string().nullable(),
+  partition_name_bytes_hex: vbmetaHex,
+  image_size: vbmetaU64Decimal,
+  hash_algorithm: z.string().nullable(),
+  hash_algorithm_bytes_hex: z.string().regex(/^[0-9a-f]{64}$/u),
+  salt_hex: vbmetaHex,
+  digest_hex: vbmetaHex,
+  flags: uint32,
+  flag_names: z.array(z.string()),
+});
+
+const androidVbmetaKernelCmdlineDescriptorSchema = z.strictObject({
+  ...vbmetaDescriptorCommon,
+  tag: z.literal(3),
+  tag_name: z.literal("KERNEL_CMDLINE"),
+  flags: uint32,
+  flag_names: z.array(z.string()),
+  cmdline: z.string().nullable(),
+  cmdline_bytes_hex: vbmetaHex,
+});
+
+const androidVbmetaChainPartitionDescriptorSchema = z.strictObject({
+  ...vbmetaDescriptorCommon,
+  tag: z.literal(4),
+  tag_name: z.literal("CHAIN_PARTITION"),
+  rollback_index_location: uint32,
+  partition_name: z.string().nullable(),
+  partition_name_bytes_hex: vbmetaHex,
+  public_key_size: offset,
+  public_key_sha256: vbmetaSha256,
+  flags: uint32,
+  flag_names: z.array(z.string()),
+});
+
+const androidVbmetaUnknownDescriptorSchema = z.strictObject({
+  ...vbmetaDescriptorCommon,
+  tag: vbmetaU64Decimal,
+  tag_name: z.literal("UNKNOWN"),
+});
+
+/** One vbmeta descriptor. Unknown tags keep their tag, size, and file offset. */
+export const androidVbmetaDescriptorSchema = z.discriminatedUnion("tag_name", [
+  androidVbmetaPropertyDescriptorSchema,
+  androidVbmetaHashtreeDescriptorSchema,
+  androidVbmetaHashDescriptorSchema,
+  androidVbmetaKernelCmdlineDescriptorSchema,
+  androidVbmetaChainPartitionDescriptorSchema,
+  androidVbmetaUnknownDescriptorSchema,
+]);
+export type AndroidVbmetaDescriptor = z.infer<
+  typeof androidVbmetaDescriptorSchema
+>;
+
+/**
+ * Android Verified Boot vbmeta header and descriptors. Range fields are the
+ * header's own block-relative values. Descriptor `offset` is a file offset.
+ * Signatures and digests are recorded and not verified.
+ */
+export const androidVbmetaMetadataSchema = z.strictObject({
+  kind: z.literal("android-vbmeta"),
+  magic: z.literal("AVB0"),
+  required_libavb_version_major: uint32,
+  required_libavb_version_minor: uint32,
+  algorithm_type: uint32,
+  algorithm_name: vbmetaAlgorithmName,
+  authentication_data_block_size: offset,
+  auxiliary_data_block_size: offset,
+  hash_offset: offset,
+  hash_size: offset,
+  signature_offset: offset,
+  signature_size: offset,
+  public_key_offset: offset,
+  public_key_size: offset,
+  public_key_sha256: vbmetaSha256.nullable(),
+  public_key_metadata_offset: offset,
+  public_key_metadata_size: offset,
+  descriptors_offset: offset,
+  descriptors_size: offset,
+  rollback_index: vbmetaU64Decimal,
+  rollback_index_location: uint32,
+  flags: uint32,
+  flag_names: z.array(z.string()),
+  release_string: z.string().nullable(),
+  release_string_bytes_hex: z.string().regex(/^[0-9a-f]{96}$/u),
+  image_size: offset,
+  trailing_bytes: offset,
+  signatures_verified: z.literal(false),
+  descriptors: z.array(androidVbmetaDescriptorSchema),
+  /**
+   * Null when every descriptor decoded. Otherwise the malformed descriptor
+   * that stopped the walk; `descriptors` holds the decoded prefix.
+   */
+  descriptor_failure: z
+    .strictObject({
+      kind: z.enum(["malformed", "truncated"]),
+      detail: z.string(),
+      field: z.string().nullable(),
+      offset,
+      descriptor_offset: offset,
+      unexamined_bytes: offset,
+    })
+    .nullable(),
+});
+export type AndroidVbmetaMetadata = z.infer<typeof androidVbmetaMetadataSchema>;
+
+/** One stored vbmeta range. The role restates the child path. */
+export const androidVbmetaEntryMetadataSchema = z.strictObject({
+  kind: z.literal("android-vbmeta-entry"),
+  role: z.enum(["authentication-block", "public-key", "public-key-metadata"]),
+});
+export type AndroidVbmetaEntryMetadata = z.infer<
+  typeof androidVbmetaEntryMetadataSchema
+>;
+
 const denoListingSchema = z.enum(["listed", "unsupported"]);
 
 const denoEnvVarSchema = z.strictObject({
@@ -1178,6 +1349,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   fitImageMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  androidVbmetaMetadataSchema,
+  androidVbmetaEntryMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
@@ -1303,6 +1476,14 @@ const declarationsByKind: {
   "android-boot-image-entry": {
     notCompared:
       "role and index restate the entry's path, compression is observed from its bytes, and load addresses, names and board IDs come from the image header or vendor ramdisk table, which the image's content comparison covers.",
+  },
+  "android-vbmeta": {
+    notCompared:
+      "Its header and descriptor facts come from the image's own bytes, which content comparison covers. Signatures and digests are recorded and not verified.",
+  },
+  "android-vbmeta-entry": {
+    notCompared:
+      "role restates the entry's path; its stored bytes are compared by content.",
   },
   "android-ota-payload": {
     notCompared:

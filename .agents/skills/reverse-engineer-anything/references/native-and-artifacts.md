@@ -962,6 +962,17 @@ verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
 operations stay inventoried with unavailable content. See
 [Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
 
+Standalone Android Verified Boot `vbmeta.img` files (`AVB0` at offset 0) use
+the same inspection and extraction workflows. The root records the header,
+rollback index, flags, release string, and each property, hashtree, hash,
+kernel command-line, and chain-partition descriptor. Unknown tags are
+retained. `public_key_sha256` is the auxiliary public key; a chain descriptor
+reports the SHA-256 of its own key bytes. Extract `authentication_block`,
+`public_key`, and `public_key_metadata` when those ranges are non-empty.
+Signatures and digests are recorded and not verified. An `AVBf` footer is not
+this image. See
+[Android Verified Boot vbmeta images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-vbmeta.md).
+
 ## ESP images
 
 For an ESP32-family app or bootloader image, `open_binary` then

@@ -505,3 +505,13 @@ zstd are recorded from leading magic and left compressed. An AVB footer is
 reported with its sizes and is not verified. `ANDROID!` does not say whether
 the file was boot, init_boot, or recovery. Extract `dtb` and pass that file
 to `inspect-devicetree`. See [Android boot images](../../android-boot-image.md).
+
+## Inspect Android vbmeta images
+
+`inspect-artifact` / `extract-artifact` recognize a standalone `vbmeta.img`
+by the `AVB0` magic at offset 0. The root records the header, rollback index,
+flags, release string, and each property, hashtree, hash, kernel command-line,
+and chain-partition descriptor. Unknown descriptor tags are retained. The
+authentication block, public key, and public key metadata are extractable
+children. Signatures and digests are recorded and not verified. See
+[Android Verified Boot vbmeta images](android-vbmeta.md).
