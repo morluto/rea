@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
 
@@ -39,6 +40,12 @@ it("accepts a typed script with no sibling declaration file", async () => {
     join(root, "scripts/lib/example.mjs"),
     "export const value = 1;\n",
   );
+
+  await expect(findTypedScriptSiblingDeclarations(root)).resolves.toEqual([]);
+});
+
+it("reports no sibling declaration for this repository's typed scripts", async () => {
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
 
   await expect(findTypedScriptSiblingDeclarations(root)).resolves.toEqual([]);
 });
