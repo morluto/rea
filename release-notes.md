@@ -47,6 +47,7 @@
 * **javascript:** reuse lexical returned-reference facts across ambient writes ([#13004](https://github.com/morluto/rea/issues/13004)) ([d43fc10](https://github.com/morluto/rea/commit/d43fc1051134823b1f52a7a3ed564051948e0aa1))
 * **javascript:** share settled ambient call continuations ([#13010](https://github.com/morluto/rea/issues/13010)) ([2e45687](https://github.com/morluto/rea/commit/2e45687dfde28274a5451223695a14f0ae6e5afd))
 * **mcp:** reduce deferred catalog startup data ([#13039](https://github.com/morluto/rea/issues/13039)) ([8f2b865](https://github.com/morluto/rea/commit/8f2b865c0645aab11a1d5d4c027d34089a925bf2))
+* **web:** normalize each browser redaction marker once ([#13172](https://github.com/morluto/rea/issues/13172)) ([6818b01](https://github.com/morluto/rea/commit/6818b01d5aacfdcc119054fec8d985d7b9ccfb5f))
 
 
 ### Documentation
