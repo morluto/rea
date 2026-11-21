@@ -84,6 +84,10 @@ export interface GhidraLaunchSession {
   readonly runId: string;
   readonly targetPath: string;
   readonly targetSha256: string;
+  /** Universal-file offset of the imported slice; Ghidra offsets are local to it. */
+  readonly targetFileOffsetBase?: number;
+  /** Digest of the slice Ghidra's loader selects from an imported container. */
+  readonly targetSourceSha256?: string;
   readonly providerVersion: string;
   readonly profileDigest: string;
   readonly packedProgram?: import("./GhidraCheckpoint.js").GhidraPackedProgram;
@@ -405,6 +409,12 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           token: session.token,
           run_id: session.runId,
           target_sha256: session.targetSha256,
+          ...(session.targetFileOffsetBase === undefined
+            ? {}
+            : { target_file_offset_base: session.targetFileOffsetBase }),
+          ...(session.targetSourceSha256 === undefined
+            ? {}
+            : { target_source_sha256: session.targetSourceSha256 }),
           provider_version: session.providerVersion,
           profile_digest: session.profileDigest,
           ...(existingProject === undefined ? {} : { existing_project: true }),

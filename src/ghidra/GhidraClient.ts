@@ -179,6 +179,8 @@ export class GhidraClient {
   /** Reported by every cleanup failure until a close releases everything. */
   #cleanupRelease = new AnalysisCleanupRelease();
   #targetAdmission: JsonValue | undefined;
+  #importedSha256: string | undefined;
+  #sourceSha256: string | undefined;
   #token: string | undefined;
   // Retain authentication identities for diagnostics from late request settlement.
   readonly #authenticationTokens = new Set<string>();
@@ -1085,9 +1087,17 @@ export class GhidraClient {
           signal: deadline.signal,
           platform: this.#options.platform,
           resourceScope: this.#fileResources,
+          ...(this.#options.universalSlice === undefined
+            ? {}
+            : {
+                slice: this.#options.universalSlice,
+                keepContainer: this.#options.universalContainerImport === true,
+              }),
         },
       );
       this.#snapshotPath = snapshot.path;
+      this.#importedSha256 = snapshot.sha256;
+      this.#sourceSha256 = snapshot.sourceSha256;
       this.#targetAdmission = snapshot.admission;
     } catch (cause: unknown) {
       const failure =
@@ -1120,7 +1130,16 @@ export class GhidraClient {
           token: this.#token,
           runId: this.#runId,
           targetPath: this.#snapshotPath,
-          targetSha256: this.#options.targetSha256,
+          // Ghidra digests the imported bytes, which are the slice for a
+          // thinned universal Mach-O; Evidence keeps the admitted container.
+          targetSha256: this.#importedSha256 ?? this.#options.targetSha256,
+          // The bridge reports and accepts universal-file offsets for the slice.
+          ...(this.#options.universalSlice === undefined
+            ? {}
+            : { targetFileOffsetBase: this.#options.universalSlice.offset }),
+          ...(this.#sourceSha256 === undefined
+            ? {}
+            : { targetSourceSha256: this.#sourceSha256 }),
           providerVersion: this.#options.providerVersion,
           profileDigest: this.#options.profileDigest,
           ...(packedProgram === undefined ? {} : { packedProgram }),
@@ -1360,7 +1379,7 @@ export class GhidraClient {
       expectedExistingProject: this.#options.existingProject === true,
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
-      targetSha256: this.#options.targetSha256,
+      targetSha256: this.#importedSha256 ?? this.#options.targetSha256,
       ...(this.#targetAdmission === undefined
         ? {}
         : { targetAdmission: this.#targetAdmission }),

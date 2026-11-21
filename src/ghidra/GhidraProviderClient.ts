@@ -592,7 +592,23 @@ export const createGhidraProviderClient = (input: {
     target.format === "raw-binary"
       ? ghidraRawBinaryLanguage(target.architecture)
       : undefined;
+  // A container with one declared architecture keeps its whole-file import, so
+  // Programs and checkpoints saved before thinning keep their digest. Ghidra's
+  // loader has a single choice only when the FAT table holds one slice.
+  const universalContainerImport =
+    target.format === "mach-o-universal" &&
+    target.universalSlices?.length === 1;
+  const universalSlice =
+    target.format === "mach-o-universal" &&
+    (universalContainerImport || target.availableArchitectures.length > 1)
+      ? target.universalSlice
+      : undefined;
   const targetLimitations = [
+    ...(universalSlice === undefined
+      ? []
+      : [
+          `Ghidra imported only the ${target.architecture} slice of this universal Mach-O, ${universalContainerImport ? "selected by its loader at" : "copied from"} container offset ${universalSlice.offset} (${universalSlice.size} bytes). File offsets in results and file-offset selectors are universal-file offsets; native load-image mappings stay relative to the imported slice source file.`,
+        ]),
     ...(target.format === "dos-mz"
       ? [
           "DOS MZ uses 16-bit x86 real mode with the Ghidra load segment 0x1000. Returned addresses are linear byte coordinates; they do not identify a unique segment:offset alias.",
@@ -733,6 +749,9 @@ export const createGhidraProviderClient = (input: {
         ? (target.sourcePath ?? target.path)
         : target.path,
     targetSha256: target.sha256,
+    ...(universalSlice === undefined
+      ? {}
+      : { universalSlice, universalContainerImport }),
     transport:
       installation.platform === "win32"
         ? "authenticated-loopback-tcp"
