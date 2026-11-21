@@ -34,6 +34,7 @@ import {
   type AnalysisExecution,
   type ExecutionOptions,
   type ProviderAvailability,
+  type RetainedResourceScope,
 } from "../ports/AnalysisProvider.js";
 import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
 import {
@@ -252,12 +253,16 @@ const resolveGhidraHeadless = async (
   signal?: AbortSignal,
 ): Promise<string | null> => {
   try {
+    const inspectionOwner: RetainedResourceScope = {
+      retain: () => {},
+      run: (operation) => operation(),
+    };
     const inspection: GhidraInstallationInspection =
       await inspectGhidraInstallation({
         environment: process.env,
-        resourceOwner: "uefi-decompilation",
+        resourceOwner: inspectionOwner,
         platform: HOST_PLATFORM.platform,
-        architecture: HOST_PLATFORM.arch,
+        architecture: HOST_PLATFORM.architecture,
         ...(signal === undefined ? {} : { signal }),
         ...(process.env.GHIDRA_INSTALL_DIR === undefined
           ? {}
