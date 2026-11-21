@@ -16,6 +16,15 @@ const COMMAND_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
   "--no-timings",
 ]);
 
+/** Global switches that inspect a single known command without listing others. */
+const COMMAND_DISCOVERY_FLAGS: ReadonlySet<string> = new Set([
+  "--help",
+  "-h",
+  "--schema",
+  "--llms",
+  "--llms-full",
+]);
+
 const isRegistrationId = (id: string): id is CliCommandRegistrationId =>
   Object.hasOwn(CLI_COMMAND_REGISTRATIONS, id);
 
@@ -23,9 +32,10 @@ const isRegistrationId = (id: string): id is CliCommandRegistrationId =>
  * The registrars the command these arguments run needs, or undefined when the
  * complete CLI must answer, as it does for shell completion, which has no
  * global arguments. A standalone version or retired per-command MCP query
- * needs no registrar. Help, schemas, `--llms`, completions, other
- * CLI builtins, unknown names ("did you mean"), and a missing or unusable
- * recording all describe or search every command.
+ * needs no registrar. A recorded top-level command's `--help`, `--schema`,
+ * `--llms`, or `--llms-full` only needs that command's registrar. Root help/
+ * manifests, unknown names ("did you mean"), other CLI builtins, and a missing
+ * or unusable recording all describe or search every command.
  */
 const selectCliRegistrations = (
   global: CliGlobalArguments | undefined,
@@ -38,7 +48,11 @@ const selectCliRegistrations = (
     return [];
   if (recorded === undefined) return undefined;
   for (const flag of flags)
-    if (!COMMAND_OUTPUT_FLAGS.has(flag) && !flag.startsWith("--timings="))
+    if (
+      !COMMAND_OUTPUT_FLAGS.has(flag) &&
+      !COMMAND_DISCOVERY_FLAGS.has(flag) &&
+      !flag.startsWith("--timings=")
+    )
       return undefined;
   const name = command[0];
   if (name === undefined || !Object.hasOwn(recorded, name)) return undefined;

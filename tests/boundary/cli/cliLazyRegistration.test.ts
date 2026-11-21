@@ -166,9 +166,6 @@ describe("lazy CLI execution", () => {
         },
       });
       expect(retired.stderr).not.toContain(COMPLETE_CLI_IMPORT);
-      const complete = await run(["list-cutter-sessions", "--help"]);
-      expect(complete.exitCode, complete.stderr).toBe(0);
-      expect(complete.stderr).toContain(COMPLETE_CLI_IMPORT);
     },
   );
 
@@ -251,6 +248,46 @@ describe("lazy CLI execution", () => {
           JSON.parse(expected.stdout),
         );
       }
+    },
+  );
+});
+
+describe("lazy CLI discovery", () => {
+  processTest(
+    "loads only the target registrar for known-command help and schema, keeping root and unknown help complete",
+    async ({ processes }) => {
+      const home = await createTestTempDirectory("rea-cli-lazy-discovery-");
+      const run = (arguments_: readonly string[]) =>
+        processes.run(
+          process.execPath,
+          [
+            `--import=${monitorCompleteCli()}`,
+            join("scripts", "rea.mjs"),
+            ...arguments_,
+          ],
+          { env: { ...ENVIRONMENT, HOME: home } },
+        );
+      const lazyHelp = await run(["list-cutter-sessions", "--help"]);
+      expect(lazyHelp.exitCode, lazyHelp.stderr).toBe(0);
+      expect(lazyHelp.stdout).toContain("Usage: rea list-cutter-sessions");
+      expect(lazyHelp.stderr).not.toContain(COMPLETE_CLI_IMPORT);
+      const lazySchema = await run([
+        "list-cutter-sessions",
+        "--schema",
+        "--json",
+      ]);
+      expect(lazySchema.exitCode, lazySchema.stderr).toBe(0);
+      expect(JSON.parse(lazySchema.stdout)).toMatchObject({
+        options: { type: "object" },
+        globals: { properties: { timings: { type: "boolean" } } },
+      });
+      expect(lazySchema.stderr).not.toContain(COMPLETE_CLI_IMPORT);
+      const rootHelp = await run(["--help"]);
+      expect(rootHelp.exitCode, rootHelp.stderr).toBe(0);
+      expect(rootHelp.stderr).toContain(COMPLETE_CLI_IMPORT);
+      const unknownHelp = await run(["unknown-command-xyz", "--help"]);
+      expect(unknownHelp.exitCode, unknownHelp.stderr).toBe(0);
+      expect(unknownHelp.stderr).toContain(COMPLETE_CLI_IMPORT);
     },
   );
 });
