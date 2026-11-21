@@ -412,6 +412,34 @@ const envBindings = (
   return bindings;
 };
 
+const HISTORY_FIELDS = [
+  ["created", "string"],
+  ["created_by", "string"],
+  ["createdBy", "string"],
+  ["empty_layer", "boolean"],
+  ["emptyLayer", "boolean"],
+  ["comment", "string"],
+] as const;
+
+const historyRecordOf = (
+  item: Record<string, unknown>,
+): OciImageLayoutImage["history"][number] => ({
+  created: nonempty(item.created),
+  created_by:
+    typeof item.created_by === "string"
+      ? item.created_by
+      : typeof item.createdBy === "string"
+        ? item.createdBy
+        : null,
+  empty_layer:
+    typeof item.empty_layer === "boolean"
+      ? item.empty_layer
+      : typeof item.emptyLayer === "boolean"
+        ? item.emptyLayer
+        : null,
+  comment: typeof item.comment === "string" ? item.comment : null,
+});
+
 const historyOf = (
   value: unknown,
   defects: string[],
@@ -424,33 +452,42 @@ const historyOf = (
   const history: OciImageLayoutImage["history"] = [];
   let invalid = 0;
   let first = -1;
+  const fieldDefects = new Map<
+    (typeof HISTORY_FIELDS)[number][0],
+    { count: number; first: number }
+  >();
   for (const [position, item] of value.entries()) {
     if (!isRecord(item)) {
       invalid += 1;
       if (first === -1) first = position;
       continue;
     }
-    history.push({
-      created: nonempty(item.created),
-      created_by:
-        typeof item.created_by === "string"
-          ? item.created_by
-          : typeof item.createdBy === "string"
-            ? item.createdBy
-            : null,
-      empty_layer:
-        typeof item.empty_layer === "boolean"
-          ? item.empty_layer
-          : typeof item.emptyLayer === "boolean"
-            ? item.emptyLayer
-            : null,
-      comment: typeof item.comment === "string" ? item.comment : null,
-    });
+    for (const [name, expected] of HISTORY_FIELDS) {
+      const member = item[name];
+      if (
+        member !== undefined &&
+        member !== null &&
+        typeof member !== expected
+      ) {
+        const current = fieldDefects.get(name);
+        if (current === undefined)
+          fieldDefects.set(name, { count: 1, first: position });
+        else current.count += 1;
+      }
+    }
+    history.push(historyRecordOf(item));
   }
   if (invalid > 0)
     defects.push(
       `history has ${String(invalid)} member${invalid === 1 ? "" : "s"} that ${invalid === 1 ? "is" : "are"} not a JSON object, first at [${String(first)}]; ${invalid === 1 ? "it is" : "they are"} omitted`,
     );
+  for (const [name, expected] of HISTORY_FIELDS) {
+    const defect = fieldDefects.get(name);
+    if (defect === undefined) continue;
+    defects.push(
+      `history has ${String(defect.count)} member${defect.count === 1 ? "" : "s"} whose ${name} is not a ${expected}, first at [${String(defect.first)}]; ${defect.count === 1 ? "it is" : "they are"} not modeled`,
+    );
+  }
   return history;
 };
 

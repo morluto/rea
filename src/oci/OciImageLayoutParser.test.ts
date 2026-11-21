@@ -2520,6 +2520,62 @@ it("reports malformed history and keeps the readable records", async () => {
   expect(report.coverage.status).toBe("partial");
 });
 
+it("reports malformed fields inside history records and keeps the readable fields", async () => {
+  const root = await createTestTempDirectory("rea-oci-history-fields-");
+  const written = await writeLayoutWithConfigPatch(root, (doc) => {
+    doc.history = [{ created_by: 7, empty_layer: "false", comment: "kept" }];
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    {
+      kind: "malformed_blob_json",
+      digest: written.configDigest,
+      path: null,
+      message: `Config ${written.configDigest} history has 1 member whose created_by is not a string, first at [0]; it is not modeled.`,
+    },
+    {
+      kind: "malformed_blob_json",
+      digest: written.configDigest,
+      path: null,
+      message: `Config ${written.configDigest} history has 1 member whose empty_layer is not a boolean, first at [0]; it is not modeled.`,
+    },
+  ]);
+  expect(report.images[0]?.history).toEqual([
+    {
+      created: null,
+      created_by: null,
+      empty_layer: null,
+      comment: "kept",
+    },
+  ]);
+  expect(report.coverage.status).toBe("partial");
+
+  const nullRoot = await createTestTempDirectory(
+    "rea-oci-history-null-fields-",
+  );
+  await writeLayoutWithConfigPatch(nullRoot, (doc) => {
+    doc.history = [
+      {
+        created: null,
+        created_by: null,
+        empty_layer: null,
+        comment: null,
+      },
+    ];
+  });
+  const nullReport = await inspectLayout(nullRoot);
+  expect(nullReport.findings).toEqual([]);
+  expect(nullReport.images[0]?.history).toEqual([
+    {
+      created: null,
+      created_by: null,
+      empty_layer: null,
+      comment: null,
+    },
+  ]);
+  expect(nullReport.coverage.status).toBe("complete");
+});
+
 it("reports a non-array history and keeps the other image facts", async () => {
   const root = await createTestTempDirectory("rea-oci-history-shape-");
   const written = await writeLayoutWithConfigPatch(root, (doc) => {
