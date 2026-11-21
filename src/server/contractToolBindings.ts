@@ -641,6 +641,7 @@ export const registerContractTools = (
                             recordEvidence,
                             withAdmittedAnalysis,
                             binding.viewSource,
+                            evidenceById,
                           )(contract)
                         : createRetainedSummaryToolHandler(
                             server,

@@ -1,6 +1,11 @@
 import { unknownTarget } from "../../domain/targetIdentity.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  withEvidenceProviderSelection,
+  type Evidence,
+  type ProviderSelectionProvenance,
+} from "../../domain/evidence.js";
 import type {
   RecordUnknownInput,
   UpdateUnknownInput,
@@ -25,30 +30,34 @@ type UnknownMutation =
 export const unknownMutationEvidence = (
   target: BinaryTarget | undefined,
   mutation: UnknownMutation,
+  providerSelection?: ProviderSelectionProvenance,
 ): Evidence =>
-  createEvidence(
-    target ?? unknownTarget("not-observed"),
-    UNKNOWN_REGISTRY_PROVIDER,
-    {
-      predicateType: "rea.residual-unknown-mutation",
-      operation: mutation.operation,
-      parameters: { ...mutation.input },
-      result:
-        mutation.operation === "record_unknown"
-          ? {
-              action: "record",
-              question: mutation.input.question,
-              required_authority: mutation.input.required_authority,
-              required_confidence: mutation.input.required_confidence,
-            }
-          : { action: "update", status: mutation.input.status },
-      confidence: "derived",
-      authority: "analyst-inference",
-      evidenceLinks: unknownEvidenceLinks(mutation.input),
-      limitations: [
-        "Registry mutation evidence records analyst intent, not proof of the answer.",
-      ],
-    },
+  withEvidenceProviderSelection(
+    createEvidence(
+      target ?? unknownTarget("not-observed"),
+      UNKNOWN_REGISTRY_PROVIDER,
+      {
+        predicateType: "rea.residual-unknown-mutation",
+        operation: mutation.operation,
+        parameters: { ...mutation.input },
+        result:
+          mutation.operation === "record_unknown"
+            ? {
+                action: "record",
+                question: mutation.input.question,
+                required_authority: mutation.input.required_authority,
+                required_confidence: mutation.input.required_confidence,
+              }
+            : { action: "update", status: mutation.input.status },
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: unknownEvidenceLinks(mutation.input),
+        limitations: [
+          "Registry mutation evidence records analyst intent, not proof of the answer.",
+        ],
+      },
+    ),
+    providerSelection,
   );
 
 /** Deduplicate evidence links carried by an unknown mutation. */

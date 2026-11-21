@@ -17,7 +17,10 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { buildGodotPck, buildGodotPck1 } from "../../fixtures/godotPck.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  evidenceDisplayMetadataAgree,
+  parseEvidence,
+} from "../../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { artifactIdForContent } from "../../../src/domain/artifactIdentity.js";
 import type { ArtifactOccurrence } from "../../../src/domain/artifactGraph.js";
@@ -177,9 +180,14 @@ it.for([1, 4] as const)(
       throw new Error("Expected an owned parse-equivalent inspection");
     const inspection = parent.normalized_result;
     const nested = inspection.substeps[0]!.evidence;
-    expect(
-      session.evidenceForAnalysis(nested.evidence_id)?.normalized_result,
-    ).toBe(nested.normalized_result);
+    // The retained record carries this session's provider selection and is a
+    // separately sealed copy, so identity differs; every semantic member and
+    // all display metadata the producer recorded must still agree.
+    const nestedRecord = session.evidenceForAnalysis(nested.evidence_id);
+    if (nestedRecord === undefined)
+      throw new Error("Missing retained nested inspection");
+    expect(evidenceDisplayMetadataAgree(nestedRecord, nested)).toBe(true);
+    expect(nestedRecord).toEqual(nested);
     const graph = nested.normalized_result;
     const view = retainedInventoryView(client, parent.evidence_id, validators);
     await assertInvalidNodeField(client, parent.evidence_id);

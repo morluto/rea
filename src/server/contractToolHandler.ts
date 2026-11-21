@@ -21,6 +21,7 @@ import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewReq
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { withEvidenceProviderSelection } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { isRecord } from "../kernel/isRecord.js";
@@ -51,6 +52,24 @@ export interface ContractToolService<TOperation extends string> {
   ): Promise<Result<Evidence, AnalysisError>>;
 }
 
+/**
+ * Recording stamps the active session's provider selection onto the retained
+ * record under the same semantic ID. A workflow that builds its own Evidence
+ * value would otherwise deliver an unattributed copy, so the response and the
+ * snapshot export disagree for one evidence_id. Carry the stamp on the copy
+ * this call delivers; other retained display metadata stays as the workflow
+ * built it.
+ */
+const stampSessionSelection = (
+  evidenceById: ((id: string) => Evidence | undefined) | undefined,
+  evidence: Evidence,
+): Evidence => {
+  const retained = evidenceById?.(evidence.evidence_id);
+  return retained?.provider_selection === undefined
+    ? evidence
+    : withEvidenceProviderSelection(evidence, retained.provider_selection);
+};
+
 /** Record and deliver one Evidence result using the tool's exact contract. */
 export const deliverEvidenceResult = (
   server: EvidenceMcpServer,
@@ -58,6 +77,7 @@ export const deliverEvidenceResult = (
   contract: ToolContract,
   recordEvidence?: EvidenceWriter["recordEvidence"],
   viewSource?: JsonValue,
+  evidenceById?: (id: string) => Evidence | undefined,
 ): CallToolResult => {
   if (!result.ok)
     return server.delivery.toPartialErrorToolResult(
@@ -66,8 +86,11 @@ export const deliverEvidenceResult = (
       recordEvidence,
     );
   const recorded = recordEvidence?.(result.value);
+  // Recording stamps the active session's provider selection onto the retained
+  // record, so a producer that built its own Evidence value would otherwise
+  // deliver an unattributed copy of the same evidence_id.
   return server.delivery.toEvidenceToolResult(
-    result.value,
+    stampSessionSelection(evidenceById, result.value),
     contract,
     recorded,
     viewSource,
@@ -167,29 +190,22 @@ export const createEvidenceToolHandler =
     recordEvidence?: EvidenceWriter["recordEvidence"],
     withAdmittedAnalysis?: WithAdmittedAnalysis,
     viewSource?: (input: unknown) => JsonValue | undefined,
+    evidenceById?: (id: string) => Evidence | undefined,
   ) =>
   <TOperation extends string>(contract: ToolContract<TOperation>) =>
   (input: unknown, context: ServerContext) =>
-    runAdmittedToolOperation(
-      server,
-      withAdmittedAnalysis,
-      contract.name,
-      context.mcpReq.signal,
-      async () => {
-        const result = await logToolExecution(logger, contract.name, () =>
-          operation(input, {
-            signal: context.mcpReq.signal,
-            progress: mcpProgressReporter(context),
-          }),
-        );
-        return deliverEvidenceResult(
-          server,
-          result,
-          contract,
-          recordEvidence,
-          viewSource?.(input),
-        );
+    runEvidenceToolOperation(
+      {
+        server,
+        logger,
+        recordEvidence,
+        evidenceById,
+        withAdmittedAnalysis,
+        viewSource,
       },
+      contract,
+      { input, context },
+      operation,
     );
 
 /** The MCP request a value-returning workflow runs for. */
@@ -478,6 +494,53 @@ export const createApplicationToolHandler =
       },
     );
 
+/** One owner for admission, execution, recording and delivery of named Evidence. */
+export const runEvidenceToolOperation = async <Input>(
+  options: {
+    readonly server: EvidenceMcpServer;
+    readonly logger: Logger;
+    readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+    /** The retained record for a delivered id, whose display metadata carries the session stamp. */
+    readonly evidenceById?: ((id: string) => Evidence | undefined) | undefined;
+    readonly withAdmittedAnalysis?: WithAdmittedAnalysis | undefined;
+    /** The source a view's overflow recovery may name again, when it has one. */
+    readonly viewSource?: ((input: Input) => JsonValue | undefined) | undefined;
+  },
+  contract: ToolContract,
+  request: { readonly input: Input; readonly context: ServerContext },
+  execute: (
+    input: Input,
+    options: {
+      readonly signal: AbortSignal;
+      readonly progress: ProgressReporter;
+    },
+  ) => Promise<Result<Evidence, AnalysisError>>,
+): Promise<CallToolResult> => {
+  const { input, context } = request;
+  return runAdmittedToolOperation(
+    options.server,
+    options.withAdmittedAnalysis,
+    contract.name,
+    context.mcpReq.signal,
+    async () => {
+      const result = await logToolExecution(options.logger, contract.name, () =>
+        execute(input, {
+          signal: context.mcpReq.signal,
+          progress: mcpProgressReporter(context),
+        }),
+      );
+      return deliverEvidenceResult(
+        options.server,
+        result,
+        contract,
+        options.recordEvidence,
+        options.viewSource?.(input),
+        options.evidenceById,
+      );
+    },
+  );
+};
+
 /**
  * A provider-backed workflow's Evidence and, when the workflow already
  * recorded it in the session, that record's result: delivery reuses it
@@ -557,16 +620,26 @@ export const createAnalysisToolHandler =
                   : analyzed,
                 contract,
                 retention.recordEvidence,
+                undefined,
+                retention.evidenceById,
               )
             : analyzed.value.recorded === undefined
               ? deliverEvidenceResult(
                   server,
-                  ok(analyzed.value.evidence),
+                  ok(
+                    stampSessionSelection(
+                      retention.evidenceById,
+                      analyzed.value.evidence,
+                    ),
+                  ),
                   contract,
                   retention.recordEvidence,
                 )
               : server.delivery.toEvidenceToolResult(
-                  analyzed.value.evidence,
+                  stampSessionSelection(
+                    retention.evidenceById,
+                    analyzed.value.evidence,
+                  ),
                   contract,
                   analyzed.value.recorded,
                 );

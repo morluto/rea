@@ -63,8 +63,11 @@ it.each(["compact"] as const)(
           ok({ profile: createAnalysisProfile(identity, { fixture: true }) }),
       },
     );
+    // The session stamps each retained record with its provider selection.
+    // address_name stays admitted at this allowance while the multi-megabyte
+    // procedure observation does not, which is what these fixtures separate.
     const records = new InvestigationRecords({
-      maximumRepresentationBytes: 8000,
+      maximumRepresentationBytes: 9500,
     });
     const session = new BinarySession(router, records);
     const server = createServer(

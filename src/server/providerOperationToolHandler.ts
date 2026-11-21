@@ -26,6 +26,7 @@ import { logToolExecution } from "./toolLogging.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import { createOperationProgress } from "./operationProgress.js";
+import { withEvidenceProviderSelection } from "../domain/evidence.js";
 
 import { currentMcpToolRequest } from "./McpToolRequest.js";
 
@@ -161,13 +162,23 @@ export const createProviderOperationToolHandler =
             return progress.complete(
               server.delivery.toCallToolResult(projected, contract),
             );
+          // Recording stamps the session's provider selection onto the
+          // retained record under this evidence_id, so the copy delivered now
+          // must carry the same stamp or the response and the retained view
+          // disagree for one id.
           const recorded = dependencies.recordEvidence?.(projected.value);
+          const retained = dependencies.evidenceById?.(
+            projected.value.evidence_id,
+          );
+          const delivered =
+            retained?.provider_selection === undefined
+              ? projected.value
+              : withEvidenceProviderSelection(
+                  projected.value,
+                  retained.provider_selection,
+                );
           return progress.complete(
-            server.delivery.toEvidenceToolResult(
-              projected.value,
-              contract,
-              recorded,
-            ),
+            server.delivery.toEvidenceToolResult(delivered, contract, recorded),
           );
         },
       );
