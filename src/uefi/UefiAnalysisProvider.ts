@@ -1240,6 +1240,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       return ellipsisExcerpt(line, 120);
     };
 
+    const formatDecompileBudgetLimit = (
+      moduleName: string,
+      limitBytes: number,
+    ): string => {
+      const limitLabel =
+        limitBytes < MAX_DECOMPILE_MODULE_BYTES
+          ? "64 MiB aggregate staging budget"
+          : "4 MiB per-module limit";
+      return `Decompiled C output for ${moduleName} stopped after reaching ${limitLabel}; recovered with reconstructed entry scaffolding.`;
+    };
+
     const MAX_RAW_PAYLOAD_TOTAL_BYTES = 128 * 1024 * 1024;
     let totalStagedRawBytes = 0;
 
@@ -1822,7 +1833,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
                 if (exporterOutcome?.status === "limit_exceeded") {
                   isCoveragePartial = true;
-                  const perModuleLimit = `Decompiled C output for ${safeLimitationModName} exceeded 4 MiB module budget; generated entry point scaffolding instead.`;
+                  const effectiveLimitBytes =
+                    exporterOutcome.max_output_bytes ??
+                    MAX_DECOMPILE_MODULE_BYTES;
+                  const perModuleLimit = formatDecompileBudgetLimit(
+                    safeLimitationModName,
+                    effectiveLimitBytes,
+                  );
                   if (!effectiveLimitations.includes(perModuleLimit)) {
                     effectiveLimitations.push(perModuleLimit);
                   }
@@ -1855,7 +1872,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     }
                   } else if (cStat.size > MAX_DECOMPILE_MODULE_BYTES) {
                     isCoveragePartial = true;
-                    const perModuleLimit = `Decompiled C output for ${safeLimitationModName} exceeded 4 MiB module budget (${cStat.size} bytes); generated entry point scaffolding instead.`;
+                    const perModuleLimit = formatDecompileBudgetLimit(
+                      safeLimitationModName,
+                      MAX_DECOMPILE_MODULE_BYTES,
+                    );
                     if (!effectiveLimitations.includes(perModuleLimit)) {
                       effectiveLimitations.push(perModuleLimit);
                     }
@@ -1952,11 +1972,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 if (budgetMatch) {
                   isCoveragePartial = true;
                   const limitBytes = Number(budgetMatch[1]);
-                  const limitLabel =
-                    limitBytes < MAX_DECOMPILE_MODULE_BYTES
-                      ? "64 MiB aggregate staging budget"
-                      : "4 MiB per-module limit";
-                  const limitMsg = `Decompiled C output for ${safeLimitationModName} stopped after reaching ${limitLabel}; recovered with reconstructed entry scaffolding.`;
+                  const limitMsg = formatDecompileBudgetLimit(
+                    safeLimitationModName,
+                    limitBytes,
+                  );
                   if (!effectiveLimitations.includes(limitMsg)) {
                     effectiveLimitations.push(limitMsg);
                   }

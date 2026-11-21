@@ -5392,7 +5392,73 @@ it("checks Ghidra exporter outcome and marks coverage partial on limit_exceeded"
     expect(result.modules[0]?.c_generator).toBe("scaffold");
     expect(
       result.limitations.some((l) =>
-        l.includes("exceeded 4 MiB module budget"),
+        l.includes("stopped after reaching 4 MiB per-module limit"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("checks Ghidra exporter outcome and reports aggregate budget when effective cap is under 4 MiB", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-outcome-agg-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "limit_exceeded",
+              max_output_bytes: 1024 * 1024,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("stopped after reaching 64 MiB aggregate staging budget"),
       ),
     ).toBe(true);
   } finally {
