@@ -92,7 +92,11 @@ if (process.argv.includes("--version")) {
       },
     });
     const receipt = JSON.parse(result.stdout);
-    expect(receipt.finalSeen).toBe(true);
+    expect(receipt, result.stderr).toMatchObject({
+      finalSeen: true,
+      clientFinalSeen: scenario.passed || scenario.code === 7,
+      lifecycle: expect.arrayContaining(["doctor"]),
+    });
     expect(receipt.fixtureFailure).toBeUndefined();
     expect(
       await readFile(join(receipt.artifacts, "client.stdout"), "utf8"),
