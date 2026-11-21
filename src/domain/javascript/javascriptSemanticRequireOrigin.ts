@@ -1972,6 +1972,12 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
     return { specifier, path };
   if (specifier === "process" && (path[0] === "env" || path[0] === "argv"))
     return { specifier, path };
+  // Named and namespace exports still expose the same mutable Agent object.
+  if (
+    (specifier === "http" || specifier === "https") &&
+    path[0] === "globalAgent"
+  )
+    return { specifier, path };
   return specifier === "fs" && path[0] === "promises"
     ? { specifier, path }
     : undefined;
