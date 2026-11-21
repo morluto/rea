@@ -1,6 +1,6 @@
 import {
   homeDirectoryFromEnvironment,
-  selectedHomeDirectory,
+  selectedHomeDirectorySettings,
 } from "../config/homeDirectory.js";
 import { USER_CONFIG_FILE_NAME } from "../config/userConfig.js";
 import {
@@ -51,13 +51,12 @@ export const userConfigLocationSettings = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
 ): ReadonlySet<string> => {
-  const names = new Set(["XDG_CONFIG_HOME"]);
-  if (selectedConfigHome(environment, platform) === undefined)
-    selectedHomeDirectory(platform, (name) => {
-      names.add(name);
-      return environment[name];
-    });
-  return names;
+  return new Set([
+    "XDG_CONFIG_HOME",
+    ...(selectedConfigHome(environment, platform) === undefined
+      ? selectedHomeDirectorySettings(platform, environment)
+      : []),
+  ]);
 };
 
 /** A session-independent locator for clients that rely on saved defaults. */

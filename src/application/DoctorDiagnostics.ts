@@ -4,8 +4,11 @@ import {
   supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { hopperLauncherDiscovery } from "../hopperPaths/HopperLauncherDiscovery.js";
+import { selectedHomeDirectorySettings } from "../config/homeDirectory.js";
+import { ok, err, type Result } from "../domain/result.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
+import { linuxHopperReleaseCacheLocationSettings } from "./LinuxHopperCacheDirectory.js";
 import { isDesktopBuildCheck } from "../domain/doctorProviderIds.js";
 import type {
   DoctorHost,
@@ -52,7 +55,7 @@ const collectProviderDiagnostics = async (
   const selection = await host.forProviderDiagnostics?.(clients);
   const providerHost = selection?.host ?? host;
   const configuration = selection?.configuration;
-  const hopperFailure = staticProviderFailure(
+  const configuredHopperFailure = staticProviderFailure(
     configuration,
     "hopper",
     "HOPPER_LAUNCHER_PATH",
@@ -65,10 +68,13 @@ const collectProviderDiagnostics = async (
   const [hopperOutcome, providerInspections, ilspyCheck] =
     await settleConcurrent([
       (async () => {
-        if (hopperFailure !== undefined) return {};
-        const hopperPath = await findHopper(providerHost);
+        if (configuredHopperFailure !== undefined)
+          return { hopperFailure: configuredHopperFailure };
+        const location = await findHopper(providerHost, configuration);
+        if (!location.ok) return { hopperFailure: location.error };
+        const hopperPath = location.value;
         const [hopperVersionCheck, hopperDemoCheck] = await settleConcurrent([
-          optionalHopperVersionCheck(providerHost, hopperPath),
+          optionalHopperVersionCheck(providerHost, hopperPath, configuration),
           optionalHopperDemoCheck(providerHost, hopperPath),
         ]);
         return { hopperPath, hopperVersionCheck, hopperDemoCheck };
@@ -79,7 +85,8 @@ const collectProviderDiagnostics = async (
         : Promise.resolve(ilspyFailure),
     ]);
 
-  const { hopperPath, hopperVersionCheck, hopperDemoCheck } = hopperOutcome;
+  const { hopperPath, hopperVersionCheck, hopperDemoCheck, hopperFailure } =
+    hopperOutcome;
   const checks = [hopperFailure ?? hopperCheck(providerHost, hopperPath)];
   if (hopperFailure === undefined) {
     const timeout = optionalHopperStartupTimeoutCheck(providerHost);
@@ -137,16 +144,33 @@ const staticProviderFailure = (
       detail: failure.detail,
       remediation: failure.remediation,
     };
-  if (configuration?.unresolved?.has(setting) !== true) return undefined;
-  return {
-    name,
-    ok: false,
-    classification: "unknown",
-    detail: `The selected client's registration has an unresolved ${setting}.`,
-    remediation:
-      "Resolve the setting in the selected client's registration, then rerun doctor.",
-  };
+  return configuration?.unresolved?.has(setting) === true
+    ? unresolvedSettingCheck(name, setting)
+    : undefined;
 };
+
+const firstUnresolvedSetting = (
+  configuration: DoctorProviderConfiguration | undefined,
+  consulted: (environment: Readonly<NodeJS.ProcessEnv>) => readonly string[],
+): string | undefined => {
+  if (configuration?.unresolved === undefined) return undefined;
+  const { environment, unresolved } = configuration;
+  return unresolved.size === 0
+    ? undefined
+    : consulted(environment).find((name) => unresolved.has(name));
+};
+
+const unresolvedSettingCheck = (
+  name: string,
+  setting: string,
+): DoctorCheck => ({
+  name,
+  ok: false,
+  classification: "unknown",
+  detail: `The selected client's registration has an unresolved ${setting}.`,
+  remediation:
+    "Resolve the setting in the selected client's registration, then rerun doctor.",
+});
 
 const staticSetting = (
   configuration: DoctorProviderConfiguration,
@@ -278,19 +302,30 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
 
 const findHopper = async (
   host: DoctorProviderProbeHost,
-): Promise<string | undefined> => {
+  configuration: DoctorProviderConfiguration | undefined,
+): Promise<Result<string | undefined, DoctorCheck>> => {
   if (host.configuredHopperPath !== undefined)
-    return firstExecutable(host, [host.configuredHopperPath]);
-  const discovery = hopperLauncherDiscovery(host.platform, host.homeDirectory);
+    return ok(await firstExecutable(host, [host.configuredHopperPath]));
+  const unresolvedHome = firstUnresolvedSetting(configuration, (environment) =>
+    selectedHomeDirectorySettings(host.platform, environment),
+  );
+  const discovery = hopperLauncherDiscovery(
+    host.platform,
+    unresolvedHome === undefined ? host.homeDirectory : undefined,
+  );
   const fixed = await firstExecutable(host, discovery.candidates);
-  if (fixed !== undefined || !discovery.probesMacApplicationBundles)
-    return fixed;
+  if (fixed !== undefined) return ok(fixed);
+  if (unresolvedHome !== undefined && discovery.stopsAtUnresolvedHome)
+    return err(unresolvedSettingCheck("hopper", unresolvedHome));
+  if (!discovery.probesMacApplicationBundles) return ok(undefined);
   const renamed = await firstExecutable(host, await host.manualHopperPaths());
-  if (renamed !== undefined) return renamed;
+  if (renamed !== undefined) return ok(renamed);
   const brewCandidate = await host.brewHopperPath();
-  return firstExecutable(
-    host,
-    brewCandidate === undefined ? [] : [brewCandidate],
+  return ok(
+    await firstExecutable(
+      host,
+      brewCandidate === undefined ? [] : [brewCandidate],
+    ),
   );
 };
 
@@ -382,8 +417,15 @@ const runtimeConfigurationChecks = (
 const optionalHopperVersionCheck = async (
   host: DoctorProviderProbeHost,
   hopperPath: string | undefined,
+  configuration: DoctorProviderConfiguration | undefined,
 ): Promise<DoctorCheck | undefined> => {
   if (host.platform !== "linux" || hopperPath === undefined) return undefined;
+  const cacheSetting = firstUnresolvedSetting(
+    configuration,
+    linuxHopperReleaseCacheLocationSettings,
+  );
+  if (cacheSetting !== undefined)
+    return unresolvedSettingCheck("hopper-version", cacheSetting);
   const inspected = await host.inspectLinuxHopper(hopperPath);
   const buildCheck = check("hopper-version", inspected.ok, hopperPath, {
     remediation: unsupportedHopperRemediation(

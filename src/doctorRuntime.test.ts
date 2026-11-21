@@ -21,6 +21,7 @@ import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import { runDoctor, runDoctorOwned } from "./application/Doctor.js";
+import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./hopperPaths/MacHopperPaths.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
 import { AnalysisCleanupLease } from "./resources/AnalysisCleanupLease.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
@@ -967,6 +968,124 @@ test("keeps a known provider configuration when only its Java setting is unresol
   }
 });
 
+test.each([
+  {
+    kind: "discovery needs HOME",
+    homeUnknown: true,
+    available: "fallback",
+    classification: "unknown",
+  },
+  {
+    kind: "discovery needs USERPROFILE",
+    homeUnknown: false,
+    available: "fallback",
+    classification: "unknown",
+  },
+  {
+    kind: "literal HOME wins over unknown USERPROFILE",
+    homeUnknown: false,
+    available: "literal",
+    classification: "healthy",
+  },
+  {
+    kind: "system launcher wins before HOME is needed",
+    homeUnknown: true,
+    available: "system",
+    classification: "healthy",
+  },
+  {
+    kind: "explicit launcher bypasses HOME discovery",
+    homeUnknown: true,
+    available: "explicit",
+    classification: "healthy",
+  },
+])(
+  "keeps Hopper selection exact when $kind",
+  async ({ homeUnknown, available, classification }) => {
+    const home = await createTestTempDirectory("rea-dsh-hopper-home-");
+    const explicit = join(home, "explicit-hopper");
+    const literalHome = join(home, "client-home");
+    const fallbackHome = join(home, "fallback-home");
+    const userLauncher = (account: string) =>
+      join(
+        account,
+        "Applications",
+        "Hopper Disassembler.app",
+        "Contents",
+        "MacOS",
+        "hopper",
+      );
+    const found =
+      available === "system"
+        ? MAC_HOPPER_SYSTEM_LAUNCHER
+        : available === "explicit"
+          ? explicit
+          : userLauncher(available === "literal" ? literalHome : fallbackHome);
+    await mkdir(join(home, ".dsh"));
+    await writeFile(
+      join(home, ".dsh", "cordis.patch.yml"),
+      [
+        "- insert:",
+        "    - id: rea-mcp",
+        '      name: "@deepseek-ai/dsh-mcp-client"',
+        "      config:",
+        "        serverName: rea",
+        "        transport: stdio",
+        "        command: rea",
+        "        args: [mcp]",
+        "        env:",
+        `          XDG_CONFIG_HOME: ${JSON.stringify(join(home, "config"))}`,
+        ...(homeUnknown
+          ? [
+              "          HOME: !!js caller.home",
+              `          USERPROFILE: ${JSON.stringify(fallbackHome)}`,
+            ]
+          : [
+              `          HOME: ${JSON.stringify(available === "literal" ? literalHome : "")}`,
+              "          USERPROFILE: !!js caller.profile",
+            ]),
+        ...(available === "explicit"
+          ? [`          HOPPER_LAUNCHER_PATH: ${JSON.stringify(explicit)}`]
+          : []),
+      ].join("\n"),
+    );
+    const host = createSystemDoctorHost(
+      { HOME: home, USERPROFILE: fallbackHome },
+      undefined,
+      { platform: "darwin", architecture: "arm64" },
+    );
+    const report = await runDoctor(
+      undefined,
+      {
+        ...host,
+        async forProviderDiagnostics(clients) {
+          const selected = await host.forProviderDiagnostics!(clients);
+          return {
+            ...selected,
+            host: {
+              ...selected.host,
+              executable: async (path) => path === found,
+              manualHopperPaths: async () => [],
+              brewHopperPath: async () => undefined,
+            },
+          };
+        },
+      },
+      { clients: ["dsh"], providers: ["hopper"] },
+    );
+    expect(report.checks.find(({ name }) => name === "hopper")).toMatchObject({
+      classification,
+      detail:
+        classification === "healthy"
+          ? found
+          : expect.stringContaining(homeUnknown ? "HOME" : "USERPROFILE"),
+    });
+    expect(report.hopperPath).toBe(
+      classification === "healthy" ? found : undefined,
+    );
+  },
+);
+
 test("keeps a Qwen PATH expression unresolved for provider readiness", async () => {
   const home = await createTestTempDirectory("rea-qwen-doctor-path-");
   const javaHome = await createFakeJdk(home);
@@ -1040,6 +1159,69 @@ it.each(["REA_KUNA_COMMAND", "REA_KUNA_JOBS", "USERPROFILE"] as const)(
         available: null,
         checks: [expect.objectContaining({ classification: "unknown" })],
       });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+it.each([
+  { platform: "linux", absoluteCache: true, available: true },
+  { platform: "linux", absoluteCache: false, available: null },
+  { platform: "darwin", absoluteCache: true, available: null },
+] as const)(
+  "checks the selected Kuna cache on $platform with absolute cache=$absoluteCache",
+  async ({ platform, absoluteCache, available }) => {
+    const home = await createTestTempDirectory("rea-dsh-kuna-cache-");
+    const command = join(home, "kuna");
+    const cache = join(home, "cache");
+    await writeFile(command, "#!/bin/sh\nprintf 'kuna 1.833\\n'\n", {
+      mode: 0o700,
+    });
+    await mkdir(join(home, ".dsh"));
+    await writeFile(
+      join(home, ".dsh/cordis.patch.yml"),
+      [
+        "- insert:",
+        "    - id: rea-mcp",
+        '      name: "@deepseek-ai/dsh-mcp-client"',
+        "      config:",
+        "        serverName: rea",
+        "        transport: stdio",
+        "        command: rea",
+        "        args: [mcp]",
+        "        env:",
+        "          HOME: !!js caller.home",
+        `          XDG_CONFIG_HOME: ${JSON.stringify(join(home, "config"))}`,
+        `          XDG_CACHE_HOME: ${JSON.stringify(absoluteCache ? cache : "relative")}`,
+        `          REA_KUNA_COMMAND: ${JSON.stringify(command)}`,
+      ].join("\n"),
+    );
+    const host = createSystemDoctorHost({ HOME: home }, undefined, {
+      platform,
+      architecture: "x64",
+    });
+    try {
+      const inspections = await host.providerInspections?.(["dsh"]);
+      const inspection = inspections?.find(({ id }) => id === "kuna");
+      expect(inspection).toMatchObject({ configured: true, available });
+      if (available)
+        expect(inspection?.checks).toContainEqual(
+          expect.objectContaining({
+            name: "cache",
+            ok: true,
+            details: expect.objectContaining({
+              cache_root: join(cache, "rea", "kuna"),
+            }),
+          }),
+        );
+      else
+        expect(inspection?.checks).toContainEqual(
+          expect.objectContaining({
+            classification: "unknown",
+            detail: expect.stringContaining("HOME"),
+          }),
+        );
     } finally {
       await host.close?.();
     }

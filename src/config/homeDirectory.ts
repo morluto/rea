@@ -20,6 +20,19 @@ export const selectedHomeDirectory = (
   return nonempty("HOME");
 };
 
+/** Settings consulted before selecting a home, including omitted values. */
+export const selectedHomeDirectorySettings = (
+  platform: NodeJS.Platform,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): readonly string[] => {
+  const names: string[] = [];
+  selectedHomeDirectory(platform, (name) => {
+    names.push(name);
+    return environment[name];
+  });
+  return names;
+};
+
 /** Resolve the caller's selected home before consulting the host account. */
 export const homeDirectoryFromEnvironment = (
   environment: Readonly<NodeJS.ProcessEnv>,

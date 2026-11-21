@@ -26,6 +26,7 @@ import {
 import {
   KUNA_DOCTOR_SETTINGS,
   inspectKunaProvider,
+  kunaSettingAffectsProbe,
 } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
@@ -230,27 +231,8 @@ export const settingAffectsProbe = (
         read("GHIDRA_INSTALL_DIR") === undefined ||
         read("JAVA_HOME") === undefined
       );
-    case "kuna": {
-      // Only cache-location defaults are decided by REA_KUNA_CACHE_DIR. An
-      // unresolved command, job or timeout setting still leaves the probe's
-      // answer unknown, so those keep reporting unknown.
-      if (
-        name !== "HOME" &&
-        name !== "USERPROFILE" &&
-        name !== "XDG_CACHE_HOME"
-      )
-        return true;
-      // A literal cache directory decides the root on its own.
-      if (read("REA_KUNA_CACHE_DIR") !== undefined) return false;
-      if (name === "XDG_CACHE_HOME") return platform !== "darwin";
-      if (
-        name === "USERPROFILE" &&
-        platform !== "win32" &&
-        (read("HOME")?.length ?? 0) > 0
-      )
-        return false;
-      return true;
-    }
+    case "kuna":
+      return kunaSettingAffectsProbe(name, environment, platform);
     default:
       return true;
   }
