@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
@@ -3253,6 +3254,133 @@ it("tolerates fractional millisecond remaining time values without command deadl
     );
     const result = executed.value.result as UefiDecompileResult;
     expect(result.total_modules_decompiled).toBe(1);
+  } finally {
+    await provider.close();
+  }
+});
+
+it.skipIf(process.getuid?.() === 0 || HOST_PLATFORM.platform === "win32")(
+  "fails when directory root is inaccessible",
+  async () => {
+    const directory = await createTestTempDirectory("rea-uefi-missing-dir-");
+    const inDir = join(directory, "unreadable_root");
+    const outDir = join(directory, "output");
+    await mkdir(inDir, { recursive: true });
+    await chmod(inDir, 0o000);
+
+    const provider = new UefiAnalysisProvider();
+    try {
+      const executed = await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      );
+      expect(executed.ok).toBe(false);
+      if (!executed.ok) {
+        expect(String(executed.error.cause)).toContain(
+          "Selected directory root is not accessible",
+        );
+      }
+    } finally {
+      await chmod(inDir, 0o755);
+      await provider.close();
+    }
+  },
+);
+
+it("includes manifest in directory corpus digest so manifest changes alter image identity", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-digest-");
+  const inDir = join(directory, "input");
+  const outDir1 = join(directory, "output1");
+  const outDir2 = join(directory, "output2");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x33, 140);
+  await writeFile(join(inDir, "Sample.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      modules: [{ payload_file: "Sample.efi", name: "Version1", phase: "DXE" }],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res1 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir1, { include_disassembly: false }),
+      ),
+    );
+    const sha1 = (res1.value.result as UefiDecompileResult).image_sha256;
+
+    // Now modify the manifest
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        modules: [
+          { payload_file: "Sample.efi", name: "Version2", phase: "DXE" },
+        ],
+      }),
+    );
+
+    const res2 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir2, { include_disassembly: false }),
+      ),
+    );
+    const sha2 = (res2.value.result as UefiDecompileResult).image_sha256;
+
+    expect(sha1).not.toBe(sha2);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("validates manifest rows and emits limitations with payload fallbacks on malformed metadata", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-malformed-",
+  );
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x44, 140);
+  await writeFile(join(inDir, "Driver.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      modules: [
+        {
+          payload_file: "Driver.efi",
+          guid: "not-a-valid-uuid",
+          phase: "INVALID_PHASE",
+          name: 12345,
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("invalid GUID format"),
+        expect.stringContaining("non-string name"),
+        expect.stringContaining("unrecognized phase"),
+      ]),
+    );
   } finally {
     await provider.close();
   }

@@ -30,6 +30,13 @@ public class ReaDecompileToC extends GhidraScript {
         }
 
         File outputFile = new File(args[0]);
+        long maxOutputBytes = 4L * 1024L * 1024L;
+        if (args.length > 1) {
+            try {
+                maxOutputBytes = Long.parseLong(args[1]);
+            } catch (NumberFormatException ignored) {
+            }
+        }
         File parent = outputFile.getParentFile();
         if (parent != null && !parent.exists()) {
             parent.mkdirs();
@@ -47,11 +54,14 @@ public class ReaDecompileToC extends GhidraScript {
                 return;
             }
 
+            long bytesWritten = 0;
+            boolean limitExceeded = false;
             try (BufferedWriter writer = new BufferedWriter(
                     new OutputStreamWriter(new FileOutputStream(outputFile), StandardCharsets.UTF_8))) {
-                writer.write("/*\n");
-                writer.write(" * Decompiled with Ghidra (" + currentProgram.getName() + ")\n");
-                writer.write(" */\n\n");
+                String header = "/*\n * Decompiled with Ghidra (" + currentProgram.getName() + ")\n */\n\n";
+                byte[] headerBytes = header.getBytes(StandardCharsets.UTF_8);
+                bytesWritten += headerBytes.length;
+                writer.write(header);
 
                 FunctionIterator iter = currentProgram.getListing().getFunctions(true);
                 int decompiledCount = 0;
@@ -67,8 +77,14 @@ public class ReaDecompileToC extends GhidraScript {
                         if (decompFunc != null) {
                             String cCode = decompFunc.getC();
                             if (cCode != null && !cCode.trim().isEmpty()) {
+                                byte[] codeBytes = (cCode + "\n\n").getBytes(StandardCharsets.UTF_8);
+                                if (bytesWritten + codeBytes.length > maxOutputBytes) {
+                                    limitExceeded = true;
+                                    break;
+                                }
                                 writer.write(cCode);
                                 writer.write("\n\n");
+                                bytesWritten += codeBytes.length;
                                 decompiledCount++;
                                 continue;
                             }
@@ -82,9 +98,19 @@ public class ReaDecompileToC extends GhidraScript {
                     String safeFunc = function.getName().replace("*/", "* /").replace("\r", " ").replace("\n", " ");
                     String safeEntry = String.valueOf(function.getEntryPoint()).replace("*/", "* /");
                     String safeErr = errMsg.replace("*/", "* /").replace("\r", " ").replace("\n", " ");
-                    writer.write("/* WARNING: Failed to decompile function " + safeFunc + " at " + safeEntry + ": " + safeErr + " */\n\n");
+                    String warning = "/* WARNING: Failed to decompile function " + safeFunc + " at " + safeEntry + ": " + safeErr + " */\n\n";
+                    byte[] warnBytes = warning.getBytes(StandardCharsets.UTF_8);
+                    if (bytesWritten + warnBytes.length > maxOutputBytes) {
+                        limitExceeded = true;
+                        break;
+                    }
+                    writer.write(warning);
+                    bytesWritten += warnBytes.length;
                 }
                 writer.flush();
+                if (limitExceeded) {
+                    throw new RuntimeException("ReaDecompileToC: decompiled C output exceeded " + maxOutputBytes + " byte limit");
+                }
                 println("ReaDecompileToC: decompiled " + decompiledCount + " functions (" + failedCount + " failed/incomplete) to " + outputFile.getAbsolutePath());
                 if (decompiledCount == 0 && failedCount > 0) {
                     throw new RuntimeException("ReaDecompileToC: all " + failedCount + " function(s) failed decompilation");

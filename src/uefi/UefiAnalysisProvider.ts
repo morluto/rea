@@ -1270,10 +1270,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         let asmSha256: string | null = null;
         let asmGenerator: "llvm-objdump" | "objdump" | null = null;
         let disassemblyStatus: "ok" | "failed" | "omitted" = "omitted";
-        const tempEfiPath = join(
-          tempRoot.path,
-          `${cIdentifier}_${moduleSeq}.efi`,
-        );
+        const tempEfiPath = join(tempRoot.path, `mod_${moduleSeq}.efi`);
         let ghidraOutC: string | undefined;
 
         await writeFile(tempEfiPath, modBytes);
@@ -1473,10 +1470,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               const ghidraTimeout = Math.floor(
                 Math.min(45_000, Math.max(1_000, timeLeftForGhidra)),
               );
-              ghidraOutC = join(
-                tempRoot.path,
-                `${cIdentifier}_${moduleSeq}_decompiled.c`,
-              );
+              ghidraOutC = join(tempRoot.path, `mod_${moduleSeq}_decompiled.c`);
               try {
                 const bridgeDir = fileURLToPath(
                   new URL("../../bridge/ghidra", import.meta.url),
@@ -1509,7 +1503,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 };
                 const ghidraArgs = [
                   tempRoot.path,
-                  `UefiDecomp_${cIdentifier}_${moduleSeq}`,
+                  `UefiDecomp_${moduleSeq}`,
                   "-import",
                   tempEfiPath,
                   "-scriptPath",
@@ -1517,6 +1511,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   "-postScript",
                   scriptPath,
                   ghidraOutC,
+                  String(Math.min(MAX_DECOMPILE_MODULE_BYTES, remainingCBytes)),
                   "-deleteProject",
                 ];
                 let execCmd = ghidraBin;
@@ -2044,7 +2039,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       let entries: Dirent[];
       try {
         entries = await readdir(currentDir, { withFileTypes: true });
-      } catch {
+      } catch (dirErr) {
+        if (currentDir === input.path) {
+          throw new Error(
+            `Selected directory root is not accessible: ${errorMessage(dirErr)}`,
+          );
+        }
+        if (limitations.length < 50) {
+          limitations.push(
+            `Directory subtree could not be read: ${errorMessage(dirErr)}`,
+          );
+        }
         continue;
       }
       for (const entry of entries) {
@@ -2070,31 +2075,87 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     }
 
     const guidRegex =
+      /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+    const embeddedGuidRegex =
       /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
     const manifestModulesByRelPath = new Map<
       string,
-      { guid?: string | null; name?: string; phase?: string }
+      {
+        guid?: string | null | undefined;
+        name?: string | undefined;
+        phase?: string | undefined;
+      }
     >();
+    let manifestSha256: string | null = null;
     try {
       const manifestPath = join(input.path, "firmware_manifest.json");
       if (existsSync(manifestPath)) {
-        const manifestRaw = await readFile(manifestPath, "utf8");
-        const parsed = JSON.parse(manifestRaw);
+        const manifestRaw = await readFile(manifestPath);
+        manifestSha256 = sha256Hex(manifestRaw);
+        const parsed = JSON.parse(manifestRaw.toString("utf8"));
         if (Array.isArray(parsed?.modules)) {
-          for (const m of parsed.modules) {
-            if (typeof m?.payload_file === "string") {
-              const norm = m.payload_file
-                .split(/[/\\]+/)
-                .join("/")
-                .toLowerCase();
-              manifestModulesByRelPath.set(norm, m);
+          for (let mIdx = 0; mIdx < parsed.modules.length; mIdx++) {
+            const m = parsed.modules[mIdx];
+            if (!m || typeof m !== "object") continue;
+            if (typeof m.payload_file !== "string") continue;
+            const norm = m.payload_file
+              .split(/[/\\]+/)
+              .join("/")
+              .toLowerCase();
+
+            let validGuid: string | null | undefined = undefined;
+            if (m.guid !== undefined && m.guid !== null) {
+              if (typeof m.guid === "string" && guidRegex.test(m.guid)) {
+                validGuid = m.guid.toLowerCase();
+              } else {
+                limitations.push(
+                  `Manifest module at index ${mIdx} has invalid GUID format; using payload-derived fallback.`,
+                );
+              }
+            } else if (m.guid === null) {
+              validGuid = null;
             }
+
+            let validName: string | undefined = undefined;
+            if (typeof m.name === "string" && m.name.length > 0) {
+              validName = m.name;
+            } else if (m.name !== undefined) {
+              limitations.push(
+                `Manifest module at index ${mIdx} has non-string name; using filename fallback.`,
+              );
+            }
+
+            let validPhase: string | undefined = undefined;
+            if (typeof m.phase === "string") {
+              const upperPhase = m.phase.toUpperCase();
+              if (
+                ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"].includes(upperPhase)
+              ) {
+                validPhase = upperPhase;
+              } else {
+                limitations.push(
+                  `Manifest module at index ${mIdx} has unrecognized phase "${m.phase}"; using path-derived fallback.`,
+                );
+              }
+            } else if (m.phase !== undefined) {
+              limitations.push(
+                `Manifest module at index ${mIdx} has non-string phase; using path-derived fallback.`,
+              );
+            }
+
+            manifestModulesByRelPath.set(norm, {
+              guid: validGuid,
+              name: validName,
+              phase: validPhase,
+            });
           }
         }
       }
-    } catch {
-      // Ignore unreadable manifest
+    } catch (manifestErr) {
+      limitations.push(
+        `Failed to parse firmware_manifest.json: ${errorMessage(manifestErr)}`,
+      );
     }
 
     interface CandidateModule {
@@ -2264,11 +2325,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       if (fromManifest?.guid) {
         guid = fromManifest.guid.toLowerCase();
       } else {
-        const nameMatch = entry.name.match(guidRegex);
+        const nameMatch = entry.name.match(embeddedGuidRegex);
         if (nameMatch && nameMatch[1]) {
           guid = nameMatch[1].toLowerCase();
         } else {
-          const pathMatch = manifestLookupKey.match(guidRegex);
+          const pathMatch = manifestLookupKey.match(embeddedGuidRegex);
           if (pathMatch && pathMatch[1]) {
             guid = pathMatch[1].toLowerCase();
           }
@@ -2311,6 +2372,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     );
 
     const dirHash = createHash("sha256");
+    dirHash.update("manifest:" + (manifestSha256 ?? "none") + "\n");
     const discoveredModules: DiscoveredUefiModule[] = [];
 
     const MAX_PRELOAD_BYTES = 32 * 1024 * 1024;
