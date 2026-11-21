@@ -547,6 +547,8 @@ export interface EffectiveClientRegistrationConfiguration {
   readonly environmentError?: ClientConfigurationFileError;
   /** Project candidate spellings already owned by the same physical user files. */
   readonly projectUserAliases?: readonly string[];
+  /** Whether proposed project edits leave the original selected row in effect. */
+  readonly preservesOriginalRegistration?: true;
 }
 
 /** Reading an effective registration does not authorize probes from project settings. */
@@ -558,10 +560,11 @@ export const hasProjectRegistrationContribution = ({
 interface ProjectConfigurationReadOptions {
   readonly projectDirectory: string;
   readonly mode?: "ownership";
-  /** Admitted project sources with proposed bytes parsed by their transaction owner. */
+  /** Original and proposed layers from the transaction owner's snapshots. */
   readonly candidates?: readonly {
     readonly path: string;
-    readonly document: ClientConfigurationDocument;
+    readonly original: ClientConfigurationDocument;
+    readonly replacement: ClientConfigurationDocument;
   }[];
 }
 
@@ -596,7 +599,10 @@ export const readEffectiveClientRegistrationConfiguration = async (
     platform,
   );
   if (!paths.ok) return paths;
-  const candidates = new Map<string, ClientConfigurationDocument>();
+  const candidates = new Map<
+    string,
+    NonNullable<ProjectConfigurationReadOptions["candidates"]>[number]
+  >();
   const layers = paths.value.filter(
     ({ userPath }) =>
       userPath === undefined || userPath === client.openCodeExplicitConfigPath,
@@ -609,7 +615,8 @@ export const readEffectiveClientRegistrationConfiguration = async (
       userPath === undefined ? [path] : [],
     ),
   );
-  for (const { path, document } of project.candidates ?? []) {
+  for (const candidate of project.candidates ?? []) {
+    const { path } = candidate;
     if (candidates.has(path))
       return err({
         kind: "unreadable",
@@ -625,7 +632,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
         detail:
           "The selected file is missing from the native project configuration load order.",
       });
-    candidates.set(path, document);
+    candidates.set(path, candidate);
   }
   if (layers.length === 0) {
     const user = await readEffectiveUserConfiguration(
@@ -687,11 +694,11 @@ export const readEffectiveClientRegistrationConfiguration = async (
       if (source !== undefined) sources.push(source);
       continue;
     }
-    const candidate = candidates.get(path);
+    const original = candidates.get(path)?.original;
     const configuration =
-      candidate === undefined
+      original === undefined
         ? await readConfigurationFile(path, client.format, resources)
-        : ok(candidate);
+        : ok(original);
     if (!configuration.ok)
       return err({ ...configuration.error, scope: "project" });
     if (configuration.value === undefined) continue;
@@ -704,32 +711,39 @@ export const readEffectiveClientRegistrationConfiguration = async (
     projectSources.push(source);
   }
 
-  const wholeRows =
-    client.format === "opencode" &&
-    sources.some(({ dialect }) => dialect === "opencode_v2");
-  const projectedSources =
-    client.format === "opencode"
-      ? sources.map((source) => projectOpenCodeSource(source, wholeRows))
-      : sources;
-  const declarations = serverDeclarations(projectedSources);
-  const winning = declarations.at(-1);
-  const piOverride =
-    client.format === "pi" &&
-    winning?.source.scope === "project" &&
-    isPiPartialServerOverride(winning.entry);
-  const replaces = wholeRows || client.format === "pi";
-  const active = activeDeclarations(declarations, replaces && !piOverride);
+  const original = projectRegistration(sources, client.format, platform);
+  if (!original.ok) return original;
+  const proposed =
+    candidates.size === 0
+      ? original
+      : projectRegistration(
+          sources.map((source) => {
+            if (source.scope !== "project" || source.sourcePath === undefined)
+              return source;
+            const candidate = candidates.get(source.sourcePath)?.replacement;
+            return candidate === undefined
+              ? source
+              : { ...source, ...candidate };
+          }),
+          client.format,
+          platform,
+        );
+  if (!proposed.ok) return proposed;
+  const { active, document } = proposed.value;
   const last = active.at(-1);
-  if (piOverride && last !== undefined) {
-    const override = piProjectOverride(active, last);
-    if (!override.ok) return override;
-  }
-
-  const document = piOverride
-    ? withPiOverride(sources, active)
-    : replaces
-      ? replacedServerConfiguration(projectedSources)
-      : mergeClientConfigurationDocuments(projectedSources, platform);
+  const baseline = original.value.document;
+  const preservesOriginalRegistration =
+    candidates.size > 0 &&
+    baseline !== undefined &&
+    document !== undefined &&
+    last !== undefined &&
+    baseline.dialect === document.dialect &&
+    original.value.active.at(-1)?.source.sourcePath ===
+      last.source.sourcePath &&
+    clientConfigurationValuesEqual(
+      effectiveClientServer(baseline, PRODUCT_IDENTITY.mcpServerKey),
+      effectiveClientServer(document, PRODUCT_IDENTITY.mcpServerKey),
+    );
   const environment = clientRegistrationEnvironment(document, client, platform);
   let environmentError: ClientConfigurationFileError | undefined;
   if (!environment.ok) {
@@ -752,6 +766,9 @@ export const readEffectiveClientRegistrationConfiguration = async (
     declarations: active,
     projectInspection: "evaluated" as const,
     ...(project.mode === "ownership" ? { projectSources } : {}),
+    ...(preservesOriginalRegistration
+      ? { preservesOriginalRegistration: true as const }
+      : {}),
     ...(environmentError === undefined ? {} : { environmentError }),
     ...(userAliases.length === 0 ? {} : { projectUserAliases: userAliases }),
   };
@@ -781,6 +798,47 @@ export const readEffectiveClientRegistrationConfiguration = async (
     activationScope: activation.source.scope ?? "user",
     activationConfigPath: activation.source.sourcePath ?? client.configPath,
     ...projectFacts,
+  });
+};
+
+/** Resolve the native merge for a single set of parsed layers. */
+const projectRegistration = (
+  sources: readonly ClientConfigurationSource[],
+  format: "opencode" | "pi",
+  platform: NodeJS.Platform,
+): Result<
+  {
+    readonly document: ClientConfigurationDocument | undefined;
+    readonly active: readonly ServerDeclaration[];
+  },
+  ClientConfigurationFileError
+> => {
+  const wholeRows =
+    format === "opencode" &&
+    sources.some(({ dialect }) => dialect === "opencode_v2");
+  const projected =
+    format === "opencode"
+      ? sources.map((source) => projectOpenCodeSource(source, wholeRows))
+      : sources;
+  const declarations = serverDeclarations(projected);
+  const winning = declarations.at(-1);
+  if (
+    format === "pi" &&
+    winning?.source.scope === "project" &&
+    isPiPartialServerOverride(winning.entry)
+  ) {
+    const active = activeDeclarations(declarations, false);
+    const override = piProjectOverride(active, winning);
+    return override.ok
+      ? ok({ document: withPiOverride(sources, active), active })
+      : override;
+  }
+  const replaces = wholeRows || format === "pi";
+  return ok({
+    active: activeDeclarations(declarations, replaces),
+    document: replaces
+      ? replacedServerConfiguration(projected)
+      : mergeClientConfigurationDocuments(projected, platform),
   });
 };
 

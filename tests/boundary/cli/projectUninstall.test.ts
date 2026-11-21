@@ -101,6 +101,58 @@ cliTest(
 );
 
 cliTest(
+  "uninstall removes a shadowed OpenCode copy and a Pi registration while retaining the effective foreign row",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-project-shadowed-uninstall-",
+    );
+    const home = join(root, "home");
+    const project = join(root, "selected");
+    const lower = join(project, "opencode.json");
+    const higher = join(project, "opencode.jsonc");
+    const pi = join(project, ".pi", "mcp.json");
+    const environment = await registrationEnvironment(home);
+    await put(join(home, ".pi", "agent", "trust.json"), { [project]: true });
+    const lowerOriginal = await put(lower, {
+      mcp: { servers: { rea: openCodeRegistration, peer: openCodePeer } },
+    });
+    const higherOriginal = await put(higher, {
+      mcp: {
+        servers: {
+          rea: {
+            ...openCodePeer,
+            command: ["npx", "-y", "other-package", "mcp"],
+          },
+        },
+      },
+    });
+    const piOriginal = await put(pi, {
+      mcpServers: { rea: piRegistration, peer: { command: "unrelated" } },
+    });
+
+    const result = await cli.run({
+      arguments: ["uninstall", "--project", project, "--json"],
+      environment,
+      cwd: root,
+    });
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(result.json).toMatchObject({ status: "complete" });
+    expect(JSON.parse(await readFile(lower, "utf8"))).toEqual({
+      mcp: { servers: { peer: openCodePeer } },
+    });
+    expect(JSON.parse(await readFile(pi, "utf8"))).toEqual({
+      mcpServers: { peer: { command: "unrelated" } },
+    });
+    expect(await readFile(`${lower}.rea.backup`, "utf8")).toBe(lowerOriginal);
+    expect(await readFile(`${pi}.rea.backup`, "utf8")).toBe(piOriginal);
+    expect(await readFile(higher, "utf8")).toBe(higherOriginal);
+    await expect(readFile(`${higher}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+cliTest(
   "uninstall skips a project candidate beneath a regular file before reading unrelated user data",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-project-absent-uninstall-");

@@ -1277,6 +1277,7 @@ interface ProjectRemovalFile {
   readonly client: UninstallClient;
   readonly original: string;
   readonly transactionPath: string;
+  readonly originalDocument: ClientConfigurationDocument;
   readonly candidate: ClientConfigurationDocument;
 }
 
@@ -1451,6 +1452,7 @@ const prepareProjectRemoval = async (
     client,
     original: read.original,
     transactionPath: read.transactionPath,
+    originalDocument: read.parsed,
     candidate: registrationRemovalDocument(
       read.parsed,
       removal.value,
@@ -1513,9 +1515,10 @@ const verifyProjectFallback = async (
     {
       projectDirectory: project.directory,
       candidates: [...project.pending.values()].map(
-        ({ client, candidate }) => ({
+        ({ client, originalDocument, candidate }) => ({
           path: client.configPath,
-          document: candidate,
+          original: originalDocument,
+          replacement: candidate,
         }),
       ),
     },
@@ -1534,11 +1537,16 @@ const verifyProjectFallback = async (
     const parsed = parseClientRegistrationPolicy(remaining, project.userClient);
     if (
       !parsed.ok ||
-      clientRegistrationActivation(
+      (clientRegistrationActivation(
         parsed.value,
         project.userClient,
         document,
-      ) !== "disabled"
+      ) !== "disabled" &&
+        !(
+          observed.value.preservesOriginalRegistration === true &&
+          clientRegistrationOwnership(remaining, project.userClient) ===
+            "foreign"
+        ))
     )
       return failed(
         `Removing this registration would leave another or unresolved REA registration at ${configPath}. No change was made. Review that registration, then rerun uninstall.`,
