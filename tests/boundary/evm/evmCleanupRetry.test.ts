@@ -62,6 +62,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { windowsSystemRootEnvironment } from "../../support/process/windowsSystemRoot.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 let limitsWorkspace = "";
@@ -84,7 +85,10 @@ it.each(["completed", "invalid", "cancelled"] as const)(
       throw new Error("Worker must not start before its limits are admitted");
     });
     const provider = new EvmoleInterfaceProvider(
-      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      {
+        REA_EVM_PRLIMIT_COMMAND: process.execPath,
+        ...windowsSystemRootEnvironment(),
+      },
       undefined,
       createRuntime,
       SIMULATED_LINUX_X64,
@@ -140,7 +144,10 @@ it.each(["pre-aborted", "admission", "close"] as const)(
       throw new Error("Worker must not start");
     });
     const provider = new EvmoleInterfaceProvider(
-      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      {
+        REA_EVM_PRLIMIT_COMMAND: process.execPath,
+        ...windowsSystemRootEnvironment(),
+      },
       undefined,
       createRuntime,
       SIMULATED_LINUX_X64,
@@ -202,7 +209,10 @@ it.each([
     const controller = new AbortController();
     const abortReason = { requested: "cancel during root cleanup" };
     const provider = new EvmoleInterfaceProvider(
-      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      {
+        REA_EVM_PRLIMIT_COMMAND: process.execPath,
+        ...windowsSystemRootEnvironment(),
+      },
       async (spawn) => {
         const requestPath = spawn.arguments.at(-1);
         if (requestPath === undefined) throw new Error("Request path missing");
@@ -331,6 +341,7 @@ it("keeps descriptor cleanup in close aggregates until the exact file lease rele
   const provider = new EvmoleInterfaceProvider(
     {
       REA_EVM_PRLIMIT_COMMAND: process.execPath,
+      ...windowsSystemRootEnvironment(),
     },
     undefined,
     undefined,
@@ -384,7 +395,10 @@ it("keeps a mixed root and reply-descriptor aggregate pending until both owners 
   let rootPath = "";
   let rootCloseAttempts = 0;
   const provider = new EvmoleInterfaceProvider(
-    { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+    {
+      REA_EVM_PRLIMIT_COMMAND: process.execPath,
+      ...windowsSystemRootEnvironment(),
+    },
     async (spawn) => {
       const requestPath = spawn.arguments.at(-1);
       if (requestPath === undefined) throw new Error("Request path missing");
@@ -474,7 +488,10 @@ it("releases a retained process independently while a root cleanup retry remains
   let cleanupAttempts = 0;
   let allowProcessCleanup = false;
   const provider = new EvmoleInterfaceProvider(
-    { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+    {
+      REA_EVM_PRLIMIT_COMMAND: process.execPath,
+      ...windowsSystemRootEnvironment(),
+    },
     async (spawn) => {
       const requestPath = spawn.arguments.at(-1);
       if (requestPath === undefined) throw new Error("Request path missing");
@@ -586,7 +603,10 @@ it("preserves an active cancellation through denied owned-group cleanup and late
   let cleanupAttempts = 0;
   let allowRootClose = false;
   const provider = new EvmoleInterfaceProvider(
-    { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+    {
+      REA_EVM_PRLIMIT_COMMAND: process.execPath,
+      ...windowsSystemRootEnvironment(),
+    },
     async (spawn) => {
       const launched = await spawnOwnedProviderProcess({
         ...spawn,
@@ -695,7 +715,10 @@ it.each([
     const reason = { requested: "stop during reply close" };
     let replyPath = "";
     const provider = new EvmoleInterfaceProvider(
-      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      {
+        REA_EVM_PRLIMIT_COMMAND: process.execPath,
+        ...windowsSystemRootEnvironment(),
+      },
       async (spawn) => {
         const request = JSON.parse(
           await readFile(spawn.arguments.at(-1)!, "utf8"),
@@ -846,7 +869,10 @@ it.each(["physical-read", "completed-late-cancel"] as const)(
       throw new Error("Worker must not start");
     });
     const provider = new EvmoleInterfaceProvider(
-      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      {
+        REA_EVM_PRLIMIT_COMMAND: process.execPath,
+        ...windowsSystemRootEnvironment(),
+      },
       undefined,
       createRuntime,
       SIMULATED_LINUX_X64,
@@ -912,7 +938,10 @@ it.each([
     const deniedDescriptor =
       scenario.endsWith("denied") || scenario === "physical-read";
     const provider = new EvmoleInterfaceProvider(
-      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      {
+        REA_EVM_PRLIMIT_COMMAND: process.execPath,
+        ...windowsSystemRootEnvironment(),
+      },
       async (spawn) => {
         const request = JSON.parse(
           await readFile(spawn.arguments.at(-1)!, "utf8"),
@@ -1068,7 +1097,10 @@ it.each([
     const controller = new AbortController();
     const callerReason = { requested: "stop inspection" };
     const provider = new EvmoleInterfaceProvider(
-      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      {
+        REA_EVM_PRLIMIT_COMMAND: process.execPath,
+        ...windowsSystemRootEnvironment(),
+      },
       async () => {
         controller.abort(callerReason);
         // An abort error raised while the caller's signal is also aborted.

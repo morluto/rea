@@ -24,6 +24,7 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+import { windowsSystemRootEnvironment } from "../../support/process/windowsSystemRoot.js";
 
 const it = nativeTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE);
 
@@ -1320,9 +1321,7 @@ nativeTest(
     let ownedRoot = "";
     let pid: number | undefined;
     const provider = new SqliteDatabaseProvider(
-      process.platform === "win32" && process.env.SystemRoot !== undefined
-        ? { SystemRoot: process.env.SystemRoot }
-        : {},
+      windowsSystemRootEnvironment(),
       async (spawn) => {
         ownedRoot = spawn.cwd ?? "";
         const requestPath = spawn.arguments[2];

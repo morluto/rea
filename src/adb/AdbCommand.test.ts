@@ -7,6 +7,7 @@ import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
+import { windowsSystemRootEnvironment } from "../../tests/support/process/windowsSystemRoot.js";
 
 const resources = new ArtifactResourceScope();
 beforeAll(() => prepareProcessOwnershipInspection());
@@ -15,7 +16,7 @@ afterAll(() => resources.close());
 const selection = {
   binary: "/host/adb",
   pathSource: "environment",
-  environment: {},
+  environment: windowsSystemRootEnvironment(),
   resources,
 } as const;
 
@@ -115,12 +116,6 @@ it("recognizes only the completed empty false result as absence", async () => {
 it.each([
   ["exit status 2", exits(2)],
   ["a refused launch", refused(spawnFailure("ENOENT", "/host/adb"))],
-  [
-    "a signal exit",
-    scripted(
-      "process.kill(process.pid, 'SIGTERM'); setInterval(() => {}, 1000)",
-    ),
-  ],
   ["unexpected stdout", exits(1, { stdout: "unexpected" })],
   ["unrecognized stderr", exits(1, { stderr: " " })],
 ] as const)(
@@ -130,6 +125,22 @@ it.each([
       ok: false,
       error: { _tag: "AnalysisProtocolError" },
     });
+  },
+);
+
+// The owned Windows launcher reports no signal exits: a process that signals
+// itself ends with exit status 1 and no output, which cannot be told apart from
+// the completed false result.
+it.skipIf(process.platform === "win32")(
+  "keeps nonstandard false completion unknown: a signal exit",
+  async () => {
+    expect(
+      await probe(
+        scripted(
+          "process.kill(process.pid, 'SIGTERM'); setInterval(() => {}, 1000)",
+        ),
+      ),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisProtocolError" } });
   },
 );
 
