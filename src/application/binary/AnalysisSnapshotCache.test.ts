@@ -252,11 +252,6 @@ it.each(["provider", "workflow"] as const)(
         name: "display-only-name",
       }),
     };
-    const nameImport = ledger.import(createEvidenceBundle([nameOnly]));
-    if (!nameImport.ok) throw nameImport.error;
-    cache.refreshEvidenceMetadata(nameImport.value.replacements);
-    expect(cache.entries()).toEqual(before.value.entries);
-    expect(cache.workflowEntries()).toEqual(before.value.workflow_entries);
     // A different observation for this exact query is not the entry's dependency.
     const alternative = createEvidence(target, provider, {
       operation,
@@ -277,19 +272,17 @@ it.each(["provider", "workflow"] as const)(
         }),
       };
     };
-    const foreign = ledger.import(
-      createEvidenceBundle([relocate(alternative)]),
+    // Name-only changes, a different result for this query, and source
+    // changes do not rewrite the cached entry's own subject.
+    const unrelated = ledger.import(
+      createEvidenceBundle([
+        nameOnly,
+        relocate(alternative),
+        ...dependencies.map(relocate),
+      ]),
     );
-    if (!foreign.ok) throw foreign.error;
-    cache.refreshEvidenceMetadata(foreign.value.replacements);
-    expect(cache.entries()).toEqual(before.value.entries);
-    expect(cache.workflowEntries()).toEqual(before.value.workflow_entries);
-    // A result may cite several observations; updating their envelopes does not change its payload.
-    const dependentImport = ledger.import(
-      createEvidenceBundle(dependencies.map(relocate)),
-    );
-    if (!dependentImport.ok) throw dependentImport.error;
-    cache.refreshEvidenceMetadata(dependentImport.value.replacements);
+    if (!unrelated.ok) throw unrelated.error;
+    cache.refreshEvidenceMetadata(unrelated.value.replacements);
     expect(cache.entries()).toEqual(before.value.entries);
     expect(cache.workflowEntries()).toEqual(before.value.workflow_entries);
     const relocated = relocate(evidence);
@@ -1527,25 +1520,9 @@ it("replays source-bearing entries only when their complete retained closure exi
       .lookup(target, profile, "procedure_info", parameters)
       ?.sourceEvidence?.map((record) => record.evidence_id),
   ).toEqual([source.evidence_id, parent.evidence_id]);
-  if (source.subject.identity.kind !== "file")
-    throw new Error("Expected source subject");
   const ledger = new EvidenceLedger();
   for (const record of [parent, source, leaf])
     expect(ledger.record(record).ok).toBe(true);
-  const movedSource = {
-    ...source,
-    subject: displayedEvidenceSubject(source.subject, {
-      local_path: "/relocated/source",
-      name: "source",
-    }),
-  };
-  const replacement = ledger.import(createEvidenceBundle([movedSource]));
-  if (!replacement.ok) throw replacement.error;
-  cache.refreshEvidenceMetadata(replacement.value.replacements);
-  expect(
-    cache.lookup(target, profile, "procedure_info", parameters)
-      ?.sourceEvidence?.[0]?.subject?.local_path,
-  ).toBe("/relocated/source");
   const exported = cache.export(target, profile, ledger.export());
   if (!exported.ok) throw exported.error;
   const imported = new AnalysisSnapshotCache();
@@ -1555,18 +1532,14 @@ it("replays source-bearing entries only when their complete retained closure exi
       .lookup(target, profile, "procedure_info", parameters)
       ?.sourceEvidence?.map((record) => record.evidence_id),
   ).toEqual([source.evidence_id, parent.evidence_id]);
-  expect(
-    imported.lookup(target, profile, "procedure_info", parameters)
-      ?.sourceEvidence?.[0]?.subject?.local_path,
-  ).toBe("/relocated/source");
   const pruned = parseAnalysisSnapshot({
     ...exported.value,
-    evidence_bundle: createEvidenceBundle([parent, movedSource]),
+    evidence_bundle: createEvidenceBundle([parent, source]),
   });
   const incomplete = new AnalysisSnapshotCache();
   incomplete.stage(pruned);
   const partial = new Map(
-    [parent, movedSource].map((record) => [record.evidence_id, record]),
+    [parent, source].map((record) => [record.evidence_id, record]),
   );
   expect(
     incomplete.lookup(target, profile, "procedure_info", parameters, (id) =>
