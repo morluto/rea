@@ -397,52 +397,21 @@ describe("web capture WebSocket comparison", () => {
       total_changes: 0,
     });
 
-    const changeFrame = (
-      update: (
-        event: WebPageInspection["network"]["websocket_connections"][number]["events"][number],
-      ) => void,
-    ): WebPageInspection => {
+    for (const patch of [
+      { direction: "received" },
+      { opcode: 2 },
+      { payload_shape: { format: "binary", json_shape: null } },
+    ] as const) {
       const changed = structuredClone(before);
-      const event = changed.network.websocket_connections[0]?.events[0];
-      if (event === undefined)
-        throw new Error("Missing captured WebSocket frame");
-      update(event);
-      return changed;
-    };
-    const eventChanges: readonly ((
-      event: WebPageInspection["network"]["websocket_connections"][number]["events"][number],
-    ) => void)[] = [
-      (event) => {
-        event.direction = "received";
-      },
-      (event) => {
-        event.opcode = 2;
-      },
-      (event) => {
-        event.payload_shape = { format: "binary", json_shape: null };
-      },
-    ];
-    for (const update of eventChanges)
-      expect(compareNetwork(before, changeFrame(update)).status).toBe(
-        "changed",
-      );
-
-    const changed = structuredClone(before);
-    const connection = changed.network.websocket_connections[0];
-    const event = connection?.events[0];
-    if (connection === undefined || event === undefined)
-      throw new Error("Missing captured WebSocket frame");
-    if (event.payload_bytes === null)
-      throw new Error("Expected captured WebSocket byte count");
-    connection.request_id = "capture-local-id-3";
-    event.direction = "received";
-    event.opcode = 2;
-    event.payload_bytes += 1;
-    event.payload_shape = { format: "binary", json_shape: null };
-    expect(compareNetwork(before, changed)).toMatchObject({
-      status: "changed",
-      changes: [expect.objectContaining({ change: "modified" })],
-    });
+      const frame = changed.network.websocket_connections[0]?.events[0];
+      if (frame === undefined)
+        throw new Error("Expected a retained WebSocket frame");
+      Object.assign(frame, patch);
+      expect(compareNetwork(before, changed)).toMatchObject({
+        status: "changed",
+        changes: [expect.objectContaining({ change: "modified" })],
+      });
+    }
 
     const reordered = structuredClone(before);
     reordered.network.websocket_connections[0]?.events.reverse();
@@ -464,216 +433,135 @@ describe("web capture WebSocket comparison", () => {
   });
 });
 
-describe("web capture WebSocket shape comparison", () => {
-  it("aligns WebSocket shape streams only through common known coverage", async () => {
-    const browser = await startFakeCdpBrowser({ binaryWebSocketEvent: true });
-    browsers.push(browser);
-    const captured = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_websocket_shapes: true,
-      }),
-    );
-    if (!captured.ok) throw captured.error;
-    const before = structuredClone(captured.value);
-    markSectionsComplete(before, [
-      "network_requests",
-      "websocket_connections",
-      "websocket_frames",
-      "websocket_shapes",
-    ]);
+it("preserves WebSocket stream correlation and compares only shared payload evidence", async () => {
+  const browser = await startFakeCdpBrowser({ binaryWebSocketEvent: true });
+  browsers.push(browser);
+  const captured = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+      include_websocket_shapes: true,
+    }),
+  );
+  if (!captured.ok) throw captured.error;
+  const known = captured.value;
+  markSectionsComplete(known, [
+    "network_requests",
+    "websocket_connections",
+    "websocket_frames",
+    "websocket_shapes",
+  ]);
+  const baseConnection = known.network.websocket_connections[0];
+  if (baseConnection === undefined)
+    throw new Error("Expected a WebSocket connection");
 
-    const sameUrlStreams = structuredClone(before);
-    sameUrlStreams.network.websocket_connections.push({
-      ...structuredClone(sameUrlStreams.network.websocket_connections[0]!),
-      request_id: "second-local-id",
-    });
-    const reorderedConnections = structuredClone(sameUrlStreams);
-    reorderedConnections.network.websocket_connections.reverse();
-    for (const [
-      index,
-      item,
-    ] of reorderedConnections.network.websocket_connections.entries())
-      item.request_id = `new-local-id-${String(index)}`;
-    expect(compareNetwork(sameUrlStreams, reorderedConnections)).toMatchObject({
-      status: "unchanged",
-      total_changes: 0,
-    });
-
-    const correlatedBefore = structuredClone(before);
-    const correlatedConnection =
-      correlatedBefore.network.websocket_connections[0]!;
-    const shape = (root_type: "string" | "number") => ({
-      format: "json" as const,
-      json_shape: {
-        root_type,
-        node_count: 1,
-        max_depth_observed: 0,
-        properties: [],
-      },
-    });
-    const firstShape = shape("string");
-    const secondShape = shape("number");
-    for (const connection of [
-      correlatedConnection,
-      {
-        ...structuredClone(correlatedConnection),
-        request_id: "second-correlated-connection",
-      },
-    ]) {
-      connection.events[0]!.payload_shape = structuredClone(firstShape);
-      connection.events[1]!.payload_shape = structuredClone(secondShape);
-    }
-    correlatedBefore.network.websocket_connections = [
-      correlatedConnection,
-      {
-        ...structuredClone(correlatedConnection),
-        request_id: "second-correlated-connection",
-      },
-    ];
-    const crossed = structuredClone(correlatedBefore);
-    crossed.network.websocket_connections[0]!.events[1]!.payload_shape =
-      structuredClone(firstShape);
-    crossed.network.websocket_connections[1]!.events[0]!.payload_shape =
-      structuredClone(secondShape);
-    crossed.network.websocket_connections[1]!.events[1]!.payload_shape =
-      structuredClone(firstShape);
-    expect(compareNetwork(correlatedBefore, crossed).status).toBe("changed");
-
-    const partialShapes = structuredClone(correlatedBefore);
-    partialShapes.network.websocket_connections[0]!.events[1]!.payload_shape =
-      null;
-    const ambiguousShapeChange = structuredClone(partialShapes);
-    ambiguousShapeChange.network.websocket_connections[1]!.events[1]!.payload_shape =
-      structuredClone(firstShape);
-    expect(compareNetwork(partialShapes, ambiguousShapeChange)).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-      changes: [],
-    });
-    const changedKnownShape = structuredClone(partialShapes);
-    changedKnownShape.network.websocket_connections[0]!.events[0]!.payload_shape =
-      structuredClone(secondShape);
-    expect(compareNetwork(partialShapes, changedKnownShape).status).toBe(
-      "changed",
-    );
+  const shape = (root_type: "string" | "number") => ({
+    format: "json" as const,
+    json_shape: {
+      root_type,
+      node_count: 1,
+      max_depth_observed: 0,
+      properties: [],
+    },
   });
-});
-
-describe("web capture WebSocket shape coverage", () => {
-  it("keeps unchanged unknown when selected WebSocket shapes are unavailable", async () => {
-    const browser = await startFakeCdpBrowser();
-    browsers.push(browser);
-    const captured = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_websocket_shapes: true,
-      }),
+  const stringShape = shape("string");
+  const numberShape = shape("number");
+  const streams = (
+    ...rows: readonly (readonly [typeof stringShape, typeof stringShape])[]
+  ) => {
+    const capture = structuredClone(known);
+    capture.network.websocket_connections = rows.map(
+      ([first, second], index) => {
+        const stream = structuredClone(baseConnection);
+        stream.request_id = `socket-${String(index)}`;
+        const [sent, received] = stream.events;
+        if (sent === undefined || received === undefined)
+          throw new Error("Expected two retained WebSocket frames");
+        sent.payload_shape = first;
+        received.payload_shape = second;
+        return stream;
+      },
     );
-    if (!captured.ok) throw captured.error;
-    const unavailable = structuredClone(captured.value);
-    markSectionsComplete(unavailable, [
-      "network_requests",
-      "websocket_connections",
-      "websocket_frames",
-    ]);
-    unavailable.completeness.unavailable_sections.push("websocket_shapes");
-    for (const connection of unavailable.network.websocket_connections)
-      for (const event of connection.events) event.payload_shape = null;
-    expect(
-      compareNetwork(unavailable, structuredClone(unavailable)),
-    ).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-      changes: [],
-    });
+    return capture;
+  };
+  const editFrame = (
+    capture: WebPageInspection,
+    frameIndex: number,
+    patch: Partial<(typeof baseConnection.events)[number]>,
+    connectionIndex = 0,
+  ) => {
+    const copy = structuredClone(capture);
+    const frame =
+      copy.network.websocket_connections[connectionIndex]?.events[frameIndex];
+    if (frame === undefined)
+      throw new Error("Expected a retained WebSocket frame");
+    Object.assign(frame, patch);
+    return copy;
+  };
 
-    const observed = structuredClone(unavailable);
-    for (const connection of observed.network.websocket_connections)
-      for (const event of connection.events)
-        event.payload_shape = { format: "binary", json_shape: null };
-    for (const [left, right] of [
-      [unavailable, observed],
-      [observed, unavailable],
-    ] as const)
-      expect(compareNetwork(left, right)).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
-        changes: [],
-      });
+  const correlated = streams(
+    [stringShape, stringShape],
+    [numberShape, numberShape],
+  );
+  expect(
+    compareNetwork(
+      correlated,
+      streams([numberShape, numberShape], [stringShape, stringShape]),
+    ).status,
+  ).toBe("unchanged");
+  // Both positions have the same marginal shapes, but the pairing within each connection changed.
+  expect(
+    compareNetwork(
+      correlated,
+      streams([stringShape, numberShape], [numberShape, stringShape]),
+    ).status,
+  ).toBe("changed");
+  const unknown = { status: "unknown", total_changes: 0, changes: [] };
+  const partial = editFrame(correlated, 1, { payload_shape: null });
+  expect(
+    compareNetwork(
+      partial,
+      editFrame(partial, 1, { payload_shape: stringShape }, 1),
+    ),
+  ).toMatchObject(unknown);
+  expect(
+    compareNetwork(
+      partial,
+      editFrame(partial, 0, { payload_shape: numberShape }),
+    ).status,
+  ).toBe("changed");
 
-    const metadataChanged = structuredClone(observed);
-    metadataChanged.network.websocket_connections[0]!.events[0]!.opcode = 2;
-    expect(compareNetwork(unavailable, metadataChanged).status).toBe("changed");
+  const unavailable = structuredClone(known);
+  unavailable.completeness.unavailable_sections.push("websocket_shapes");
+  for (const { events } of unavailable.network.websocket_connections)
+    for (const frame of events) frame.payload_shape = null;
+  expect(compareNetwork(unavailable, unavailable)).toMatchObject(unknown);
+  expect(
+    compareNetwork(unavailable, editFrame(known, 0, { opcode: 2 })).status,
+  ).toBe("changed");
 
-    const truncated = structuredClone(observed);
-    truncated.network.websocket_connections[0]!.events[0]!.payload_shape = null;
-    truncated.completeness.truncated_sections.push("websocket_shapes");
-    for (const [left, right] of [
-      [truncated, observed],
-      [observed, truncated],
-    ] as const)
-      expect(compareNetwork(left, right)).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
-        changes: [],
-      });
-  });
-});
-
-describe("web capture WebSocket payload byte coverage", () => {
-  it("keeps unknown byte counts out of differences while comparing known metadata", async () => {
-    const browser = await startFakeCdpBrowser({ binaryWebSocketEvent: true });
-    browsers.push(browser);
-    const captured = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!captured.ok) throw captured.error;
-    const known = structuredClone(captured.value);
-    markSectionsComplete(known, [
-      "network_requests",
-      "websocket_connections",
-      "websocket_frames",
-    ]);
-    const unknownBytes = structuredClone(known);
-    unknownBytes.network.websocket_connections[0]!.events[1]!.payload_bytes =
-      null;
-    for (const [left, right] of [
-      [unknownBytes, known],
-      [known, unknownBytes],
-    ] as const)
-      expect(compareNetwork(left, right)).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
-        changes: [],
-      });
-
-    const knownMetadataChanged = structuredClone(unknownBytes);
-    knownMetadataChanged.network.websocket_connections[0]!.events[1]!.direction =
-      "sent";
-    expect(compareNetwork(unknownBytes, knownMetadataChanged).status).toBe(
-      "changed",
-    );
-
-    const knownBytesChanged = structuredClone(known);
-    const knownBytesEvent =
-      knownBytesChanged.network.websocket_connections[0]!.events[1]!;
-    if (knownBytesEvent.payload_bytes === null)
-      throw new Error("Expected captured WebSocket byte count");
-    knownBytesEvent.payload_bytes += 1;
-    expect(compareNetwork(known, knownBytesChanged).status).toBe("changed");
-  });
+  const truncated = editFrame(known, 0, { payload_shape: null });
+  truncated.completeness.truncated_sections.push("websocket_shapes");
+  const unknownBytes = editFrame(known, 1, { payload_bytes: null });
+  for (const limited of [unavailable, truncated, unknownBytes]) {
+    expect(compareNetwork(known, limited)).toMatchObject(unknown);
+    expect(compareNetwork(limited, known)).toMatchObject(unknown);
+  }
+  expect(
+    compareNetwork(
+      unknownBytes,
+      editFrame(unknownBytes, 1, { direction: "sent" }),
+    ).status,
+  ).toBe("changed");
+  const size = baseConnection.events[1]?.payload_bytes;
+  if (size === null || size === undefined)
+    throw new Error("Expected a captured WebSocket byte count");
+  expect(
+    compareNetwork(known, editFrame(known, 1, { payload_bytes: size + 1 }))
+      .status,
+  ).toBe("changed");
 });
 
 describe("web capture diff", () => {
