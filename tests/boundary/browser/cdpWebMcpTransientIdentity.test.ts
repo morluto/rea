@@ -22,13 +22,14 @@ const transientChildren = [
 ];
 
 it.each([
-  { phase: "initial", recover: false },
-  { phase: "initial", recover: true },
-  { phase: "event", recover: false },
-  { phase: "event", recover: true },
+  { phase: "initial", replay: "absent" },
+  { phase: "initial", replay: "valid" },
+  { phase: "initial", replay: "malformed" },
+  { phase: "event", replay: "absent" },
+  { phase: "event", replay: "valid" },
 ] as const)(
-  "keeps temporary document policy independent of URL encoding: $phase/$recover",
-  async ({ phase, recover }) => {
+  "keeps temporary document policy independent of URL encoding: $phase/$replay",
+  async ({ phase, replay }) => {
     let document = phase === "initial" ? "transient" : "old";
     const frames = (origin: string) =>
       transientChildren.map(({ id, location }) => ({
@@ -47,13 +48,6 @@ it.each([
         name: `read-${id}`,
         description,
         frameId: id,
-        inputSchema: {},
-        annotations: {
-          readOnly: true,
-          untrustedContent: true,
-          consequential: false,
-          autosubmit: false,
-        },
       }));
     const browser = await startFakeCdpBrowser({
       eventsBeforeReply: ["WebMCP.enable"],
@@ -87,12 +81,17 @@ it.each([
         ];
         document = "transient";
         if (phase === "event") events.push(...navigationEvents());
-        if (recover) {
+        if (replay !== "absent") {
           document = "fresh";
           events.push(...navigationEvents(), {
             method: "WebMCP.toolsAdded",
             sessionId,
-            params: { tools: registrations("Current registration") },
+            params: {
+              tools:
+                replay === "valid"
+                  ? registrations("Current registration")
+                  : transientChildren.map(({ id }) => ({ frameId: id })),
+            },
           });
         }
         return events;
@@ -115,7 +114,7 @@ it.each([
         left.name.localeCompare(right.name),
       ),
     ).toMatchObject(
-      recover
+      replay === "valid"
         ? transientChildren.map(({ id }) => ({
             name: `read-${id}`,
             frame_id: id,
@@ -127,12 +126,21 @@ it.each([
     expect(result.value.completeness.policy_filtered_sections).not.toContain(
       "webmcp_tools",
     );
-    const complete = recover && phase === "initial";
+    if (replay === "malformed")
+      expect(result.value.completeness.excluded).toEqual([
+        {
+          section: "webmcp_tools",
+          reason: "invalid_protocol_value",
+          count: transientChildren.length,
+        },
+      ]);
+    const complete = replay === "valid" && phase === "initial";
     expect(
       result.value.completeness.attach_limited_sections.includes(
         "webmcp_tools",
       ),
     ).toBe(!complete);
+    if (phase !== "initial" || replay === "malformed") return;
     const inspection = await provider.inspectPage(
       inspectWebPageInputSchema.parse(input),
     );
