@@ -1726,7 +1726,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "tests/boundary/filesystem/webModuleArtifacts.test.ts",
-          "verifies original bytes and tolerates relocation without inventing URL paths",
+          "verifies relocated source identity before accepting the captured bytes",
         ),
       ),
       cancel: covered(
