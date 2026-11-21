@@ -27,6 +27,7 @@ import {
   aubeShimLauncher,
   aubeShimRegistration,
   aubeShimTarget,
+  type AubeShimLauncher,
   registeredAubeShim,
 } from "../process/AubeBinShim.js";
 import {
@@ -86,7 +87,7 @@ export const managedClientLauncher = (
   entrypoint: string | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-): string | undefined => {
+): AubeShimLauncher | undefined => {
   if (
     platform === "win32" ||
     entrypoint === undefined ||
@@ -99,14 +100,23 @@ export const managedClientLauncher = (
     usesTransientLauncherPath(process.execPath, roots)
   )
     return undefined;
-  const shim = aubeShimLauncher(
+  const runtime = registrationRuntimePath(
+    process.execPath,
+    "node",
+    environment,
+    platform,
+  );
+  if (runtime === undefined) return undefined;
+  const launcher = aubeShimLauncher(
     entrypoint,
     PRODUCT_IDENTITY.cliBinary,
     process.execPath,
+    runtime,
   );
-  return shim === undefined || usesTransientLauncherPath(shim, roots)
+  return launcher === undefined ||
+    usesTransientLauncherPath(launcher.shim, roots)
     ? undefined
-    : shim;
+    : launcher;
 };
 
 /** Restrictions on the automatically selected launcher shared by setup and mcp add. */
@@ -364,7 +374,10 @@ export const transientClientLauncherPaths = (
   const shim = registeredAubeShim(command);
   const paths =
     shim !== undefined
-      ? [shim]
+      ? [
+          shim.shim,
+          ...(shim.fallbackRuntime === undefined ? [] : [shim.fallbackRuntime]),
+        ]
       : command.length === 3 && command[2] === "mcp"
         ? command.slice(0, 2)
         : [];
@@ -498,7 +511,11 @@ const inspectDirectRegistrationCommand = (
     const target =
       HOST_PLATFORM.platform === "win32"
         ? undefined
-        : aubeShimTarget(managed, process.execPath);
+        : aubeShimTarget(
+            managed.shim,
+            process.execPath,
+            managed.fallbackRuntime,
+          );
     return {
       launch: "managed_shim",
       identity:

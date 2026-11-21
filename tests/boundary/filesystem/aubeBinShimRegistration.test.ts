@@ -219,7 +219,7 @@ it.skipIf(process.platform === "win32")(
 
 it
   .skipIf(process.platform === "win32")
-  .each(["marker-only", "no-independent-node"] as const)(
+  .each(["marker-only", "different-local-node"] as const)(
   "keeps the explicit runtime for a %s Aube launcher",
   async (cause) => {
     const home = await createTestTempDirectory("rea-aube-unverified-shim-");
@@ -232,7 +232,11 @@ it
         shim,
         `#!/bin/sh\n# aube-bin-shim v2 target=${storeTarget("6.7.0")}\nexit 44\n`,
       );
-    else await rm(join(dirname(shim), "node"));
+    else {
+      const interpreter = join(dirname(shim), "node");
+      await rm(interpreter);
+      await writeFile(interpreter, "#!/bin/sh\nexit 44\n", { mode: 0o755 });
+    }
     expect(registerCommand(entrypoint)).toEqual([
       process.execPath,
       entrypoint,
@@ -306,5 +310,62 @@ it.skipIf(process.platform === "win32")(
     expect(classifyClientRegistrationCommand([fifo, "mcp"], entrypoint)).toBe(
       "foreign",
     );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "binds the selected Node for a generated shim without a sibling interpreter",
+  async () => {
+    const home = await createTestTempDirectory("rea-aube-external-node-");
+    const { entrypoint, shim } = await installWithMise(
+      join(home, "installs", "rea"),
+      "6.7.0",
+    );
+    await rm(join(dirname(shim), "node"));
+    await writeFile(
+      entrypoint,
+      "console.log(JSON.stringify({path: process.env.PATH, args: process.argv.slice(2)}));\n",
+    );
+    const command = registerCommand(entrypoint);
+    expect(command.slice(3)).toEqual([shim, process.execPath, "mcp"]);
+    expect(classifyClientRegistrationCommand(command, entrypoint)).toBe(
+      "owned",
+    );
+    expect(JSON.parse(launchFromClient(command))).toEqual({
+      path: "",
+      args: ["mcp"],
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "checks the Node executable reached by the shell through symlink and parent traversal",
+  async () => {
+    const home = await createTestTempDirectory("rea-aube-native-node-path-");
+    const { entrypoint, shim } = await installWithMise(
+      join(home, "installs", "rea"),
+      "6.7.0",
+    );
+    const lexicalBin = dirname(shim);
+    const nativeBase = join(home, "native");
+    const nativeBin = join(nativeBase, ".bin");
+    await mkdir(join(nativeBase, "sub"), { recursive: true });
+    await mkdir(nativeBin);
+    await writeFile(join(nativeBin, "rea"), aubeShim(storeTarget("6.7.0")), {
+      mode: 0o755,
+    });
+    await symlink(join(nativeBase, "sub"), join(lexicalBin, "..", "helper"));
+    await rm(shim);
+    await symlink("../helper/../.bin/rea", shim);
+    const direct = [shim, "mcp"];
+    // The Node script argument resolves lexically to the installed script.
+    // The shell's earlier -x test resolves its own Node path natively.
+    expect(classifyClientRegistrationCommand(direct, entrypoint)).not.toBe(
+      "owned",
+    );
+    await rm(join(lexicalBin, "node"));
+    await symlink(process.execPath, join(nativeBin, "node"));
+    expect(classifyClientRegistrationCommand(direct, entrypoint)).toBe("owned");
+    expect(launchFromClient(registerCommand(entrypoint))).toBe("6.7.0");
   },
 );
