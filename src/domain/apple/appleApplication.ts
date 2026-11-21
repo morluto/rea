@@ -13,6 +13,10 @@ import {
   platformsOf,
 } from "./appleBundleAnatomy.js";
 import {
+  appleBundlePlacementSchema,
+  projectAppleBundlePlacement,
+} from "./appleBundlePlacement.js";
+import {
   isSwiftRuntimeLibrary,
   nativeRuntimeConvention,
 } from "../nativeConvention.js";
@@ -27,6 +31,7 @@ import {
   projectCartesianCandidates,
 } from "../bridgeCandidateProjection.js";
 import {
+  applicationInventoryProjectionInputSchema,
   projectedComponentSchema,
   projectionEvidenceIdSchema,
   projectionPathSchema,
@@ -88,6 +93,8 @@ export const appleApplicationProjectionResultSchema = z.strictObject({
     }),
   ),
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
+  /** Omitted by historical projections, where placement was not evaluated. */
+  bundle_placement: appleBundlePlacementSchema.exactOptional(),
   coverage: z.strictObject({
     status: z.enum(["complete-within-inventory", "partial"]),
     // Count completeness is separate from the declared coverage status.
@@ -103,9 +110,20 @@ export type AppleApplicationProjectionResult = z.infer<
 type Component = z.infer<typeof projectedComponentSchema>;
 type RootFormat = (typeof APPLE_ROOT_FORMATS)[number];
 
+export const appleApplicationProjectionInputSchema =
+  applicationInventoryProjectionInputSchema.extend({
+    include_bundle_placement: z
+      .boolean()
+      .exactOptional()
+      .describe(
+        "Include static Apple bundle placement findings and per-rule coverage.",
+      ),
+  });
+
 /** Project an already authenticated inventory without reparsing its source. */
 export const projectAppleInventory = (
   source: ParsedInventorySet,
+  includeBundlePlacement = false,
 ): Result<AppleApplicationProjectionResult, AnalysisInputError> => {
   const { evidence, inventory } = source;
   const rootFormatResult = appleRootFormat(inventory.manifest.root_format);
@@ -114,10 +132,15 @@ export const projectAppleInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const inventoried = projectedFileComponents(entries);
-  const { roots, bundles } = projectAppleBundleAnatomy(entries, {
-    name: evidenceSubjectDisplay(evidence[0] ?? {})?.name ?? "",
-    format: rootFormat,
-  });
+  const anatomy = projectAppleBundleAnatomy(
+    entries,
+    {
+      name: evidenceSubjectDisplay(evidence[0] ?? {})?.name ?? "",
+      format: rootFormat,
+    },
+    includeBundlePlacement,
+  );
+  const { roots, bundles } = anatomy;
   const { all, unattributed } = attributeComponents(
     inventoried,
     roots,
@@ -183,6 +206,9 @@ export const projectAppleInventory = (
     runtime_families: runtimeFamilies,
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
+    ...(includeBundlePlacement
+      ? { bundle_placement: projectAppleBundlePlacement(anatomy, complete) }
+      : {}),
     coverage: {
       status:
         complete &&

@@ -34,7 +34,10 @@ import {
   reconstructionObligationLedgerSchema,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import { androidApplicationProjectionResultSchema } from "../domain/android/androidApplication.js";
-import { appleApplicationProjectionResultSchema } from "../domain/apple/appleApplication.js";
+import {
+  appleApplicationProjectionInputSchema,
+  appleApplicationProjectionResultSchema,
+} from "../domain/apple/appleApplication.js";
 import { harmonyApplicationProjectionResultSchema } from "../domain/harmony/harmonyApplication.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
@@ -414,9 +417,9 @@ export const APPLICATION_TOOL_CONTRACTS = [
     cli: true,
     ...toolContractMetadata("project_apple_application_graph", evidenceEffects),
     description:
-      "Build a static Apple application inventory from the authenticated nested inventory Evidence returned by inspect_artifact for an IPA, .app directory, ZIP or DMG. Returns application roots, nested-bundle roles, launchd plists, component paths/hashes, runtime hints and bridge hypotheses. Roles follow path conventions; plist/CMS semantics and runtime calls are not established.",
+      "Build a static Apple application inventory from the authenticated nested inventory Evidence returned by inspect_artifact for an IPA, .app directory, ZIP or DMG. Returns application roots, nested-bundle roles, launchd plists, component paths/hashes, runtime hints and bridge hypotheses. Set include_bundle_placement to true to report Mach-O paths that contradict Apple's bundle layout and the coverage of each placement rule. Roles follow path conventions; plist/CMS semantics and runtime calls are not established.",
     kind: "application",
-    inputSchema: applicationInventoryProjectionInputSchema,
+    inputSchema: appleApplicationProjectionInputSchema,
     outputSchema: evidenceResultOf(appleApplicationProjectionResultSchema),
     examples: [
       {
