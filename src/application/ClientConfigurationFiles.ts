@@ -540,17 +540,22 @@ export interface EffectiveClientRegistrationConfiguration {
   readonly activationConfigPath?: string;
   readonly declarations: readonly ServerDeclaration[];
   readonly projectInspection?: "evaluated" | "untrusted";
+  /** Every admitted project file, in native load order, when proving ownership. */
+  readonly projectSources?: readonly ClientConfigurationSource[];
+  /** Readiness can fail while parsed launcher identity remains available. */
+  readonly environmentError?: ClientConfigurationFileError;
   /** Project candidate spellings already owned by the same physical user files. */
   readonly projectUserAliases?: readonly string[];
 }
 
 interface ProjectConfigurationReadOptions {
   readonly projectDirectory: string;
-  /** An observed project source with proposed bytes parsed by the transaction owner. */
-  readonly candidate?: {
+  readonly mode?: "ownership";
+  /** Admitted project sources with proposed bytes parsed by their transaction owner. */
+  readonly candidates?: readonly {
     readonly path: string;
     readonly document: ClientConfigurationDocument;
-  };
+  }[];
 }
 
 /** Read actual user layers, with a project view only when a directory is expressly supplied. */
@@ -584,15 +589,26 @@ export const readEffectiveClientRegistrationConfiguration = async (
     platform,
   );
   if (!paths.ok) return paths;
-  const candidate = project.candidate;
-  if (candidate !== undefined && !paths.value.project.includes(candidate.path))
-    return err({
-      kind: "unreadable",
-      path: candidate.path,
-      scope: "project",
-      detail:
-        "The selected file is missing from the native project configuration load order.",
-    });
+  const candidates = new Map<string, ClientConfigurationDocument>();
+  const admitted = new Set(paths.value.project);
+  for (const { path, document } of project.candidates ?? []) {
+    if (candidates.has(path))
+      return err({
+        kind: "unreadable",
+        path,
+        scope: "project",
+        detail: "A proposed project file appears more than once.",
+      });
+    if (!admitted.has(path))
+      return err({
+        kind: "unreadable",
+        path,
+        scope: "project",
+        detail:
+          "The selected file is missing from the native project configuration load order.",
+      });
+    candidates.set(path, document);
+  }
   if (paths.value.project.length === 0) {
     const user = await readEffectiveUserConfiguration(
       client,
@@ -618,10 +634,11 @@ export const readEffectiveClientRegistrationConfiguration = async (
     );
     if (!trust.ok) return err({ ...trust.error, scope: "project" });
     if (!trust.value) {
-      if (candidate !== undefined)
+      const replacementPath = candidates.keys().next().value;
+      if (replacementPath !== undefined)
         return err({
           kind: "unreadable",
-          path: candidate.path,
+          path: replacementPath,
           scope: "project",
           detail:
             "Pi does not load MCP configuration from this untrusted project.",
@@ -639,10 +656,11 @@ export const readEffectiveClientRegistrationConfiguration = async (
 
   const projectSources: ClientConfigurationSource[] = [];
   for (const path of paths.value.project) {
+    const candidate = candidates.get(path);
     const configuration =
-      candidate?.path === path
-        ? ok(candidate.document)
-        : await readConfigurationFile(path, client.format, resources);
+      candidate === undefined
+        ? await readConfigurationFile(path, client.format, resources)
+        : ok(candidate);
     if (!configuration.ok)
       return err({ ...configuration.error, scope: "project" });
     if (configuration.value !== undefined)
@@ -683,11 +701,12 @@ export const readEffectiveClientRegistrationConfiguration = async (
       ? replacedServerConfiguration(projectedSources)
       : mergeClientConfigurationDocuments(projectedSources, platform);
   const environment = clientRegistrationEnvironment(document, client, platform);
+  let environmentError: ClientConfigurationFileError | undefined;
   if (!environment.ok) {
     const source =
       contributingEnvironmentSource(active, environment.error, platform) ??
       last?.source;
-    return err({
+    environmentError = {
       ...invalidEnvironment(
         source?.sourcePath ?? client.configPath,
         environment.error,
@@ -695,19 +714,23 @@ export const readEffectiveClientRegistrationConfiguration = async (
         platform,
       ),
       ...(source?.scope === "project" ? { scope: "project" } : {}),
-    });
+    };
+    if (project.mode !== "ownership") return err(environmentError);
   }
+
+  const projectFacts = {
+    declarations: active,
+    projectInspection: "evaluated" as const,
+    ...(project.mode === "ownership" ? { projectSources } : {}),
+    ...(environmentError === undefined ? {} : { environmentError }),
+    ...(paths.value.userAliases.length === 0
+      ? {}
+      : { projectUserAliases: paths.value.userAliases }),
+  };
   if (last === undefined || last.source.scope !== "project")
     return ok(
       projectViewOfUserRegistration(
-        {
-          document,
-          configPath: client.configPath,
-          declarations: active,
-          ...(paths.value.userAliases.length === 0
-            ? {}
-            : { projectUserAliases: paths.value.userAliases }),
-        },
+        { document, configPath: client.configPath, ...projectFacts },
         "evaluated",
       ),
     );
@@ -729,11 +752,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
     launcherConfigPath: launcher.source.sourcePath ?? client.configPath,
     activationScope: activation.source.scope ?? "user",
     activationConfigPath: activation.source.sourcePath ?? client.configPath,
-    declarations: active,
-    projectInspection: "evaluated",
-    ...(paths.value.userAliases.length === 0
-      ? {}
-      : { projectUserAliases: paths.value.userAliases }),
+    ...projectFacts,
   });
 };
 

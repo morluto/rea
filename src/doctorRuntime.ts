@@ -62,9 +62,11 @@ interface SelectedRegistrationEnvironment {
   readonly environment: Readonly<Record<string, string | undefined>>;
   /** Names the client records as expressions this process cannot evaluate. */
   readonly unresolved: ReadonlySet<string>;
-  /** The registration could not be read or its effective settings resolved. */
-  readonly unknown?: boolean;
+  /** Why registration settings cannot authorize provider probes. */
+  readonly unavailable?: RegistrationProbeRefusal;
 }
+
+type RegistrationProbeRefusal = "unreadable" | "project_scope";
 
 const selectedRegistrationEnvironment = async (
   clients: readonly string[],
@@ -83,7 +85,11 @@ const selectedRegistrationEnvironment = async (
     await resolveSupportedClients(home, platform, processEnvironment)
   ).find(({ name }) => name === selected);
   if (client === undefined || client.format === "unsupported")
-    return { environment: {}, unresolved: new Set(), unknown: true };
+    return {
+      environment: {},
+      unresolved: new Set(),
+      unavailable: "unreadable",
+    };
   const registered = await readSelectedRegistration(
     client,
     resourceScope,
@@ -91,8 +97,12 @@ const selectedRegistrationEnvironment = async (
     projectDirectory,
   );
   if (registered === undefined) return undefined;
-  if ("unknown" in registered)
-    return { environment: {}, unresolved: new Set(), unknown: true };
+  if ("unavailable" in registered)
+    return {
+      environment: {},
+      unresolved: new Set(),
+      unavailable: registered.unavailable,
+    };
   return {
     environment: registered.values,
     unresolved: registered.unresolvedSettings,
@@ -146,7 +156,11 @@ const readSelectedRegistration = async (
   resourceScope: RetainedResourceScope,
   platform: NodeJS.Platform,
   projectDirectory: string | undefined,
-): Promise<SelectedRegistration | { readonly unknown: true } | undefined> => {
+): Promise<
+  | SelectedRegistration
+  | { readonly unavailable: RegistrationProbeRefusal }
+  | undefined
+> => {
   // A failed close is a retained owner, not a read outcome: transfer it to the
   // caller's scope so `close()` retries it instead of losing it.
   const configuration = await resourceScope
@@ -167,14 +181,18 @@ const readSelectedRegistration = async (
     });
   // A registration this process cannot read says nothing about the values the
   // client passes on; the terminal is not those values.
-  if (configuration === undefined) return { unknown: true };
+  if (configuration === undefined) return { unavailable: "unreadable" };
   if (!configuration.ok) {
     const cleanup = configuration.error.cleanupFailure;
     if (cleanup !== undefined)
       resourceScope.retain(cleanup.owner, cleanup.path);
-    return { unknown: true };
+    return { unavailable: "unreadable" };
   }
   if (configuration.value.document === undefined) return undefined;
+  // Inspecting a project registration does not approve its provider commands.
+  // Pass no project-controlled settings to any of the provider probes.
+  if (configuration.value.scope === "project")
+    return { unavailable: "project_scope" };
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,
     client,
@@ -187,7 +205,7 @@ const readSelectedRegistration = async (
         values: details.value.values,
         unresolvedSettings: details.value.unresolvedSettings,
       }
-    : { unknown: true };
+    : { unavailable: "unreadable" };
 };
 
 /** Registration settings read by each provider's readiness probe. */
@@ -266,7 +284,8 @@ const unresolvedProvider = (
       read.has(normalize(name)) &&
       settingAffectsProbe(id, normalize(name), environment, platform),
   );
-  if (selected.unknown !== true && unresolved.length === 0) return undefined;
+  if (selected.unavailable === undefined && unresolved.length === 0)
+    return undefined;
   const configurationKeys: Readonly<Record<string, string>> = {
     ghidra: "GHIDRA_INSTALL_DIR",
     ida: "REA_IDA_MCP_CONFIG",
@@ -275,7 +294,7 @@ const unresolvedProvider = (
   };
   const configurationKey = configurationKeys[id];
   const unknownConfiguration =
-    selected.unknown === true ||
+    selected.unavailable !== undefined ||
     configurationKey === undefined ||
     unresolved.some((name) => normalize(name) === normalize(configurationKey));
   const configuration =
@@ -295,14 +314,21 @@ const unresolvedProvider = (
       {
         name: "configuration",
         ok: false,
-        code: "registration_environment_unknown",
+        code:
+          selected.unavailable === "project_scope"
+            ? "project_provider_settings_unapproved"
+            : "registration_environment_unknown",
         classification: "unknown",
         detail:
-          selected.unknown === true
-            ? "The selected client's registration could not be read or resolved."
-            : `The selected client's registration has unresolved settings: ${unresolved.join(", ")}.`,
+          selected.unavailable === "project_scope"
+            ? "Doctor discovered a project registration and did not run provider probes from its settings."
+            : selected.unavailable === "unreadable"
+              ? "The selected client's registration could not be read or resolved."
+              : `The selected client's registration has unresolved settings: ${unresolved.join(", ")}.`,
         remediation:
-          "Inspect the selected client's registration on the host and rerun doctor.",
+          selected.unavailable === "project_scope"
+            ? `Run rea doctor --provider ${id} with provider settings you selected in the terminal.`
+            : "Inspect the selected client's registration on the host and rerun doctor.",
       },
     ],
   };

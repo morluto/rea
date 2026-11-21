@@ -669,6 +669,7 @@ export const systemUninstallHost = (
           supported,
           directory,
           projectTargets,
+          fileSystem,
           resources,
           platform,
         );
@@ -735,8 +736,14 @@ export const systemUninstallHost = (
     inspectClient: (client) =>
       configurationOperations.run(async () => {
         const project = projectTargets.get(client);
-        if (project?.issue?.status === "failed") return project.issue;
-        if (project?.issue !== undefined) return undefined;
+        if (project?.kind === "issue")
+          return project.item.status === "failed" ? project.item : undefined;
+        if (project?.kind === "planned") {
+          const blocker = clientWriteBlocker(client);
+          return blocker === undefined
+            ? undefined
+            : item(client.name, "failed", blocker);
+        }
         const ownershipEstablished =
           client.sharedRegistration === true &&
           clientOwnershipEvidencePaths(client).length > 0 &&
@@ -767,24 +774,6 @@ export const systemUninstallHost = (
             { ...read.parsed, sourcePath: client.configPath },
           );
           if (unknown !== undefined) return unknown;
-        }
-        if (project !== undefined) {
-          if (
-            !removal.value.removeNative &&
-            removal.value.legacyPath === undefined
-          )
-            return undefined;
-          const writeBlocker = clientWriteBlocker(client);
-          if (writeBlocker !== undefined)
-            return item(client.name, "failed", writeBlocker);
-          return verifyProjectRemoval(
-            project,
-            client,
-            read.transactionPath,
-            registrationRemovalDocument(read.parsed, removal.value, platform),
-            resources,
-            platform,
-          );
         }
         // ZCode switches the entire server table to its shared fallback once
         // the last native server disappears. Inspect the table it would load,
@@ -933,20 +922,24 @@ export const systemUninstallHost = (
           : item(client.name, "failed", blocker);
       }),
     removeClient: (client) =>
-      configurationOperations.run(
-        async () =>
-          projectTargets.get(client)?.issue ??
+      configurationOperations.run(async () => {
+        const project = projectTargets.get(client);
+        if (project?.kind === "issue") return project.item;
+        const result =
           retainedLowerOnly.get(client) ??
-          removeClient(
+          (await removeClient(
             client,
             fileSystem,
             resources,
             platform,
             () => clientWriteBlocker(client),
             preflightOwnedClients.has(client),
-            projectTargets.get(client),
-          ),
-      ),
+            project?.plan,
+          ));
+        if (result.status === "removed")
+          project?.plan.pending.delete(client.configPath);
+        return result;
+      }),
     inspectSkill: async () => {
       if (projectDirectory !== undefined) return undefined;
       const selection = skillDestinationSelection(
@@ -1268,10 +1261,27 @@ const registrationRemovalDocument = (
   };
 };
 
-interface ProjectUninstallTarget {
+type ProjectUninstallTarget =
+  | { readonly kind: "planned"; readonly plan: ProjectUninstallPlan }
+  | { readonly kind: "issue"; readonly item: UninstallItem };
+
+type ProjectConfigurationRead = Extract<
+  ClientConfigurationRead,
+  { kind: "configuration" }
+>;
+
+interface ProjectRemovalFile {
+  readonly client: UninstallClient;
+  readonly original: string;
+  readonly transactionPath: string;
+  readonly candidate: ClientConfigurationDocument;
+}
+
+interface ProjectUninstallPlan {
   readonly directory: string;
   readonly userClient: SetupClient;
-  readonly issue?: UninstallItem;
+  /** Files are removed in native low-to-high precedence order. */
+  readonly pending: Map<string, ProjectRemovalFile>;
 }
 
 const requireProjectUninstallDirectory = async (
@@ -1295,6 +1305,7 @@ const resolveProjectUninstallClients = async (
   supported: readonly SetupClient[],
   directory: string,
   targets: WeakMap<UninstallClient, ProjectUninstallTarget>,
+  fileSystem: UninstallFileSystem,
   resources: ArtifactResourceScope,
   platform: NodeJS.Platform,
 ): Promise<readonly UninstallClient[]> => {
@@ -1306,8 +1317,8 @@ const resolveProjectUninstallClients = async (
       directory,
       platform,
     ).filter((path) => withinLexicalDirectory(path, directory, platform));
-    // An absent file grants no write target. Let the configuration owner report
-    // any unresolved candidate instead of treating a failed probe as absence.
+    // An unresolved candidate must reach the configuration owner; only a
+    // definitively absent file supplies no write target.
     const exists = await Promise.all(
       localPaths.map(async (path) => {
         try {
@@ -1323,65 +1334,132 @@ const resolveProjectUninstallClients = async (
       userClient,
       resources,
       platform,
-      { projectDirectory: directory },
+      { projectDirectory: directory, mode: "ownership" },
     );
-    let path: string;
-    let issue: UninstallItem | undefined;
+    const reportIssue = (path: string, detail: string) => {
+      const client = { ...userClient, configPath: path };
+      selected.push(client);
+      targets.set(client, {
+        kind: "issue",
+        item: item(client.name, "failed", detail),
+      });
+    };
     if (!observed.ok) {
-      path = observed.error.path;
-      issue = item(userClient.name, "failed", observed.error.detail);
-    } else {
-      const configuration = observed.value;
-      if (configuration.projectInspection === "untrusted") {
-        path = appendCallerPath(directory, ".pi/mcp.json", platform);
-        issue = item(
-          userClient.name,
-          "failed",
-          "Pi has not admitted this project's configuration. Verify the Pi project trust decision before removing the registration.",
-        );
-      } else if (configuration.scope !== "project") {
-        const alias = configuration.projectUserAliases?.find((candidate) =>
-          withinLexicalDirectory(candidate, directory, platform),
-        );
-        if (alias === undefined) continue;
-        path = alias;
-        issue = item(
-          userClient.name,
-          "failed",
-          `The selected project configuration at ${alias} aliases user configuration. No change was made.`,
-        );
-      } else {
-        path = configuration.launcherConfigPath ?? configuration.configPath;
-        if (
-          configuration.launcherScope !== "project" ||
-          !withinLexicalDirectory(path, directory, platform)
-        ) {
-          path = configuration.configPath;
-          issue = item(
-            userClient.name,
-            "retained",
-            "The selected directory does not own the effective REA launcher. Review the registration's source before removing it.",
-          );
-        }
-      }
+      reportIssue(observed.error.path, observed.error.detail);
+      continue;
     }
-    const client = { ...userClient, configPath: path };
-    selected.push(client);
-    targets.set(client, {
+    const configuration = observed.value;
+    if (configuration.projectInspection === "untrusted") {
+      reportIssue(
+        appendCallerPath(directory, ".pi/mcp.json", platform),
+        "Pi has not admitted this project's configuration. Verify the Pi project trust decision before removing the registration.",
+      );
+      continue;
+    }
+    for (const path of configuration.projectUserAliases ?? []) {
+      if (!localPaths.includes(path)) continue;
+      reportIssue(
+        path,
+        `The selected project configuration at ${path} aliases user configuration. No change was made.`,
+      );
+    }
+    const plan: ProjectUninstallPlan = {
       directory,
       userClient,
-      ...(issue === undefined ? {} : { issue }),
-    });
+      pending: new Map(),
+    };
+    for (const source of configuration.projectSources ?? []) {
+      const path = source.sourcePath;
+      if (
+        path === undefined ||
+        !localPaths.includes(path) ||
+        !registrationPresent(source)
+      )
+        continue;
+      const client = { ...userClient, configPath: path };
+      selected.push(client);
+      const prepared = await prepareProjectRemoval(
+        plan,
+        client,
+        fileSystem,
+        resources,
+        platform,
+      );
+      if (prepared.ok) {
+        plan.pending.set(path, prepared.value);
+        targets.set(client, { kind: "planned", plan });
+      } else targets.set(client, { kind: "issue", item: prepared.error });
+    }
+    const first = plan.pending.values().next().value;
+    if (first !== undefined) {
+      const issue = await verifyProjectFallback(plan, resources, platform);
+      if (issue !== undefined)
+        targets.set(first.client, { kind: "issue", item: issue });
+    }
   }
   return selected;
 };
 
-const verifyProjectRemoval = async (
-  project: ProjectUninstallTarget,
+const prepareProjectRemoval = async (
+  plan: ProjectUninstallPlan,
+  client: UninstallClient,
+  fileSystem: UninstallFileSystem,
+  resources: ArtifactResourceScope,
+  platform: NodeJS.Platform,
+): Promise<Result<ProjectRemovalFile, UninstallItem>> => {
+  const read = await readClientConfiguration(
+    client,
+    fileSystem,
+    resources,
+    false,
+  );
+  if (read.kind === "item") return err(read.item);
+  const removal = clientRegistrationRemoval(read.parsed, read.original, client);
+  if (!removal.ok)
+    return err(item(client.name, "failed", removal.error.detail));
+  if (!removal.value.removeNative && removal.value.legacyPath === undefined)
+    return err(
+      item(
+        client.name,
+        "retained",
+        "The rea-named registration is not REA-owned.",
+      ),
+    );
+  if (
+    [...plan.pending.values()].some(
+      (file) => file.transactionPath === read.transactionPath,
+    )
+  )
+    return err(
+      item(
+        client.name,
+        "failed",
+        `Multiple selected configuration paths alias ${read.transactionPath}. Keep only one project configuration path to that file, then rerun uninstall.`,
+      ),
+    );
+  const blocker = await verifyProjectWriteTarget(
+    plan,
+    client,
+    read.transactionPath,
+    platform,
+  );
+  if (blocker !== undefined) return err(blocker);
+  return ok({
+    client,
+    original: read.original,
+    transactionPath: read.transactionPath,
+    candidate: registrationRemovalDocument(
+      read.parsed,
+      removal.value,
+      platform,
+    ),
+  });
+};
+
+const verifyProjectWriteTarget = async (
+  project: ProjectUninstallPlan,
   client: UninstallClient,
   transactionPath: string,
-  candidate: ClientConfigurationDocument,
-  resources: ArtifactResourceScope,
   platform: NodeJS.Platform,
 ): Promise<UninstallItem | undefined> => {
   const failed = (detail: string) => item(client.name, "failed", detail);
@@ -1415,16 +1493,28 @@ const verifyProjectRemoval = async (
         );
     }
   }
+  return undefined;
+};
+
+const verifyProjectFallback = async (
+  project: ProjectUninstallPlan,
+  resources: ArtifactResourceScope,
+  platform: NodeJS.Platform,
+): Promise<UninstallItem | undefined> => {
+  const failed = (detail: string) =>
+    item(project.userClient.name, "failed", detail);
   const observed = await readEffectiveClientRegistrationConfiguration(
     project.userClient,
     resources,
     platform,
     {
       projectDirectory: project.directory,
-      candidate: {
-        path: client.configPath,
-        document: candidate,
-      },
+      candidates: [...project.pending.values()].map(
+        ({ client, candidate }) => ({
+          path: client.configPath,
+          document: candidate,
+        }),
+      ),
     },
   );
   if (!observed.ok) return failed(observed.error.detail);
@@ -1452,6 +1542,46 @@ const verifyProjectRemoval = async (
       );
   }
   return undefined;
+};
+
+/** Match the planned bytes and path identities before applying its next edit. */
+const verifyProjectRemoval = async (
+  project: ProjectUninstallPlan,
+  client: UninstallClient,
+  current: ProjectConfigurationRead,
+  fileSystem: UninstallFileSystem,
+  resources: ArtifactResourceScope,
+  platform: NodeJS.Platform,
+): Promise<UninstallItem | undefined> => {
+  const target = await verifyProjectWriteTarget(
+    project,
+    client,
+    current.transactionPath,
+    platform,
+  );
+  if (target !== undefined) return target;
+  for (const planned of project.pending.values()) {
+    const read =
+      planned.client === client
+        ? current
+        : await readClientConfiguration(
+            planned.client,
+            fileSystem,
+            resources,
+            false,
+          );
+    if (
+      read.kind !== "configuration" ||
+      read.transactionPath !== planned.transactionPath ||
+      read.original !== planned.original
+    )
+      return item(
+        client.name,
+        "failed",
+        `Project configuration ${planned.client.configPath} changed or could not be verified since preflight. Review the current configuration, then rerun uninstall.`,
+      );
+  }
+  return verifyProjectFallback(project, resources, platform);
 };
 
 /** Preserve the bytes uninstall is about to edit and return the backup holding them. */
@@ -1502,7 +1632,7 @@ const removeClient = async (
   platform: NodeJS.Platform,
   writeBlocker?: () => string | undefined,
   preflightOwned = false,
-  project?: ProjectUninstallTarget,
+  project?: ProjectUninstallPlan,
 ): Promise<UninstallItem> => {
   const read = await readClientConfiguration(
     client,
@@ -1510,7 +1640,25 @@ const removeClient = async (
     resources,
     preflightOwned,
   );
-  if (read.kind === "item") return read.item;
+  if (read.kind === "item")
+    return project === undefined || read.item.status === "failed"
+      ? read.item
+      : item(
+          client.name,
+          "failed",
+          `Project configuration ${client.configPath} could not be verified since preflight. Review the current configuration, then rerun uninstall.`,
+        );
+  if (project !== undefined) {
+    const issue = await verifyProjectRemoval(
+      project,
+      client,
+      read,
+      fileSystem,
+      resources,
+      platform,
+    );
+    if (issue !== undefined) return issue;
+  }
   const { transactionPath, original, parsed } = read;
   const name = PRODUCT_IDENTITY.mcpServerKey;
   if (
@@ -1541,17 +1689,6 @@ const removeClient = async (
     removal.value,
     platform,
   );
-  if (project !== undefined) {
-    const issue = await verifyProjectRemoval(
-      project,
-      client,
-      transactionPath,
-      candidate,
-      resources,
-      platform,
-    );
-    if (issue !== undefined) return issue;
-  }
   const editedPaths = [
     ...(removeNative ? [clientServerPath(parsed, name)] : []),
     ...(legacyPath === undefined ? [] : [legacyPath]),

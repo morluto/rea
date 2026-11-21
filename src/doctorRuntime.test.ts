@@ -585,6 +585,47 @@ test("probes the selected client's registration environment instead of the termi
   }
 });
 
+test("reports project provider settings without admitting them for probes", async () => {
+  const home = await createTestTempDirectory("rea-doctor-project-settings-");
+  const project = join(home, "project");
+  await mkdir(project);
+  await writeFile(
+    join(project, "opencode.json"),
+    JSON.stringify({
+      mcp: {
+        servers: {
+          rea: {
+            type: "local",
+            command: [process.execPath, CURRENT_ENTRYPOINT_PATH, "mcp"],
+            environment: {
+              REA_KUNA_COMMAND: join(project, "unavailable-provider"),
+            },
+          },
+        },
+      },
+    }),
+  );
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue(project);
+  const host = createSystemDoctorHost({ HOME: home, USERPROFILE: home });
+  try {
+    const inspections = await host.providerInspections?.(["opencode"]);
+    expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
+      configured: null,
+      available: null,
+      registrationEnvironment: {},
+      checks: [
+        expect.objectContaining({
+          classification: "unknown",
+          code: "project_provider_settings_unapproved",
+        }),
+      ],
+    });
+  } finally {
+    cwd.mockRestore();
+    await host.close?.();
+  }
+});
+
 test("keeps reading this terminal when no client is selected", async () => {
   const home = await createTestTempDirectory("rea-opencode-doctor-ambient-");
   await opencodeRegistration(home, { GHIDRA_INSTALL_DIR: "/opt/ghidra" });

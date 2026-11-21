@@ -217,3 +217,127 @@ for (const scope of ["outside", "user"] as const) {
     },
   );
 }
+
+cliTest(
+  "project uninstall removes an owned launcher with invalid REA environment settings",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-project-uninstall-invalid-owned-",
+    );
+    const environment = await registrationEnvironment(join(root, "home"));
+    const selected = join(root, "selected");
+    const configuration = join(selected, "opencode.json");
+    const original = await put(configuration, {
+      mcp: {
+        servers: {
+          rea: {
+            ...openCodeRegistration,
+            environment: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "bad" },
+          },
+          peer: openCodePeer,
+        },
+      },
+    });
+
+    const result = await cli.run({
+      arguments: ["uninstall", "--project", selected, "--json"],
+      environment,
+      cwd: root,
+    });
+    expect(result.exitCode, result.stdout).toBe(0);
+    expect(result.json).toMatchObject({
+      status: "complete",
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "opencode", status: "removed" }),
+      ]),
+    });
+    expect(JSON.parse(await readFile(configuration, "utf8"))).toEqual({
+      mcp: { servers: { peer: openCodePeer } },
+    });
+    expect(await readFile(`${configuration}.rea.backup`, "utf8")).toBe(
+      original,
+    );
+  },
+);
+
+for (const foreign of [false, true]) {
+  cliTest(
+    foreign
+      ? "project uninstall preserves the whole selected set when removing copies would expose a foreign fallback"
+      : "project uninstall removes all owned files after checking their combined fallback",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-project-uninstall-multi-file-",
+      );
+      const environment = await registrationEnvironment(join(root, "home"));
+      const selected = join(root, "selected");
+      const firstPath = join(selected, "opencode.json");
+      const secondPath = join(selected, "opencode.jsonc");
+      const first = await put(firstPath, {
+        mcp: { servers: { rea: openCodeRegistration, first: openCodePeer } },
+      });
+      const second = await put(secondPath, {
+        mcp: { servers: { rea: openCodeRegistration, second: openCodePeer } },
+      });
+      const lowerPath = join(root, "opencode.json");
+      const lower = foreign
+        ? await put(lowerPath, { mcp: { servers: { rea: openCodePeer } } })
+        : undefined;
+      const run = () =>
+        cli.run({
+          arguments: ["uninstall", "--project", selected, "--json"],
+          environment,
+          cwd: root,
+        });
+
+      const result = await run();
+      if (foreign) {
+        expect(result.exitCode, result.stdout).toBe(1);
+        expect(result.json).toMatchObject({ status: "failed" });
+        expect(await readFile(firstPath, "utf8")).toBe(first);
+        expect(await readFile(secondPath, "utf8")).toBe(second);
+        expect(await readFile(lowerPath, "utf8")).toBe(lower);
+        await expect(readFile(`${firstPath}.rea.backup`)).rejects.toMatchObject(
+          {
+            code: "ENOENT",
+          },
+        );
+        await expect(
+          readFile(`${secondPath}.rea.backup`),
+        ).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        return;
+      }
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(result.json).toMatchObject({
+        status: "complete",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            name: "opencode",
+            status: "removed",
+            actions: expect.arrayContaining([
+              expect.objectContaining({
+                configuration_path: firstPath,
+                status: "removed",
+              }),
+              expect.objectContaining({
+                configuration_path: secondPath,
+                status: "removed",
+              }),
+            ]),
+          }),
+        ]),
+      });
+      expect(JSON.parse(await readFile(firstPath, "utf8"))).toEqual({
+        mcp: { servers: { first: openCodePeer } },
+      });
+      expect(JSON.parse(await readFile(secondPath, "utf8"))).toEqual({
+        mcp: { servers: { second: openCodePeer } },
+      });
+      expect(await readFile(`${firstPath}.rea.backup`, "utf8")).toBe(first);
+      expect(await readFile(`${secondPath}.rea.backup`, "utf8")).toBe(second);
+      expect((await run()).exitCode).toBe(0);
+    },
+  );
+}

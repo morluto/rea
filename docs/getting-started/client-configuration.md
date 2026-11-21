@@ -1181,7 +1181,9 @@ from the filesystem root to the current working directory. It loads
 files in their `.opencode` directories. When a loaded file uses the native
 `mcp.servers` table, REA applies V2's whole-row replacement rule. If the files
 use only legacy `mcp.NAME` tables, REA uses the legacy merge rules. Doctor
-checks the effective registration and reports its scope. Plain `rea uninstall` removes user
+checks the effective registration and reports its scope. For a project
+registration, run provider probes separately with settings you explicitly
+select in the terminal. Plain `rea uninstall` removes user
 registrations. Use `rea uninstall --project DIR` to select a project; REA
 can remove an owned registration defined in that directory and checks whether
 removal would expose another launcher. Ancestors remain read-only.
