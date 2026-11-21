@@ -72,6 +72,7 @@
 * **javascript:** share widened reference-store propagation ([#12990](https://github.com/morluto/rea/issues/12990)) ([fba5e44](https://github.com/morluto/rea/commit/fba5e44bf5f393dcd6bd3269d88d7101f1586ff0))
 * **javascript:** track shared ESM HTTP agent mutations ([d500638](https://github.com/morluto/rea/commit/d500638d5d4b666cf0b255085ce4d75a29cbc35e))
 * **mcp:** name the HTTP option that requires --http ([2fbcec8](https://github.com/morluto/rea/commit/2fbcec84eb5054c7f014729021172173df1742c8))
+* **model:** recognize F8_E4M3 GGUF tensors from ggml v0.29.0 ([afc040c](https://github.com/morluto/rea/commit/afc040ccebb9af1f8b9eb6c5dbbdbc322a58ded2))
 * **native:** label XML plists that file calls data as xml ([#12910](https://github.com/morluto/rea/issues/12910)) ([f03cce9](https://github.com/morluto/rea/commit/f03cce9c01d184ffade34dcb36fd05c0c0350a5e))
 * **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
 * **pe:** exclude section padding from RVA metadata reads ([#12755](https://github.com/morluto/rea/issues/12755)) ([c5b5d9f](https://github.com/morluto/rea/commit/c5b5d9f7ea3f0f32a3ebf0834314ae3888ab4132))
