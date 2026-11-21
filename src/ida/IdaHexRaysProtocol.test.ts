@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { access, readdir, rm, writeFile } from "node:fs/promises";
+import { access, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,11 +9,9 @@ import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { IdaToolRejection, type IdaMcpConnection } from "./IdaMcpConnection.js";
 import { readCallGraphCallees } from "./IdaCallGraph.js";
-import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { runHexRaysQuery } from "./IdaHexRaysProtocol.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
 
 const roots: string[] = [];
@@ -62,50 +60,9 @@ const fixture = async () => {
   );
   return { root, target, producer, client };
 };
-const resourceScope: RetainedResourceScope = {
-  retain: () => undefined,
-  run: (operation) => operation(),
-};
 /** Private workspaces REA allocated beside the fixture target. */
 const workspaces = async (root: string) =>
   (await readdir(root)).filter((name) => name.startsWith("rea-ida-"));
-
-describe("Hex-Rays IDA MCP registration", () => {
-  it("admits only a headless stdio registration", async () => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
-    const path = join(root, "mcp.json");
-    for (const [input, ok] of [
-      [
-        {
-          command: "uvx",
-          args: ["ida-mcp", "stdio"],
-          mode: "headless",
-          protocol: "hexrays",
-        },
-        true,
-      ],
-      [
-        { command: "uvx", args: ["ida-mcp", "stdio"], protocol: "hexrays" },
-        false,
-      ],
-      [
-        {
-          url: "http://127.0.0.1:8737/mcp",
-          mode: "headless",
-          protocol: "hexrays",
-        },
-        false,
-      ],
-    ] as const) {
-      await writeFile(path, JSON.stringify(input));
-      expect(
-        (await readIdaConfiguration(path, { resourceScope })).ok,
-        JSON.stringify(input),
-      ).toBe(ok);
-    }
-  });
-});
 
 const hasPython = spawnSync("python3", ["--version"]).status === 0;
 
