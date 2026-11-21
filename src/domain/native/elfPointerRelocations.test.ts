@@ -408,8 +408,10 @@ const walkPointers = walker(false);
 it.each([
   ["AArch64 ABS64", 183, 257, 0x4020n],
   ["AArch64 GLOB_DAT", 183, 1025, 0x4020n],
+  ["AArch64 JUMP_SLOT", 183, 1026, 0x4020n],
   ["x86-64 absolute", 62, 1, 0x4020n],
   ["x86-64 GLOB_DAT", 62, 6, 0x4000n],
+  ["x86-64 JUMP_SLOT", 62, 7, 0x4000n],
   ["RISC-V RV64 absolute", 243, 2, 0x4020n],
 ] as const)(
   "derives %s from image definitions only when requested",
@@ -484,6 +486,79 @@ it.each([
     definition: { value: 0x4000n, section, type },
   });
   expect(walk(bytes, undefined, 183, 64, true).writes[0]?.value).toBeNull();
+});
+
+it.each([
+  ["AArch64 ABS64", 183, 257, false],
+  ["AArch64 GLOB_DAT", 183, 1025, false],
+  ["AArch64 JUMP_SLOT", 183, 1026, false],
+  ["x86-64 absolute", 62, 1, false],
+  ["x86-64 GLOB_DAT", 62, 6, true],
+  ["x86-64 JUMP_SLOT", 62, 7, true],
+] as const)(
+  "marks %s binding a valueless undefined symbol as imported",
+  (_name, machine, kind, ignoresAddend) => {
+    const imported = (value: bigint, addend: bigint, imageDefinitions = true) =>
+      walk(
+        symbolicImage(BigInt(kind), 0n, {
+          definition: { value, section: 0 },
+          addend,
+        }),
+        undefined,
+        machine,
+        64,
+        imageDefinitions,
+      ).writes[0];
+    expect(imported(0n, 0n)).toMatchObject({ value: null, imported: true });
+    // A loader can accept an executable's canonical PLT address for non-PLT
+    // lookups, and an addend can reach any address from the binding.
+    expect(imported(0x4000n, 0n)).toMatchObject({
+      value: null,
+      imported: false,
+    });
+    expect(imported(0n, 0x20n)).toMatchObject({
+      value: null,
+      imported: ignoresAddend,
+    });
+    expect(imported(0n, 0n, false)).toMatchObject({
+      value: null,
+      imported: false,
+    });
+  },
+);
+
+it("reports an imported word only while no other write shares it", () => {
+  const values = (bytes: Buffer) => {
+    const steps = readElfPointerValuesSteps(
+      bytes,
+      {
+        bits: 64,
+        little: true,
+        machine: 183,
+        dynamicSegments: [{ offset: 0n, size: 0x100n }],
+        mappings: [{ address: 0n, offset: 0, size: bytes.length }],
+        zeroFills: [],
+      },
+      1 << 20,
+      { symbolResolution: "image-definitions" },
+    );
+    let next = steps.next();
+    while (!next.done) next = steps.next();
+    return next.value;
+  };
+  const layout = { definition: { value: 0n, section: 0 }, records: 2 };
+  const imported = values(symbolicImage(1026n, 0n, layout));
+  expect(imported.importedAt(0x300n)).toBe(true);
+  expect(imported.unsignedAt(0x300n, 8)).toBeUndefined();
+  expect(imported.importedAt(0x308n)).toBe(false);
+  // A second record at the same word, here RELATIVE, can bind this image.
+  const shared = symbolicImage(1026n, 0n, layout);
+  shared.writeBigUInt64LE(1027n, 0x120);
+  shared.writeBigInt64LE(0x1234n, 0x128);
+  expect(values(shared).importedAt(0x300n)).toBe(false);
+  const overlapped = symbolicImage(1026n, 0n, layout);
+  overlapped.writeBigUInt64LE(0x304n, 0x118);
+  expect(values(overlapped).importedAt(0x300n)).toBe(false);
 });
 
 it("keeps an unbounded symbol table unknown without losing RELATIVE facts", () => {
@@ -821,8 +896,10 @@ it.each([32, 64] as const)(
     expect(
       walk(make(absolute), undefined, 243, bits, true).writes[0]?.value,
     ).toBe(0x3ff0n);
-    // Type 6 must never inherit x86 GLOB_DAT semantics, even for a defined symbol.
+    // Type 6 must never inherit x86 GLOB_DAT semantics, even for a defined
+    // symbol, and JUMP_SLOT (5) is not derived from image definitions.
     for (const [kind, width] of [
+      [5, bits / 8],
       [6, 4],
       [12, bits / 4],
       [58, bits / 8],

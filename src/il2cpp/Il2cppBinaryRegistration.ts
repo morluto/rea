@@ -299,7 +299,7 @@ export function* findModules(
             "code-gen-modules-not-found",
             "A matching module record has an unresolved method pointer array",
           );
-        if (pointers === null) continue;
+        if (pointers === null || pointers === "imported") continue;
         if (!hasPointerArrayCoverage(image, pointers, counts[index]!)) continue;
         if (count === "unknown")
           throw new Il2cppBinaryFormatFailure(
@@ -366,7 +366,11 @@ export function* findCodeRegistration(
           "A possible CodeRegistration has an unresolved module array",
         );
       const array = arraySlot;
-      if (array === null || !isMapped(image, array, modules.length * 8))
+      if (
+        array === null ||
+        array === "imported" ||
+        !isMapped(image, array, modules.length * 8)
+      )
         continue;
       const seen = new Set<bigint>();
       let uncertain = count === "unknown";
@@ -378,7 +382,11 @@ export function* findCodeRegistration(
           uncertain = true;
           continue;
         }
-        if (pointer === null || !expected.has(pointer) || seen.has(pointer)) {
+        if (
+          typeof pointer !== "bigint" ||
+          !expected.has(pointer) ||
+          seen.has(pointer)
+        ) {
           viable = false;
           break;
         }
@@ -671,6 +679,10 @@ export function* findMetadataRegistration(
         types === null ||
         fieldOffsets === null ||
         typeSizes === null ||
+        // A table bound in another loaded object is not this registration's.
+        types === "imported" ||
+        fieldOffsets === "imported" ||
+        typeSizes === "imported" ||
         (typeof fieldOffsets === "bigint" &&
           !isMapped(image, fieldOffsets, 8)) ||
         (typeof typeSizes === "bigint" && !isMapped(image, typeSizes, 8)) ||

@@ -352,14 +352,20 @@ export const isExecutable = (image: NativeImage, address: bigint): boolean => {
   }
 };
 
+/**
+ * A slot's loaded pointer: "imported" when the ELF loader binds it to another
+ * object's definition (never an address of this image), "unknown" when its
+ * loader value is otherwise unresolved, null when it is not mapped.
+ */
 export const readSlot = (
   image: NativeImage,
   address: bigint,
-): bigint | "unknown" | null => {
+): bigint | "unknown" | "imported" | null => {
   try {
     if (image.elfPointerOverlay !== undefined) {
       const value = image.elfPointerOverlay.unsignedAt(address, 8);
       if (value !== undefined) return value;
+      if (image.elfPointerOverlay.importedAt(address)) return "imported";
       if (image.elfPointerOverlay.hasWrites(address, 8)) return "unknown";
     }
     // A successful indexed read already excludes zero-fill aliases. Only a

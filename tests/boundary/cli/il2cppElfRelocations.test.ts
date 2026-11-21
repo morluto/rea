@@ -26,16 +26,24 @@ const report = (value: unknown) =>
   );
 
 cliTest(
-  "links ELF metadata past ABS64 and GLOB_DAT records through CLI and MCP",
+  "links ELF metadata past ABS64, GLOB_DAT and JUMP_SLOT records through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-il2cpp-elf-symbols-");
     const metadataPath = join(root, "global-metadata.dat");
     await writeFile(metadataPath, createLinkedIl2cppMetadataFixture().bytes);
     const { call } = await connectLocalToolsMcp();
-    for (const machine of [183, 62]) {
+    // A defined symbol derives its link-image value. An undefined one with no
+    // value, like an Android import, binds another object, so its unknown
+    // value cannot name a competing module.
+    for (const [machine, symbol, definition] of [
+      [183, "defined", { value: FIXTURE_BINARY_BASE + 0xe00n }],
+      [62, "defined", { value: FIXTURE_BINARY_BASE + 0xe00n }],
+      [183, "imported", { value: 0n, section: 0 }],
+      [62, "imported", { value: 0n, section: 0 }],
+    ] as const) {
       const bytes = createElfFixture(createIl2cppBinaryFixture(), {
         machine,
-        symbolDefinition: { value: FIXTURE_BINARY_BASE + 0xe00n },
+        symbolDefinition: definition,
         unresolvedRelocations: [
           ...[0xe00, 0xe08, 0xe10].map((offset) => ({
             offset,
@@ -45,9 +53,13 @@ cliTest(
             offset,
             kind: machine === 183 ? 1025 : 6,
           })),
+          ...[0xe40, 0xe48, 0xe50].map((offset) => ({
+            offset,
+            kind: machine === 183 ? 1026 : 7,
+          })),
         ],
       });
-      const binaryPath = join(root, `libil2cpp-${machine}.so`);
+      const binaryPath = join(root, `libil2cpp-${machine}-${symbol}.so`);
       await writeFile(binaryPath, bytes);
       const result = await cli.run({
         arguments: [
@@ -82,7 +94,8 @@ cliTest(
       expect((await readFile(binaryPath)).equals(bytes)).toBe(true);
     }
 
-    // A declared but undefined symbol still cannot disprove a competing module.
+    // An undefined symbol with a value, an executable's canonical PLT address,
+    // can bind inside the image, so it still cannot disprove a competing module.
     const unresolved = createElfFixture(createIl2cppBinaryFixture(), {
       symbolDefinition: { value: FIXTURE_BINARY_BASE + 0xe00n, section: 0 },
       unresolvedRelocations: [0xe00, 0xe08, 0xe10].map((offset) => ({
@@ -150,5 +163,63 @@ cliTest(
     });
     expect(metadataOnly.isError).not.toBe(true);
     expect(report(metadataOnly.structuredContent).binary).toBeNull();
+  },
+);
+
+cliTest.for([
+  {
+    name: "CodeRegistration module array",
+    fixture: { duplicateCodeRegistration: true },
+    pointerOffset: 0x688,
+    ambiguity: "A possible CodeRegistration has an unresolved module array",
+  },
+  {
+    name: "MetadataRegistration type table",
+    fixture: { duplicateMetadataRegistration: true },
+    pointerOffset: 0x8b8,
+    ambiguity:
+      "A possible MetadataRegistration has unresolved candidate fields",
+  },
+])(
+  "rules out a competing $name only when its pointer is imported",
+  async ({ fixture, pointerOffset, ambiguity }, { cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-elf-registration-");
+    const metadataPath = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "libil2cpp.so");
+    await writeFile(metadataPath, createLinkedIl2cppMetadataFixture().bytes);
+
+    const image = createIl2cppBinaryFixture(fixture);
+    // Replace the duplicate's local pointer without emitting a second relocation
+    // at the same address. Its matching counts and other pointers stay intact.
+    image.writeBigUInt64LE(0n, pointerOffset);
+    const inspect = async (value: bigint) => {
+      await writeFile(
+        binaryPath,
+        createElfFixture(image, {
+          symbolDefinition: { value, section: 0 },
+          unresolvedRelocations: [{ offset: pointerOffset, kind: 1025 }],
+        }),
+      );
+      return cli.run({
+        arguments: [
+          "inspect-il2cpp-metadata",
+          metadataPath,
+          "--binary",
+          binaryPath,
+          "--json",
+        ],
+      });
+    };
+
+    const linked = await inspect(0n);
+    expect(linked.exitCode, JSON.stringify(linked.json)).toBe(0);
+    expect(report(linked.json).binary).toMatchObject({
+      code_gen_modules_field: `0x${(FIXTURE_BINARY_BASE + 0x600n).toString(16)}`,
+      types_field: `0x${(FIXTURE_BINARY_BASE + 0x830n).toString(16)}`,
+    });
+
+    const unresolved = await inspect(FIXTURE_BINARY_BASE + 0xe00n);
+    expect(unresolved.exitCode).toBe(1);
+    expect(JSON.stringify(unresolved.json)).toContain(ambiguity);
   },
 );

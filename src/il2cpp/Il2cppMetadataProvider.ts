@@ -609,7 +609,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               : `Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; ${input.generic_instances === true ? "" : "generic method instances (see generic_instances), "}adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means no module claimed the method or its slot has an unresolved relocation.`,
             ...(linked.binary?.format === "elf"
               ? [
-                  "ELF symbolic pointers use the selected file's defined symbols to derive link-image addresses; runtime symbol interposition, external definitions, TLS addresses and IFUNC results are not established.",
+                  "ELF symbolic pointers, including JUMP_SLOT bindings, use the selected file's defined symbols to derive link-image addresses; an undefined symbol with no value is taken to bind another loaded object, never this file; runtime symbol interposition, external definition addresses, TLS addresses and IFUNC results are not established.",
                 ]
               : []),
             ...(binaryPath !== undefined && input.generic_instances === true

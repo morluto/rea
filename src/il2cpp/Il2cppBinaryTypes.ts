@@ -87,7 +87,8 @@ const createTypeRenderer = (
   };
   const pointer = (address: bigint, label: string): bigint => {
     const value = readSlot(image, address);
-    if (value === "unknown") return unresolved(address, label);
+    if (value === "unknown" || value === "imported")
+      return unresolved(address, label);
     return (
       value ?? fail(`${label} at 0x${address.toString(16)} is not file mapped`)
     );

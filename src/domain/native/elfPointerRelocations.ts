@@ -102,6 +102,14 @@ export interface ElfPointerWrite {
   readonly symbol_index: number | null;
   /** Decoded RELA `r_addend`; null for REL (implicit in place) and RELR. */
   readonly addend: bigint | null;
+  /**
+   * True only under image-definitions resolution, for a null `value` whose
+   * relocation binds, with no addend, an undefined symbol that has no value.
+   * Neither glibc nor bionic accepts such an entry as a definition, so the
+   * bound value is another loaded object's definition, or zero for an unbound
+   * weak reference: never an address of this image.
+   */
+  readonly imported: boolean;
 }
 export interface ElfOverlayPointer {
   readonly value: bigint;
@@ -129,8 +137,9 @@ export interface ElfPointerRelocationInput {
 
 // JNI sparse consumers retain per-write provenance; streaming materializers do not.
 const MAX_RELOCATION_RECORDS = 65_536;
-/** Conservative logical reservation for three Map entries, boxed coordinates and
- * values, and finish-time tuples/ranges/reach/sort storage including growth slack.
+/** Conservative logical reservation for three Map entries and one imported-set
+ * entry, boxed coordinates and values, and finish-time tuples/ranges/reach/sort
+ * storage including growth slack.
  * This is allocation accounting, not a measurement of a JavaScript VM's RSS. */
 const ELF_POINTER_INDEX_ENTRY_BYTES = 2 * 1024;
 const DT_RELA = 7n,
@@ -289,6 +298,7 @@ const RELOCATION_KINDS = [
   {
     machine: 183,
     globalData: 1025,
+    jumpSlot: 1026,
     absolute: 257,
     bits: 64,
     relative: 1027,
@@ -335,6 +345,7 @@ const RELOCATION_KINDS = [
   {
     machine: 62,
     globalData: 6,
+    jumpSlot: 7,
     absolute: 1,
     bits: 64,
     relative: 8,
@@ -370,6 +381,7 @@ const RELOCATION_KINDS = [
   {
     machine: 40,
     globalData: 21,
+    jumpSlot: 22,
     absolute: 2,
     bits: 32,
     relative: 23,
@@ -389,6 +401,7 @@ const RELOCATION_KINDS = [
   {
     machine: 3,
     globalData: 6,
+    jumpSlot: 7,
     absolute: 1,
     bits: 32,
     relative: 8,
@@ -430,6 +443,9 @@ const RELOCATION_KINDS = [
     copy: 4,
     // RISC-V has no GLOB_DAT. In particular, type 6 is TLS_DTPMOD32.
     globalData: null,
+    // JUMP_SLOT (5) binds S without an addend; its image-definition value is
+    // not established here, so it stays an unknown write.
+    jumpSlot: null,
     widths: new Map([
       [1, 4], // R_RISCV_32
       [2, 8], // R_RISCV_64
@@ -583,6 +599,7 @@ export function* readElfRelocationWritesSteps(
   const relative = kinds.relative;
   const absolute = kinds.absolute;
   const globalData = kinds.globalData;
+  const jumpSlot = kinds.jumpSlot;
   const wholeExtents = options.wholeExtents === true;
   const copy = wholeExtents ? kinds.copy : undefined;
   const unknownWidths = kinds.widths;
@@ -639,6 +656,7 @@ export function* readElfRelocationWritesSteps(
     width: number,
     value: bigint | null,
     record: Pick<ElfPointerWrite, "source" | "symbol_index" | "addend">,
+    imported = false,
   ): ElfPointerWrite => ({
     address,
     width,
@@ -646,6 +664,7 @@ export function* readElfRelocationWritesSteps(
     file_offset:
       value === null ? fileOffset(address, width) : target(address, width),
     ...record,
+    imported,
   });
   const symbolBytes = elfSymbolSize(input.bits);
   const symbolTable =
@@ -722,9 +741,11 @@ export function* readElfRelocationWritesSteps(
   }
   let symbolCountRead = false;
   let symbolCount: number | undefined;
+  /** A defined symbol's link-image value, "imported" for an undefined entry
+   * no loader lookup can accept, or undefined when not established. */
   function* symbolLinkValue(
     symbolIndex: number,
-  ): Generator<undefined, bigint | undefined> {
+  ): Generator<undefined, bigint | "imported" | undefined> {
     if (symbolIndex === 0) return 0n;
     if (!symbolCountRead) {
       symbolCountRead = true;
@@ -735,13 +756,14 @@ export function* readElfRelocationWritesSteps(
     const symbol = dynamicSymbol(symbolIndex);
     if (symbol === undefined) return undefined;
     const { section_index, type, value } = symbol;
-    // Undefined/reserved sections, TLS offsets and IFUNC resolvers do not
-    // supply an ordinary link-image address for this file.
-    return section_index !== 0 &&
-      section_index < 0xff00 &&
-      (type === 0 || type === 1 || type === 2)
-      ? value
-      : undefined;
+    // Reserved sections, TLS offsets and IFUNC resolvers do not supply an
+    // ordinary link-image address for this file.
+    if (!(type === 0 || type === 1 || type === 2)) return undefined;
+    // glibc and bionic skip an undefined entry without a value. One with a
+    // value is an executable's canonical PLT address, which non-PLT lookups
+    // can bind inside this image, so it stays unknown.
+    if (section_index === 0) return value === 0n ? "imported" : undefined;
+    return section_index < 0xff00 ? value : undefined;
   }
   /**
    * Bytes a COPY relocation can write: the loader copies at most the size this
@@ -802,25 +824,32 @@ export function* readElfRelocationWritesSteps(
       if (
         options.symbolResolution === "image-definitions" &&
         (input.bits === 64 || input.machine === 243) &&
-        (kind === absolute || kind === globalData)
+        (kind === absolute || kind === globalData || kind === jumpSlot)
       ) {
         const value = yield* symbolLinkValue(symbolIndex);
         if (value !== undefined) {
-          // AArch64 ABS64/GLOB_DAT and x86-64 R_X86_64_64 use S + A.
-          // R_X86_64_GLOB_DAT uses S, ignoring even a nonzero addend.
+          // AArch64 ABS64/GLOB_DAT/JUMP_SLOT and x86-64 R_X86_64_64 use
+          // S + A. x86-64 GLOB_DAT and JUMP_SLOT ignore the addend.
+          // JUMP_SLOT describes the bound value, not a lazy-binding trampoline.
           const slot =
             explicitAddend === undefined ? target(destination, word) : null;
           const addend =
-            input.machine === 62 && kind === globalData
+            input.machine === 62 && (kind === globalData || kind === jumpSlot)
               ? 0n
               : (explicitAddend ?? (slot === null ? 0n : rawWord(slot)));
-          yield write(
-            destination,
-            word,
-            BigInt.asUintN(input.bits, value + addend),
-            record,
-          );
-          return;
+          if (value !== "imported") {
+            yield write(
+              destination,
+              word,
+              BigInt.asUintN(input.bits, value + addend),
+              record,
+            );
+            return;
+          }
+          if (addend === 0n) {
+            yield write(destination, word, null, record, true);
+            return;
+          }
         }
       }
       const width = unknownWidths.get(kind);
@@ -1019,6 +1048,8 @@ export interface ElfVirtualPointerWrites {
   readonly hasWrites: (address: bigint, size: number) => boolean;
   /** Undefined when a write leaves the selected field unresolved or partly overwritten. */
   readonly unsignedAt: (address: bigint, width: 4 | 8) => bigint | undefined;
+  /** True when only imported whole-word writes cover the word at `address`. */
+  readonly importedAt: (address: bigint) => boolean;
 }
 
 /** Both sparse consumers use virtual coordinates; physical aliases never merge writes. */
@@ -1026,6 +1057,8 @@ class ElfVirtualWriteIndex {
   readonly #values = new Map<bigint, bigint>();
   readonly #widths = new Map<bigint, number>();
   readonly #unresolved = new Map<bigint, number>();
+  /** Addresses whose every write is an imported whole-word binding. */
+  readonly #imported = new Set<bigint>();
   #reservedBytes = 0;
   constructor(
     readonly word: 4 | 8,
@@ -1036,8 +1069,10 @@ class ElfVirtualWriteIndex {
     address,
     width,
     value,
-  }: Pick<ElfPointerWrite, "address" | "width" | "value">): void {
-    if (!this.#widths.has(address)) {
+    imported,
+  }: Pick<ElfPointerWrite, "address" | "width" | "value" | "imported">): void {
+    const first = !this.#widths.has(address);
+    if (first) {
       // Reserve retained containers and finish-time lookup expansion before
       // the first insertion. Repeated declarations of one VA share its charge.
       if (
@@ -1052,6 +1087,9 @@ class ElfVirtualWriteIndex {
         );
       this.#reservedBytes += ELF_POINTER_INDEX_ENTRY_BYTES;
     }
+    // Any other write at this address can bind a value of this image.
+    if (!imported || width !== this.word) this.#imported.delete(address);
+    else if (first) this.#imported.add(address);
     this.#widths.set(address, Math.max(this.#widths.get(address) ?? 0, width));
     if (
       value === null ||
@@ -1165,8 +1203,22 @@ class ElfVirtualWriteIndex {
       }
       return owner !== undefined && covered === complete ? result : undefined;
     };
+    const importedAt = (address: bigint): boolean => {
+      if (!this.#imported.has(address)) return false;
+      const end = address + BigInt(this.word);
+      for (
+        let at = before(end) - 1;
+        at >= 0 && (reach[at] ?? 0n) > address;
+        at--
+      ) {
+        const range = ranges[at]!;
+        if (range.end > address && range.address !== address) return false;
+      }
+      return true;
+    };
     return {
       unsignedAt,
+      importedAt,
       unresolved: this.#unresolved,
       hasWrites: (address: bigint, size: number): boolean => {
         const low = before(address + BigInt(size));
@@ -1279,6 +1331,7 @@ export function* readElfPointerValuesSteps(
   const { originalValueAt } = next.value;
   return {
     hasWrites: facts.hasWrites,
+    importedAt: facts.importedAt,
     unsignedAt: (address, width) => {
       if (!facts.hasWrites(address, width)) return undefined;
       return facts.unsignedAt(
