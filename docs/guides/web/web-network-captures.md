@@ -98,7 +98,8 @@ The observed Playwright 1.58.2 and 1.64.1 profiles can report a bracketed IPv6
 `serverIPAddress`, forwarded from Chromium's `remoteIPAddress` through
 [Playwright's HAR tracer](https://github.com/microsoft/playwright/blob/v1.64.1/packages/playwright-core/src/server/har/harTracer.ts).
 Chromium DevTools exports (declared as `WebInspector` `537.36`, the frozen
-AppleWebKit version in Chromium's user agent) report the same bracketed form:
+AppleWebKit version in Chromium's user agent) and Firefox DevTools exports (declared as
+`Firefox` `135.0` and `136.0`) report the same bracketed form:
 [its HAR writer](https://github.com/ChromeDevTools/devtools-frontend/blob/63739e8ec45ca01b9e4be9b8b05946acdadd8f1f/front_end/models/har/Log.ts)
 strips the port but not the brackets.
 REA preserves the original spelling in reported Evidence and removes brackets

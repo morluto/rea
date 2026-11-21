@@ -849,10 +849,21 @@ it.each(["[2620:0:860:ed1a::1]", "[::1]"])(
     const fixture = historicalHar();
     const first = fixture.log.entries[0];
     if (first === undefined) throw new Error("Fixture must have one entry");
-    fixture.log.creator = { name: "Firefox", version: "135.0" };
-    first.serverIPAddress = address;
-    const decoded = decodeHarCapture(JSON.stringify(fixture), []);
-    expect(decoded.records[0]?.serverIPAddress).toBe(address);
+    const input = {
+      ...fixture,
+      log: {
+        ...fixture.log,
+        creator: { name: "Firefox", version: "135.0" },
+        entries: [
+          { ...first, serverIPAddress: address },
+          structuredClone(first),
+        ],
+      },
+    };
+    const decoded = decodeHarCapture(JSON.stringify(input), []);
+    expect(decoded.records[0]).toMatchObject({
+      reported: { serverIPAddress: address },
+    });
     const limitation = decoded.records[0]?.limitations.find((line) =>
       line.includes("Firefox DevTools (135.0)"),
     );
