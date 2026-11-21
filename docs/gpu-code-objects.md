@@ -232,3 +232,6 @@ the first module token. Inventory and kernel inspection use strict UTF-8 and
 reuse a complete, valid scan. Invalid encoding can leave a recognizable PTX
 object whose effective target is unknown. If a file extends beyond the byte
 budget, discovery is partial, including when the scan ends mid-character.
+An unmatched `}` or a body still open at the end of the text leaves the
+effective target unknown, matching the unbalanced body that kernel inspection
+rejects.

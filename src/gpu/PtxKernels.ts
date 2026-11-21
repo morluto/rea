@@ -568,7 +568,11 @@ export const readPtxTarget = (text: string): PtxTargetFacts => {
         continue;
       }
       if (token.value === "}") {
-        if (depth > 0) depth--;
+        // The kernel reader rejects an unmatched close as an unbalanced body.
+        // Keep scanning so the object stays recognized, but the target is not
+        // established from structure that inspection cannot accept.
+        if (depth === 0) malformed = true;
+        else depth--;
         continue;
       }
       if (depth !== 0) continue;
@@ -602,6 +606,8 @@ export const readPtxTarget = (text: string): PtxTargetFacts => {
         ambiguous = true;
       }
     }
+    // A body still open at end of text is truncated, as kernel inspection reports.
+    if (depth !== 0) malformed = true;
   } catch (cause) {
     if (!(cause instanceof BinaryFormatFailure)) throw cause;
     malformed = true;
