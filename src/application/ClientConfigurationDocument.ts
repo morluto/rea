@@ -56,6 +56,11 @@ export type ClientRegistrationDialect =
   | ClientConfigurationFormat
   | "opencode_v2";
 
+/** In this dialect, a higher server row supplies all of its own fields. */
+export const clientServerRowsReplace = (
+  dialect: ClientRegistrationDialect | undefined,
+) => dialect === "opencode_v2";
+
 /** Validated client document and its server table, preserving unrelated settings. */
 export interface ClientConfigurationDocument {
   readonly document: Record<string, unknown>;
@@ -491,10 +496,11 @@ export const parseClientConfiguration = (
   };
 };
 
-/** The registration a client loads for `name`, including OpenCode V1 entries. */
+/** Read a server row, keeping `enabled` only while merging legacy OpenCode layers. */
 export const effectiveClientServer = (
   parsed: ClientConfigurationDocument,
   name: string,
+  dialect: ClientRegistrationDialect = "opencode_v2",
 ): unknown => {
   const native = Object.hasOwn(parsed.servers, name);
   const value = native
@@ -509,13 +515,20 @@ export const effectiveClientServer = (
     Array.isArray(value)
   )
     return value;
-  const { enabled, ...registration } = value as Record<string, unknown>;
-  // OpenCode migrates legacy activation before merging layers. An enabled V1
-  // fragment must override inherited disabled:true; native V2 ignores enabled.
-  return (parsed.dialect === "opencode" || !native) &&
-    typeof enabled === "boolean"
-    ? { ...registration, disabled: !enabled }
-    : registration;
+  const { enabled, disabled, ...registration } = value as Record<
+    string,
+    unknown
+  >;
+  if (parsed.dialect === "opencode_v2" && native)
+    return disabled === undefined
+      ? registration
+      : { ...registration, disabled };
+  if (enabled === undefined) return registration;
+  if (dialect === "opencode") return { ...registration, enabled };
+  return {
+    ...registration,
+    disabled: typeof enabled === "boolean" ? !enabled : enabled,
+  };
 };
 
 /** Preserve source policy when editing its native table. A legacy OpenCode

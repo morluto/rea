@@ -193,6 +193,36 @@ it("keeps OpenCode activation tied to the authored row dialect", async () => {
   });
 });
 
+it("uses the same native user row with or without an empty project file", async () => {
+  const { client, projectDirectory, read } = await fixture();
+  const [, lower, upper] = client.configPaths ?? [];
+  if (lower === undefined || upper === undefined)
+    throw Error("OpenCode user layers are missing");
+  const row = localServer("upper");
+  await writeConfiguration(lower, {
+    mcp: {
+      servers: {
+        rea: {
+          ...localServer("lower"),
+          disabled: true,
+          environment: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "invalid" },
+        },
+      },
+    },
+  });
+  await writeConfiguration(upper, { mcp: { servers: { rea: row } } });
+  const user = await read();
+  await writeConfiguration(join(projectDirectory, "opencode.json"), {});
+  const project = await read();
+  for (const result of [user, project]) {
+    if (!result.ok) throw Error(result.error.detail);
+    expect(readReaServer(result.value.document)).toEqual(row);
+    expect(
+      result.value.declarations.map(({ source }) => source.sourcePath),
+    ).toEqual([upper]);
+  }
+});
+
 it.each([
   ["file", "legacy"],
   ["file", "native"],
@@ -228,7 +258,9 @@ it.each([
       configPath: client.configPath,
       launcherScope: "user",
       launcherConfigPath: client.configPath,
-      projectUserAliases: [client.configPath],
+      projectUserAliases: [
+        { path: client.configPath, source: { sourcePath: client.configPath } },
+      ],
       projectSources: [{ sourcePath: project }],
     });
     expect(result.value.activationConfigPath).toBe(

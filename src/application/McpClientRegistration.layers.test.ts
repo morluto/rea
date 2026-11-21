@@ -227,7 +227,7 @@ it("retains harmless higher file and inline metadata as read-only inherited fact
   expect(inline).toEqual(beforeInline);
 });
 
-it("uses the effective OpenCode V2 dialect in its target fragment while preserving lower policy", async () => {
+it("writes a complete OpenCode V2 row while leaving the lower policy file intact", async () => {
   const root = await createTestTempDirectory(
     "rea-registration-native-dialect-",
   );
@@ -260,14 +260,18 @@ it("uses the effective OpenCode V2 dialect in its target fragment while preservi
     mcp: {
       peer,
       servers: {
-        rea: { type: "local", command: [launcher.command, ...launcher.args] },
+        rea: {
+          type: "local",
+          command: [launcher.command, ...launcher.args],
+          disabled: false,
+        },
       },
     },
   });
-  expect(effective([lowerText, targetText], "opencode")).toMatchObject({
+  expect(effective([lowerText, targetText], "opencode")).toEqual({
+    type: "local",
     command: [launcher.command, ...launcher.args],
-    disabled: true,
-    environment: { LOWER: "1" },
+    disabled: false,
   });
   expect(await readFile(lower, "utf8")).toBe(lowerText);
 });
