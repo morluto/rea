@@ -15,6 +15,7 @@ import {
 } from "./cliOutput.js";
 import { HOST_PLATFORM } from "./platform/HostPlatform.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
+import { CLI_COMMANDS } from "./contracts/cliCommandNames.js";
 import type { VersionReportHost } from "./domain/versionReport.js";
 
 /**
@@ -127,10 +128,13 @@ export const runOneShotCli = async (
 
   let environment = host.environment;
   let savedDefaults: ReadonlySet<string> | undefined;
+  // Config owns its file access. Uninstall uses registration and cache ownership
+  // independently of the saved provider defaults.
   if (
     host.persistentUserConfig === true &&
     global !== undefined &&
-    global.command[0] !== "config" &&
+    global.command[0] !== CLI_COMMANDS.config &&
+    global.command[0] !== CLI_COMMANDS.uninstall &&
     !global.flags.has("--help") &&
     !global.flags.has("-h") &&
     !global.flags.has("--version") &&

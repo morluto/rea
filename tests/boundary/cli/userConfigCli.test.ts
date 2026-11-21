@@ -4,6 +4,7 @@ import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
 
 cliTest(
   "reports persisted setting origins and keeps startup recovery actionable",
@@ -87,6 +88,61 @@ cliTest(
     expect(await readFile(config, "utf8")).toBe("{ broken");
   },
 );
+
+for (const purgeData of [false, true]) {
+  cliTest(
+    `uninstall with purge-data=${String(purgeData)} cleans owned resources when saved provider settings are malformed`,
+    async ({ cli }) => {
+      const home = await createTestTempDirectory(
+        "rea-uninstall-provider-config-",
+      );
+      const environment = await registrationEnvironment(home);
+      const config = join(environment.XDG_CONFIG_HOME!, "rea", "rea.json");
+      const registration = join(home, ".claude.json");
+      const cache = join(home, ".rea", "cache", "sentinel");
+      const malformed = "{ broken";
+      const cacheContents = "owned cache";
+      const peer = { command: "other-server" };
+      await mkdir(dirname(config), { recursive: true });
+      await mkdir(dirname(cache), { recursive: true });
+      await writeFile(config, malformed);
+      await writeFile(cache, cacheContents);
+      await writeFile(
+        registration,
+        JSON.stringify({
+          mcpServers: {
+            rea: { command: "npx", args: ["-y", "rea-agents@1.0.0", "mcp"] },
+            peer,
+          },
+        }),
+      );
+      const result = await cli.run({
+        arguments: [
+          "uninstall",
+          ...(purgeData ? ["--purge-data"] : []),
+          "--json",
+        ],
+        cwd: home,
+        environment,
+        freshProcess: true,
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(result.json).toMatchObject({
+        status: "complete",
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "claude_code", status: "removed" }),
+        ]),
+      });
+      expect(JSON.parse(await readFile(registration, "utf8"))).toEqual({
+        mcpServers: { peer },
+      });
+      expect(await readFile(config, "utf8")).toBe(malformed);
+      if (purgeData)
+        await expect(lstat(cache)).rejects.toMatchObject({ code: "ENOENT" });
+      else expect(await readFile(cache, "utf8")).toBe(cacheContents);
+    },
+  );
+}
 
 cliTest(
   "setup leaves shared defaults live and preserves client overrides",
