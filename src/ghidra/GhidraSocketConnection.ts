@@ -100,6 +100,7 @@ export const connectGhidraSocket = async (
   return err(
     options.failure("timeout", GHIDRA_STARTUP_DEADLINE_ELAPSED, undefined, {
       timeoutMs: options.startupTimeoutMs,
+      elapsedMs: options.deadline.elapsedMs(),
     }),
   );
 };
@@ -115,6 +116,7 @@ const interruptionFailure = (
         })
       : options.failure("timeout", GHIDRA_STARTUP_DEADLINE_ELAPSED, cause, {
           timeoutMs: options.startupTimeoutMs,
+          elapsedMs: options.deadline.elapsedMs(),
         });
   return cause?.cleanupFailure === undefined
     ? failure

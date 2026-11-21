@@ -98,6 +98,18 @@ export class ProviderStartupDeadline {
   }
 
   /**
+   * Whole milliseconds spent under this deadline so far, mirroring the
+   * remainingMs() rounding direction so a timed-out startup never reports less
+   * time than the budget it exhausted.
+   */
+  elapsedMs(): number {
+    const elapsed = this.#budget.elapsedMs();
+    return this.interruption === "timeout"
+      ? Math.max(this.timeoutMs, elapsed)
+      : elapsed;
+  }
+
+  /**
    * Wait for at most one polling interval under the shared deadline signal.
    *
    * Treat the polling target and the startup deadline as separate absolute times.

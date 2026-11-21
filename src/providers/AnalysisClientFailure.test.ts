@@ -197,6 +197,26 @@ it("keeps the structured limit when a resource refusal changes operation", () =>
   });
 });
 
+it("preserves startup measurements when a timeout is attributed to the caller", () => {
+  const failure = new AnalysisTimeoutError("open_binary", 250, {
+    elapsedMs: 251,
+    targetBytes: 0,
+    envName: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+  });
+  const attributed = analysisClientFailureForOperation(
+    failure,
+    "ghidra",
+    "health",
+  );
+  expect(projectAnalysisError(attributed).details).toMatchObject({
+    operation: "health",
+    timeout_ms: 250,
+    elapsed_ms: 251,
+    target_bytes: 0,
+    env_name: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+  });
+});
+
 it.each([
   new ProviderAdapterError("fixture", "open_binary"),
   new AnalysisOutputError("open_binary", "physical parse failure"),

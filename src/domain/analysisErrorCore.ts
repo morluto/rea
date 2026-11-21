@@ -524,6 +524,9 @@ export const cancelledBy = (
  * explain it.
  */
 export interface AnalysisTimeoutRecovery {
+  readonly elapsedMs?: number;
+  readonly targetBytes?: number;
+  readonly envName?: string;
   /** Provider-specific explanation of which deadline elapsed. */
   readonly userMessage?: string;
   /** Provider-specific setting or action that changes that deadline. */
@@ -537,6 +540,12 @@ export class AnalysisTimeoutError extends AnalysisError {
   readonly _tag = "AnalysisTimeoutError";
   override readonly userMessage: string | undefined;
   readonly remediationAction: string | undefined;
+  /** Measured milliseconds spent before the deadline interrupted the work. */
+  readonly elapsedMs: number | undefined;
+  /** Admitted target size in bytes, when the failure retains the admission. */
+  readonly targetBytes: number | undefined;
+  /** Environment setting that configures the elapsed deadline, when named. */
+  readonly envName: string | undefined;
 
   constructor(
     readonly operation: string,
@@ -549,6 +558,9 @@ export class AnalysisTimeoutError extends AnalysisError {
     );
     this.userMessage = options?.userMessage;
     this.remediationAction = options?.remediationAction;
+    this.elapsedMs = options?.elapsedMs;
+    this.targetBytes = options?.targetBytes;
+    this.envName = options?.envName;
   }
 }
 

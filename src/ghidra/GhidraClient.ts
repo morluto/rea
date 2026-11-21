@@ -873,6 +873,9 @@ export class GhidraClient {
         ...(primary.timeoutMs === undefined
           ? {}
           : { timeoutMs: primary.timeoutMs }),
+        ...(primary.elapsedMs === undefined
+          ? {}
+          : { elapsedMs: primary.elapsedMs }),
         ...(primary.remoteCode === undefined
           ? {}
           : { remoteCode: primary.remoteCode }),
@@ -969,6 +972,7 @@ export class GhidraClient {
     if (this.#hasOwnedResources())
       return err(this.#failure("protocol", "Ghidra client is already started"));
     this.#lastDiagnostics = {};
+    this.#targetAdmission = undefined;
     this.#processSnapshot = undefined;
     this.#startupOutputCheckpoint = undefined;
     this.#activeOutputCheckpoint = undefined;
@@ -1303,7 +1307,6 @@ export class GhidraClient {
           this.#wire.request(method, params, requestOptions),
         parseSessionInfo: (value) => this.#parseSessionInfo(value),
         failure: this.#failure,
-        startupTimeoutMs: deadline.timeoutMs,
       });
       if (
         completed.ok ||
@@ -1664,6 +1667,7 @@ export class GhidraClient {
         })
       : this.#failure("timeout", GHIDRA_STARTUP_DEADLINE_ELAPSED, cause, {
           timeoutMs: deadline.timeoutMs,
+          elapsedMs: deadline.elapsedMs(),
         });
   }
 

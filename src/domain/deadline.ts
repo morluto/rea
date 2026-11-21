@@ -21,6 +21,7 @@ const validBudget = (name: string, milliseconds: number): number => {
  * release what it owns. Wall-clock changes never move either budget.
  */
 export class Deadline {
+  readonly #startedAt = performance.now();
   readonly #endsAt: number;
   #finalize: Deadline | undefined;
 
@@ -30,7 +31,7 @@ export class Deadline {
     /** Budget a finalizer gets once work stops, in milliseconds. */
     readonly finalizeMs: number,
   ) {
-    this.#endsAt = performance.now() + workMs;
+    this.#endsAt = this.#startedAt + workMs;
   }
 
   /** A deadline whose work budget starts now. Omitting `finalizeMs` grants none. */
@@ -47,6 +48,11 @@ export class Deadline {
   /** Whole milliseconds of work budget left; zero once it has elapsed. */
   remainingMs(): number {
     return Math.max(0, Math.ceil(this.#endsAt - performance.now()));
+  }
+
+  /** Whole milliseconds since work began, including any budget overrun. */
+  elapsedMs(): number {
+    return Math.max(0, Math.floor(performance.now() - this.#startedAt));
   }
 
   /** Whether the work budget has elapsed. */
