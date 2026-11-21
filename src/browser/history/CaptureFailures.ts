@@ -129,7 +129,7 @@ const recordedCpuSeconds = (value: unknown): number | undefined =>
  * Undefined when the record is absent, malformed, or claims a ceiling above
  * the budget it names.
  */
-export const parseRecordedCpuCeiling = (
+const parseRecordedCpuCeiling = (
   bytes: Buffer,
 ): RecordedDecoderCpuCeiling | undefined => {
   if (
