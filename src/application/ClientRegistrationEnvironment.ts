@@ -146,6 +146,7 @@ export const clientRegistrationEnvironmentDetails = (
         environment.value.values,
         environment.value.configuration,
         environment.value.unresolvedSettings,
+        platform,
       ),
     );
   }
@@ -332,6 +333,7 @@ const validatedDetails = (
           environment,
           validated.value.configuration,
           validated.value.unresolvedSettings,
+          platform,
         ),
       )
     : validated;
@@ -391,6 +393,7 @@ const environmentDetails = (
   environment: Readonly<Record<string, string>>,
   configuration: Environment,
   unresolvedSettings: ReadonlySet<string>,
+  platform: NodeJS.Platform,
 ): ClientRegistrationEnvironmentDetails => ({
   values: Object.fromEntries(
     Object.entries(environment).sort(([left], [right]) =>
@@ -404,7 +407,13 @@ const environmentDetails = (
     ? undefined
     : {
         analysisProvider: configuration.REA_ANALYSIS_PROVIDER,
-        ...registrationTimeoutInputs(environment),
+        // The retained spelling is what the file records; the child receives the platform-folded
+        // environment, and its facts are what these timeouts must describe. On Windows a
+        // differently-cased name is the same setting, so reading the recorded spelling would
+        // report the default allowance for a timeout the child really applies.
+        ...registrationTimeoutInputs(
+          snapshotEnvironment(environment, platform),
+        ),
       },
 });
 

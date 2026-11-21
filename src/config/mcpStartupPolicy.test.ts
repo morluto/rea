@@ -70,6 +70,64 @@ describe("MCP tool deadline allowance for a Ghidra decompile limit", () => {
     expect(recommendedMcpToolTimeoutSeconds(timeoutInputs)).toBe(1050);
   });
 
+  it("derives the allowance from the spelling the child receives on Windows", () => {
+    // Windows names are case-insensitive, so a differently-cased registration setting is the same
+    // setting and the child applies it. Deriving these facts from the recorded spelling would
+    // report the default allowance for a timeout the child really enforces.
+    const at = (
+      environment: Readonly<Record<string, string>>,
+      platform: NodeJS.Platform,
+    ) => {
+      const details = clientRegistrationEnvironmentDetails(
+        parseClientConfiguration(
+          JSON.stringify({
+            mcpServers: {
+              rea: { command: "rea", args: ["mcp"], env: environment },
+            },
+          }),
+          "json",
+        ),
+        undefined,
+        platform,
+        {},
+        "effective",
+      );
+      if (!details.ok) throw details.error;
+      return details.value;
+    };
+
+    const folded = at({ rea_hopper_startup_timeout_ms: "2700000" }, "win32");
+    expect(folded.timeoutInputs).toMatchObject({
+      hopperStartupTimeoutMs: 2_700_000,
+    });
+    // The file keeps the caller's spelling even though the derived fact is folded.
+    expect(Object.keys(folded.values)).toEqual([
+      "rea_hopper_startup_timeout_ms",
+    ]);
+
+    const timeoutInputs = folded.timeoutInputs;
+    if (timeoutInputs === undefined)
+      throw new Error("Expected resolved timeout inputs");
+    // 120 s headroom over the 2700 s startup allowance the child enforces.
+    expect(recommendedMcpToolTimeoutSeconds(timeoutInputs)).toBe(2_820);
+
+    // The other three forwarded facts fold the same way.
+    expect(
+      at({ rea_ghidra_startup_timeout_ms: "600000" }, "win32").timeoutInputs,
+    ).toMatchObject({ ghidraStartupTimeoutMs: 600_000 });
+    expect(
+      at({ rea_ghidra_decompile_timeout_seconds: "120" }, "win32")
+        .timeoutInputs,
+    ).toMatchObject({ ghidraDecompileTimeoutMs: 120_000 });
+    expect(
+      at({ rea_jeb_mcp_timeout_ms: "600000" }, "win32").timeoutInputs,
+    ).toMatchObject({ jebMcpTimeoutMs: 600_000 });
+
+    // POSIX names are case-sensitive, so a lower-case spelling stays a different variable.
+    expect(
+      at({ rea_hopper_startup_timeout_ms: "2700000" }, "linux").timeoutInputs,
+    ).toMatchObject({ hopperStartupTimeoutMs: 120_000 });
+  });
   it("forwards selected launch and response limits without copying transport credentials or unrelated settings", () => {
     expect(
       explicitSetupRegistrationEnvironment({
