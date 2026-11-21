@@ -8,6 +8,10 @@ import {
   compactToolAvailability,
 } from "./CapabilityInventory.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { CUTTER_TOOL_CONTRACTS } from "../contracts/cutterToolContracts.js";
+import { GDB_TOOL_CONTRACTS } from "../contracts/gdbToolContracts.js";
+import { RIZIN_DEBUG_TOOL_CONTRACTS } from "../contracts/rizinDebugToolContracts.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../contracts/reverseEngineeringToolContracts.js";
 import { cleanupRetryRemediation } from "../domain/analysisErrorRecovery.js";
 import {
   expandToolAvailability,
@@ -1098,19 +1102,11 @@ it.each(["darwin", "linux", "win32"])(
 
 it("keeps independent native sessions discoverable without an unrelated binary target", () => {
   const entries = buildCapabilityInventory(status(), enabledPolicy);
-  for (const name of [
-    "list_cutter_sessions",
-    "cutter_command",
-    "start_gdb_session",
-    "gdb_console",
-    "gdb_session_status",
-    "close_gdb_session",
-    "start_rizin_debug_session",
-    "rizin_debug_command",
-    "rizin_debug_session_status",
-    "close_rizin_debug_session",
-    "inspect_with_objdump",
-    "execute_rizin_command",
+  for (const { name } of [
+    ...CUTTER_TOOL_CONTRACTS,
+    ...GDB_TOOL_CONTRACTS,
+    ...RIZIN_DEBUG_TOOL_CONTRACTS,
+    ...REVERSE_ENGINEERING_TOOL_CONTRACTS,
   ]) {
     expect(
       entries.find((entry) => entry.name === name),
