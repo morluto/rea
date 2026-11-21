@@ -3,6 +3,8 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
+import { parse } from "yaml";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -147,6 +149,120 @@ it("merges paginated jobs, reports elapsed metrics, and preserves raw responses"
   ]);
 });
 
+const workflowSteps = z.object({
+  jobs: z.record(
+    z.string(),
+    z.object({
+      steps: z
+        .array(
+          z.object({
+            name: z.string().optional(),
+            uses: z.string().optional(),
+          }),
+        )
+        .optional(),
+    }),
+  ),
+});
+
+it.each(["ci.yml", "release.yml"])(
+  "counts artifact actions from %s under their jobs API names",
+  async (filename) => {
+    const { jobs } = workflowSteps.parse(
+      parse(
+        await readFile(
+          new URL(`../../../.github/workflows/${filename}`, import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
+    const steps = Object.values(jobs).flatMap(({ steps }) => steps ?? []);
+    const namesFor = (action: string) =>
+      steps
+        .filter(({ uses }) => uses?.startsWith(`actions/${action}-artifact@`))
+        .map(({ name, uses }) => name ?? `Run ${uses}`);
+    const uploads = namesFor("upload");
+    const downloads = namesFor("download");
+    expect(uploads.length + downloads.length).toBeGreaterThan(0);
+    const fixture = await createFixture([
+      {
+        jobs: [
+          {
+            name: filename,
+            status: "completed",
+            steps: [
+              ...uploads,
+              ...downloads,
+              "Cache npm package downloads",
+            ].map((name) => ({
+              name,
+              started_at: "2026-10-13T00:00:00Z",
+              completed_at: "2026-10-13T00:00:01Z",
+            })),
+          },
+        ],
+      },
+    ]);
+    await runReporter(fixture);
+    const report = JSON.parse(
+      await readFile(join(fixture.outputDirectory, "report.json"), "utf8"),
+    );
+    expect(report.stepCosts).toMatchObject({
+      artifactUpload: uploads.map((name) => ({
+        name,
+        duration: { seconds: 1 },
+      })),
+      artifactDownload: downloads.map((name) => ({
+        name,
+        duration: { seconds: 1 },
+      })),
+    });
+  },
+);
+
+it("excludes skipped artifact steps even when GitHub supplies timestamps", async () => {
+  const at = "2026-10-13T00:00:10Z";
+  const fixture = await createFixture([
+    {
+      jobs: [
+        {
+          name: "Portable tests",
+          status: "completed",
+          conclusion: "failure",
+          steps: [
+            {
+              name: "Publish successful timing history",
+              conclusion: "skipped",
+              started_at: at,
+              completed_at: at,
+            },
+            {
+              name: "Upload reports artifact",
+              conclusion: "success",
+              started_at: at,
+              completed_at: "2026-10-13T00:00:11Z",
+            },
+          ],
+        },
+      ],
+    },
+  ]);
+  await runReporter(fixture);
+  const report = JSON.parse(
+    await readFile(join(fixture.outputDirectory, "report.json"), "utf8"),
+  );
+  expect(report.jobs[0].steps[0]).toMatchObject({
+    name: "Publish successful timing history",
+    duration: { seconds: null, reason: "step was skipped" },
+  });
+  expect(report.stepCosts.artifactUpload).toEqual([
+    expect.objectContaining({
+      name: "Upload reports artifact",
+      duration: { seconds: 1, reason: null },
+    }),
+  ]);
+});
+
 it("marks invalid and out-of-order timestamps unknown instead of emitting negative durations", async () => {
   const fixture = await createFixture([
     {
@@ -191,6 +307,37 @@ it("fails on malformed pages or a failed GitHub API request", async () => {
 
   const failedApi = await createFixture([], { exitCode: 1 });
   await expect(runReporter(failedApi)).rejects.toThrow();
+});
+
+it.each([
+  [
+    "incomplete jobs",
+    "total_count does not match",
+    [{ total_count: 2, jobs: [{ id: 1, name: "test", status: "completed" }] }],
+  ],
+  [
+    "duplicate jobs",
+    "duplicate job IDs",
+    [
+      { total_count: 2, jobs: [{ id: 1, name: "test", status: "completed" }] },
+      { total_count: 2, jobs: [{ id: 1, name: "test", status: "completed" }] },
+    ],
+  ],
+])("keeps raw timing evidence and refuses %s", async (_label, error, pages) => {
+  const fixture = await createFixture(pages);
+  await mkdir(fixture.outputDirectory, { recursive: true });
+  const report = join(fixture.outputDirectory, "report.json");
+  await writeFile(report, '{"prior":true}');
+  await expect(runReporter(fixture)).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining(error),
+  });
+  await expect(readFile(report, "utf8")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await expect(
+    readFile(join(fixture.outputDirectory, "jobs.json"), "utf8"),
+  ).resolves.toBe(fixture.raw);
 });
 
 async function createFixture(

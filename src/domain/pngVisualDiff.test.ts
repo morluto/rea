@@ -37,12 +37,12 @@ describe("PNG header admission", () => {
   );
 
   it.each([24, 25, 26, 27, 28])(
-    "preserves header dimensions for unknown encoding field at %s",
+    "rejects unknown IHDR encoding fields at %s",
     (offset) => {
       const bytes = png(1, 1, [0, 0, 0, 255]);
       bytes[offset] = 255;
       bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
-      expect(readPngHeaderDimensions(bytes)).toEqual({ width: 1, height: 1 });
+      expect(readPngHeaderDimensions(bytes)).toBeUndefined();
       const image = createWebScreenshotArtifact(bytes);
       expect(() =>
         comparePngScreenshots(
@@ -199,6 +199,13 @@ describe("PNG visual diff", () => {
 });
 
 describe("isOneColourPng", () => {
+  it("accepts a single pixel and detects an alpha change at the row boundary", () => {
+    const pixel = [15, 35, 55, 75];
+    expect(isOneColourPng(png(1, 1, pixel).toString("base64"))).toBe(true);
+    const pixels = [...pixel, ...pixel, 15, 35, 55, 76, ...pixel];
+    expect(isOneColourPng(png(2, 2, pixels).toString("base64"))).toBe(false);
+  });
+
   it("tells a one-colour frame from a drawn one, and an unreadable one from both", () => {
     const base64 = (pixels: readonly number[]) =>
       png(2, 2, pixels).toString("base64");
@@ -254,6 +261,9 @@ describe("PNG chunk integrity", () => {
         }
         offset += length + 12;
       }
+      expect(readPngHeaderDimensions(bytes)).toEqual(
+        type === "IHDR" ? undefined : { width: 1, height: 1 },
+      );
       const image = createWebScreenshotArtifact(bytes);
       expect(() =>
         comparePngScreenshots(
@@ -357,14 +367,17 @@ describe("PNG chunk integrity", () => {
 
     const grayscaleHeader = Buffer.from(bytes.subarray(16, 29));
     grayscaleHeader[9] = 0;
-    const grayscale = createWebScreenshotArtifact(
-      Buffer.concat([
-        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-        chunk("IHDR", grayscaleHeader),
-        chunk("IDAT", deflateSync(Buffer.from([0, 30]))),
-        chunk("IEND", Buffer.alloc(0)),
-      ]),
-    );
+    const grayscaleBytes = Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      chunk("IHDR", grayscaleHeader),
+      chunk("IDAT", deflateSync(Buffer.from([0, 30]))),
+      chunk("IEND", Buffer.alloc(0)),
+    ]);
+    expect(readPngHeaderDimensions(grayscaleBytes)).toEqual({
+      width: 1,
+      height: 1,
+    });
+    const grayscale = createWebScreenshotArtifact(grayscaleBytes);
     expect(() =>
       comparePngScreenshots(
         compareWebScreenshotsInputSchema.parse({

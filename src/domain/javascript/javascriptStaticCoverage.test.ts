@@ -14,7 +14,6 @@ import {
   javaScriptProgramStrictness,
   parseJavaScriptSource,
   parseRecoveredJavaScript,
-  parserPluginsForPath,
 } from "./javascriptSourceParser.js";
 
 it.each(["main.js", ".js", ".mjs", ".cjs", ".JS", ".MJS"])(
@@ -26,7 +25,7 @@ it.each(["main.js", ".js", ".mjs", ".cjs", ".JS", ".MJS"])(
     const historical = parseRecoveredJavaScript(
       source,
       path,
-      { plugins: parserPluginsForPath(path) },
+      {},
       "unknown",
     ).file;
     for (const file of [application!, historical]) {

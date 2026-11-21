@@ -1,6 +1,6 @@
 import { ellipsisExcerpt } from "../excerpt.js";
 import { CHECK_VALUE_CHARS } from "./valueCuts.js";
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues, type JsonValue } from "../jsonValue.js";
 import {
   collapseWhitespace,
   countComparison,
@@ -83,29 +83,6 @@ const undecided = (file: string): Verdict =>
 /** A failure to find what a check looks for, undecided when its view is cut, since it may lie past what the view kept. */
 const notFound = (description: string, cut: boolean): Verdict =>
   cut ? unread(description) : fail(description);
-
-/** JSON equality: numbers by value, objects by their keys, arrays in order. */
-export const sameJson = (
-  actual: JsonValue | undefined,
-  expected: JsonValue,
-): boolean => {
-  if (Array.isArray(expected))
-    return (
-      Array.isArray(actual) &&
-      actual.length === expected.length &&
-      expected.every((item, index) => sameJson(actual[index], item))
-    );
-  if (isRecord(expected))
-    return (
-      isRecord(actual) &&
-      Object.keys(actual).length === Object.keys(expected).length &&
-      Object.entries(expected).every(
-        ([key, item]) =>
-          Object.hasOwn(actual, key) && sameJson(actual[key], item),
-      )
-    );
-  return actual === expected;
-};
 
 /** A decimal numeral as FreeCAD and other apps write numbers in text, such as `5.0000000000000000`. */
 const NUMERAL = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/u;
@@ -339,7 +316,7 @@ const valueVerdict = (
         shown,
       );
     }
-    return sameJson(located.value, check.value)
+    return equalJsonValues(located.value, check.value)
       ? pass(`${at} is ${shown(check.value)}`)
       : fail(`${at} is ${shown(located.value)}, not ${shown(check.value)}`);
   }
@@ -534,7 +511,7 @@ export const countTaskRows = (
   for (const row of rows)
     if (
       conditions.every(
-        ([index, value]) => index >= 0 && sameJson(row[index], value),
+        ([index, value]) => index >= 0 && equalJsonValues(row[index], value),
       )
     )
       count += 1;

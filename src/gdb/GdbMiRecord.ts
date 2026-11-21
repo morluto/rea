@@ -55,6 +55,7 @@ const MAX_GDB_MI_NESTED_VALUE_FRAMES = 256;
 const SIMPLE_ESCAPES: Readonly<Record<string, number>> = {
   a: 7,
   b: 8,
+  e: 0x1b,
   f: 12,
   n: 10,
   r: 13,

@@ -586,6 +586,34 @@ it.each([
   ).toBe("code-registration-not-found");
 });
 
+it.each([
+  ["x86-64", 7],
+  ["arm64", 8],
+] as const)(
+  "keeps the entire %s registration reference inside the executable extent",
+  (arch, width) => {
+    const instruction = 0xc00;
+    const makeImage = (inside: number) => {
+      const bytes = createIl2cppBinaryFixture({
+        codeRegistration: false,
+        codeReference: arch === "x86-64",
+        adrpAdd: arch === "arm64" ? [[instruction, 0x500]] : [],
+        splitSegmentAt: instruction + inside,
+      });
+      if (arch === "x86-64") bytes.writeUInt32LE(0x01000007, 4);
+      bytes.writeUInt32LE(1, 32 + 72 + 60); // The second segment is read-only.
+      return bytes;
+    };
+    expect(link(makeImage(width)).code_gen_modules_array).toBe(
+      FIXTURE_BINARY_BASE + 0x500n,
+    );
+    expect(failure(makeImage(width - 1))).toMatchObject({
+      reason: "code-registration-not-found",
+      kind: "malformed",
+    });
+  },
+);
+
 it("finds an arm64 module array through the ADRP+ADD pair that loads it", () => {
   const linked = link(
     createIl2cppBinaryFixture({
@@ -1112,7 +1140,7 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
       bytes.copy(bytes, 176, 120, 176);
       bytes.writeUInt16LE(3, 56);
     }
-    expect(() => readBinaryContainer(bytes)).not.toThrow();
+    expect(() => readBinaryContainer(bytes, "elf-directory")).not.toThrow();
     expect(() => link(bytes)).toThrow(
       shape === "duplicate"
         ? "multiple PT_DYNAMIC segments"

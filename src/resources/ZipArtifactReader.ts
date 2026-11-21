@@ -13,7 +13,7 @@ import {
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { FileHandle } from "node:fs/promises";
-import { Duplex, PassThrough, type Readable } from "node:stream";
+import { compose, Duplex, PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";
 import { constants, createZstdDecompress } from "node:zlib";
 
@@ -56,6 +56,10 @@ import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { decodeZipCp437 } from "../domain/zip/zipEntryText.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import {
+  ZstandardFramingError,
+  zstandardFrameChunks,
+} from "../domain/compression/zstandardFrameChunks.js";
 
 const ZIP_UTF8_DECODER = strictUtf8Decoder("preserve");
 
@@ -83,13 +87,16 @@ class ZipZstandardDecompressionStream {
 
   constructor(_format: string, options?: DecompressionStreamOptions) {
     const stream = Duplex.toWeb(
-      createZstdDecompress({
-        chunkSize: options?.chunkSize,
-        // Match the existing ELF/GPU Zstandard decoder's 128 MiB window cap.
-        params: {
-          [constants.ZSTD_d_windowLogMax]: ZIP_ZSTANDARD_WINDOW_LOG_MAX,
-        },
-      }),
+      compose(
+        new PassThrough(),
+        zstandardFrameChunks,
+        createZstdDecompress({
+          chunkSize: options?.chunkSize,
+          params: {
+            [constants.ZSTD_d_windowLogMax]: ZIP_ZSTANDARD_WINDOW_LOG_MAX,
+          },
+        }),
+      ),
     );
     this.readable = stream.readable;
     this.writable = stream.writable;
@@ -648,7 +655,8 @@ export const typedZipFailure = (
     });
   const invalidZstandard =
     compressionMethod === 93 &&
-    (code === "ZSTD_error_prefix_unknown" ||
+    (cause instanceof ZstandardFramingError ||
+      code === "ZSTD_error_prefix_unknown" ||
       code === "ZSTD_error_checksum_wrong" ||
       code === "ZSTD_error_corruption_detected" ||
       code === "ZSTD_error_dictionary_corrupted" ||

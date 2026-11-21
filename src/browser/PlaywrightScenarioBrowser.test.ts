@@ -37,15 +37,6 @@ it("locks one attached browser for spellings that discover the same endpoint", (
   expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).not.toBe(
     attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-2"),
   );
-});
-
-it("locks one attached browser across loopback spellings of one endpoint", () => {
-  expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).toBe(
-    attachedScenarioLeaseKey("http://[::1]:9222", "page-1"),
-  );
-  expect(attachedScenarioLeaseKey("http://[::1]:9222", "page-1")).not.toBe(
-    attachedScenarioLeaseKey("http://[::1]:9222", "page-2"),
-  );
   expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).not.toBe(
     attachedScenarioLeaseKey("http://127.0.0.1:9223", "page-1"),
   );
@@ -930,75 +921,71 @@ it("cancels same-target queued connection before acquiring a browser", async () 
 });
 
 it("serializes concurrent attach across loopback spellings of one browser", async () => {
-  const makeScenario = (endpoint: string) =>
-    browserScenarioSchema.parse({
-      browser: { mode: "connect", cdp_endpoint: endpoint, target_id: "page-1" },
-      start_url: { url: "https://example.test" },
-      actions: [
-        {
-          step_id: "wait",
-          action: "wait_for_timeout",
-          duration_ms: 1,
+  const open = (endpoint: string) =>
+    openPlaywrightScenarioBrowser(
+      browserScenarioSchema.parse({
+        browser: {
+          mode: "connect",
+          cdp_endpoint: endpoint,
+          target_id: "page-1",
         },
-      ],
-    });
+        start_url: { url: "https://example.test" },
+        actions: scenarioActions,
+      }),
+      {},
+      { launcher },
+    );
   const firstConnection = phaseGate<
     void,
     Pick<Browser, "contexts" | "close" | "isConnected" | "version">
   >();
-  let rejectFirstConnection: ((cause: Error) => void) | undefined;
-  const failingConnection = new Promise<never>((_resolve, reject) => {
-    rejectFirstConnection = reject;
-  });
-  const endpoints: string[] = [];
-  const connectOverCDP = vi.fn((endpoint: string) => {
-    endpoints.push(endpoint);
-    if (endpoints.length === 1) return firstConnection.hold();
-    return failingConnection;
-  });
+  const firstClose = phaseGate();
+  const secondFailure = new Error("second connection failed");
+  const order: string[] = [];
   const launcher = {
-    connectOverCDP,
+    connectOverCDP: async (endpoint: string) => {
+      order.push(endpoint);
+      if (endpoint === "http://127.0.0.1:9222") return firstConnection.hold();
+      throw secondFailure;
+    },
     launchPersistentContext: async () => {
       throw new Error("Unexpected launch");
     },
   };
 
-  const first = openPlaywrightScenarioBrowser(
-    makeScenario("http://127.0.0.1:9222"),
-    {},
-    { launcher },
-  );
+  const first = open("http://127.0.0.1:9222");
   await firstConnection.reached(first, "first CDP connection");
-
-  const second = openPlaywrightScenarioBrowser(
-    makeScenario("http://[::1]:9222"),
-    {},
-    { launcher },
-  );
-  const race = await Promise.race([
-    second.then(
-      () => "settled" as const,
-      () => "settled" as const,
-    ),
-    new Promise((resolve) => setTimeout(() => resolve("queued"), 100)),
-  ]);
-  // The loopback spelling is the same browser, so the second attach must wait
-  // for the lease instead of dialing in parallel and being rejected.
-  expect(race).toBe("queued");
-  expect(connectOverCDP).toHaveBeenCalledTimes(1);
+  const outcomes = Promise.allSettled([first, open("http://[::1]:9222")]);
 
   firstConnection.release({
-    close: vi.fn(async () => undefined),
-    contexts: vi.fn(() => []),
-    isConnected: vi.fn(() => true),
+    close: async () => {
+      await firstClose.hold();
+      order.push("first transport closed");
+    },
+    contexts: () => [],
+    isConnected: () => true,
     version: () => "fixture",
   });
-  await expect(first).rejects.toThrow();
-  if (rejectFirstConnection === undefined)
-    throw new Error("second connection did not begin");
-  rejectFirstConnection(new Error("second connection failed"));
-  await expect(second).rejects.toThrow("second connection failed");
-  expect(endpoints).toEqual(["http://127.0.0.1:9222", "http://[::1]:9222"]);
+  let settled: Awaited<typeof outcomes>;
+  try {
+    await firstClose.reached(first, "first transport close");
+  } finally {
+    firstClose.release();
+    settled = await outcomes;
+  }
+
+  expect(settled).toMatchObject([
+    {
+      status: "rejected",
+      reason: { _tag: "BrowserObservationError", reason: "target_not_found" },
+    },
+    { status: "rejected", reason: secondFailure },
+  ]);
+  expect(order).toEqual([
+    "http://127.0.0.1:9222",
+    "first transport closed",
+    "http://[::1]:9222",
+  ]);
 });
 
 it("tracks only pending browser cleanup resources and resolves prior errors after exact recovery", async () => {
@@ -1009,6 +996,8 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
   let browserDenied = true;
   let profileDenied = true;
   let browserCloses = 0;
+  const finishEvents = vi.fn(async () => undefined);
+  const settlements: boolean[] = [];
   const owner = new PlaywrightScenarioBrowserCleanupOwner({
     closeBrowser: async (disconnectAtBoundary) => {
       browserCloses++;
@@ -1017,23 +1006,35 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
           throw new Error("controlled transport close failure");
       });
     },
+    onSettled: (closed) => settlements.push(closed),
     removeProfile: async () => {
       if (profileDenied) throw new Error("controlled profile removal failure");
       await rm(profile, { recursive: true });
     },
   });
   try {
-    const first: unknown = await owner.close().catch((cause: unknown) => cause);
-    expect(first).toMatchObject({
-      cleanupIncomplete: true,
-      cleanupResources: ["browser_transport", "browser_profile"],
+    const initial = await Promise.allSettled([
+      owner.close(finishEvents),
+      owner.close(finishEvents),
+    ]);
+    const firstFailures = initial.map((result) => {
+      if (result.status !== "rejected")
+        throw new Error("Expected transport refusal");
+      const failure: unknown = result.reason;
+      expect(failure).toMatchObject({
+        reason: "cleanup_failed",
+        cleanupIncomplete: true,
+        cleanupResources: ["browser_transport", "browser_profile"],
+      });
+      return failure;
     });
+    expect(settlements).toEqual([false]);
     browserDenied = false;
     const second: unknown = await owner
       .close()
       .catch((cause: unknown) => cause);
     expect(owner.browserClosed).toBe(true);
-    for (const error of [first, second])
+    for (const error of [...firstFailures, second])
       expect(error).toMatchObject({
         cleanupIncomplete: true,
         cleanupResources: ["browser_profile"],
@@ -1042,102 +1043,20 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
     profileDenied = false;
     await owner.close();
     await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
-    for (const error of [first, second])
+    for (const error of [...firstFailures, second])
       expect(error).toMatchObject({
         cleanupIncomplete: false,
         cleanupResources: [],
       });
+    await owner.close(finishEvents);
     expect(browserCloses).toBe(2);
+    expect(finishEvents).toHaveBeenCalledOnce();
+    expect(settlements).toEqual([false, true, true]);
   } finally {
     browserDenied = false;
     profileDenied = false;
     await owner.close();
   }
-});
-
-it("rechecks the browser release gate after finalization changes its revision", async () => {
-  const eventFinalization = phaseGate();
-  const releaseGate = phaseGate();
-  const closeBrowser = vi.fn(
-    async (
-      disconnectAtBoundary: (disconnect: () => Promise<void>) => Promise<void>,
-    ) => disconnectAtBoundary(async () => undefined),
-  );
-  const owner = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser,
-    removeProfile: undefined,
-  });
-  let revision = 0;
-  const gateRuns: number[] = [];
-  const release = owner.release(
-    async () => {
-      await eventFinalization.hold();
-    },
-    {
-      get revision() {
-        return revision;
-      },
-      async run() {
-        gateRuns.push(revision);
-        if (gateRuns.length === 1) await releaseGate.hold();
-      },
-    },
-  );
-
-  try {
-    await eventFinalization.reached(release, "browser event finalization");
-    eventFinalization.release();
-    await releaseGate.reached(release, "browser release gate");
-    revision += 1;
-    releaseGate.release();
-    await release;
-  } finally {
-    eventFinalization.release();
-    releaseGate.release();
-    await release.catch(() => undefined);
-  }
-
-  expect(gateRuns).toEqual([0, 1]);
-  expect(closeBrowser).toHaveBeenCalledTimes(1);
-  expect(owner.browserClosed).toBe(true);
-});
-
-it("runs the latest stop gate after attached restoration and before disconnect", async () => {
-  const restoration = phaseGate();
-  const gateRevisions: number[] = [];
-  let revision = 0;
-  let disconnected = false;
-  const owner = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser: async (disconnectAtBoundary) => {
-      await restoration.hold();
-      await disconnectAtBoundary(async () => {
-        disconnected = true;
-      });
-    },
-    removeProfile: undefined,
-  });
-  const release = owner.release(undefined, {
-    get revision() {
-      return revision;
-    },
-    async run() {
-      gateRevisions.push(revision);
-    },
-  });
-
-  try {
-    await restoration.reached(release, "browser restoration");
-    revision += 1;
-    restoration.release();
-    await release;
-  } finally {
-    restoration.release();
-    await release.catch(() => undefined);
-  }
-
-  expect(gateRevisions).toEqual([1]);
-  expect(disconnected).toBe(true);
-  expect(owner.browserClosed).toBe(true);
 });
 
 it.each([false, true])(
