@@ -15000,12 +15000,12 @@ msgstr "Hướng dẫn xây dựng môi trường"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Tạo môi trường cho ứng dụng máy tính{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Tạo môi trường cho ứng dụng máy tính"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15016,6 +15016,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Mô tả nhiệm vụ bạn muốn tác tử thực hành trong một ứng dụng máy tính Linux. "
+"Ví dụ, yêu cầu tạo môi trường Gnote để tác tử thêm dầu ô liu vào danh sách "
+"mua sắm. Tác tử cài ứng dụng trên máy dựng cục bộ, viết nhiệm vụ, xuất môi "
+"trường rồi kiểm tra trên một máy mới bằng ảnh chụp màn hình, chuột và bàn "
+"phím."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15029,6 +15034,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Máy dựng cần Linux trên amd64 hoặc arm64, Docker và phiên bản AgentEnv được "
+"chỉ định. Làm theo {ph0}hướng dẫn thiết lập máy dựng{ph1} để cài đặt và kiểm"
+" tra mức độ sẵn sàng."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

@@ -15028,12 +15028,12 @@ msgstr "Ortam oluşturma rehberi"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Masaüstü uygulaması için ortam oluşturun{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Masaüstü uygulaması için ortam oluşturun"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15044,6 +15044,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Ajanın bir Linux masaüstü uygulamasında denemesini istediğiniz görevi tarif "
+"edin. Örneğin, alışveriş listesine zeytinyağı ekleyeceği bir Gnote ortamı "
+"oluşturmasını isteyin. Ajan uygulamayı yerel derleme bilgisayarına kurar, "
+"görevi yazar, ortamı dışa aktarır ve temiz bir bilgisayarda ekran "
+"görüntüleri, fare ve klavyeyle kontrol eder."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15057,6 +15062,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Derleme bilgisayarında amd64 veya arm64 üzerinde Linux, Docker ve belirtilen"
+" AgentEnv sürümü gerekir. Kurulum ve hazırlık kontrolleri için {ph0}masaüstü"
+" derleme kurulum kılavuzunu{ph1} izleyin."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

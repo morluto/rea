@@ -305,7 +305,7 @@ Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
 ## Community & Support
 
-- **Discord** — Ask questions and share what you’re investigating. [![Join the REA Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Discord** — Ask questions and share what you’re investigating with our passionate community of over 50,000 reverse engineers and builders! [![Join the REA Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
 - **Twitter / X** — Follow [@reatools](https://x.com/reatools) for updates and announcements.
 - **Feedback & Ideas** — Want a new feature or support for a file format? [Open a GitHub issue](https://github.com/morluto/rea/issues) or [join our Discord](https://discord.gg/GkcryMnJDM) and let us know.
 

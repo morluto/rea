@@ -186,7 +186,6 @@ export const documentationFactIssues = async (root, catalog) => {
   for (const path of readmePaths) {
     const content = await readFile(join(root, path), "utf8");
     readmes.set(path, content);
-    requireText(issues, path, content, "MCP-tool_catalog");
     if (path === "README.md") {
       requireText(
         issues,

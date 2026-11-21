@@ -21,7 +21,7 @@
 
 <a href="https://discord.com/invite/GkcryMnJDM"><img alt="Bergabunglah dengan komunitas REA di Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
-[Mulai Cepat](#mulai-cepat) · [Cara Kerja REA](#cara-kerja-rea) · [Hal yang Dapat Anda Analisis](#hal-yang-dapat-anda-analisis) · [Contoh Penggunaan](#contoh-penggunaan) · [Membangun lingkungan RL](#build-rl-environments) · [FAQ](#faq) · [Dokumentasi](#dokumentasi)
+[Mulai Cepat](#mulai-cepat) · [Contoh Penggunaan](#contoh-penggunaan) · [Cara Kerja REA](#cara-kerja-rea) · [Hal yang Dapat Anda Analisis](#hal-yang-dapat-anda-analisis) · [Membangun lingkungan RL](#build-rl-environments) · [FAQ](#faq) · [Dokumentasi](#dokumentasi)
 
 <code>npx rea-agents setup</code>
 
@@ -63,15 +63,13 @@ REA menghubungkan agen Anda dengan berbagai alat untuk memeriksa biner native, a
 
 Proses penyiapan mendaftarkan REA ke agen Anda dan memasang instruksi alur kerja yang sesuai. Analisis native dapat menggunakan instalasi Hopper, Ghidra, IDA, atau Kuna yang sudah ada. Proses penyiapan juga dapat memasang Hopper secara opsional setelah mendapatkan persetujuan. Analisis JavaScript statis tidak memerlukan mesin analisis native.
 
-> **[Kunjungi situs web REA](https://rea.tools/id/)** untuk mendapatkan petunjuk penyiapan, panduan bergambar, dan studi kasus nyata.
-
 ## Mulai Cepat
 
-Di Linux, peluncuran Ghidra, JADX dan alat firmware serta analisis statis JavaScript/Electron memerlukan `ps` yang kompatibel dengan procps pada `PATH` REA untuk memeriksa kepemilikan proses. Lihat prasyarat Linux.
+**[Mulai Cepat · rea.tools](https://rea.tools/id/get-started/)**
 
-### Siapkan agen Anda
+### Siapkan agen Anda (MCP)
 
-Dengan Node.js dan npm yang telah terpasang, jalankan:
+Setelah memasang [Node.js dan npm](../reference/supported-targets.md), jalankan perintah ini dari direktori tepercaya di luar proyek yang ingin Anda analisis.
 
 ```bash
 npx rea-agents setup
@@ -79,15 +77,9 @@ npx rea-agents setup
 
 Pilih agen yang ingin digunakan, tinjau perubahan yang diusulkan, lalu setujui perubahan tersebut. Proses penyiapan menambahkan server MCP REA dan instruksi alur kerja yang sesuai, serta membuat cadangan konfigurasi yang sudah ada. Setelah itu, mulai ulang agen Anda.
 
-Penyiapan mendukung Claude Code, Codex, Cursor, Gemini CLI, Grok Build, dan [agen lainnya](../getting-started/installation.md#supported-agents). Lihat [instalasi dan penyiapan](../getting-started/installation.md) untuk konfigurasi penyedia dan pendaftaran MCP secara manual.
+[instalasi dan penyiapan](../getting-started/installation.md)
 
-MCP menggunakan skema input ringkas secara default. Petunjuk yang dihilangkan skema ringkas mengikuti deskripsi alat. Semua alat dan validasi server kanonis tidak berubah; lihat panduan kontrak MCP.
-
-Setup mencatat runtime yang dipilih dan skrip masuk REA secara langsung. Jika memakai package runner, pertahankan entri cache dan runtime tersebut; unduh paket dari direktori tepercaya di luar proyek target. Lihat panduan instalasi.
-
-Skema keluaran tidak disertakan dalam `tools/list` secara default: tidak ada API model yang membacanya, dan REA memvalidasi setiap hasil sendiri. Atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` dalam registrasi MCP untuk mengumumkan setiap skema keluaran dalam batas 4096 byte. Di semua pengaturan, validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
-
-### Minta agen Anda
+Minta agen Anda:
 
 ```text
 Pahami cara kerja pencarian di aplikasi Notes, tunjukkan buktinya, dan buat fitur serupa untuk proyek saya.
@@ -95,7 +87,7 @@ Pahami cara kerja pencarian di aplikasi Notes, tunjukkan buktinya, dan buat fitu
 
 Ganti Notes dengan aplikasi target dan fitur yang ingin Anda pahami.
 
-### Gunakan terminal
+### Gunakan terminal (CLI)
 
 Periksa direktori aplikasi JavaScript/Electron yang telah diekstrak atau berkas ASAR:
 
@@ -114,9 +106,9 @@ rea --help
 
 Untuk analisis native, konfigurasikan penyedia terlebih dahulu. Lihat [Panduan CLI dan Bukti](../getting-started/cli.md) untuk perintah native, pemilihan penyedia, snapshot, dan pembuatan skrip.
 
-### Perbarui REA
+[Persyaratan Linux](../getting-started/installation.md#linux-owned-process-prerequisite)
 
-REA berkembang dengan cepat, dan rilis baru sering menyertakan perbaikan bug. Pastikan instalasi Anda selalu diperbarui.
+### Perbarui REA
 
 Untuk CLI yang dipasang melalui `npm install --global` atau `bun add --global`:
 
@@ -124,19 +116,44 @@ Untuk CLI yang dipasang melalui `npm install --global` atau `bun add --global`:
 rea update
 ```
 
-`rea --update` adalah alias `rea update` dengan opsi keluaran global yang sama. Perintah pembaruan menyimpan stdout/stderr gabungan maksimal 4 MiB. Metadata terlalu besar ditolak setelah perintah selesai; instalasi verbose menyimpan diagnostik terbatas. Kemajuan mengikuti backpressure terminal dan menunggu penulisan yang telah dikirim.
-
-Pembaruan global dengan Bun memerlukan Bun 1.2.17 atau yang lebih baru. Pada rilis Bun yang lebih lama, perbarui Bun secara manual sebelum menjalankan `rea update`.
-
-Untuk memperbarui pendaftaran agen dan skill Anda, jalankan perintah penyiapan yang ditampilkan oleh proses pembaruan.
-
 Jika Anda menggunakan `npx`, perbarui penyiapan agen dengan:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-Tinjau perubahan penyiapan dan mulai ulang agen Anda. Untuk menjalankan perintah CLI sekali pakai, gunakan `npx rea-agents@latest` diikuti dengan perintah yang diinginkan. Dengan Bun, gunakan `bunx rea-agents@latest` sebagai pengganti `npx rea-agents@latest`.
+[Pembaruan dan penghapusan instalasi](../getting-started/installation.md#diagnose-update-and-remove)
+
+## Contoh Penggunaan
+
+<a href="https://rea.tools/id/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="Ilustrasi contoh penggunaan DX-Ball sound-pan, Notion clipboard-bridge, dan TH04 bullet-ring" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
+
+<table>
+<tbody>
+<tr><td>
+<h3>DX-Ball: merekonstruksi perhitungan sound-pan</h3>
+<p>Ikuti pemanggilan suara hingga ke fungsi pembantu yang mengubah posisi menjadi nilai pan, periksa instruksinya, lalu ubah pseudocode yang belum lengkap menjadi C. Hasil rekonstruksi tersebut lolos pada 3.205 kasus x86 asli dan mereproduksi seluruh 63 byte fungsi hasil kompilasi.</p>
+<p><a href="https://rea.tools/id/showcase/dx-ball/">Baca studi kasus</a> · <a href="https://github.com/N0zoM1z0/dx-ball">Repositori rekonstruksi</a></p>
+</td></tr>
+<tr><td>
+<h3>Notion: menelusuri jembatan clipboard Electron</h3>
+<p>Temukan API clipboard pada renderer, telusuri jalurnya melalui preload dan IPC hingga ke proses utama, lalu periksa format clipboard kaya.</p>
+<p><a href="https://rea.tools/id/showcase/notion/">Baca studi kasus</a></p>
+</td></tr>
+<tr><td>
+<h3>TH04: memulihkan perhitungan bullet-ring DOS</h3>
+<p>Periksa instruksi 16-bit dari gim PC-98 asli, pulihkan perhitungan sudut tetap dan sudut yang diarahkan, lalu bandingkan C++ hasil rekonstruksi dengan keluaran historis kompiler.</p>
+<p><a href="https://rea.tools/id/showcase/th04/">Baca studi kasus</a> · <a href="https://github.com/N0zoM1z0/th04">Repositori rekonstruksi</a></p>
+</td></tr>
+</tbody>
+</table>
+
+Jika Anda telah menggunakan REA untuk menganalisis sesuatu yang menarik, kami ingin melihat hasilnya. Bagikan kasus Anda melalui [issue](https://github.com/morluto/rea/issues) atau [pull request](https://github.com/morluto/rea/pulls), sertakan target, pertanyaan Anda, bagaimana REA membantu, dan apa yang Anda temukan.
 
 ## Cara Kerja REA
 
@@ -152,148 +169,21 @@ Perintah CLI menggunakan alur kerja yang sama.
 
 ## Hal yang Dapat Anda Analisis
 
-REA memerlukan Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), atau 26+ (>=26.12.1), beserta npm.
+Biner native · JavaScript / Electron · Situs web · Assembly .NET · APK Android · Firmware · Perilaku proses
 
-Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
-
-| Target                     | Hasil yang diberikan REA                                                                              | Persyaratan dan panduan                                                                                                                                       |
-| -------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Biner native               | Pseudocode, assembly, string, simbol, pemanggilan, dan referensi                                      | Hopper, Ghidra, IDA, atau Kuna; [analisis native](../guides/native/native-investigation.md)                                                                   |
-| Tata letak ELF offline     | Bagian, segmen, simbol/relokasi asli, dan kandidat mitigasi statis                                    | pwntools yang disediakan pemanggil pada Linux x64; [diagnostik biner](../guides/native/binary-diagnostics.md)                                                 |
-| PE certificates            | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                          | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
-| PE imports                 | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                            | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
-| Windows shortcuts          | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                          | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                     |
-| Paket NuGet                | Identitas paket, grup dependensi, lisensi, repositori, dan isi ZIP                                    | Inspeksi statis .nupkg bawaan; [Paket NuGet](../guides/managed/nuget-nupkg.md)                                                                                |
-| Artefak WASM               | Validasi, bagian, bentuk WAT import/ekspor yang tepat, dan WAT yang didekode                          | WABT 1.0.42 yang disediakan pemanggil; `inspect_wasm_artifact`                                                                                                |
-| Bytecode EVM               | Selector dispatch, offset byte, argumen yang disimpulkan, dan sifat mutabilitas                       | Pembawa data raw/hex lokal di Linux x64; [panduan EVM offline](../guides/evm/evm-bytecode.md)                                                                 |
-| Rust binaries              | Embedded cargo-auditable dependency list                                                              | [Rust binaries](../rust-binaries.md)                                                                                                                          |
-| ELF notes                  | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                       | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                  |
-| DWARF compile units        | Compile-unit name, directory, producer, language, and dwo_name                                        | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                        |
-| ELF dependencies           | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                 | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                    |
-| Binary hardening           | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                   | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                 |
-| Apple IPS crashes          | .ips metadata, threads, images, registers and crash classes                                           | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                 |
-| Linux kernel modules       | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                           | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                        |
-| Erlang BEAM                | IFF chunks, atoms, exports, and tables                                                                | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                             |
-| Crash Linux yang direkam   | Catatan mentah, register/sinyal setiap thread yang direkam, dan kandidat pemetaan opsional            | pwntools yang disediakan pemanggil di Linux x64; GDB/pwndbg opsional; [crash yang direkam](../guides/native/recorded-crashes.md)                              |
-| Instalasi desktop          | Kandidat runtime, berkas pendukung, penanda komponen, dan langkah berikutnya                          | Pemeriksaan direktori dan header terbatas；[Aplikasi desktop](../desktop-applications.md)                                                                     |
-| JavaScript / Electron      | Modul, impor, source map, rute, IPC, dan hubungan add-on native                                       | Node.js dan npm; [analisis aplikasi](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                            |
-| Situs web                  | Struktur halaman, skrip, pengamatan jaringan, dan tangkapan layar yang diminta                        | Peramban berbasis Chrome; [analisis peramban](../guides/web/browser-observation.md)                                                                           |
-| Rekaman jaringan tersimpan | Permintaan, respons, payload yang terekspos, dan lokasi sumber                                        | HAR / Fiddler Everywhere SAZ; mitmdump di Linux untuk rekaman native mitmproxy; [panduan rekaman](../guides/web/web-network-captures.md)                      |
-| Capturan paket             | Endpoint, DNS, TLS SNI, distribusi protokol, dan permintaan HTTP                                      | tshark dan capinfos buatan pemanggil (diverifikasi di Linux); [panduan pcap](../guides/data/pcap-analysis.md)                                                 |
-| Assembly .NET              | Metadata, instruksi CIL, dependensi native yang dideklarasikan, dan perbandingan build                | Tidak ada (hanya analisis statis); [panduan kode terkelola](../guides/managed/managed-code-analysis.md)                                                       |
-| PyInstaller                | CArchive, PYZ, Python bytecode                                                                        | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                         |
-| Deno compile binaries      | Virtual files, entry point, recorded options, npm snapshot length                                     | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                          |
-| APK Android                | Deklarasi manifest, kelas, metode hasil dekompilasi, dan referensi                                    | JADX mode headless dan JDK lengkap di Linux/macOS/Windows x64; [panduan Android](../guides/android/android-analysis.md)                                       |
-| Perangkat Android          | Perangkat, paket, proses, log, dump, tangkapan layar, serta transfer APK/berkas                       | adb buatan pemanggil (emulator atau perangkat); [panduan ADB](../guides/android/adb-device-analysis.md)                                                       |
-| Proyek JEB                 | Unit proyek bertenaga mesin, hash artefak, dan pseudokode tipe/metode                                 | Klien JEB yang dijalankan pemanggil dan menyajikan MCP, dipilih dengan REA_JEB_MCP_URL; [panduan JEB](../providers/jeb-analysis.md)                           |
-| Resource Android           | Manifest terdekode, tabel string, lokal, dan fakta versi                                              | Peluncur Apktool buatan pemanggil; [panduan resource](../guides/android/apktool-resource-analysis.md)                                                         |
-| Aplikasi Flutter           | Hash snapshot Dart, hash pustaka per ABI, dan asal build engine                                       | Tidak ada (parsing APK statis); [panduan Flutter](../guides/android/flutter-analysis.md)                                                                      |
-| Firmware                   | Wilayah, hasil ekstraksi, dan pengalihan ke analisis native                                           | Binwalk / Unblob di Linux; [panduan firmware](../guides/firmware/firmware-analysis.md)                                                                        |
-| Paket rekaman              | Kolom terpilih, nilai berulang, filter, dan aturan decode-as                                          | Linux: TShark 4.x + prlimit; [panduan tangkapan](../guides/data/packet-captures.md)                                                                           |
-| Sinyal logika terekam      | Anotasi dekoder, rentang sampel, dan diagnostik                                                       | Linux: sigrok-cli 0.7.2 + prlimit; [panduan sinyal](../guides/signals/signal-recordings.md)                                                                   |
-| Paket dan sumber daya      | Inventaris berkas, digest, plist, struktur paket Apple, dan sumber daya yang diekstrak                | [Panduan artefak dan JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [aplikasi Apple](../guides/apple/apple-application-analysis.md) |
-| Perilaku proses            | Keluaran terminal, interaksi, pengamatan proses keluar dan sistem berkas, serta perbandingan eksekusi | Linux/macOS dengan PTY native; [perekaman proses](../guides/runtime/process-capture.md)                                                                       |
-| Biner Go                   | Versi compiler tertanam, modul, penggantian dan pengaturan build                                      | Pemeriksaan statis bawaan ELF/PE/thin Mach-O; Tidak perlu memasang Go                                                                                         |
-| Database SQLite            | Tabel, kolom, indeks, view, trigger dan baris terpilih dari tabel biasa                               | Snapshot database/WAL lokal; Node.js 24.x >=24.15 atau 26+ dengan batas SQLite native                                                                         |
-| Objek kode GPU             | Target CUDA/HIP, parameter dan sumber daya kernel terpilih, teks PTX yang dipertahankan               | Pemeriksaan statis bawaan ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                              |
-| Berkas model               | Metadata GGUF / safetensors, deklarasi tensor dan total turunan                                       | Pemeriksaan header; hash seluruh berkas opsional; [GGUF / safetensors](../model-artifacts.md)                                                                 |
-| Metadata IL2CPP            | Citra assembly Unity global-metadata.dat, nama tipe/metode dan rentang indeks                         | Dekode statis versi 24, 27, 29, 31, 39; tanpa Unity                                                                                                           |
-| Godot PCK                  | Inventaris dan ekstraksi arsip, header/direktori asli dan identitas konten terpilih                   | Format statis 2, 3, 4; tanpa Godot                                                                                                                            |
-| Tanda tangan APK           | Penanda tangan v1/v2/v3/v3.1, sidik jari sertifikat, rotasi kunci dan konsistensi internal digest     | Pemeriksaan statis bawaan; `inspect_apk_signature`                                                                                                            |
-
-Pemeriksaan JavaScript dan .NET statis membaca berkas yang disediakan tanpa menjalankan aplikasinya. Perekaman runtime menjalankan atau berinteraksi dengan target yang dipilih menggunakan izin pengguna Anda. Setiap panduan runtime menjelaskan dampaknya.
-
-Untuk pemeriksaan biner native secara offline, REA juga mendukung GNU objdump dan Rizin yang Anda sediakan sendiri. [Panduan alat rekayasa balik](../reverse-engineering-tools.md) menjelaskan penyiapan penyedia, perintah CLI, dan keterbatasan Evidence. REA tidak menginstal atau memperbarui kedua penyedia tersebut.
+[Format yang didukung dan persyaratan](../reference/supported-targets.md)
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Format native dan dukungan sistem host berbeda-beda menurut penyedia. Lihat [penyiapan Hopper dan Ghidra](../getting-started/installation.md#hopper), [panduan IDA](../providers/ida-provider.md), [Kuna](../kuna-provider.md), dan [dukungan eksperimental Ghidra di Windows](../providers/windows-ghidra-p0.md).
-
-Ghidra juga mendukung [analisis DOS 16-bit](../providers/ghidra-dos.md).
-
-Untuk biner berukuran besar, tingkatkan batas waktu startup menggunakan `REA_GHIDRA_STARTUP_TIMEOUT_MS` / `REA_HOPPER_STARTUP_TIMEOUT_MS`.
-
-Untuk memilih penyedia, lihat [panduan CLI](../getting-started/cli.md#choose-a-provider).
-
-Periksa [ketersediaan rilis](../getting-started/installation.md#released-package-and-main) untuk mengetahui fitur yang ditambahkan setelah rilis npm terbaru.
-
-## Contoh Penggunaan
-
-<a href="https://rea.tools/id/showcase/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
-    <img alt="Ilustrasi contoh penggunaan DX-Ball sound-pan, Notion clipboard-bridge, dan TH04 bullet-ring" src="../assets/rea-showcases.svg" />
-  </picture>
-</a>
-
-### DX-Ball: merekonstruksi perhitungan sound-pan
-
-Ikuti pemanggilan suara hingga ke fungsi pembantu yang mengubah posisi menjadi nilai pan, periksa instruksinya, lalu ubah pseudocode yang belum lengkap menjadi C. Hasil rekonstruksi tersebut lolos pada 3.205 kasus x86 asli dan mereproduksi seluruh 63 byte fungsi hasil kompilasi.
-
-[Baca studi kasus](https://rea.tools/id/showcase/dx-ball/) · [Repositori rekonstruksi](https://github.com/N0zoM1z0/dx-ball)
-
-### Notion: menelusuri jembatan clipboard Electron
-
-Temukan API clipboard pada renderer, telusuri jalurnya melalui preload dan IPC hingga ke proses utama, lalu periksa format clipboard kaya.
-
-[Baca studi kasus](https://rea.tools/id/showcase/notion/)
-
-### TH04: memulihkan perhitungan bullet-ring DOS
-
-Periksa instruksi 16-bit dari gim PC-98 asli, pulihkan perhitungan sudut tetap dan sudut yang diarahkan, lalu bandingkan C++ hasil rekonstruksi dengan keluaran historis kompiler.
-
-[Baca studi kasus](https://rea.tools/id/showcase/th04/) · [Repositori rekonstruksi](https://github.com/N0zoM1z0/th04)
-
-### Bangun lingkungan RL dengan REA
-
-Rekam sesi aplikasi web, ubah API menjadi alat, lalu ekspor lingkungan yang dapat digunakan agen AI. Jalankan dengan AgentEnv dan tambahkan tugas serta pemeriksaan reward untuk pelatihan RL atau evaluasi.
-
-[Panduan membangun lingkungan](https://rea.tools/guides/rl-environments/) ·
-[Tonton demo di X](https://x.com/reatools/status/2112574822584918075?s=20)
-
-Jika Anda telah menggunakan REA untuk menganalisis sesuatu yang menarik, kami ingin melihat hasilnya. Bagikan kasus Anda melalui [issue](https://github.com/morluto/rea/issues) atau [pull request](https://github.com/morluto/rea/pulls), sertakan target, pertanyaan Anda, bagaimana REA membantu, dan apa yang Anda temukan.
+[Memilih penyedia analisis](../reference/supported-targets.md#choosing-a-deep-analysis-provider)
 
 <a id="build-rl-environments"></a>
 
 ## Membangun lingkungan RL
 
-Buat lingkungan lokal agar agen AI dapat berlatih tugas seperti mencari issue atau membuat folder tanpa menjalankan aplikasi aslinya. Gunakan untuk pembelajaran penguatan (RL) atau menguji kemampuan agen menyelesaikan tugas.
+Buat lingkungan lokal dari rekaman sesi web atau aplikasi desktop Linux agar agen dapat berlatih menjalankan tugas dan memeriksa hasilnya.
 
-REA mengubah permintaan dan respons API yang direkam menjadi alat yang dapat dipanggil agen. Lingkungan memakai data rekaman dan hanya mendukung perubahan yang dampaknya dikonfirmasi oleh rekaman.
-
-Setelah menyiapkan REA di agen, ganti URL contoh dan tugas folder di bawah sesuai aplikasi Anda:
-
-```text
-Gunakan REA untuk membuat lingkungan RL dari aplikasi web uji saya di
-http://127.0.0.1:3000.
-Cakup daftar, pembuatan, penggantian nama, dan penghapusan folder. Boleh membuat
-dan menghapus folder uji, tetapi jangan ubah data yang sudah ada.
-Simpan dalam folder bernama my-env, periksa operasi yang berfungsi, dan beri tahu cara menjalankannya.
-```
-
-<details>
-<summary>Gunakan baris perintah</summary>
-
-Gunakan perintah ini jika Anda sudah punya file rekaman permintaan dan respons aplikasi di browser. Untuk menjalankan hasilnya, Anda juga perlu AgentEnv dan Docker.
-
-```sh
-rea environment-build ./session.har ./my-env --name my-env --json
-agent-env run ./my-env
-```
-
-</details>
-
-REA mengekspor lingkungan yang dapat dijalankan dengan uji dasar untuk memeriksa bahwa lingkungan mulai dan merespons. Hubungkan ke framework RL untuk menetapkan tujuan tugas, menambahkan pemeriksaan reward, dan menjalankan pelatihan.
-
-[Panduan membangun lingkungan](https://rea.tools/guides/rl-environments/) ·
-[Referensi lingkungan](../agent-environments.md) ·
-[Tonton demo di X](https://x.com/reatools/status/2112574822584918075?s=20)
-
-### Lingkungan aplikasi desktop
-
-REA juga dapat membuat lingkungan untuk aplikasi desktop Linux yang digunakan agen melalui tangkapan layar, mouse, dan keyboard. Dari permintaan satu baris, seperti "Buatkan lingkungan Gnote tempat agen menambahkan minyak zaitun ke catatan daftar belanja", agen Anda memasang aplikasi di komputer build lokal, menulis tugas, mengekspor lingkungan, dan memeriksa tugas di komputer baru. Mesin yang membuatnya memerlukan Linux di amd64 atau arm64, Docker, dan versi framework agentenv yang ditetapkan panduan.
-
-[Siapkan lingkungan aplikasi desktop](../desktop-build-computer.md)
+[Membangun lingkungan RL](https://rea.tools/guides/rl-environments/)
 
 ## FAQ
 
@@ -382,6 +272,12 @@ Untuk mengetahui opsi, prasyarat, dan kontrak hasil secara tepat:
 
 Laporkan kerentanan melalui [SECURITY.md](../../SECURITY.md).
 
+## Komunitas dan dukungan
+
+- **Discord** — Ajukan pertanyaan dan bagikan temuan Anda bersama komunitas kami yang terdiri dari lebih dari 50.000 penggemar rekayasa balik dan pembuat proyek! [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — Ikuti [@reatools](https://x.com/reatools) untuk kabar terbaru.
+- **Masukan dan ide** — Ingin fitur baru atau dukungan untuk suatu format berkas? Beri tahu kami melalui [GitHub](https://github.com/morluto/rea/issues) atau [Discord](https://discord.gg/GkcryMnJDM).
+
 ## Riwayat Bintang
 
 🎉 **400.000 bintang GitHub, terima kasih!**
@@ -396,6 +292,12 @@ Terima kasih kepada semua orang yang menggunakan REA, melaporkan bug, meminta fi
   </picture>
 </a>
 
+## Kontribusi
+
+Kami sangat menghargai bantuan Anda untuk REA! [Buat issue](https://github.com/morluto/rea/issues) untuk melaporkan bug atau menyarankan fitur, atau [kirim pull request](https://github.com/morluto/rea/pulls) untuk meningkatkan kode atau dokumentasi.
+
+Lihat [CONTRIBUTING.md](../../CONTRIBUTING.md) untuk penyiapan pengembangan dan pemeriksaan, [pengujian](../development/testing.md) untuk tahapan verifikasi.
+
 ## Penafian
 
 Lihat [DISCLAIMER.md](../../DISCLAIMER.md) untuk panduan penggunaan yang bertanggung jawab.
@@ -405,12 +307,6 @@ REA ditujukan untuk penelitian, pendidikan, interoperabilitas, pelestarian peran
 The project's position on illegal or unauthorized use covers all REA
 versions, distribution channels, and platforms; each copy retains its
 applicable licenses.
-
-## Kontribusi
-
-Kami sangat menghargai bantuan Anda untuk REA! [Buat issue](https://github.com/morluto/rea/issues) untuk melaporkan bug atau menyarankan fitur, atau [kirim pull request](https://github.com/morluto/rea/pulls) untuk meningkatkan kode atau dokumentasi.
-
-Lihat [CONTRIBUTING.md](../../CONTRIBUTING.md) untuk penyiapan pengembangan dan pemeriksaan, [pengujian](../development/testing.md) untuk tahapan verifikasi.
 
 ## Lisensi
 

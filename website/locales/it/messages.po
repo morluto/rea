@@ -15157,12 +15157,12 @@ msgstr "Guida alla creazione di un ambiente"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Creare un ambiente per un’app desktop{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Creare un ambiente per un’app desktop"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15173,6 +15173,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Per un’app desktop Linux, descrivi l’attività su cui vuoi far esercitare "
+"l’agente. Per esempio, chiedigli di creare un ambiente Gnote in cui aggiunga"
+" l’olio d’oliva alla lista della spesa. L’agente installa l’app su una "
+"macchina di compilazione locale, scrive l’attività, esporta l’ambiente e lo "
+"verifica su una macchina pulita usando schermate, mouse e tastiera."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15186,6 +15191,10 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"La macchina di compilazione richiede Linux su amd64 o arm64, Docker e la "
+"versione specificata di AgentEnv. Segui la {ph0}guida alla configurazione "
+"della macchina di compilazione{ph1} per l’installazione e i controlli "
+"preliminari."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

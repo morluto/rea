@@ -13710,12 +13710,12 @@ msgstr "建立環境指南"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}建立桌面應用程式環境{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "建立桌面應用程式環境"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -13726,6 +13726,8 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"先描述你希望代理在 Linux 桌面應用程式中練習的任務。例如，請它建立 Gnote "
+"環境，練習將橄欖油加入購物清單。代理會在本機建置電腦上安裝應用程式、編寫任務並匯出環境，接著在全新的電腦上透過螢幕截圖、滑鼠與鍵盤進行驗證。"
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -13739,6 +13741,8 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"建置主機需要執行 amd64 或 arm64 版 Linux，並安裝 Docker 和指定版本的 "
+"AgentEnv。請依照{ph0}桌面環境建置主機設定指南{ph1}完成安裝並確認主機已就緒。"
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

@@ -14864,12 +14864,12 @@ msgstr "راهنمای ساخت محیط"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}ساخت محیط برنامهٔ دسکتاپ{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "ساخت محیط برنامهٔ دسکتاپ"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -14880,6 +14880,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"کاری را که می‌خواهید ایجنت در یک برنامهٔ دسکتاپ لینوکس تمرین کند شرح دهید. "
+"مثلاً بخواهید محیطی برای Gnote بسازد که در آن روغن زیتون را به فهرست خرید "
+"اضافه کند. ایجنت برنامه را روی رایانهٔ ساخت محلی نصب می‌کند، وظیفه را "
+"می‌نویسد، محیط را صادر می‌کند و روی رایانه‌ای تازه با تصویر صفحه، ماوس و "
+"صفحه‌کلید آن را بررسی می‌کند."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -14893,6 +14898,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"رایانهٔ ساخت به لینوکس روی amd64 یا arm64، داکر و نسخهٔ تعیین‌شدهٔ AgentEnv "
+"نیاز دارد. برای نصب و بررسی آمادگی، {ph0}راهنمای راه‌اندازی رایانهٔ ساخت "
+"محیط دسکتاپ{ph1} را دنبال کنید."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

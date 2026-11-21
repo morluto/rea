@@ -15326,12 +15326,12 @@ msgstr "Anleitung zum Erstellen einer Umgebung"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Eine Desktop-App-Umgebung erstellen{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Eine Desktop-App-Umgebung erstellen"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15342,6 +15342,12 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Beschreibe die Aufgabe, die ein Agent mit einer Linux-Desktop-App üben soll."
+" Bitte ihn zum Beispiel, eine Gnote-Umgebung zu erstellen, in der er "
+"Olivenöl auf eine Einkaufsliste setzt. Der Agent installiert die App auf "
+"einem lokalen Build-Rechner, schreibt die Aufgabe und exportiert die "
+"Umgebung. Auf einem frisch eingerichteten Rechner prüft er sie anhand von "
+"Bildschirmfotos und mit Maus und Tastatur."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15355,6 +15361,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Der Build-Rechner braucht Linux auf amd64 oder arm64, Docker und die "
+"vorgegebene AgentEnv-Version. Installation und Bereitschaftsprüfung "
+"beschreibt die {ph0}Anleitung zur Einrichtung des Build-Rechners{ph1}."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

@@ -15049,12 +15049,12 @@ msgstr "Przewodnik tworzenia środowiska"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Tworzenie środowiska aplikacji desktopowej{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Tworzenie środowiska aplikacji desktopowej"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15065,6 +15065,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Opisz zadanie, które agent ma ćwiczyć w aplikacji desktopowej dla Linuksa. "
+"Poproś na przykład o środowisko Gnote, w którym agent dopisze oliwę do listy"
+" zakupów. Agent instaluje aplikację na lokalnej maszynie do budowania, "
+"przygotowuje zadanie, eksportuje środowisko i sprawdza je na czystej "
+"maszynie, korzystając ze zrzutów ekranu, myszy i klawiatury."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15078,6 +15083,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Maszyna do budowania wymaga Linuksa na amd64 lub arm64, Dockera oraz "
+"wskazanej wersji AgentEnv. Instalację i sprawdzanie gotowości opisuje "
+"{ph0}instrukcja konfiguracji maszyny{ph1}."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

@@ -15162,12 +15162,12 @@ msgstr "Руководство по созданию окружения"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Создать среду для настольного приложения{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Создать среду для настольного приложения"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15178,6 +15178,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Опишите задачу, которую агент должен отработать в настольном приложении "
+"Linux. Например, попросите создать среду Gnote, где агент добавит оливковое "
+"масло в список покупок. Агент устанавливает приложение на локальную "
+"сборочную машину, описывает задачу, экспортирует среду и проверяет её на "
+"чистой машине с помощью снимков экрана, мыши и клавиатуры."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15191,6 +15196,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Для сборки нужны Linux на amd64 или arm64, Docker и указанная версия "
+"AgentEnv. Инструкции по установке и проверке готовности приведены в "
+"{ph0}руководстве по настройке сборочной машины{ph1}."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

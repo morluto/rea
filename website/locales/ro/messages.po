@@ -13167,12 +13167,12 @@ msgstr "Ghid pentru construirea unui mediu"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Construiește un mediu pentru o aplicație desktop{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Construiește un mediu pentru o aplicație desktop"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -13183,6 +13183,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Descrie sarcina pe care vrei să o exerseze agentul într-o aplicație desktop "
+"Linux. De exemplu, cere-i să creeze un mediu Gnote în care să adauge ulei de"
+" măsline pe lista de cumpărături. Agentul instalează aplicația pe un "
+"calculator local de compilare, scrie sarcina, exportă mediul și îl verifică "
+"pe un calculator curat folosind capturi de ecran, mouse-ul și tastatura."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -13196,6 +13201,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Calculatorul de compilare necesită Linux pe amd64 sau arm64, Docker și "
+"versiunea specificată de AgentEnv. Urmează {ph0}ghidul de configurare a "
+"calculatorului de compilare{ph1} pentru instalare și verificări."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

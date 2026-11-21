@@ -15092,12 +15092,12 @@ msgstr "Panduan membangun lingkungan"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Membangun lingkungan aplikasi desktop{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Membangun lingkungan aplikasi desktop"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15108,6 +15108,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Jelaskan tugas yang ingin Anda latihkan kepada agen dalam aplikasi desktop "
+"Linux. Misalnya, minta agen membuat lingkungan Gnote untuk menambahkan "
+"minyak zaitun ke daftar belanja. Agen memasang aplikasi pada komputer build "
+"lokal, menulis tugas, mengekspor lingkungan, lalu memeriksanya pada komputer"
+" baru menggunakan tangkapan layar, mouse, dan papan ketik."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15121,6 +15126,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Komputer build memerlukan Linux pada amd64 atau arm64, Docker, dan versi "
+"AgentEnv yang ditentukan. Ikuti {ph0}panduan penyiapan komputer build{ph1} "
+"untuk memasang perangkat dan memeriksa kesiapannya."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

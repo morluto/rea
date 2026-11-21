@@ -15280,12 +15280,12 @@ msgstr "Οδηγός δημιουργίας περιβάλλοντος"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Δημιουργία περιβάλλοντος για εφαρμογή επιφάνειας εργασίας{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Δημιουργία περιβάλλοντος για εφαρμογή επιφάνειας εργασίας"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15296,6 +15296,12 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Περίγραψε την εργασία στην οποία θέλεις να εξασκηθεί ο πράκτορας σε μια "
+"εφαρμογή Linux. Για παράδειγμα, ζήτησέ του να φτιάξει ένα περιβάλλον Gnote "
+"όπου θα προσθέτει ελαιόλαδο σε μια λίστα αγορών. Ο πράκτορας εγκαθιστά την "
+"εφαρμογή σε τοπικό υπολογιστή κατασκευής, γράφει την εργασία, εξάγει το "
+"περιβάλλον και το ελέγχει σε καθαρό υπολογιστή με στιγμιότυπα οθόνης, "
+"ποντίκι και πληκτρολόγιο."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15309,6 +15315,10 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Ο υπολογιστής κατασκευής χρειάζεται Linux σε amd64 ή arm64, Docker και την "
+"καθορισμένη έκδοση του AgentEnv. Ακολούθησε τον {ph0}οδηγό ρύθμισης του "
+"υπολογιστή κατασκευής{ph1} για την εγκατάσταση και τους ελέγχους "
+"ετοιμότητας."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

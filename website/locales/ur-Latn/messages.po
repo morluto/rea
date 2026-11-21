@@ -13165,12 +13165,12 @@ msgstr "Environment banane ki rehnumai"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Desktop app ka environment banayein{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Desktop app ka environment banayein"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -13181,6 +13181,12 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Linux desktop app mein jo kaam agent ko sikhana hai, us ki tafseel dein. "
+"Misal ke taur par Gnote ka aisa environment banane ko kahein jahan agent "
+"khareedari ki fehrist mein zaitoon ka tel shamil kare. Agent local build "
+"computer par app install karta hai, task likhta hai, environment export "
+"karta hai aur naye computer par screenshots, mouse aur keyboard se usay "
+"check karta hai."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -13194,6 +13200,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Build host par amd64 ya arm64 wala Linux, Docker aur AgentEnv ka muqarrar "
+"version chahiye. Installation aur tayyari ki jaanch ke liye {ph0}desktop "
+"build setup guide{ph1} dekhein."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

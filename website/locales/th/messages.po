@@ -14764,12 +14764,12 @@ msgstr "คู่มือสร้างสภาพแวดล้อม"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}สร้างสภาพแวดล้อมสำหรับแอปเดสก์ท็อป{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "สร้างสภาพแวดล้อมสำหรับแอปเดสก์ท็อป"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -14780,6 +14780,10 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"อธิบายงานที่ต้องการให้เอเจนต์ฝึกในแอปเดสก์ท็อป Linux เช่น "
+"ขอให้สร้างสภาพแวดล้อม Gnote ที่เอเจนต์เพิ่มน้ำมันมะกอกลงในรายการซื้อของ "
+"เอเจนต์จะติดตั้งแอปบนเครื่องที่ใช้สร้างสภาพแวดล้อม เขียนงาน "
+"ส่งออกสภาพแวดล้อม แล้วตรวจสอบบนเครื่องใหม่โดยใช้ภาพหน้าจอ เมาส์ และแป้นพิมพ์"
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -14793,6 +14797,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"เครื่องที่ใช้สร้างสภาพแวดล้อมต้องมี Linux บน amd64 หรือ arm64, Docker และ "
+"AgentEnv รุ่นที่ระบุ "
+"ทำตาม{ph0}คู่มือตั้งค่าเครื่องสำหรับสร้างสภาพแวดล้อมเดสก์ท็อป{ph1}เพื่อติดตั้งและตรวจสอบความพร้อม"
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

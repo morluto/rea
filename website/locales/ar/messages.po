@@ -14712,12 +14712,12 @@ msgstr "دليل إنشاء بيئة"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}إنشاء بيئة لتطبيق سطح مكتب{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "إنشاء بيئة لتطبيق سطح مكتب"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -14728,6 +14728,10 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"صِف المهمة التي تريد أن يتدرّب عليها الوكيل في تطبيق سطح مكتب على Linux. "
+"اطلب منه مثلًا بناء بيئة Gnote يضيف فيها زيت الزيتون إلى قائمة التسوق. يثبّت"
+" الوكيل التطبيق على حاسوب بناء محلي، ويكتب المهمة، ويصدّر البيئة، ثم يتحقق "
+"منها على حاسوب جديد باستخدام لقطات الشاشة والفأرة ولوحة المفاتيح."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -14741,6 +14745,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"يتطلب حاسوب البناء نظام Linux بمعمارية amd64 أو arm64، وDocker، وإصدار "
+"AgentEnv المحدد. اتبع {ph0}دليل إعداد حاسوب بناء بيئات سطح المكتب{ph1} "
+"للتثبيت والتحقق من الجاهزية."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"

@@ -15108,12 +15108,12 @@ msgstr "Посібник зі створення середовища"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Створення середовища для настільного застосунку{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Створення середовища для настільного застосунку"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15124,6 +15124,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Опишіть завдання, яке агент має відпрацювати в настільному застосунку Linux."
+" Наприклад, попросіть створити середовище Gnote, де агент додасть оливкову "
+"олію до списку покупок. Агент встановлює застосунок на локальній машині для "
+"збирання, описує завдання, експортує середовище й перевіряє його на чистій "
+"машині за допомогою знімків екрана, миші та клавіатури."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15137,6 +15142,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"Для машини збирання потрібні Linux на amd64 або arm64, Docker і вказана "
+"версія AgentEnv. Встановлення та перевірку готовності описано в "
+"{ph0}посібнику з налаштування машини збирання{ph1}."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
