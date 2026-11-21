@@ -37,7 +37,8 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "annotate_native_function"),
     {
-      description: "Edit function annotations and return refreshed analysis",
+      description:
+        "Edit function annotations and return refreshed analysis. In Ghidra ephemeral mode the edit is discarded when this command exits. REA_GHIDRA_CHECKPOINT_DIR keeps edits only for stock ELF/PE/Mach-O imports on Linux/macOS without analysis overrides; otherwise use one MCP session for dependent edits and reads",
       sessionTarget: executable,
       positionals: ["procedure"],
       fields: {
