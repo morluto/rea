@@ -1,19 +1,17 @@
-import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { expect, onTestFinished } from "vitest";
-import { Client } from "@modelcontextprotocol/client";
 import {
-  StdioClientTransport,
-  getDefaultEnvironment,
-} from "@modelcontextprotocol/client/stdio";
-import { fileURLToPath } from "node:url";
+  connectLocalToolsMcp,
+  lazyLocalToolsMcp,
+} from "../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import { expect } from "vitest";
+import type { Client } from "@modelcontextprotocol/client";
+import { parseEvidence } from "../../src/domain/evidence.js";
 import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
-import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const silentCliEnv = { REA_LOG_LEVEL: "silent" } as const;
 const defaultMcp = lazyLocalToolsMcp();
@@ -64,6 +62,7 @@ const expectRetainedSourceMap = async (
 const expectEqualPositionSummary = async (
   client: Client,
   input: Record<string, unknown>,
+  evidenceId: string,
 ) => {
   const compact = await client.callTool({
     name: "trace_web_source_location",
@@ -75,6 +74,7 @@ const expectEqualPositionSummary = async (
   expect(compact.isError).not.toBe(true);
   expect(compact.structuredContent).toMatchObject({
     normalized_result: {
+      parent_evidence_id: evidenceId,
       summary: {
         match_count: 2,
         matches: [
@@ -207,6 +207,7 @@ const expectForwardSlashManifestTrace = async (
   cliJson: unknown,
 ) => {
   const forwardSlash = input.manifest_path.replaceAll("\\", "/");
+  if (forwardSlash === input.manifest_path) return;
   const forward = await client.callTool({
     name: "trace_web_source_location",
     arguments: { ...input, manifest_path: forwardSlash },
@@ -299,48 +300,33 @@ cliTest(
       },
     });
     expectSourceLocationLimitations(response.json);
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [
-        fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
-        "mcp",
-      ],
-      env: {
-        ...getDefaultEnvironment(),
-        REA_LOG_LEVEL: "silent",
-        CLANG_MODULE_CACHE_PATH: map,
-      },
-      stderr: "pipe",
+    const { client, call } = await connectLocalToolsMcp({
+      CLANG_MODULE_CACHE_PATH: map,
+      REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
     });
-    const client = new Client(
-      {
-        name: "source-location-cli-parity",
-        version: "1",
-      },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    onTestFinished(async () => {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
-    });
-    await client.connect(transport);
     const input = {
       manifest_path: manifest,
       script_index: 0,
       source_map: { path: map, url: fixture.sourceMap.url },
       generated_position: { line: 1, column: 0 },
     };
-    const mcpResponse = await client.callTool({
-      name: "trace_web_source_location",
-      arguments: input,
-    });
+    const evidenceId = parseEvidence(response.json).evidence_id;
+    await expectEqualPositionSummary(client, input, evidenceId);
+    await unlink(map);
+    const exportPath = join(root, "summary-parent.json");
+    expect(
+      (await call("export_evidence_bundle", { path: exportPath })).isError,
+    ).not.toBe(true);
+    await expectRetainedSourceMap(
+      exportPath,
+      evidenceId,
+      fixture.sourceMap.file.sha256,
+    );
+    await writeFile(map, fixture.sourceMap.text);
+    const mcpResponse = await call("trace_web_source_location", input);
     expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
     expect(mcpResponse.structuredContent).toEqual(response.json);
     await expectForwardSlashManifestTrace(client, input, response.json);
-    await expectEqualPositionSummary(client, input);
     const pastColumn = await client.callTool({
       name: "trace_web_source_location",
       arguments: {
