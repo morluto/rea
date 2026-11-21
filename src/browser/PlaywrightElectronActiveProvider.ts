@@ -98,9 +98,9 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     private readonly environment: Readonly<Record<string, string | undefined>>,
     // Load Playwright only when a capture launches; MCP startup stays off its module graph.
     private readonly launch: typeof electron.launch = async (options) =>
-      (await loadPlaywrightCore(this.environment, this.platform))._electron.launch(
-        options,
-      ),
+      (
+        await loadPlaywrightCore(this.environment, this.platform)
+      )._electron.launch(options),
     private readonly readFuseImage: typeof readElectronFuseImage = readElectronFuseImage,
     // The host the application launches and is cleaned up on.
     private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,

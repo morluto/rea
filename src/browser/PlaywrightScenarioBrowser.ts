@@ -393,11 +393,7 @@ const resolveAndroidChromiumExecutable = async (
       ? win32.resolve(prefix, "bin")
       : absoluteCallerPath(appendCallerPath(prefix, "bin", platform));
   if (parent !== termuxBin) return executablePath;
-  const sibling = appendCallerPath(
-    parent,
-    "../lib/chromium/chrome",
-    platform,
-  );
+  const sibling = appendCallerPath(parent, "../lib/chromium/chrome", platform);
   try {
     await access(sibling, fsConstants.F_OK);
     return sibling;
@@ -430,8 +426,7 @@ const withAndroidHostTempDirectory = <Value>(
   platform: NodeJS.Platform,
   launch: () => Promise<Value>,
 ): Promise<Value> => {
-  if (platform !== "android" || directory === undefined)
-    return launch();
+  if (platform !== "android" || directory === undefined) return launch();
   installAndroidTmpdirScope();
   return androidLaunchTemp.run(directory, launch);
 };
@@ -471,7 +466,10 @@ const allowedBrowserEnvironment = (
   // through the system linker and removes itself for the launched program.
   // Playwright must retain it for its Chromium child process.
   const prefix = nonemptyEnvironmentValue(environment, "PREFIX");
-  const temporaryDirectory = androidScenarioTempDirectory(environment, platform);
+  const temporaryDirectory = androidScenarioTempDirectory(
+    environment,
+    platform,
+  );
   const hasSelectedTemp =
     selected.TMPDIR !== undefined && selected.TMPDIR.length > 0;
   const withTemporaryDirectory =
@@ -985,7 +983,8 @@ export const openPlaywrightScenarioBrowser = async (
     );
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
-    options.launcher ?? (await loadPlaywrightCore(environment, platform)).chromium;
+    options.launcher ??
+    (await loadPlaywrightCore(environment, platform)).chromium;
   const commandTimeoutMs = scenarioCommandTimeoutMs(scenario);
   if (scenario.browser.mode === "connect")
     return openAttachedScenarioBrowser(

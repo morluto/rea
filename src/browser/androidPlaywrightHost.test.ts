@@ -47,7 +47,9 @@ it("publishes the Android browsers path before the first Playwright import", asy
 });
 
 it("preserves the caller-selected Playwright browsers path on Android", async () => {
-  const prefix = await createTestTempDirectory("rea-termux-playwright-selected-");
+  const prefix = await createTestTempDirectory(
+    "rea-termux-playwright-selected-",
+  );
   const selected = appendCallerPath(prefix, "selected-browsers", "android");
   const hostUrl = new URL("./androidPlaywrightHost.ts", import.meta.url).href;
   const env: NodeJS.ProcessEnv = { ...process.env };

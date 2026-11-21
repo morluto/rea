@@ -113,9 +113,9 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
     this.launcher =
       launcher ??
       (async (options) =>
-        (await loadPlaywrightCore(this.environment, this.platform)).chromium.launch(
-          options,
-        ));
+        (
+          await loadPlaywrightCore(this.environment, this.platform)
+        ).chromium.launch(options));
   }
 
   resolve(
