@@ -8,6 +8,7 @@ import { parse as parseYaml } from "yaml";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
@@ -66,6 +67,7 @@ let mainRequests = 0;
 const lifecycle = [];
 const patterns = new Set();
 const commands = await createVerifierCommands();
+const interruption = bindVerifierCommandInterruption(commands);
 await withVerifierCleanup(async () => {
   await withVerifierCleanup(async () => {
     await Promise.all([
@@ -82,7 +84,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     // A temporary directory under the checkout must not inherit its project skills or AGENTS.md.
-    await commands.exec(
+    await interruption.exec(
       "git",
       ["-c", "init.defaultBranch=main", "init", "--quiet", workspace],
       {
@@ -93,7 +95,7 @@ await withVerifierCleanup(async () => {
     );
     await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     clientVersion = (
-      await commands.exec(command, ["--version"], {
+      await interruption.exec(command, ["--version"], {
         env: environment,
         cwd: workspace,
         timeout: 30_000,
@@ -101,7 +103,7 @@ await withVerifierCleanup(async () => {
       })
     ).stdout.trim();
     const runRea = async (args, artifact) => {
-      const result = await commands.exec(
+      const result = await interruption.exec(
         process.execPath,
         [cli, ...args, "--json"],
         {
@@ -333,7 +335,7 @@ await withVerifierCleanup(async () => {
     lifecycle.push("doctor");
     const result = await saveVerifierCommandOutput(
       () =>
-        commands.exec(
+        interruption.exec(
           command,
           [
             "--profile",
@@ -379,15 +381,19 @@ await withVerifierCleanup(async () => {
       await fixture?.close();
     },
   ]);
+  interruption.throwIfInterrupted();
   passed = true;
 }, [
   async () => {
+    const completed = await completeVerifierRun(verifier);
+    const reason = interruption.finish();
     const receipt = {
       client: "deepseek-harness",
       clientVersion,
       mode,
       lifecycle,
-      passed,
+      passed: passed && reason === undefined,
+      interruption: reason?.message,
       artifacts: lab,
       runtimeRoot,
       host: {
@@ -409,7 +415,7 @@ await withVerifierCleanup(async () => {
       finalSeen,
       requests: fixture?.requests,
       fixtureFailure: fixture?.failure,
-      verifier: await completeVerifierRun(verifier),
+      verifier: completed,
     };
     await withVerifierCleanup(
       () =>
@@ -420,5 +426,7 @@ await withVerifierCleanup(async () => {
         },
       ],
     );
+    if (passed && reason !== undefined) throw reason;
   },
+  () => interruption.finish(),
 ]);

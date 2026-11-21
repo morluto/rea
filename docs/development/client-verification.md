@@ -307,7 +307,10 @@ through the public CLI and checks that only caller patches remain. `HOME` and
 `USERPROFILE` point to the disposable account. The native default
 `~/.agents/skills` search path discovers
 the installed skill without a `DSH_AGENTS_HOME` override. A separate Git root prevents inherited project skills from
-masking a missing installation. The default `call` mode checks skill loading,
+masking a missing installation. SIGINT and SIGTERM cancel the active owned
+command and run cleanup before reporting failure. The receipt records the
+interruption and the kept artifacts include any captured headless output.
+The default `call` mode checks skill loading,
 complete catalog discovery, the actual forwarded input schemas and regexes,
 and full JavaScript Evidence for a Unicode path. Use `-- chat` for ordinary
 chat with REA enabled, or `REA_VERIFY_RUNTIME_ROOT` for an installed package.
