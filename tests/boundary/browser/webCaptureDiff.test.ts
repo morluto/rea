@@ -731,148 +731,196 @@ it("compares retained HTTP response and redirect facts without inventing missing
   });
 });
 
-describe("web capture diff incomplete inventories", () => {
-  it("compares observed script facts without treating excluded map declarations as absent", async () => {
-    const browser = await startFakeCdpBrowser();
-    browsers.push(browser);
-    const captured = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!captured.ok) throw captured.error;
-    const known = structuredClone(captured.value);
-    markSectionsComplete(known, ["scripts", "source_maps"]);
-    known.completeness.excluded = known.completeness.excluded.filter(
-      (item) => item.section !== "source_maps",
-    );
-    const script = known.scripts.items[0];
-    if (script === undefined) throw new Error("Missing captured script");
-    script.source_map_url = "https://cdn.example.test/app.js.map";
-    script.cdp_hash = "a".repeat(64);
-    script.length = 10;
-    script.is_module = false;
-    script.language = "JavaScript";
-    const excluded = structuredClone(known);
-    excluded.scripts.items[0]!.source_map_url = null;
-    excluded.completeness.policy_filtered_sections.push("source_maps");
-    excluded.completeness.excluded.push({
+const compareScripts = (before: WebPageInspection, after: WebPageInspection) =>
+  compareWebCaptures(
+    compareWebCapturesInputSchema.parse({
+      before: { inspection: before },
+      after: { inspection: after },
+    }),
+  ).dimensions.scripts;
+
+const expectScriptMembershipCoverage = (complete: WebPageInspection): void => {
+  const absent = structuredClone(complete);
+  absent.scripts = { total: 0, items: [] };
+  const added = [expect.objectContaining({ change: "added" })];
+  const removed = [expect.objectContaining({ change: "removed" })];
+  expect(compareScripts(complete, absent).changes).toEqual(removed);
+  expect(compareScripts(absent, complete).changes).toEqual(added);
+
+  const revise = structuredClone(complete);
+  const script = revise.scripts.items[0];
+  if (script === undefined) throw new Error("Expected a captured script");
+  script.url = `${script.url}?revision=2`;
+  const drop = (
+    inspection: WebPageInspection,
+    kind: "scripts" | "console_events",
+  ) => {
+    const completeness = inspection.completeness;
+    completeness.dropped_events[kind]++;
+    completeness.dropped_events.total++;
+    completeness.status = "truncated";
+    if (!completeness.conditions.includes("truncated"))
+      completeness.conditions = [
+        ...completeness.conditions.filter(
+          (condition) => condition !== "complete_within_window",
+        ),
+        "truncated",
+      ];
+  };
+  const unrelatedDrop = structuredClone(absent);
+  drop(unrelatedDrop, "console_events");
+  expect(compareScripts(complete, unrelatedDrop).changes).toEqual(removed);
+  expect(compareScripts(unrelatedDrop, complete).changes).toEqual(added);
+
+  const emptyUnknown = { status: "unknown", total_changes: 0, changes: [] };
+  for (const limit of [
+    ({ completeness }: WebPageInspection) => {
+      completeness.truncated_sections.push("scripts");
+    },
+    ({ completeness }: WebPageInspection) => {
+      completeness.unavailable_sections.push("scripts");
+    },
+    (inspection: WebPageInspection) => {
+      drop(inspection, "scripts");
+    },
+  ]) {
+    const incomplete = structuredClone(absent);
+    incomplete.scripts.total = complete.scripts.total;
+    limit(incomplete);
+    expect(compareScripts(complete, incomplete)).toMatchObject(emptyUnknown);
+    expect(compareScripts(incomplete, complete)).toMatchObject(emptyUnknown);
+
+    const retained = structuredClone(revise);
+    limit(retained);
+    expect(compareScripts(complete, retained).changes).toEqual(added);
+    expect(compareScripts(retained, complete).changes).toEqual(removed);
+  }
+};
+
+it("compares observed scripts without assuming inventory or declaration absence", async () => {
+  const browser = await startFakeCdpBrowser();
+  browsers.push(browser);
+  const captured = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!captured.ok) throw captured.error;
+  const known = structuredClone(captured.value);
+  markSectionsComplete(known, ["scripts", "source_maps"]);
+  known.completeness.excluded = known.completeness.excluded.filter(
+    (item) => item.section !== "source_maps",
+  );
+  const script = known.scripts.items[0];
+  if (script === undefined) throw new Error("Missing captured script");
+  script.source_map_url = "https://cdn.example.test/app.js.map";
+  script.cdp_hash = "a".repeat(64);
+  script.length = 10;
+  script.is_module = false;
+  script.language = "JavaScript";
+  const excluded = structuredClone(known);
+  excluded.scripts.items[0]!.source_map_url = null;
+  excluded.completeness.policy_filtered_sections.push("source_maps");
+  excluded.completeness.excluded.push({
+    section: "source_maps",
+    reason: "disallowed_origin",
+    count: 1,
+  });
+  const absent = structuredClone(known);
+  absent.scripts.items[0]!.source_map_url = null;
+  const changed = structuredClone(excluded);
+  changed.scripts.items[0]!.cdp_hash = "b".repeat(64);
+  const different = structuredClone(known);
+  different.scripts.items[0]!.source_map_url =
+    "https://cdn.example.test/other.map";
+  const unavailableBody = structuredClone(known);
+  unavailableBody.completeness.unavailable_sections.push("source_maps");
+  const absentWithUnavailableBody = structuredClone(absent);
+  absentWithUnavailableBody.completeness.unavailable_sections.push(
+    "source_maps",
+  );
+  const zeroOmissions = structuredClone(absent);
+  zeroOmissions.completeness.excluded.push({
+    section: "source_maps",
+    reason: "unsupported_url",
+    count: 0,
+  });
+  expectScriptMembershipCoverage(known);
+  const unknown = { status: "unknown", total_changes: 0, changes: [] };
+  const changedScript = { status: "changed", total_changes: 1 };
+  const unchanged = { status: "unchanged", total_changes: 0, changes: [] };
+  for (const [left, right] of [
+    [known, excluded],
+    [excluded, known],
+    [excluded, excluded],
+    [absent, excluded],
+  ] as const)
+    expect(compareScripts(left, right)).toMatchObject(unknown);
+  const repeated = structuredClone(excluded);
+  repeated.scripts.items.push(structuredClone(known.scripts.items[0]!));
+  const completeRepeated = structuredClone(different);
+  completeRepeated.scripts.items.push(
+    structuredClone(different.scripts.items[0]!),
+  );
+  for (const [left, right] of [
+    [repeated, completeRepeated],
+    [completeRepeated, repeated],
+  ] as const)
+    expect(compareScripts(left, right)).toMatchObject(changedScript);
+  const linkedBefore = structuredClone(repeated);
+  linkedBefore.scripts.items[0]!.cdp_hash = "b".repeat(64);
+  const linkedAfter = structuredClone(linkedBefore);
+  linkedAfter.scripts.items[1]!.source_map_url =
+    "https://cdn.example.test/new.map";
+  for (const [left, right] of [
+    [linkedBefore, linkedAfter],
+    [linkedAfter, linkedBefore],
+  ] as const)
+    expect(compareScripts(left, right)).toMatchObject(changedScript);
+  const ambiguous = structuredClone(linkedAfter);
+  ambiguous.scripts.items[0]!.cdp_hash = "a".repeat(64);
+  const ambiguousBefore = structuredClone(linkedBefore);
+  ambiguousBefore.scripts.items[0]!.cdp_hash = "a".repeat(64);
+  expect(compareScripts(ambiguousBefore, ambiguous)).toMatchObject(unknown);
+  const incompleteRepeated = structuredClone(repeated);
+  incompleteRepeated.completeness.truncated_sections.push("scripts");
+  expect(compareScripts(incompleteRepeated, completeRepeated)).toMatchObject(
+    changedScript,
+  );
+  const possibleMatch = structuredClone(completeRepeated);
+  possibleMatch.scripts.items[1]!.source_map_url = null;
+  possibleMatch.completeness.policy_filtered_sections.push("source_maps");
+  expect(compareScripts(repeated, possibleMatch)).toMatchObject(unknown);
+  for (const reason of [
+    "unsupported_url",
+    "invalid_protocol_value",
+    "resource_budget_exhausted",
+  ] as const) {
+    const omission = structuredClone(absent);
+    omission.completeness.excluded.push({
       section: "source_maps",
-      reason: "disallowed_origin",
+      reason,
       count: 1,
     });
-    const absent = structuredClone(known);
-    absent.scripts.items[0]!.source_map_url = null;
-    const changed = structuredClone(excluded);
-    changed.scripts.items[0]!.cdp_hash = "b".repeat(64);
-    const different = structuredClone(known);
-    different.scripts.items[0]!.source_map_url =
-      "https://cdn.example.test/other.map";
-    const unavailableBody = structuredClone(known);
-    unavailableBody.completeness.unavailable_sections.push("source_maps");
-    const compare = (before: typeof known, after: typeof known) =>
-      compareWebCaptures(
-        compareWebCapturesInputSchema.parse({
-          before: { inspection: before },
-          after: { inspection: after },
-        }),
-      ).dimensions.scripts;
-    for (const [left, right] of [
-      [known, excluded],
-      [excluded, known],
-      [excluded, excluded],
-      [absent, excluded],
-    ] as const)
-      expect(compare(left, right)).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
-      });
-    const repeated = structuredClone(excluded);
-    repeated.scripts.items.push(structuredClone(known.scripts.items[0]!));
-    const completeRepeated = structuredClone(different);
-    completeRepeated.scripts.items.push(
-      structuredClone(different.scripts.items[0]!),
-    );
-    for (const [left, right] of [
-      [repeated, completeRepeated],
-      [completeRepeated, repeated],
-    ] as const)
-      expect(compare(left, right)).toMatchObject({
-        status: "changed",
-        total_changes: 1,
-      });
-    const linkedBefore = structuredClone(repeated);
-    linkedBefore.scripts.items[0]!.cdp_hash = "b".repeat(64);
-    const linkedAfter = structuredClone(linkedBefore);
-    linkedAfter.scripts.items[1]!.source_map_url =
-      "https://cdn.example.test/new.map";
-    for (const [left, right] of [
-      [linkedBefore, linkedAfter],
-      [linkedAfter, linkedBefore],
-    ] as const)
-      expect(compare(left, right)).toMatchObject({
-        status: "changed",
-        total_changes: 1,
-      });
-    const ambiguous = structuredClone(linkedAfter);
-    ambiguous.scripts.items[0]!.cdp_hash = "a".repeat(64);
-    const ambiguousBefore = structuredClone(linkedBefore);
-    ambiguousBefore.scripts.items[0]!.cdp_hash = "a".repeat(64);
-    expect(compare(ambiguousBefore, ambiguous)).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-    const incompleteRepeated = structuredClone(repeated);
-    incompleteRepeated.completeness.truncated_sections.push("scripts");
-    expect(compare(incompleteRepeated, completeRepeated)).toMatchObject({
-      status: "changed",
-      total_changes: 1,
-    });
-    const possibleMatch = structuredClone(completeRepeated);
-    possibleMatch.scripts.items[1]!.source_map_url = null;
-    possibleMatch.completeness.policy_filtered_sections.push("source_maps");
-    expect(compare(repeated, possibleMatch)).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-    for (const reason of [
-      "unsupported_url",
-      "invalid_protocol_value",
-      "resource_budget_exhausted",
-    ] as const) {
-      const omission = structuredClone(absent);
-      omission.completeness.excluded.push({
-        section: "source_maps",
-        reason,
-        count: 1,
-      });
-      expect(compare(known, omission)).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
-      });
-    }
-    for (const [left, right] of [
-      [known, known],
-      [absent, absent],
-      [known, unavailableBody],
-    ] as const)
-      expect(compare(left, right)).toMatchObject({
-        status: "unchanged",
-        total_changes: 0,
-      });
-    for (const [left, right] of [
-      [known, different],
-      [absent, known],
-      [excluded, changed],
-    ] as const)
-      expect(compare(left, right)).toMatchObject({
-        status: "changed",
-        total_changes: 1,
-      });
-  });
+    expect(compareScripts(known, omission)).toMatchObject(unknown);
+  }
+  for (const [left, right] of [
+    [known, known],
+    [absent, absent],
+    [known, unavailableBody],
+  ] as const)
+    expect(compareScripts(left, right)).toMatchObject(unchanged);
+  for (const [left, right] of [
+    [known, different],
+    [absent, known],
+    [known, absentWithUnavailableBody],
+    [known, zeroOmissions],
+    [excluded, changed],
+  ] as const)
+    expect(compareScripts(left, right)).toMatchObject(changedScript);
 });
 
 it("compares partial source-map declarations against compatible script occurrences", async () => {
@@ -1000,64 +1048,6 @@ it("compares partial source-map declarations against compatible script occurrenc
     true,
   );
   expect(compare(repeated, repeated)).toMatchObject(unknown);
-});
-
-describe("web capture diff script inventory coverage", () => {
-  it.each(["truncated_sections", "unavailable_sections"] as const)(
-    "does not infer script additions or removals from %s",
-    async (section) => {
-      const browser = await startFakeCdpBrowser();
-      browsers.push(browser);
-      const captured = await new CdpBrowserProvider().inspectPage(
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          allowed_origins: [browser.allowedOrigin],
-          target_id: "allowed-page",
-          observation_ms: 0,
-        }),
-      );
-      if (!captured.ok) throw captured.error;
-      const complete = structuredClone(captured.value);
-      markSectionsComplete(complete, ["scripts"]);
-      expect(complete.scripts.items).toHaveLength(1);
-      const incomplete = structuredClone(complete);
-      incomplete.scripts.items = [];
-      incomplete.completeness[section].push("scripts");
-      const compare = (before: typeof complete, after: typeof complete) =>
-        compareWebCaptures(
-          compareWebCapturesInputSchema.parse({
-            before: { inspection: before },
-            after: { inspection: after },
-          }),
-        ).dimensions.scripts;
-
-      expect(compare(complete, incomplete)).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
-        changes: [],
-      });
-      expect(compare(incomplete, complete)).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
-        changes: [],
-      });
-      markSectionsComplete(incomplete, ["scripts"]);
-      expect(compare(complete, incomplete).changes).toEqual([
-        expect.objectContaining({ change: "removed" }),
-      ]);
-      expect(compare(incomplete, complete).changes).toEqual([
-        expect.objectContaining({ change: "added" }),
-      ]);
-      const modified = structuredClone(complete);
-      modified.completeness[section].push("scripts");
-      const script = modified.scripts.items[0];
-      if (script === undefined) throw new Error("Missing captured script");
-      script.url = `${script.url}?revision=2`;
-      expect(compare(complete, modified).changes).toEqual([
-        expect.objectContaining({ change: "added" }),
-      ]);
-    },
-  );
 });
 
 it("compares retained accessibility and storage facts across incomplete captures", async () => {
