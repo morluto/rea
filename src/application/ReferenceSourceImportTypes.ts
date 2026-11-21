@@ -1,8 +1,10 @@
+import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import type {
@@ -71,12 +73,14 @@ export const referenceSourceImportAnalysisError = (
   };
   let primary: AnalysisError;
   switch (error.code) {
-    case "cancelled":
-      primary = new AnalysisCancelledError("import_reference_source", {
-        ...options,
+    case "cancelled": {
+      const { cause: reason, ...rest } = options;
+      primary = cancelledBy("import_reference_source", carriedReason(reason), {
+        ...rest,
         userMessage: message,
       });
       break;
+    }
     case "invalid-root":
       primary = new AnalysisInputError(
         "import_reference_source",
@@ -115,9 +119,10 @@ export const referenceSourceImportAnalysisError = (
     ? primary
     : analysisErrorWithCancellation(
         primary,
-        new AnalysisCancelledError("import_reference_source", {
-          cause: error.secondaryCancellation.cause,
-        }),
+        cancelledBy(
+          "import_reference_source",
+          carriedReason(error.secondaryCancellation.cause),
+        ),
       );
 };
 
@@ -130,6 +135,8 @@ export interface ReferenceSourceImportOptions {
   readonly importer?: string;
   readonly importerVersion?: string | null;
   readonly excludePaths?: readonly string[];
+  /** Accepted member-mutation work allowance; absent means the default. */
+  readonly memberMutationAllowance?: JavaScriptMemberMutationAllowance;
 }
 
 export const DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS = [

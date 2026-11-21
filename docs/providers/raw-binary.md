@@ -65,7 +65,7 @@ original compiler or ABI of a headerless target. Ghidra's x86 languages do not
 provide a compiler specification named `default`.
 
 Those settings, the caller-supplied entry, and `language_selection:
-caller-supplied-v1` are committed in the analysis profile. A different entry
+caller-supplied` are committed in the analysis profile. A different entry
 or architecture is a different profile; snapshots from header-detected targets
 do not replay.
 
@@ -219,21 +219,15 @@ Identity has two levels:
 Neither level covers spellings: `0x08000000` and `0x8000000` are the same base,
 an omitted `vector_table_address` equals an explicit one at the base, and REA
 reports canonical addresses only. No result retains the spelling a caller used
-yet; the
-[decision record](../adr/firmware/arm-m-profile-raw-loads.md#known-gap)
-describes that gap.
+yet. A caller that needs its spelling keeps its own request: an MCP client
+already holds its arguments, and a CLI caller can save its command beside the
+Evidence it writes, together with its `evidence_id`.
 
 These inputs leave a load without them exactly as REA loaded it before: its
 analysis profile, snapshot target and `raw-binary` load image are unchanged, so
 its saved load images stay readable and its snapshots replay wherever they did
 without these inputs. REA versions without these inputs cannot replay a
 snapshot of a load that uses them, because its analysis profile differs.
-
-### Decision record
-
-The [ARM M-profile raw load decision](../adr/firmware/arm-m-profile-raw-loads.md)
-records why these inputs take this shape, the rejected alternatives, the owners
-and consumers of each part, and the costs of a later change.
 
 ## NMOS 6502
 
@@ -291,8 +285,8 @@ entry explicitly. Windows Ghidra P0 does not admit m68k.
 annotated hex in the verifier, so it needs no assembler. The lane checks real
 CLI/MCP load-image parity, mapped bytes, a decoded call, decompilation by address
 and file offset, misaligned and out-of-range mappings, unchanged source bytes and
-runtime cleanup. It has been run with Ghidra 12.1.4 on macOS; Linux has not been
-exercised.
+runtime cleanup. Recorded on Ghidra 12.1.4 (no longer accepted); not yet re-run
+on 12.2. The recorded run was on macOS; Linux has not been exercised.
 
 ## Limitations
 

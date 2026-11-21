@@ -287,7 +287,7 @@ async function verifyCase(fixture) {
   // Without processor-defined labels, Reset is the only entry Ghidra reports.
   assert.equal(
     image.analysis_profile.parameters.processor_labels,
-    "not-applied-v1",
+    "not-applied",
   );
   assert.deepEqual(
     loaded.observations.entry_points,
@@ -577,7 +577,7 @@ async function verifyIdentityAndSnapshots() {
   const snapshot = parseAnalysisSnapshot(
     JSON.parse(await readFile(snapshotPath, "utf8")),
   );
-  assert.equal(snapshot.target.raw_load?.version, 1);
+  assert.equal(snapshot.target.identity.selection?.raw_load?.version, 1);
   // A base spelling is not identity; the snapshot replays.
   await call("open_binary", {
     ...mProfile,
@@ -614,7 +614,7 @@ async function call(name, args = {}, targetSha256) {
     return requireMcpLifecycleResult(result, name);
   const evidence = parseEvidence(requireMcpOutput(result, name));
   if (targetSha256 !== undefined)
-    assert.equal(evidence.subject.digest.sha256, targetSha256);
-  assert.equal(evidence.subject.format, "raw-binary");
+    assert.equal(evidence.subject.identity.sha256, targetSha256);
+  assert.equal(evidence.subject.identity.format, "raw-binary");
   return evidence;
 }

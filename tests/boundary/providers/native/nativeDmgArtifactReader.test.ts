@@ -13,24 +13,22 @@ import { build } from "plist";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import {
-  ExecFileOutputCancelledError,
-  execFileOutput,
-} from "../../../../src/process/ExecFileOutput.js";
+import { execFileOutput } from "../../../../src/process/ExecFileOutput.js";
+import { OwnedCommandFailure } from "../../../../src/process/OwnedCommand.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOmission,
-} from "../../../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import { DirectoryArtifactReader } from "../../../../src/artifacts/DirectoryArtifactReader.js";
+} from "../../../../src/resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
 } from "../../../../src/artifacts/NativeDmgArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../../src/artifacts/inventory/scanCanonical.js";
+import { DirectoryArtifactReader } from "../../../../src/resources/index.js";
 
 const createAttachedReader = async (
   path: string,
@@ -960,7 +958,15 @@ describe("DMG attach cancellation and preexisting mounts", () => {
       const reason = { request: "cancel DMG attach" };
       const commandFailure =
         kind === "owned cancellation"
-          ? new ExecFileOutputCancelledError(reason)
+          ? new OwnedCommandFailure(
+              "cancelled",
+              "Command cancelled.",
+              null,
+              null,
+              {
+                cancellation: { reason },
+              },
+            )
           : Object.assign(new Error("attach aborted"), { name: "AbortError" });
       const mount = createMountFixture();
       let markAttachStarted = (): void => {};
@@ -1615,6 +1621,8 @@ describe("native DMG checksum-free images", () => {
           ),
         ],
       },
+      // The mounted directory declares its own complete traversal.
+      { status: "complete", limitations: [] },
     ]);
     expect(
       reader
@@ -1679,12 +1687,12 @@ describe("native DMG real verification diagnostics", () => {
           expect(failure.message).toContain('"exitCode":1');
           expect(failure.message).toContain('"stdout":""');
           expect(failure.message).toContain("unable to recognize");
-          expect(failure.cause).toBeInstanceOf(Error);
-          if (!(failure.cause instanceof Error)) continue;
-          expect(Reflect.get(failure.cause, "code")).toBe(1);
-          expect(Reflect.get(failure.cause, "stderr")).toContain(
-            expectedDiagnostic,
-          );
+          // The cause is the exit hdiutil reported, with its diagnostics.
+          expect(failure.cause).toMatchObject({
+            command: "/usr/bin/hdiutil",
+            exitCode: 1,
+            stderr: expect.stringContaining(expectedDiagnostic) as unknown,
+          });
         }
       } finally {
         await chmod(unreadablePath, 0o600);
@@ -1746,16 +1754,18 @@ describe("native DMG real verification diagnostics", () => {
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
       if (!(failure instanceof ArtifactReaderFailure)) return;
       expect(failure.reason).toBe("integrity");
+      expect(failure.integrityCheck).toBe("image-checksum");
       expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
       expect(failure.message).toContain('"arguments":["verify"');
       expect(failure.message).toContain('"exitCode":1');
       // hdiutil localizes the CRC labels and failure reason, but not this status line.
       expect(failure.message).toContain("CRC32");
       expect(failure.message).toContain("is INVALID");
-      expect(failure.cause).toBeInstanceOf(Error);
-      if (!(failure.cause instanceof Error)) return;
-      expect(Reflect.get(failure.cause, "code")).toBe(1);
-      expect(Reflect.get(failure.cause, "stderr")).toContain("is INVALID");
+      expect(failure.cause).toMatchObject({
+        command: "/usr/bin/hdiutil",
+        exitCode: 1,
+        stderr: expect.stringContaining("is INVALID") as unknown,
+      });
     },
   );
 });

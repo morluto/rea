@@ -2,16 +2,36 @@ import { describe, expect, it, vi } from "vitest";
 
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import type { ProcessLifecycle } from "../process/ProcessLifecycle.js";
+import * as linuxSampling from "../process/capture/LinuxProcessSampling.js";
+import { samplingObservation } from "../process/capture/ProcessSamplingObservation.js";
 import {
   SessionObservations,
   observedSession,
   recordWindows,
+  sampleOpenFiles,
   sampleProcesses,
   sampleTokenCarriers,
   trackProcess,
   type SessionProcfs,
 } from "./DesktopSessionObservations.js";
-import type { ObservedWindow } from "./X11WindowObserver.js";
+import type { ObservedWindow } from "../ports/DesktopApplicationSession.js";
+
+const descriptorTargets = vi.hoisted(() => new Map<string, () => string>());
+
+vi.mock("node:fs/promises", async (original) => {
+  const native = await original<typeof import("node:fs/promises")>();
+  return {
+    ...native,
+    readdir: async (...args: Parameters<typeof native.readdir>) =>
+      descriptorTargets.has(`${String(args[0])}/3`)
+        ? ["3"]
+        : native.readdir(...args),
+    readlink: async (...args: Parameters<typeof native.readlink>) => {
+      const target = descriptorTargets.get(String(args[0]));
+      return target === undefined ? native.readlink(...args) : target();
+    },
+  };
+});
 
 interface FakeProcess {
   readonly parentPid: number;
@@ -27,20 +47,26 @@ const procfs = (
 ): SessionProcfs => ({
   stat: async (pid) => {
     const entry = table.get(pid);
-    return entry === undefined
-      ? undefined
-      : {
-          parentPid: entry.parentPid,
-          startTime: entry.startTime,
-          lifecycle: entry.lifecycle ?? "non-zombie",
-        };
+    return samplingObservation(
+      entry === undefined
+        ? undefined
+        : {
+            pid,
+            parent_pid: entry.parentPid,
+            process_group_id: pid,
+            session_id: pid,
+            startTime: entry.startTime,
+            lifecycle: entry.lifecycle ?? "non-zombie",
+            command: "",
+          },
+    );
   },
   children: async (pid) =>
     [...table]
       .filter(([, entry]) => entry.parentPid === pid)
       .map(([child]) => child),
   runId: async (pid) => table.get(pid)?.runId,
-  command: async (pid) => `process ${String(pid)}`,
+  command: async (pid) => samplingObservation(`process ${String(pid)}`),
   tokenCarriers: async (runId) =>
     tableReadable
       ? [...table]
@@ -86,6 +112,51 @@ const startedBy = (observations: SessionObservations) =>
   );
 
 const signal = new AbortController().signal;
+
+it.each([100, 101])(
+  "discards metadata from a new PID generation during discovery of %i",
+  async (pid) => {
+    const table = new Map<number, FakeProcess>([
+      [pid, { parentPid: 1, startTime: "11", runId: "run" }],
+    ]);
+    const observations = new SessionObservations(
+      performance.now(),
+      { runId: "run", launchPid: 100 },
+      { names: new Set(), byPid: true },
+      {
+        ...procfs(table),
+        command: async () => {
+          table.set(pid, { parentPid: 1, startTime: "22" });
+          return samplingObservation("replacement process");
+        },
+      },
+    );
+
+    await trackProcess(observations, pid, signal);
+
+    expect(observedSession(observations).processes).toEqual(
+      pid === 100
+        ? [
+            expect.objectContaining({
+              pid,
+              parent_pid: process.pid,
+              command: "",
+              started_by_capture: true,
+            }),
+          ]
+        : [],
+    );
+    expect(observations.liveProcessIds()).toEqual([]);
+
+    await trackProcess(observations, pid, signal);
+
+    expect(observedSession(observations).processes.at(-1)).toMatchObject({
+      pid,
+      command: "replacement process",
+      started_by_capture: false,
+    });
+  },
+);
 
 describe("SessionObservations", () => {
   it("counts a process as started when its parent chain reaches the launch, even without a readable token", async () => {
@@ -260,6 +331,30 @@ describe("sampleTokenCarriers", () => {
   });
 });
 
+it("records open files only from the observed process generation", async () => {
+  const table = new Map<number, FakeProcess>([
+    [100, { parentPid: 1, startTime: "10", runId: "run" }],
+    [101, { parentPid: 100, startTime: "11", runId: "run" }],
+  ]);
+  const observations = observe(table);
+  await trackProcess(observations, 100, signal);
+  await trackProcess(observations, 101, signal);
+  descriptorTargets.set("/proc/100/fd/3", () => "/scope/stable (deleted)");
+  descriptorTargets.set("/proc/101/fd/3", () => {
+    table.set(101, { parentPid: 100, startTime: "22" });
+    return "/scope/replacement";
+  });
+
+  try {
+    await sampleOpenFiles(observations, ["/scope"], signal);
+    expect(
+      observedSession(observations).opened_files.map(({ path }) => path),
+    ).toEqual(["/scope/stable"]);
+  } finally {
+    descriptorTargets.clear();
+  }
+});
+
 it("keeps a failed optional token-table probe unknown", async () => {
   const observations = new SessionObservations(
     performance.now(),
@@ -299,6 +394,13 @@ it("keeps a failed optional process-token read unknown", async () => {
     .mockRejectedValue(
       Object.assign(new Error("token read failed"), { code: "EIO" }),
     );
+  const stat = vi
+    .spyOn(linuxSampling, "readLinuxProcessStat")
+    .mockImplementation(
+      procfs(
+        new Map([[process.pid, { parentPid: process.ppid, startTime: "10" }]]),
+      ).stat,
+    );
   try {
     await trackProcess(observations, process.pid, new AbortController().signal);
     expect(environment).toHaveBeenCalledTimes(1);
@@ -306,6 +408,7 @@ it("keeps a failed optional process-token read unknown", async () => {
       expect.objectContaining({ pid: process.pid, started_by_capture: true }),
     ]);
   } finally {
+    stat.mockRestore();
     environment.mockRestore();
   }
 });

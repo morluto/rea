@@ -36,14 +36,18 @@ export const unavailableViewCoverage = (): z.output<
   exhausted: false,
 });
 
-/** Coverage for a summary, facet, or single selected object. */
+/**
+ * Coverage for a summary, facet, or single selected object that returns every
+ * record of its source collection. The view examined exactly the records it
+ * returns; whether the producer's collection is complete stays in the parent
+ * Evidence's own coverage and limitations.
+ */
 export const completeWithinViewCoverage = (
-  examined: number,
-  total: number,
+  returned: number,
 ): AnalysisViewCoverage => ({
   status: "complete-within-view",
-  examined,
-  total,
+  examined: returned,
+  total: returned,
   next_offset: null,
   exhausted: true,
 });

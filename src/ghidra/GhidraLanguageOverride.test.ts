@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,7 +21,7 @@ import {
   readGhidraLanguageCatalog,
 } from "./GhidraLanguageCatalog.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { rawLoadAtEntry } from "../domain/rawBinary.fixture.js";
 
 // Abbreviated from Ghidra 12.1.4 Processors/x86/data/languages/x86.ldefs.
@@ -115,6 +116,18 @@ beforeAll(async () => {
 afterAll(async () => {
   await disposeInstallDir?.();
 });
+
+const lowScoreDosCom = async (target: BinaryTarget): Promise<BinaryTarget> => {
+  const directory = await createTestTempDirectory("rea-com-profile-");
+  const path = join(directory, "fixture.com");
+  const bytes = Buffer.from("b83412c3", "hex");
+  await writeFile(path, bytes);
+  return {
+    ...target,
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+};
 
 const provider = (environment: Record<string, string>) => {
   const parsed = parseConfig({
@@ -349,7 +362,7 @@ describe("Ghidra language override profile", () => {
       loader: "auto-from-header",
       language_id: "x86:LE:32:default",
       compiler_spec_id: "borlandcpp",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     expect(ghidraProfileLanguageOverride(parameters)).toEqual({
       languageId: "x86:LE:32:default",
@@ -374,7 +387,7 @@ describe("Ghidra language override profile", () => {
       expect(resolved.value.profile?.parameters).toMatchObject({
         language_id: "MIPS:LE:32:default",
         compiler_spec_id: "default",
-        language_selection: "configured-v1",
+        language_selection: "configured",
       });
     } finally {
       await rm(mipsLanguages, { recursive: true, force: true });
@@ -447,7 +460,9 @@ describe("Ghidra language override profile", () => {
           ],
         },
       });
-      const automatic = await provider({}).resolveAnalysisProfile(target);
+      const admitted =
+        format === "dos-com" ? await lowScoreDosCom(target) : target;
+      const automatic = await provider({}).resolveAnalysisProfile(admitted);
       expect(automatic.ok).toBe(true);
     },
   );

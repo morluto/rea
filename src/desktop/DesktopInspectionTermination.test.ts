@@ -1,4 +1,4 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { retainProcessInspectionCleanup } from "../providers/OwnedCommandCleanup.js";
@@ -24,11 +24,11 @@ vi.mock("./DesktopSessionObservations.js", async (original) => ({
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { ProcessOwnershipIdentityBatchFailure } from "../process/ProcessInspectionCancellation.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
+import { runDesktopSession } from "./DesktopApplicationSession.js";
 import {
   DesktopSessionCleanupError,
-  runDesktopSession,
   type DesktopSessionOutcome,
-} from "./DesktopApplicationSession.js";
+} from "../ports/DesktopApplicationSession.js";
 import type { X11WindowObserver } from "./X11WindowObserver.js";
 
 const inspectionContext = (

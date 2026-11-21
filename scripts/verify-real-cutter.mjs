@@ -5,21 +5,12 @@ import {
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 import { createHash, randomUUID } from "node:crypto";
-import {
-  access,
-  constants,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, constants, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { createServer } from "../dist/server/createServer.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const cli = resolve("scripts/rea.mjs");
 const runCli = async (...arguments_) => {
@@ -58,12 +49,14 @@ if (process.env.EXPECTED_PLATFORM !== undefined) {
     "Cutter runner did not match its declared platform.",
   );
 }
-const projectRoot = await mkdtemp(join(tmpdir(), "rea-cutter-smoke-"));
+const projectFixture = await VerifierFixture.open({
+  prefix: "rea-cutter-smoke-",
+  private: false,
+});
+const projectRoot = projectFixture.path;
+// The package command owner releases the fixture after its commands close.
 const commands = await createPackageVerifierCommands({
-  workspace: {
-    path: projectRoot,
-    close: () => rm(projectRoot, { recursive: true, force: true }),
-  },
+  workspace: { path: projectRoot, close: () => projectFixture.release() },
 });
 const projectPath = join(projectRoot, "smoke.rzdb");
 await withVerifierCleanup(async () => {
@@ -108,6 +101,10 @@ await withVerifierCleanup(async () => {
   );
   assert.equal(typeof inspection.raw_result.bin?.arch, "string");
 
+  const [{ Client, InMemoryTransport }, { createServer }] = await Promise.all([
+    import("@modelcontextprotocol/client"),
+    import("../dist/server/createServer.js"),
+  ]);
   const mcpServer = createServer(
     { kind: "fixed", analysis: unavailableAnalysis },
     {

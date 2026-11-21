@@ -12,7 +12,7 @@ import {
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
   type CatalogIdentity,
-} from "../catalogDiscovery.js";
+} from "../contracts/catalog/catalogDiscovery.js";
 
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {
@@ -145,7 +145,7 @@ export class ProgressiveToolCatalog {
           },
           {
             remediationAction:
-              "Reduce limit or request fewer exact names, then retry. For one oversized input contract, reconnect with REA_MCP_INPUT_SCHEMA_PROFILE=compact.",
+              "Reduce limit or request fewer exact names, then retry.",
           },
         ),
         false,

@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
@@ -21,6 +22,141 @@ const shortcutContract = (() => {
     throw new Error("Missing inspect_windows_shortcut contract");
   return contract;
 })();
+
+cliTest.for([
+  { target: "C:\\Tools\\\x83A.exe", icon: "C:\\Tools\\\x83a.exe" },
+  { target: "C:\\Tools\\\x82\x60.exe", icon: "C:\\Tools\\\x82\x81.exe" },
+])(
+  "preserves opaque ANSI path facts through compiled CLI and stdio MCP: $target",
+  async ({ target, icon }, { cli }) => {
+    const root = await createTestTempDirectory("rea-shortcut-ansi-cli-");
+    const path = join(root, "shortcut.lnk");
+    const bytes = windowsShortcutBytes({
+      unicode: false,
+      idList: null,
+      relativePath: "",
+      linkInfo: { localBasePath: target },
+      extraData: [],
+      iconLocation: icon,
+    });
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-windows-shortcut", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_windows_shortcut", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    for (const value of [result.json, response.structuredContent]) {
+      const evidence = shortcutContract.outputSchema.parse(value);
+      const report = evidence.normalized_result;
+      expect(report.artifact.sha256).toBe(
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+      expect(report.link_info?.local_base_path).toBe(target);
+      expect(report.string_data.icon_location?.value).toBe(icon);
+      expect(report.coverage.status).toBe("complete");
+      expect(report.observations).toEqual(
+        expect.arrayContaining([
+          {
+            kind: "icon_location_differs_from_target",
+            evidence_kind: "derived",
+            value: null,
+          },
+          {
+            kind: "target_extension",
+            evidence_kind: "derived",
+            extension: ".exe",
+          },
+        ]),
+      );
+    }
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
+
+cliTest(
+  "preserves unreadable environment target uncertainty through CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-shortcut-environment-cli-");
+    const iconLocation = "C:\\Tools\\icon.exe";
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
+    for (const {
+      kind,
+      localBasePath,
+      expectedDifference,
+      expectedExtension,
+    } of [
+      {
+        kind: "environment",
+        localBasePath: "C:\\Tools\\other.dll",
+        expectedDifference: null,
+        expectedExtension: null,
+      },
+      {
+        kind: "environment",
+        localBasePath: iconLocation,
+        expectedDifference: false,
+        expectedExtension: null,
+      },
+      {
+        kind: "icon_environment",
+        localBasePath: "C:\\Tools\\other.dll",
+        expectedDifference: true,
+        expectedExtension: ".dll",
+      },
+    ] as const) {
+      const valid = windowsShortcutBytes({
+        idList: null,
+        relativePath: "",
+        linkInfo: { localBasePath },
+        iconLocation,
+        extraData: [{ kind, unicode: iconLocation }],
+      });
+      const terminal = valid.length - 4;
+      const blockOffset = terminal - 0x314;
+      const tail = Buffer.from([0xab, 0xcd]);
+      const bytes = Buffer.concat([
+        valid.subarray(0, terminal),
+        tail,
+        valid.subarray(terminal),
+      ]);
+      bytes.writeUInt32LE(0x314 + tail.length, blockOffset);
+      const path = join(root, `${kind}-${String(expectedDifference)}.lnk`);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-windows-shortcut", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const response = await call("inspect_windows_shortcut", { path });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      for (const value of [result.json, response.structuredContent]) {
+        const { normalized_result: report } =
+          shortcutContract.outputSchema.parse(value);
+        expect(report.coverage).toMatchObject({
+          status: "partial",
+          failing_offset: blockOffset,
+        });
+        expect(report.extra_data.blocks[0]?.decoded.kind).toBe("raw");
+        expect(report.observations).toEqual(
+          expect.arrayContaining([
+            {
+              kind: "icon_location_differs_from_target",
+              evidence_kind: "derived",
+              value: expectedDifference,
+            },
+            {
+              kind: "target_extension",
+              evidence_kind: "derived",
+              extension: expectedExtension,
+            },
+          ]),
+        );
+      }
+    }
+  },
+);
 
 cliTest(
   "preserves pre-epoch shortcut timestamps through CLI and stdio MCP",

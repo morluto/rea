@@ -4,6 +4,7 @@ import {
   admitsCanonicalPathSyntax,
   hasScheme,
   looksExternal,
+  percentDecodeUrlPath,
   stripQueryAndFragment,
 } from "./artifactPathSyntax.js";
 
@@ -47,4 +48,14 @@ describe("artifact path syntax", () => {
     expect(admitsCanonicalPathSyntax("./%2Fapp.js")).toBe(false);
     expect(admitsCanonicalPathSyntax("./%5capp.js")).toBe(false);
   });
+});
+
+it.each([
+  ["./路𐐷/caf%C3%a9%20menu.js", "./路𐐷/café menu.js"],
+  ["./a%20literal%zz%25.js", "./a literal%zz%.js"],
+  ["./%F0%90%90%B7.js", "./𐐷.js"],
+  ["./%C3.js", null],
+  ["./%00.js", null],
+])("preserves URL path decoding for %j", (input, expected) => {
+  expect(percentDecodeUrlPath(input)).toBe(expected);
 });

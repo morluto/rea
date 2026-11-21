@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { expect, it } from "vitest";
 
 import {
@@ -13,10 +14,14 @@ const replaceLauncher = (source: string, format: ClientConfigurationFormat) => {
   const existing = parsed.servers.rea;
   if (typeof existing !== "object" || existing === null)
     throw new Error("fixture registration missing");
-  const document = withClientServers(parsed, {
-    ...parsed.servers,
-    rea: { ...existing, command: "new-rea" },
-  });
+  const document = withClientServers(
+    parsed,
+    {
+      ...parsed.servers,
+      rea: { ...existing, command: "new-rea" },
+    },
+    HOST_PLATFORM.platform,
+  );
   const result = serializeClientConfiguration(document, format, source, [
     clientServerPath(parsed, "rea"),
   ]);
@@ -67,13 +72,17 @@ it("retains nested array tokens while changing siblings, shrinking and extending
   const source = `{"mcpServers":{"rea":{"command":"rea","items":[{"opaque":9007199254740993,"label":"old"},2,3],"grow":[9007199254740993]}}}`;
   const parsed = parseClientConfiguration(source, "json");
   const result = serializeClientConfiguration(
-    withClientServers(parsed, {
-      rea: {
-        command: "rea",
-        items: [{ opaque: 9007199254740992, label: "new" }],
-        grow: [9007199254740992, 4],
+    withClientServers(
+      parsed,
+      {
+        rea: {
+          command: "rea",
+          items: [{ opaque: 9007199254740992, label: "new" }],
+          grow: [9007199254740992, 4],
+        },
       },
-    }),
+      HOST_PLATFORM.platform,
+    ),
     "json",
     source,
     [clientServerPath(parsed, "rea")],
@@ -90,7 +99,11 @@ it("retains source tokens when the caller supplies a whole edited document", () 
   const source = `{"opaque":9007199254740993,"mcpServers":{"rea":{"command":"old"}}}`;
   const parsed = parseClientConfiguration(source, "fx");
   const result = serializeClientConfiguration(
-    withClientServers(parsed, { rea: { command: "new" } }),
+    withClientServers(
+      parsed,
+      { rea: { command: "new" } },
+      HOST_PLATFORM.platform,
+    ),
     "fx",
     source,
   );
@@ -103,13 +116,17 @@ it("removes all repeated nested fields without activating an earlier value", () 
   const source = `{"mcpServers":{"rea":{"remove":1,"remove":2,"retain":9007199254740993,"command":"old"}}}`;
   const parsed = parseClientConfiguration(source, "json");
   const result = serializeClientConfiguration(
-    withClientServers(parsed, {
-      rea: {
-        retain: 9007199254740992,
-        command: "new",
-        added: { enabled: true },
+    withClientServers(
+      parsed,
+      {
+        rea: {
+          retain: 9007199254740992,
+          command: "new",
+          added: { enabled: true },
+        },
       },
-    }),
+      HOST_PLATFORM.platform,
+    ),
     "json",
     source,
     [clientServerPath(parsed, "rea")],
@@ -132,7 +149,7 @@ it.each([
   const source = `{"mcpServers":{"rea":{"items":[1,2,],"old":3,}}}`;
   const parsed = parseClientConfiguration(source, "fx");
   const result = serializeClientConfiguration(
-    withClientServers(parsed, { rea }),
+    withClientServers(parsed, { rea }, HOST_PLATFORM.platform),
     "fx",
     source,
     [clientServerPath(parsed, "rea")],

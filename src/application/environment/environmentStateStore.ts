@@ -12,6 +12,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { Budget } from "../../domain/budget.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { jsonByteLength } from "../../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -133,7 +134,7 @@ export class EnvironmentStateStore {
   /** Entities served deletes kept for an application that still answers a deleted record by id, oldest first. */
   readonly #deleted = new Map<string, StateEntity>();
   /** Their UTF-8 bytes, kept within what `data/add` loads by dropping the oldest. */
-  #deletedBytes = 0;
+  readonly #deletedBytes = new Budget(STATE_INTAKE_LIMIT_BYTES);
 
   constructor(readonly state: EnvironmentState) {
     this.#types = new Map(
@@ -225,7 +226,7 @@ export class EnvironmentStateStore {
     this.#knownCollections.clear();
     this.#collectionHistoryBytes = 0;
     this.#deleted.clear();
-    this.#deletedBytes = 0;
+    this.#deletedBytes.restore(0);
     for (const [type, collections] of this.#typeCollections)
       for (const collection of collections)
         this.#rememberCollection(type, collection);
@@ -414,15 +415,18 @@ export class EnvironmentStateStore {
     const earlier = this.#deleted.get(key);
     if (earlier !== undefined) {
       this.#deleted.delete(key);
-      this.#deletedBytes -= jsonByteLength(earlier);
+      this.#deletedBytes.refund(jsonByteLength(earlier));
     }
-    this.#deleted.set(key, entity);
-    this.#deletedBytes += jsonByteLength(entity);
-    for (const [oldest, dropped] of this.#deleted) {
-      if (this.#deletedBytes <= STATE_INTAKE_LIMIT_BYTES) break;
-      this.#deleted.delete(oldest);
-      this.#deletedBytes -= jsonByteLength(dropped);
-    }
+    const kept = this.#deletedBytes.chargeEvicting(
+      jsonByteLength(entity),
+      () => {
+        const oldest = this.#deleted.entries().next();
+        if (oldest.done === true) return undefined;
+        this.#deleted.delete(oldest.value[0]);
+        return jsonByteLength(oldest.value[1]);
+      },
+    );
+    if (kept) this.#deleted.set(key, entity);
   }
 
   /** Set a held document's value, unless the state would outgrow what `data/add` loads; a value that is not the Evidence's cites no record. */

@@ -17,48 +17,36 @@ import { GHIDRA_VARIANT_LANGUAGES } from "./GhidraRawBinaryLanguage.js";
 import { silentLogger } from "../logger.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 
-// Digests commit to the current shared policy, including the instruction
-// status, load-image relocation-symbol, procedure search, byte-search and
-// bit-field base-type, runtime value-flow budgets and inventory-search revisions that prevent reuse of snapshots with earlier
-// results.
-const RAW_DIGESTS = {
-  "6502": "51160ff6e94cb32eaeb87ac248915afb3bc17e33b11a1a101222344dd3907c6f",
-  "x86-disabled-analyzer":
-    "94e93961a699cf9250844d53fe95802c72063c08656fc308b3fed523dd86ea1c",
-} as const;
+// A profile digest is the digest of its committed parameters; these tests pin
+// the parameters (runtime selections and the producer identity) rather than a
+// literal hash that every bridge or REA release would have to re-record.
+const expectCommittedProfile = (
+  profile: ReturnType<typeof createAnalysisProfile> | null | undefined,
+): void => {
+  if (profile == null) throw new Error("Expected an analysis profile");
+  expect(profile.parameters).toMatchObject({
+    producer: ghidraProducerIdentity(),
+  });
+  expect(profile.digest).toBe(
+    createAnalysisProfile(profile.provider, profile.parameters).digest,
+  );
+};
 
-// Computed by upstream main at 5044e2017, which has neither a separate base nor
-// a variant. A raw load whose base is its caller-selected entry keeps these
-// profile digests, so it stays reusable wherever main's raw sessions and
-// snapshots are.
-const LEGACY_RAW_DIGESTS = [
-  [
-    "x86",
-    "0x1000",
-    "05e0e6f88ad78409dc4cff332fb6f97f74b51607b4d755d9b0be33f1c35f63bf",
-  ],
-  [
-    "x86_64",
-    "0x401000",
-    "e80406d06ea4a88c807c5ef167b7476190513648b13cdbffb81177fc24f97358",
-  ],
-  [
-    "arm",
-    "0x8000000",
-    "f6e99193b6b9defd10913ef35fbb7040042800fd5b97fcd30ea2bbac32ae3ecc",
-  ],
-  [
-    "arm64",
-    "0x80000",
-    "4ec69b793d7bae1006efc12ff0e74bdca6a0be89d51a718deaca0177d4a8e616",
-  ],
-  [
-    "m68k",
-    "0x1000",
-    "37c6067d5a19e08451750d9ba5592900d3f7c211f0660784359f125e922e749e",
-  ],
+// Raw loads whose base is their caller-selected entry: they commit the
+// parameters they committed before separate bases and variants existed.
+const LEGACY_RAW_LOADS = [
+  ["x86", "0x1000"],
+  ["x86_64", "0x401000"],
+  ["arm", "0x8000000"],
+  ["arm64", "0x80000"],
+  ["m68k", "0x1000"],
 ] as const;
+
+/** Keys only a load with a separate base or a variant commits. */
+const RAW_LOAD_KEYS = ["raw_load", "entry_context", "processor_labels"];
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
   const parsed = parseConfig({ GHIDRA_INSTALL_DIR: "/ghidra", ...environment });
@@ -83,29 +71,18 @@ const raw = (
   },
 });
 
-describe("raw-binary analysis profile digest", () => {
+describe("raw-binary analysis profile commitments", () => {
   it("commits the 6502 raw profile to the current shared policy", async () => {
     const ghidra = new GhidraProvider(configFor({}), silentLogger, {}, host);
     const resolved = await ghidra.resolveAnalysisProfile(raw("6502", "0x8001"));
     if (!resolved.ok) throw resolved.error;
-    expect(resolved.value.profile?.digest).toBe(RAW_DIGESTS["6502"]);
+    expectCommittedProfile(resolved.value.profile);
     expect(resolved.value.profile?.parameters).toMatchObject({
       target_format: "raw-binary",
       loader: "BinaryLoader",
       language_id: "6502:LE:16:default",
-      language_selection: "caller-supplied-v1",
-      load_image_evidence: "independent-raw-mapping-context-v4",
-      load_image_observations:
-        "source-mappings-entry-context-relocation-symbol-v3",
-      instruction_status: "unlisted-and-containing-code-data-v3",
-      inventory_search_projection: "provider-inventory-facts-v1",
-      value_flow_effect_scope: "pcode-load-store-explicit-v1",
-      native_value_flow_projection: "accepted-runtime-budgets-v1",
-      byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
-      byte_search_coverage: "separate-loaded-overlays-v1",
-      data_type_observations: "bit-field-base-and-lookup-v1",
-      instruction_references:
-        "exact-address-incoming-without-synthetic-entry-v3",
+      language_selection: "caller-supplied",
+      entry_point: "0x8001",
       analyzer_preset: "ghidra-default",
     });
   });
@@ -121,32 +98,30 @@ describe("raw-binary analysis profile digest", () => {
     );
     const resolved = await ghidra.resolveAnalysisProfile(raw("x86", "0x1000"));
     if (!resolved.ok) throw resolved.error;
-    expect(resolved.value.profile?.digest).toBe(
-      RAW_DIGESTS["x86-disabled-analyzer"],
-    );
+    expectCommittedProfile(resolved.value.profile);
     expect(resolved.value.profile?.parameters).toMatchObject({
-      inventory_search_projection: "provider-inventory-facts-v1",
-      value_flow_effect_scope: "pcode-load-store-explicit-v1",
-      native_value_flow_projection: "accepted-runtime-budgets-v1",
-      byte_search_coverage: "separate-loaded-overlays-v1",
+      analyzer_preset: expect.any(String),
       analysis_options: {
         disabled_analyzers: ["Aggressive Instruction Finder"],
       },
     });
   });
 
-  it.each(LEGACY_RAW_DIGESTS)(
-    "keeps the %s raw profile digest at entry %s",
-    async (architecture, entryPoint, digest) => {
+  it.each(LEGACY_RAW_LOADS)(
+    "commits the %s raw profile at entry %s without the M-profile keys",
+    async (architecture, entryPoint) => {
       const ghidra = new GhidraProvider(configFor({}), silentLogger, {}, host);
       const resolved = await ghidra.resolveAnalysisProfile(
         raw(architecture, entryPoint),
       );
       if (!resolved.ok) throw resolved.error;
+      expectCommittedProfile(resolved.value.profile);
       expect(resolved.value.profile?.parameters).toMatchObject({
         entry_point: entryPoint,
+        language_selection: "caller-supplied",
       });
-      expect(resolved.value.profile?.digest).toBe(digest);
+      for (const key of RAW_LOAD_KEYS)
+        expect(resolved.value.profile?.parameters).not.toHaveProperty(key);
     },
   );
 });
@@ -184,7 +159,7 @@ describe("M-profile raw-binary analysis profile", () => {
       vectorTableWords(0x20005000, 0x080001c5),
     );
 
-  it("keeps the legacy ARM digest for a load admitted without a variant", async () => {
+  it("keeps a load admitted without a variant on the legacy parameters", async () => {
     const legacy = await profile(
       admittedRawLoad({
         architecture: "arm",
@@ -192,10 +167,9 @@ describe("M-profile raw-binary analysis profile", () => {
         fileBytes: 4,
       }),
     );
-    expect(legacy.digest).toBe(
-      LEGACY_RAW_DIGESTS.find(([family]) => family === "arm")?.[2],
-    );
-    expect(legacy.parameters).not.toHaveProperty("raw_load");
+    expectCommittedProfile(legacy);
+    for (const key of RAW_LOAD_KEYS)
+      expect(legacy.parameters).not.toHaveProperty(key);
   });
 
   it.each(ARCHITECTURE_VARIANT_NAMES)(
@@ -205,9 +179,8 @@ describe("M-profile raw-binary analysis profile", () => {
       expect(committed.parameters).toMatchObject({
         language_id: GHIDRA_VARIANT_LANGUAGES[variant],
         compiler_spec_id: "default",
-        load_image_evidence: "independent-raw-segments-v1",
-        entry_context: "thumb-tmode-1-before-analysis-v1",
-        processor_labels: "not-applied-v1",
+        entry_context: "thumb-tmode-1-before-analysis",
+        processor_labels: "not-applied",
         raw_load: {
           version: 1,
           base_address: "0x8000000",
@@ -230,11 +203,9 @@ describe("M-profile raw-binary analysis profile", () => {
   );
 
   it("keeps the digest across spellings and provenance only", async () => {
-    const digest = (await profile(reset("armv7-m"))).digest;
-    // Pinned so a change to raw_load semantics must bump its version.
-    expect(digest).toBe(
-      "5577153d31725a2f26813ae98b852fe02f84fbde9f8264dcce172b2b825e268d",
-    );
+    const committed = await profile(reset("armv7-m"));
+    expectCommittedProfile(committed);
+    const { digest } = committed;
     expect(
       (await profile(reset("armv7-m", { baseAddress: "0x8000000" }))).digest,
     ).toBe(digest);

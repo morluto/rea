@@ -1,53 +1,45 @@
 import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelection.js";
 import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
-import { assertArtifactFileSelectedSource } from "../ArtifactFileSource.js";
-import {
-  assertArtifactSelectedSource,
-  resolveArtifactSourcePath,
-} from "../ArtifactSelectedSource.js";
 import { InesArtifactReader } from "../InesArtifactReader.js";
 import {
   openRootArtifact,
   hashStableRootArtifactHandle,
-} from "../inventory/hashStableRootArtifact.js";
+  abortIfNeeded,
+  withArtifactRegularFile,
+  type ArtifactCleanupAttempt,
+  type ArtifactResourceOwner,
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  SafeOutputTreeDestinationRefusal,
+  ArtifactPathRegistry,
+  normalizeArtifactPath,
+  SafeOutputTree,
+  SafeOutputTreeCreationFailure,
+  assertArtifactFileSelectedSource,
+  assertArtifactSelectedSource,
+  resolveArtifactSourcePath,
+  resolveAsarHeaderAdmission,
+} from "../../resources/index.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { createArtifactReader } from "../createArtifactReader.js";
-import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
 import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
-import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
-import type {
-  ArtifactCleanupAttempt,
-  ArtifactResourceOwner,
-  ArtifactResourceScope,
-} from "../ArtifactResourceScope.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isPathWithinRoot } from "../../domain/localPath.js";
-import { SafeOutputTreeDestinationRefusal } from "../SafeOutputTreeAdmission.js";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import {
-  ArtifactPathRegistry,
-  normalizeArtifactPath,
-} from "../ArtifactPaths.js";
-import {
-  ArtifactReaderFailure,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { SafeOutputTree } from "../SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../SafeOutputTreeCreationFailure.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
@@ -187,7 +179,7 @@ export const materializeArtifactInventoryInScope = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `Inventoried source changed: ${sourcePath}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       throw cause;
     }
@@ -288,6 +280,7 @@ export const materializeArtifactInventoryInScope = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Selected occurrence has no inventory node: ${occurrence.occurrence_id}`,
+        { integrityCheck: "inventory-node" },
       );
     return { occurrence, node };
   });
@@ -373,7 +366,7 @@ const materializeSelection = async ({
       throw cause;
     }
     const traversal = new ArtifactTraversalObservation();
-    traversal.onCoverage({
+    traversal.record({
       status: inventory.coverage.status,
       limitations: inventory.limitations,
     });
@@ -478,7 +471,7 @@ const writeSelectedEntries = async ({
     else queue.occurrences.push(occurrence);
   }
   const registry = new ArtifactPathRegistry();
-  for await (const entry of reader.entries(signal, traversal)) {
+  for await (const entry of traversal.entries(reader, signal)) {
     const path = normalizeArtifactPath(entry.path);
     // Logical declarations may share a query path with a real file. They do
     // not consume that file's selection or participate in materialization.
@@ -493,6 +486,7 @@ const writeSelectedEntries = async ({
       throw new ArtifactReaderFailure(
         "integrity",
         `Regular artifact entry is missing from inventory: ${path}`,
+        { integrityCheck: "inventory-node" },
       );
     }
     queue.next += 1;
@@ -526,6 +520,7 @@ const writeSelectedEntries = async ({
     throw new ArtifactReaderFailure(
       "integrity",
       `Inventoried regular artifact entries were not materialized: ${[...expected.keys()].sort(compareUnicodeCodePoints).join(", ")}`,
+      { integrityCheck: "traversal-coverage" },
     );
 };
 
@@ -730,6 +725,7 @@ const createReader = async (
     | "resourceScope"
     | "espFlashSelection"
     | "readerLimits"
+    | "integrityPolicy"
   >,
   manifest: ArtifactGraphManifest,
   transferredSource?: ActiveArtifactInventorySource,
@@ -749,7 +745,7 @@ const createReader = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `Inventoried source changed: ${path}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       throw cause;
     }
@@ -791,6 +787,7 @@ const createReader = async (
           admission: transferredSource?.admission,
           espFlashSelection: input.espFlashSelection,
           readerLimits: input.readerLimits,
+          integrity: input.integrityPolicy,
           asarHeaderAdmission:
             containerFormat === "asar"
               ? (input.asarHeaderAdmission ??

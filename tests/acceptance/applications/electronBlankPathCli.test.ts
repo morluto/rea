@@ -16,7 +16,6 @@ cliTest.for(["", " \t "])(
         "--json",
       ],
       environment: { REA_LOG_LEVEL: "silent" },
-      timeoutMs: 15000,
     });
     expect(response.exitCode).toBe(1);
     expect(response.json).toMatchObject({

@@ -1,53 +1,51 @@
-import { Cli } from "incur";
 import { z } from "zod";
 
-/** Read primary names and aliases from the actual Incur command router. */
-export const createCliInventory = (cli) => {
-  const commands = Cli.toCommands.get(cli);
-  if (commands === undefined)
-    throw new Error("Incur did not expose the registered REA CLI commands");
-  const primary = [];
-  const aliases = [];
-  for (const [name, entry] of commands) {
-    if ("_alias" in entry) aliases.push({ name, target: entry.target });
-    else primary.push(name);
-  }
-  if (primary.length === 0)
-    throw new Error("Incur exposed no primary REA CLI commands");
+/** @typedef {import("../../src/cli/commandRegistry.js").CliCommandEntry} CliCommandEntry */
+
+const INPUT_GROUPS = /** @type {const} */ (["args", "options"]);
+
+/**
+ * Read primary names from the command owner's records. Command aliases are
+ * not part of the REA registration contract; option aliases remain on definitions.
+ * @param {readonly CliCommandEntry[]} entries
+ */
+export const createCliInventory = (entries) => {
+  if (entries.length === 0)
+    throw new Error("REA exposed no primary CLI commands");
   return {
-    primary: primary.sort((left, right) => left.localeCompare(right)),
-    aliases: aliases.sort((left, right) => left.name.localeCompare(right.name)),
+    primary: entries
+      .map(({ name }) => name)
+      .sort((left, right) => left.localeCompare(right)),
+    aliases:
+      /** @type {readonly { readonly name: string; readonly target: string }[]} */ ([]),
   };
 };
 
-/** Read one primary command's declared option names from the Incur router. */
-export const cliCommandOptionNames = (cli, name) => {
-  const commands = Cli.toCommands.get(cli);
-  const command = commands?.get(name);
-  if (
-    command === undefined ||
-    "_alias" in command ||
-    !("options" in command) ||
-    command.options === undefined
-  )
-    return [];
+/**
+ * Read one primary command's declared option names from its registered schema.
+ * @param {readonly CliCommandEntry[]} entries
+ * @param {string} name
+ */
+export const cliCommandOptionNames = (entries, name) => {
+  const command = entries.find((entry) => entry.name === name)?.definition;
+  if (command?.options === undefined) return [];
   const schema = z.toJSONSchema(command.options);
   return Object.keys(schema.properties ?? {}).sort((left, right) =>
     left.localeCompare(right),
   );
 };
 
-/** Report primary CLI fields whose generated JSON Schema lacks help text. */
-export const cliCommandDescriptionIssues = (cli) => {
-  const commands = Cli.toCommands.get(cli);
-  if (commands === undefined)
-    throw new Error("Incur did not expose the registered REA CLI commands");
+/**
+ * Report primary CLI fields whose generated JSON Schema lacks help text.
+ * @param {readonly CliCommandEntry[]} entries
+ */
+export const cliCommandDescriptionIssues = (entries) => {
   const missing = [];
-  for (const [commandName, command] of commands) {
-    if ("_alias" in command) continue;
-    for (const groupName of ["args", "options"]) {
-      if (!(groupName in command) || command[groupName] === undefined) continue;
-      const properties = z.toJSONSchema(command[groupName]).properties ?? {};
+  for (const { name: commandName, definition } of entries) {
+    for (const groupName of INPUT_GROUPS) {
+      const group = definition[groupName];
+      if (group === undefined) continue;
+      const properties = z.toJSONSchema(group).properties ?? {};
       for (const [propertyName, property] of Object.entries(properties)) {
         if (
           typeof property !== "object" ||

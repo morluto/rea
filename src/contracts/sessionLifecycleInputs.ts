@@ -1,7 +1,7 @@
 import {
-  executableFormatHintSchema,
-  type ExecutableFormatHint,
-} from "../domain/dosCom.js";
+  TARGET_FORMAT_HINTS,
+  type TargetFormatHint,
+} from "../domain/targetFormats.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import {
   binaryArchitectureSchema,
@@ -32,7 +32,7 @@ const binaryTargetPathSchema = absoluteLocalPathStringSchema.describe(
 
 /** Collect the open_binary load fields into the selection that target admission owns. */
 export const openBinaryLoadSelection = (input: {
-  readonly format?: ExecutableFormatHint | undefined;
+  readonly format?: TargetFormatHint | undefined;
   readonly architecture?: NativeLoadSelection["architecture"] | undefined;
   readonly entry_point?: string | undefined;
   readonly base_address?: string | undefined;
@@ -57,11 +57,14 @@ export const openBinaryLoadSelection = (input: {
     : { vectorTableAddress: input.vector_table_address }),
 });
 
+/** Explicit format selection, including the ESP flash archive interpretation. */
+const targetFormatHintSchema = z.enum(TARGET_FORMAT_HINTS);
+
 /** Input contract for opening a target with an optional staged snapshot. */
 export const openBinaryInputSchema = z
   .strictObject({
     path: binaryTargetPathSchema,
-    format: executableFormatHintSchema
+    format: targetFormatHintSchema
       .optional()
       .describe(
         "Explicit interpretation: dos-com or raw-binary (headerless), gamecube-dol (GameCube/Wii DOL, never auto-detected), or esp-flash-image (an ESP flash dump read with flash_offset and partition_table_offset). Omission preserves header-based detection.",
@@ -154,4 +157,42 @@ export const resetInvestigationInputSchema = z.strictObject({
     )
     .optional(),
   overwrite: z.boolean().default(false),
+});
+
+/**
+ * The target interpretation an `open_binary` input selects, in the spelling
+ * every target open takes. MCP and CLI commands that open a target with these
+ * fields share this mapping.
+ */
+export const openBinaryTargetSelection = (
+  input: Pick<
+    z.output<typeof openBinaryInputSchema>,
+    | "format"
+    | "architecture"
+    | "entry_point"
+    | "base_address"
+    | "architecture_variant"
+    | "vector_table_address"
+    | "flash_offset"
+    | "partition_table_offset"
+  >,
+) => ({
+  loadSelection: openBinaryLoadSelection(input),
+  ...(input.flash_offset === undefined &&
+  input.partition_table_offset === undefined
+    ? {}
+    : {
+        espFlash: {
+          ...(input.flash_offset === undefined
+            ? {}
+            : { flashOffset: parseEspFlashAddress(input.flash_offset) }),
+          ...(input.partition_table_offset === undefined
+            ? {}
+            : {
+                partitionTableOffset: parseEspFlashAddress(
+                  input.partition_table_offset,
+                ),
+              }),
+        },
+      }),
 });

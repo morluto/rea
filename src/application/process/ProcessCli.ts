@@ -1,34 +1,34 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  type AnalysisInputIssue,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { describeValidationFailure } from "../../domain/validationFailure.js";
+import {
+  describeValidationFailure,
+  firstValidationIssue,
+} from "../../domain/validationFailure.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
-import {
-  analysisInputErrorFromIssues,
-  projectInputIssues,
-} from "../../domain/inputIssueProjection.js";
-import { processTraceSpecificationSchema } from "../../domain/process/processTraceSpecification.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
-import {
-  compareParsedProcessEvidence,
-  readProcessComparisonSource,
-  unsupportedProcessCaptureProvider,
-} from "./ProcessComparisonService.js";
-import { createProgressReporter } from "../ProgressReporter.js";
+import { unsupportedProcessCaptureProvider } from "./ProcessComparisonService.js";
+import { createProgressReporter } from "../../ports/ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";
 import {
   createProcessCaptureEvidence,
   createProcessScenarioPlanEvidence,
+  wrongWorkflowIssueFacts,
   type ProcessCaptureEvidenceFailure,
 } from "./ProcessEvidence.js";
 import { prepareProcessScenarioPlan } from "./ProcessScenarioPreparation.js";
@@ -36,27 +36,19 @@ import { readJsonFile, jsonFileReadCleanupLeases } from "../JsonFiles.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { unsupportedEvidenceFormatError } from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 
 /** Preserve the owning reader's facts when retaining a different cause. */
 const artifactFailureFacts = (failure: ArtifactReaderFailure) => ({
-  ...(failure.userMessage === undefined
-    ? {}
-    : { userMessage: failure.userMessage }),
-  ...(failure.resolvedPath === undefined
-    ? {}
-    : { resolvedPath: failure.resolvedPath }),
-  ...(failure.boundary === undefined ? {} : { boundary: failure.boundary }),
-  ...(failure.admission === undefined ? {} : { admission: failure.admission }),
-  ...(failure.readerLimit === undefined
-    ? {}
-    : { readerLimit: failure.readerLimit }),
+  ...failure.primaryFacts(),
   ...(failure.cleanup === undefined ? {} : { cleanup: failure.cleanup }),
   ...(failure.partialObservation === undefined
     ? {}
@@ -122,13 +114,13 @@ export const captureProcessScenarioFile = async (
         const prepared = await prepareProcessScenarioPlan(
           parsed.data,
           environment,
-          process.platform,
+          HOST_PLATFORM.platform,
           signal,
         );
         if (!prepared.ok) throw prepared.error;
         return createProcessScenarioPlanEvidence(
           prepared.value,
-          process.platform,
+          HOST_PLATFORM.platform,
         );
       }
       const progress = createProgressReporter(
@@ -143,7 +135,7 @@ export const captureProcessScenarioFile = async (
         const captured = await captureProcessScenario(
           parsed.data,
           signal,
-          process.platform,
+          HOST_PLATFORM.platform,
           environment,
           undefined,
           undefined,
@@ -179,11 +171,11 @@ export const captureProcessScenarioFile = async (
           : original instanceof AnalysisError && cause instanceof AnalysisError
             ? original instanceof ProcessCaptureError
               ? original.withFinalization({ cleanupFailure: cause })
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   original,
                   cause,
                   "capture_process_scenario",
-                ).bindCleanupDependencies([original, cause])
+                )
             : new AggregateError(
                 [original, cause],
                 "Process capture and cleanup failed",
@@ -210,70 +202,19 @@ export const captureProcessScenarioFile = async (
     },
   );
 
-/** Compare two capture Evidence files and emit derived comparison Evidence. */
-export const compareProcessEvidenceFiles = async (
-  leftPath: string,
-  rightPath: string,
-  traceSpecPath?: string,
-  signal?: AbortSignal,
-) =>
-  withProcessInputResources(
-    "compare_process_captures",
-    signal,
-    async (resources) => {
-      const leftInput = await readJson(
-        leftPath,
-        "compare_process_captures",
-        signal,
-        resources,
-      );
-      const left = readProcessComparisonSource(
-        "left",
-        leftInput,
-        projectCaptureFileFailure,
-      );
-      if (!left.ok) throw left.error;
-      const rightInput = await readJson(
-        rightPath,
-        "compare_process_captures",
-        signal,
-        resources,
-      );
-      const right = readProcessComparisonSource(
-        "right",
-        rightInput,
-        projectCaptureFileFailure,
-      );
-      if (!right.ok) throw right.error;
-      const traceSpecification =
-        traceSpecPath === undefined
-          ? undefined
-          : parseTraceSpecification(
-              await readJson(
-                traceSpecPath,
-                "compare_process_captures",
-                signal,
-                resources,
-              ),
-            );
-      const result = compareParsedProcessEvidence(
-        left.value,
-        right.value,
-        traceSpecification === undefined ? {} : { traceSpecification },
-      );
-      if (!result.ok) throw result.error;
-      return result.value.evidence;
-    },
-  );
-
-/** Preserve CLI file diagnostics while sharing all source interpretation. */
-const projectCaptureFileFailure = (
+/**
+ * Report a capture read from a CLI file as that file's document: its own
+ * validation issues, or the side it was given for.
+ */
+export const projectCaptureFileFailure = (
   failure: ProcessCaptureEvidenceFailure,
   side: "left" | "right",
   input: unknown,
 ): AnalysisError => {
   switch (failure.kind) {
     case "invalid-evidence":
+      if (isUnsupportedEvidenceFormat(failure.cause))
+        return unsupportedEvidenceFormatError(failure.cause, side);
       return analysisInputErrorFromIssues(
         "compare_process_captures",
         failure.cause.issues,
@@ -286,6 +227,7 @@ const projectCaptureFileFailure = (
         "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
         [side],
         "invalid_value",
+        wrongWorkflowIssueFacts(failure),
       );
     case "unsupported-provider":
       return unsupportedProcessCaptureProvider(side, failure);
@@ -294,42 +236,39 @@ const projectCaptureFileFailure = (
   }
 };
 
-const parseTraceSpecification = (input: unknown) => {
-  const parsed = processTraceSpecificationSchema.safeParse(input);
-  if (parsed.success) return parsed.data;
-  // Match the MCP boundary: the operation name and a trace_spec-rooted path.
-  throw new AnalysisInputError(
-    "compare_process_captures",
-    { cause: parsed.error },
-    projectInputIssues(parsed.error.issues, input).map((issue) => ({
-      ...issue,
-      path: ["trace_spec", ...issue.path],
-    })),
-  );
-};
-
-const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") =>
-  processInputFailure(
+const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") => {
+  const issue = firstValidationIssue(cause);
+  return processInputFailure(
     "compare_process_captures",
     `Capture evidence is malformed (${describeValidationFailure(cause)}). Create new capture evidence, then try again.`,
     [side],
     "invalid_value",
+    issue === undefined
+      ? undefined
+      : {
+          observed: {
+            issue_path: ["normalized_result", ...issue.path],
+            ...(issue.constraint === undefined
+              ? {}
+              : { constraint: issue.constraint }),
+            remaining_issue_count: issue.remainingIssueCount,
+          },
+        },
   );
+};
 
 const readJson = async (
   path: string,
-  operation: "capture_process_scenario" | "compare_process_captures",
+  operation: "capture_process_scenario",
   signal: AbortSignal | undefined,
   resources: ArtifactResourceScope,
 ): Promise<unknown> => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted) throw cancelledBy(operation, signal);
   const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok && loaded.error instanceof AnalysisCancelledError)
-    throw new AnalysisCancelledError(operation, { cause: loaded.error.cause });
+    throw cancelledBy(operation, carriedReason(loaded.error.cause));
   if (loaded.ok) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted) throw cancelledBy(operation, signal);
     return loaded.value;
   }
   if (loaded.error._tag !== "EvidenceFileError") throw loaded.error;
@@ -344,6 +283,8 @@ const readJson = async (
         : `Process input file could not be read: ${path} (${detail}). Check the reported filesystem constraint and retry.`,
     ["input_file"],
     "invalid_value",
+    // Read and parse failures share one issue reason; name which one occurred.
+    { observed: { file_reason: loaded.error.reason } },
   );
 };
 
@@ -352,9 +293,10 @@ const processInputFailure = (
   userMessage: string,
   path: readonly (string | number)[],
   reason: "invalid_value" | "missing_argument",
+  facts?: Pick<AnalysisInputIssue, "expected" | "observed">,
 ): AnalysisInputError =>
   new AnalysisInputError(operation, { userMessage }, [
-    { path, reason, message: userMessage },
+    { path, reason, message: userMessage, ...facts },
   ]);
 
 const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
@@ -379,13 +321,13 @@ export const projectProcessCliInputCleanupError = (
  * This catch includes target execution, and the projection stays non-retryable.
  * Tell the user what happened; do not ask them to run the command again.
  */
-const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
-  "Do not repeat this command. Tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.";
+export const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
+  "Do not repeat this command. Tell the user the process command could not complete, give them the reported reason, and ask them to check the scenario or capture files it read. If those files are valid, report the failure with its diagnostics.";
 
 /** Preserve typed failures and local diagnostics at the process CLI boundary. */
 const projectProcessCliError = (
   cause: unknown,
-  operation: "capture_process_scenario" | "compare_process_captures",
+  operation: "capture_process_scenario",
   signal?: AbortSignal,
 ): ProcessCliErrorOutput => {
   const failure =
@@ -399,10 +341,7 @@ const projectProcessCliError = (
         });
   return cliAnalysisError(
     signal?.aborted
-      ? analysisErrorWithCancellation(
-          failure,
-          new AnalysisCancelledError(operation, { cause: signal.reason }),
-        )
+      ? analysisErrorWithCancellation(failure, cancelledBy(operation, signal))
       : failure,
   );
 };
@@ -431,7 +370,7 @@ const artifactFailureWithCancellation = (
 
 /** One invocation owns every input descriptor through final cleanup and retry. */
 const withProcessInputResources = async (
-  operation: "capture_process_scenario" | "compare_process_captures",
+  operation: "capture_process_scenario",
   signal: AbortSignal | undefined,
   run: (resources: ArtifactResourceScope) => Promise<Evidence>,
 ): Promise<Evidence | ProcessCliErrorOutput> => {
@@ -450,10 +389,11 @@ const withProcessInputResources = async (
       resources.cleanupResources,
     );
     const cancellation = signal?.aborted
-      ? new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-          ...(outcome.ok ? { partialObservation: outcome.value } : {}),
-        })
+      ? cancelledBy(
+          operation,
+          signal,
+          outcome.ok ? { partialObservation: outcome.value } : {},
+        )
       : undefined;
     const primary = outcome.ok
       ? cancellation === undefined

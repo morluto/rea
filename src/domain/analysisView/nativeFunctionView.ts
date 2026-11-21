@@ -158,7 +158,9 @@ const summarizeDossier = (dossier: FunctionDossier) => {
     },
     value_flow: {
       available: flow !== undefined,
-      truncated: flow?.truncated ?? false,
+      // Unavailable value-flow examined nothing: whether it would be
+      // truncated is unknown, not false.
+      truncated: flow === undefined ? null : flow.truncated,
     },
     facet_availability: dossier.facet_availability ?? null,
     counts: {
@@ -185,6 +187,11 @@ const summarizeDossier = (dossier: FunctionDossier) => {
       swift_string_literal_omissions: recorded(
         dossier.swift_string_literal_omissions,
       ),
+      prototype_conflicts: recorded(
+        dossier.native_api?.available
+          ? dossier.native_api.prototype_conflicts
+          : undefined,
+      ),
       // Value-flow rows are unknown, not zero, when value flow was not recorded
       // or the provider declared it unavailable; parentFields names which.
       value_flow_operations: flow?.operations.length ?? null,
@@ -205,7 +212,7 @@ const summaryView = (
   kind: "summary" as const,
   view,
   summary: summarizeDossier(dossier),
-  coverage: completeWithinViewCoverage(1, 1),
+  coverage: completeWithinViewCoverage(1),
   ...common,
   unknowns: uniqueSorted([
     ...common.unknowns,
@@ -250,7 +257,7 @@ export const projectNativeFunctionView = (
     kind: "native" as const,
     view,
     item: jsonValueSchema.parse(item),
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     ...common,
   });
   if (availability?.available === false) return ok(singleton(availability));

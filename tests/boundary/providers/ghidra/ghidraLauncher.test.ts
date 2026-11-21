@@ -31,6 +31,7 @@ import {
   GhidraHeadlessLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
 import { GHIDRA_RAW_ENTRY_CONTEXT } from "../../../../src/ghidra/GhidraRawBinaryLanguage.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const fixturePath = fileURLToPath(
   new URL(
@@ -112,14 +113,14 @@ describe("Ghidra COM loader", () => {
       descriptorPath: "/tmp/session.json",
       ghidraLogPath: "/tmp/ghidra.log",
       scriptLogPath: "/tmp/script.log",
-      dosCom: true,
+      dosCom: { loader: "ComLoader" },
     });
     expectOptions(arguments_, [
-      ["-loader", "BinaryLoader"],
-      ["-loader-baseAddr", "1000:0100"],
+      ["-loader", "ComLoader"],
       ["-processor", "x86:LE:16:Real Mode"],
       ["-cspec", "default"],
     ]);
+    expect(arguments_).not.toContain("-loader-baseAddr");
     const prepare = arguments_.indexOf("-preScript");
     expect(arguments_[prepare + 1]).toBe(
       join("/package/bridge", "ReaGhidraPrepareCom.java"),
@@ -127,6 +128,27 @@ describe("Ghidra COM loader", () => {
     expect(prepare).toBeLessThan(arguments_.indexOf("-postScript"));
     expect(arguments_).toContain("-readOnly");
     expect(arguments_).toContain("-deleteProject");
+  });
+
+  it("keeps BinaryLoader at 1000:0100 when ComLoader is not selected", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target.bin",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      dosCom: { loader: "BinaryLoader" },
+    });
+    expectOptions(arguments_, [
+      ["-loader", "BinaryLoader"],
+      ["-loader-baseAddr", "1000:0100"],
+      ["-processor", "x86:LE:16:Real Mode"],
+      ["-cspec", "default"],
+    ]);
+    expect(arguments_).toContain(
+      join("/package/bridge", "ReaGhidraPrepareCom.java"),
+    );
   });
 });
 
@@ -277,7 +299,7 @@ describe("Ghidra GameCube DOL loader", () => {
   it.each([
     ["PSP", { psp: true }],
     ["DOS MZ", { dosMz: true }],
-    ["DOS COM", { dosCom: true }],
+    ["DOS COM", { dosCom: { loader: "ComLoader" } }],
     ["MIPS soft-float", { mipsSoftFloat: true }],
     [
       "RISC-V calling convention",
@@ -388,7 +410,7 @@ describe("Ghidra headless launcher", () => {
     for (const conflict of [
       { psp: true as const },
       { dosMz: true as const },
-      { dosCom: true as const },
+      { dosCom: { loader: "ComLoader" } as const },
       {
         rawBinary: {
           languageId: "x86:LE:32:default",
@@ -446,7 +468,7 @@ describe("Ghidra headless launcher", () => {
       { psp: true as const },
       { mipsSoftFloat: true as const },
       { dosMz: true as const },
-      { dosCom: true as const },
+      { dosCom: { loader: "ComLoader" } as const },
       {
         rawBinary: {
           languageId: "x86:LE:32:default",
@@ -554,7 +576,7 @@ describe("Ghidra configured import language and seeds", () => {
         ...base,
         platform,
         bridgeScriptPath: path.join(bridgeDirectory, "ReaGhidraBridge.java"),
-        dosCom: true,
+        dosCom: { loader: "ComLoader" },
         seedPath,
       });
       const prepare = arguments_.indexOf(
@@ -578,6 +600,76 @@ describe("Ghidra configured import language and seeds", () => {
   });
 });
 
+describe("Ghidra committed ELF image base", () => {
+  const base = {
+    platform: "darwin" as const,
+    projectRoot: "/tmp/project",
+    targetPath: "/tmp/target",
+    bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+    descriptorPath: "/tmp/session.json",
+    ghidraLogPath: "/tmp/ghidra.log",
+    scriptLogPath: "/tmp/script.log",
+  };
+
+  it("selects the ELF loader at the committed image base, with or without a language", () => {
+    expectOptions(ghidraHeadlessArguments({ ...base, elfImageBase: "0" }), [
+      ["-loader", "ElfLoader"],
+      ["-loader-imagebase", "0"],
+    ]);
+    const pinned = ghidraHeadlessArguments({
+      ...base,
+      elfImageBase: "2aaa0000",
+      languageOverride: { languageId: "MIPS:BE:32:default" },
+    });
+    expectOptions(pinned, [
+      ["-loader-imagebase", "2aaa0000"],
+      ["-processor", "MIPS:BE:32:default"],
+    ]);
+  });
+
+  it.each([
+    [{ psp: true as const }, "elf_image_base_scope"],
+    [{ dosMz: true as const }, "elf_image_base_scope"],
+    [
+      {
+        rawBinary: {
+          languageId: "ARM:LE:32:v7",
+          compilerSpecId: "default",
+          baseAddr: "0x8000000",
+          entryPoint: "0x8000000",
+        },
+      },
+      "elf_image_base_scope",
+    ],
+    [
+      {
+        gamecubeDol: {
+          languageId: "PowerPC:BE:32:default",
+          sectionFilePath: "/tmp/gamecube-dol-sections.txt",
+        },
+      },
+      "elf_image_base_scope",
+    ],
+    // A restored Program keeps the base it was saved at; the loader option
+    // would not re-apply, so the restore is refused rather than ignored.
+    [
+      { packedProgramPath: "/tmp/runtime/restored-program.gzf" },
+      "elf_image_base_scope",
+    ],
+    [{}, "elf_image_base_format", "0x0"],
+    [{}, "elf_image_base_format", "100000000"],
+  ])(
+    "refuses an image base it cannot apply %j",
+    (conflict, code, value = "0") => {
+      expect(() =>
+        ghidraHeadlessArguments({ ...base, ...conflict, elfImageBase: value }),
+      ).toThrow(
+        expect.objectContaining({ _tag: "GhidraAdmissionError", code }),
+      );
+    },
+  );
+});
+
 describe("Ghidra disabled analyzers", () => {
   const base = {
     platform: "darwin" as const,
@@ -592,7 +684,7 @@ describe("Ghidra disabled analyzers", () => {
   it("applies the analyzer options after seeds and before analysis scripts", () => {
     const arguments_ = ghidraHeadlessArguments({
       ...base,
-      dosCom: true,
+      dosCom: { loader: "ComLoader" },
       seedPath: posix.join("/tmp/runtime/seeds", "seeds.tsv"),
       disabledAnalyzers: [
         "Objective-C Message Analyzer",
@@ -612,36 +704,32 @@ describe("Ghidra disabled analyzers", () => {
     const seeds = arguments_.indexOf(
       posix.join("/package/bridge", "ReaGhidraApplySeeds.java"),
     );
+    expect(prepare).toBeGreaterThanOrEqual(0);
     expect(prepare).toBeLessThan(seeds);
     expect(seeds).toBeLessThan(options);
     expect(options).toBeLessThan(arguments_.indexOf("-postScript"));
   });
 
-  it.each(["darwin", "win32"] as const)(
-    "uses the target platform's script path for the options script on %s",
-    (platform) => {
-      const path = platform === "win32" ? win32 : posix;
-      const arguments_ = ghidraHeadlessArguments({
-        ...base,
-        platform,
-        bridgeScriptPath: path.join(
-          "/package",
-          "bridge",
-          "ReaGhidraBridge.java",
-        ),
-        disabledAnalyzers: ["Objective-C Message Analyzer"],
-      });
-      const options = arguments_.indexOf(
-        path.join("/package", "bridge", "ReaGhidraAnalysisOptions.java"),
-      );
-      expect(arguments_[options - 1]).toBe("-preScript");
-      expect(arguments_[options + 1]).toBe("Objective-C Message Analyzer");
-      expect(options).toBeLessThan(arguments_.indexOf("-postScript"));
-    },
-  );
+  it("passes the Windows script path and one literal analyzer argument", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      ...base,
+      platform: "win32",
+      bridgeScriptPath: "C:\\package\\bridge\\ReaGhidraBridge.java",
+      disabledAnalyzers: ["Objective-C Message Analyzer"],
+    });
+    const script = "C:\\package\\bridge\\ReaGhidraAnalysisOptions.java";
+    const options = arguments_.indexOf(script);
+    expect(arguments_.slice(options - 1, options + 2)).toEqual([
+      "-preScript",
+      script,
+      "Objective-C Message Analyzer",
+    ]);
+    expect(options).toBeLessThan(arguments_.indexOf("-postScript"));
+  });
 
-  it("keeps the invocation byte-identical without an override", () => {
-    expect(ghidraHeadlessArguments(base)).toEqual([
+  it("keeps the invocation byte-identical with no configured analyzer names", () => {
+    const arguments_ = ghidraHeadlessArguments(base);
+    expect(arguments_).toEqual([
       "/tmp/project",
       "rea-project",
       "-import",
@@ -660,13 +748,8 @@ describe("Ghidra disabled analyzers", () => {
       "/package/bridge/ReaGhidraBridge.java",
       "/tmp/session.json",
     ]);
-  });
-
-  it("adds no analyzer script for an empty override", () => {
-    expect(
-      ghidraHeadlessArguments({ ...base, disabledAnalyzers: [] }),
-    ).not.toContain(
-      posix.join("/package/bridge", "ReaGhidraAnalysisOptions.java"),
+    expect(ghidraHeadlessArguments({ ...base, disabledAnalyzers: [] })).toEqual(
+      arguments_,
     );
   });
 });
@@ -712,7 +795,7 @@ describe("Ghidra existing project", () => {
 
   it.each([
     [{ dosMz: true as const }, "existing_project_dos"],
-    [{ dosCom: true as const }, "existing_project_dos"],
+    [{ dosCom: { loader: "ComLoader" } as const }, "existing_project_dos"],
     [
       {
         rawBinary: {
@@ -734,6 +817,7 @@ describe("Ghidra existing project", () => {
       { riscvCallingConvention: "ilp32-prototype-v1" as const },
       "existing_project_riscv_calling_convention",
     ],
+    [{ elfImageBase: "0" }, "existing_project_elf_image_base"],
     [{ seedPath: "/tmp/runtime/seeds/seeds.tsv" }, "existing_project_analysis"],
     [
       { disabledAnalyzers: ["Decompiler Parameter ID"] },
@@ -1240,9 +1324,7 @@ describe("Ghidra Windows launcher process ownership", () => {
       if (!launched.ok) throw launched.error;
       try {
         const capturePath = join(runtimeRoot, "launch-capture.json");
-        await vi.waitFor(() => access(`${capturePath}.ready`), {
-          timeout: 10_000,
-        });
+        await waitFor(() => access(`${capturePath}.ready`));
         const capture = launchCaptureSchema.parse(
           JSON.parse(await readFile(capturePath, "utf8")),
         );

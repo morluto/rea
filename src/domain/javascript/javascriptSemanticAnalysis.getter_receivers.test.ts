@@ -42,6 +42,18 @@ const getterReceivers = [
     "const arr = [, { x: 1, get self() { return this; } }]; arr[1].self.x = 2; return arr[1].x;",
   ],
   [
+    "array element copied by spread",
+    "const arr = [...[{ x: 1, get self() { return this; } }]]; arr[0].self.x = 2; return arr[0].x;",
+  ],
+  [
+    "saved receiver from a nested spread",
+    "const arr = [...[{ x: 1 }, ...[{ x: 1, get self() { return this; } }]]]; const saved = arr[1].self; saved.x = 2; return arr[1].x;",
+  ],
+  [
+    "receiver in a wrapped spread operand",
+    "const arr = [...([{ x: 1, get self() { return this; } }] satisfies object[])]; arr[0].self.x = 2; return arr[0].x;",
+  ],
+  [
     "mixed object and array owners",
     "const outer = { rows: [{ box: { x: 1, get self() { return this; } } }] }; outer.rows[0].box.self.x = 2; return outer.rows[0].box.x;",
   ],
@@ -107,6 +119,17 @@ const getterReceivers = [
   ],
 ] as const;
 
+const preservedSpreadReceivers = [
+  [
+    "unrelated array element copied before a getter receiver",
+    "const arr = [...[{ x: 1 }], { x: 1, get self() { return this; } }]; arr[1].self.x = 2; return arr[0].x;",
+  ],
+  [
+    "unrelated field on a copied getter receiver",
+    "const arr = [...[{ x: 1, y: 1, get self() { return this; } }]]; arr[0].self.y = 2; return arr[0].x;",
+  ],
+] as const;
+
 describe("getter receiver mutation aliases (#1665, #2654)", () => {
   it.each(getterReceivers)(
     "does not report a stale literal through %s",
@@ -151,6 +174,7 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
       "unrelated array element",
       "const arr = [{ x: 1, get self() { return this; } }, { x: 1 }]; arr[0].self.x = 2; return arr[1].x;",
     ],
+    ...preservedSpreadReceivers,
     [
       "array replacement after a receiver was captured",
       "const original = [{ x: 1, get self() { return this; } }]; const replacement = [{ x: 1 }]; let arr = original; const saved = arr[0].self; arr = replacement; saved.x = 2; return replacement[0].x;",
@@ -183,9 +207,74 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
       "ordinary method read",
       "const box = { x: 1, self() { return this; } }; const method = box.self; return box.x;",
     ],
-  ])("preserves a known literal for %s", (_shape, body) => {
+  ] as const)("preserves a known literal for %s", (_shape, body) => {
     expect(resultValue(body)).toMatchObject({ status: "literal", value: 1 });
   });
+  it.each([
+    ["class computed method key", "class { [(this.x = 2, 'k')]() {} }"],
+    ["class computed field key", "class { [(this.x = 2, 'k')] = 0; }"],
+    ["superclass expression", "class extends (this.x = 2, Object) {}"],
+    [
+      "nested class key",
+      "class extends (class { [(this.x = 2, 'k')]() {} }) {}",
+    ],
+    ["object method computed key", "({ [(this.x = 2, 'k')]() {} })"],
+  ])("invalidates the receiver after a %s write", (_label, result) => {
+    expect(
+      resultValue(
+        `const box = { x: 1, get trigger() { return ${result}; } }; box.trigger; return box.x;`,
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it.each([
+    ["class computed method key", "class { [this]() {} }"],
+    ["class computed field key", "class { [this] = 0; }"],
+    ["object method computed key", "({ [this]() {} })"],
+  ])("invalidates the receiver when a %s converts it", (_label, result) => {
+    expect(
+      resultValue(
+        `const box = { x: 1, toString() { this.x = 2; return 'k'; }, get trigger() { return ${result}; } }; box.trigger; return box.x;`,
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it.each([
+    ["uninvoked class method", "class { method() { this.x = 2; } }"],
+    [
+      "uninvoked computed class method",
+      "class { [(0, 'k')]() { this.x = 2; } }",
+    ],
+    ["uninvoked computed object method", "({ [(0, 'k')]() { this.x = 2; } })"],
+    ["instance field initializer", "class { f = (this.x = 2); }"],
+    ["static field receiver", "class { static s = (this.x = 2); }"],
+    ["static block receiver", "class { static { this.x = 2; } }"],
+  ])("keeps the receiver value through a %s", (_label, result) => {
+    expect(
+      resultValue(
+        `const box = { x: 1, get trigger() { return ${result}; } }; box.trigger; return box.x;`,
+      ),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it.each([
+    ["static block", "class { static { self.x = 2; } }"],
+    ["static field value", "class { static s = (self.x = 2); }"],
+    [
+      "static block of a nested heritage class",
+      "class extends (class { static { self.x = 2; } }) {}",
+    ],
+  ])(
+    "invalidates the receiver after a %s writes through a captured alias",
+    (_label, result) => {
+      expect(
+        resultValue(
+          `const box = { x: 1, get trigger() { const self = this; return ${result}; } }; box.trigger; return box.x;`,
+        ),
+      ).toMatchObject({ status: "unknown" });
+    },
+  );
+
   it("terminates recursive receiver getters", () => {
     expect(
       resultValue(

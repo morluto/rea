@@ -36,7 +36,7 @@ it("bounds repeated capture checks while preserving unindexed and escaped unknow
   const first = sites[0];
   if (first === undefined || !t.isIdentifier(first.arguments[0]))
     throw new Error("Expected capture");
-  expect(index.referenceMayHaveChangedAt(first, first.arguments[0])).toBe(true);
+  expect(index.mayObserve(first, first.arguments[0])).toBe(true);
   completeSemanticSteps(index.indexMemberMutationFactsSteps());
   const binding = index.bindingForReferenceAt(first.arguments[0]);
   if (binding === undefined) throw new Error("Expected local binding");
@@ -51,7 +51,7 @@ it("bounds repeated capture checks while preserving unindexed and escaped unknow
   const changed = sites.map((site) => {
     const reference = site.arguments[0];
     if (!t.isIdentifier(reference)) throw new Error("Expected local reference");
-    return index.referenceMayHaveChangedAt(site, reference, ["webPreferences"]);
+    return index.mayObserve(site, reference, ["webPreferences"]);
   });
   expect(changed).toEqual([
     false,

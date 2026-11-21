@@ -2,24 +2,22 @@ import type { ProviderProcessInspectionCleanup } from "../../process/ProviderPro
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
-import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   ProviderAdapterError,
   type ProviderAdapterErrorOptions,
 } from "../../domain/providerAdapterError.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import type { CaptureContentStore } from "../../ports/CaptureContentStore.js";
 import {
   DesktopSessionCleanupError,
+  XpropUnavailableError,
   type UnresolvedCleanup,
-} from "../../desktop/DesktopApplicationSession.js";
-import type { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
-import { XpropUnavailableError } from "../../desktop/X11WindowObserver.js";
+} from "../../ports/DesktopApplicationSession.js";
 import type { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,
@@ -30,7 +28,7 @@ import {
 
 /** The parts of the content store its cleanup uses. */
 type ContentOwner = Pick<
-  DesktopContentStore,
+  CaptureContentStore,
   "close" | "discard" | "directory"
 >;
 
@@ -230,11 +228,7 @@ export const failedCaptureError = (
     diagnostics: { phase: "desktop_capture" },
   }));
   return primary instanceof AnalysisError && primary.cleanupIncomplete
-    ? analysisErrorWithCleanupFailure(
-        primary,
-        failure,
-        DESKTOP_OPERATION,
-      ).bindCleanupDependencies([primary, failure])
+    ? analysisErrorWithCleanupDependencies(primary, failure, DESKTOP_OPERATION)
     : failure;
 };
 

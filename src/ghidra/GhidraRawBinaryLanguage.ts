@@ -62,7 +62,7 @@ export const GHIDRA_RAW_ENTRY_CONTEXT = {
   thumb: {
     register: "TMode",
     value: "0x1",
-    commitment: "thumb-tmode-1-before-analysis-v1",
+    commitment: "thumb-tmode-1-before-analysis",
   },
 } as const satisfies Record<
   RawEntryIsaMode,
@@ -74,7 +74,7 @@ export const GHIDRA_RAW_ENTRY_CONTEXT = {
 >;
 
 /** Profile `processor_labels` value: the import does not apply the language's labels. */
-export const GHIDRA_PROCESSOR_LABELS_NOT_APPLIED = "not-applied-v1";
+export const GHIDRA_PROCESSOR_LABELS_NOT_APPLIED = "not-applied";
 
 /**
  * Profile commitment that a variant load is imported without the language's

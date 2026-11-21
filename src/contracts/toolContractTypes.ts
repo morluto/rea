@@ -1,6 +1,7 @@
 import type { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ToolAvailabilityDeclaration } from "./toolAvailability.js";
 import type { DerivedToolAnnotations, ToolEffects } from "./toolEffects.js";
 
 /** One validated example request for an MCP tool contract. */
@@ -47,6 +48,14 @@ export interface ToolContract<
   readonly title: string;
   readonly description: string;
   readonly kind: ToolKind;
+  /** What the tool needs before it can run; see ToolAvailabilityDeclaration. */
+  readonly availability?: ToolAvailabilityDeclaration;
+  /**
+   * The CLI exposes this contract as the one-shot command named by its
+   * kebab-case name (`inspect_pe_imports` is `rea inspect-pe-imports`). The
+   * CLI command inventory is derived from this declaration.
+   */
+  readonly cli?: true;
   /** This handler dispatches through the active binary-analysis session. */
   readonly requiresActiveTarget?: boolean;
   /** Adapter delivery of a retained summary; detail never reaches analysis. */
@@ -55,7 +64,10 @@ export interface ToolContract<
   };
   readonly inputSchema: InputSchema;
   readonly outputSchema: OutputSchema;
+  /** Possible effects across every supported provider profile. */
   readonly effects: ToolEffects;
+  /** Effects the tool owns before composing the selected provider. */
+  readonly sessionEffects: ToolEffects;
   readonly annotations: DerivedToolAnnotations;
   /**
    * Results, successful or failed, can contain text that originates from the

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { reconstructionProofApplicabilityCases } from "../../tests/fixtures/reconstructionProofApplicability.js";
 
@@ -11,7 +12,7 @@ import {
   reviewedObligation,
   readyReviewedLedgerRequest,
 } from "./ReconstructionObligationLedger.fixture.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createEvidence, evidenceSubjectInput } from "../domain/evidence.js";
 import type { ReviewedReconstructionObligation } from "../domain/reconstructionObligationLedgerSchemas.js";
 
 describe("selected reconstruction fixture outcomes", () => {
@@ -65,7 +66,7 @@ const registerOriginalProcessAuthorityCases = (): void => {
     ({ defect, state, qualifies }) => {
       const capture = processEvidence();
       const original = createEvidence(
-        undefined,
+        evidenceSubjectInput(capture.subject),
         defect === "provider"
           ? { id: "foreign", name: "Foreign observer", version: "1" }
           : capture.provider,
@@ -301,7 +302,7 @@ describe("reconstruction obligation ledger fail-closed behavior", () => {
 
   it("fails closed on ambiguous ownership and contradiction", () => {
     const original = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "external", name: "External protocol observer", version: "1" },
       {
         predicateType: "rea.protocol-observation",

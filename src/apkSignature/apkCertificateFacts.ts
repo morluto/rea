@@ -3,16 +3,13 @@
  * v3/v3.1, lineage nodes and source stamps): identity is SHA-256 over the raw
  * embedded DER, and the readable X.509 facts come from the platform parser.
  */
-import { createHash, X509Certificate } from "node:crypto";
+import { X509Certificate } from "node:crypto";
 
 import type { ApkSignatureResult } from "../domain/apkSignature/apkSignatureReport.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export type Certificate =
   ApkSignatureResult["schemes"]["v2"]["signers"][number]["certificate"];
-
-/** SHA-256 over the raw embedded DER — exactly what apksig/apksigner hash. */
-const derFingerprint = (der: Uint8Array): string =>
-  createHash("sha256").update(der).digest("hex");
 
 /** Each fact is read independently so one unsupported field does not hide the rest. */
 const attempt = <T>(read: () => T): T | null => {
@@ -34,7 +31,7 @@ export const certificateFacts = (der: Uint8Array): NonNullable<Certificate> => {
     return parsed.raw.equals(Buffer.from(der)) ? parsed : null;
   });
   return {
-    sha256_fingerprint: derFingerprint(der),
+    sha256_fingerprint: sha256Hex(der),
     subject: cert?.subject ?? null,
     issuer: cert?.issuer ?? null,
     serial_number: cert?.serialNumber ?? null,

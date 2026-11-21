@@ -20,6 +20,8 @@ itWithCaptureCapability(
           patterns: [{ pattern: " ", replacement: "_" }],
         },
       }),
+      undefined,
+      process.platform,
     );
     if (!result.ok) throw result.error;
     expect(
@@ -62,6 +64,8 @@ itWithCaptureCapability(
           environment: { CAPTURE_VALUE: "caller-selected" },
           filesystem_observation_paths: ["."],
         }),
+        undefined,
+        process.platform,
       );
       if (!result.ok) throw result.error;
       expect(result.value.frames.map(({ data }) => data).join("")).toContain(
@@ -113,6 +117,8 @@ itWithCaptureCapability(
         working_directory: selected,
         filesystem_observation_paths: [`${selected}/observed`],
       }),
+      undefined,
+      process.platform,
     );
     if (!result.ok) throw result.error;
     expect(result.value.frames.map(({ data }) => data).join("")).toBe(

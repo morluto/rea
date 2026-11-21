@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 import {
@@ -34,6 +37,26 @@ const inspect = (report: V8CodeCache) =>
     close: async () => {},
     inspect: async () => ok(report),
   }).inspect({ path: report.artifact.path });
+
+it("retains a completed V8 code cache observation when the caller cancels as the provider completes", async () => {
+  const report = reportFor(8);
+  const controller = new AbortController();
+  const reason = { request: "late V8 code cache cancellation" };
+  const result = await new V8CodeCacheService({
+    identity: { id: "cache-fixture", name: "Cache fixture", version: "1" },
+    close: async () => {},
+    inspect: async () => {
+      controller.abort(reason);
+      return ok(report);
+    },
+  }).inspect({ path: report.artifact.path }, { signal: controller.signal });
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  const evidence = parseEvidence(result.error.partialObservation);
+  expect(evidence.operation).toBe("inspect_v8_code_cache");
+  expect(evidence.normalized_result).toEqual(report);
+});
 
 it.each([0, 9])(
   "rejects complete coverage claiming %s scanned bytes for an eight-byte payload",

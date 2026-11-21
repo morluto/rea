@@ -10,9 +10,10 @@ import { isImmutableJsonSnapshot } from "./immutableJson.js";
 import {
   analysisErrorCategory,
   UNRETAINED_EVIDENCE_EXPORT_GUIDANCE,
+  analysisErrorRelatedInputs,
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
-  assertKnownAnalysisErrorTag,
+  assertKnownAnalysisError,
   hasAnalysisContinuingCallerGuidance,
 } from "./analysisErrorPresentation.js";
 import {
@@ -38,17 +39,9 @@ import {
   EvidenceIntegrityError,
   EvidenceReferenceError,
 } from "./evidenceErrors.js";
-import {
-  HopperCancelledError,
-  HopperProcessError,
-  HopperRemoteError,
-  HopperStartError,
-  HopperTimeoutError,
-} from "./hopperErrors.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
-import { providerRetryAction } from "./providerOperationHealth.js";
 import {
   primaryAnalysisError,
   resolvedAnalysisError,
@@ -56,9 +49,32 @@ import {
   type AnalysisCallerLifetime,
   type AnalysisError,
   type AnalysisErrorOptions,
-  type AnalysisErrorTag,
+  type AnalysisRelatedInputs,
 } from "./analysisErrorBase.js";
-import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
+import { invocationLimit } from "./analysisSettingDefinitions.js";
+import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
+import { analysisRefusalDetails } from "./analysisRefusal.js";
+import {
+  classifyAnalysisError,
+  RETRYABLE_CODES,
+} from "./analysisErrorClassification.js";
+import { isRecord } from "../kernel/isRecord.js";
+import { reportedParseLimit } from "./parseFailure.js";
+
+/**
+ * Inputs the recovery names, by contract field and operation name. Each
+ * adapter renders them in its own spelling.
+ */
+const relatedInputDetails = (
+  related: AnalysisRelatedInputs | undefined,
+): Record<string, JsonValue> => ({
+  ...(related?.parameters === undefined || related.parameters.length === 0
+    ? {}
+    : { related_parameters: [...related.parameters] }),
+  ...(related?.operations === undefined || related.operations.length === 0
+    ? {}
+    : { related_operations: [...related.operations] }),
+});
 
 /**
  * Project expected failures into exhaustive, secret-safe caller fields. The
@@ -128,9 +144,7 @@ export function* unretainedEvidenceCandidates(
   ] as const) {
     const value = projected.details?.[field];
     if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value) &&
+      isRecord(value) &&
       (value.kind === "unretained-evidence" ||
         value.kind === "unretained-observation" ||
         value.kind === "inline-evidence")
@@ -211,12 +225,7 @@ export const omitUnretainedEvidenceFromError = (
   }
   const { [field]: _partial, ...details } = projected.details!;
   const evidence = partial.evidence;
-  const evidenceId =
-    typeof evidence === "object" &&
-    evidence !== null &&
-    !Array.isArray(evidence)
-      ? evidence.evidence_id
-      : undefined;
+  const evidenceId = isRecord(evidence) ? evidence.evidence_id : undefined;
   const retention =
     partial.kind === "inline-evidence"
       ? typeof partial.retention === "string"
@@ -377,6 +386,16 @@ const projectError = (
     owner = owner.cleanupPrimary
   )
     partialObservation = owner.partialObservation;
+  let argumentObservations =
+    composed.argumentObservations.length > 0
+      ? composed.argumentObservations
+      : error.argumentObservations;
+  for (
+    let owner = composed.cleanupPrimary;
+    argumentObservations.length === 0 && owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    argumentObservations = owner.argumentObservations;
   const completedSourceObservation =
     publication?.completed.kind === "omitted"
       ? undefined
@@ -397,12 +416,13 @@ const projectError = (
     owner = owner.cleanupPrimary
   )
     cleanupReport = owner.cleanupReport;
-  assertKnownAnalysisErrorTag(error._tag);
+  assertKnownAnalysisError(error);
   const primary = primaryAnalysisError(error);
-  assertKnownAnalysisErrorTag(primary._tag);
+  assertKnownAnalysisError(primary);
   const underlyingCode = underlyingErrorCode(primary);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(primary);
+  const refusal = analysisErrorRefusal(primary);
   const unknownPublication =
     composed.workflowUnknownPublication ?? primary.workflowUnknownPublication;
   const details = {
@@ -424,9 +444,13 @@ const projectError = (
       : {
           limit:
             callerLifetime === "invocation"
-              ? { ...invocationSettingLimit(primary.limit) }
+              ? { ...invocationLimit(primary.limit) }
               : { ...primary.limit },
         }),
+    ...(refusal === undefined
+      ? {}
+      : { refusal: analysisRefusalDetails(refusal) }),
+    ...relatedInputDetails(analysisErrorRelatedInputs(primary)),
     ...(!options.secondary || secondary.size === 0
       ? {}
       : {
@@ -477,6 +501,18 @@ const projectError = (
             ? partialObservation
             : jsonValueSchema.parse(partialObservation),
         }),
+    ...(!options.partialObservation || argumentObservations.length === 0
+      ? {}
+      : {
+          argument_observations: argumentObservations.map(
+            ({ argument, observation }) => ({
+              argument,
+              observation: isImmutableJsonSnapshot(observation)
+                ? observation
+                : jsonValueSchema.parse(observation),
+            }),
+          ),
+        }),
     ...(!options.partialObservation || completedSourceObservation === undefined
       ? {}
       : {
@@ -522,7 +558,8 @@ const projectError = (
     category: analysisErrorCategory(error),
     message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
-      RETRYABLE_CODES.has(code) ||
+      (RETRYABLE_CODES.has(code) &&
+        error.ownPresentation()?.retryable !== false) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
       (error._tag === "ProcessCaptureError" &&
@@ -563,153 +600,16 @@ const errorRecovery = (
 
 const underlyingErrorCode = (
   error: AnalysisError,
-): AnalysisErrorProjection["code"] => {
-  if (
-    error instanceof HopperRemoteError &&
-    error.diagnosticType === "invalid_request"
-  )
-    return "invalid_request";
-  if (error instanceof ProviderSelectionError)
-    return error.reason === "provider_unavailable"
-      ? "provider_unavailable"
-      : "capability_unavailable";
-  if (error instanceof BrowserObservationError)
-    return error.userCategory === "cancelled"
-      ? "cancelled"
-      : BROWSER_ERROR_CODES[error.reason];
-  if (error instanceof ArtifactOperationError)
-    return artifactOperationCode(error);
-  if (error instanceof BinaryTargetError)
-    return error.constraint === "load_selection_rejected"
-      ? "invalid_request"
-      : error.systemCode === undefined
-        ? "target_unavailable"
-        : "access_denied";
-  if (error instanceof EvidenceFileError) return evidenceFileCode(error.reason);
-  if (error instanceof UnknownRegistryError)
-    return unknownRegistryCode(error.reason);
-  if (error._tag === "ProcessCaptureError") return processCaptureCode(error);
-  return staticErrorCode(error._tag);
-};
-
-const BROWSER_ERROR_CODES: Readonly<
-  Record<BrowserObservationError["reason"], AnalysisErrorProjection["code"]>
-> = {
-  endpoint_unreachable: "provider_unavailable",
-  invalid_endpoint_response: "unreadable_output",
-  target_not_found: "target_unavailable",
-  target_not_allowed: "target_unavailable",
-  service_worker_blocked: "target_unavailable",
-  target_changed: "target_unavailable",
-  target_session_detached: "target_unavailable",
-  protocol_error: "unreadable_output",
-  disconnected: "provider_unavailable",
-  payload_limit: "truncated",
-  window_not_found: "unreadable_output",
-  window_metadata_missing: "unreadable_output",
-  process_ownership_unavailable: "unreadable_output",
-  cleanup_failed: "execution_failure",
-  cancelled: "cancelled",
-  timeout: "provider_timeout",
-};
-
-const artifactOperationCode = (
-  error: ArtifactOperationError,
-): AnalysisErrorProjection["code"] => {
-  if (error.reason === "integrity" && error.artifactDetails !== undefined)
-    return "artifact_integrity_mismatch";
-  if (error.reason === "limit") return "truncated";
-  if (error.reason === "cancelled") return "cancelled";
-  return "artifact_operation_failed";
-};
-
-const evidenceFileCode = (
-  reason: EvidenceFileError["reason"],
-): AnalysisErrorProjection["code"] => {
-  if (reason === "invalid-json") return "evidence_integrity_mismatch";
-  if (reason === "path-limit" || reason === "storage-limit")
-    return "resource_constraint";
-  // A missing, non-file or already-existing path is the caller's selection.
-  if (reason === "io") return "execution_failure";
-  return "invalid_request";
-};
-
-const unknownRegistryCode = (
-  reason: UnknownRegistryError["reason"],
-): AnalysisErrorProjection["code"] => {
-  if (reason === "revision-conflict") return "revision_conflict";
-  if (reason === "already-exists" || reason === "constraint")
-    return "invalid_request";
-  if (reason === "limit") return "truncated";
-  if (reason === "integrity") return "evidence_integrity_mismatch";
-  return "execution_failure";
-};
-
-const processCaptureCode = (
-  error: AnalysisError,
-): AnalysisErrorProjection["code"] => {
-  if (error.cleanupIncomplete) return "cleanup_incomplete";
-  if (error.userCategory === "cancelled") return "cancelled";
-  return "process_capture_failed";
-};
-
-type SpecializedErrorTag =
-  | "ArtifactOperationError"
-  | "BinaryTargetError"
-  | "BrowserObservationError"
-  | "EvidenceFileError"
-  | "ProcessCaptureError"
-  | "ProviderSelectionError"
-  | "UnknownRegistryError";
-
-const STATIC_ERROR_CODES = {
-  AnalysisProtocolError: "unreadable_output",
-  AnalysisOutputError: "unreadable_output",
-  HopperProtocolError: "unreadable_output",
-  AnalysisInputError: "invalid_request",
-  AnalysisAccessDeniedError: "access_denied",
-  AnalysisArtifactChangedError: "artifact_changed",
-  AnalysisCapabilityUnavailableError: "capability_unavailable",
-  AnalysisUnsupportedTargetError: "unsupported_target",
-  AnalysisCancelledError: "cancelled",
-  HopperCancelledError: "cancelled",
-  AnalysisTimeoutError: "provider_timeout",
-  AnalysisResourceConstraintError: "resource_constraint",
-  HopperTimeoutError: "provider_timeout",
-  HopperProcessError: "provider_unavailable",
-  HopperStartError: "provider_unavailable",
-  ConfigurationError: "configuration_invalid",
-  NoBinaryOpenError: "target_unavailable",
-  EvidenceIntegrityError: "evidence_integrity_mismatch",
-  ProviderAdapterError: "execution_failure",
-  HopperRemoteError: "execution_failure",
-} as const satisfies Readonly<
-  Record<
-    Exclude<AnalysisErrorTag, SpecializedErrorTag>,
-    AnalysisErrorProjection["code"]
-  >
->;
-
-const staticErrorCode = (
-  tag: AnalysisErrorTag,
-): AnalysisErrorProjection["code"] => {
-  switch (tag) {
-    case "ArtifactOperationError":
-    case "BinaryTargetError":
-    case "BrowserObservationError":
-    case "EvidenceFileError":
-    case "ProcessCaptureError":
-    case "ProviderSelectionError":
-    case "UnknownRegistryError":
-      throw new TypeError(`Unhandled specialized analysis error: ${tag}`);
-    default:
-      return STATIC_ERROR_CODES[tag];
-  }
-};
+): AnalysisErrorProjection["code"] =>
+  // A capture whose cleanup did not finish names that as its execution failure.
+  error._tag === "ProcessCaptureError" && error.cleanupIncomplete
+    ? "cleanup_incomplete"
+    : classifyAnalysisError(error).code;
 
 const errorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined =>
+  error.ownPresentation()?.details ??
   requestErrorDetails(error) ??
   artifactStateErrorDetails(error) ??
   providerErrorDetails(error) ??
@@ -730,6 +630,9 @@ const requestErrorDetails = (
       resource: error.resource,
       reason: error.reason,
       reported_limits: error.reportedLimits,
+      ...(error.requestSent === undefined
+        ? {}
+        : { request_sent: error.requestSent }),
     };
   if (error instanceof AnalysisArtifactChangedError)
     return {
@@ -737,6 +640,9 @@ const requestErrorDetails = (
       path: error.path,
       reason: error.reason,
       boundary: "stable-artifact-read",
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
     };
   if (error instanceof AnalysisAccessDeniedError)
     return {
@@ -786,7 +692,20 @@ const requestErrorDetails = (
         ? {}
         : { binding_mismatch: jsonValueSchema.parse(error.bindingMismatch) }),
     };
-  if (error instanceof EvidenceIntegrityError) return { reason: error.message };
+  if (error instanceof EvidenceIntegrityError)
+    return {
+      reason: error.message,
+      ...(error.side === undefined ? {} : { side: error.side }),
+      ...(error.issuePath === undefined
+        ? {}
+        : { issue_path: [...error.issuePath] }),
+      ...(error.constraint === undefined
+        ? {}
+        : { constraint: error.constraint }),
+      ...(error.remainingIssueCount === undefined
+        ? {}
+        : { remaining_issue_count: error.remainingIssueCount }),
+    };
   return undefined;
 };
 
@@ -794,7 +713,12 @@ const artifactStateErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof ArtifactOperationError && error.artifactDetails)
-    return projectArtifactIntegrityDetails(error.artifactDetails);
+    return {
+      ...projectArtifactIntegrityDetails(error.artifactDetails),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
+    };
   if (error instanceof ArtifactOperationError)
     return {
       operation: error.operation,
@@ -802,9 +726,15 @@ const artifactStateErrorDetails = (
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
+      ...(error.integrityCheck === undefined
+        ? {}
+        : { integrity_check: error.integrityCheck }),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),
+      ...(error.parserLimit === undefined
+        ? {}
+        : { reported_limits: reportedParseLimit(error.parserLimit) }),
       ...(error.admission === undefined
         ? {}
         : {
@@ -834,6 +764,9 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.reason === "path-limit" ? { boundary: "filesystem-path" } : {}),
+      ...(error.detectedKind === undefined
+        ? {}
+        : { detected_kind: error.detectedKind }),
       ...(error.systemCode === undefined
         ? {}
         : { system_code: error.systemCode }),
@@ -915,52 +848,6 @@ const providerErrorDetails = (
         : {}),
     };
   }
-  if (error instanceof HopperRemoteError)
-    return {
-      stage: "analysis",
-      provider_code: error.code,
-      diagnostic_type: error.diagnosticType,
-      ...(error.operation === undefined ? {} : { operation: error.operation }),
-      ...(error.requestId === undefined ? {} : { request_id: error.requestId }),
-    };
-  if (error instanceof HopperProcessError) {
-    const stage = error.stage;
-    return {
-      exit_code: error.exitCode,
-      stage,
-      provider_state: error.providerState,
-      retry_action: providerRetryAction(
-        error.providerState,
-        error.failureCode !== undefined || error.stage === "launch",
-      ),
-      ...(error.failureCode === undefined
-        ? {}
-        : { failure_code: error.failureCode }),
-      ...(error.operation === undefined ? {} : { operation: error.operation }),
-      ...(error.requestId === undefined ? {} : { request_id: error.requestId }),
-      ...(error.diagnostic === undefined
-        ? {}
-        : { diagnostics: { ...error.diagnostic } }),
-      ...(error.launcherFailure === undefined
-        ? {}
-        : { launcher: error.launcherFailure }),
-    };
-  }
-  if (error instanceof HopperStartError)
-    return {
-      stage: "launch",
-      provider_state: "unknown",
-      ...(error.launchRejection === undefined
-        ? {}
-        : { launch_rejection: { ...error.launchRejection } }),
-      retry_action: error.ownerRunId === undefined ? "retry" : "unknown",
-      ...(error.ownerRunId === undefined
-        ? {}
-        : { owner_run_id: error.ownerRunId }),
-      ...(error.launcherFailure === undefined
-        ? {}
-        : { launcher: error.launcherFailure }),
-    };
   return undefined;
 };
 
@@ -995,8 +882,6 @@ const lifecycleErrorDetails = (
             execution_failure: "cancelled",
           }),
     };
-  if (error instanceof HopperCancelledError)
-    return { operation: "hopper", cleanup: "complete" };
   if (error instanceof AnalysisTimeoutError)
     return {
       operation: error.operation,
@@ -1008,18 +893,6 @@ const lifecycleErrorDetails = (
             cleanup_reason: error.cleanup.reason,
             resources: [...error.cleanup.resources],
           }),
-    };
-  if (error instanceof HopperTimeoutError)
-    return {
-      stage: error.operation === undefined ? "startup" : error.stage,
-      timeout_ms: error.timeoutMs,
-      ...(error.launcherOutcome === undefined
-        ? {}
-        : { launcher: error.launcherOutcome }),
-      provider_state: error.providerState,
-      retry_action: error.providerState === "busy" ? "wait" : "retry",
-      ...(error.operation === undefined ? {} : { operation: error.operation }),
-      ...(error.requestId === undefined ? {} : { request_id: error.requestId }),
     };
   if (error._tag === "ProcessCaptureError" && error.cleanupIncomplete)
     return {
@@ -1077,14 +950,6 @@ const lifecycleErrorDetails = (
     };
   return undefined;
 };
-
-const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
-  "artifact_changed",
-  "provider_timeout",
-  "cancelled",
-  "revision_conflict",
-  "provider_unavailable",
-]);
 
 export interface AnalysisErrorProjection extends Readonly<
   Record<string, JsonValue>

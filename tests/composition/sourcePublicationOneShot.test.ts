@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
@@ -13,7 +14,7 @@ import {
   runProviderAnalysis,
 } from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../src/domain/analysisObservation.js";
 import { createEvidence } from "../../src/domain/evidence.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
@@ -28,7 +29,7 @@ it.each(["inspect_macho", "inspect_managed_members"] as const)(
     const [target] = await createBinarySessionTargets();
     const path = `${dirname(target)}/./${basename(target)}`;
     const provider = { id: "fixture", name: "Fixture", version: "1" };
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "health",
       parameters: {},
       result: "large".repeat(20000),
@@ -81,99 +82,20 @@ it.each(["inspect_macho", "inspect_managed_members"] as const)(
   },
 );
 
-it("delivers a preexisting completed record inline after one-shot cleanup", async () => {
-  const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const source = createEvidence(
-    undefined,
-    provider,
-    { operation: "health", parameters: {}, result: "large".repeat(20000) },
-    { immutable: true },
-  );
-  const path = join(
-    await createTestTempDirectory("rea-oneshot-source-"),
-    "fixture.com",
-  );
-  await writeFile(path, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
-  const router = createTestProviderRouter(() => ({
-    execute: async (op) =>
-      ok(
-        createAnalysisExecution(
-          op === "health" ? null : "completed",
-          provider,
-          op === "health" ? {} : { sourceEvidence: [source] },
-        ),
-      ),
-    close: async () => ok(null),
-  }));
-  const records = new InvestigationRecords({
-    maximumRepresentationBytes: 20000,
-  });
-  const session = new BinarySession(router, records);
-  const opened = await session.open(path, {
-    loadSelection: { format: "dos-com" },
-  });
-  if (!opened.ok) throw opened.error;
-  const args = { address: "0x100", length: 4 };
-  const primary = createAnalysisExecutionEvidence(
-    "read_bytes",
-    args,
-    {
-      ...createAnalysisExecution("completed", provider, {
-        sourceEvidence: [source],
-      }),
-      subject: opened.value,
-    },
-    "observed",
-  );
-  expect(session.recordEvidence(primary).ok).toBe(true);
-  const create = () => session;
-  const dependencies: DirectAnalysisDependencies = {
-    readConfiguration: () => parseConfig({}),
-    createBinarySession: create,
-    createNativeDispatchBinarySession: create,
-    createArtifactBinarySession: create,
-    createNativeBinarySession: create,
-    createManagedBinarySession: create,
-  };
-  const result = await runDirectAnalysis(
-    dependencies,
-    path,
-    "read_bytes",
-    args,
-    { loadSelection: { format: "dos-com" } },
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected source failure");
-  expect(result.error).toMatchObject({
-    code: "resource_constraint",
-    details: {
-      completed_observation: {
-        kind: "inline-evidence",
-        retention: "one-shot-session",
-        source_closure: "not-established",
-        evidence: {
-          evidence_id: primary.evidence_id,
-          caller_input_path: path,
-          normalized_result: "completed",
-        },
-      },
-    },
-  });
-});
-
 it("keeps caller spelling on a raw observation when a source ID is malformed", async () => {
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const base = createEvidence(undefined, provider, {
+  const base = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "health",
     parameters: {},
     result: "source",
   });
   const source = { ...base, evidence_id: "invalid" };
-  const path = join(
-    await createTestTempDirectory("rea-oneshot-invalid-source-"),
-    "fixture.com",
+  const root = await createTestTempDirectory("rea-oneshot-invalid-source-");
+  const path = `${root}/./fixture.com`;
+  await writeFile(
+    join(root, "fixture.com"),
+    Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]),
   );
-  await writeFile(path, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
   const router = createTestProviderRouter(() => ({
     execute: async (op) =>
       ok(
@@ -220,167 +142,57 @@ it("keeps caller spelling on a raw observation when a source ID is malformed", a
   });
 });
 
-it.each([false, true])(
-  "keeps the source failure and primary when cancellation arrives during final close (close fails: %s)",
-  async (closeFails) => {
-    const provider = { id: "fixture", name: "Fixture", version: "1" };
-    const source = createEvidence(
-      undefined,
-      provider,
-      { operation: "health", parameters: {}, result: "large".repeat(20000) },
-      { immutable: true },
-    );
-    const path = join(
-      await createTestTempDirectory("rea-source-final-close-"),
-      "fixture.com",
-    );
-    await writeFile(path, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
-    const session = new BinarySession(
-      createTestProviderRouter(() => ({
-        execute: async (op) =>
-          ok(
-            createAnalysisExecution(
-              op === "health" ? null : "completed",
-              provider,
-              op === "health" ? {} : { sourceEvidence: [source] },
-            ),
-          ),
-        close: async () => ok(null),
-      })),
-      new InvestigationRecords({ maximumRepresentationBytes: 20000 }),
-    );
-    const opened = await session.open(path, {
-      loadSelection: { format: "dos-com" },
-    });
-    if (!opened.ok) throw opened.error;
-    const args = { address: "0x100", length: 4 };
-    const primary = createAnalysisExecutionEvidence(
-      "read_bytes",
-      args,
-      {
-        ...createAnalysisExecution("completed", provider, {
-          sourceEvidence: [source],
-        }),
-        subject: opened.value,
-      },
-      "observed",
-    );
-    expect(session.recordEvidence(primary).ok).toBe(true);
-    const create = () => session;
-    const dependencies: DirectAnalysisDependencies = {
-      readConfiguration: () => parseConfig({}),
-      createBinarySession: create,
-      createNativeDispatchBinarySession: create,
-      createArtifactBinarySession: create,
-      createNativeBinarySession: create,
-      createManagedBinarySession: create,
-    };
-    const controller = new AbortController();
-    const reason = { during: "final close" };
-    const recordEvidence = vi.spyOn(session, "recordEvidence");
-    const nativeClose = session.close.bind(session);
-    const failure = new ProviderCleanupError("fixture", ["fixture-owner"], {});
-    const close = vi
-      .spyOn(session, "close")
-      .mockImplementationOnce(async () => {
-        controller.abort(reason);
-        return closeFails ? err(failure) : nativeClose();
-      });
-    try {
-      const result = await runDirectAnalysis(
-        dependencies,
-        path,
-        "read_bytes",
-        args,
-        {
-          loadSelection: { format: "dos-com" },
-          signal: controller.signal,
-        },
-      );
-      expect(result.ok).toBe(false);
-      if (result.ok) throw new Error("Expected source failure");
-      expect(result.error).toMatchObject({
-        code: closeFails ? "cleanup_incomplete" : "resource_constraint",
-        details: {
-          partial_observation: {
-            kind: "unretained-evidence",
-            evidence: { evidence_id: source.evidence_id },
-          },
-          completed_observation: {
-            kind: "inline-evidence",
-            retention: "one-shot-session",
-            source_closure: "not-established",
-            evidence: {
-              evidence_id: primary.evidence_id,
-              caller_input_path: path,
-              normalized_result: "completed",
-            },
-          },
-          ...(closeFails
-            ? {
-                resources: ["fixture-owner"],
-                cleanup: "incomplete",
-                execution_failure: "resource_constraint",
-              }
-            : {}),
-        },
-      });
-      const sourceFailure = recordEvidence.mock.results
-        .map(({ value }) => value)
-        .find((value) => value !== undefined && !value.ok);
-      expect(sourceFailure).toBeDefined();
-      expect(
-        primaryAnalysisError(sourceFailure!.error).secondaryFailures,
-      ).toContainEqual(expect.objectContaining({ cause: reason }));
-      expect(
-        primaryAnalysisError(sourceFailure!.error).secondaryFailures.some(
-          (failure) =>
-            failure instanceof AnalysisCancelledError &&
-            failure.cause === reason,
-        ),
-      ).toBe(true);
-      expect(result.error).toMatchObject({
-        details: {
-          secondary_failures: [expect.objectContaining({ code: "cancelled" })],
-        },
-      });
-      expect(session.activeTarget() !== undefined).toBe(closeFails);
-    } finally {
-      close.mockRestore();
-      const closed = await nativeClose();
-      if (!closed.ok) throw closed.error;
-      expect(session.activeTarget()).toBeUndefined();
-    }
-  },
-);
-
-it("reports an omitted completed one-shot result when authentication headroom is exhausted", async () => {
+it.each([
+  "ordinary close",
+  "cancelled close",
+  "cancelled close with retained resources",
+] as const)("delivers the completed record inline after %s", async (finish) => {
+  const cancelled = finish !== "ordinary close";
+  const closeFails = finish === "cancelled close with retained resources";
   const provider = { id: "fixture", name: "Fixture", version: "1" };
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     provider,
-    { operation: "health", parameters: {}, result: "historical source" },
+    { operation: "health", parameters: {}, result: "large".repeat(20000) },
     { immutable: true },
   );
   const path = join(
-    await createTestTempDirectory("rea-oneshot-headroom-"),
+    await createTestTempDirectory("rea-source-final-close-"),
     "fixture.com",
   );
   await writeFile(path, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
-  const router = createTestProviderRouter(() => ({
-    execute: async () =>
-      ok(
-        createAnalysisExecution("completed", provider, {
-          sourceEvidence: [source],
-        }),
-      ),
-    close: async () => ok(null),
-  }));
-  const records = new InvestigationRecords({
-    maximumRepresentationBytes: 1000000,
-    availableAuthenticationBytes: () => 0,
+  const session = new BinarySession(
+    createTestProviderRouter(() => ({
+      execute: async (op) =>
+        ok(
+          createAnalysisExecution(
+            op === "health" ? null : "completed",
+            provider,
+            op === "health" ? {} : { sourceEvidence: [source] },
+          ),
+        ),
+      close: async () => ok(null),
+    })),
+    new InvestigationRecords({ maximumRepresentationBytes: 20000 }),
+  );
+  const opened = await session.open(path, {
+    loadSelection: { format: "dos-com" },
   });
-  const create = () => new BinarySession(router, records);
+  if (!opened.ok) throw opened.error;
+  const args = { address: "0x100", length: 4 };
+  const primary = createAnalysisExecutionEvidence(
+    "read_bytes",
+    args,
+    {
+      ...createAnalysisExecution("completed", provider, {
+        sourceEvidence: [source],
+      }),
+      subject: opened.value,
+    },
+    "observed",
+  );
+  expect(session.recordEvidence(primary).ok).toBe(true);
+  const create = () => session;
   const dependencies: DirectAnalysisDependencies = {
     readConfiguration: () => parseConfig({}),
     createBinarySession: create,
@@ -389,25 +201,78 @@ it("reports an omitted completed one-shot result when authentication headroom is
     createNativeBinarySession: create,
     createManagedBinarySession: create,
   };
-  const result = await runDirectAnalysis(
-    dependencies,
-    path,
-    "procedure_pseudo_code",
-    { procedure: "0x100" },
-    { loadSelection: { format: "dos-com" } },
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected admission failure");
-  expect(result.error).toMatchObject({
-    code: "resource_constraint",
-    details: {
-      completed_observation_omitted: {
-        reason: "insufficient-authentication-headroom",
-        source_closure: "not-established",
-      },
-    },
+  const controller = new AbortController();
+  const reason = { during: "final close" };
+  const recordEvidence = vi.spyOn(session, "recordEvidence");
+  const nativeClose = session.close.bind(session);
+  const failure = new ProviderCleanupError("fixture", ["fixture-owner"], {});
+  const close = vi.spyOn(session, "close").mockImplementationOnce(async () => {
+    if (cancelled) controller.abort(reason);
+    return closeFails ? err(failure) : nativeClose();
   });
-  expect(records.statistics().evidenceRecords).toBe(1);
+  try {
+    const result = await runDirectAnalysis(
+      dependencies,
+      path,
+      "read_bytes",
+      args,
+      {
+        loadSelection: { format: "dos-com" },
+        signal: controller.signal,
+      },
+    );
+    if (result.ok) throw new Error("Expected source failure");
+    expect(result.error).toMatchObject({
+      code: closeFails ? "cleanup_incomplete" : "resource_constraint",
+      details: {
+        partial_observation: {
+          kind: "unretained-evidence",
+          evidence: { evidence_id: source.evidence_id },
+        },
+        completed_observation: {
+          kind: "inline-evidence",
+          retention: "one-shot-session",
+          source_closure: "not-established",
+          evidence: {
+            evidence_id: primary.evidence_id,
+            caller_input_path: path,
+            normalized_result: "completed",
+          },
+        },
+        ...(closeFails
+          ? {
+              resources: ["fixture-owner"],
+              cleanup: "incomplete",
+              execution_failure: "resource_constraint",
+            }
+          : {}),
+      },
+    });
+    const sourceFailure = recordEvidence.mock.results
+      .map(({ value }) => value)
+      .find((value) => value !== undefined && !value.ok);
+    if (sourceFailure === undefined)
+      throw new Error("Expected a source recording failure");
+    expect(
+      primaryAnalysisError(sourceFailure.error).secondaryFailures.some(
+        (failure) =>
+          failure instanceof AnalysisCancelledError && failure.cause === reason,
+      ),
+    ).toBe(cancelled);
+    if (cancelled)
+      expect(result.error).toMatchObject({
+        details: {
+          secondary_failures: [expect.objectContaining({ code: "cancelled" })],
+        },
+      });
+    else expect(result.error).not.toHaveProperty("details.secondary_failures");
+    expect(session.activeTarget() !== undefined).toBe(closeFails);
+  } finally {
+    close.mockRestore();
+    const closed = await nativeClose();
+    if (!closed.ok) throw closed.error;
+    expect(session.activeTarget()).toBeUndefined();
+  }
 });
 
 it.each([false, true])(
@@ -415,7 +280,7 @@ it.each([false, true])(
   async (closeFails) => {
     const provider = { id: "fixture", name: "Fixture", version: "1" };
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       provider,
       { operation: "health", parameters: {}, result: "history" },
       { immutable: true },
@@ -425,6 +290,10 @@ it.each([false, true])(
       "fixture.com",
     );
     await writeFile(path, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
+    const records = new InvestigationRecords({
+      maximumRepresentationBytes: 1000000,
+      availableAuthenticationBytes: () => 0,
+    });
     const session = new BinarySession(
       createTestProviderRouter(() => ({
         execute: async () =>
@@ -435,10 +304,7 @@ it.each([false, true])(
           ),
         close: async () => ok(null),
       })),
-      new InvestigationRecords({
-        maximumRepresentationBytes: 1000000,
-        availableAuthenticationBytes: () => 0,
-      }),
+      records,
     );
     const create = () => session;
     const dependencies: DirectAnalysisDependencies = {
@@ -485,6 +351,7 @@ it.each([false, true])(
             : {}),
         },
       });
+      expect(records.statistics().evidenceRecords).toBe(1);
       expect(session.activeTarget() !== undefined).toBe(closeFails);
     } finally {
       close.mockRestore();

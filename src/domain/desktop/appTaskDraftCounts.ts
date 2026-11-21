@@ -211,6 +211,7 @@ export const draftCounts = (
       return seed !== end && Math.max(seed ?? 0, end ?? 0) > 1;
     })
     .flatMap((counted) => countAt(context, counted, "final") ?? [])
+    // generation-cap: suggested count checks
     .slice(0, MAX_COUNTS);
   const edited = new Map<string, Counted>();
   for (const pointer of change.changed) {
@@ -235,6 +236,7 @@ export const draftCounts = (
         membersOf(ends.final, counted).length,
     )
     .flatMap((counted) => countAt(context, counted, "baseline") ?? [])
+    // generation-cap: suggested count guards
     .slice(0, MAX_COUNT_GUARDS);
   return { checks, guards };
 };

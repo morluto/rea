@@ -1,7 +1,7 @@
 import { absenceClaimable, canonicalJson } from "../comparisonSemantics.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import type {
   ApplicationEdge,
   ApplicationNode,
@@ -773,8 +773,9 @@ const indexNativeEvidence = (
   evidence: readonly Evidence[],
 ): ReadonlyMap<string, readonly string[]> => {
   const evidenceByDigest = new Map<string, string[]>();
-  for (const { evidence_id: id, subject } of evidence) {
-    const digest = subject?.digest.sha256;
+  for (const record of evidence) {
+    const id = record.evidence_id;
+    const digest = evidenceFileTarget(record)?.sha256;
     if (digest === undefined) continue;
     const ids = evidenceByDigest.get(digest);
     if (ids === undefined) evidenceByDigest.set(digest, [id]);

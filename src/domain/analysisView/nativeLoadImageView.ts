@@ -4,7 +4,10 @@ import {
   nativeLoadImageObservationSchema,
   nativeLoadImageSchema,
   nativeUnsupportedLoadImageSchema,
-  nativeDosLoadImageSchema,
+  nativeDosMzLoadImageSchema,
+  nativeDosComVerifiedComLoaderLoadImageSchema,
+  nativeDosComVerifiedBinaryLoaderLoadImageSchema,
+  nativeDosComMismatchLoadImageSchema,
   nativeRawLoadImageSchema,
   nativeSegmentsLoadImageSchema,
   nativeDolLoadImageSchema,
@@ -122,7 +125,22 @@ export const nativeLoadImageSummarySchema = z.strictObject({
       observations: true,
       limitations: true,
     }),
-    nativeDosLoadImageSchema.omit({
+    nativeDosMzLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComVerifiedComLoaderLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComVerifiedBinaryLoaderLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComMismatchLoadImageSchema.omit({
       observations: true,
       limitations: true,
       checks: true,
@@ -204,11 +222,7 @@ const selectRows = (source: readonly (Row | string)[], view: PageRequest) => {
   };
 };
 
-/** Query the owner's parsed historical observations without reopening the target. */
-/** A selected historical relocation row omitted its symbol field. */
-export const RELOCATION_SYMBOL_UNRECORDED =
-  "The relocation symbol was not recorded for at least one selected row.";
-
+/** Query the owner's parsed observations without reopening the target. */
 export const projectNativeLoadImageView = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
@@ -288,7 +302,7 @@ export const projectNativeLoadImageView = (
           sections: "sections" in report ? report.sections.length : null,
         },
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
 
   const selected =
@@ -302,16 +316,8 @@ export const projectNativeLoadImageView = (
           : undefined
         : observed[view.collection];
   const page = selected === undefined ? undefined : selectRows(selected, view);
-  const symbolUnrecorded =
-    view.collection === "relocations" &&
-    (view.fields === undefined ||
-      view.fields.some((field: string) => field === "symbol")) &&
-    (page?.rows.some(({ record }) => !("symbol" in record)) ?? false);
   return ok({
     ...shared,
-    unknowns: symbolUnrecorded
-      ? [...shared.unknowns, RELOCATION_SYMBOL_UNRECORDED]
-      : shared.unknowns,
     kind: "native-load-image" as const,
     verification_status: report.status,
     view,

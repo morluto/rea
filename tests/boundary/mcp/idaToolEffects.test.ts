@@ -9,14 +9,15 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createIdaTarget, RecordingIdaMcp } from "../../fixtures/idaMcp.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 
-const ATTACHED_IDA_NAVIGATION = [
-  "procedure_pseudo_code",
+/** Native GUI decompilation changes the active view; assembly reads do not. */
+const ATTACHED_IDA_UI = ["procedure_pseudo_code", "analyze_function"] as const;
+const ATTACHED_IDA_READS = [
+  ...ATTACHED_IDA_UI,
   "procedure_assembly",
   "read_function_instructions",
-  "analyze_function",
 ] as const;
 const IDA_NETWORK_DISCOVERY = [
-  ...ATTACHED_IDA_NAVIGATION,
+  ...ATTACHED_IDA_READS,
   "list_procedures",
   "search_strings",
   "batch_decompile",
@@ -64,7 +65,11 @@ it("advertises attached IDA UI and network effects in SDK and session discovery"
     const registration = join(root, "registration.json");
     await writeFile(
       registration,
-      JSON.stringify({ command: "fixture", mode: "attached" }),
+      JSON.stringify({
+        command: "fixture",
+        mode: "attached",
+        protocol: "native",
+      }),
     );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: registration });
     if (!config.ok) throw config.error;
@@ -85,7 +90,7 @@ it("advertises attached IDA UI and network effects in SDK and session discovery"
     const client = await mcp.connect(server);
     const tools = (await client.listTools()).tools;
 
-    for (const name of ATTACHED_IDA_NAVIGATION) {
+    for (const name of ATTACHED_IDA_READS) {
       const response = await client.callTool({
         name,
         arguments: { procedure: "main" },
@@ -106,7 +111,13 @@ it("advertises attached IDA UI and network effects in SDK and session discovery"
     );
     expect(ida).toBeDefined();
 
-    for (const name of ATTACHED_IDA_NAVIGATION) {
+    for (const name of ["procedure_assembly", "read_function_instructions"]) {
+      const availability = status.tool_availability.groups.find(({ names }) =>
+        names.includes(name),
+      );
+      expect(availability?.effects, name).not.toContain("changesUiState");
+    }
+    for (const name of ATTACHED_IDA_UI) {
       const capability = ida?.groups.find(({ operations }) =>
         operations.includes(name),
       );

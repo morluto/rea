@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { stating } from "../../tests/support/statingFacts.js";
-import { executableFormatHintSchema } from "./dosCom.js";
+import { TARGET_FORMAT_HINTS } from "./targetFormats.js";
 import {
   admitRawBinary,
   isLegacyRawLoad,
@@ -19,17 +19,7 @@ import {
 } from "./architectureVariant.js";
 import { admittedRawLoad, vectorTableWords } from "./rawBinary.fixture.js";
 
-describe("headerless format hints", () => {
-  it("admits dos-com and raw-binary names only", () => {
-    expect(executableFormatHintSchema.safeParse("dos-com").success).toBe(true);
-    expect(executableFormatHintSchema.safeParse("raw-binary").success).toBe(
-      true,
-    );
-    expect(executableFormatHintSchema.safeParse("raw").success).toBe(false);
-  });
-});
-
-describe("raw-binary entry addresses", () => {
+describe("headerless entry points", () => {
   it("canonicalizes equivalent hex spellings without dropping the source", () => {
     const parsed = parseRawBinaryEntryPoint("0x08000000");
     expect(parsed).toEqual({
@@ -162,7 +152,11 @@ describe("raw-binary admission", () => {
         ).toEqual({
           ok: false,
           error: {
-            reason: `raw-binary ${architecture} entry_point ${entryPoint} must be 4-byte aligned`,
+            reason: `raw-binary ${architecture} entry_point ${entryPoint} must be 4-byte aligned${
+              architecture === "arm" && entryPoint !== "0x8000002"
+                ? "; an odd address can be a Thumb function pointer with bit 0 set, but raw-binary arm without architecture_variant decodes ARM state only, so the entry was not adjusted"
+                : ""
+            }`,
             constraint: "load_selection_rejected",
             field: "entry_point",
             ...(thumbHint
@@ -296,12 +290,13 @@ describe("raw-binary selection pairing", () => {
 describe("raw-binary admission results", () => {
   const sha256 = (value: unknown): string =>
     createHash("sha256").update(JSON.stringify(value)).digest("hex");
-  // Computed at d6f88becd over every combination below, without the caller's
-  // entry spelling, which the admitted load no longer keeps. Changing how the
-  // load is represented must not change any accepted value, refusal reason or
-  // constraint.
+  // Computed over every combination below, without the caller's entry
+  // spelling, which the admitted load no longer keeps. Changing how the load
+  // is represented must not change any accepted value, refusal reason or
+  // constraint. First computed at d6f88becd (930f0a2a9fbab817…); recomputed
+  // after main's #10683 added the Thumb note to odd ARM entry refusals.
   const ADMISSION_GRID_SHA256 =
-    "930f0a2a9fbab8177d89ca8161f21bc2cb472b095286282ca362ced5d2dbec50";
+    "ccc75843c2abfca5c4eb3dc192dbb2534361a8e760a9e8dc58f1b3c28fadbd65";
   // The pairing grid also covers esp-flash-image (#8228); its other 16 rows
   // still hash to d6f88becd's b6447afda4012589….
   const PAIRING_GRID_SHA256 =
@@ -380,20 +375,19 @@ describe("raw-binary admission results", () => {
   });
 
   it("keeps every format, architecture and entry pairing result", () => {
-    const rows = [undefined, ...executableFormatHintSchema.options].flatMap(
-      (format) =>
-        [undefined, "arm"].flatMap((architecture) =>
-          [undefined, "0x8000000"].map((entryPoint) => [
-            format,
+    const rows = [undefined, ...TARGET_FORMAT_HINTS].flatMap((format) =>
+      [undefined, "arm"].flatMap((architecture) =>
+        [undefined, "0x8000000"].map((entryPoint) => [
+          format,
+          architecture,
+          entryPoint,
+          rawBinarySelectionError({
+            ...(format === undefined ? {} : { format }),
             architecture,
             entryPoint,
-            rawBinarySelectionError({
-              ...(format === undefined ? {} : { format }),
-              architecture,
-              entryPoint,
-            })?.message ?? null,
-          ]),
-        ),
+          })?.message ?? null,
+        ]),
+      ),
     );
     expect(rows).toHaveLength(20);
     expect(sha256(rows)).toBe(PAIRING_GRID_SHA256);

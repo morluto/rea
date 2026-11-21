@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const run = (
   root: string,
@@ -49,18 +50,17 @@ const commit = (root: string, message: string) =>
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-development-tests-");
-  await mkdir(join(root, "scripts", "lib"), { recursive: true });
   await mkdir(join(root, "src"));
-  for (const path of [
-    "scripts/run-development-tests.mjs",
-    "scripts/run-exact-tests.mjs",
-    "scripts/run-exclusive.mjs",
-    "scripts/run-exclusive-command.mjs",
-    "scripts/lib/development-tests.mjs",
-    "scripts/lib/test-projects.mjs",
-    "scripts/lib/windows-owned-command.mjs",
-  ])
-    await copyFile(join(process.cwd(), path), join(root, path));
+  // The runner spawns the exact-test and exclusive-lock scripts.
+  await copyScriptsWithImports(
+    [
+      "scripts/run-development-tests.mjs",
+      "scripts/run-exact-tests.mjs",
+      "scripts/run-exclusive.mjs",
+      "scripts/run-exclusive-command.mjs",
+    ],
+    root,
+  );
   await symlink(
     join(process.cwd(), "node_modules"),
     join(root, "node_modules"),
@@ -166,8 +166,8 @@ describe("development test runner symlink aliases", () => {
 describe("development test runner prerequisite ownership", () => {
   it("prepares artifacts for filesystem aliases without folding distinct filenames", async () => {
     const root = await fixture();
-    const canonical = "tests/boundary/mcp/deferredRuntime.test.ts";
-    const selected = "tests/boundary/mcp/DEFERREDRuntime.test.ts";
+    const canonical = "tests/boundary/mcp/guidanceMcp.test.ts";
+    const selected = "tests/boundary/mcp/GUIDANCEMcp.test.ts";
     await mkdir(join(root, "tests/boundary/mcp"), { recursive: true });
     await writeFile(
       join(root, canonical),
@@ -192,7 +192,7 @@ describe("development test runner prerequisite ownership", () => {
         paths: [path],
         needsBuild: true,
         artifactTasks:
-          path === canonical || sameFile ? ["artifacts:mcp-catalog"] : [],
+          path === canonical || sameFile ? ["artifacts:skills"] : [],
         vitestArguments: ["run", path],
       });
     }

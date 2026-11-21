@@ -26,6 +26,9 @@ const rawLoadSummary = (load: RawBinaryLoad) => ({
 export const binaryTargetSummary = (target: BinaryTarget) =>
   liveBinaryTargetSummarySchema.parse({
     path: target.path,
+    ...(target.callerInputPath === undefined
+      ? {}
+      : { caller_input_path: target.callerInputPath }),
     format: target.format,
     kind: target.kind,
     sha256: target.sha256,

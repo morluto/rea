@@ -12,7 +12,7 @@ import {
   type AnalysisSnapshot,
 } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,

@@ -12,11 +12,13 @@ import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSna
 import {
   BRIDGE_MAX_REQUEST_BYTES_SETTING,
   DEFAULT_BRIDGE_MAX_REQUEST,
+  parseBridgeMaxRequestBytes,
+} from "./bridgeMaxRequestBytes.js";
+import {
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
   MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
-  parseBridgeMaxRequestBytes,
-} from "./bridgeMaxRequestBytes.js";
+} from "../domain/analysisResourceLimits.js";
 
 const configured = (maximumBytes: number) =>
   ({ maximumBytes, source: "setting" }) as const;
@@ -72,7 +74,6 @@ it("sets the maximum to the serialized string bound minus the framing LF", () =>
   const stringCeiling = 536_870_888;
   const hundredMib = 100 * 1024 * 1024;
   expect(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES).toBe(stringCeiling - 1);
-  expect(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES).toBe(536_870_887);
   expect(hundredMib).toBeLessThan(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES);
   const parsed = parseConfig({
     [BRIDGE_MAX_REQUEST_BYTES_SETTING]: String(hundredMib),

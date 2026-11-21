@@ -1,6 +1,10 @@
 import { z } from "zod";
-import { clientRegistrationSource } from "./ClientRegistrationSource.js";
+import {
+  clientRegistrationSource,
+  gooseEnvironmentField,
+} from "./ClientRegistrationSource.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -10,21 +14,28 @@ import {
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
   type McpToolTimeoutInputs,
-} from "../mcpStartupPolicy.js";
+} from "../config/mcpStartupPolicy.js";
 import {
   clientConfigurationRecordSchema,
+  clientServerForcedEnabled,
+  clientServerListedDisabled,
   clientRegistrationEntry,
   clientRegistrationLauncherEntry,
+  type ClientConfigurationDocument,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { ClientRegistrationTarget } from "./ClientRegistrationProfile.js";
+import {
+  stdioSelectingFields,
+  type ClientRegistrationTarget,
+} from "./ClientRegistrationProfile.js";
 import {
   classifyClientRegistrationCommand,
   equivalentClientRegistrationCommands,
   type ClientRegistrationCommandIdentity,
 } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import { dshToolCallTimeout } from "./DshCordisPatch.js";
 
 const tomlTimeoutSchema = z.union([
   z.number().positive(),
@@ -67,6 +78,38 @@ const registrationSchema = launcherSchema.extend({
 });
 
 export type ClientRegistration = z.output<typeof registrationSchema>;
+const registrationActivationSchema = registrationSchema
+  .pick({ disabled: true, enabled: true })
+  .passthrough();
+
+// Codex, Kimi Code and Pi use enabled. Devin uses disabled. Grok reads its
+// disable list. OpenCode's effective document already uses the selected dialect.
+const ignoresDisabledKey = new Set(["codex", "kimi", "pi"]);
+const ignoresEnabledKey = new Set(["devin"]);
+
+/** Interpret activation on the effective, validated registration. */
+export const clientRegistrationActivation = (
+  registration: z.output<typeof registrationActivationSchema>,
+  client: SetupClient,
+  parsed: ClientConfigurationDocument,
+): "enabled" | "disabled" => {
+  // Shared storage also serves ZCode. Its flag binds every reader of the row.
+  const sharedDisabled =
+    (parsed.dialect === "zcode" ||
+      parsed.dialect === "zcode_fallback" ||
+      client.sharedRegistration === true) &&
+    registration.enable === false;
+  return (client.format !== "grok" &&
+    !ignoresDisabledKey.has(client.name) &&
+    registration.disabled === true) ||
+    (registration.enabled === false &&
+      !ignoresEnabledKey.has(client.name) &&
+      !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
+    sharedDisabled ||
+    clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
+    ? "disabled"
+    : "enabled";
+};
 
 // https://developers.openai.com/codex/config-reference/#mcp_servers
 const codexApprovalModeSchema = z.enum(["auto", "prompt", "writes", "approve"]);
@@ -104,6 +147,18 @@ const registrationError = (error: z.ZodError): ConfigurationError =>
     })),
   });
 
+/** Read activation from an effective row regardless of its transport. */
+export const parseClientRegistrationActivation = (
+  value: unknown,
+  client: SetupClient,
+  document: ClientConfigurationDocument,
+): Result<"enabled" | "disabled", ConfigurationError> => {
+  const parsed = registrationActivationSchema.safeParse(value);
+  return parsed.success
+    ? ok(clientRegistrationActivation(parsed.data, client, document))
+    : err(registrationError(parsed.error));
+};
+
 /** Launcher identity remains usable when unrelated readiness settings are invalid. */
 export const parseClientRegistrationLauncher = (
   value: unknown,
@@ -140,6 +195,8 @@ export const parseClientRegistrationLauncher = (
 export const clientRegistrationOwnership = (
   value: unknown,
   client: SetupClient,
+  /** The REA entry point that owns registrations; update names the new one. */
+  currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
 ): ClientRegistrationCommandIdentity => {
   const parsed = parseClientRegistrationLauncher(value, {
     dialect: client.format ?? "json",
@@ -148,7 +205,7 @@ export const clientRegistrationOwnership = (
   return parsed.ok
     ? classifyClientRegistrationCommand(
         [parsed.value.command, ...parsed.value.args],
-        CURRENT_ENTRYPOINT_PATH,
+        currentCommandPath,
       )
     : "unknown";
 };
@@ -186,13 +243,17 @@ export const parseClientRegistrationPolicy = (
   if (client.format === "dsh") {
     const parsed = registrationSchema
       .pick({ command: true, args: true, serverName: true, transport: true })
+      .extend({
+        toolCallTimeoutMs: z.unknown().transform(dshToolCallTimeout).optional(),
+      })
       .strip()
       .safeParse(value);
     return parsed.success
       ? ok(parsed.data)
       : err(registrationError(parsed.error));
   }
-  if (client.format === "opencode") {
+  // Kilo keeps OpenCode's launcher and environment shape.
+  if (client.format === "opencode" || client.format === "kilo") {
     const entry = opencodeLauncherSchema
       .extend({
         environment: jsonRecordSchema(z.string()).optional(),
@@ -201,6 +262,20 @@ export const parseClientRegistrationPolicy = (
       .safeParse(value);
     if (!entry.success) return err(registrationError(entry.error));
     value = entry.data;
+  } else if (client.format === "fx" || client.format === "goose") {
+    // fx's command array and Goose's `cmd` are dialect launcher shapes;
+    // normalize them once through the launcher owner.
+    const launcher = parseClientRegistrationLauncher(value, {
+      dialect: client.format,
+      profile: client.registrationProfile,
+    });
+    if (!launcher.ok) return launcher;
+    const entry = clientConfigurationRecordSchema.safeParse(value);
+    value = {
+      ...(entry.success ? entry.data : {}),
+      command: launcher.value.command,
+      args: launcher.value.args,
+    };
   }
   const source = clientRegistrationSource(value, client.registrationProfile);
   if (source.nested)
@@ -220,6 +295,7 @@ export const parseClientRegistrationPolicy = (
 // defaults and preservation rules are applied below.
 const managedPolicyKeys = new Set([
   "env",
+  "envs",
   "environment",
   "enabled",
   "disabled",
@@ -277,19 +353,31 @@ export const clientRegistrationSourceFacts = (
         ),
       );
   } else {
+    const launcherFields = new Set(fields);
     for (const field of connection.kind === "cline"
       ? ["transport", "type", "transportType", "url"]
       : connection.kind === "commandcode"
         ? ["type", "url"]
         : connection.fields)
       fields.add(field);
+    // An existing selector that already chooses stdio stays, including one
+    // inherited through a YAML merge; only remote selectors are superseded.
+    if (connection.kind === "flat")
+      for (const field of stdioSelectingFields(source ?? {}, connection))
+        if (!launcherFields.has(field)) fields.delete(field);
   }
   return ok({ ...parsed, connectionFields: fields });
 };
 
+const inheritsGooseEnvironmentAlias = (inherited: unknown): boolean =>
+  typeof inherited === "object" &&
+  inherited !== null &&
+  Object.hasOwn(inherited, "env");
+
 /** Explicit launcher replacement preserves policy and native environment, while
  * superseding connection selectors that could keep the old remote transport.
- * Goose's single env alias becomes envs; declaring both remains ambiguous. */
+ * Goose's single env alias becomes envs unless a lower layer declares the
+ * alias; declaring both remains ambiguous. */
 export const replaceClientRegistrationLauncher = (
   target: ClientRegistrationTarget,
   command: readonly string[],
@@ -308,21 +396,10 @@ export const replaceClientRegistrationLauncher = (
             ([key]) => !launcherConnectionKeys.has(key),
           ),
         );
-  if (dialect === "goose" && Object.hasOwn(retained, "env")) {
-    if (Object.hasOwn(retained, "envs"))
-      return err(
-        new ConfigurationError(
-          "Goose environment is ambiguous: keep only envs or its env alias, not both.",
-          {
-            settings: [
-              {
-                setting: "envs",
-                constraint: "env and envs declare the same native field",
-              },
-            ],
-          },
-        ),
-      );
+  const gooseField =
+    dialect === "goose" ? gooseEnvironmentField(retained) : ok("envs");
+  if (!gooseField.ok) return gooseField;
+  if (gooseField.value === "env") {
     const alias = jsonRecordSchema(z.string()).safeParse(retained.env);
     if (!alias.success)
       return err(
@@ -336,8 +413,13 @@ export const replaceClientRegistrationLauncher = (
           ],
         }),
       );
-    retained.envs = alias.data;
-    delete retained.env;
+    // Goose overlays each field separately, so an alias a lower layer also
+    // declares keeps its spelling; `envs` beside it would be ambiguous.
+    if (inheritsGooseEnvironmentAlias(inherited)) retained.env = alias.data;
+    else {
+      retained.envs = alias.data;
+      delete retained.env;
+    }
   }
   const defaults = clientRegistrationEntry(dialect, command, {});
   // Layered native clients inherit policy without copying it into the edited
@@ -348,6 +430,10 @@ export const replaceClientRegistrationLauncher = (
       if (
         !launcherConnectionKeys.has(key) &&
         (Object.hasOwn(inheritedPolicy.data, key) ||
+          // Goose reads its `env` alias as `envs`.
+          (dialect === "goose" &&
+            key === "envs" &&
+            inheritsGooseEnvironmentAlias(inherited)) ||
           (dialect === "opencode" &&
             key === "enabled" &&
             Object.hasOwn(inheritedPolicy.data, "disabled")))
@@ -414,6 +500,8 @@ export const refreshClientRegistration = (
   environment: Readonly<Record<string, string>>,
   previous: unknown,
   timeoutInputs: McpToolTimeoutInputs,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Result<Record<string, unknown>, ConfigurationError> => {
   const target = { dialect, profile: client.registrationProfile };
   const facts = clientRegistrationSourceFacts(target, command, previous);
@@ -427,7 +515,12 @@ export const refreshClientRegistration = (
     : undefined;
   const launcher =
     priorCommand !== undefined &&
-    equivalentClientRegistrationCommands(priorCommand, command)
+    equivalentClientRegistrationCommands(
+      priorCommand,
+      command,
+      launcherEnvironment,
+      platform,
+    )
       ? priorCommand
       : command;
   const defaults = clientRegistrationEntry(dialect, launcher, environment);

@@ -13,9 +13,12 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   copyYamlAliasSource,
   preserveYamlAliasValues,
+  resolveYamlEditPath,
 } from "./YamlConfigurationAliases.js";
 import {
+  materializeUnresolvedYamlAliases,
   retainYamlConfigurationSource,
+  yamlAliasValues,
   retainYamlScalarSource,
 } from "./YamlConfigurationSource.js";
 
@@ -251,7 +254,7 @@ export const editGooseConfigurationYaml = (
   if (!isMap(document.contents))
     throw new ConfigurationError("Goose configuration root must be a mapping");
   for (let length = 1; length < path.length; length++) {
-    const parent = path.slice(0, length);
+    const parent = resolveYamlEditPath(document, path.slice(0, length));
     let previous = document.getIn(parent, true);
     if (isAlias(previous)) {
       previous = copyYamlAliasSource(previous, document);
@@ -262,30 +265,33 @@ export const editGooseConfigurationYaml = (
       document.setIn(parent, document.createNode({}));
     } else if (!isMap(previous))
       throw new ConfigurationError(
-        `Goose configuration ${parent.join(".")} must be a mapping`,
+        `Goose configuration ${path.slice(0, length).join(".")} must be a mapping`,
       );
   }
-  const previous = document.getIn(path, true);
-  const parent = document.getIn(path.slice(0, -1), true);
+  const sourcePath = resolveYamlEditPath(document, path);
+  const previous = document.getIn(sourcePath, true);
+  const parent = document.getIn(sourcePath.slice(0, -1), true);
   const removedKey =
     value === undefined && isMap(parent)
-      ? parent.items.find(
-          (pair) => isScalar(pair.key) && pair.key.value === path.at(-1),
-        )?.key
+      ? parent.items.find((pair) => pair.key === sourcePath.at(-1))?.key
       : undefined;
+  const aliasValues = yamlAliasValues(previous, document);
   const retained = preserveYamlAliasValues(document, [previous, removedKey]);
   if (value === undefined) {
-    if (!document.deleteIn(path)) return text;
-  } else
+    if (!document.deleteIn(sourcePath)) return text;
+  } else {
     document.setIn(
-      path,
+      sourcePath,
       isMap(previous) || isSeq(previous)
         ? retainYamlConfigurationSource(
             previous,
             document.createNode(value),
             retained,
+            document,
           )
         : value,
     );
+    materializeUnresolvedYamlAliases(document, aliasValues);
+  }
   return document.toString({ lineWidth: 0 });
 };

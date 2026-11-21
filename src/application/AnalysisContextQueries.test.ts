@@ -10,14 +10,14 @@ import {
   createAnalysisExecution,
   type AnalysisOperationPort,
   type AnalysisExecution,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   primaryAnalysisError,

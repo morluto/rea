@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import * as owned from "../process/OwnedCommand.js";
 import { runDesktopBuildOwnedCommand } from "./DesktopBuildOwnedCommand.js";
 import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";
@@ -10,7 +10,7 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 it
   .skipIf(process.platform === "win32" || process.getuid?.() === 0)
@@ -182,14 +182,7 @@ it("retains an observed command failure when cancellation arrives during its cle
   const resources = new ArtifactResourceScope();
   const controller = new AbortController();
   const reason = new Error("cancel during cleanup");
-  let entered!: () => void;
-  let release!: () => void;
-  const cleanupEntered = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const cleanupRelease = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const commandCleanup = phaseGate();
   const snapshot = {
     stdout: { text: "earlier output", bytes: 14, observedBytes: 14 },
     stderr: { text: "disk full", bytes: 9, observedBytes: 9 },
@@ -204,8 +197,7 @@ it("retains an observed command failure when cancellation arrives during its cle
   const mocked = vi
     .spyOn(owned, "runOwnedCommand")
     .mockImplementation(async () => {
-      entered();
-      await cleanupRelease;
+      await commandCleanup.hold();
       throw new owned.OwnedCommandFailure(
         "process",
         primary.message,
@@ -225,9 +217,9 @@ it("retains an observed command failure when cancellation arrives during its cle
   );
   const pending = host.installAgentenv("fixture", controller.signal);
   try {
-    await awaitAcknowledgement(cleanupEntered, pending, "command cleanup");
+    await commandCleanup.reached(pending, "command cleanup");
     controller.abort(reason);
-    release();
+    commandCleanup.release();
     const failure: unknown = await pending.catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(AnalysisOutputError);
     if (!(failure instanceof AnalysisOutputError)) throw failure;
@@ -245,7 +237,7 @@ it("retains an observed command failure when cancellation arrives during its cle
     expect(failure.secondaryFailures[0]?.cause).toBe(reason);
   } finally {
     controller.abort();
-    release();
+    commandCleanup.release();
     await Promise.allSettled([pending]);
     mocked.mockRestore();
     await resources.close();
