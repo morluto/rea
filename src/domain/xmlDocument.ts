@@ -27,7 +27,8 @@ const XML_FORMAT = "xml";
 /** How XML failed: ill-formed syntax, or a DOCTYPE the policy refuses. */
 export type XmlParseFailure =
   | ParseFailureError<"malformed">
-  | ParseFailureError<"unsupported">;
+  | ParseFailureError<"unsupported">
+  | ParseFailureError<"limit">;
 
 const notWellFormed = (cause?: unknown): ParseFailureError<"malformed"> =>
   malformedInput(
@@ -52,11 +53,28 @@ const unsupportedDoctype = (
 const isXmlFailure = (cause: unknown): cause is XmlParseFailure =>
   cause instanceof ParseFailureError &&
   cause.failure.format === XML_FORMAT &&
-  (cause.kind === "malformed" || cause.kind === "unsupported");
+  (cause.kind === "malformed" ||
+    cause.kind === "unsupported" ||
+    cause.kind === "limit");
 
 /** The failure the syntax check established; any other throw is ill-formed XML. */
 const xmlFailure = (cause: unknown): XmlParseFailure =>
   isXmlFailure(cause) ? cause : notWellFormed(cause);
+
+/** A streaming admission limit reached before allocating the DOM. */
+export class XmlDocumentNodeLimitError extends ParseFailureError<"limit"> {
+  constructor(
+    readonly nodes: number,
+    readonly maxNodes: number,
+  ) {
+    super({
+      kind: "limit",
+      format: XML_FORMAT,
+      detail: "XML document exceeds its projection node allowance",
+      limit: { name: "xml-nodes", maximum: maxNodes, required: nodes },
+    });
+  }
+}
 
 /** Whether a DOCTYPE's text, as saxes reports it, opens an internal subset: a `[` outside its quoted literals. */
 const declaresInternalSubset = (declaration: string): boolean =>
@@ -109,6 +127,7 @@ const checkXmlSyntax = (
   doctype: DoctypePolicy,
   listen?: (syntax: SaxesParser<{ xmlns: true }>) => void,
   nameSupported?: (name: string) => boolean,
+  maxNodes?: number,
 ): void => {
   const syntax = new SaxesParser({
     xmlns: true,
@@ -135,6 +154,20 @@ const checkXmlSyntax = (
     if (!EXTERNAL_DOCTYPE.test(declaration)) throw notWellFormed();
     checkName(declaration.trimStart().split(/[ \t\r\n]/u, 1)[0] ?? "");
   });
+  if (maxNodes !== undefined) {
+    let nodes = 0;
+    const count = () => {
+      nodes += 1;
+      if (nodes > maxNodes)
+        throw new XmlDocumentNodeLimitError(nodes, maxNodes);
+    };
+    syntax.on("opentagstart", count);
+    syntax.on("attribute", count);
+    syntax.on("text", count);
+    syntax.on("cdata", count);
+    syntax.on("comment", count);
+    syntax.on("processinginstruction", count);
+  }
   syntax.write(source).close();
 };
 
@@ -305,11 +338,18 @@ export const parseXmlDocument = (
   policy: {
     readonly doctype: DoctypePolicy;
     readonly lineEndings: "preserve" | "normalize";
+    readonly maxNodes?: number;
     readonly nameSupported?: (name: string) => boolean;
   },
 ): Result<Document, XmlParseFailure> => {
   try {
-    checkXmlSyntax(source, policy.doctype, undefined, policy.nameSupported);
+    checkXmlSyntax(
+      source,
+      policy.doctype,
+      undefined,
+      policy.nameSupported,
+      policy.maxNodes,
+    );
     // Saxes owns well-formedness outside DTDs. The DOM parser additionally
     // checks DTD syntax and builds source-located nodes; its advisory warnings
     // (including literal U+FFFD) are not byte-decoding or syntax failures.

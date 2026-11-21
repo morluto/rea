@@ -1,5 +1,6 @@
 import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "./playwrightTraceToolContracts.js";
 import { API_CONTRACT_TOOL_CONTRACTS } from "./apiContractToolContracts.js";
+import { MAVEN_POM_TOOL_CONTRACTS } from "./mavenPomToolContracts.js";
 import { NTFS_JOURNAL_TOOL_CONTRACTS } from "./ntfsJournalToolContracts.js";
 import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
 import { z } from "zod";
@@ -103,6 +104,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
   ...API_CONTRACT_TOOL_CONTRACTS,
   ...NTFS_JOURNAL_TOOL_CONTRACTS,
   ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
+  ...MAVEN_POM_TOOL_CONTRACTS,
   {
     name: "search_guidance",
     ...toolContractMetadata("search_guidance", toolEffects()),

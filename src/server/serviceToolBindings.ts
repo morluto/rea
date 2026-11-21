@@ -122,6 +122,7 @@ import type { InvestigationWorkflowExecution } from "../application/investigatio
 import { traceApplicationFeatureEvidence } from "../application/javascript/JavaScriptApplicationWorkflowService.js";
 import { traceJavaScriptSemanticsEvidence } from "../application/javascript/JavaScriptSemanticTraceService.js";
 import { compareStaticAndObservedEndpointsEvidence } from "../application/javascript/StaticObservedEndpointComparisonService.js";
+import { inspectMavenPomEvidence } from "../application/mavenPom/MavenPomService.js";
 import { inspectNtfsJournalEvidence } from "../application/ntfs/NtfsJournalService.js";
 import { evaluateReconstructionCoverage } from "../application/ReconstructionCoverageService.js";
 import { exportEnvironmentBundleTool } from "../application/environment/environmentBundleTool.js";
@@ -1116,6 +1117,17 @@ const SERVICE_TOOL_BINDINGS = {
           inspectionExecution(
             await inspectNtfsJournalEvidence(input, resources, signal),
           ),
+      },
+      inspect_maven_pom: {
+        admission: "sdk",
+        workflow: async (input, { signal }) => {
+          const inspected = await inspectMavenPomEvidence(input, resources, {
+            signal,
+          });
+          return inspectionExecution(
+            inspected.ok ? ok(inspected.value.evidence) : inspected,
+          );
+        },
       },
       inspect_playwright_trace: {
         admission: "sdk",
