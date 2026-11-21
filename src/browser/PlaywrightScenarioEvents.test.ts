@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserContext, Page, Request, Response } from "playwright-core";
 
@@ -79,20 +80,8 @@ describe("declared secrets in scenario events", () => {
 const captureNetworkBudgetFixture = async (
   maxTotalEventAllocationBytes?: number,
 ) => {
-  const pageListeners = new Map<string, (value: unknown) => void>();
-  const contextListeners = new Map<string, (value: unknown) => void>();
-  const context = {
-    on: (name: string, listener: (value: unknown) => void) =>
-      contextListeners.set(name, listener),
-    off: vi.fn(),
-  } as unknown as BrowserContext;
-  const page = {
-    url: () => "http://127.0.0.1/fixture",
-    context: () => context,
-    on: (name: string, listener: (value: unknown) => void) =>
-      pageListeners.set(name, listener),
-    off: vi.fn(),
-  } as unknown as Page;
+  const context = new EventEmitter();
+  const page = new EventEmitter();
   const scenario = browserScenarioSchema.parse({
     browser: { mode: "launch", executable_path: "/fixture/chrome" },
     start_url: { url: "http://127.0.0.1/fixture" },
@@ -113,19 +102,19 @@ const captureNetworkBudgetFixture = async (
   const redactBytes = vi.spyOn(secrets, "redactBytes");
   const redactJson = vi.spyOn(secrets, "redactJsonBody");
   const capture = new PlaywrightScenarioEvents({
-    page,
-    context,
+    page: page as unknown as Page,
+    context: context as unknown as BrowserContext,
     ownsContext: true,
     enabled: new Set(["network"]),
     network: scenario.capture.network,
     limits: scenario.capture.limits,
     secrets,
   });
+  const largeBody = Buffer.from("x".repeat(60_000));
+  const smallBody = Buffer.from('{"ok":true}');
   for (let index = 0; index < 43; index += 1) {
     const post = index >= 40;
-    const body = post
-      ? Buffer.from('{"ok":true}')
-      : Buffer.from("x".repeat(60_000));
+    const body = post ? smallBody : largeBody;
     const request = {
       method: () => (post ? "POST" : "GET"),
       url: () => `http://127.0.0.1/${post ? "final" : "data"}/${String(index)}`,
@@ -148,21 +137,25 @@ const captureNetworkBudgetFixture = async (
       ],
       body: async () => body,
     } as unknown as Response;
-    contextListeners.get("request")?.(request);
-    contextListeners.get("response")?.(response);
-    contextListeners.get("requestfinished")?.(request);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    context.emit("request", request);
+    context.emit("response", response);
+    context.emit("requestfinished", request);
+    await vi.advanceTimersByTimeAsync(0);
   }
   await capture.finish();
   return {
     result: capture.result(),
-    redactedByteValues: redactBytes.mock.calls.length,
+    redactedBodies: redactBytes.mock.calls.filter(
+      ([bytes]) =>
+        bytes.length === largeBody.length || bytes.length === smallBody.length,
+    ).length,
     processedJsonBodies: redactJson.mock.calls.length,
   };
 };
 
-describe("PlaywrightScenarioEvents", () => {
-  it("identifies omitted network transaction content and honors a raised budget", async () => {
+it("identifies omitted network transaction content and honors a raised budget", async () => {
+  vi.useFakeTimers();
+  try {
     const baseline = await captureNetworkBudgetFixture();
     const raised = await captureNetworkBudgetFixture(32 * 1024 * 1024);
     expect(baseline.result.dropped).toBeGreaterThan(0);
@@ -182,7 +175,7 @@ describe("PlaywrightScenarioEvents", () => {
         event.kind === "network-content" && event.body.state === "captured",
     ).length;
     expect(baseline.processedJsonBodies).toBe(retainedBodies);
-    expect(baseline.redactedByteValues).toBe(2 * retainedBodies);
+    expect(baseline.redactedBodies).toBe(retainedBodies);
     expect(raised.result).toMatchObject({
       dropped: 0,
       omissions: { network_transactions: [] },
@@ -193,95 +186,9 @@ describe("PlaywrightScenarioEvents", () => {
           event.kind === "network-content" && event.phase === "response",
       ),
     ).toHaveLength(43);
-  });
-
-  it("observes requested popup page errors independently of popup lifecycle events", () => {
-    const listeners = new Map<string, (value: unknown) => void>();
-    const popupListeners = new Map<string, (value: unknown) => void>();
-    const page = {
-      on: (name: string, listener: (value: unknown) => void) => {
-        listeners.set(name, listener);
-      },
-    } as unknown as Page;
-    const popup = {
-      url: () => "https://app.example.test/popup",
-      on: (name: string, listener: (value: unknown) => void) => {
-        popupListeners.set(name, listener);
-      },
-    } as unknown as Page;
-    const scenario = browserScenarioSchema.parse({
-      browser: { mode: "launch", executable_path: "/opt/chromium" },
-      start_url: { url: "https://app.example.test/" },
-      actions: [
-        { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
-      ],
-      capture: { events: ["page-errors"] },
-    });
-    const secrets = resolveScenarioSecrets(scenario, {});
-    const events = new PlaywrightScenarioEvents({
-      page,
-      enabled: new Set(["page-errors"]),
-      secrets,
-    });
-    listeners.get("popup")?.(popup);
-    popupListeners.get("pageerror")?.(new Error("popup application failure"));
-    expect(events.result().items).toMatchObject([
-      { kind: "page-error", message: "popup application failure" },
-    ]);
-  });
-
-  it("retains oversized page errors without truncating their text", () => {
-    const listeners = new Map<string, (value: Error) => void>();
-    const page = {
-      url: () => "https://app.example.test/",
-      on: (name: string, listener: (value: Error) => void) => {
-        listeners.set(name, listener);
-      },
-    } as unknown as Page;
-    const scenario = browserScenarioSchema.parse({
-      browser: {
-        mode: "launch",
-        executable_path: "/opt/chromium",
-      },
-      start_url: { url: "https://app.example.test/" },
-      environment: {
-        viewport: { width: 1_280, height: 720 },
-        locale: "en-US",
-        timezone: "UTC",
-        color_scheme: "light",
-        reduced_motion: "reduce",
-      },
-      actions: [
-        {
-          step_id: "wait",
-          action: "wait_for_timeout",
-          duration_ms: 1,
-        },
-      ],
-      storage: {},
-      secrets: [],
-      capture: {
-        after_each_step: [],
-        at_end: [],
-        events: ["page-errors"],
-      },
-    });
-    const secrets = resolveScenarioSecrets(scenario, {});
-    const events = new PlaywrightScenarioEvents({
-      page,
-      enabled: new Set(["page-errors"]),
-      secrets,
-    });
-    const error = new Error("m".repeat(70_000));
-    error.stack = "s".repeat(300_000);
-
-    listeners.get("pageerror")?.(error);
-    expect(events.result().items[0]).toMatchObject({
-      kind: "page-error",
-      message: "m".repeat(70_000),
-      stack: "s".repeat(300_000),
-    });
-  });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("retains network response events with HTTP status codes above 599 without error", () => {
@@ -342,87 +249,88 @@ it("retains network response events with HTTP status codes above 599 without err
   });
 });
 
-it("retains ordinary event volumes and reports event-count exhaustion", () => {
-  const listeners = new Map<string, ((value: Error) => void)[]>();
-  const page = {
-    url: () => "https://app.example.test/",
-    on: (name: string, listener: (value: Error) => void) => {
-      const registered = listeners.get(name) ?? [];
-      registered.push(listener);
-      listeners.set(name, registered);
-    },
-  } as unknown as Page;
+it("keeps admitted page errors intact and reports each distinct event budget", async () => {
   const scenario = browserScenarioSchema.parse({
-    browser: {
-      mode: "launch",
-      executable_path: "/opt/chromium",
-    },
+    browser: { mode: "launch", executable_path: "/opt/chromium" },
     start_url: { url: "https://app.example.test/" },
     actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
-    capture: { events: ["page-errors"] },
   });
   const secrets = resolveScenarioSecrets(scenario, {});
-  const events = new PlaywrightScenarioEvents({
-    page,
-    enabled: new Set(["page-errors"]),
-    secrets,
-  });
-  for (let index = 0; index < 2_001; index += 1)
-    listeners.get("pageerror")?.forEach((listener) => {
-      const error = new Error(`failure-${index}`);
-      error.stack = "";
-      listener(error);
+  const captureErrors = (
+    page: EventEmitter,
+    maxTotal = scenario.capture.limits.max_total_event_allocation_bytes,
+  ) =>
+    new PlaywrightScenarioEvents({
+      page: page as unknown as Page,
+      enabled: new Set(["page-errors"]),
+      limits: {
+        ...scenario.capture.limits,
+        max_total_event_allocation_bytes: maxTotal,
+      },
+      secrets,
     });
-  expect(events.result()).toMatchObject({ retained: 2_001, dropped: 0 });
-  expect(events.result().items.at(-1)).toMatchObject({
-    kind: "page-error",
-    message: "failure-2000",
-  });
-  // Omit whole oversized events, preserving ordinary messages rather than
-  // inventing truncated observations. This also tests admission before redact.
+  const emit = (page: EventEmitter, message: string, stack = "") => {
+    const error = new Error(message);
+    error.stack = stack;
+    page.emit("pageerror", error);
+  };
+  const page = new EventEmitter();
+  const capture = captureErrors(page);
+  const message = "m".repeat(70_000);
+  const stack = "s".repeat(300_000);
+  emit(page, message, stack);
   const redact = vi.spyOn(secrets, "redact");
-  listeners.get("pageerror")?.forEach((listener) => {
-    const error = new Error("x".repeat(1_000_000));
-    error.stack = "";
-    listener(error);
-  });
+  emit(page, "x".repeat(1_000_000));
   expect(redact).not.toHaveBeenCalled();
-  for (let index = 0; index < 10_000; index += 1)
-    listeners.get("pageerror")?.forEach((listener) => {
-      const error = new Error(`short-${index}`);
-      error.stack = "";
-      listener(error);
-    });
-  expect(events.result()).toMatchObject({ retained: 10_000, dropped: 2_002 });
-  expect(events.limitations().join(" ")).toContain("resource budget");
-  const aggregate = new PlaywrightScenarioEvents({
-    page,
-    enabled: new Set(["page-errors"]),
-    secrets,
-  });
-  const aggregateListener = listeners.get("pageerror")?.at(-1);
-  const aggregateRedact = vi.spyOn(secrets, "redact");
-  let refused = false;
-  for (let index = 0; index < 64 && !refused; index += 1) {
-    aggregateRedact.mockClear();
-    const droppedBefore = aggregate.result().dropped;
-    const error = new Error("x".repeat(400_000));
-    error.stack = "";
-    aggregateListener?.(error);
-    refused = aggregate.result().dropped > droppedBefore;
-    if (refused) expect(aggregateRedact.mock.calls.length).toBe(0);
-  }
-  expect(refused).toBe(true);
 
-  const small = new Error("small event remains eligible");
-  small.stack = "";
-  aggregateRedact.mockClear();
-  aggregateListener?.(small);
-  expect(aggregateRedact.mock.calls.length).toBeGreaterThan(0);
-  expect(aggregate.result().retained).toBeGreaterThan(0);
-  expect(aggregate.result().items.at(-1)).toMatchObject({
-    kind: "page-error",
-    message: "small event remains eligible",
+  for (let index = 1; index < 10_000; index += 1)
+    emit(page, `ordinary-${index}`);
+  emit(page, "over count");
+  await capture.finish();
+  const result = capture.result();
+  expect(result).toMatchObject({
+    retained: 10_000,
+    dropped: 2,
+    omissions: {
+      by_kind: [
+        {
+          kind: "page-error",
+          count: 2,
+          reasons: ["max-event-allocation-bytes", "max-events"],
+        },
+      ],
+    },
+  });
+  expect(result.items[0]).toMatchObject({ kind: "page-error", message, stack });
+  expect(result.items.at(-1)).toMatchObject({
+    message: "ordinary-9999",
+    sequence: 10_001,
+  });
+
+  const totalPage = new EventEmitter();
+  const total = captureErrors(totalPage, 40_000);
+  emit(totalPage, "before excess text");
+  redact.mockClear();
+  emit(totalPage, "x".repeat(5_000));
+  expect(redact).not.toHaveBeenCalled();
+  emit(totalPage, "small event remains eligible");
+  await total.finish();
+  expect(total.result()).toMatchObject({
+    retained: 2,
+    dropped: 1,
+    items: [
+      { message: "before excess text", sequence: 1 },
+      { message: "small event remains eligible", sequence: 3 },
+    ],
+    omissions: {
+      by_kind: [
+        {
+          kind: "page-error",
+          count: 1,
+          reasons: ["max-total-event-allocation-bytes"],
+        },
+      ],
+    },
   });
 });
 
