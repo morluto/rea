@@ -993,18 +993,6 @@ describe("saved value credentials and limits", () => {
     expect(redacted).not.toContain("x7");
   });
 
-  it("saves no integer JSON parsing would round, so no later step names another object", async () => {
-    stubFetch(201, ['{"id":9007199254740993}']);
-    const parsed = scenario([
-      requestStep({ save: [{ name: "folder", json_pointer: "/id" }] }),
-    ]);
-    const secrets = resolved(parsed);
-    await expect(
-      perform(fakePage({}), parsed.actions[0]!, secrets),
-    ).rejects.toThrow("cannot be saved exactly");
-    expect(() => secrets.savedValue("folder")).toThrow();
-  });
-
   it("sends a JSON string that spells a placeholder percent-encoded as written", async () => {
     const calls = stubFetch(200, ['{"id":7}']);
     const parsed = scenario([
@@ -1155,7 +1143,9 @@ describe("saved response JSON pointers", () => {
   });
 });
 
-describe("saved numbers JSON cannot spell back", () => {
+describe("saved response number identity", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it.each([
     ["0", 0],
     ["0.0", 0],
@@ -1163,59 +1153,43 @@ describe("saved numbers JSON cannot spell back", () => {
     ["12.50", 12.5],
     ["1E2", 100],
     ["0.1", 0.1],
-  ])(
-    "preserves an equivalent JSON decimal spelling (%s)",
-    async (number, kept) => {
-      stubFetch(201, [`{"id":${number}}`]);
+    ['"record-7"', "record-7"],
+    ["-0", undefined, "cannot be saved exactly"],
+    ["1e-400", undefined, "cannot be saved exactly"],
+    ["-1e-400", undefined, "cannot be saved exactly"],
+    ["1.0000000000000000001", undefined, "cannot be saved exactly"],
+    ["9007199254740993", undefined, "cannot be saved exactly"],
+    ["1e400", undefined, "not finite"],
+    ["-1e400", undefined, "not finite"],
+  ] as const)(
+    "preserves saved response value identity for %s",
+    async (token, kept, refusal?: string) => {
+      stubFetch(201, [
+        `{"id":${token},"companion":"stable","unselected":1e-400}`,
+      ]);
       const parsed = scenario([
-        requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
+        requestStep({
+          save: [
+            { name: "companion", json_pointer: "/companion" },
+            { name: "item", json_pointer: "/id" },
+          ],
+        }),
       ]);
       const secrets = resolved(parsed);
-      await perform(fakePage({}), parsed.actions[0]!, secrets);
-      expect(secrets.savedValue("item")).toBe(kept);
-    },
-  );
-  it.each(["-0", "1e-400", "-1e-400", "1.0000000000000000001"])(
-    "refuses a saved numeric identity that loses precision during parsing: %s",
-    async (number) => {
-      stubFetch(201, [`{"id":${number}}`]);
-      const parsed = scenario([
-        requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
-      ]);
-      const secrets = resolved(parsed);
-      await expect(
-        perform(fakePage({}), parsed.actions[0]!, secrets),
-      ).rejects.toThrow("cannot be saved exactly");
-      expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    },
-  );
-
-  it("keeps an exact saved field when an unrelated response number is inexact", async () => {
-    stubFetch(201, ['{"id":"record-7","unrelated":1e-400}']);
-    const parsed = scenario([
-      requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
-    ]);
-    const secrets = resolved(parsed);
-    await perform(fakePage({}), parsed.actions[0]!, secrets);
-    expect(secrets.savedValue("item")).toBe("record-7");
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it.each(["1e400", "-1e400"])(
-    "saves no number JSON cannot spell back (%s)",
-    async (number) => {
-      stubFetch(201, [`{"id":${number}}`]);
-      const parsed = scenario([
-        requestStep({ save: [{ name: "folder", json_pointer: "/id" }] }),
-      ]);
-      const secrets = resolved(parsed);
-      await expect(
-        perform(fakePage({}), parsed.actions[0]!, secrets),
-      ).rejects.toThrow("not finite");
-      expect(() => secrets.savedValue("folder")).toThrow();
+      const attempt = perform(fakePage({}), parsed.actions[0]!, secrets);
+      if (refusal === undefined) {
+        await attempt;
+        expect(secrets.savedValue("item")).toBe(kept);
+        expect(secrets.savedValue("companion")).toBe("stable");
+      } else {
+        await expect(attempt).rejects.toThrow(refusal);
+        expect(() => secrets.savedValue("item")).toThrow(
+          "No earlier step saved item",
+        );
+        expect(() => secrets.savedValue("companion")).toThrow(
+          "No earlier step saved companion",
+        );
+      }
     },
   );
 });
