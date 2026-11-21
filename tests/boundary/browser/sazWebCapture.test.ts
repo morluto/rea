@@ -17,6 +17,9 @@ import {
 } from "vitest";
 import { z } from "zod";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
+import { evidenceRecordSelectionSchema } from "../../../src/domain/evidenceRecordSummary.js";
+import { lifecycleResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
   webNetworkCaptureSchema,
@@ -552,33 +555,44 @@ it("pages retained SAZ Evidence through public MCP and portable CLI after source
   const path = await fixture(await archive());
   const { call } = await connectSazMcp();
   const args = { capture_path: path, format: "saz", record_ordinals: [1, 0] };
-  const full = await call("inspect_web_network_capture", args);
-  const fromMcp = parseEvidence(full.structuredContent);
-  const capture = webNetworkCaptureSchema.parse(fromMcp.normalized_result);
-  const summaryArgs = { ...args, detail: "summary" };
-  const summaryResponse = await call(
-    "inspect_web_network_capture",
-    summaryArgs,
-  );
+  const summaryResponse = await call("inspect_web_network_capture", {
+    ...args,
+    detail: "summary",
+  });
   expect(summaryResponse.isError, JSON.stringify(summaryResponse)).not.toBe(
     true,
   );
   const summary = parseEvidence(summaryResponse.structuredContent);
-  expect(summary.normalized_result).toMatchObject({
-    kind: "summary",
-    parent_evidence_id: fromMcp.evidence_id,
-    summary: { format: "saz", total_records: 2, retained_records: 2 },
+  const view = webNetworkCaptureSummaryViewResultSchema.parse(
+    summary.normalized_result,
+  );
+  expect(view.summary).toMatchObject({
+    format: "saz",
+    total_records: 2,
+    retained_records: 2,
   });
   expect(JSON.stringify(summary)).not.toContain(
     compressedBody.toString("base64"),
   );
 
-  // Retained pages must keep their snapshot semantics after the input disappears.
   await unlink(path);
   const source = {
     kind: "retained-evidence",
-    evidence_id: fromMcp.evidence_id,
+    evidence_id: view.parent_evidence_id,
   };
+  const bundle = await call("get_evidence_bundle", {
+    detail: "records",
+    filters: { evidence_id: source.evidence_id },
+  });
+  const { records } = lifecycleResultOf(evidenceRecordSelectionSchema).parse(
+    bundle.structuredContent,
+  ).result;
+  expect(records.map(({ evidence_id }) => evidence_id)).toEqual([
+    source.evidence_id,
+  ]);
+  const fromMcp = parseEvidence(records[0]);
+  const capture = webNetworkCaptureSchema.parse(fromMcp.normalized_result);
+  expect(capture.records.map(({ ordinal }) => ordinal)).toEqual([1, 0]);
   const previewArgs = {
     source,
     view: { kind: "capture", offset: 0, limit: 1 },
