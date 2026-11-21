@@ -46,6 +46,7 @@
 * **readme:** refresh project badges ([c7bc743](https://github.com/morluto/rea/commit/c7bc7436b4c354aabd34723b22dae7e544ee9a5e))
 * **readme:** simplify setup and move target details to the reference ([a914bba](https://github.com/morluto/rea/commit/a914bba78df46985618598a8e4ef79145acd3784))
 * remove tracked planning and architecture records ([#12856](https://github.com/morluto/rea/issues/12856)) ([a1dec2d](https://github.com/morluto/rea/commit/a1dec2d2d502ebb56da8902ccde9bf3dd9dfaf23))
+* streamline the README and expand the RL environment guide ([f3ce9a1](https://github.com/morluto/rea/commit/f3ce9a14c7b7ea482352bc6c8c66bdcd22ba7705))
 
 
 ### Tests
