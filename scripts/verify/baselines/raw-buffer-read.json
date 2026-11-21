@@ -1,5 +1,4 @@
 {
   "src/domain/desktop/openPgpKeys.ts": 2,
-  "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/native/pe/PeCertificateAsn1.ts": 2
 }
