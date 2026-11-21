@@ -17,6 +17,7 @@ import {
   readCudaParameters,
 } from "./CudaInfo.js";
 import type { GpuKernel, GpuLocation } from "../domain/gpu/gpuCodeObjects.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import {
   BinaryReader,
   BinaryFormatFailure,
@@ -100,6 +101,7 @@ export const readGpuElfKernels = async (
   source: GpuSource,
   kind: "cubin" | "amdgpu",
   onKernel: (kernel: GpuKernel) => void,
+  pause: ZstandardFramePause,
   preparedAmd?: AmdElfMetadata,
   onTarget?: (target: GpuPayloadTarget) => void,
 ): Promise<{
@@ -111,6 +113,7 @@ export const readGpuElfKernels = async (
   const directory = await readGpuNativeDirectory(
     source,
     readElfSectionDirectory(source.size),
+    pause,
   );
   if (directory.machine !== (kind === "cubin" ? 190 : 224))
     rejectGpu("GPU entry kind disagrees with ELF machine");

@@ -1,3 +1,4 @@
+import { probeUefiFlashImage } from "../uefi/UefiFormatProbe.js";
 import {
   BINARY_TARGET_FORMAT_KINDS,
   type TargetFormatHint,
@@ -49,11 +50,16 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import type {
-  BinaryTarget,
-  BinaryArchitecture,
-  PeCodeViewRecord,
-  UniversalMachOSlice,
+import {
+  hasIdaDatabaseSignature,
+  type AnalysisDatabaseEngine,
+} from "../domain/analysisDatabase.js";
+import {
+  PE_CODEVIEW_PREFIX_BYTES,
+  type BinaryTarget,
+  type BinaryArchitecture,
+  type PeCodeViewRecord,
+  type UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
@@ -110,13 +116,14 @@ import {
   parseMzExecutableMetadata,
   parsePeRecordFacts,
   peDebugDirectoryEntry,
-  peCodeViewDataRanges,
+  peCodeViewDirectoryEntries,
   peRvaToFileOffset,
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
 import {
   classifyFatContainerIdentity,
   readFatContainerHeader,
+  readFatJvmIdentityLimitIssue,
   readMachoHeaderPrefixFacts,
   type FatSliceHeaderEvidence,
   type MachoHeaderPrefixFacts,
@@ -125,7 +132,6 @@ import {
   hasJvmClassHeader,
   isJvmClassFile,
   MAX_JVM_CLASS_IDENTITY_BYTES,
-  JVM_CLASS_IDENTITY_LIMIT_REASON,
 } from "../domain/apple/jvmClassFile.js";
 import {
   MachoLoadCommandCursor,
@@ -495,17 +501,23 @@ const readOpenedBinaryTarget = async (
     ...(await identity()),
     artifactSelectedPath: selectedPath,
   });
+  const databaseEngine =
+    targetKind === undefined || targetKind === "database"
+      ? await detectDatabaseEngine(path, handle, signal)
+      : null;
   if (
     targetKind === "database" ||
     (targetKind === undefined &&
       artifactFormat !== "ines" &&
+      artifactFormat !== "uefi" &&
       artifactFormat !== "plist" &&
-      path.toLowerCase().endsWith(".hop"))
+      databaseEngine !== null)
   )
     return ok({
       ...(await identity()),
       kind: "database",
       format: "analysis-database",
+      databaseEngine,
     });
   if (artifactFormat !== undefined) {
     const identity = await artifactIdentity();
@@ -693,6 +705,21 @@ const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
     throw cancelledBy("resolve_binary_target", signal);
 };
 
+/** IDA databases carry a signature; Hopper databases are known only by suffix. */
+const detectDatabaseEngine = async (
+  path: string,
+  handle: FileHandle,
+  signal?: AbortSignal,
+): Promise<AnalysisDatabaseEngine | null> => {
+  throwIfTargetResolutionCancelled(signal);
+  const magic = Buffer.alloc(4);
+  const observed = await handle.read(magic, 0, magic.length, 0);
+  throwIfTargetResolutionCancelled(signal);
+  if (hasIdaDatabaseSignature(magic.subarray(0, observed.bytesRead)))
+    return "ida";
+  return path.toLowerCase().endsWith(".hop") ? "hopper" : null;
+};
+
 const detectArtifactFormat = async (
   path: string,
   source: StableRegularFileDescriptor,
@@ -800,6 +827,7 @@ const detectArtifactFormat = async (
     ))
   )
     return "dmg";
+  if (await probeUefiFlashImage(handle, signal)) return "uefi";
   // XML property lists can use archive-specific suffixes such as .archive.
   // The named-format check above keeps .js, .map, and .asar classifications.
   const xmlProbe = createXmlPlistSignatureProbe();
@@ -1061,13 +1089,20 @@ const readExecutableMetadata = async (
   if (
     mayBeJvmClass &&
     fileSize > MAX_JVM_CLASS_IDENTITY_BYTES &&
-    fatEvidence !== undefined &&
-    classifyFatContainerIdentity(
-      fatEvidence.header,
-      (offset) => fatEvidence.sliceHeadersByOffset.get(offset)?.magic,
-    ).state === "malformed"
-  )
-    return err(JVM_CLASS_IDENTITY_LIMIT_REASON);
+    fatEvidence !== undefined
+  ) {
+    const { header, sliceHeadersByOffset } = fatEvidence;
+    const identity = classifyFatContainerIdentity(
+      header,
+      (offset) => sliceHeadersByOffset.get(offset)?.magic,
+    );
+    const limitIssue = await readFatJvmIdentityLimitIssue(
+      header,
+      identity,
+      (offset, length) => readHandleRange(handle, offset, length, signal),
+    );
+    if (limitIssue !== null) return err(limitIssue);
+  }
   const parsed = parseExecutableHeader(
     bytes,
     hostArchitecture,
@@ -1337,13 +1372,7 @@ const readFatSliceHeaderEvidence = async (
   for (let index = 0; index < header.slices.length; index += 1) {
     const slice = header.slices[index];
     if (slice === undefined) continue;
-    if (header.rangeIssues[index] !== null) {
-      sliceHeadersByOffset.set(
-        slice.offset,
-        readMachoHeaderPrefixFacts(Buffer.alloc(0)),
-      );
-      continue;
-    }
+    if (header.rangeIssues[index] !== null) continue;
     const observedLength = Math.min(12, slice.size);
     const thinHeader = await readHandleRange(
       handle,
@@ -1450,13 +1479,14 @@ const readPeCodeView = async (
   for (const {
     fileOffset: pointerToRawData,
     declaredSize: sizeOfData,
-  } of peCodeViewDataRanges(
+  } of peCodeViewDirectoryEntries(
     debugDirectoryBuffer,
     sectionTable,
     numberOfSections,
     debugDir.sizeOfHeaders,
   )) {
-    const maxCodeViewRead = Math.min(sizeOfData, 4096);
+    if (pointerToRawData === undefined) continue;
+    const maxCodeViewRead = Math.min(sizeOfData, PE_CODEVIEW_PREFIX_BYTES);
     const codeViewBuffer = await readHandleRange(
       handle,
       pointerToRawData,

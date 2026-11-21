@@ -199,6 +199,13 @@ describe("PNG visual diff", () => {
 });
 
 describe("isOneColourPng", () => {
+  it("accepts a single pixel and detects an alpha change at the row boundary", () => {
+    const pixel = [15, 35, 55, 75];
+    expect(isOneColourPng(png(1, 1, pixel).toString("base64"))).toBe(true);
+    const pixels = [...pixel, ...pixel, 15, 35, 55, 76, ...pixel];
+    expect(isOneColourPng(png(2, 2, pixels).toString("base64"))).toBe(false);
+  });
+
   it("tells a one-colour frame from a drawn one, and an unreadable one from both", () => {
     const base64 = (pixels: readonly number[]) =>
       png(2, 2, pixels).toString("base64");

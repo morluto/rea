@@ -456,7 +456,7 @@ configuration errors and do not fall back to 128. The setting is read from
 the environment that starts REA, while MCP `regex.worker_heap_request_mib`
 can override it for workers belonging to newly accepted searches. Use
 `update_analysis_settings` for either runtime control; accepted work keeps its
-budget. See the [settings design](../../design/limits-and-recovery.md).
+budget. See the [analysis settings and recovery](../../reference/limits-and-recovery.md).
 A heap failure names the effective request, known source, default, floor, and
 maximum. A positive Node.js
 `--max-old-space-size` on the process that starts
@@ -701,6 +701,10 @@ Available CPU type, subtype/capability bits, byte range, and alignment remain
 checked against the source bytes. Inventory records source ranges and hashes, and
 extraction copies those ranges without running the target. This does not
 expand any analysis provider's supported architectures.
+An unnamed architecture can carry a numeric CPU type and base subtype in
+`lipo`'s label. The `PTR_AUTH_VERSION` line identifies a userspace or kernel
+ABI, while the exact version and full subtype code remain unknown when that
+line is the only capability information.
 Malformed successful `lipo` output reports a format failure with its parse
 diagnostic.
 Apple lipo's hidden ARM64 compatibility row is retained separately from the
@@ -766,7 +770,13 @@ Selected plist paths preserve filesystem resolution, including `..` after a
 directory symlink and trailing directory separators. Resource-only bundle
 sessions resolve relative selections from the bundle root with the same path
 semantics as executable sessions; the reported source path retains those
-selected segments.
+selected segments. `source_sha256` identifies the stable bytes used for
+classification, decoding, and any native conversion. In an executable session the
+Evidence subject remains the open program, the same binding as other
+bundle-resource observations. A resource-only session keeps a null subject.
+For either bundle session, the selected plist must resolve inside the opened
+bundle. Use `rea inspect-plist <path>` or open the plist itself in MCP when
+it resides outside the bundle.
 
 A conversion refusal includes plutil's diagnostic from either output stream.
 `details.captured_output` retains bounded stdout/stderr excerpts, observed byte

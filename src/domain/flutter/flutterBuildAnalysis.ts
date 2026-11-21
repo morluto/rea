@@ -239,6 +239,13 @@ export const flutterResultSchemas = {
       snapshot_hash_candidates: z.array(z.string().regex(/^[0-9a-f]{32}$/u)),
       /** Distinct exported data headers with a valid hash at the header's fixed offset. */
       snapshot_hash_sources: z.int().nonnegative(),
+      snapshot_profile: z
+        .enum(["legacy-split", "unified"])
+        .nullable()
+        .exactOptional()
+        .describe(
+          "Export profile supported by the observed headers. Null means unresolved. Older Evidence may omit it.",
+        ),
       /** Snapshot symbols read from the dynamic symbol table. */
       sections: z.array(
         z.strictObject({

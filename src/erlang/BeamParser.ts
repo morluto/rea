@@ -127,27 +127,29 @@ const parseAtoms = (
   // Every entry needs at least one length byte, regardless of the layout.
   // Reject an impossible table before treating its count as a budget refusal.
   if (count > payload.length - 4) fail("BEAM atom table is truncated.");
-  if (count > maxAtoms)
+  const overBudget = count > maxAtoms;
+  const atoms: NonNullable<ErlangBeam["atoms"]> = [];
+  const examined = Math.min(count, maxAtoms);
+  let at = 4;
+  for (let index = 1; index <= examined; index += 1) {
+    const [length, next] = atomLength(payload, at, compact);
+    // Reserve at least one length byte per remaining atom. A length inside
+    // the admitted prefix can disprove framing without inspecting those rows.
+    if (length > payload.length - next - (count - index))
+      fail("BEAM atom table is truncated.");
+    at = next + length;
+    if (overBudget) continue;
+    const nameBytes = payload.subarray(next, at);
+    if (encoding === "utf8" && !isUtf8(nameBytes))
+      fail("BEAM atom name is not valid UTF-8.");
+    atoms.push({ index, name: nameBytes.toString(encoding) });
+  }
+  if (overBudget)
     throw decodeLimit(
       "beam",
       `BEAM atom table exceeds the ${String(maxAtoms)}-atom budget.`,
       { name: "max_atoms", maximum: maxAtoms, required: count },
     );
-  const atoms: NonNullable<ErlangBeam["atoms"]> = [];
-  let at = 4;
-  for (let index = 1; index <= count; index += 1) {
-    const [length, next] = atomLength(payload, at, compact);
-    at = next;
-    requireRange(payload, at, length);
-    const nameBytes = payload.subarray(at, at + length);
-    if (encoding === "utf8" && !isUtf8(nameBytes))
-      fail("BEAM atom name is not valid UTF-8.");
-    atoms.push({
-      index,
-      name: nameBytes.toString(encoding),
-    });
-    at += length;
-  }
   return { atoms, trailingBytes: payload.length - at };
 };
 

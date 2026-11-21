@@ -1,3 +1,4 @@
+import type { AnalysisDatabaseEngine } from "./analysisDatabase.js";
 import type { DolHeader } from "./gamecubeDol.js";
 import type { TargetFormatsOfKind } from "./targetFormats.js";
 
@@ -41,13 +42,26 @@ export interface ElfFamilyMetadata {
   readonly hasInterpreter?: boolean;
 }
 
+/** Prefix shared by CodeView RVA mapping and both payload readers. */
+export const PE_CODEVIEW_PREFIX_BYTES = 4096;
+
+export type PeCodeViewPath =
+  | {
+      readonly pdbPath: string;
+      readonly pdbFileName: string;
+    }
+  | {
+      readonly pdbPath: null;
+      readonly pdbFileName: null;
+      /** Exact bytes before the record's NUL terminator, with unknown text decoding. */
+      readonly pdbPathBytesHex: string;
+    };
+
 /** Referenced CodeView debug symbols from a PE debug directory. */
-export interface PeCodeViewRecord {
-  readonly pdbPath: string;
-  readonly pdbFileName: string;
+export type PeCodeViewRecord = PeCodeViewPath & {
   readonly guid: string | null;
   readonly age: number;
-}
+};
 
 /** Families whose parsed target variant carries `ElfFamilyMetadata`. */
 export const ELF_METADATA_ARCHITECTURES = [
@@ -305,6 +319,8 @@ export type BinaryTarget =
       NonExecutableMetadata & {
         readonly kind: "database";
         readonly format: "analysis-database";
+        /** Engine identified at admission; null when the database is unidentified. */
+        readonly databaseEngine: AnalysisDatabaseEngine | null;
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {

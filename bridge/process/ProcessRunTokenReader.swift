@@ -175,7 +175,7 @@ private func unavailableIdentity(pid: Int32, reason: String) -> ProcessIdentityO
   )
 }
 
-enum ProcargsMalformedStage: String, CaseIterable {
+enum ProcargsMalformedStage: String {
   case header
   case argumentCount = "argument_count"
   case executablePath = "executable_path"

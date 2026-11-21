@@ -9,6 +9,7 @@ import type {
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
   assertArtifactReadActive,
+  yieldArtifactRead,
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
@@ -21,6 +22,8 @@ import {
 } from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
+import { ZstandardFrameAllowanceError } from "../domain/compression/zstandardFrameAllowance.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   ANDROID_OTA_HEADER_V2_BYTES,
   androidOtaDistinctOperationDataBytes,
@@ -28,7 +31,8 @@ import {
   androidOtaExtractRefusalLimitation,
   parseAndroidOtaHeader,
   parseAndroidOtaPayload,
-  reconstructAndroidOtaPartition,
+  reconstructAndroidOtaPartitionCooperative,
+  withAndroidOtaPayloadSignature,
   type AndroidOtaPartition,
   type AndroidOtaPayload,
   type AndroidOtaPayloadParseError,
@@ -142,11 +146,12 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
       }
       await this.#source.read(signal);
       this.#assertOpen(signal);
-      const reconstructed = reconstructAndroidOtaPartition(
+      const reconstructed = await reconstructAndroidOtaPartitionCooperative(
         stored.partition,
         payload.blockSize,
         (offset, length) =>
           blob.get(`${String(offset)}:${String(length)}`) ?? new Uint8Array(),
+        () => yieldArtifactRead(signal),
         // A SHA-256 claim on the entry is checked by the shared scanner under
         // the caller's integrity policy, so record-and-continue can keep the
         // observed bytes. Without that claim the reader checks it here.
@@ -205,17 +210,21 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     );
     const header = parseAndroidOtaHeader(headerBytes, initial.size);
     if (!header.ok) throw parseFailure(header.error);
-    const prefixEnd = Math.min(initial.size, header.value.blobOffset);
-    const prefix = await readArtifactFileBytes(
+    const { manifestOffset, metadataPrefixEnd } = header.value;
+    const metadata = await readArtifactFileBytes(
       handle,
-      0,
-      prefixEnd,
+      manifestOffset,
+      metadataPrefixEnd - manifestOffset,
       initial.size,
       signal,
     );
-    const first = parseAndroidOtaPayload(prefix, initial.size);
-    if (!first.ok) throw parseFailure(first.error);
-    const signatureRange = first.value.payloadSignatureRange;
+    const payload = parseAndroidOtaPayload(
+      header.value,
+      metadata,
+      initial.size,
+    );
+    if (!payload.ok) throw parseFailure(payload.error);
+    const signatureRange = payload.value.payloadSignatureRange;
     const payloadSignature =
       signatureRange === null
         ? undefined
@@ -230,8 +239,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     this.#assertOpen(signal);
     const parsed =
       payloadSignature === undefined
-        ? first
-        : parseAndroidOtaPayload(prefix, initial.size, payloadSignature);
+        ? payload
+        : withAndroidOtaPayloadSignature(payload.value, payloadSignature);
     if (!parsed.ok) throw parseFailure(parsed.error);
     this.#payload = parsed.value;
     this.#entries.clear();
@@ -342,6 +351,12 @@ const reconstructFailure = (
       cause: failure,
       integrityCheck: "declared-digest",
     });
+  if (failure instanceof ConfigurationError) throw failure;
+  if (failure._tag === "ZstandardFrameWorkRefusal")
+    throw new ZstandardFrameAllowanceError(
+      { maxFrames: failure.value, source: failure.source },
+      failure.offset,
+    );
   return parseFailure(failure);
 };
 

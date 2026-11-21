@@ -18,6 +18,7 @@ const GUARDED_WORKFLOWS = new Set([
   ".github/workflows/ci-full-pr.yml",
   ".github/workflows/release.yml",
   ".github/workflows/release-recovery.yml",
+  ".github/workflows/release-abandon.yml",
   ".github/workflows/real-ghidra-windows.yml",
   ".github/workflows/sqlite-runtime.yml",
   ".github/workflows/ci-timings.yml",
@@ -304,10 +305,12 @@ export function planChanges(request, repository) {
       .filter(([, { paths }]) => matchesAny(file, paths))
       .map(([owner]) => owner);
     for (const owner of owners) selected[owner] = true;
+    // Workflow callers can become invalid when local action inputs or outputs change.
+    selected.workflows ||= /^\.github\/actions\/.+\/action\.ya?ml$/u.test(file);
     if (
       file.startsWith(".github/workflows/") ||
       file.startsWith(".github/codeql/") ||
-      file === ".github/actionlint.yaml"
+      /^\.github\/actionlint\.ya?ml$/u.test(file)
     ) {
       selected.workflows = true;
       if (GUARDED_WORKFLOWS.has(file) || file.startsWith(".github/codeql/"))
