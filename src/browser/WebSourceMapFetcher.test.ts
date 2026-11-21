@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
@@ -702,39 +702,59 @@ it.each([302, 503])(
   },
 );
 
-it("retains an admitted response when the deadline expires before body reading", async () => {
-  const [body, sibling] = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new Uint8Array([1]));
+it("cancels an admitted response unread when the deadline expires before the timer fires", async () => {
+  const timeoutMs = 50;
+  let now = 0;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+  const firstBodyAction = phaseArrival<"read" | "cancel">();
+  const cancellation = phaseGate();
+  let operationSignal: AbortSignal | null | undefined;
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull() {
+        firstBodyAction.arrive("read");
+      },
+      cancel() {
+        firstBodyAction.arrive("cancel");
+        return cancellation.hold();
+      },
     },
-  }).tee();
+    { highWaterMark: 0 },
+  );
   const pending = fetchWebSourceMaps(
     [request],
-    {
-      ...input,
-      allowed_origins: [new URL(request.fetchUrl).origin],
-      source_map_fetch_timeout_ms: 50,
-    },
+    { ...approvedInput, source_map_fetch_timeout_ms: timeoutMs },
     undefined,
     {
-      fetch: async () => {
-        // Keep the timer callback queued while synchronous delivery crosses the deadline.
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+      fetch: async (_url, options) => {
+        operationSignal = options?.signal;
+        now = timeoutMs + 1;
         return new Response(body);
       },
     },
   );
   try {
+    expect(
+      await firstBodyAction.reached(pending, "first response body action"),
+    ).toBe("cancel");
+    expect(operationSignal?.aborted).toBe(false);
     const result = await pending;
     if (result.ok) throw new Error("Expected owned response cleanup");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
       cleanupResources: [request.fetchUrl],
+      cause: {
+        message: expect.stringContaining("50 ms source_map_fetch_timeout_ms"),
+      },
     });
-    await sibling.cancel();
+    expect(body.locked).toBe(true);
+    cancellation.release();
     await expect.poll(() => result.error.cleanupIncomplete).toBe(false);
+    expect(body.locked).toBe(false);
   } finally {
-    await Promise.allSettled([body.cancel(), sibling.cancel()]);
+    clock.mockRestore();
+    cancellation.release();
+    await pending;
   }
 });
 
