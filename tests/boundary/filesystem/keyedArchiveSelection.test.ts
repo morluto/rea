@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-import { build } from "plist";
+import { build, buildBinary } from "plist";
 import { expect, it } from "vitest";
 
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
@@ -216,6 +216,31 @@ it.each([
     'its $archiver is "MyArchiver" without an $objects table and $top roots',
     "inspect_plist",
   ],
+  // A UID projects as an object but is not the $top roots dictionary.
+  [
+    "plist with another archiver and a binary UID $top",
+    Buffer.from(
+      buildBinary({
+        $archiver: "MyArchiver",
+        $objects: ["$null", "value"],
+        $top: { UID: 1 },
+      }),
+    ),
+    'its $archiver is "MyArchiver" without an $objects table and $top roots',
+    "inspect_plist",
+  ],
+  [
+    "plist with another archiver and an XML CF$UID $top",
+    Buffer.from(
+      build({
+        $archiver: "MyArchiver",
+        $objects: ["$null", "value"],
+        $top: { CF$UID: 1 },
+      }),
+    ),
+    'its $archiver is "MyArchiver" without an $objects table and $top roots',
+    "inspect_plist",
+  ],
   [
     "compiled NIBArchive",
     Buffer.concat([Buffer.from("NIBArchive"), Buffer.alloc(40)]),
@@ -319,7 +344,6 @@ it("keeps a damaged NSKeyedArchiver archive a format failure", async () => {
     message: expect.stringContaining("$objects array"),
   });
 });
-
 it("selects a decomposed bundle path by its normalized spelling and reports the raw identity", async () => {
   const root = await bundle();
   const rawPath = `Contents/Resources/Caf\u0065\u0301.plist`;

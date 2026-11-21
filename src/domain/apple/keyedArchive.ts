@@ -123,9 +123,12 @@ const keyedArchiver = (
 ): string | undefined => {
   const archiver = archive?.$archiver;
   if (typeof archiver !== "string") return undefined;
+  // A UID projects as an object too, but it is not a $top roots dictionary.
+  const top = archive?.$top;
   return archiver === "NSKeyedArchiver" ||
     (Array.isArray(archive?.$objects) &&
-      record(archive?.$top, wrappedScalars) !== undefined)
+      record(top, wrappedScalars) !== undefined &&
+      uid(top, wrappedScalars) === undefined)
     ? archiver
     : undefined;
 };
