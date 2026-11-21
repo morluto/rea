@@ -12,6 +12,7 @@ import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellati
 import { isPlistDecodeBudgetFailure } from "../domain/apple/propertyListDecodeBudget.js";
 import { decodeInfoPlistValue } from "../domain/apple/infoPlist.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 import { decodeLimit, ParseFailureError } from "../domain/parseFailure.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import type {
@@ -162,6 +163,8 @@ const resolveAppBundleExecutable = async (
     }
   } catch (cause: unknown) {
     if (cause instanceof AnalysisCancelledError) throw cause;
+    // A broken internal assumption is a REA defect, not a fact about the bundle.
+    if (cause instanceof InternalInvariantError) throw cause;
     if (cause instanceof BinaryTargetError) return err(cause);
     return err(
       new BinaryTargetError(path, errorReason(cause, path), { cause }),
@@ -223,6 +226,8 @@ export const resolveAppleBundleExecutable = async (
     );
   } catch (cause: unknown) {
     if (cause instanceof AnalysisCancelledError) throw cause;
+    // A broken internal assumption is a REA defect, not a fact about the bundle.
+    if (cause instanceof InternalInvariantError) throw cause;
     if (cause instanceof BinaryTargetError) return err(cause);
     return err(
       new BinaryTargetError(path, errorReason(cause, path), { cause }),
@@ -590,6 +595,7 @@ const resolveLayoutExecutable = async (
       decodeInfoPlistValue(plist.value, ["CFBundleExecutable"]),
     );
   } catch (cause: unknown) {
+    if (cause instanceof InternalInvariantError) throw cause;
     if (isPlistDecodeBudgetFailure(cause))
       return err(
         new BinaryTargetError(
