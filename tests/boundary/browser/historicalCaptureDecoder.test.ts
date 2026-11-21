@@ -600,24 +600,29 @@ it.each(["missing-capture", "missing-reply", "failed-command"])(
     const path = join(root, "explicit-private-value.har");
     if (mode !== "missing-capture")
       await writeFile(path, JSON.stringify(historicalHar()));
+    let privatePath: string | undefined;
     const decoder = new HistoricalCaptureDecoder(
       [
         {
           format: "har",
           identity: HAR_CAPTURE_PROVIDER_IDENTITY,
-          command: async () => ({
-            command: process.execPath,
-            arguments: [
-              "-e",
-              mode === "failed-command"
-                ? 'process.stderr.write("explicit-private-value ordinary diagnostic"); process.exit(2)'
-                : "process.exit(0)",
-            ],
-          }),
+          command: async (_, runtimePath) => {
+            privatePath = runtimePath;
+            return {
+              command: process.execPath,
+              arguments: [
+                "-e",
+                mode === "failed-command"
+                  ? 'process.stderr.write("explicit-private-value ordinary diagnostic"); process.exit(2)'
+                  : "process.exit(0)",
+              ],
+            };
+          },
         },
       ],
       process.env,
     );
+    onTestFinished(() => decoder.close());
     const result = await decoder.inspect(
       inspectWebNetworkCaptureInputSchema.parse({
         capture_path: path,
@@ -637,46 +642,20 @@ it.each(["missing-capture", "missing-reply", "failed-command"])(
           ? "AnalysisOutputError"
           : "ProviderAdapterError",
     );
-    if (mode === "missing-capture") expect(serialized).toContain("ENOENT");
+    if (mode === "missing-capture") {
+      expect(privatePath).toBeUndefined();
+      expect(serialized).toContain("ENOENT");
+      return;
+    }
+    if (privatePath === undefined)
+      throw new Error("Private root was not acquired");
+    await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
+    if (mode === "missing-reply")
+      expect(result.error.message).toContain("ENOENT");
     if (mode === "failed-command")
       expect(serialized).toContain('"exit_code":2');
   },
 );
-
-it("reports an absent owned reply as output failure and removes its private snapshot root", async () => {
-  const root = await createTestTempDirectory("rea-historical-decoder-");
-  const path = join(root, "input.har");
-  await writeFile(path, JSON.stringify(historicalHar()));
-  let privatePath: string | undefined;
-  const decoder = new HistoricalCaptureDecoder(
-    [
-      {
-        format: "har",
-        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
-        command: async (_, runtimePath) => {
-          privatePath = runtimePath;
-          return {
-            command: process.execPath,
-            arguments: ["-e", "process.exit(0)"],
-          };
-        },
-      },
-    ],
-    process.env,
-  );
-  const result = await decoder.inspect(
-    inspectWebNetworkCaptureInputSchema.parse({
-      capture_path: path,
-      format: "har",
-    }),
-  );
-  if (result.ok) throw new Error("Owned reply is required");
-  expect(result.error._tag).toBe("AnalysisOutputError");
-  expect(result.error.message).toContain("ENOENT");
-  if (privatePath === undefined)
-    throw new Error("Private root was not acquired");
-  await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
-});
 
 it("cancels after snapshot acquisition before launch and removes private input declarations", async () => {
   const root = await createTestTempDirectory("rea-historical-cancel-");

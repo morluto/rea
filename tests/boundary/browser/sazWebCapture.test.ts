@@ -935,14 +935,17 @@ it.each([
   const path = await fixture(bytes);
   const result = await cliResponse(path, ["--record", "0"]);
   expect(result.ok, result.stdout).toBe(false);
-  expect(JSON.parse(result.stdout).category).toBe(
+  const failure = JSON.parse(result.stdout);
+  expect(failure.category).toBe(
     ["encrypted", "unknown-member", "dtd"].includes(variant)
       ? "unsupported_provider"
       : "invalid_input",
   );
+  if (variant === "encrypted")
+    expect(failure.message).toContain("export an unencrypted copy");
   // Expanded size is a caller-correctable input bound, not a decoder failure.
   if (variant === "expanded-limit") {
-    const error = JSON.parse(result.stdout);
+    const error = failure;
     expect(error.code).toBe("invalid_request");
     expect(error.details.issues).toEqual([
       expect.objectContaining({
