@@ -1786,7 +1786,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "tests/boundary/filesystem/webSourceLocationArtifacts.test.ts",
-          "reads exact selected map bytes, retaining a BOM and explicitly selected URL context",
+          "retains exact selected map bytes and completed reads across failures",
         ),
       ),
       cancel: covered(
