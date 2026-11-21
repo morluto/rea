@@ -436,41 +436,6 @@ describe("CdpBrowserProvider: malformed approved payloads", () => {
       ]),
     );
   });
-
-  it("records a malformed response body reply as a body-shape gap", async () => {
-    const browser = await startFakeCdpBrowser({
-      eventsBeforeReply: ["Network.enable"],
-      commandResult: ({ method }) =>
-        method === "Network.getResponseBody"
-          ? { body: 7, base64Encoded: false }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_json_body_shapes: true,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.network.requests[0]?.body_shapes).toMatchObject({
-      status: "partial",
-      response: null,
-    });
-    expect(result.value.completeness.excluded).toContainEqual(
-      expect.objectContaining({
-        section: "json_body_shapes",
-        reason: "invalid_protocol_value",
-      }),
-    );
-    expect(result.value.limitations).toContain(
-      "Network.getResponseBody returned a malformed result; the section that reads it is incomplete.",
-    );
-  });
 });
 
 const expectSensitiveValuesAbsent = (
