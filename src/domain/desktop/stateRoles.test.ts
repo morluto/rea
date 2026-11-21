@@ -139,24 +139,24 @@ describe("stateReasons", () => {
     expect(reasons("/home/ada/Documents/today.tx")).toEqual([]);
   });
 
-  it.each(["𐐀notes.txt", "notes.txt𐐀"])(
-    "does not attribute an opened file to a title naming %s",
-    (name) => {
-      const path = "/home/ada/notes.txt";
-      const facts: DesktopRoleFacts = {
-        home: "/home/ada",
-        stateDirectories: [],
-        stateTails: [],
-        selectedRoots: [],
-        selections: [],
-        titles: [`${name} - Editor`],
-        openedFiles: new Set([path]),
-      };
-      expect(stateReasons(facts, path, [], false)).toEqual([
-        "opened_by_application",
-      ]);
-    },
-  );
+  it.each([
+    ["𐐀notes.txt", ["opened_by_application"]],
+    ["notes.txt𐐀", ["opened_by_application"]],
+    ["📄notes.txt", ["opened_by_application", "named_in_window_title"]],
+    ["notes.txt📄", ["opened_by_application", "named_in_window_title"]],
+  ])("attributes an opened file using the boundary in %s", (name, reasons) => {
+    const path = "/home/ada/notes.txt";
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: [],
+      stateTails: [],
+      selectedRoots: [],
+      selections: [],
+      titles: [`${name} - Editor`],
+      openedFiles: new Set([path]),
+    };
+    expect(stateReasons(facts, path, [], false)).toEqual(reasons);
+  });
 
   it("names a file by its whole name or path, never by a folder segment, a cache or a dconf database", () => {
     // CherryTree shows the document's folder, whose path holds the segment "user".
