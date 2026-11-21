@@ -209,6 +209,14 @@ it.each([
     "inspect_plist",
   ],
   [
+    "plist with another archiver and scalar $top",
+    Buffer.from(
+      build({ $archiver: "MyArchiver", $objects: ["$null"], $top: "root" }),
+    ),
+    'its $archiver is "MyArchiver" without an $objects table and $top roots',
+    "inspect_plist",
+  ],
+  [
     "compiled NIBArchive",
     Buffer.concat([Buffer.from("NIBArchive"), Buffer.alloc(40)]),
     "compiled NIBArchive",
@@ -264,6 +272,34 @@ it.each([
     });
   },
 );
+
+it("decodes an archive another keyed archiver wrote, as Foundation does", async () => {
+  // SceneKit writes .scn scenes with SCNKeyedArchiver; NSKeyedUnarchiver reads them.
+  const root = await bundle();
+  await writeFile(
+    join(root, "Contents", "Resources", "Scene.scn"),
+    Buffer.from(
+      build({
+        $archiver: "SCNKeyedArchiver",
+        $version: 100000,
+        $objects: ["$null", "value"],
+        $top: { root: { CF$UID: 1 }, other: { CF$UID: 1 } },
+      }),
+    ),
+  );
+  const { roots, objects, references, limitations } = await inspect(root, {
+    path: "Contents/Resources/Model.plist",
+  });
+  await expect(
+    inspect(root, { path: "Contents/Resources/Scene.scn" }),
+  ).resolves.toMatchObject({
+    archive_path: "Contents/Resources/Scene.scn",
+    roots,
+    objects,
+    references,
+    limitations,
+  });
+});
 
 it("keeps a damaged NSKeyedArchiver archive a format failure", async () => {
   const root = await bundle();

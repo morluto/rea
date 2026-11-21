@@ -109,13 +109,28 @@ const uid = (
   return object === undefined ? undefined : plistUidValue(object);
 };
 
+/**
+ * Foundation decodes a keyed archive whatever its $archiver names; SceneKit
+ * writes SCNKeyedArchiver. Another name is an archive only with an $objects
+ * table and $top roots, so an ordinary plist keeps the workflow that reads it.
+ */
+const isKeyedArchive = (
+  archive: Record<string, JsonValue> | undefined,
+  wrappedScalars: WeakSet<object>,
+): archive is Record<string, JsonValue> =>
+  archive !== undefined &&
+  (archive.$archiver === "NSKeyedArchiver" ||
+    (typeof archive.$archiver === "string" &&
+      Array.isArray(archive.$objects) &&
+      record(archive.$top, wrappedScalars) !== undefined));
+
 const archiverMismatch = (
   archive: Record<string, JsonValue> | undefined,
 ): string => {
   if (archive === undefined) return "its root is not a dictionary";
   if (!Object.hasOwn(archive, "$archiver")) return "it has no $archiver key";
   return typeof archive.$archiver === "string"
-    ? `its $archiver is ${JSON.stringify(archive.$archiver)}`
+    ? `its $archiver is ${JSON.stringify(archive.$archiver)} without an $objects table and $top roots`
     : "its $archiver is not a string";
 };
 
@@ -137,9 +152,9 @@ export const projectKeyedArchive = (
     wrappedScalars.add(scalar),
   );
   const archive = record(projected.value, wrappedScalars);
-  if (archive?.$archiver !== "NSKeyedArchiver")
+  if (!isKeyedArchive(archive, wrappedScalars))
     throw new KeyedArchiveKindError(
-      `Selected property list is not an NSKeyedArchiver archive: ${archiverMismatch(archive)}`,
+      `Selected property list is not a keyed archive: ${archiverMismatch(archive)}`,
       "property-list",
     );
   if (!Array.isArray(archive.$objects))
