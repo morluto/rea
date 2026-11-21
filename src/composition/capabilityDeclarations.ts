@@ -143,9 +143,14 @@ export const CAPABILITY_DECLARATIONS = {
   },
   android: {
     providers: [
-      providerBinding(JADX_PROVIDER_IDENTITY, {
-        group: "ANDROID_TOOL_CONTRACTS",
-      }),
+      providerBinding(JADX_PROVIDER_IDENTITY, [
+        "inspect_android_jni_bindings",
+        "inspect_android_package",
+        "search_android_classes",
+        "inspect_android_class",
+        "inspect_android_method",
+        "trace_android_references",
+      ]),
     ],
   },
   androidApplicationGraph: {

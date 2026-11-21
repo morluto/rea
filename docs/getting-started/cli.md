@@ -1004,7 +1004,8 @@ The JSON workflow commands supporting this option are:
   `project-managed-application-graph`.
 - `project-android-application-graph`, `project-apple-application-graph`, and
   `project-harmony-application-graph`.
-- `compare-wasm-interfaces` and `inspect-analysis-view`.
+- `compare-android-declarations`, `compare-wasm-interfaces` and
+  `inspect-analysis-view`.
 
 For `inspect-analysis-view`, the request's source reference selects a parent
 from the bundle for every supported view kind. Bundles exported from MCP work

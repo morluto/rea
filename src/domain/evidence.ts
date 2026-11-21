@@ -230,6 +230,12 @@ export type Evidence<Result extends JsonValue = JsonValue> =
     readonly normalized_result: Result;
   };
 const immutableEvidenceSnapshots = new WeakMap<object, Evidence>();
+
+/** The Evidence owner's proof of an authenticated immutable snapshot. */
+const immutableEvidenceSnapshot = (input: unknown): Evidence | undefined =>
+  typeof input === "object" && input !== null
+    ? immutableEvidenceSnapshots.get(input)
+    : undefined;
 const immutableResultSchema = z
   .custom<JsonValue>(isImmutableJsonSnapshot)
   .superRefine((value, context) => {
@@ -419,10 +425,7 @@ const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
 
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {
-  const immutable =
-    typeof input === "object" && input !== null
-      ? immutableEvidenceSnapshots.get(input)
-      : undefined;
+  const immutable = immutableEvidenceSnapshot(input);
   if (immutable !== undefined) return immutable;
   admitEvidenceRecordFormat(input);
   return authenticatedEvidenceSchema.parse(input);
@@ -522,8 +525,8 @@ const rememberReboundEvidence = (
 };
 
 /** Recognize authenticated Evidence whose complete reachable JSON data is immutable. */
-export const isImmutableEvidence = (evidence: Evidence): boolean =>
-  immutableEvidenceSnapshots.has(evidence);
+export const isImmutableEvidence = (evidence: unknown): boolean =>
+  immutableEvidenceSnapshot(evidence) !== undefined;
 
 const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
   freezeJsonSnapshot(evidence);

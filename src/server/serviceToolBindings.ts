@@ -23,6 +23,7 @@ import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
 import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
+import { compareAndroidDeclarations } from "../application/android/AndroidDeclarationComparisonService.js";
 import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
 import {
   inspectAnalysisView,
@@ -725,6 +726,22 @@ const SERVICE_TOOL_BINDINGS = {
     },
   })) satisfies Bind<FlutterBuildAnalysisService>,
   androidAnalysis: ((service, retention) => ({
+    compare_android_declarations: {
+      admission: "sdk",
+      run: async (input, options) => {
+        const result = retainAnalysisResultSources(
+          "compare_android_declarations",
+          retention.recordEvidence,
+          await compareAndroidDeclarations(
+            input,
+            options,
+            retention.evidenceById,
+          ),
+          { sourceOwner: "caller" },
+        );
+        return result.ok ? ok(result.value.evidence) : result;
+      },
+    },
     ...contractServiceBindings(service, [
       "search_android_classes",
       "trace_android_references",

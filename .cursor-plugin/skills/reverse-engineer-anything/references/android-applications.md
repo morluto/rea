@@ -13,6 +13,13 @@ own APK path and explicit selectors; do not open a native session first.
 Choose an `overload_index` from the class inventory when methods are ambiguous
 instead of guessing.
 
+For two already inspected APKs, discover `compare_android_declarations` and
+select the complete inspection IDs (a summary's `parent_evidence_id`), rather
+than reopening the targets. It compares selected SDK/component declarations and
+retained permission-name observations; partial/duplicate components and unknown
+permission-list coverage do not establish absence or effective runtime access.
+See [declaration comparison](https://github.com/morluto/rea/blob/main/docs/guides/android/android-analysis.md#compare-retained-declarations).
+
 For JNI implementations, discover `inspect_android_jni_bindings`. Select raw
 DEX class/method identities and optional descriptors, ABI or logical library
 paths. Prefer `detail: "summary"`; complete Evidence remains retained and
