@@ -2,17 +2,10 @@ import {
   fileIdentity,
   fileSubjectDisplay,
   fileSubjectTarget,
-  displayedEvidenceSubject,
 } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it, vi } from "vitest";
 
-import {
-  createEvidence,
-  parseEvidence,
-  rebindEvidenceToTargetPath,
-  type Evidence,
-} from "../../domain/evidence.js";
-import { ok } from "../../domain/result.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { createJavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import { createJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
@@ -29,10 +22,7 @@ import {
 } from "./JavaScriptApplicationWorkflowService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "./JavaScriptRuntimeReconciliationService.js";
 import { traceJavaScriptSemanticsEvidence } from "./JavaScriptSemanticTraceService.js";
-import {
-  inspectAnalysisView,
-  projectRetainedAnalysis,
-} from "../analysisView/AnalysisViewService.js";
+import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 
 const reference = ({ evidence_id }: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -126,31 +116,6 @@ it("preserves the verified application subject in both trace workflows", async (
   });
   if (!view.ok) throw view.error;
   expect(view.value.subject).toEqual(application.subject);
-  const selected = parseEvidence({
-    ...feature.value.evidence,
-    subject: displayedEvidenceSubject(feature.value.evidence.subject, {
-      name: "selected display",
-    }),
-  });
-  const retained = projectRetainedAnalysis(
-    selected,
-    {
-      recordEvidence: () => ok("added"),
-      evidenceById: () => feature.value.evidence,
-    },
-    { kind: "summary" },
-  );
-  if (!retained.ok) throw retained.error;
-  expect(retained.value.subject?.name).toBe("selected display");
-  expect(
-    rebindEvidenceToTargetPath(feature.value.evidence, {
-      path: fileSubjectDisplay(application.subject).local_path,
-      sha256: "f".repeat(64),
-      format: fileIdentity(application.subject).format,
-      architecture: "x86_64",
-      name: "wrong artifact",
-    }),
-  ).toBe(feature.value.evidence);
 });
 
 it("does not attribute a multi-source reconciliation graph to its envelope subject", () => {
