@@ -73,7 +73,7 @@ const registerCommand = (entrypointPath: string): readonly string[] =>
 const launchFromClient = (command: readonly string[]) =>
   execFileSync(command[0]!, command.slice(1), {
     encoding: "utf8",
-    env: { PATH: "/usr/bin:/bin" },
+    env: { PATH: "" },
   }).trim();
 
 const registerWithClaudeCode = async (
@@ -110,7 +110,7 @@ it.skipIf(process.platform === "win32")(
     const before = await installWithMise(installs, "6.7.0");
 
     const command = registerCommand(before.entrypoint);
-    expect(command).toEqual([before.shim, "mcp"]);
+    expect(command.slice(-2)).toEqual([before.shim, "mcp"]);
     expect(classifyClientRegistrationCommand(command, before.entrypoint)).toBe(
       "owned",
     );
@@ -267,8 +267,28 @@ it.skipIf(process.platform === "win32")(
       content + `exec '${process.execPath}' "$basedir/"'${target}' "$@"\n`,
     );
     const command = registerCommand(entrypoint);
-    expect(command).toEqual([shim, "mcp"]);
+    expect(command.slice(-2)).toEqual([shim, "mcp"]);
     expect(launchFromClient(command)).toBe("6.7.0");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps an alias with a different Node-resolved script outside the owned registration",
+  async () => {
+    const home = await createTestTempDirectory("rea-aube-parent-alias-");
+    const { entrypoint, shim } = await installWithMise(
+      join(home, "installs", "rea"),
+      "6.7.0",
+    );
+    const aliasParent = join(home, "alias");
+    await mkdir(aliasParent);
+    await symlink(dirname(shim), join(aliasParent, ".bin"), "dir");
+    const alias = join(aliasParent, ".bin", "rea");
+    expect(classifyClientRegistrationCommand([alias, "mcp"], entrypoint)).toBe(
+      "unknown",
+    );
+    const installed = registerCommand(entrypoint);
+    expect(launchFromClient(installed)).toBe("6.7.0");
   },
 );
 

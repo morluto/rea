@@ -13,7 +13,12 @@ import {
 } from "../domain/runtimeVersion.js";
 import { posixPathCandidates } from "../process/executableSearch.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { aubeShimLauncher, aubeShimTarget } from "../process/AubeBinShim.js";
+import {
+  aubeShimLauncher,
+  aubeShimRegistration,
+  aubeShimTarget,
+  registeredAubeShim,
+} from "../process/AubeBinShim.js";
 
 /** Package runners recognized for invocation guidance and legacy registrations. */
 type PackageRunner = "npx" | "bunx";
@@ -89,7 +94,7 @@ export const currentClientRegistrationCommand = (
     : CURRENT_ENTRYPOINT_PATH;
   if (entrypointPath === undefined || entrypointPath.length === 0) return [];
   const managed = managedClientLauncher(entrypointPath, platform);
-  if (managed !== undefined) return [managed, "mcp"];
+  if (managed !== undefined) return aubeShimRegistration(managed);
   return [
     registrationRuntimePath(
       process.execPath,
@@ -315,6 +320,22 @@ const inspectDirectRegistrationCommand = (
 ): ClientRegistrationCommandFacts => {
   const currentPathAvailable =
     currentCommandPath !== undefined && currentCommandPath.length > 0;
+  const managed = registeredAubeShim(command);
+  if (managed !== undefined) {
+    const target =
+      HOST_PLATFORM.platform === "win32"
+        ? undefined
+        : aubeShimTarget(managed, process.execPath);
+    return {
+      launch: "managed_shim",
+      identity:
+        target === undefined || !currentPathAvailable
+          ? "unknown"
+          : entrypointIdentity(target, currentCommandPath),
+      entrypoint: target,
+      package: undefined,
+    };
+  }
   if (command.length === 3 && command[2] === "mcp") {
     const interpreter = command[0] ?? "";
     const entrypoint = command[1] ?? "";
@@ -365,7 +386,7 @@ const inspectDirectRegistrationCommand = (
         : undefined;
     if (managedTarget !== undefined)
       return {
-        launch: "managed_shim",
+        launch: "direct",
         identity: currentPathAvailable
           ? entrypointIdentity(managedTarget, currentCommandPath)
           : "unknown",

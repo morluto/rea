@@ -1,12 +1,14 @@
 import {
   accessSync,
   constants,
+  lstatSync,
   readFileSync,
   readlinkSync,
   realpathSync,
   statSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 
 // Pin the POSIX v2 generator instead of trusting its uninstall marker.
 // https://github.com/aubepkg/aube/blob/d4c6265856caea19c7e8699d289ccc6773de02bd/crates/aube-linker/src/sys.rs#L1063-L1154
@@ -16,10 +18,11 @@ const BOUND_NODE_MARKER = "# aube-node-shim v1 ";
 const SAFE_TARGET = /^[\w.@+/-]+$/u;
 const SAFE_NODE_PATH =
   /^export NODE_PATH="\$basedir\/[\w.@+/-]+(?::\$basedir\/[\w.@+/-]+)*"$/u;
+const AUBE_POSIX_LINK_HOPS = 40;
 const BASEDIR = [
   'link="$0"',
   "hops=0",
-  'while [ -L "$link" ] && [ "$hops" -lt 40 ]; do',
+  `while [ -L "$link" ] && [ "$hops" -lt ${AUBE_POSIX_LINK_HOPS} ]; do`,
   "  hops=$((hops+1))",
   '  target=$(readlink "$link")',
   '  case "$target" in',
@@ -29,6 +32,58 @@ const BASEDIR = [
   "done",
   'basedir=$(dirname "$link")',
 ];
+
+const SHIM_SHELL = "/bin/sh";
+const SHIM_BODY = [
+  'dirname() { if [ -x /usr/bin/dirname ]; then /usr/bin/dirname "$@"; else /bin/dirname "$@"; fi; }',
+  'readlink() { if [ -x /usr/bin/readlink ]; then /usr/bin/readlink "$@"; else /bin/readlink "$@"; fi; }',
+  '. "$0"',
+].join("\n");
+
+export const aubeShimRegistration = (shim: string): readonly string[] => [
+  SHIM_SHELL,
+  "-c",
+  SHIM_BODY,
+  shim,
+  "mcp",
+];
+
+export const registeredAubeShim = (
+  command: readonly string[],
+): string | undefined =>
+  command.length === 5 &&
+  command[0] === SHIM_SHELL &&
+  command[1] === "-c" &&
+  command[2] === SHIM_BODY &&
+  command[4] === "mcp"
+    ? command[3]
+    : undefined;
+
+/** The shell walks symlinks at the supplied name without canonicalizing its parent. */
+const shellShimPath = (path: string): string => {
+  let link = path;
+  for (let hops = 0; lstatSync(link).isSymbolicLink(); hops += 1) {
+    if (hops === AUBE_POSIX_LINK_HOPS)
+      throw new Error("Aube shim exceeded its symbolic link traversal limit");
+    const target = readlinkSync(link);
+    link = isAbsolute(target)
+      ? target
+      : appendCallerPath(dirname(link), target);
+  }
+  return link;
+};
+
+const shellHelpersAvailable = (): boolean =>
+  ["dirname", "readlink"].every((name) =>
+    [`/usr/bin/${name}`, `/bin/${name}`].some((path) => {
+      try {
+        accessSync(path, constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+  );
 
 const readShim = (path: string): string | undefined => {
   try {
@@ -77,7 +132,7 @@ export const aubeShimTarget = (
   if (lines[0] !== undefined && SAFE_NODE_PATH.test(lines[0])) lines.shift();
 
   try {
-    const parent = dirname(realpathSync.native(shim));
+    const parent = dirname(shellShimPath(shim));
     const selectedRuntime = realpathSync.native(runtime);
     if (bound) {
       const exec = /^exec '([^'\n]+)' "\$basedir\/"'([^'\n]+)' "\$@"$/u.exec(
@@ -126,7 +181,7 @@ export const aubeShimLauncher = (
   name: string,
   runtime: string,
 ): string | undefined => {
-  if (!isAbsolute(entrypoint)) return undefined;
+  if (!isAbsolute(entrypoint) || !shellHelpersAvailable()) return undefined;
   let launcher: string | undefined;
   for (
     let directory = dirname(entrypoint);
