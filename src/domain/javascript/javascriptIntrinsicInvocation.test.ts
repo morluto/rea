@@ -3,7 +3,11 @@ import { createSemanticBuiltinSlotQuery } from "./javascriptSemanticDataEffectHe
 import * as t from "@babel/types";
 
 import { retainSemanticAmbientEffect } from "./javascriptSemanticAmbientWrites.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  createSemanticModuleInterop,
+  semanticModuleInteropWithAmbientWrites,
+} from "./javascriptModuleInterop.js";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
 import {
   javaScriptSourceInvocationContext,
   javaScriptGenericInvocationMethod,
@@ -324,4 +328,31 @@ it("reads a mutable bound alias at its use and preserves earlier captures", () =
     saved({});
   `).filter((fact) => fact?.path.join(".") === "intrinsic.Object.keys");
   expect(calls.map((fact) => fact?.kind)).toEqual(["known", "opaque", "known"]);
+});
+
+it("retains each ambient assignment once when refreshing the shared interop", () => {
+  const parsed = parseJavaScriptSource(
+    "Object.keys = first; Object.keys; Object.keys = second; Object.keys;",
+  );
+  if (!parsed) throw new Error("Expected intrinsic read fixture");
+  const [, earlier, , later] = parsed.program.body;
+  if (!t.isExpressionStatement(earlier) || !t.isExpressionStatement(later))
+    throw new Error("Expected two intrinsic reads");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const interop = () => semanticModuleInteropWithAmbientWrites(index.bindings);
+  const assignedNames = (read: t.ExpressionStatement) =>
+    interop()
+      .intrinsicValueReferences(read.expression, () => false)
+      ?.map(({ node }) => (t.isIdentifier(node) ? node.name : node.type));
+
+  const before = interop();
+  expect(assignedNames(later)).toEqual([]);
+  completeSemanticSteps(index.indexAmbientWritesSteps());
+  const loaded = interop();
+  expect(loaded).not.toBe(before);
+  expect(assignedNames(later)).toEqual(["first", "second"]);
+  expect(assignedNames(earlier)).toEqual(["first"]);
+  expect(interop()).toBe(loaded);
 });

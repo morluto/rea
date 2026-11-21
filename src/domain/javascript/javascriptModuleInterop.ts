@@ -1422,8 +1422,6 @@ export const semanticModuleInteropWithAmbientWrites = (
   const prior = ambientWriteInterops.get(state);
   if (prior?.generation === generation) return prior.interop;
   const interop = createSemanticModuleInterop(state);
-  for (const { site, path } of semanticAmbientIntrinsicWrites(state))
-    interop.retainWrite(site, path);
   ambientWriteInterops.set(state, { generation, interop });
   return interop;
 };
