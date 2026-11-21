@@ -403,6 +403,7 @@
 * **web:** consolidate screenshot document and reply checks ([#13107](https://github.com/morluto/rea/issues/13107)) ([383709c](https://github.com/morluto/rea/commit/383709ca7e2af26249d19143e3b6b1b736c6fb88))
 * **web:** consolidate script metadata admission and projection proofs ([#13091](https://github.com/morluto/rea/issues/13091)) ([6878e24](https://github.com/morluto/rea/commit/6878e24cc75aba57f04e1d60aec9d39d19c3659d))
 * **web:** consolidate service-worker policy lifecycle checks ([#13112](https://github.com/morluto/rea/issues/13112)) ([bb18055](https://github.com/morluto/rea/commit/bb18055d1234266a5d852f26f9b8d07e7ce4ac71))
+* **web:** consolidate service-worker policy restoration checks ([#13145](https://github.com/morluto/rea/issues/13145)) ([cc81464](https://github.com/morluto/rea/commit/cc814643ab7fc4f817538c5f0cf5c879df2d9c3e))
 * **web:** consolidate storage fingerprint comparison proofs ([#13084](https://github.com/morluto/rea/issues/13084)) ([251f863](https://github.com/morluto/rea/commit/251f863f30388f02017d0e34c790e529e8a7c183))
 * **web:** consolidate transaction admission and omission checks ([#13127](https://github.com/morluto/rea/issues/13127)) ([c9a6f5d](https://github.com/morluto/rea/commit/c9a6f5dedc7766424e9d82d29a94d8ed39064fd9))
 * **web:** consolidate UI response observation lifecycle checks ([#13121](https://github.com/morluto/rea/issues/13121)) ([648d1f8](https://github.com/morluto/rea/commit/648d1f8f9d45822fbb729492a9519d12d4cf6fa6))
