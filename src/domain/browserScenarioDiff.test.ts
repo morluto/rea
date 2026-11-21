@@ -278,39 +278,99 @@ it("reports event-family selection mismatch as unknown", () => {
   }
 });
 
-it("reports a shared unknown redirect predecessor only once", () => {
-  const original = networkCapture(1, 0);
-  const capture = browserScenarioCaptureSchema.parse({
-    ...original,
-    events: {
-      ...original.events,
-      items: original.events.items.map((event) =>
-        event.kind === "request"
-          ? { ...event, redirected_from_transaction_state: "unknown" }
-          : event,
-      ),
-    },
-  });
-  const compare = (value: BrowserScenarioCapture) =>
+it("retains network coverage guidance alongside independent console changes", () => {
+  const network = networkCapture(1, 0);
+  const consoleEvent = scenarioCapture({}).events.items[0];
+  if (consoleEvent?.kind !== "console")
+    throw new Error("Expected console fixture");
+
+  const capture = ({
+    unknownPredecessor = false,
+    responseBody = false,
+    text = consoleEvent.text,
+  } = {}) =>
+    browserScenarioCaptureSchema.parse({
+      ...network,
+      scenario: {
+        ...network.scenario,
+        event_families: ["network", "console"],
+        network_content: {
+          ...network.scenario.network_content,
+          response_body: responseBody,
+        },
+      },
+      events: {
+        ...network.events,
+        retained: 3,
+        items: [
+          ...network.events.items.map((event) =>
+            unknownPredecessor && event.kind === "request"
+              ? { ...event, redirected_from_transaction_state: "unknown" }
+              : event,
+          ),
+          { ...consoleEvent, sequence: 3, text },
+        ],
+      },
+    });
+  const compare = (
+    before_scenario: BrowserScenarioCapture,
+    after_scenario: BrowserScenarioCapture,
+  ) =>
     compareBrowserScenarios(
       compareBrowserScenariosInputSchema.parse({
-        before_scenario: value,
-        after_scenario: value,
+        before_scenario,
+        after_scenario,
       }),
     );
-  expect(compare(original).overall_status).toBe("unchanged");
-  const result = compare(capture);
-  expect(result.overall_status).toBe("unknown");
-  const diffs = result.steps.flatMap((step) =>
-    step.artifact_diffs.filter((diff) => diff.artifact === "events"),
-  );
-  expect(diffs.length).toBeGreaterThan(0);
-  for (const diff of diffs) {
-    expect(diff.status).toBe("unknown");
-    expect(diff.before_sha256).toBe(diff.after_sha256);
-    expect(diff.reason).toMatch(
-      /redirect predecessor evidence.*missing.*network transaction identity.*unknown/iu,
-    );
+
+  const original = capture();
+  const matching = compare(original, original);
+  expect(matching.overall_status).toBe("unchanged");
+  expect(matching.artifact_diffs.total).toBe(0);
+  const missing = capture({ unknownPredecessor: true });
+
+  for (const { before, quietAfter, changedAfter, reason } of [
+    {
+      before: original,
+      quietAfter: capture({ responseBody: true }),
+      changedAfter: capture({ responseBody: true, text: "settings-failed" }),
+      reason: /Network content selections differ/gu,
+    },
+    {
+      before: missing,
+      quietAfter: missing,
+      changedAfter: capture({
+        unknownPredecessor: true,
+        text: "settings-failed",
+      }),
+      reason: /Redirect predecessor evidence is missing/gu,
+    },
+  ]) {
+    const quiet = compare(before, quietAfter);
+    expect(quiet.overall_status).toBe("unknown");
+    const changed = compare(before, changedAfter);
+    expect(changed.overall_status).toBe("changed");
+
+    for (const [result, consoleStatus] of [
+      [quiet, "unknown"],
+      [changed, "changed"],
+    ] as const) {
+      const diffs = result.steps.flatMap(
+        ({ artifact_diffs }) => artifact_diffs,
+      );
+      expect(diffs.map(({ artifact, status }) => [artifact, status])).toEqual([
+        ["events", "unknown"],
+        ["events", consoleStatus],
+      ]);
+      for (const diff of diffs) {
+        expect(diff.reason?.match(reason)).toHaveLength(1);
+        expect(diff.before_sha256).not.toBeNull();
+        expect(diff.after_sha256).not.toBeNull();
+        if (diff.status === "changed")
+          expect(diff.before_sha256).not.toBe(diff.after_sha256);
+        else expect(diff.before_sha256).toBe(diff.after_sha256);
+      }
+    }
   }
 });
 
@@ -587,56 +647,6 @@ describe("browser scenario network comparison stability", () => {
     expect(compared.overall_status).toBe("changed");
   });
 
-  it("reports changed ordinary events despite incomplete redirect ancestry", () => {
-    const withGap = (text: string) => {
-      const base = scenarioCapture({});
-      const consoleEvent = base.events.items[0];
-      if (consoleEvent?.kind !== "console")
-        throw new Error("Expected console fixture");
-      return browserScenarioCaptureSchema.parse({
-        ...base,
-        scenario: {
-          ...base.scenario,
-          event_families: ["console", "network"],
-        },
-        events: {
-          retained: 2,
-          dropped: 0,
-          omissions: noEventOmissions,
-          items: [
-            { ...consoleEvent, text },
-            {
-              sequence: 2,
-              step_index: 0,
-              kind: "request",
-              transaction_id: "orphan-request",
-              redirected_from_transaction_id: null,
-              redirected_from_transaction_state: "unknown",
-              method: "GET",
-              url: {
-                url: "https://app.example.test/orphan",
-                origin: "https://app.example.test",
-                query_parameter_names: [],
-                redacted: false,
-              },
-              resource_type: "fetch",
-              header_names: [],
-              status: null,
-              failure: null,
-            },
-          ],
-        },
-      });
-    };
-    const compared = compareBrowserScenarios(
-      compareBrowserScenariosInputSchema.parse({
-        before_scenario: withGap("settings-ready"),
-        after_scenario: withGap("settings-failed"),
-      }),
-    );
-    expect(compared.overall_status).toBe("changed");
-  });
-
   it("compares concurrent network transactions without receipt order, receipt step or capture-local IDs", () => {
     const compare = (
       before: BrowserScenarioCapture,
@@ -785,65 +795,6 @@ describe("browser scenario network request times", () => {
         timed(ended("net::ERR_CONNECTION_RESET"), 7_000),
       ).overall_status,
     ).toBe("changed");
-  });
-});
-
-describe("scenario comparison recovery guidance", () => {
-  it("retains network guidance beside a changed console event", () => {
-    const before = scenarioCapture({});
-    const afterBase = scenarioCapture({});
-    const consoleEvent = afterBase.events.items[0];
-    if (consoleEvent?.kind !== "console")
-      throw new Error("Expected console fixture");
-    const after = browserScenarioCaptureSchema.parse({
-      ...afterBase,
-      scenario: {
-        ...afterBase.scenario,
-        network_content: {
-          ...afterBase.scenario.network_content,
-          response_body: true,
-        },
-      },
-      events: {
-        ...afterBase.events,
-        items: [{ ...consoleEvent, text: "settings-ready-again" }],
-      },
-    });
-    const compare = (left: typeof before, right: typeof before) =>
-      compareBrowserScenarios(
-        compareBrowserScenariosInputSchema.parse({
-          before_scenario: left,
-          after_scenario: right,
-        }),
-      );
-
-    const changed = compare(before, after);
-    expect(changed.overall_status).toBe("changed");
-    expect(changed.steps.flatMap((step) => step.artifact_diffs)).toContainEqual(
-      expect.objectContaining({
-        artifact: "events",
-        status: "changed",
-        reason: expect.stringContaining("Network content selections differ"),
-      }),
-    );
-    const sameSelection = compare(before, scenarioCapture({}));
-    expect(sameSelection.overall_status).toBe("unchanged");
-    expect(
-      sameSelection.steps.flatMap((step) => step.artifact_diffs),
-    ).not.toContainEqual(expect.objectContaining({ artifact: "events" }));
-    const quietMismatch = compare(
-      before,
-      browserScenarioCaptureSchema.parse({ ...after, events: before.events }),
-    );
-    expect(
-      quietMismatch.steps.flatMap((step) => step.artifact_diffs),
-    ).toContainEqual(
-      expect.objectContaining({
-        artifact: "events",
-        status: "unknown",
-        reason: expect.stringContaining("Network content selections differ"),
-      }),
-    );
   });
 });
 
