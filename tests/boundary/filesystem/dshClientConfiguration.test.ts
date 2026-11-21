@@ -1966,6 +1966,54 @@ describe("DeepSeek Harness inert anchors", () => {
 });
 
 describe("DeepSeek Harness alias anchors", () => {
+  it.each(["setup", "uninstall"] as const)(
+    "retains caller alias annotations when %s removes their anchor",
+    async (operation) => {
+      const { home, client } = await harnessClient();
+      const initial = `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        command: &oldLauncher stale-launcher
+- insert:
+    - id: caller
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        command:
+          # caller command explanation
+          *oldLauncher # caller inline comment
+        transport: &callerTransport stdio
+        env:
+          CALLER_TRANSPORT: *callerTransport # unrelated alias
+`;
+      await writeFile(client.configPath, initial);
+      const result =
+        operation === "setup"
+          ? await configureClientConfiguration(client, {}, command)
+          : await systemUninstallHost(home).removeClient(client);
+      expect(result.status).toBe(
+        operation === "setup" ? "configured" : "removed",
+      );
+      const text = await readFile(client.configPath, "utf8");
+      expect(loadedInserts(text).find(({ id }) => id === "caller")).toEqual({
+        id: "caller",
+        name: "@deepseek-ai/dsh-mcp-client",
+        config: {
+          command: "stale-launcher",
+          transport: "stdio",
+          env: { CALLER_TRANSPORT: "stdio" },
+        },
+      });
+      expect(text).toContain("# caller command explanation");
+      expect(text).toContain("# caller inline comment");
+      expect(text).toContain("*callerTransport # unrelated alias");
+      expect(text).not.toContain("*oldLauncher");
+      expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+        initial,
+      );
+    },
+  );
+
   it("rewrites an entry id alias before removing its anchor", async () => {
     const { client } = await harnessClient();
     await writeFile(
