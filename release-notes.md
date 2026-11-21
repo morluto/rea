@@ -14,6 +14,9 @@
 
 ### Bug Fixes
 
+* **apple:** decode keyed archives that name another archiver ([11896a6](https://github.com/morluto/rea/commit/11896a6eb1864f4f45e4ab756bdfea93427b4eb9))
+* **apple:** report the declared archiver of a keyed archive ([2d182f8](https://github.com/morluto/rea/commit/2d182f865f5db5d59269b19b2f7115706ab79dfa))
+* **apple:** require a $top dictionary, not a UID, for another archiver name ([b2a7cd9](https://github.com/morluto/rea/commit/b2a7cd91cc02b551e584ac7d774d8eab0e89f961))
 * **artifacts:** keep a ZIP inventory when one member uses an unsupported compression method ([#13026](https://github.com/morluto/rea/issues/13026)) ([f548a62](https://github.com/morluto/rea/commit/f548a62a4f0c6f98f9624f529d6998305139117d))
 * **asar:** preserve lazy listing configuration errors ([#12854](https://github.com/morluto/rea/issues/12854)) ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
 * **asar:** preserve typed inventory configuration errors ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
@@ -57,10 +60,16 @@
 
 ### Code Refactoring
 
+* **apple:** read dispatch relative displacements through the shared readers ([0ae58b4](https://github.com/morluto/rea/commit/0ae58b4a1fe1778f49def9920a214498a2ce084d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
+* **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
+* **elf:** read GNU property words through BinaryReader ([add4faf](https://github.com/morluto/rea/commit/add4faf2ad7aeb38d6d8c0e8619e238f01e6a5c1)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **errors:** list distinct resources in providerCleanupErrorFromFailures ([13725d2](https://github.com/morluto/rea/commit/13725d2986dda6bb8b9a3ae449408da67da5c360)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **hopper:** compose bridge image cleanup through the shared owner ([3ba20f0](https://github.com/morluto/rea/commit/3ba20f0eb8387c2eede14249a32c86ba15fef294)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **inspector:** compose provider close failures through the shared owner ([a5f3689](https://github.com/morluto/rea/commit/a5f36891793f2a901326f7443d177ff9e277065d)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **macho:** read LC_BUILD_VERSION fields through BinaryReader ([a0d2357](https://github.com/morluto/rea/commit/a0d2357230bdce24510436ee405d263fceb47870)), closes [#11865](https://github.com/morluto/rea/issues/11865)
+* **managed:** read custom-attribute prologs and resource lengths through BinaryReader ([2bd8963](https://github.com/morluto/rea/commit/2bd8963062fa664e7c6fab0410547480778a5ea5)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **native:** compose LLDB resolver cleanup through the shared owner ([3af56cc](https://github.com/morluto/rea/commit/3af56cc7d50a5f41ea4753d2d0570082611ee0a4)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **pe:** decode certificate BMP and UTF-32 strings through BinaryReader ([6543a3c](https://github.com/morluto/rea/commit/6543a3c1a182aeeb797c3e9e27a3ec887e71d00f)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **process:** compose analysis runtime cleanup through the shared owner ([2d36025](https://github.com/morluto/rea/commit/2d360253ddf8c2ab2c0c4a6a3186a8e981a8e090)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **verify:** exclude negated .ok checks from the abort-reclassification guard ([a80dc68](https://github.com/morluto/rea/commit/a80dc68318d2b9e2abca08ae5d4eaf1206b83bde)), closes [#11920](https://github.com/morluto/rea/issues/11920)
 
