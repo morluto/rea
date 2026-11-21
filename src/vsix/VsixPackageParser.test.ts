@@ -1137,6 +1137,34 @@ it.each([
   },
 );
 
+it.each([
+  ["../../outside.js", "extension/out/index.js", true],
+  ["../../extension/out/start.js", "extension/out/index.js", true],
+])(
+  "keeps a directory package.json main (%s) inside the extension root",
+  async (nestedMain, path, present) => {
+    const bytes = await vsixPackageFixture({
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        engines: { vscode: "^1.74.0" },
+        main: "./out",
+      }),
+      extraMembers: {
+        "extension/out/package.json": JSON.stringify({ main: nestedMain }),
+        "outside.js": "exports.activate = () => {};",
+        "extension/out/start.js": "exports.activate = () => {};",
+        "extension/out/index.js": "exports.activate = () => {};",
+      },
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.entry_points.main).toEqual({ path, present });
+  },
+);
+
 it("reports an absolute directory package.json main absent without an index", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({
