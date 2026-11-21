@@ -9,20 +9,19 @@
 
 **നിങ്ങൾക്ക് ഇഷ്ടപ്പെട്ട ഒരു feature കണ്ടോ? അത് എങ്ങനെ പ്രവർത്തിക്കുന്നു എന്ന് binary തലത്തിലേക്ക് വരെ മനസ്സിലാക്കൂ.**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
-[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#എന്തൊക്കെ-വിശകലനം-ചെയ്യാം)
-[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
+[![GitHub stars](https://img.shields.io/github/stars/morluto/rea?style=flat-square&logo=github)](https://github.com/morluto/rea/stargazers)
+[![Monthly npm downloads](https://img.shields.io/npm/dm/rea-agents?style=flat-square&label=npm%20downloads)](https://www.npmjs.com/package/rea-agents)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
-[![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
-
-<a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
+[![Join the REA Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+[![Follow REA on X](https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/reatools)
+[![Supported platforms: macOS, Windows, and Linux](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-4493F8?style=flat-square)](../getting-started/installation.md)
+[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 
 **[വെബ്സൈറ്റ്](https://rea.tools/) · [ഗൈഡുകൾ](https://rea.tools/guides/) · [ഉദാഹരണങ്ങൾ](https://rea.tools/showcase/)**
 
 <a href="https://discord.com/invite/GkcryMnJDM"><img alt="Discord-ൽ REA കമ്മ്യൂണിറ്റിയിൽ ചേരുക" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
-[ദ്രുതാരംഭം](#ദ്രുതാരംഭം) · [REA എങ്ങനെ പ്രവർത്തിക്കുന്നു](#rea-എങ്ങനെ-പ്രവർത്തിക്കുന്നു) · [എന്തൊക്കെ വിശകലനം ചെയ്യാം](#എന്തൊക്കെ-വിശകലനം-ചെയ്യാം) · [ഉദാഹരണങ്ങൾ](#ഉദാഹരണങ്ങൾ) · [RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക](#build-rl-environments) · [പതിവുചോദ്യങ്ങൾ](#പതിവുചോദ്യങ്ങൾ) · [ഡോക്യുമെന്റേഷൻ](#ഡോക്യുമെന്റേഷൻ)
+[ദ്രുതാരംഭം](#ദ്രുതാരംഭം) · [ഉദാഹരണങ്ങൾ](#ഉദാഹരണങ്ങൾ) · [REA എങ്ങനെ പ്രവർത്തിക്കുന്നു](#rea-എങ്ങനെ-പ്രവർത്തിക്കുന്നു) · [എന്തൊക്കെ വിശകലനം ചെയ്യാം](#എന്തൊക്കെ-വിശകലനം-ചെയ്യാം) · [RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക](#build-rl-environments) · [പതിവുചോദ്യങ്ങൾ](#പതിവുചോദ്യങ്ങൾ) · [ഡോക്യുമെന്റേഷൻ](#ഡോക്യുമെന്റേഷൻ)
 
 <code>npx rea-agents setup</code>
 
@@ -66,15 +65,13 @@ Native binaries, JavaScript, Electron apps, .NET assemblies, websites എന്�
 
 Setup നിങ്ങളുടെ agent-ിൽ REA രജിസ്റ്റർ ചെയ്യുകയും അനുയോജ്യമായ workflow നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യുകയും ചെയ്യുന്നു. Native analysis-നായി നിലവിലുള്ള Hopper, Ghidra, IDA, അല്ലെങ്കിൽ Kuna installation ഉപയോഗിക്കാം; അനുമതി നൽകിയാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാനും കഴിയും. Static JavaScript analysis-ന് native analysis engine ആവശ്യമില്ല.
 
-> **[REA വെബ്സൈറ്റ് സന്ദർശിക്കുക](https://rea.tools/)** — setup നിർദ്ദേശങ്ങൾക്കും ചിത്രങ്ങളോടുകൂടിയ ഗൈഡുകൾക്കും യഥാർത്ഥ case study-കൾക്കും.
-
 ## ദ്രുതാരംഭം
 
-Linux-ൽ Ghidra, JADX, firmware tool launches, static JavaScript/Electron analysis എന്നിവയ്ക്ക് process ownership പരിശോധിക്കാൻ REA-യുടെ `PATH`-ൽ procps-compatible `ps` ആവശ്യമാണ്. പരിഹാര നടപടികൾ `docs/getting-started/installation.md`-യിലെ "Linux owned-process prerequisite" എന്ന വിഭാഗത്തിൽ ലഭ്യമാണ്.
+**[ദ്രുതാരംഭം · rea.tools](https://rea.tools/ml/get-started/)**
 
-### നിങ്ങളുടെ agent സജ്ജമാക്കുക
+### നിങ്ങളുടെ agent സജ്ജമാക്കുക (MCP)
 
-Node.js-ഉം npm-ഉം ഇൻസ്റ്റാൾ ചെയ്തശേഷം ഈ command പ്രവർത്തിപ്പിക്കുക:
+[Node.js, npm](../reference/supported-targets.md) എന്നിവ ഇൻസ്റ്റാൾ ചെയ്ത ശേഷം പരിശോധിക്കേണ്ട പ്രോജക്റ്റിന് പുറത്തുള്ള വിശ്വസനീയമായ ഡയറക്ടറിയിൽ നിന്ന് ഈ കമാൻഡ് പ്രവർത്തിപ്പിക്കുക.
 
 ```bash
 npx rea-agents setup
@@ -82,15 +79,9 @@ npx rea-agents setup
 
 നിങ്ങൾ ഉപയോഗിക്കുന്ന agents തിരഞ്ഞെടുക്കുക, നിർദ്ദേശിച്ച മാറ്റങ്ങൾ പരിശോധിക്കുക, തുടർന്ന് അവയ്ക്ക് അനുമതി നൽകുക. നിലവിലുള്ള configuration-ന്റെ backup-ുകൾ സൂക്ഷിച്ചുകൊണ്ട് setup, REA-യുടെ MCP server-ഉം അനുയോജ്യമായ workflow നിർദ്ദേശങ്ങളും ചേർക്കും. അതിനുശേഷം നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക.
 
-Claude Code, Codex, Cursor, Gemini CLI, Grok Build, കൂടാതെ [മറ്റ് agents](../getting-started/installation.md#supported-agents) എന്നിവയെ setup പിന്തുണയ്ക്കുന്നു. provider configuration-നും manual MCP registration-നും [installation and setup](../getting-started/installation.md) കാണുക.
+[installation and setup](../getting-started/installation.md)
 
-MCP സാധാരണയായി compact input schemas ഉപയോഗിക്കുന്നു. Compact schema ഒഴിവാക്കുന്ന guidance tool description-ന് ശേഷം വരും. എല്ലാ tools-ഉം canonical server validation-ഉം മാറ്റമില്ലാതെ നിലനിൽക്കും; MCP contracts guide കാണുക.
-
-തിരഞ്ഞെടുത്ത runtime-ഉം REA entry script-ഉം setup നേരിട്ട് രജിസ്റ്റർ ചെയ്യുന്നു. Package runner ഉപയോഗിക്കുമ്പോൾ അതിന്റെ cache entry-യും runtime-ഉം നിലനിർത്തുക; target project-ന് പുറത്തുള്ള വിശ്വസനീയമായ ഡയറക്ടറിയിൽ നിന്ന് package നേടുക. ഇൻസ്റ്റലേഷൻ ഗൈഡ് കാണുക.
-
-സ്ഥിരസ്ഥിതിയായി output schema-കൾ `tools/list`-ൽ നിന്ന് ഒഴിവാക്കുന്നു: ഒരു model API-യും അവ വായിക്കുന്നില്ല, ഓരോ result-ഉം REA തന്നെ validate ചെയ്യുന്നു. ഓരോ output schema-യും 4096 byte പരിധിക്കുള്ളിൽ പരസ്യപ്പെടുത്താൻ MCP registration-ൽ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` സജ്ജമാക്കുക. എല്ലാ ക്രമീകരണങ്ങളിലും Server validation-ഉം structured result-കളും പൂർണ്ണമായി നിലനിൽക്കും. MCP കരാർ ഗൈഡിലെ «Output schemas» കാണുക.
-
-### നിങ്ങളുടെ agent-നോട് ആവശ്യപ്പെടുക
+നിങ്ങളുടെ agent-നോട് ആവശ്യപ്പെടുക:
 
 ```text
 Notes app-ൽ search എങ്ങനെ പ്രവർത്തിക്കുന്നു എന്ന് മനസ്സിലാക്കി, അതിനുള്ള തെളിവുകൾ കാണിച്ചുതരികയും എന്റെ project-നായി സമാനമായൊരു feature നിർമ്മിക്കുകയും ചെയ്യുക.
@@ -98,7 +89,7 @@ Notes app-ൽ search എങ്ങനെ പ്രവർത്തിക്കു�
 
 `Notes` എന്നതിന് പകരം നിങ്ങൾ പരിശോധിക്കാൻ ആഗ്രഹിക്കുന്ന app-ിന്റെയും മനസ്സിലാക്കേണ്ട feature-ിന്റെയും പേരുകൾ നൽകുക.
 
-### Terminal ഉപയോഗിക്കുക
+### Terminal ഉപയോഗിക്കുക (CLI)
 
 Extract ചെയ്ത JavaScript/Electron app directory അല്ലെങ്കിൽ ASAR പരിശോധിക്കുക:
 
@@ -117,9 +108,9 @@ rea --help
 
 Native analysis നടത്തുന്നതിന് മുമ്പ് ഒരു provider ക്രമീകരിക്കുക. Native commands, provider തിരഞ്ഞെടുക്കൽ, snapshots, scripting എന്നിവയ്ക്കായി [CLI and Evidence guide](../getting-started/cli.md) കാണുക.
 
-### REA അപ്‌ഡേറ്റ് ചെയ്യുക
+[Linux ആവശ്യകതകൾ](../getting-started/installation.md#linux-owned-process-prerequisite)
 
-REA-യിൽ പതിവായി മാറ്റങ്ങൾ വരുന്നു; പുതിയ releases-ൽ പല bug fixes-ഉം ഉൾപ്പെടുന്നു. നിങ്ങളുടെ installation ഏറ്റവും പുതിയ പതിപ്പിലേക്ക് അപ്‌ഡേറ്റ് ചെയ്യുക.
+### REA അപ്‌ഡേറ്റ് ചെയ്യുക
 
 `npm install --global` അല്ലെങ്കിൽ `bun add --global` ഉപയോഗിച്ച് ഇൻസ്റ്റാൾ ചെയ്ത CLI-ക്കായി:
 
@@ -127,19 +118,46 @@ REA-യിൽ പതിവായി മാറ്റങ്ങൾ വരുന്�
 rea update
 ```
 
-`rea --update`, `rea update`-ന്റെ alias ആണ്; ഒരേ global output flags സ്വീകരിക്കുന്നു. Update commands stdout/stderr ചേർത്ത് പരമാവധി 4 MiB സൂക്ഷിക്കുന്നു. വലിയ metadata replies command അവസാനിച്ചശേഷം നിരസിക്കും; verbose installs bounded diagnostics സൂക്ഷിക്കുന്നു. Progress output terminal backpressure പാലിക്കുകയും സമർപ്പിച്ച writes തീരാൻ കാത്തിരിക്കുകയും ചെയ്യുന്നു.
-
-Bun-ന്റെ global updates-ന് Bun 1.2.17 അല്ലെങ്കിൽ അതിനുശേഷമുള്ള പതിപ്പ് ആവശ്യമാണ്. പഴയ Bun പതിപ്പാണെങ്കിൽ `rea update` പ്രവർത്തിപ്പിക്കുന്നതിന് മുമ്പ് Bun സ്വമേധയാ അപ്‌ഗ്രേഡ് ചെയ്യുക.
-
-Agent registrations-ഉം skill-ഉം പുതുക്കാൻ, update കാണിക്കുന്ന setup command പ്രവർത്തിപ്പിക്കുക.
-
 `npx` ഉപയോഗിക്കുന്നുവെങ്കിൽ, agent setup പുതുക്കാൻ:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-Setup-ൽ വരുത്തുന്ന മാറ്റങ്ങൾ പരിശോധിച്ച് നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക. ഒറ്റത്തവണ മാത്രം ഉപയോഗിക്കുന്ന CLI commands-നായി command-ന് മുമ്പ് `npx rea-agents@latest` ഉപയോഗിക്കുക. Bun ഉപയോഗിക്കുമ്പോൾ `npx rea-agents@latest`-ന് പകരം `bunx rea-agents@latest` ഉപയോഗിക്കുക.
+[അപ്‌ഡേറ്റും അൺഇൻസ്റ്റാളും](../getting-started/installation.md#diagnose-update-and-remove)
+
+## ഉദാഹരണങ്ങൾ
+
+<a href="https://rea.tools/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="DX-Ball sound-pan, Notion clipboard-bridge, TH04 bullet-ring എന്നിവയുടെ ചിത്രീകരണങ്ങൾ" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
+
+<table>
+<tbody>
+<tr><td>
+<h3>DX-Ball: sound-pan കണക്കുകൂട്ടൽ പുനർനിർമ്മിക്കുക</h3>
+<p>ഒരു sound call-നെ അതിന്റെ position-to-pan helper വരെ പിന്തുടരുക, instructions പരിശോധിക്കുക, അപൂർണ്ണമായ pseudocode-നെ C-യാക്കി മാറ്റുക. ഈ പുനർനിർമ്മാണം യഥാർത്ഥ x86-ലെ 3,205 test cases വിജയിക്കുകയും compile ചെയ്ത function-ന്റെ 63 bytes-ഉം അതേപടി പുനരുത്പാദിപ്പിക്കുകയും ചെയ്യുന്നു.</p>
+<p><a href="https://rea.tools/showcase/dx-ball/">Case study വായിക്കുക</a> ·
+<a href="https://github.com/N0zoM1z0/dx-ball">പുനർനിർമ്മാണ repository</a></p>
+</td></tr>
+<tr><td>
+<h3>Notion: Electron clipboard bridge പിന്തുടരുക</h3>
+<p>Renderer-ന്റെ clipboard API കണ്ടെത്തി, അതിനെ preload-ഉം IPC-ഉം വഴി main process വരെ പിന്തുടർന്ന് rich clipboard format പരിശോധിക്കുക.</p>
+<p><a href="https://rea.tools/showcase/notion/">Case study വായിക്കുക</a></p>
+</td></tr>
+<tr><td>
+<h3>TH04: DOS bullet-ring കണക്കുകൂട്ടൽ വീണ്ടെടുക്കുക</h3>
+<p>യഥാർത്ഥ PC-98 game-ന്റെ 16-bit instructions പരിശോധിക്കുക, fixed, aimed angle കണക്കുകൂട്ടലുകൾ വീണ്ടെടുക്കുക, പുനർനിർമ്മിച്ച C++-നെ ചരിത്രപരമായ compiler output-ുമായി താരതമ്യം ചെയ്യുക.</p>
+<p><a href="https://rea.tools/showcase/th04/">Case study വായിക്കുക</a> ·
+<a href="https://github.com/N0zoM1z0/th04">പുനർനിർമ്മാണ repository</a></p>
+</td></tr>
+</tbody>
+</table>
+
+REA ഉപയോഗിച്ച് നിങ്ങൾ രസകരമായ എന്തെങ്കിലും പരിശോധിച്ചിട്ടുണ്ടെങ്കിൽ അത് കാണാൻ ഞങ്ങൾ ആഗ്രഹിക്കുന്നു. പരിശോധിച്ച target, നിങ്ങളുടെ ചോദ്യം, REA എങ്ങനെ സഹായിച്ചു, നിങ്ങൾ കണ്ടെത്തിയത് എന്നിവ ഉൾപ്പെടുത്തി [issue](https://github.com/morluto/rea/issues) അല്ലെങ്കിൽ [pull request](https://github.com/morluto/rea/pulls) വഴി നിങ്ങളുടെ case പങ്കിടുക.
 
 ## REA എങ്ങനെ പ്രവർത്തിക്കുന്നു
 
@@ -153,144 +171,21 @@ Target പരിശോധിക്കാനും പ്രസക്തമായ
 
 ## എന്തൊക്കെ വിശകലനം ചെയ്യാം
 
-REA-യ്ക്ക് Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), അല്ലെങ്കിൽ 26+ (>=26.12.1) പതിപ്പും npm-ഉം ആവശ്യമാണ്. Target അനുസരിച്ച് അധിക tools-ഉം host support-ഉം വ്യത്യാസപ്പെടും:
+Native binaries · JavaScript / Electron · Websites · .NET assemblies · Android APKs · Firmware · Process behavior
 
-| Target                 | REA നൽകുന്ന ഫലങ്ങൾ                                                                             | ആവശ്യകതകളും ഗൈഡും                                                                                                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native binaries        | Pseudocode, assembly, strings, symbols, calls, references                                   | Hopper, Ghidra, IDA അല്ലെങ്കിൽ Kuna; [native analysis](../guides/native/native-investigation.md)                                                                   |
-| Offline ELF layout     | Sections, segments, യഥാർത്ഥ symbols/relocations, static mitigation candidates                 | Linux x64-ൽ caller നൽകുന്ന pwntools; [binary diagnostics](../guides/native/binary-diagnostics.md)                                                                  |
-| Go binaries            | ഉൾച്ചേർത്ത compiler version, modules, replacements, build settings                            | Built-in static ELF/PE/thin Mach-O പരിശോധന; Go installation ആവശ്യമില്ല                                                                                             |
-| Rust binaries          | ഉൾച്ചേർത്ത cargo-auditable crate പേരുകൾ, versions, sources, dependency edges                   | Built-in static ELF/PE/thin Mach-O/WebAssembly പരിശോധന; [Rust binaries](../rust-binaries.md)                                                                     |
-| PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
-| PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
-| Windows shortcuts      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
-| ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
-| DWARF compile units    | Compile-unit name, directory, producer, language, and dwo_name                              | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                           |
-| ELF dependencies       | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                       | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                       |
-| Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
-| Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
-| Erlang BEAM            | IFF chunks, atoms, exports, and tables                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                |
-| NuGet packages         | Package identity, dependency groups, license, repository, ZIP ഉള്ളടക്കം                       | Built-in static .nupkg പരിശോധന; [NuGet packages](../guides/managed/nuget-nupkg.md)                                                                               |
-| WASM artifact          | Validation, sections, കൃത്യമായ import/export WAT രൂപങ്ങൾ, decoded WAT                            | Caller നൽകുന്ന WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                |
-| EVM bytecode           | Dispatch selectors, byte offsets, അനുമാനിച്ച arguments, mutability                             | Linux x64-ൽ local raw/hex carrier; [offline EVM guide](../guides/evm/evm-bytecode.md)                                                                            |
-| SQLite databases       | Tables, columns, indexes, views, triggers, തിരഞ്ഞെടുത്ത സാധാരണ table rows                        | Local database/WAL snapshot; native SQLite പരിമിതികളോടെ Node.js 24.x >=24.15 അല്ലെങ്കിൽ 26+                                                                        |
-| Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                    |
-| Recorded Linux crashes | Raw notes, രേഖപ്പെടുത്തിയ ഓരോ thread-ന്റെയും registers/signals, ഐച്ഛിക mapping candidates         | Linux x64-ൽ caller നൽകുന്ന pwntools; ഐച്ഛിക GDB/pwndbg; [recorded crashes](../guides/native/recorded-crashes.md)                                                    |
-| ഡെസ്ക്ടോപ്പ് ഇൻസ്റ്റലേഷനുകൾ   | റൺടൈം സാധ്യതകൾ, തെളിവ് ഫയലുകൾ, ഘടക സൂചനകൾ, തുടർ നടപടികൾ                                           | പരിധിയുള്ള ഡയറക്ടറി, ഹെഡർ പരിശോധന；[ഡെസ്ക്ടോപ്പ് ആപ്ലിക്കേഷനുകൾ](../desktop-applications.md)                                                                               |
-| JavaScript / Electron  | Modules, imports, source maps, routes, IPC, native add-on ബന്ധങ്ങൾ                            | Node.js, npm; Linux: procps-compatible `ps`; [application analysis](../guides/javascript/javascript-application-workflows.md)                                    |
-| Websites               | Page structure, scripts, network observations, ആവശ്യപ്പെട്ട screenshots                        | Chrome-family browser; [browser analysis](../guides/web/browser-observation.md)                                                                                  |
-| Saved network captures | Requests, responses, പുറത്തുകാണുന്ന payload-ുകൾ, source locations                                  | HAR അല്ലെങ്കിൽ Fiddler Everywhere SAZ; native mitmproxy-നായി Linux-ൽ mitmdump; [capture guide](../guides/web/web-network-captures.md)                               |
-| .NET assemblies        | Metadata, CIL instructions, പ്രഖ്യാപിച്ച native dependencies, build comparisons                 | ഒന്നും ആവശ്യമില്ല (static മാത്രം); [managed-code guide](../guides/managed/managed-code-analysis.md)                                                                    |
-| Python packaged apps   | CArchive/PYZ entries, Python version, bytecode, resources and runtime options               | Static PyInstaller parsing; [Python guide](../python-packaged-applications.md)                                                                                   |
-| Deno compile binaries  | Virtual files, entry point, recorded options, npm snapshot length                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
-| Android APKs           | Manifest declarations, classes, decompiled methods, references                              | Linux/macOS/Windows x64-ൽ Headless JADX-ഉം full JDK-ഉം; [Android guide](../guides/android/android-analysis.md)                                                   |
-| Android devices        | Devices, packages, processes, logs, dumps, screen captures, APK/file transfers              | Caller നൽകുന്ന adb (emulator അല്ലെങ്കിൽ hardware); [ADB guide](../guides/android/adb-device-analysis.md)                                                             |
-| JEB projects           | Engine-backed project units, artifact digests, type/method pseudo-code                      | MCP സേവനം നൽകുന്ന caller ആരംഭിച്ച JEB client; REA_JEB_MCP_URL ഉപയോഗിച്ച് തിരഞ്ഞെടുക്കുക; [JEB guide](../providers/jeb-analysis.md)                                        |
-| Android resources      | Decoded manifest, string tables, locales, version വിവരങ്ങൾ                                   | Caller നൽകുന്ന Apktool launcher; [resource guide](../guides/android/apktool-resource-analysis.md)                                                                  |
-| Flutter apps           | Dart snapshot hash, ഓരോ ABI-യിലെയും library digests, engine build provenance                 | ഒന്നും ആവശ്യമില്ല (static APK parsing); [Flutter guide](../guides/android/flutter-analysis.md)                                                                       |
-| Firmware               | Regions, extraction results, native-analysis handoffs                                       | Linux-ൽ Binwalk / Unblob; [firmware guide](../guides/firmware/firmware-analysis.md)                                                                              |
-| Recorded packets       | തിരഞ്ഞെടുത്ത fields, ആവർത്തിക്കുന്ന values, filters, decode-as rules                               | Linux: TShark 4.x + prlimit; [capture guide](../guides/data/packet-captures.md)                                                                                  |
-| Packet summaries       | Endpoints, DNS, TLS SNI, protocol distribution, HTTP requests                               | Caller നൽകുന്ന tshark, capinfos (Linux-ൽ പരിശോധിച്ചത്); [pcap guide](../guides/data/pcap-analysis.md)                                                                |
-| Recorded logic signals | Decoder annotations, sample ranges, diagnostics                                             | Linux: sigrok-cli 0.7.2 + prlimit; [signal recordings](../guides/signals/signal-recordings.md)                                                                   |
-| Packages and resources | File inventories, digests, plists, Apple bundle ഘടന, extracted resources                    | [Artifact and JavaScript guide](../guides/javascript/javascript-artifact-reconstruction.md), [Apple applications](../guides/apple/apple-application-analysis.md) |
-| Process behavior       | Terminal output, interactions, exit, filesystem observations, run comparisons               | Native PTY ഉള്ള Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                                              |
-| GPU code objects       | CUDA/HIP targets, തിരഞ്ഞെടുത്ത kernel parameters/resources, സൂക്ഷിച്ച PTX text                    | ഉൾനിർമിത static പരിശോധന ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                   |
-| Model files            | GGUF / safetensors metadata, tensor declarations, കണക്കാക്കിയ totals                           | Header പരിശോധന; full-file hash ഐച്ഛികം; [GGUF / safetensors](../model-artifacts.md)                                                                               |
-| IL2CPP metadata        | Unity global-metadata.dat assembly images, type/method names, index ranges                  | 24, 27, 29, 31, 39 versions-ന്റെ static decoding; Unity വേണ്ട                                                                                                      |
-| Godot PCK              | Archive inventory/extraction, original header/directory facts, തിരഞ്ഞെടുത്ത content identities | Static formats 2, 3, 4; Godot വേണ്ട                                                                                                                               |
-| APK signatures         | v1/v2/v3/v3.1 signers, certificate fingerprints, key rotation, digest self-consistency      | ഉൾനിർമിത static പരിശോധന; `inspect_apk_signature`                                                                                                                 |
-
-Static JavaScript, .NET പരിശോധനകൾ application പ്രവർത്തിപ്പിക്കാതെ നൽകിയ files വായിച്ചാണ് നടത്തുന്നത്. Runtime capture, നിങ്ങളുടെ user permissions ഉപയോഗിച്ച് തിരഞ്ഞെടുത്ത target പ്രവർത്തിപ്പിക്കുകയോ അതുമായി ഇടപെടുകയോ ചെയ്യുന്നു; ഓരോ runtime guide-ലും അതിന്റെ പ്രത്യാഘാതങ്ങൾ വിശദീകരിച്ചിട്ടുണ്ട്.
-
-Offline native-binary പരിശോധനയ്ക്കായി REA, caller നൽകുന്ന GNU objdump, Rizin എന്നിവയും പിന്തുണയ്ക്കുന്നു. Provider setup, CLI commands, Evidence-ന്റെ പരിമിതികൾ എന്നിവയ്ക്കായി [reverse-engineering tools guide](../reverse-engineering-tools.md) കാണുക. ഈ providers ഒന്നും REA ഇൻസ്റ്റാൾ ചെയ്യുകയോ അപ്‌ഡേറ്റ് ചെയ്യുകയോ ചെയ്യുന്നില്ല.
+[പിന്തുണയ്ക്കുന്ന ഫോർമാറ്റുകളും ആവശ്യകതകളും](../reference/supported-targets.md)
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Native formats-ഉം host support-ഉം provider അനുസരിച്ച് വ്യത്യാസപ്പെടും. [Hopper and Ghidra setup](../getting-started/installation.md#hopper), [IDA guide](../providers/ida-provider.md) (ഐച്ഛിക native MCP bridge ഉൾപ്പെടെ), [JEB guide](../providers/jeb-analysis.md), [Kuna decompiler guide](../kuna-provider.md), [പരീക്ഷണഘട്ടത്തിലുള്ള Windows Ghidra support](../providers/windows-ghidra-p0.md) എന്നിവ കാണുക.
-Ghidra, [16-bit DOS analysis](../providers/ghidra-dos.md)-ഉം പിന്തുണയ്ക്കുന്നു.
-വലിയ binaries-നായി `REA_GHIDRA_STARTUP_TIMEOUT_MS` അല്ലെങ്കിൽ `REA_HOPPER_STARTUP_TIMEOUT_MS` ഉപയോഗിച്ച് provider-ന്റെ startup deadline വർധിപ്പിക്കുക.
-Provider തിരഞ്ഞെടുക്കാൻ [CLI guide](../getting-started/cli.md#choose-a-provider) കാണുക.
-ഏറ്റവും പുതിയ npm release-നുശേഷം ചേർത്ത features അറിയാൻ [release availability](../getting-started/installation.md#released-package-and-main) പരിശോധിക്കുക.
-
-## ഉദാഹരണങ്ങൾ
-
-<a href="https://rea.tools/showcase/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
-    <img alt="DX-Ball sound-pan, Notion clipboard-bridge, TH04 bullet-ring എന്നിവയുടെ ചിത്രീകരണങ്ങൾ" src="../assets/rea-showcases.svg" />
-  </picture>
-</a>
-
-### DX-Ball: sound-pan കണക്കുകൂട്ടൽ പുനർനിർമ്മിക്കുക
-
-ഒരു sound call-നെ അതിന്റെ position-to-pan helper വരെ പിന്തുടരുക, instructions പരിശോധിക്കുക, അപൂർണ്ണമായ pseudocode-നെ C-യാക്കി മാറ്റുക. ഈ പുനർനിർമ്മാണം യഥാർത്ഥ x86-ലെ 3,205 test cases വിജയിക്കുകയും compile ചെയ്ത function-ന്റെ 63 bytes-ഉം അതേപടി പുനരുത്പാദിപ്പിക്കുകയും ചെയ്യുന്നു.
-
-[Case study വായിക്കുക](https://rea.tools/showcase/dx-ball/) ·
-[പുനർനിർമ്മാണ repository](https://github.com/N0zoM1z0/dx-ball)
-
-### Notion: Electron clipboard bridge പിന്തുടരുക
-
-Renderer-ന്റെ clipboard API കണ്ടെത്തി, അതിനെ preload-ഉം IPC-ഉം വഴി main process വരെ പിന്തുടർന്ന് rich clipboard format പരിശോധിക്കുക.
-
-[Case study വായിക്കുക](https://rea.tools/showcase/notion/)
-
-### TH04: DOS bullet-ring കണക്കുകൂട്ടൽ വീണ്ടെടുക്കുക
-
-യഥാർത്ഥ PC-98 game-ന്റെ 16-bit instructions പരിശോധിക്കുക, fixed, aimed angle കണക്കുകൂട്ടലുകൾ വീണ്ടെടുക്കുക, പുനർനിർമ്മിച്ച C++-നെ ചരിത്രപരമായ compiler output-ുമായി താരതമ്യം ചെയ്യുക.
-
-[Case study വായിക്കുക](https://rea.tools/showcase/th04/) ·
-[പുനർനിർമ്മാണ repository](https://github.com/N0zoM1z0/th04)
-
-### REA ഉപയോഗിച്ച് RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക
-
-വെബ് ആപ്പ് സെഷൻ റെക്കോർഡ് ചെയ്ത് API ടൂളുകളാക്കി AI ഏജന്റിന് ഉപയോഗിക്കാവുന്ന പരിതസ്ഥിതി എക്‌സ്‌പോർട്ട് ചെയ്യുക. AgentEnv ഉപയോഗിച്ച് പ്രവർത്തിപ്പിച്ച ശേഷം RL പരിശീലനത്തിനോ മൂല്യനിർണയത്തിനോ ടാസ്‌ക്കുകളും റിവാർഡ് പരിശോധനകളും ചേർക്കുക.
-
-[പരിതസ്ഥിതി നിർമ്മാണ മാർഗ്ഗദർശി](https://rea.tools/guides/rl-environments/) ·
-[X-ൽ ഡെമോ കാണുക](https://x.com/reatools/status/2112574822584918075?s=20)
-
-REA ഉപയോഗിച്ച് നിങ്ങൾ രസകരമായ എന്തെങ്കിലും പരിശോധിച്ചിട്ടുണ്ടെങ്കിൽ അത് കാണാൻ ഞങ്ങൾ ആഗ്രഹിക്കുന്നു. പരിശോധിച്ച target, നിങ്ങളുടെ ചോദ്യം, REA എങ്ങനെ സഹായിച്ചു, നിങ്ങൾ കണ്ടെത്തിയത് എന്നിവ ഉൾപ്പെടുത്തി [issue](https://github.com/morluto/rea/issues) അല്ലെങ്കിൽ [pull request](https://github.com/morluto/rea/pulls) വഴി നിങ്ങളുടെ case പങ്കിടുക.
+[വിശകലന ഉപകരണം തിരഞ്ഞെടുക്കൽ](../reference/supported-targets.md#choosing-a-deep-analysis-provider)
 
 <a id="build-rl-environments"></a>
 
 ## RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക
 
-യഥാർഥ ആപ്പ് പ്രവർത്തിപ്പിക്കാതെ issue കണ്ടെത്തൽ, ഫോൾഡർ സൃഷ്ടിക്കൽ തുടങ്ങിയ ജോലികൾ AI ഏജന്റിന് പരിശീലിക്കാൻ ഒരു പ്രാദേശിക പരിതസ്ഥിതി നിർമ്മിക്കുക. റീഇൻഫോഴ്‌സ്‌മെന്റ് ലേണിംഗിനോ (RL) ഏജന്റ് ജോലികൾ എത്ര നന്നായി പൂർത്തിയാക്കുന്നു എന്ന് പരിശോധിക്കാനോ ഇത് ഉപയോഗിക്കാം.
+റെക്കോർഡ് ചെയ്ത വെബ് സെഷനിൽ നിന്നോ Linux ഡെസ്‌ക്‌ടോപ്പ് ആപ്പിൽ നിന്നോ ഒരു ലോക്കൽ പരിസ്ഥിതി സൃഷ്ടിച്ച് ഏജന്റിന് ഒരു ജോലി പരിശീലിക്കാനും ഫലം പരിശോധിക്കാനും കഴിയും.
 
-REA റെക്കോർഡ് ചെയ്ത API അഭ്യർത്ഥനകളും പ്രതികരണങ്ങളും ഏജന്റിന് വിളിക്കാവുന്ന ടൂളുകളാക്കുന്നു. പരിതസ്ഥിതി റെക്കോർഡ് ചെയ്ത ഡാറ്റ ഉപയോഗിക്കുന്നു. റെക്കോർഡ് ഫലം സ്ഥിരീകരിക്കുന്ന മാറ്റങ്ങൾ മാത്രമാണ് പിന്തുണയ്ക്കുന്നത്.
-
-ഏജന്റിൽ REA സജ്ജീകരിച്ച ശേഷം ഉദാഹരണത്തിലെ URL-ഉം ഫോൾഡർ ജോലികളും നിങ്ങളുടെ ആപ്പിന് അനുസരിച്ച് മാറ്റുക:
-
-```text
-എന്റെ പരീക്ഷണ വെബ് ആപ്പിൽ നിന്ന് REA ഉപയോഗിച്ച് RL പരിതസ്ഥിതി നിർമ്മിക്കുക:
-http://127.0.0.1:3000
-ഫോൾഡറുകൾ പട്ടികപ്പെടുത്തൽ, സൃഷ്ടിക്കൽ, പേരുമാറ്റൽ, ഇല്ലാതാക്കൽ എന്നിവ ഉൾപ്പെടുത്തുക.
-പരീക്ഷണ ഫോൾഡറുകൾ സൃഷ്ടിക്കാനും നീക്കാനും അനുമതിയുണ്ട്. നിലവിലുള്ള ഡാറ്റ മാറ്റരുത്.
-my-env എന്ന ഫോൾഡറിൽ സംരക്ഷിച്ച് ഏതെല്ലാം പ്രവർത്തനങ്ങൾ ലഭ്യമാണെന്നും എങ്ങനെ പ്രവർത്തിപ്പിക്കണമെന്നും പറയുക.
-```
-
-<details>
-<summary>കമാൻഡ് ലൈൻ ഉപയോഗിക്കുക</summary>
-
-ബ്രൗസറിലെ ആപ്പിന്റെ അഭ്യർത്ഥനകളും പ്രതികരണങ്ങളും റെക്കോർഡ് ചെയ്ത ഫയൽ ഉണ്ടെങ്കിൽ ഈ കമാൻഡുകൾ ഉപയോഗിക്കാം. ഫലം പ്രവർത്തിപ്പിക്കാൻ AgentEnv-ഉം Docker-ഉം വേണം.
-
-```sh
-rea environment-build ./session.har ./my-env --name my-env --json
-agent-env run ./my-env
-```
-
-</details>
-
-പ്രവർത്തനം തുടങ്ങുന്നതും പ്രതികരിക്കുന്നതും പരിശോധിക്കുന്ന അടിസ്ഥാന ടെസ്റ്റിനൊപ്പം പ്രവർത്തിപ്പിക്കാവുന്ന പരിതസ്ഥിതി REA എക്‌സ്‌പോർട്ട് ചെയ്യുന്നു. ടാസ്‌ക് ലക്ഷ്യങ്ങളും റിവാർഡ് പരിശോധനകളും നിർവചിക്കാനും പരിശീലനം നടത്താനും RL ഫ്രെയിംവർക്കുമായി ബന്ധിപ്പിക്കുക.
-
-[പരിതസ്ഥിതി നിർമ്മാണ മാർഗ്ഗദർശി](https://rea.tools/guides/rl-environments/) ·
-[പരിതസ്ഥിതി റഫറൻസ്](../agent-environments.md) ·
-[X-ൽ ഡെമോ കാണുക](https://x.com/reatools/status/2112574822584918075?s=20)
-
-### ഡെസ്‌ക്‌ടോപ്പ് ആപ്പ് പരിതസ്ഥിതികൾ
-
-സ്ക്രീൻഷോട്ടുകൾ, മൗസ്, കീബോർഡ് എന്നിവ വഴി ഏജന്റ് ഉപയോഗിക്കുന്ന Linux ഡെസ്‌ക്‌ടോപ്പ് ആപ്പിന്റെ പരിതസ്ഥിതിയും REA-യ്ക്ക് നിർമ്മിക്കാം. "ഷോപ്പിംഗ് ലിസ്റ്റ് നോട്ടിൽ ഏജന്റ് ഒലിവ് ഓയിൽ ചേർക്കുന്ന ഒരു Gnote പരിതസ്ഥിതി നിർമ്മിക്കുക" പോലുള്ള ഒറ്റവരി അഭ്യർത്ഥനയിൽ നിന്ന്, നിങ്ങളുടെ ഏജന്റ് ഒരു പ്രാദേശിക ബിൽഡ് കമ്പ്യൂട്ടറിൽ ആപ്പ് ഇൻസ്റ്റാൾ ചെയ്യുന്നു, ടാസ്‌ക് എഴുതുന്നു, പരിതസ്ഥിതി എക്‌സ്‌പോർട്ട് ചെയ്യുന്നു, ഒരു പുതിയ കമ്പ്യൂട്ടറിൽ ടാസ്‌ക് പരിശോധിക്കുന്നു. ഇത് നിർമ്മിക്കുന്ന മെഷീന് amd64 അല്ലെങ്കിൽ arm64-ലെ Linux, Docker, ഗൈഡ് നിശ്ചയിക്കുന്ന agentenv ഫ്രെയിംവർക്ക് പതിപ്പ് എന്നിവ വേണം.
-
-[ഡെസ്‌ക്‌ടോപ്പ് ആപ്പ് പരിതസ്ഥിതികൾ സജ്ജീകരിക്കുക](../desktop-build-computer.md)
+[RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക](https://rea.tools/guides/rl-environments/)
 
 ## പതിവുചോദ്യങ്ങൾ
 
@@ -367,15 +262,24 @@ npx rea-agents@latest setup
 - [CLI and Evidence](../getting-started/cli.md): commands, provider തിരഞ്ഞെടുക്കൽ, snapshots, import/export, exit statuses.
 - [MCP contracts](../reference/mcp-contracts.md), [agent prompts](../getting-started/mcp-prompts.md): tool results, sessions, guided investigations.
 - [Tool catalog](../reference/mcp-contracts.md#generated-catalog): tools, providers, CLI commands എന്നിവയുടെ സ്വയമേവ സൃഷ്ടിച്ച പട്ടിക.
-- [Roadmap](../development/roadmap.md): ആസൂത്രണം ചെയ്ത പ്രവർത്തനങ്ങളും capability trackers-ഉം.
 
 സുരക്ഷാ ദുർബലതകൾ [SECURITY.md](../../SECURITY.md) വഴി റിപ്പോർട്ട് ചെയ്യുക.
+
+## കമ്മ്യൂണിറ്റിയും സഹായവും
+
+- **Discord** — റിവേഴ്‌സ് എൻജിനീയറിങ്ങിനെയും പുതിയ പ്രോജക്റ്റുകൾ നിർമ്മിക്കുന്നതിനെയും സ്നേഹിക്കുന്ന 50,000-ത്തിലധികം പേരുള്ള നമ്മുടെ കൂട്ടായ്മയിൽ ചോദ്യങ്ങൾ ചോദിക്കൂ, കണ്ടെത്തലുകൾ പങ്കിടൂ! [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — വാർത്തകൾക്കും അറിയിപ്പുകൾക്കുമായി [@reatools](https://x.com/reatools) പിന്തുടരൂ.
+- **അഭിപ്രായങ്ങളും നിർദേശങ്ങളും** — ഒരു പുതിയ സൗകര്യമോ ഫയൽ ഫോർമാറ്റിനുള്ള പിന്തുണയോ വേണോ? [GitHub](https://github.com/morluto/rea/issues) അല്ലെങ്കിൽ [Discord](https://discord.gg/GkcryMnJDM) വഴി ഞങ്ങളെ അറിയിക്കൂ.
 
 ## Star ചരിത്രം
 
 🎉 **400,000 GitHub stars — നന്ദി!**
 
 REA ഉപയോഗിക്കുന്നവർക്കും, bugs റിപ്പോർട്ട് ചെയ്യുന്നവർക്കും, features ആവശ്യപ്പെടുന്നവർക്കും, builds പരിശോധിക്കുന്നവർക്കും, fixes സംഭാവന ചെയ്യുന്നവർക്കും നന്ദി.
+
+<a href="https://rea.tools/ml/contributors/">
+  <img src="../../website/public/contributors/avatars.png" alt="REA പദ്ധതിയിൽ സംഭാവന നൽകിയവർ" />
+</a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
@@ -385,6 +289,12 @@ REA ഉപയോഗിക്കുന്നവർക്കും, bugs റിപ
   </picture>
 </a>
 
+## സംഭാവനകൾ
+
+REA-യ്ക്കായി നിങ്ങളുടെ സഹായം ഞങ്ങൾ സ്വാഗതം ചെയ്യുന്നു! bug റിപ്പോർട്ട് ചെയ്യാനോ feature നിർദ്ദേശിക്കാനോ [issue തുറക്കുക](https://github.com/morluto/rea/issues), code അല്ലെങ്കിൽ docs മെച്ചപ്പെടുത്താൻ [pull request അയയ്ക്കുക](https://github.com/morluto/rea/pulls).
+
+Development setup-നും checks-നും [CONTRIBUTING.md](../../CONTRIBUTING.md), verification lanes-നായി [testing](../development/testing.md) എന്നിവ കാണുക.
+
 ## നിരാകരണം
 
 ഉത്തരവാദിത്തത്തോടെ ഉപയോഗിക്കുന്നതിനുള്ള മാർഗനിർദ്ദേശങ്ങൾക്ക് [DISCLAIMER.md](../../DISCLAIMER.md) കാണുക.
@@ -392,12 +302,6 @@ REA ഉപയോഗിക്കുന്നവർക്കും, bugs റിപ
 നിയമവിരുദ്ധമോ അനുമതിയില്ലാത്തതോ ആയ ഉപയോഗത്തെക്കുറിച്ചുള്ള project-ന്റെ നിലപാട് എല്ലാ REA versions-നും distribution channels-നും platforms-നും ബാധകമാണ്; ഓരോ copy-യും അതിന് ബാധകമായ licenses നിലനിർത്തുന്നു.
 
 നിയമാനുസൃതമായ research, education, interoperability, software preservation, കൂടാതെ നിങ്ങൾക്ക് സ്വന്തമായതോ പരിശോധിക്കാൻ അനുമതിയുള്ളതോ ആയ software-ന്റെ analysis എന്നിവയ്ക്കാണ് REA ഉദ്ദേശിച്ചിരിക്കുന്നത്.
-
-## സംഭാവനകൾ
-
-REA-യ്ക്കായി നിങ്ങളുടെ സഹായം ഞങ്ങൾ സ്വാഗതം ചെയ്യുന്നു! bug റിപ്പോർട്ട് ചെയ്യാനോ feature നിർദ്ദേശിക്കാനോ [issue തുറക്കുക](https://github.com/morluto/rea/issues), code അല്ലെങ്കിൽ docs മെച്ചപ്പെടുത്താൻ [pull request അയയ്ക്കുക](https://github.com/morluto/rea/pulls).
-
-Development setup-നും checks-നും [CONTRIBUTING.md](../../CONTRIBUTING.md), verification lanes-നായി [testing](../development/testing.md), project ഘടനയ്ക്കായി [architecture map](../architecture/architecture.mermaid) എന്നിവ കാണുക.
 
 ## ലൈസൻസ്
 

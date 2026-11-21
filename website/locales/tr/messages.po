@@ -14937,15 +14937,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "Katkıda bulunan birini bul"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "{ph0}GitHub katkıda bulunanlar listesi{ph1} · Güncelleme: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -15021,6 +15012,50 @@ msgstr "Değerlendir"
 msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr "Ortam oluşturma rehberi"
+
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}Masaüstü uygulaması için ortam oluşturun{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "Masaüstü uygulaması için ortam oluşturun"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"Ajanın bir Linux masaüstü uygulamasında denemesini istediğiniz görevi tarif "
+"edin. Örneğin, alışveriş listesine zeytinyağı ekleyeceği bir Gnote ortamı "
+"oluşturmasını isteyin. Ajan uygulamayı yerel derleme bilgisayarına kurar, "
+"görevi yazar, ortamı dışa aktarır ve temiz bir bilgisayarda ekran "
+"görüntüleri, fare ve klavyeyle kontrol eder."
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"Derleme bilgisayarında amd64 veya arm64 üzerinde Linux, Docker ve belirtilen"
+" AgentEnv sürümü gerekir. Kurulum ve hazırlık kontrolleri için {ph0}masaüstü"
+" derleme kurulum kılavuzunu{ph1} izleyin."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -17507,3 +17542,8 @@ msgstr ""
 #~ "uygulamaları ve DLL'ler için deneysel, salt okunur desteğe sahiptir. Mevcut "
 #~ "bir Ghidra 12.1.x kurulumu ve 64 bit JDK 21 veya daha yeni bir sürüm "
 #~ "kullanın:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "{ph0}GitHub katkıda bulunanlar listesi{ph1} · Güncelleme: {ph2}."

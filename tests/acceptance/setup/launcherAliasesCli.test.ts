@@ -11,6 +11,15 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
+const registrationPathWithoutRuntime = async (root: string) => {
+  const restrictedPath = join(root, "path-without-runtime");
+  await mkdir(restrictedPath);
+  // Linux process ownership requires procps; no JavaScript runtime is exposed.
+  if (process.platform === "linux")
+    await symlink("/bin/ps", join(restrictedPath, "ps"));
+  return restrictedPath;
+};
+
 cliTest.skipIf(process.platform === "win32")(
   "migrates an owned shebang registration and starts its generated MCP command without a runtime on PATH",
   async ({ cli }) => {
@@ -18,11 +27,7 @@ cliTest.skipIf(process.platform === "win32")(
     const profile = join(home, ".qwen");
     const config = join(profile, "settings.json");
     const entrypoint = resolve("scripts/rea.mjs");
-    const restrictedPath = join(home, "path-without-runtime");
-    await mkdir(restrictedPath);
-    // Linux process ownership requires procps; no JavaScript runtime is exposed.
-    if (process.platform === "linux")
-      await symlink("/bin/ps", join(restrictedPath, "ps"));
+    const restrictedPath = await registrationPathWithoutRuntime(home);
     const retainedEnvironment = {
       PATH: restrictedPath,
       CALLER_SETTING: "keep exactly",
@@ -151,6 +156,7 @@ cliTest.skipIf(process.platform === "win32").for([
     const root = await createTestTempDirectory("rea-launcher-registration-");
     const home = join(root, "home");
     const config = join(home, ".cursor/mcp.json");
+    const restrictedPath = await registrationPathWithoutRuntime(root);
     await mkdir(join(home, ".cursor"), { recursive: true });
     const unrelated = { command: "other-server", args: [] };
     await writeFile(config, JSON.stringify({ mcpServers: { unrelated } }));
@@ -163,7 +169,7 @@ cliTest.skipIf(process.platform === "win32").for([
           HOME: home,
           USERPROFILE: home,
           XDG_CONFIG_HOME: join(home, ".config"),
-          PATH: process.env.PATH ?? "",
+          PATH: restrictedPath,
         },
       });
 

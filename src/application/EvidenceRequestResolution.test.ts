@@ -173,8 +173,16 @@ describe("schema-owned Evidence request resolution", () => {
       },
       schema,
     );
-    if (rejected.ok) throw new Error("invalid envelope was admitted");
-    expect(rejected.error).toBeInstanceOf(AnalysisInputError);
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [
+          expect.objectContaining({ path: ["sources"] }),
+          expect.objectContaining({ path: ["limit"] }),
+        ],
+      },
+    });
   });
 });
 
@@ -337,20 +345,24 @@ describe("Evidence request borrowing and cancellation", () => {
     const controller = new AbortController();
     const reason = new Error("cancelled by caller");
     controller.abort(reason);
-    let lookups = 0;
+    const schema = z
+      .strictObject({ source: evidenceInputSchema })
+      .superRefine(() => {
+        throw new Error("Cancelled request reached input parsing");
+      });
     const result = resolveEvidenceRequest(
       "test",
       { source: reference },
-      z.strictObject({ source: evidenceInputSchema }),
+      schema,
       () => {
-        lookups += 1;
-        return evidence;
+        throw new Error("Cancelled request reached source lookup");
       },
       { signal: controller.signal },
     );
-    if (result.ok) throw new Error("cancelled request was admitted");
-    expect(result.error.cause).toBe(reason);
-    expect(lookups).toBe(0);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
   });
 
   it("observes cancellation raised by the final source owner", () => {

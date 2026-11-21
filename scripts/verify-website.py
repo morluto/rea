@@ -2,6 +2,7 @@
 
 from html.parser import HTMLParser
 from pathlib import Path
+import json
 import re
 import struct
 import sys
@@ -10,7 +11,7 @@ from urllib.parse import unquote
 import xml.etree.ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
-from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, sync_pages
+from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, ranked_contributors, sync_pages
 from website_i18n import is_language_code
 from website_references import markdown_references, split_reference
 
@@ -448,6 +449,12 @@ def main():
     errors.extend(check_repository_links(root))
     try:
         sync_pages(root, check=True)
+        from PIL import Image
+        directory = root / "website/_site/contributors"
+        people = ranked_contributors(json.loads((directory / "people.json").read_text()))
+        with Image.open(directory / "avatars.png") as grid:
+            if grid.info.get("contributor_ids") != ",".join(str(p["id"]) for p in people):
+                errors.append("Contributor grid differs from the directory; refresh contributors.")
     except (OSError, ValueError, KeyError) as error:
         errors.append(str(error))
     if errors:

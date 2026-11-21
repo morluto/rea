@@ -1968,37 +1968,13 @@ it.each(["complete", "truncated"] as const)(
   },
 );
 
-it("inspects the display and window focus", async () => {
-  const { binary } = await writeAdbStub(
-    shellStub({
-      "wm:size": "Physical size: 1080x2340\n",
-      "wm:density": "Physical density: 420\n",
-      "dumpsys:window":
-        "  mCurrentFocus=Window{abcdef u0 com.example.app/com.example.app.MainActivity}\n",
-    }),
-  );
-  const display = await evidenceResult(providerOver(binary), {
-    operation: "inspect_adb_display",
-    input: { serial: "emulator-5554" },
-  });
-  expect(display.physical_size).toEqual({ width: 1080, height: 2340 });
-  expect(display.physical_density).toBe(420);
-  const window = await evidenceResult(providerOver(binary), {
-    operation: "inspect_adb_window",
-    input: { serial: "emulator-5554" },
-  });
-  expect(window.focused_window).toBe(
-    "Window{abcdef u0 com.example.app/com.example.app.MainActivity}",
-  );
-});
-
-// Older builds print `wm density` as a bare number; the display projection
-// must keep it as the physical density (morluto/rea#3942).
-it("keeps a bare numeric wm density as the physical density", async () => {
+it("inspects display and window focus with a bare physical density", async () => {
   const { binary } = await writeAdbStub(
     shellStub({
       "wm:size": "Physical size: 1080x2340\n",
       "wm:density": "420\n",
+      "dumpsys:window":
+        "  mCurrentFocus=Window{abcdef u0 com.example.app/com.example.app.MainActivity}\n",
     }),
   );
   const display = await evidenceResult(providerOver(binary), {
@@ -2010,6 +1986,13 @@ it("keeps a bare numeric wm density as the physical density", async () => {
     physical_density: 420,
     override_density: null,
   });
+  const window = await evidenceResult(providerOver(binary), {
+    operation: "inspect_adb_window",
+    input: { serial: "emulator-5554" },
+  });
+  expect(window.focused_window).toBe(
+    "Window{abcdef u0 com.example.app/com.example.app.MainActivity}",
+  );
 });
 
 it("reads Android 16 focus declarations from displays when windows omits them", async () => {

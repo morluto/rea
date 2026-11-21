@@ -379,6 +379,3 @@ the computer up so that reader can be retried.
 The control token that guards the computer's framework-only routes stays in
 REA: no result, error or log carries it. Code running in the computer as its
 user can still read it, which is acceptable for a local build.
-
-See the [specification](specs/desktop-app-environments/build-computer/spec.md)
-for scope and verification.

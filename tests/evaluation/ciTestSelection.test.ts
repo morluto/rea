@@ -65,6 +65,27 @@ it("follows test and verifier imports and directory scans, not production import
   ]);
 });
 
+it("selects a registry guard when a named test changes or moves", () => {
+  const registered =
+    "tests/boundary/providers/sampleRegistryProviderCatalog.test.ts";
+  const moved = "tests/boundary/providers/sampleRegistryMoved.test.ts";
+  const guard = "tests/evaluation/sampleRegistryGuard.test.ts";
+  const sources = {
+    "tests/support/lifecycleRegistry.ts": `export const paths = ["${registered}"];`,
+    "tests/support/lifecycleCoverage.ts":
+      'export { paths } from "./lifecycleRegistry.js";',
+    [guard]: 'import "../support/lifecycleCoverage.js";',
+    "tests/boundary/providers/sampleRegistryUnrelated.test.ts": "",
+  };
+  expect(
+    selectedFiles(plan([registered], { ...sources, [registered]: "" })),
+  ).toEqual([registered, guard]);
+  expect(selectedFiles(plan([registered], sources))).toEqual([guard]);
+  expect(
+    selectedFiles(plan([registered, moved], { ...sources, [moved]: "" })),
+  ).toEqual([moved, guard]);
+});
+
 it("selects a leaf adapter's tests by its name and directory across test projects", () => {
   const sources = {
     "src/jeb/JebMcpDeadline.ts": "",
@@ -119,8 +140,8 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
   const sources = {
     "src/domain/Value.test.ts": "",
     "tests/boundary/filesystem/docs.test.ts": 'read("docs/guide.md");',
-    "tests/boundary/filesystem/mermaid.test.ts":
-      'read("docs/architecture/architecture.mermaid");',
+    "tests/boundary/filesystem/docsAsset.test.ts":
+      'read("docs/assets/example.png");',
     "tests/boundary/filesystem/licenses.test.ts":
       'read("licenses/npm-dependencies.txt"); read("LICENSE");',
     "tests/boundary/filesystem/issueTemplate.test.ts":
@@ -146,9 +167,9 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
   expect(selectedFiles(plan(["docs/guide.md"], sources))).toEqual([
     "tests/boundary/filesystem/docs.test.ts",
   ]);
-  expect(
-    selectedFiles(plan(["docs/architecture/architecture.mermaid"], sources)),
-  ).toEqual(["tests/boundary/filesystem/mermaid.test.ts"]);
+  expect(selectedFiles(plan(["docs/assets/example.png"], sources))).toEqual([
+    "tests/boundary/filesystem/docsAsset.test.ts",
+  ]);
   expect(
     selectedFiles(plan(["licenses/npm-dependencies.txt"], sources)),
   ).toEqual(["tests/boundary/filesystem/licenses.test.ts"]);
