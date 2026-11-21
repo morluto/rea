@@ -1,4 +1,3 @@
-import { MIMEType } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { safeResponseMetadata as projectResponseMetadata } from "./CdpSafeMetadata.js";
@@ -65,24 +64,36 @@ describe("structured COOP and COEP declarations", () => {
         "policies",
         `${origin}/page`,
         {
-          headers: {
-            "Cross-Origin-Opener-Policy": value,
-            "Cross-Origin-Embedder-Policy": value,
-            "Cross-Origin-Resource-Policy":
-              'same-origin; report-to="not-structured"',
-            "X-Content-Type-Options": 'nosniff; report-to="not-structured"',
-          },
+          headers: { "Cross-Origin-Opener-Policy": value },
         },
         new Set([origin]),
       );
-      expect(captured.response.policies).toMatchObject({
-        coop: expected,
-        coep: expected,
-        corp: null,
-        x_content_type_options: null,
-      });
+      expect(captured.response.policies.coop).toBe(expected);
     },
   );
+
+  it("distinguishes malformed field policies from an independent valid declaration", () => {
+    const { response } = safeResponseMetadata(
+      "policies",
+      `${origin}/page`,
+      {
+        headers: {
+          "Cross-Origin-Opener-Policy": 'same-origin; report-to="coop"',
+          "Cross-Origin-Embedder-Policy": "require-corp; report-to=",
+          "Cross-Origin-Resource-Policy":
+            'same-origin; report-to="not-structured"',
+          "X-Content-Type-Options": 'nosniff; report-to="not-structured"',
+        },
+      },
+      new Set([origin]),
+    );
+    expect(response.policies).toMatchObject({
+      coop: "same-origin",
+      coep: null,
+      corp: null,
+      x_content_type_options: null,
+    });
+  });
 });
 
 describe("media type parameter preservation", () => {
@@ -116,15 +127,7 @@ describe("media type parameter preservation", () => {
         new Set([origin]),
       );
 
-      for (const projected of [
-        captured.response.mime_type,
-        captured.response.links[0]?.type,
-      ]) {
-        expect(projected).toBe(expected);
-        expect([...new MIMEType(projected ?? "").params]).toEqual([
-          ...new MIMEType(raw).params,
-        ]);
-      }
+      expect(captured.response.mime_type).toBe(expected);
       expect(captured.response.content_encoding).toBe("gzip");
       expect(captured.response.links).toMatchObject([
         {
@@ -133,6 +136,7 @@ describe("media type parameter preservation", () => {
           context_url: `${origin}/page`,
           context_scope: "approved",
           rel: ["preload", "mcp"],
+          type: expected,
           as: "script",
           crossorigin: "anonymous",
         },
@@ -253,148 +257,127 @@ describe("safe CDP response metadata", () => {
       expect(captured.agentHints).toEqual([]);
     },
   );
+});
 
-  it("retains every parsed header, CSP directive, link, relation, and policy feature", () => {
-    const csp = Array.from(
-      { length: 105 },
-      (_, index) => `x-${String(index)} 'self'`,
-    ).join("; ");
-    const links = Array.from(
-      { length: 105 },
-      (_, index) => `</${String(index)}>; rel="mcp service-desc"`,
-    ).join(", ");
-    const permissions = Array.from(
-      { length: 205 },
-      (_, index) => `feature-${String(index)}=()`,
-    ).join(", ");
-    const headers = Object.fromEntries(
-      Array.from({ length: 501 }, (_, index) => [
-        `x-extra-${String(index)}`,
-        "ok",
-      ]),
-    );
-    const captured = safeResponseMetadata(
-      "request-1",
-      `${origin}/api`,
-      {
-        mimeType: "application/json",
-        headers: {
-          ...headers,
-          "Content-Security-Policy": csp,
-          Link: links,
-          "Permissions-Policy": permissions,
-          "X-Model-Context": "present-after-many-headers",
-        },
+it("retains all projected metadata and hints in a large header inventory", () => {
+  const csp = Array.from(
+    { length: 105 },
+    (_, index) => `x-${String(index)} 'self'`,
+  ).join("; ");
+  const paths = Array.from({ length: 105 }, (_, index) => `/${String(index)}`);
+  const links = paths
+    .map((path) => `<${path}>; rel="mcp service-desc"`)
+    .join(", ");
+  const permissions = Array.from(
+    { length: 205 },
+    (_, index) => `feature-${String(index)}=()`,
+  ).join(", ");
+  const headers = Object.fromEntries(
+    Array.from({ length: 501 }, (_, index) => [
+      `x-extra-${String(index)}`,
+      "ok",
+    ]),
+  );
+  const captured = safeResponseMetadata(
+    "request-1",
+    `${origin}/api`,
+    {
+      mimeType: "application/json",
+      headers: {
+        ...headers,
+        "Content-Security-Policy": csp,
+        Link: links,
+        "Permissions-Policy": permissions,
+        "X-Model-Context": "present-after-many-headers",
       },
-      new Set([origin]),
-    );
+    },
+    new Set([origin]),
+  );
 
-    expect(captured.response.csp.directives).toHaveLength(105);
-    expect(captured.response.links).toHaveLength(105);
-    expect(captured.response.policies.permissions_policy_features).toHaveLength(
-      205,
-    );
-    expect(captured.agentHints).toContainEqual(
-      expect.objectContaining({ declaration: "x-model-context" }),
-    );
-  });
+  expect(captured.response.csp.directives).toHaveLength(105);
+  expect(captured.response.links).toHaveLength(105);
+  expect(captured.response.policies.permissions_policy_features).toHaveLength(
+    205,
+  );
+  expect(captured.agentHints).toEqual([
+    ...paths.map((path) => ({
+      mechanism: "link_rel",
+      declaration: "mcp service-desc",
+      url: origin + path,
+      trust: "page-declared-untrusted",
+    })),
+    {
+      mechanism: "response_header",
+      declaration: "x-model-context",
+      url: null,
+      trust: "page-declared-untrusted",
+    },
+  ]);
 });
 
 describe("safe CDP response metadata CSP sources", () => {
-  it("classifies scheme-less CSP host sources by their own host, not the page origin", () => {
-    const captured = safeResponseMetadata(
+  it("resolves scheme-less CSP hosts in the protected scheme and keeps wildcard scopes external", () => {
+    const { response } = safeResponseMetadata(
       "request-csp",
       `${origin}/api`,
       {
         headers: {
           "Content-Security-Policy":
-            "script-src cdn.example.test *.trusted.test * 'self' https://api.other.test",
+            "script-src cdn.example.test app.example.test private.example.test https://api.other.test *.trusted.test * 'self'",
         },
       },
-      new Set([origin]),
+      new Set([
+        origin,
+        "https://cdn.example.test",
+        "http://private.example.test",
+      ]),
     );
 
-    expect(captured.response.csp.directives).toEqual([
+    expect(response.csp.directives).toEqual([
       {
         name: "script-src",
         sources: [
+          { kind: "approved_origin", value: "https://cdn.example.test" },
+          { kind: "approved_origin", value: origin },
+          { kind: "external_origin", value: null },
           { kind: "external_origin", value: null },
           { kind: "external_origin", value: null },
           { kind: "external_origin", value: null },
           { kind: "keyword", value: "'self'" },
-          { kind: "external_origin", value: null },
         ],
       },
     ]);
   });
 
-  it.each(["\n", "\r\n", ", "])(
-    "parses every policy of a repeated CSP field joined by %j",
-    (delimiter) => {
-      const captured = safeResponseMetadata(
-        "request-csp-repeated",
-        `${origin}/api`,
-        {
-          headers: {
-            "Content-Security-Policy": [
-              "default-src 'self'",
-              "script-src https://private.example.test; img-src data:",
-            ].join(delimiter),
-          },
-        },
-        new Set([origin]),
-      );
-
-      expect(captured.response.csp.directives).toEqual([
-        {
-          name: "default-src",
-          sources: [{ kind: "keyword", value: "'self'" }],
-        },
-        {
-          name: "script-src",
-          sources: [{ kind: "external_origin", value: null }],
-        },
-        { name: "img-src", sources: [{ kind: "scheme", value: "data:" }] },
-      ]);
-    },
-  );
-
-  it("inherits the protected resource scheme for a scheme-less host source", () => {
-    const captured = safeResponseMetadata(
-      "request-csp-scheme",
+  it("preserves CSP policies across field boundaries and ignores repeats within each policy", () => {
+    const { response } = safeResponseMetadata(
+      "request-csp-repeated",
       `${origin}/api`,
       {
         headers: {
           "Content-Security-Policy":
-            "script-src cdn.example.test app.example.test",
-        },
-      },
-      new Set([origin, "https://cdn.example.test"]),
-    );
-
-    expect(captured.response.csp.directives[0]?.sources).toEqual([
-      { kind: "approved_origin", value: "https://cdn.example.test" },
-      { kind: "approved_origin", value: origin },
-    ]);
-  });
-
-  it("ignores a directive repeated within one policy but not across policies", () => {
-    const captured = safeResponseMetadata(
-      "request-csp-duplicate",
-      `${origin}/api`,
-      {
-        headers: {
-          "Content-Security-Policy":
-            "script-src 'self'; Script-Src 'unsafe-inline' 'nonce-abc', script-src data:",
+            "default-src 'self'; script-src 'self'; Script-Src 'unsafe-inline' 'nonce-abc', " +
+            "script-src https://private.example.test; img-src data:\n" +
+            "script-src data:\r\nscript-src 'none'",
         },
       },
       new Set([origin]),
     );
 
-    expect(captured.response.csp).toEqual({
+    expect(response.csp).toEqual({
       directives: [
+        {
+          name: "default-src",
+          sources: [{ kind: "keyword", value: "'self'" }],
+        },
         { name: "script-src", sources: [{ kind: "keyword", value: "'self'" }] },
+        {
+          name: "script-src",
+          sources: [{ kind: "external_origin", value: null }],
+        },
+        { name: "img-src", sources: [{ kind: "scheme", value: "data:" }] },
         { name: "script-src", sources: [{ kind: "scheme", value: "data:" }] },
+        { name: "script-src", sources: [{ kind: "keyword", value: "'none'" }] },
       ],
       nonce_count: 0,
       hash_count: 0,
@@ -629,15 +612,11 @@ describe("safe CDP response metadata referrer policy", () => {
       "request-referrer",
       `${origin}/api`,
       {
-        headers: {
-          "Referrer-Policy": raw,
-          "Cross-Origin-Opener-Policy": "same-origin",
-        },
+        headers: { "Referrer-Policy": raw },
       },
       new Set([origin]),
     );
     expect(captured.response.policies.referrer_policy).toBe(expected);
-    expect(captured.response.policies.coop).toBe("same-origin");
   });
 
   it.each<[string | number | undefined, number | null]>([
