@@ -106,6 +106,7 @@
 * **web:** retain Chromium navigation kind in session evidence ([#13194](https://github.com/morluto/rea/issues/13194)) ([9230f69](https://github.com/morluto/rea/commit/9230f698b34f34c683449fbe34f87fbbbfe34324))
 * **website:** improve page loading, image labels, and legacy redirects ([e1c37d6](https://github.com/morluto/rea/commit/e1c37d68a4e44fa2cd3311e49e3980692bc65c00))
 * **website:** match social preview accents to REA blue ([753321d](https://github.com/morluto/rea/commit/753321dda66d840c58008119a9e6852cd7c64f25))
+* **website:** refresh favicon links and serve a root icon ([b33b674](https://github.com/morluto/rea/commit/b33b6743d9bab514c7131d31e5b28ef645bb59ab))
 * **website:** restore shared theme script formatting ([#13117](https://github.com/morluto/rea/issues/13117)) ([a1c8f67](https://github.com/morluto/rea/commit/a1c8f67e9934efc0153b3bc2864c13370389b5d3))
 * **website:** use the blue REA wordmark for site icons ([2c4776d](https://github.com/morluto/rea/commit/2c4776d9aa9c1167da96f75a27645a23ef3a348e))
 
