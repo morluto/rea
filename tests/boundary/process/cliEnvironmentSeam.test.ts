@@ -13,6 +13,52 @@ import { parseProcessCapture } from "../../../src/domain/process/processCaptureP
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("the CLI takes its environment as an input", () => {
+  it("preserves an object-like environment name through capture", async ({
+    skip,
+  }) => {
+    const capability = await probeProcessCaptureCapability();
+    if (!capability.available) {
+      skip("Process capture is unavailable on this host");
+      return;
+    }
+
+    const root = await createTestTempDirectory("rea-cli-env-proto-");
+    const scenarioPath = join(root, "scenario.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify({
+        executable: process.execPath,
+        arguments: [
+          "-e",
+          "console.log('selected='+Object.hasOwn(process.env,'__proto__')+':'+process.env['__proto__']);console.log('control='+process.env.NORMAL_CAPTURE_KEY)",
+        ],
+        environment: {
+          ["__proto__"]: "selected-value",
+          NORMAL_CAPTURE_KEY: "control-value",
+        },
+        timeout_ms: 5_000,
+      }),
+    );
+
+    const result = await captureProcessScenarioFile(scenarioPath, {});
+    if (isCliOperationFailure(result))
+      throw new Error(
+        `Process capture returned an error: ${JSON.stringify(result)}`,
+      );
+    const evidence = parseEvidence(result);
+    const capture = parseProcessCapture(evidence.normalized_result);
+    expect(capture.frames.map(({ data }) => data).join("")).toContain(
+      "selected=true:selected-value",
+    );
+    expect(capture.frames.map(({ data }) => data).join("")).toContain(
+      "control=control-value",
+    );
+    expect(capture.manifest.scenario.environment).toEqual({
+      ["__proto__"]: "selected-value",
+      NORMAL_CAPTURE_KEY: "control-value",
+    });
+  });
+
   it("resolves from injected PATH and inherits injected env with scenario overrides", async ({
     skip,
   }) => {

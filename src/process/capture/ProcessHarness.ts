@@ -75,7 +75,10 @@ import {
   createProcessCaptureJournal,
   scheduleScenarioInteractions,
 } from "./ProcessCaptureJournal.js";
-import { makeProcessCaptureEnvironment } from "./ProcessCaptureEnvironment.js";
+import {
+  makePtyProcessCaptureEnvironment,
+  resolvePtyProcessLaunch,
+} from "./ProcessPtyLaunch.js";
 import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
 import { processCaptureOwnershipUnavailableReason } from "./ProcessCaptureCapability.js";
 import {
@@ -421,9 +424,13 @@ const startCaptureRuntime = async (
     // Completed executable facts do not authorize launch after cancellation
     // during the sampler's final metadata read or descriptor cleanup.
     assertNotCancelled(options.signal);
-    terminal = spawn(scenario.executable, [...scenario.arguments], {
+    const ptyLaunch = resolvePtyProcessLaunch(scenario);
+    terminal = spawn(ptyLaunch.executable, [...ptyLaunch.arguments], {
       cwd: scenario.working_directory,
-      env: makeProcessCaptureEnvironment(options),
+      env: makePtyProcessCaptureEnvironment(
+        options,
+        ptyLaunch.environmentDelegateNames,
+      ),
       cols: scenario.terminal.columns,
       rows: scenario.terminal.rows,
       name: "xterm-256color",
