@@ -48,6 +48,7 @@
 * **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
 * **electron:** preserve waits and cancellation through renderer shutdown ([#12972](https://github.com/morluto/rea/issues/12972)) ([2533a8b](https://github.com/morluto/rea/commit/2533a8b32bf2d8e4c052f6ea5c7e616a93660a9f))
 * **electron:** resolve exact local IPC channel values ([#13005](https://github.com/morluto/rea/issues/13005)) ([e66a27c](https://github.com/morluto/rea/commit/e66a27c2f2bb294a0506e6d2d6cf9d2f0125b9e2))
+* **elf:** clear the ARM Thumb bit before naming unwind ranges ([#9692](https://github.com/morluto/rea/issues/9692)) ([ce3506e](https://github.com/morluto/rea/commit/ce3506e298e1a42d111a08613821ce8868f411cd))
 * **elf:** do not count SPARC register declarations as imports ([d955cd0](https://github.com/morluto/rea/commit/d955cd0d60558a3f884b057e9aa6653b7652134d))
 * **entropy:** keep the whole-file census in a counter that cannot wrap ([a3acfcf](https://github.com/morluto/rea/commit/a3acfcf003a1213c751a46051630f06023766d1f))
 * **frida:** explain refused ptrace seize during injection ([317f90e](https://github.com/morluto/rea/commit/317f90e023a96f18695790efbe903fb39a4e6b85)), closes [#9103](https://github.com/morluto/rea/issues/9103)
@@ -102,6 +103,7 @@
 
 ### Performance Improvements
 
+* **desktop:** bound retained text lines while counting full files ([#10207](https://github.com/morluto/rea/issues/10207)) ([71a7e0d](https://github.com/morluto/rea/commit/71a7e0d9ff20cfd79b90ff94d57b6380eb5fec4f))
 * **entropy:** count bytes by index into an integer table ([5d3276d](https://github.com/morluto/rea/commit/5d3276d14c162b559a500189096a733692212bfc))
 * **entropy:** count bytes through one shared loop ([d777c3c](https://github.com/morluto/rea/commit/d777c3c55f90421a35a7a032336c6f4f1c21dd17))
 * **javascript:** index widened summary coverage by root ([#13007](https://github.com/morluto/rea/issues/13007)) ([f2d5cd6](https://github.com/morluto/rea/commit/f2d5cd633734c1baeda7ac73a31fc7f2e40550fe))
