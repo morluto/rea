@@ -17,6 +17,7 @@ import {
 } from "./CdpWorkerTarget.js";
 import { exclusionReasonForUrl } from "./CdpCaptureEventHelpers.js";
 import { Budget } from "../domain/budget.js";
+import { noRuntimeOverrideSentence } from "../domain/browserDeadline.js";
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
@@ -544,6 +545,19 @@ export class CdpWorkerCapture {
       throw new BrowserObservationError(
         this.context.operation,
         "payload_limit",
+        {
+          detail: noRuntimeOverrideSentence(
+            `Worker CDP events exceeded the aggregate ${String(this.#eventBytes.maximum)}-byte capture budget.`,
+            "command_timeout_ms",
+          ),
+          remediationAction:
+            "Retry with a shorter observation_ms, fewer explicit worker_target_ids, or a quieter page target.",
+          related: { parameters: ["observation_ms", "worker_target_ids"] },
+          diagnostics: {
+            kind: "worker_events",
+            limit_bytes: this.#eventBytes.maximum,
+          },
+        },
       );
     if (
       registered?.method === "ServiceWorker.workerVersionUpdated" &&
@@ -804,6 +818,19 @@ export class CdpWorkerCapture {
             throw new BrowserObservationError(
               this.context.operation,
               "payload_limit",
+              {
+                detail: noRuntimeOverrideSentence(
+                  `Retained worker script sources exceeded the aggregate ${String(this.#sourceBytes.maximum)}-byte capture budget.`,
+                  "command_timeout_ms",
+                ),
+                remediationAction:
+                  "Retry with include_script_sources disabled, or select a target with less worker script source to retain.",
+                related: { parameters: ["include_script_sources"] },
+                diagnostics: {
+                  kind: "worker_script_sources",
+                  limit_bytes: this.#sourceBytes.maximum,
+                },
+              },
             );
           item.source = sourceResult(text);
         } catch (cause) {

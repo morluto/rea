@@ -1,5 +1,7 @@
 import { waitFor } from "../../support/testWait.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { WEB_RUNTIME_LIMITS } from "../../../src/domain/webRuntime.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { selectScriptCapture } from "../../../src/domain/webScriptCaptureAdapters.js";
@@ -868,13 +870,62 @@ it.each(["revoked", "selected", "controlled"])(
           .find((w) => w.target_id === "service")!
           .observation!.lifecycle.at(-1),
       ).toMatchObject({ controls_page: false });
-    } else
-      expect(captured).toMatchObject({
-        ok: false,
-        error: { reason: "payload_limit" },
+    } else {
+      if (captured.ok)
+        throw new Error("Expected the worker event budget to be exhausted");
+      expect(projectAnalysisError(captured.error)).toMatchObject({
+        code: "truncated",
+        message: expect.stringContaining(
+          String(WEB_RUNTIME_LIMITS.retainedEventBytes),
+        ),
+        details: {
+          reason: "payload_limit",
+          diagnostics: {
+            kind: "worker_events",
+            limit_bytes: WEB_RUNTIME_LIMITS.retainedEventBytes,
+          },
+        },
+        remediation: { action: expect.stringContaining("observation_ms") },
       });
+    }
   },
 );
+
+it("reports the aggregate worker source limit separately from the event budget", async () => {
+  const { provider, input } = await fixture({
+    commandResult(command) {
+      if (
+        command.method === "Debugger.getScriptSource" &&
+        command.sessionId?.startsWith("worker-")
+      )
+        return {
+          scriptSource: "x".repeat(
+            WEB_RUNTIME_LIMITS.sourceBytes / 2 +
+              (command.sessionId === "worker-shared" ? 1 : 0),
+          ),
+        };
+      return undefined;
+    },
+  });
+  const captured = await provider.inspectPage({
+    ...input,
+    worker_target_ids: ["shared"],
+  });
+  if (captured.ok)
+    throw new Error("Expected the worker source budget to be exhausted");
+  expect(projectAnalysisError(captured.error)).toMatchObject({
+    code: "truncated",
+    message: expect.stringContaining(String(WEB_RUNTIME_LIMITS.sourceBytes)),
+    details: {
+      reason: "payload_limit",
+      diagnostics: {
+        kind: "worker_script_sources",
+        limit_bytes: WEB_RUNTIME_LIMITS.sourceBytes,
+      },
+    },
+    remediation: { action: expect.stringContaining("include_script_sources") },
+  });
+});
 
 it.each(["missing", "observation"] as const)(
   "rejects an explicitly selected worker without retained %s",
