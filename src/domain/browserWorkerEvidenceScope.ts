@@ -156,21 +156,25 @@ export const browserWorkerEvidenceScopeSchema = z
             "Worker Evidence disagrees with its recorded target selection",
         });
       for (const [scriptIndex, script] of observation.scripts.entries()) {
-        const sanitizedScript = sanitizeBrowserUrl(script.url);
-        if (sanitizedScript.url !== script.url)
-          context.addIssue({
-            code: "custom",
-            path: [...path, "observation", "scripts", scriptIndex, "url"],
-            message: "Worker Evidence script URL must be sanitized",
-          });
-        const scriptOrigin = sanitizedScript.origin;
-        if (scriptOrigin === null || !allowed.has(scriptOrigin))
-          context.addIssue({
-            code: "custom",
-            path: [...path, "observation", "scripts", scriptIndex],
-            message:
-              "Worker Evidence script is outside its recorded origin scope",
-          });
+        for (const field of ["url", "source_map_url"] as const) {
+          const url = script[field];
+          if (url === null) continue;
+          const sanitizedScript = sanitizeBrowserUrl(url);
+          if (sanitizedScript.url !== url)
+            context.addIssue({
+              code: "custom",
+              path: [...path, "observation", "scripts", scriptIndex, field],
+              message: "Worker Evidence script URL must be sanitized",
+            });
+          const scriptOrigin = sanitizedScript.origin;
+          if (scriptOrigin === null || !allowed.has(scriptOrigin))
+            context.addIssue({
+              code: "custom",
+              path: [...path, "observation", "scripts", scriptIndex, field],
+              message:
+                "Worker Evidence script is outside its recorded origin scope",
+            });
+        }
       }
     }
   });

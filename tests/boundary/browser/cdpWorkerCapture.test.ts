@@ -342,6 +342,8 @@ it("requires common content evidence to prove worker scripts unchanged", async (
     coverage.dropped_events.scripts = 0;
   }
   const original = observation.scripts[0]!;
+  original.is_module = false;
+  original.language = "JavaScript";
   original.source = { included: false, reason: "not approved" };
   original.cdp_hash = null;
   const after = structuredClone(before);
@@ -466,13 +468,14 @@ it.each(["length", "cdp_hash", "is_module", "language"] as const)(
       coverage.unavailable_sections = [];
       coverage.dropped_events.scripts = 0;
     }
-    const first =
-      field === "length" ? 0 : field === "is_module" ? false : "first";
-    const second =
-      field === "length" ? 1 : field === "is_module" ? true : "second";
     Object.assign(before.workers[0]!.observation!.scripts[0]!, {
-      [field]: first,
+      length: 0,
+      is_module: false,
+      language: "JavaScript",
+      cdp_hash: "known",
     });
+    const second =
+      field === "length" ? 1 : field === "is_module" ? true : "different";
     const after = structuredClone(before);
     const script = after.workers[0]!.observation!.scripts[0]!;
     const compare = (left = before, right = after) =>
@@ -480,29 +483,52 @@ it.each(["length", "cdp_hash", "is_module", "language"] as const)(
         before: { inspection: left, webmcp: null },
         after: { inspection: right, webmcp: null },
       });
+    expect(compare().dimensions.scripts).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+    });
     for (const complete of [true, false]) {
       if (!complete) after.completeness.unavailable_sections.push("scripts");
+      Object.assign(script, { [field]: second });
+      expect(compare().dimensions.scripts).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+      });
       Object.assign(script, { [field]: null });
       for (const [left, right] of [
         [before, after],
         [after, before],
       ] as const) {
         expect(compare(left, right).dimensions.scripts).toMatchObject({
-          status: complete ? "unchanged" : "unknown",
+          status: complete && field === "cdp_hash" ? "unchanged" : "unknown",
           total_changes: 0,
         });
         expect(compare(left, right).overall_status).not.toBe("changed");
       }
       if (field === "length") {
         delete script.length;
-        expect(compare().dimensions.scripts.total_changes).toBe(0);
-        expect(compare(after, before).dimensions.scripts.total_changes).toBe(0);
+        for (const [left, right] of [
+          [before, after],
+          [after, before],
+        ] as const)
+          expect(compare(left, right).dimensions.scripts).toMatchObject({
+            status: "unknown",
+            total_changes: 0,
+          });
       }
-      Object.assign(script, { [field]: second });
-      expect(compare().dimensions.scripts).toMatchObject({
-        status: "changed",
-        total_changes: 1,
-      });
+      const url = script.url;
+      if (field === "cdp_hash") script.url += "?changed";
+      else script.cdp_hash = "different";
+      for (const [left, right] of [
+        [before, after],
+        [after, before],
+      ] as const)
+        expect(compare(left, right).dimensions.scripts).toMatchObject({
+          status: "changed",
+          total_changes: 1,
+        });
+      script.url = url;
+      script.cdp_hash = "known";
     }
   },
 );
@@ -2804,7 +2830,7 @@ it("reports a contradictory page origin at the captured target", async () => {
   expect(() => selectScriptCapture(evidence)).toThrow(/origin scope/u);
 });
 
-it.each(["target", "script", "origin"] as const)(
+it.each(["target", "script", "origin", "source-map"] as const)(
   "rejects out-of-scope worker %s in Evidence consumers",
   async (changed) => {
     const { provider, input } = await fixture();
@@ -2818,6 +2844,9 @@ it.each(["target", "script", "origin"] as const)(
       worker.url = "https://foreign.example/worker.js";
       worker.origin = "https://foreign.example";
     } else if (changed === "origin") worker.origin = "https://foreign.example";
+    else if (changed === "source-map")
+      worker.observation!.scripts[0]!.source_map_url =
+        "https://foreign.example/child.js.map";
     else
       worker.observation!.scripts[0]!.url = "https://foreign.example/child.js";
     const evidence = createBrowserEvidence(
@@ -3218,7 +3247,7 @@ it.each(["cdp_hash", "is_module", "source_map_url"] as const)(
   },
 );
 
-it.each(["target", "script"] as const)(
+it.each(["target", "script", "source-map"] as const)(
   "rejects unsanitized worker %s URLs",
   async (location) => {
     const { provider, input } = await fixture();
@@ -3230,7 +3259,9 @@ it.each(["target", "script"] as const)(
     const url = new URL(selected.url);
     url.username = "user";
     url.password = "secret";
-    selected.url = url.href;
+    if (location === "source-map")
+      worker.observation!.scripts[0]!.source_map_url = url.href + ".map";
+    else selected.url = url.href;
     const evidence = createBrowserEvidence(
       "inspect_web_page",
       input,
@@ -3248,6 +3279,51 @@ it.each(["target", "script"] as const)(
       }),
     );
     expect(() => selectScriptCapture(evidence)).toThrow(/sanitized/u);
+  },
+);
+
+it.each([false, true])(
+  "preserves a permitted worker source-map declaration, present=%s",
+  async (present) => {
+    const { provider, input } = await fixture();
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const worker = captured.value.workers.find((w) => w.target_id === "own")!;
+    const script = worker.observation!.scripts[0]!;
+    const mapUrl = present ? script.url + ".map?version=1#source" : null;
+    script.source_map_url = mapUrl;
+    script.language = "JavaScript";
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      captured.value,
+      provider.identity(),
+    );
+    expect(selectScriptCapture(evidence).scripts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: expect.objectContaining({
+            kind: "worker-script",
+            target_id: "own",
+            source_map_url: mapUrl,
+          }),
+        }),
+      ]),
+    );
+    expect(
+      projectRuntimeCaptures(parseRuntimeCaptures([evidence])).nodes.flatMap(
+        (node) => node.observations,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            worker_target_id: "own",
+            source_map_url: mapUrl,
+          }),
+        }),
+      ]),
+    );
   },
 );
 
@@ -3473,6 +3549,8 @@ it.each([
   "page-origin",
   "page-source-selection",
   "page-unsanitized",
+  "source-map-credentials",
+  "source-map-origin",
 ] as const)(
   "rejects inconsistent worker Evidence through CLI and MCP without publishing: %s",
   async (mismatch) => {
@@ -3502,14 +3580,21 @@ it.each([
     if (mismatch === "missing-observation")
       delete inspection.workers.find((w) => w.target_id === "shared")!
         .observation;
-    if (mismatch === "unsanitized") {
+    if (mismatch === "unsanitized" || mismatch === "source-map-credentials") {
       const script = inspection.workers.find((w) => w.target_id === "shared")!
         .observation!.scripts[0]!;
       const url = new URL(script.url);
       url.username = "user";
       url.password = "secret";
-      script.url = url.href;
+      if (mismatch === "source-map-credentials")
+        script.source_map_url = url.href + ".map";
+      else script.url = url.href;
     }
+    if (mismatch === "source-map-origin")
+      inspection.workers.find(
+        (w) => w.target_id === "shared",
+      )!.observation!.scripts[0]!.source_map_url =
+        "https://foreign.example/worker.js.map";
     if (mismatch === "origin")
       inspection.workers.find(
         (w) => w.target_id === "shared",
@@ -3543,6 +3628,7 @@ it.each([
         ? { ...selected, include_script_sources: false }
         : mismatch === "origin" ||
             mismatch === "unsanitized" ||
+            mismatch.startsWith("source-map-") ||
             mismatch === "missing-selection" ||
             mismatch === "missing-observation" ||
             mismatch === "service-target-type" ||

@@ -1679,13 +1679,17 @@ const workerScriptsDimension = (
       );
       const sourceComparable =
         script.source.included && peer?.source.included === true;
-      const hashesComparable =
-        script.cdp_hash != null && peer?.cdp_hash != null;
+      const fields = (
+        ["cdp_hash", "length", "is_module", "language"] as const
+      ).filter((key) => script[key] != null && peer?.[key] != null);
       if (
         peer &&
         (!comparable ||
+          !fields.includes("length") ||
+          !fields.includes("is_module") ||
+          !fields.includes("language") ||
           (!sourceComparable &&
-            (!hashesComparable ||
+            (!fields.includes("cdp_hash") ||
               script.source.included ||
               peer.source.included)))
       )
@@ -1694,11 +1698,7 @@ const workerScriptsDimension = (
         identity,
         digestCanonicalValue({
           url: script.url,
-          ...Object.fromEntries(
-            (["cdp_hash", "length", "is_module", "language"] as const)
-              .filter((key) => script[key] != null && peer?.[key] != null)
-              .map((key) => [key, script[key]]),
-          ),
+          ...Object.fromEntries(fields.map((key) => [key, script[key]])),
           ...(comparable ? { source_map_url: script.source_map_url } : {}),
           ...(script.source.included && peer?.source.included
             ? { source_sha256: script.source.artifact.sha256 }
@@ -1713,7 +1713,7 @@ const workerScriptsDimension = (
     fingerprints(afterScripts, beforeScripts),
     workerComplete && valuesComplete,
     workerComplete
-      ? "Worker script content or source-map evidence was incomplete in at least one observation."
+      ? "Worker script content, metadata, or source-map evidence was incomplete in at least one observation."
       : "Worker script inventory was incomplete in at least one observation.",
     workerComplete,
   );

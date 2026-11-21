@@ -7,6 +7,7 @@ import type { CdpCommand, CdpCommandParams } from "./protocol/CdpCommands.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
   CdpCommandRejection,
+  isCdpSessionGoneRejection,
   isCdpSessionNotFoundRejection,
 } from "./CdpCommandRejection.js";
 import {
@@ -329,7 +330,7 @@ export class CdpWorkerCapture {
           signal,
         );
       } catch (cause: unknown) {
-        if (!isCdpSessionNotFoundRejection(cause)) this.requireTransportClose();
+        if (!isCdpSessionGoneRejection(cause)) this.requireTransportClose();
       }
     };
     if (this.context.sessionId !== undefined)
