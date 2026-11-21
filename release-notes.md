@@ -133,6 +133,7 @@
 * **debugger:** consolidate runtime setting recovery coverage ([#13042](https://github.com/morluto/rea/issues/13042)) ([67f8094](https://github.com/morluto/rea/commit/67f8094efaa220b354f032d607b56f3126950bf2))
 * **debugger:** consolidate startup descriptor ownership checks ([#13028](https://github.com/morluto/rea/issues/13028)) ([fb873fe](https://github.com/morluto/rea/commit/fb873feaeb928c692ee074784846a9f41c1d3b79))
 * **desktop:** verify cancellation before releasing the guest ([#12812](https://github.com/morluto/rea/issues/12812)) ([c94f275](https://github.com/morluto/rea/commit/c94f275667e8d9402d34bcddb61abe0393302685))
+* **docs:** isolate README drift cases and remove duplicate checks ([ce52580](https://github.com/morluto/rea/commit/ce5258043c47483d2c8db9a3c0b8f369542bed73))
 * **dotnet:** consolidate managed ExtraData coverage ([#12788](https://github.com/morluto/rea/issues/12788)) ([e8105d6](https://github.com/morluto/rea/commit/e8105d6be9c5b96a0635f09e0eeef9672f112e8f))
 * **dotnet:** use smaller fixtures for managed byte budgets ([#12793](https://github.com/morluto/rea/issues/12793)) ([337fd43](https://github.com/morluto/rea/commit/337fd43a0f91aa63c9697fd5dc912f7807454ba3))
 * **electron:** consolidate action and projection coverage ([#12959](https://github.com/morluto/rea/issues/12959)) ([32e5f5b](https://github.com/morluto/rea/commit/32e5f5bc1c26281656d6d2a17e14308c8eba05ce))
