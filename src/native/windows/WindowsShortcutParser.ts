@@ -280,7 +280,7 @@ const driveType = (
 
 const extensionOf = (path: string, ansi: boolean): string | null => {
   if (path.length === 0) return null;
-  const normalized = path.replaceAll("/", "\\");
+  const normalized = fileNameSegment(path.replaceAll("/", "\\"));
   const slash = normalized.lastIndexOf("\\");
   const name = slash === -1 ? normalized : normalized.slice(slash + 1);
   const dot = name.lastIndexOf(".");
@@ -294,6 +294,20 @@ const foldPath = (path: string): string =>
 
 /** `\\?\` and `\\.\` paths reach Windows verbatim, so their segments are kept as written. */
 const DEVICE_PATH = /^\\\\[?.]\\/u;
+
+/**
+ * The final segment as Win32 opens it.
+ *
+ * Win32 strips trailing spaces and periods from a name before it opens the file, so
+ * `app.exe.` and `app.exe ` both open `app.exe`, while `report.` opens `report`. A `\\?\`
+ * path skips that pass, and an unexpanded `%VAR%` may expand to one, so both keep their text.
+ */
+const fileNameSegment = (path: string): string => {
+  if (DEVICE_PATH.test(path) || hasUnexpandedVariable(path)) return path;
+  const at = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/")) + 1;
+  const name = path.slice(at).replace(/[. ]+$/u, "");
+  return name === "" ? path : `${path.slice(0, at)}${name}`;
+};
 
 /**
  * Compare form of a full path, from the text alone: no path is ever opened.
@@ -433,8 +447,14 @@ const linkInfoTargets = (
       : recorded(suffixText, info.common_path_suffix_unicode === null);
   // Each part keeps its own encoding, so an ASCII ANSI part never hides a
   // comparable Unicode part.
+  // The extension belongs to the joined target, not to the suffix: pefile-style
+  // trimming depends on the whole path, and `\\?\C:\Tools` + `app.exe.` must keep its
+  // trailing period because a device path skips the trim. A part whose encoding cannot be
+  // compared leaves the extension unknown rather than taking the suffix's.
   const withSuffix = (base: ReturnType<typeof recorded>): RecordedPath => {
     if (suffix === null) return base;
+    // The parts cannot be joined into one comparable string, but the extension still comes
+    // from the final segment, which is the suffix's own name.
     if (base.ansi || suffix.ansi)
       return {
         path: null,
@@ -442,11 +462,12 @@ const linkInfoTargets = (
         unicode: base.unicode || suffix.unicode,
         extension: suffix.extension,
       };
+    const joined = `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`;
     return {
-      path: `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`,
+      path: joined,
       ansi: base.ansi || suffix.ansi,
       unicode: base.unicode || suffix.unicode,
-      extension: suffix.extension,
+      extension: extensionOf(joined, base.ansi || suffix.ansi),
     };
   };
   const values: RecordedPath[] = [];
