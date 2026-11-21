@@ -8,6 +8,100 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains fetch candidates when an inherited header iterator may change through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-fetch-header-iterator-");
+    const iterator =
+      'Object.prototype[Symbol.iterator] = function* () { yield ["x-ok", "1"]; }';
+    const badHeaders = '{ headers: { "bad name": "1" } }';
+    const fixtures = {
+      "prior.cjs": `${iterator}; fetch("https://example.test/prior", ${badHeaders});`,
+      "during.cjs": `fetch("https://example.test/during", { headers: { "bad name": "1" }, ignored: (${iterator}, 0) });`,
+      "later.cjs": `fetch("https://example.test/later", ${badHeaders}); ${iterator};`,
+      "invalid.cjs": `fetch("https://example.test/invalid", ${badHeaders});`,
+      "valid.cjs":
+        'fetch("https://example.test/valid", { headers: { "x-ok": "1" } });',
+    };
+    for (const [path, source] of Object.entries(fixtures))
+      await writeFile(join(root, path), source);
+    const { semantic_graph: graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      root,
+    );
+    expect(
+      graph.nodes
+        .filter(({ kind }) => kind === "request")
+        .map(({ properties }) => properties.endpoint)
+        .sort(),
+    ).toEqual([
+      "https://example.test/during",
+      "https://example.test/prior",
+      "https://example.test/valid",
+    ]);
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "uses the observed WebSocket protocol iterator through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-websocket-protocol-iterator-",
+    );
+    const iterator =
+      'Array.prototype[Symbol.iterator] = function* () { yield "safe"; }';
+    const cases = [
+      [
+        "prior",
+        `${iterator}; new WebSocket("wss://example.test/", ["chat", "chat"])`,
+        true,
+      ],
+      [
+        "during",
+        `new WebSocket("wss://example.test/", ["bad name", (${iterator}, "ok")])`,
+        true,
+      ],
+      [
+        "later",
+        `new WebSocket("wss://example.test/", ["chat", "chat"]); ${iterator}`,
+        false,
+      ],
+      [
+        "duplicate",
+        'new WebSocket("wss://example.test/", ["chat", "chat"])',
+        false,
+      ],
+      [
+        "distinct",
+        'new WebSocket("wss://example.test/", ["chat", "other"])',
+        true,
+      ],
+      [
+        "coercion",
+        'new WebSocket("wss://example.test/", [null, "null"])',
+        true,
+      ],
+    ] as const;
+    for (const [name, source] of cases)
+      await writeFile(join(root, `${name}.cjs`), `${source};\n`);
+    const { semantic_graph: graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      root,
+    );
+    for (const [name, , retained] of cases)
+      expect(
+        graph.nodes.filter(
+          (node) =>
+            node.kind === "request" &&
+            node.identity.module_path === `${name}.cjs`,
+        ),
+        name,
+      ).toHaveLength(retained ? 1 : 0);
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
   "retains conditional built-in effects through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-conditional-builtins-");
