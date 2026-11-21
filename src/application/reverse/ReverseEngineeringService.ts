@@ -67,8 +67,8 @@ import type {
   ReverseEngineeringCommandUnavailable,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
-import { execFileOutputFailure } from "../../process/ExecFileOutput.js";
 import {
+  execFileOutputFailure,
   capturedInvalidUtf8,
   execFileFailureCapturedOutput,
 } from "../../process/ExecFileOutput.js";
@@ -767,14 +767,17 @@ export class ReverseEngineeringService {
     } catch (cause) {
       const ownedCause =
         cause instanceof OwnedOutputFailure ? cause.cause : cause;
-      const inspection = processInspectionFailure(ownedCause);
+      const preparation = ownershipPreparationFailure(cause);
+      const inspection = preparation?.inspection;
       if (
-        inspection !== undefined &&
-        !(inspection instanceof DarwinProcessOwnershipInspectionError)
+        preparation !== undefined &&
+        !(
+          preparation.inspection instanceof
+          DarwinProcessOwnershipInspectionError
+        )
       )
         earlyFailure = ownershipPreparationError(
-          inspection,
-          cause,
+          preparation,
           undefined,
           operation,
           timeoutMs,
@@ -894,11 +897,10 @@ export class ReverseEngineeringService {
       }
       if (
         earlyFailure === undefined &&
-        inspection instanceof DarwinProcessOwnershipInspectionError
+        preparation?.inspection instanceof DarwinProcessOwnershipInspectionError
       )
         earlyFailure = ownershipPreparationError(
-          inspection,
-          cause,
+          preparation,
           code,
           operation,
           timeoutMs,
@@ -1614,25 +1616,22 @@ export class ReverseEngineeringService {
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
       // Ownership preparation that failed or stopped ends the call as it would
       // for the command, and its cleanup joins the same retained scope.
-      const inspection = processInspectionFailure(
-        cause instanceof OwnedOutputFailure ? cause.cause : cause,
-      );
+      const preparation = ownershipPreparationFailure(cause);
       const preparationFailure =
-        inspection === undefined
+        preparation === undefined
           ? undefined
           : ownershipPreparationError(
-              inspection,
-              cause,
+              preparation,
               code,
               operation,
               timeoutMs,
               repair,
             );
-      if (inspection !== undefined && preparationFailure !== undefined)
+      if (preparation !== undefined && preparationFailure !== undefined)
         return err(
           this.#registerCleanupFailure(
             retainProcessInspectionCleanup(
-              inspection,
+              preparation.inspection,
               preparationFailure,
               this.#inspectionResources,
               operation,
@@ -1995,6 +1994,28 @@ const runtimeControlPreparationError = (
   return windowsNativeSpawnControlError(cause);
 };
 
+/** An owned run that ownership preparation ended, as its owner parsed it. */
+interface OwnershipPreparationFailure {
+  readonly inspection: ProcessInspectionFailure;
+  /** What the runner threw. */
+  readonly cause: Error;
+  /** The owned primitive's failure under the service's capture. */
+  readonly ownedCause: Error;
+}
+
+/** The preparation failure a run ended with, if ownership preparation ended it. */
+const ownershipPreparationFailure = (
+  cause: unknown,
+): OwnershipPreparationFailure | undefined => {
+  const ownedCause = cause instanceof OwnedOutputFailure ? cause.cause : cause;
+  const inspection = processInspectionFailure(ownedCause);
+  return inspection === undefined ||
+    !(cause instanceof Error) ||
+    !(ownedCause instanceof Error)
+    ? undefined
+    : { inspection, cause, ownedCause };
+};
+
 /**
  * The failure an ownership preparation leaves when it fails or stops. The
  * command and its version probe share it, so a preparation failure ends the
@@ -2002,15 +2023,13 @@ const runtimeControlPreparationError = (
  * Darwin preparation that a deadline interrupted stays a timeout.
  */
 const ownershipPreparationError = (
-  inspection: ProcessInspectionFailure,
-  cause: unknown,
+  { inspection, cause, ownedCause }: OwnershipPreparationFailure,
   code: string | number | null | undefined,
   operation: ReverseEngineeringOperation,
   timeoutMs: number,
   repair: ReverseEngineeringCommandRepair,
 ): AnalysisError | undefined => {
   const { provider, setting } = repair;
-  const ownedCause = cause instanceof OwnedOutputFailure ? cause.cause : cause;
   if (!(inspection instanceof DarwinProcessOwnershipInspectionError)) {
     const cancellation = processInspectionCancellationError(
       ownedCause,
