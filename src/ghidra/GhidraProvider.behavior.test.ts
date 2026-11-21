@@ -1936,7 +1936,11 @@ const missingMachoMain = async (options: {
       procedure: options.selector,
     });
     if (result.ok) throw new Error("Expected a missing procedure");
-    return { projected: projectAnalysisError(result.error), snapshot };
+    return {
+      error: result.error,
+      projected: projectAnalysisError(result.error),
+      snapshot,
+    };
   } finally {
     await client.close();
   }
@@ -2052,6 +2056,44 @@ describe("Ghidra missing main on a Mach-O with LC_MAIN", () => {
         ghidraFunctionSeedRecovery("fresh-import"),
       ),
     ).toBe(true);
+  });
+
+  it("attaches a failed snapshot read's cleanup to the unchanged missing-procedure error", async () => {
+    const cleanup = new ProviderCleanupError(
+      "ghidra",
+      ["controlled snapshot descriptor"],
+      { reason: "controlled close failure" },
+    );
+    const lease = new AnalysisCleanupLease(async () => {}, [
+      "controlled snapshot descriptor",
+    ]);
+    lease.bindCleanupError(cleanup);
+    onTestFinished(() => lease.release());
+    const { error, snapshot } = await missingMachoMain({
+      target: executableTarget("mach-o", "arm64"),
+      selector: "main",
+      snapshotFailure: new GhidraSessionError(
+        "protocol",
+        "Ghidra target snapshot read or finalization did not complete",
+      ).withCleanupFailure(cleanup),
+    });
+    expect(snapshot.reads).toBe(1);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toEqual(["controlled snapshot descriptor"]);
+    const primary = error.cleanupPrimary;
+    if (primary === undefined) throw new Error("Expected a cleanup primary");
+    const projected = projectAnalysisError(primary);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      details: { diagnostics: { remote_code: "procedure_not_found" } },
+    });
+    expect(
+      projected.remediation.action.endsWith(
+        ghidraFunctionSeedRecovery("fresh-import"),
+      ),
+    ).toBe(true);
+    await lease.release();
+    expect(error.cleanupIncomplete).toBe(false);
   });
 });
 

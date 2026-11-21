@@ -796,7 +796,10 @@ export const createGhidraProviderClient = (input: {
     failure: GhidraSessionError,
     request: Readonly<Record<string, JsonValue>>,
     signal: AbortSignal | undefined,
-  ): Promise<string | undefined> => {
+  ): Promise<{
+    readonly hint?: string;
+    readonly cleanupFailure?: AnalysisError;
+  }> => {
     if (
       target.format !== "mach-o" ||
       projection.source === "existing-project" ||
@@ -805,12 +808,15 @@ export const createGhidraProviderClient = (input: {
       !isGhidraMainSelector(request.procedure) ||
       client.readTargetSnapshotRanges === undefined
     )
-      return undefined;
-    const hint = await client.readTargetSnapshotRanges(
+      return {};
+    const read = await client.readTargetSnapshotRanges(
       ghidraMachoMainEntryHint,
       signal,
     );
-    return hint.ok ? hint.value : undefined;
+    if (read.ok) return read.value === undefined ? {} : { hint: read.value };
+    return read.error.cleanupFailure === undefined
+      ? {}
+      : { cleanupFailure: read.error.cleanupFailure };
   };
   let projectHistory: Evidence | undefined;
   const checkSessionObservations = async (
@@ -1143,21 +1149,30 @@ export const createGhidraProviderClient = (input: {
       if (called.ok) providerStarted = true;
       if (operation === "list_documents" || operation === "list_procedures")
         return inventoryExecution(operation, called);
-      if (!called.ok)
-        return err(
-          projectSessionError(
-            operation,
-            called.error,
-            projection,
-            lostProviderHealth(),
-            input.value,
-            await machoMainEntryHint(
-              called.error,
-              input.value,
-              options?.signal,
-            ),
-          ),
+      if (!called.ok) {
+        const entry = await machoMainEntryHint(
+          called.error,
+          input.value,
+          options?.signal,
         );
+        const projected = projectSessionError(
+          operation,
+          called.error,
+          projection,
+          lostProviderHealth(),
+          input.value,
+          entry.hint,
+        );
+        return err(
+          entry.cleanupFailure === undefined
+            ? projected
+            : analysisErrorWithCleanupDependencies(
+                projected,
+                entry.cleanupFailure,
+                operation,
+              ),
+        );
+      }
       if (operation === "inspect_native_load_image")
         return loadImageExecution(called.value, options?.signal);
       const result = isGhidraFunctionOperation(operation)
