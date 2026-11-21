@@ -1340,51 +1340,53 @@ describe("saved value retention", () => {
     expect(secrets.redact(token)).not.toContain(token);
   });
 
-  it("charges trimmed secret spellings before changing either saved or redaction state", () => {
-    const secrets = resolved(scenario([requestStep({})]));
-    secrets.save("seed.fill", "fill", "x".repeat(3_999_000), false);
-    const trimmed = "a".repeat(198);
-    expect(() =>
-      secrets.save("step.padded", "padded", ` ${trimmed} `, true),
-    ).toThrow("more than 4000000 characters of saved values");
-    expect(() => secrets.savedValue("padded")).toThrow("No earlier step saved");
-    expect(secrets.redact(trimmed)).toBe(trimmed);
-    expect(String(secrets.savedValue("fill"))).toHaveLength(3_999_000);
-  });
+  it.each([
+    { label: "an ordinary value", length: 2_500_000, padding: "", fill: 0 },
+    { label: "a padded value", length: 198, padding: " ", fill: 3_999_000 },
+  ])(
+    "charges secret spellings for $label before replacing a saved value",
+    ({ length, padding, fill }) => {
+      const secrets = resolved(scenario([requestStep({})]));
+      const filler = "x".repeat(fill);
+      const token = "t".repeat(length);
+      const value = `${padding}${token}${padding}`;
+      secrets.save("seed.fill", "fill", filler, false);
+      secrets.save("sample.token", "token", value, false);
+      expect(secrets.savedValue("token")).toBe(value);
+      secrets.save("keep.token", "token", "previous", false);
 
-  it("refuses a new saved name that would keep more than the limit, before keeping it", () => {
-    const secrets = resolved(scenario([requestStep({})]));
-    secrets.save("a.first", "first", "x".repeat(3_000_000), false);
-    expect(() =>
-      secrets.save("b.second", "second", "y".repeat(1_500_000), false),
-    ).toThrow("more than 4000000 characters of saved values");
-    expect(() => secrets.savedValue("second")).toThrow("No earlier step saved");
-    // A later save of the same name replaces its value rather than adding to it.
-    secrets.save("c.first", "first", "z".repeat(3_500_000), false);
-    expect(String(secrets.savedValue("first"))).toHaveLength(3_500_000);
-  });
+      expect(() => secrets.save("new.token", "token", value, true)).toThrow(
+        "more than 4000000 characters of saved values",
+      );
+      expect(secrets.savedValue("token")).toBe("previous");
+      expect(secrets.savedValue("fill")).toBe(filler);
+      expect(secrets.redact(value)).toBe(value);
+      expect(secrets.redact(token)).toBe(token);
+    },
+  );
 
-  it("counts the redaction spellings a secret save keeps", () => {
-    const plain = resolved(scenario([requestStep({})]));
-    plain.save("a.token", "token", "t".repeat(2_500_000), false);
-    const secret = resolved(scenario([requestStep({})]));
-    expect(() =>
-      secret.save("a.token", "token", "t".repeat(2_500_000), true),
-    ).toThrow("more than 4000000 characters of saved values");
-  });
-
-  it("fails the step that would save past the limit", async () => {
-    stubFetch(201, [`{"id":"${"y".repeat(200_000)}"}`]);
+  it("rejects a new binding at capacity and can save it after replacing an older value", async () => {
+    const item = "y".repeat(200_000);
+    const body = JSON.stringify({ id: item });
+    stubFetch(201, [body, body]);
     const parsed = scenario([
       requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
     ]);
     const secrets = resolved(parsed);
-    secrets.save("seed.big", "big", "x".repeat(3_900_000), false);
-    await expect(
-      perform(fakePage({}), parsed.actions[0]!, secrets),
-    ).rejects.toThrow(
+    const original = "x".repeat(3_900_000);
+    secrets.save("seed.big", "big", original, false);
+    const page = fakePage({});
+    await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toThrow(
       "Step create: item cannot be saved: the scenario would keep more than",
     );
+    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
+    expect(secrets.savedValue("big")).toBe(original);
+
+    const replacement = "z".repeat(3_500_000);
+    secrets.save("replace.big", "big", replacement, false);
+    await perform(page, parsed.actions[0]!, secrets);
+    expect(secrets.savedValue("big")).toBe(replacement);
+    expect(secrets.savedValue("item")).toBe(item);
   });
 });
 
