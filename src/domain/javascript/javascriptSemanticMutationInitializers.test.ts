@@ -3,11 +3,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   semanticBindingAtRead,
+  semanticEffectTiming,
   semanticMutationInitializers,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import type { JavaScriptSemanticBindingState } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 it("shares effect ancestry work across successively nested captures", () => {
@@ -183,3 +188,51 @@ describe("parameter references copied into function body bindings", () => {
     },
   );
 });
+
+// A literal loop at program level orders its body against program-level code
+// by source position. Code in a function body or an instance field value runs
+// later, on a call or a construction, so source position proves nothing.
+it.each([
+  ["const value = read(); for (const item of [1]) target = item;", "after"],
+  ["for (const item of [1]) target = item; const value = read();", "before"],
+  [
+    "class Box { static value = read(); } for (const item of [1]) target = item;",
+    "after",
+  ],
+  [
+    "class Box { value = read(); } for (const item of [1]) target = item; new Box();",
+    "unknown",
+  ],
+  [
+    "for (const item of [1]) { var Box = class { value = (target = item); }; } const value = read(); new Box();",
+    "unknown",
+  ],
+] as const)(
+  "orders a literal loop write against %s as %s",
+  (source, timing) => {
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected a valid fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let read: t.CallExpression | undefined;
+    let write: t.AssignmentExpression | undefined;
+    traverseJavaScriptAst(parsed.program, {
+      enter: (node) => {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "read" })
+        )
+          read = node;
+        if (
+          t.isAssignmentExpression(node) &&
+          t.isIdentifier(node.left, { name: "target" })
+        )
+          write = node;
+      },
+    });
+    if (read === undefined || write === undefined)
+      throw new Error("Expected a read and a write");
+    expect(semanticEffectTiming(read, write, index.bindings)).toBe(timing);
+  },
+);

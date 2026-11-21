@@ -34,8 +34,8 @@ reopened with `inspect-evidence-bundle`; its `records` contain the complete
 Evidence. `inspect_analysis_view`'s `evidence-file` source accepts either one
 Evidence record or an exported bundle with the selected `evidence_id`.
 Views do not reopen source files or
-reconnect to a browser. Historical Evidence without `route_inventory` is
-unmeasured, rather than an empty route set.
+reconnect to a browser. A parent without `route_inventory` is unmeasured,
+rather than an empty route set.
 
 ## Page captured endpoint observations and inferences
 
@@ -65,8 +65,9 @@ confidence and basis, and does not prove a backend endpoint or reachability.
 Pages obey the shared 1 MiB projection budget; MCP transport applies its own
 wire-size guard. A byte-limited page returns a continuation; an indivisible
 oversized record or metadata returns a typed resource error. Select fewer
-fields or retrieve the complete retained parent through `get_evidence_bundle`,
-`export_evidence_bundle`, or the CLI's exported bundle. Full Evidence is never
+fields or retrieve the complete retained parent through `get_evidence_bundle`
+(`detail: "records"` with its `evidence_id`), `export_evidence_bundle`, or the
+CLI's exported bundle. Full Evidence is never
 silently truncated.
 
 Collections are `summary`, `routes`, `occurrences`, `sources`, and `unknowns`.

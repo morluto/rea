@@ -4,6 +4,117 @@
 
 Security fixes are provided for the latest published version of REA. Upgrade to the latest release before reporting a problem that may already have been resolved.
 
+## Security boundary
+
+REA is a local reverse-engineering and automation tool. CLI and MCP use the
+same application workflows and run with the host process's permissions.
+REA is not a general-purpose sandbox or a multi-tenant authorization service.
+
+### Threat model
+
+- **Trusted authority:** the operating-system account running REA, the caller
+  or agent host that selects operations, and configured analysis providers,
+  their executables and extensions, and service endpoints. An MCP client can
+  invoke the operations exposed to it; its host must enforce the user's tool
+  permissions and approvals.
+- **Untrusted data:** target binaries, archives, source files, project contents,
+  captures, web pages and returned target content can be malicious. Selecting
+  an input for static inspection does not authorize commands embedded in that
+  input. Agents must treat target text and Evidence as data rather
+  than instructions granting additional authority.
+- **Operation-specific effects:** static inspection parses target data and may
+  launch an analysis engine. Runtime, debugger, instrumentation, browser,
+  desktop and environment workflows can deliberately execute code, attach to
+  processes, make network requests, write files or interact with applications
+  and devices. Review the selected operation's effects and limitations; static
+  inspection does not authorize launching or interacting with the target
+  application. See
+  [runtime and network responsibilities](DISCLAIMER.md#runtime-network-and-device-operations).
+
+Standard client registrations use a dedicated stdio process. Opt-in
+[HTTP MCP](docs/reference/mcp-contracts.md#transports) uses plain HTTP without
+TLS or client authentication and shares provider/active-target state across
+protocol sessions. Its session ID is not a user-authentication or isolation
+boundary. Keep this endpoint within a trusted local or isolated environment.
+
+### Intended security properties
+
+Static JavaScript and .NET inspection do not run the target application.
+Unexpected execution of input code through a data-only analysis path is a
+security concern. Analysis engines themselves are executable software trusted
+with the host account's permissions; parsing an input in an external engine
+does not isolate that engine from the host.
+
+REA authenticates its managed Hopper and Ghidra bridges with per-session random
+capability tokens transferred through private session files, rather than
+process arguments or environment variables. POSIX uses current-user Unix
+sockets. Windows Ghidra uses authenticated loopback TCP and a private NTFS
+runtime whose DACL admits only the current user and SYSTEM. These controls
+protect the managed session boundary, not every external provider or debugger
+endpoint. See [Windows Ghidra transport and lifecycle](docs/providers/windows-ghidra-p0.md#private-runtime-transport-and-lifecycle).
+
+Provider ownership and mutation rules remain specific to each workflow:
+
+- Ghidra's working projects are temporary and owned by REA. Opt-in
+  [checkpoints](docs/getting-started/installation.md#automatically-checkpoint-an-owned-ghidra-program)
+  retain REA-owned Program state. A
+  [caller-selected existing project](docs/getting-started/installation.md#reuse-an-existing-ghidra-project)
+  is fingerprinted and copied into an owned runtime for read-only processing;
+  Ghidra does not open or save the original database through that workflow.
+- [IDA analysis](docs/providers/ida-provider.md) is read-only. An attached GUI
+  database is never saved or closed by REA; owned headless sessions have a
+  separate lifecycle.
+- Cleanup must stay within resources REA owns. Failed or unverified cleanup
+  can retain a workspace or session for retry; closing a session
+  does not imply that every investigation artifact has been erased.
+
+`rea setup` shows planned configuration and installation changes and requires
+approval before applying them. Ghidra, Java and IDA are user-managed. Approved
+Linux Hopper installation authenticates the package's detached PGP signature
+against the pinned publisher identity and checks the signed launcher against
+the selected release's digest. The release feed's display version is separate
+from that authenticated identity. See [installation and publisher verification](docs/getting-started/installation.md#hopper).
+
+### Limits and caller responsibilities
+
+- **Host isolation:** private runtimes and capability tokens do not protect
+  against malicious software already running as the same operating-system
+  user, or a compromised trusted client or provider. Use an appropriately
+  isolated account, VM or restricted environment when handling hostile targets.
+- **Resource bounds:** timeouts, cancellation, streaming and size limits are
+  operation-specific. They are not a universal CPU, memory, disk or wall-time
+  limit on every target and third-party tool. Enforce hard host resource limits
+  externally when needed. Failures of a documented boundary or cancellation
+  control still warrant investigation.
+- **Data and network exposure:** Evidence, caches, checkpoints, exports and
+  captures can retain private target data, paths, URLs and memory contents.
+  Local execution does not make these outputs safe to publish. Requested
+  network operations, agent hosts and provider features such as
+  [IDA Free's cloud decompiler](docs/providers/ida-provider.md) can communicate
+  outside the host. Review their data handling and secure any exposed endpoint.
+- **Interpretation:** analysis, reconstruction and generated environments can
+  be incomplete or incorrect. Identity checks, signatures and successful
+  analysis do not establish that a target, provider or generated program is
+  safe to execute. Review the Evidence and proposed actions before relying on
+  them.
+
+### Vulnerability scope
+
+Please report suspected violations of these boundaries privately. Examples
+include unintended code execution during data-only inspection, escaping a
+documented extraction/output boundary, bypassing bridge authentication or
+target/session identity checks, unauthorized effects on an unrelated resource,
+and disclosure of transport credentials or explicitly marked sensitive values.
+An attacker-triggered bypass of a documented resource or cancellation control
+can also be security-relevant without code execution.
+
+Incorrect analysis, unsupported formats, crashes, hangs and high resource use
+without a security-boundary impact are generally ordinary bug reports. Effects
+explicitly requested through an execution or interaction workflow are not by
+themselves a vulnerability. A dependency advisory needs its actual REA exposure
+assessed; a complete exploit or diagnosis is not required to report a concern.
+If you are unsure whether a boundary is affected, use the private channel below.
+
 ## Reporting a vulnerability
 
 Do not disclose vulnerabilities, proof-of-concept exploits, credentials,
@@ -21,30 +132,3 @@ unrelated local paths from logs or examples.
 The maintainer will acknowledge the report, assess its scope, and coordinate
 remediation and disclosure timing with the reporter. Please allow time for
 provider-dependent behavior to be reproduced safely.
-
-## Security boundary
-
-REA authenticates its Hopper and Ghidra bridges with per-session random
-capability tokens. POSIX uses current-user Unix sockets; Windows Ghidra uses
-authenticated loopback TCP with a private NTFS runtime whose DACL admits only
-the current user and SYSTEM. See [Windows Ghidra P0](docs/windows-ghidra-p0.md#private-runtime-transport-and-lifecycle).
-Tokens are transferred through private session descriptors rather than process
-arguments or environment variables.
-This is not a sandbox and does not protect against malicious processes already
-running as the same operating-system user. Opening an untrusted binary
-delegates parsing and analysis to the selected local provider with that user's
-permissions.
-
-Ghidra sessions use a packaged Java `HeadlessScript`, an isolated temporary
-project, and private home, cache, and runtime directories. REA imports only the
-requested target, bounds startup and protocol messages, requests bounded CPU
-and heap settings, and deletes the temporary project when the session closes.
-These controls limit accidental persistence and resource use; they do not make
-Ghidra a sandbox. REA does not open or modify user-owned Ghidra projects.
-
-`GHIDRA_INSTALL_DIR` and optional `JAVA_HOME` identify user-managed
-installations. Setup can add those values to detected client configuration only
-after showing its plan and receiving approval. REA does not download, install,
-upgrade, or modify Ghidra or Java.
-
-On Linux, REA accepts release metadata only from Hopper's HTTPS endpoint, restricts package URLs to Hopper's public download origin, bounds the package size, and compares the downloaded bytes with Hopper's published checksum before requesting installation. The published SHA-1 value is a corruption check, not a modern package signature; HTTPS origin validation remains part of the trust boundary. Dependency installation is delegated without shell evaluation to `apt-get`, `dnf`, or `pacman`, directly as root or through `pkexec`. REA never invokes `sudo`.

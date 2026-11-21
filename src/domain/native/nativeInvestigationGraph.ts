@@ -1,7 +1,7 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 import {
-  objcImplementationClassName,
   nativeMetadataEvidenceSchema,
   nativeMetadataLocationSchema,
   type ObjcSwiftMetadata,
@@ -101,10 +101,18 @@ export type NativeInvestigationEdge = z.infer<
 /** Explicit inventory coverage so missing graph parts are not read as absent. */
 export const nativeInvestigationCoverageSchema = z.strictObject({
   facet: z.string().min(1),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
+  status: z
+    .enum([...coverageStatusSchema.options, "unsupported", "not_requested"])
+    .describe(
+      "unknown when the producer could not tell how much of the facet it covered; omitted is then null.",
+    ),
   reason: z.string().nullable(),
   examined: z.int().nonnegative(),
-  omitted: z.int().nonnegative(),
+  omitted: z
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe("Omitted items; null when the count is unknown."),
 });
 
 export const nativeInvestigationProviderSchema = z.strictObject({
@@ -154,8 +162,17 @@ export const nativeInvestigationTraceSchema = z.strictObject({
   edges: z.array(nativeInvestigationEdgeSchema),
   unresolved: z.array(nativeInvestigationEdgeSchema),
   reached_depth: z.int().nonnegative(),
-  truncated: z.boolean(),
-  reason: z.string().nullable(),
+  truncated: z
+    .boolean()
+    .describe(
+      "The supplied graph was truncated or a local trace bound stopped traversal; source omissions remain unknown.",
+    ),
+  reason: z
+    .string()
+    .nullable()
+    .describe(
+      "Local trace cutoff or missing start when observed; source_graph_truncated otherwise identifies an already truncated source. Source truncation is also retained in limitations when a local reason takes precedence.",
+    ),
   coverage: z.array(nativeInvestigationCoverageSchema),
   limitations: z.array(z.string().min(1)),
 });
@@ -173,6 +190,11 @@ export const traceNativeInvestigationGraph = (
     readonly limits?: Partial<NativeInvestigationTraceLimits>;
   },
 ): NativeInvestigationTrace => {
+  const sourceLimitations = graph.truncated
+    ? [
+        "The supplied graph was truncated; relationships omitted from that source remain unknown.",
+      ]
+    : [];
   const start = graph.nodes.find(({ id }) => id === input.start);
   if (start === undefined)
     return {
@@ -184,10 +206,11 @@ export const traceNativeInvestigationGraph = (
       edges: [],
       unresolved: [],
       reached_depth: 0,
-      truncated: false,
+      truncated: graph.truncated,
       reason: "start_node_missing",
       coverage: graph.coverage,
       limitations: [
+        ...sourceLimitations,
         "The requested start node is absent from the supplied graph.",
       ],
     };
@@ -219,16 +242,26 @@ export const traceNativeInvestigationGraph = (
     const adjacent = adjacency.get(current.id) ?? [];
 
     for (const edge of adjacent) {
+      const nextId =
+        edge.resolution === "unresolved"
+          ? null
+          : direction === "forward"
+            ? edge.to
+            : edge.from;
+      if (nextId !== null && !nodeById.has(nextId)) {
+        truncated = true;
+        reason ??= "edge_target_missing_from_graph";
+        continue;
+      }
       if (selectedEdges.size + unresolved.size >= limits.max_edges) {
         truncated = true;
         reason = "max_edges_reached";
         break;
       }
-      if (edge.resolution === "unresolved") {
+      if (nextId === null) {
         unresolved.set(edge.id, edge);
         continue;
       }
-      const nextId = direction === "forward" ? edge.to : edge.from;
       const alreadyVisited = visited.has(nextId);
       if (!alreadyVisited && current.depth >= limits.max_depth) {
         truncated = true;
@@ -244,11 +277,6 @@ export const traceNativeInvestigationGraph = (
       }
       selectedEdges.set(edge.id, edge);
       if (alreadyVisited) continue;
-      if (!nodeById.has(nextId)) {
-        truncated = true;
-        reason ??= "edge_target_missing_from_graph";
-        continue;
-      }
       visited.add(nextId);
       // A retained node has already been reached even if a later sibling
       // exhausts a budget before this node is dequeued for expansion.
@@ -270,10 +298,11 @@ export const traceNativeInvestigationGraph = (
     edges: [...selectedEdges.values()],
     unresolved: [...unresolved.values()],
     reached_depth: reachedDepth,
-    truncated,
-    reason,
+    truncated: truncated || graph.truncated,
+    reason: reason ?? (graph.truncated ? "source_graph_truncated" : null),
     coverage: graph.coverage,
     limitations: [
+      ...sourceLimitations,
       "Static analysis does not prove that an authored UI action is reachable or executed at runtime.",
       "Provider call graphs may omit unresolved indirect dispatch.",
     ],
@@ -351,8 +380,7 @@ export const joinInterfaceBuilderDispatch = (
       (candidate) =>
         candidate.method_type === "instance" &&
         candidate.selector === selector &&
-        (className === null ||
-          objcImplementationClassName(candidate) === className),
+        (className === null || candidate.class_name === className),
     );
     const implementation = candidates.length === 1 ? candidates[0] : undefined;
     const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;
@@ -391,7 +419,8 @@ export const joinInterfaceBuilderDispatch = (
         name: `${implementation.class_name} ${selector}`,
         location: {
           address: implementation.implementation_address,
-          file_offset: implementation.location.file_offset,
+          // The implementation location identifies the method record, not its code.
+          file_offset: null,
         },
         attributes: {
           class_name: implementation.class_name,

@@ -47,7 +47,6 @@ export interface ProbeStep {
 const BODYLESS_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
 
 const startedSchema = z.object({ startedDateTime: z.string() });
-const methodSchema = z.object({ request: z.object({ method: z.string() }) });
 
 const startedInstant = (
   record: WebNetworkCaptureRecord,
@@ -56,18 +55,6 @@ const startedInstant = (
   if (!started.success) return undefined;
   return readRecordedStart(started.data.startedDateTime)?.instant;
 };
-
-/** Whether a probe makes calls that carry a request body: a POST, PUT or PATCH. */
-export const sendsBodies = (
-  records: readonly WebNetworkCaptureRecord[],
-): boolean =>
-  records.some((record) => {
-    const parsed = methodSchema.safeParse(record.reported);
-    return (
-      parsed.success &&
-      ["POST", "PUT", "PATCH"].includes(parsed.data.request.method)
-    );
-  });
 
 /** The JSON a request body holds, its text when it is not JSON, or undefined without one. */
 export const requestBody = (
@@ -78,9 +65,10 @@ export const requestBody = (
     return undefined;
   const { mimeType, text } = facts.postData;
   if (mimeType === undefined || text === undefined) return undefined;
-  return isJsonLike(mediaTypeEssence(mimeType))
-    ? (parseExactJson(text) ?? text)
-    : text;
+  const value = isJsonLike(mediaTypeEssence(mimeType))
+    ? parseExactJson(text)
+    : undefined;
+  return value === undefined ? text : value;
 };
 
 /** The application's answer as an environment answer carries it: JSON, text, or null when it is empty; a body the probe did not record is marked. */

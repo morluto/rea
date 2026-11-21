@@ -1,5 +1,6 @@
 """Source-owned tests for the mitmproxy adapter's record projection."""
 
+import base64
 import importlib.util
 import os
 import sys
@@ -36,7 +37,7 @@ def location(value, scheme=None):
     state = {"response": {"headers": [[b"Location", value]]}}
     if scheme is not None:
         state["request"] = {"scheme": scheme}
-    record = capture.project_record(state, [])
+    record = capture.project_record(state, [], 64)
     sidecar = next(
         field for field in record["binary_fields"] if field["pointer"] == "/response/headers/0/1"
     )
@@ -44,6 +45,29 @@ def location(value, scheme=None):
 
 
 class TransportUserinfoTests(unittest.TestCase):
+    def assert_location_redacted(self, value, expected, scheme=None):
+        text, sidecar, redactions = location(value, scheme)
+        self.assertEqual(text, expected)
+        self.assertEqual(sidecar, {
+            "pointer": "/response/headers/0/1",
+            "representation": "producer-bytes",
+            "state": "redacted",
+            "content_base64": None,
+            "bytes": None,
+            "sha256": None,
+        })
+        self.assertEqual(
+            redactions,
+            [{"pointer": "/response/headers/0/1", "reason": "transport-credential"}],
+        )
+
+    def assert_location_retained(self, value, scheme=None):
+        text, sidecar, redactions = location(value, scheme)
+        self.assertEqual(text, value.decode("utf-8"))
+        self.assertEqual(sidecar["state"], "retained")
+        self.assertEqual(base64.b64decode(sidecar["content_base64"]), value)
+        self.assertEqual(redactions, [])
+
     def test_ignorable_controls_cannot_hide_authority_credentials(self):
         for control in [b"\t", b"\n", b"\r"]:
             for value in [b"https://" + control + b"/user:pass@host/path", b"ht" + control + b"tps://user:" + control + b"pass@host/path"]:
@@ -57,10 +81,9 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_mixed_network_separators_remove_credentials(self):
         for prefix in [b"\\\\", b"/\\", b"\\/"]:
             with self.subTest(prefix=prefix):
-                text, sidecar, redactions = location(prefix + b"user:pass@host/path", b"https")
-                self.assertEqual(text, prefix.decode("ascii") + "host/path")
-                self.assertEqual(sidecar["state"], "redacted")
-                self.assertEqual(len(redactions), 1)
+                self.assert_location_redacted(
+                    prefix + b"user:pass@host/path", prefix.decode("ascii") + "host/path", b"https"
+                )
 
     def test_non_special_base_keeps_backslashes_inside_network_authorities(self):
         text, sidecar, redactions = location(b"//user\\name:pass@host/x", b"foo")
@@ -75,21 +98,18 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_native_request_paths_preserve_origin_form_and_redact_absolute_form(self):
         for value in [b"/\\invoice@customer", b"//invoice@customer", b"\\\\invoice@customer"]:
             with self.subTest(value=value):
-                record = capture.project_record({"request": {"path": value}}, [])
+                record = capture.project_record({"request": {"path": value}}, [], 64)
                 self.assertEqual(record["reported"]["request"]["path"], value.decode("ascii"))
                 self.assertEqual(record["binary_fields"][0]["state"], "retained")
                 self.assertEqual(record["redactions"], [])
-        record = capture.project_record({"request": {"path": b"https://user:pass@host/x"}}, [])
+        record = capture.project_record({"request": {"path": b"https://user:pass@host/x"}}, [], 64)
         self.assertEqual(record["reported"]["request"]["path"], "https://host/x")
         self.assertEqual(record["binary_fields"][0]["state"], "redacted")
 
     def test_same_scheme_locations_preserve_relative_path_text_and_bytes(self):
         for value in [b"https:invoice@customer", b"https:/invoice@customer", b"https:\\invoice@customer"]:
             with self.subTest(value=value):
-                text, sidecar, redactions = location(value, b"https")
-                self.assertEqual(text, value.decode("ascii"))
-                self.assertEqual(sidecar["state"], "retained")
-                self.assertEqual(redactions, [])
+                self.assert_location_retained(value, b"https")
 
     def test_location_authorities_still_remove_credentials_with_a_base_scheme(self):
         for value, scheme, expected in [
@@ -98,10 +118,7 @@ class TransportUserinfoTests(unittest.TestCase):
             (b"https:user:pass@host/path", b"http", "https:host/path"),
         ]:
             with self.subTest(value=value, scheme=scheme):
-                text, sidecar, redactions = location(value, scheme)
-                self.assertEqual(text, expected)
-                self.assertEqual(sidecar["state"], "redacted")
-                self.assertEqual(len(redactions), 1)
+                self.assert_location_redacted(value, expected, scheme)
 
     def test_backup_location_uses_its_own_request_scheme(self):
         record = capture.project_record({
@@ -110,29 +127,18 @@ class TransportUserinfoTests(unittest.TestCase):
                 "request": {"scheme": b"https"},
                 "response": {"headers": [[b"Location", b"https:invoice@customer"]]},
             },
-        }, [])
+        }, [], 64)
         self.assertEqual(record["reported"]["backup"]["response"]["headers"][0][1], "https:invoice@customer")
         self.assertEqual(record["redactions"], [])
 
-    def test_backslash_ends_a_special_scheme_authority(self):
-        text, sidecar, redactions = location(b"https://example.test\\part@tail")
-        self.assertEqual(text, "https://example.test\\part@tail")
-        self.assertEqual(sidecar["state"], "retained")
-        self.assertIsNotNone(sidecar["content_base64"])
-        self.assertEqual(redactions, [])
-
-    def test_userinfo_before_a_backslash_is_still_removed(self):
-        text, sidecar, redactions = location(b"https://user:pw@example.test\\path")
-        self.assertEqual(text, "https://example.test\\path")
-        self.assertEqual(sidecar["state"], "redacted")
-        self.assertEqual(
-            redactions,
-            [{"pointer": "/response/headers/0/1", "reason": "transport-credential"}],
+    def test_where_a_special_scheme_authority_ends(self):
+        self.assert_location_retained(b"https://example.test\\part@tail")
+        self.assert_location_redacted(
+            b"https://user:pw@example.test\\path", "https://example.test\\path"
         )
-
-    def test_ordinary_userinfo_is_removed(self):
-        text, _sidecar, _redactions = location(b"https://user:pw@example.test/a@b")
-        self.assertEqual(text, "https://example.test/a@b")
+        self.assert_location_redacted(
+            b"https://user:pw@example.test/a@b", "https://example.test/a@b"
+        )
 
     def test_empty_userinfo_marker_is_removed(self):
         self.assertEqual(
@@ -156,11 +162,7 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_file_base_keeps_paths_after_the_fixed_network_boundary(self):
         for value in [b"///u@h", b"////u@h"]:
             with self.subTest(value=value):
-                text, sidecar, redactions = location(value, b"file")
-                self.assertEqual(text, value.decode("ascii"))
-                self.assertEqual(sidecar["state"], "retained")
-                self.assertIsNotNone(sidecar["content_base64"])
-                self.assertEqual(redactions, [])
+                self.assert_location_retained(value, b"file")
 
     def test_file_urls_keep_path_text(self):
         self.assertEqual(capture.without_userinfo("file:///a@b"), "file:///a@b")
@@ -172,10 +174,7 @@ class TransportUserinfoTests(unittest.TestCase):
         )
         for value in [b"\\\\user:pass@host/x", b"/\\user:pass@host/x", b"//user:pass@host/x"]:
             with self.subTest(value=value):
-                text, sidecar, redactions = location(value, b"file")
-                self.assertEqual(text, value.decode("ascii"))
-                self.assertEqual(sidecar["state"], "retained")
-                self.assertEqual(redactions, [])
+                self.assert_location_retained(value, b"file")
 
     def test_rejected_special_hosts_keep_their_source(self):
         # A rejected host or port fails the whole URL, so it has no userinfo.
@@ -190,10 +189,7 @@ class TransportUserinfoTests(unittest.TestCase):
         ]:
             with self.subTest(value=value):
                 self.assertEqual(capture.without_userinfo(value), value)
-        text, sidecar, redactions = location(b"https://user:pass@h^st/x", b"https")
-        self.assertEqual(text, "https://user:pass@h^st/x")
-        self.assertEqual(sidecar["state"], "retained")
-        self.assertEqual(redactions, [])
+        self.assert_location_retained(b"https://user:pass@h^st/x", b"https")
 
     def test_accepted_special_hosts_still_remove_userinfo(self):
         for value, expected in [
@@ -217,10 +213,9 @@ class TransportUserinfoTests(unittest.TestCase):
                 self.assertEqual(
                     capture.without_userinfo(f"https://user:pw@{host}/"), f"https://{host}/"
                 )
-        text, sidecar, redactions = location(b"https://user:pw@%EF%BC%91.2.3.4/", b"https")
-        self.assertEqual(text, "https://%EF%BC%91.2.3.4/")
-        self.assertEqual(sidecar["state"], "redacted")
-        self.assertEqual(len(redactions), 1)
+        self.assert_location_redacted(
+            b"https://user:pw@%EF%BC%91.2.3.4/", "https://%EF%BC%91.2.3.4/", b"https"
+        )
         # ASCII rejections still hold for non-ASCII hosts.
         self.assertEqual(capture.without_userinfo("https://user@１^/"), "https://user@１^/")
 
@@ -229,10 +224,9 @@ class TransportUserinfoTests(unittest.TestCase):
         for suffix in [b" ", b"\x01", b"\x00 \x1f"]:
             with self.subTest(suffix=suffix):
                 value = b"https://user:pw@example.test" + suffix
-                text, sidecar, redactions = location(value, b"https")
-                self.assertEqual(text, "https://example.test" + suffix.decode("latin-1"))
-                self.assertEqual(sidecar["state"], "redacted")
-                self.assertEqual(len(redactions), 1)
+                self.assert_location_redacted(
+                    value, "https://example.test" + suffix.decode("latin-1"), b"https"
+                )
 
     def test_rejected_ip_literals_keep_their_source(self):
         for value in [

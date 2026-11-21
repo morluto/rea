@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -5,13 +6,6 @@ import { err, ok, type Result } from "../domain/result.js";
 
 /** Smallest phase budget. Zero is not a deadline, and Node's timer needs a positive delay. */
 export const MCP_PHASE_BUDGET_FLOOR_MS = 1;
-
-/**
- * Largest delay Node schedules exactly. A `setTimeout` delay above this
- * signed 32-bit bound is clamped to 1 ms, so a phase budget past it would
- * expire immediately. The setting stops here instead of growing without a bound.
- */
-export const MCP_PHASE_BUDGET_MAXIMUM_MS = 2_147_483_647;
 
 /** One MCP startup phase budget and where its effective milliseconds came from. */
 export interface McpPhaseBudget {
@@ -67,12 +61,12 @@ const PHASES = [
 ] as const satisfies readonly McpPhaseBudgetDefinition[];
 
 const phaseConstraint = (phase: McpPhaseBudgetDefinition): string =>
-  `${phase.setting} must be a positive decimal integer from ${String(MCP_PHASE_BUDGET_FLOOR_MS)} to ${String(MCP_PHASE_BUDGET_MAXIMUM_MS)} ms; the default is ${String(phase.defaultMilliseconds)} ms. Node schedules a delay above that maximum as 1 ms, so a larger value is refused.`;
+  `${phase.setting} must be a positive decimal integer from ${String(MCP_PHASE_BUDGET_FLOOR_MS)} to ${String(MAX_NODE_TIMER_DELAY_MS)} ms; the default is ${String(phase.defaultMilliseconds)} ms. Node schedules a delay above that maximum as 1 ms, so a larger value is refused.`;
 
 const phaseBudgetSchema = (phase: McpPhaseBudgetDefinition) =>
   positiveDecimalIntegerSchema(
     MCP_PHASE_BUDGET_FLOOR_MS,
-    MCP_PHASE_BUDGET_MAXIMUM_MS,
+    MAX_NODE_TIMER_DELAY_MS,
     phaseConstraint(phase),
   );
 
@@ -95,7 +89,7 @@ const defaultBudget = (phase: McpPhaseBudgetDefinition): McpPhaseBudget => ({
   source: "default",
   defaultMilliseconds: phase.defaultMilliseconds,
   floorMilliseconds: MCP_PHASE_BUDGET_FLOOR_MS,
-  maximumMilliseconds: MCP_PHASE_BUDGET_MAXIMUM_MS,
+  maximumMilliseconds: MAX_NODE_TIMER_DELAY_MS,
 });
 
 const parsePhaseBudget = (
@@ -112,7 +106,7 @@ const parsePhaseBudget = (
         source: "setting",
         defaultMilliseconds: phase.defaultMilliseconds,
         floorMilliseconds: MCP_PHASE_BUDGET_FLOOR_MS,
-        maximumMilliseconds: MCP_PHASE_BUDGET_MAXIMUM_MS,
+        maximumMilliseconds: MAX_NODE_TIMER_DELAY_MS,
       })
     : err(
         new ConfigurationError(phaseConstraint(phase), {

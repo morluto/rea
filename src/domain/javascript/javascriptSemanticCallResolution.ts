@@ -1,21 +1,19 @@
 import { javascriptSourceRangeContains } from "./javascriptSourceCoordinates.js";
 import * as t from "@babel/types";
+import { bindingAssignmentMayPrecede } from "./javascriptSemanticEffectLog.js";
 
 import type {
   JavaScriptSemanticArgumentFlow,
   JavaScriptSemanticCallable,
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
-import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   unwrapJavaScriptExpression,
   runtimeFunctionParameters,
 } from "./javascriptAstValues.js";
 import {
+  semanticCallableIdForNode,
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
@@ -104,11 +102,7 @@ const resolveIdentifier = (
       complete: false,
       reason: `Unresolved call target ${node.name}.`,
     };
-  const read = semanticBindingAtRead(
-    binding,
-    node,
-    context.state.parentsByNode,
-  );
+  const read = semanticBindingAtRead(binding, node, context.state);
   // A full read re-enters the same candidate set wherever the chain returns
   // to this binding. Close that cycle at the binding; position-narrowed reads
   // keep their per-initializer cycle handling.
@@ -207,11 +201,8 @@ const resolveBindingCallables = (
   // replacement. Until projected callable resolution is supported here,
   // preserve known candidates without claiming they cover every target.
   const complete =
-    !binding.referenceInitializers.some(
-      (initializer) =>
-        initializer.assignment &&
-        semanticEffectTiming(site, initializer.node, context.state) !== "after",
-    ) && candidates.every(({ complete }) => complete);
+    !bindingAssignmentMayPrecede(context.state, binding, site) &&
+    candidates.every(({ complete }) => complete);
   const resolution = {
     callableIds,
     complete,

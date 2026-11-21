@@ -1,7 +1,16 @@
-import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
+import {
+  elfFixedHeaderWidth,
+  readElfHeaderFacts,
+} from "../../domain/elfFixedHeader.js";
 import { readElfNoteHeader } from "../../domain/native/elfNoteLayout.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
-import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
+  readElfProgramHeader,
+} from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
@@ -94,7 +103,7 @@ export function validateRecordedCrashStructure(
     if (offset < 0n || offset > BigInt(snapshot.length - bytes)) return fail();
     return snapshot.subarray(Number(offset), Number(offset) + bytes);
   };
-  const header = bytesAt(0n, 64);
+  const header = bytesAt(0n, elfFixedHeaderWidth(64));
   const expectedMachine =
     RECORDED_LINUX_CORE_PROFILES[report.architecture].machine;
   const parsedHeader = readElfHeaderFacts(header);
@@ -120,12 +129,20 @@ export function validateRecordedCrashStructure(
   const entryBytes = programs.width;
   let count = programs.count;
   if (count === 0xffff) {
-    if (sections.width < 64) return fail();
-    const zero = readElfSectionHeader(bytesAt(sections.offset, 64), 64, true);
+    const width = elfSectionHeaderWidth(64);
+    if (sections.width < width) return fail();
+    const zero = readElfSectionHeader(
+      bytesAt(sections.offset, width),
+      64,
+      true,
+    );
     if (!zero.ok) return fail();
     count = zero.value.info;
   }
-  if (count !== report.segments.length || (count > 0 && entryBytes < 56))
+  if (
+    count !== report.segments.length ||
+    (count > 0 && entryBytes < elfProgramHeaderWidth(64))
+  )
     fail();
   for (const segment of report.segments) {
     const offset = table + BigInt(segment.index) * BigInt(entryBytes);

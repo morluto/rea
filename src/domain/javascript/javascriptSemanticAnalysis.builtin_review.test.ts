@@ -31,6 +31,30 @@ import {
   commonJsUncertainReceiverCases,
 } from "./javascriptCommonJsExposure.fixture.js";
 
+const analyzeCommonJs = (source: string) => {
+  const file = parseJavaScriptSource(source, "fixture.cjs");
+  if (file === null) throw new Error("Expected a parsed CommonJS fixture");
+  return analyzeParsedJavaScriptSemantics(file, "require");
+};
+
+it("distinguishes a candidate loader from a proven Node wrapper", () => {
+  const source = 'const fs=require("fs");fs.readFileSync("fixture");';
+  expect(
+    analyzeJavaScriptSemantics(source).configurationOperations,
+  ).toMatchObject([{ key: "fixture", builtinAuthority: "candidate" }]);
+  const proven = analyzeCommonJs(source).configurationOperations;
+  expect(proven.map(({ key }) => key)).toEqual(["fixture"]);
+  expect(proven[0]?.builtinAuthority).toBeUndefined();
+  const opaque =
+    'const fs=require("fs");Reflect.set(fs,"readFileSync",custom,{});fs.readFileSync("fixture");';
+  expect(analyzeJavaScriptSemantics(opaque).configurationOperations).toEqual(
+    [],
+  );
+  expect(
+    analyzeCommonJs(opaque).configurationOperations.map(({ key }) => key),
+  ).toEqual(["fixture"]);
+});
+
 it.each([
   [
     "let set=Reflect.set; eval('set=custom'); set(fs,'readFileSync',custom,{});",
@@ -49,12 +73,9 @@ it.each([
 ] as const)(
   "tracks the actual mutator and receiver at the call: %s",
   (body, expected) => {
-    const file = parseJavaScriptSource(
+    const ir = analyzeCommonJs(
       `const fs=require("fs"); ${body} fs.readFileSync("config.json");`,
-      "fixture.cjs",
     );
-    if (file === null) throw new Error("Expected a CommonJS fixture");
-    const ir = analyzeParsedJavaScriptSemantics(file, "require");
     expect(ir.configurationOperations.map(({ key }) => key)).toEqual(expected);
   },
 );
@@ -78,7 +99,7 @@ const referenceChanged = (source: string, writesOnly = false): boolean => {
       .effects.some(
         ({ kind, timing }) => kind === "member-write" && timing !== "after",
       );
-  return index.referenceMayHaveChangedAt(last.expression, reference);
+  return index.mayObserve(last.expression, reference);
 };
 const ordinaryTargetChanged = (write: string): boolean =>
   referenceChanged(
@@ -278,7 +299,7 @@ it.each([
   "function run(){Reflect.set(fs,'statSync',1,{cp}); cp.spawn('kept');} run();",
 ])("preserves independently proven Reflect data writes: %s", (body) => {
   expect(
-    analyzeJavaScriptSemantics(`const cp=require('child_process');
+    analyzeCommonJs(`const cp=require('child_process');
     const fs=require('fs'); ${body}`).childProcessSpawns.map(
       ({ method }) => method,
     ),
@@ -478,7 +499,7 @@ it.each([
   "keeps the wrapper loader for distinct receivers or omitted keys: %s",
   (setup) => {
     expect(
-      analyzeJavaScriptSemantics(
+      analyzeCommonJs(
         `${setup} require('fs').readFileSync('kept');`,
       ).configurationOperations.map(({ key }) => key),
     ).toEqual(["kept"]);
@@ -587,9 +608,7 @@ it.each([
   "const fs=require('fs'); Reflect.set(fs,'readFileSync',custom,{}); Reflect.set=other; fs.readFileSync('kept');",
 ])("orders the Reflect intrinsic proof at invocation: %s", (source) => {
   expect(
-    analyzeJavaScriptSemantics(source).configurationOperations.map(
-      ({ key }) => key,
-    ),
+    analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
   ).toEqual(["kept"]);
 });
 
@@ -598,9 +617,7 @@ it.each([
   "const proc=require('node:process'); Reflect.set(proc,'argv',[],{}); const mode=proc.env.MODE;",
 ])("honors explicit receivers for native process data slots: %s", (source) => {
   expect(
-    analyzeJavaScriptSemantics(source).configurationOperations.map(
-      ({ key }) => key,
-    ),
+    analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
   ).toEqual(["MODE"]);
 });
 
@@ -637,7 +654,7 @@ it.each([
   "const target=Object.create(null); Reflect.set(target,'hook',1,{fs}); Reflect.set(target,'hook',2,{fs});",
 ])("preserves reads when the selected setter cannot run: %s", (setup) => {
   expect(
-    analyzeJavaScriptSemantics(
+    analyzeCommonJs(
       `const fs=require('fs'); ${setup} fs.readFileSync('kept');`,
     ).configurationOperations.map(({ key }) => key),
   ).toEqual(["kept"]);
@@ -680,9 +697,7 @@ it.each([
 ])(
   "keeps conditional and deferred initializer projection conservative: %s",
   (source) => {
-    expect(analyzeJavaScriptSemantics(source).configurationOperations).toEqual(
-      [],
-    );
+    expect(analyzeCommonJs(source).configurationOperations).toEqual([]);
   },
 );
 
@@ -764,7 +779,7 @@ it.each([
   "const set=Reflect.set.bind(null, module, 'require', replacement); set({});",
   "let owner=module; owner={}; owner.require=replacement;",
 ])("preserves the wrapper loader across unrelated writes: %s", (write) => {
-  const ir = analyzeJavaScriptSemantics(`${write}
+  const ir = analyzeCommonJs(`${write}
     require('fs').readFileSync('kept');`);
   expect(ir.configurationOperations.map(({ key }) => key)).toEqual(["kept"]);
 });
@@ -966,9 +981,7 @@ it.each([
   "retains ordered reads across receiver and statement boundaries: %s",
   (source) => {
     expect(
-      analyzeJavaScriptSemantics(source).configurationOperations.map(
-        ({ key }) => key,
-      ),
+      analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
     ).toEqual(["kept"]);
   },
 );
@@ -1433,7 +1446,7 @@ it.each([
   "evaluates nested inputs before the enclosing intrinsic replacement: %s",
   (write) => {
     expect(
-      analyzeJavaScriptSemantics(
+      analyzeCommonJs(
         `const fs=require('fs');${write}fs.readFileSync('kept');`,
       ).configurationOperations.map((x) => x.key),
     ).toEqual(["kept"]);
@@ -1588,7 +1601,7 @@ it.each([
   "orders inherited setter effects at each set site: $kept / $before",
   ({ before, after, kept }) => {
     expect(
-      analyzeJavaScriptSemantics(
+      analyzeCommonJs(
         `const fs=require('fs');${before}Reflect.set(fs,'reviewHook',1,{fs});fs.readFileSync('kept');${after}`,
       ).configurationOperations.map((x) => x.key),
     ).toEqual(kept ? ["kept"] : []);
@@ -1783,7 +1796,7 @@ it.each([
 
 it("keeps unrelated intrinsic helper writes separate", () => {
   expect(
-    analyzeJavaScriptSemantics(
+    analyzeCommonJs(
       "function patch(){Reflect.deleteProperty=custom;}patch();const fs=require('fs');Reflect.set(fs,'readFileSync',custom,{});fs.readFileSync('kept');",
     ).configurationOperations.map(({ key }) => key),
   ).toEqual(["kept"]);
@@ -1877,9 +1890,9 @@ it("settles copied references without multiplying unrelated descriptor work", ()
     const last = parsed.program.body.at(-1);
     if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
       throw new Error("Expected final native method call");
-    expect(
-      index.referenceMayHaveChangedAt(last.expression, last.expression.callee),
-    ).toBe(true);
+    expect(index.mayObserve(last.expression, last.expression.callee)).toBe(
+      true,
+    );
     return work;
   };
   // Count cooperative work, not elapsed time; both runs must propagate the

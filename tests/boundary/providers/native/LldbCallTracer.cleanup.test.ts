@@ -131,7 +131,6 @@ it.skipIf(process.platform === "win32")(
 
     try {
       const trace = await tracer.trace(request);
-      expect(trace.ok).toBe(false);
       if (trace.ok) throw new Error("Expected incomplete cleanup");
       expect(trace.error).toBeInstanceOf(ProviderCleanupError);
       if (!(trace.error instanceof ProviderCleanupError)) return;
@@ -167,7 +166,6 @@ it.skipIf(process.platform === "win32")(
       },
     );
     const result = await cancelledTracer.trace(request, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancelled trace");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect((await cancelledTracer.close()).ok).toBe(true);
@@ -193,7 +191,6 @@ it.skipIf(process.platform === "win32")(
 
     try {
       const trace = await tracer.trace(request);
-      expect(trace.ok).toBe(false);
       if (trace.ok) throw new Error("Expected unverified target cleanup");
       expect(trace.error).toBeInstanceOf(ProviderCleanupError);
       if (!(trace.error instanceof ProviderCleanupError)) return;
@@ -236,7 +233,6 @@ it.skipIf(process.platform === "win32")(
 
     try {
       const trace = await tracer.trace(request);
-      expect(trace.ok).toBe(false);
       if (trace.ok) throw new Error("Expected malformed PID cleanup failure");
       expect(trace.error).toBeInstanceOf(ProviderCleanupError);
       if (!(trace.error instanceof ProviderCleanupError)) return;
@@ -249,6 +245,56 @@ it.skipIf(process.platform === "win32")(
     } finally {
       await stopChild(child);
       await client.close();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "counts a killed target that its parent has not reaped yet as terminated",
+  async () => {
+    // The shell replaces itself with a parent that never waits, like a
+    // debugserver that has not reaped its killed debuggee yet.
+    const parent = spawn(
+      "/bin/sh",
+      ["-c", "sleep 60 & echo $!; exec sleep 60"],
+      { detached: true, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    try {
+      const [line] = (await once(parent.stdout!, "data")) as [Buffer];
+      const pid = Number(line.toString("utf8").trim());
+      const identity = await observeProcessStartIdentity(pid);
+      if (identity?.state !== "readable")
+        throw new Error("Host could not read fixture process identity");
+      const tracer = createTracer(async (_exe, _args, options) => {
+        await writeFile(options.pidPath, String(pid));
+        return {
+          kind: "exited",
+          targetLaunched: true,
+          exitCode: 0,
+          output: "",
+          targetIdentity: identity.identity,
+          cleanupFailure: undefined,
+        };
+      });
+      const client = createClient(tracer);
+      try {
+        const trace = await tracer.trace(request);
+        if (trace.ok) throw new Error("Expected a missing tracer result");
+        expect(trace.error).not.toBeInstanceOf(ProviderCleanupError);
+        expect(trace.error.message).not.toContain("SIGKILL");
+        // The PID still answers kill(pid, 0), but its start identity has exited.
+        expect(() => process.kill(pid, 0)).not.toThrow();
+        expect(await observeProcessStartIdentity(pid)).toBeUndefined();
+        expect((await client.close()).ok).toBe(true);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      // The unreaped parent still holds its process group, so this stops the
+      // background target too even when setup failed before the tracer ran.
+      if (parent.exitCode === null && parent.signalCode === null)
+        process.kill(-parent.pid!, "SIGKILL");
+      await stopChild(parent);
     }
   },
 );

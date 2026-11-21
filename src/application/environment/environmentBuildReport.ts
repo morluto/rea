@@ -1,3 +1,5 @@
+import { boundedList } from "../../domain/boundedList.js";
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { z } from "zod";
 import { basename } from "node:path";
 import { isIP } from "node:net";
@@ -9,7 +11,7 @@ import {
 import {
   decodeRetainedBase64,
   readRecordedResponseBody,
-  type RecordedResponseBody,
+  type RecordedResponseBodyRead,
 } from "../../domain/analysisView/recordedResponseBody.js";
 import { scenarioContentMediaType } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
@@ -83,9 +85,6 @@ const SCAN_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
 /** Pointers the report lists; the count covers every match. */
 const REPORTED_POINTERS = 20;
 
-const pointerToken = (name: string): string =>
-  name.replaceAll("~", "~0").replaceAll("/", "~1");
-
 /** A held value: a non-empty string, or an array holding one. */
 const holdsValue = (value: unknown): boolean =>
   (typeof value === "string" && value !== "") ||
@@ -97,7 +96,7 @@ const member = (value: unknown, name: string): unknown =>
     ? Reflect.get(value, name)
     : undefined;
 
-/** A recorded body: a JSON value to walk, form fields in order with every occurrence kept, as headers and query strings are, or text too large to scan. */
+/** A recorded body: JSON or form fields to walk, or a body the scan could not examine. */
 type ScannedBody =
   | { readonly kind: "json"; readonly value: unknown }
   | { readonly kind: "form"; readonly fields: readonly [string, string][] }
@@ -139,14 +138,16 @@ const parsedBody = (
   }
 };
 
-/** Decoded body text as the scan reads it; binary bytes hold no JSON or form text. */
+/** Unproven body sources remain unscanned; binary bytes hold no JSON or form text. */
 const decodedBody = (
-  body: RecordedResponseBody,
+  body: RecordedResponseBodyRead,
   mediaType: unknown,
 ): ScannedBody | undefined =>
-  body.bodyEncoding === "base64"
-    ? undefined
-    : parsedBody(body.bodyText, mediaType, body.bodyCut === true);
+  body.sourceUnavailable === true
+    ? { kind: "skipped" }
+    : body.bodyEncoding === "base64"
+      ? undefined
+      : parsedBody(body.bodyText, mediaType, body.bodyCut === true);
 
 /** Name/value pairs such as HAR headers and query strings. */
 const namedValues = (value: unknown): (readonly [string, unknown])[] =>
@@ -198,7 +199,7 @@ const credentialTally = () => {
       const entries = Object.entries(value);
       for (let index = entries.length - 1; index >= 0; index--) {
         const [name, child] = entries[index]!;
-        const path = `${pointer}/${pointerToken(name)}`;
+        const path = `${pointer}/${escapeJsonPointerToken(name)}`;
         field(`${label} ${path}`, name, child);
         stack.push([child, path]);
       }
@@ -209,7 +210,7 @@ const credentialTally = () => {
     else if (scanned?.kind === "json") walk(scanned.value, label);
     else if (scanned?.kind === "form")
       for (const [name, value] of scanned.fields)
-        field(`${label} /${pointerToken(name)}`, name, value);
+        field(`${label} /${escapeJsonPointerToken(name)}`, name, value);
   };
   return {
     field,
@@ -327,7 +328,7 @@ export const credentialScanWarnings = (capture: {
   if (scanned.skipped.count > 0)
     warnings.push({
       code: "credential-scan-incomplete",
-      message: `${String(scanned.skipped.count)} recorded bodies exceed the credential-name scan's 4 MiB limit and were not scanned; evidence.json ships them, so review them before sharing.`,
+      message: `${String(scanned.skipped.count)} recorded bodies could not be completely scanned for credential-like names (4 MiB limit or unavailable response-body source); evidence.json ships their retained representation, so review it before sharing.`,
       pointers: scanned.skipped.pointers,
     });
   return warnings;
@@ -373,13 +374,14 @@ export const savedCredentialWarnings = (
     unmarked(action.save, "save");
     unmarked(action.save_response?.save, "save_response/save");
   });
+  const reported = boundedList(pointers, REPORTED_POINTERS);
   return pointers.length === 0
     ? []
     : [
         {
           code: "credential-named-saved-values",
           message: `${String(pointers.length)} saved values have credential-like names but are not marked secret, so the capture records them unredacted; mark them \`secret: true\` and record again before sharing.`,
-          pointers: pointers.slice(0, REPORTED_POINTERS),
+          pointers: [...reported.items],
         },
       ];
 };

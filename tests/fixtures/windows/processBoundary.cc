@@ -69,6 +69,24 @@ int wmain(int count, wchar_t** args) {
                 single ? "true" : "false", single ? static_cast<unsigned>(groups[0]) : 0u);
     return 0;
   }
+  if (count == 3 && std::wstring(args[1]) == L"volume-semantics") {
+    HANDLE root = CreateFileW(args[2], FILE_LIST_DIRECTORY | READ_CONTROL,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+      FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (root == INVALID_HANDLE_VALUE) return 10;
+    wchar_t filesystem[64]{};
+    DWORD flags = 0;
+    const bool observed = GetVolumeInformationByHandleW(root, nullptr, 0, nullptr, nullptr,
+                                                       &flags, filesystem, 64) != FALSE;
+    const DWORD observedError = observed ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(root);
+    const bool ntfs = std::wcscmp(filesystem, L"NTFS") == 0;
+    const bool refs = std::wcscmp(filesystem, L"ReFS") == 0;
+    std::printf("{\"filesystem\":\"%s\",\"persistentAcls\":%s,\"win32Code\":%lu}\n",
+      ntfs ? "NTFS" : refs ? "ReFS" : "OTHER",
+      observed && (flags & FILE_PERSISTENT_ACLS) != 0 ? "true" : "false", observedError);
+    return observed ? 0 : 11;
+  }
   if (count == 4 && std::wstring(args[1]) == L"reparse-directory") {
     // Only the conformance lane's disposable, nonempty source directory is used.
     const auto substitute = L"\\??\\" + std::wstring(args[3]);

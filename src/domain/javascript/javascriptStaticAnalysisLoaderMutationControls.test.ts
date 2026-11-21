@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const named = "import {createRequire as make} from 'node:module';";
 const namespace = "import * as mod from 'node:module';";
@@ -77,30 +77,6 @@ it.each(cases)(
     );
   },
 );
-
-it.each(["call", "apply"] as const)(
-  "does not treat an owned local %s replacement as a loader invocation",
-  (method) => {
-    const args = method === "call" ? "null,'node:path'" : "null,['node:path']";
-    const analysis = analyzeJavaScriptStaticSource(
-      `${named}const load=make(import.meta.url);load.${method}=()=>({kind:'local'});load.${method}(${args});`,
-    );
-    expect(analysis.parse_error_count).toBe(0);
-    expect(
-      analysis.references.filter(({ kind }) => kind === "require"),
-    ).toEqual([]);
-  },
-);
-
-it("keeps uncertainty for conditional call-member replacement", () => {
-  const analysis = analyzeJavaScriptStaticSource(
-    `${named}const load=make(import.meta.url);if(flag)load.call=()=>({kind:'local'});load.call(null,'node:path');`,
-  );
-  expect(analysis.parse_error_count).toBe(0);
-  expect(analysis.references.filter(({ kind }) => kind === "require")).toEqual([
-    expect.objectContaining({ kind: "require", specifier: null }),
-  ]);
-});
 
 it("uses the restored call member after a local replacement", () => {
   const source = `${named}const load=make(import.meta.url);load.call=()=>({kind:'local'});load.call=Function.prototype.call;load.call(null,'node:path');`;

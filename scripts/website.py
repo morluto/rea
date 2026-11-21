@@ -158,14 +158,16 @@ class PageMetadata(HTMLParser):
 
 
 def page_route(site, path):
-    """Map an HTML file to its public route without a separate page registry."""
+    """Map an HTML file to its encoded public route relative to the site root."""
     route = path.relative_to(site).as_posix()
-    return route.removesuffix("index.html") if path.name == "index.html" else route
+    if path.name == "index.html":
+        route = route.removesuffix("index.html")
+    return quote(route, safe="/")
 
 
 def page_url(site, path):
     """Return the canonical public URL of an authored HTML file."""
-    return f"{SITE_ORIGIN}/{quote(page_route(site, path), safe='/')}"
+    return f"{SITE_ORIGIN}/{page_route(site, path)}"
 
 
 def shared_blocks(root, path, source):
@@ -327,8 +329,9 @@ def main():
             refresh_contributors(root)
         elif args.command == "check":
             sync_pages(root, check=True)
-            for name in ("prepare-website.py", "verify-website.py", "test-website.py"):
+            for name in ("prepare-website.py", "verify-website.py", "test-website.py", "test-website-agents.py"):
                 run_script(root, name)
+            subprocess.run(["node", "--test", "website/worker.test.mjs"], cwd=root, check=True)
         elif args.command == "links":
             run_script(root, "audit-website-links.py", ["--report", args.report] if args.report else [])
         else:

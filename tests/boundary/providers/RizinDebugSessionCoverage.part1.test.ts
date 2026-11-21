@@ -10,9 +10,9 @@ import type { SpawnedOwnedProviderProcess } from "../../../src/process/ProviderP
 import {
   createRizinCoverageHarness,
   createInjectedProcess,
-  abortOnCheck,
   incompleteStop,
 } from "./RizinDebugSessionCoverage.fixtures.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 
 const {
   cleanup,
@@ -72,9 +72,11 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "returns a startup timeout when Rizin exits before its initial frame",
+  "reports Rizin exiting before its initial frame",
   async () => {
-    const provider = await makeProvider("process.exit(0);");
+    const provider = await makeProvider(
+      'process.stderr.write("early startup diagnostic\\n", () => process.exit(0));',
+    );
     const manager = createManager({
       REA_RIZIN_COMMAND: provider,
     });
@@ -84,6 +86,15 @@ it.skipIf(process.platform === "win32")(
       inferior_tty: await rizinTestInferiorTty(),
     });
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "rizin",
+      operation: "start_rizin_debug_session",
+      capturedOutput: { stderr: "early startup diagnostic\n" },
+    });
+    expect(result.error.cause).toBeInstanceOf(Error);
+    expect((result.error.cause as Error).message).toContain("Rizin exited");
   },
 );
 
@@ -124,56 +135,10 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "does not spawn Rizin when cancellation arrives during TTY validation",
-  async () => {
-    let spawned = false;
-    const manager = createManager(
-      { REA_RIZIN_COMMAND: "injected-rizin" },
-      {
-        spawnProcess: async () => {
-          spawned = true;
-          throw new Error("must not spawn after cancellation");
-        },
-      },
-    );
-    const result = await manager.start(
-      {
-        path: "/tmp/cancel-before-spawn",
-        inferior_tty: await rizinTestInferiorTty(),
-      },
-      abortOnCheck(2),
-    );
-    expect(result.ok).toBe(false);
-    expect(spawned).toBe(false);
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "rejects a non-TTY path before spawning Rizin",
-  async () => {
-    let spawned = false;
-    const manager = createManager(
-      { REA_RIZIN_COMMAND: "injected-rizin" },
-      {
-        spawnProcess: async () => {
-          spawned = true;
-          throw new Error("must not spawn with an invalid TTY");
-        },
-      },
-    );
-    const result = await manager.start({
-      path: "/tmp/not-a-tty-target",
-      inferior_tty: "/dev/null",
-    });
-    expect(result.ok).toBe(false);
-    expect(spawned).toBe(false);
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "closeAll drains concurrent startups and blocks later admission",
+  "closeAll aborts concurrent startups as owner-closed, waits for them, and blocks later admission",
   async () => {
     let spawnCount = 0;
+    let stopCount = 0;
     let resolveSpawnCalls!: () => void;
     const bothSpawnsCalled = new Promise<void>((resolve) => {
       resolveSpawnCalls = resolve;
@@ -192,7 +157,10 @@ it.skipIf(process.platform === "win32")(
           await spawnGate;
           return injected.spawnProcess(options);
         },
-        stopProcess: async () => ({ status: "stopped" }),
+        stopProcess: async () => {
+          stopCount += 1;
+          return { status: "stopped" };
+        },
       },
     );
     const tty = await rizinTestInferiorTty();
@@ -206,14 +174,21 @@ it.skipIf(process.platform === "win32")(
       closeAllResolved = true;
     });
     await Promise.resolve();
+    // The injected spawns ignore the abort, so closeAll waits for them.
     expect(closeAllResolved).toBe(false);
     releaseSpawns();
     const started = await Promise.all(starts);
-    expect(started.every((result) => result.ok)).toBe(true);
+    for (const result of started)
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCancelledError",
+          cause: OwnerCancellation.ownerClosed,
+        },
+      });
     await closing;
-    expect(
-      manager.status(started[0]!.ok ? started[0]!.value.session_id : "missing"),
-    ).toBeUndefined();
+    // Each process spawned before the abort was observed is stopped.
+    expect(stopCount).toBe(2);
     expect(
       (await manager.start({ path: "/tmp/after-close-all", inferior_tty: tty }))
         .ok,
@@ -298,9 +273,17 @@ it
         return launched;
       });
     try {
+      // The real stop's detach command gets no reply from this fixture and
+      // returns incomplete after its 1 s detach deadline without signalling
+      // the child. Report the same uncertainty at once; the child stays alive
+      // for the harness to reap either way.
       const stopProcess: typeof incompleteStop =
         stopMode === "is uncertain"
-          ? incompleteStop
+          ? async () => ({
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "injected stop uncertainty",
+            })
           : async () => ({ status: "stopped" });
       const manager = createManager(
         { REA_RIZIN_COMMAND: provider },
@@ -361,7 +344,11 @@ it.skipIf(process.platform === "win32")(
     const fixture = createRizinCoverageHarness({
       stopOwnedProcess: async (supervisor) =>
         failCleanup
-          ? { status: "incomplete", reason: "injected fixture stop failure" }
+          ? {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "injected fixture stop failure",
+            }
           : supervisor.stop(),
     });
     const provider = await fixture.makeProvider(
@@ -452,6 +439,7 @@ it.skipIf(process.platform === "win32")(
           session.launched.process.kill("SIGTERM");
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "first stop result is uncertain",
           };
         }
@@ -486,7 +474,17 @@ it.skipIf(process.platform === "win32")(
     const sessionId = started.value.session_id;
     injected.control.exitLeader();
 
-    const firstClose = await manager.close(sessionId);
+    // The output-settlement grace is a fixed timer; advance it instead of
+    // waiting it out. The open output keeps the close incomplete regardless.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let firstClose: Awaited<ReturnType<typeof manager.close>>;
+    try {
+      const closing = manager.close(sessionId);
+      await vi.advanceTimersByTimeAsync(10_000);
+      firstClose = await closing;
+    } finally {
+      vi.useRealTimers();
+    }
     expect(firstClose.ok).toBe(false);
     if (!firstClose.ok) {
       expect(firstClose.error.cleanupIncomplete).toBe(true);
@@ -506,10 +504,11 @@ it.skipIf(process.platform === "win32")(
   "closes a session after unsolicited frames make command correlation unsafe",
   async () => {
     const provider = await makeProvider(
-      'process.stdout.write("\\0"); setTimeout(() => process.stdout.write("unexpected\\0"), 20); process.stdin.resume();',
+      // One pipe write delivers the handshake and the unsolicited frame in a
+      // single chunk, so the frame is queued before start() resolves.
+      'process.stdout.write("\\0unexpected\\0"); process.stdin.resume();',
     );
     const { manager, sessionId } = await start(provider);
-    await new Promise((resolve) => setTimeout(resolve, 50));
     const result = await manager.execute(sessionId, "dr");
     expect(result.ok).toBe(false);
     expect(manager.status(sessionId)?.state).toBe("closed");

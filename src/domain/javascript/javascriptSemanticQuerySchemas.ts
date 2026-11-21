@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import {
   JAVASCRIPT_SEMANTIC_NODE_KINDS,
@@ -42,9 +43,11 @@ export const javaScriptSemanticQuerySeedSchema = z.discriminatedUnion("kind", [
     kind: z.literal("property"),
     name: z.string(),
   }),
+  // Analysis preserves the complete literal endpoint, including the empty
+  // string, so the seed matches any retained value exactly, as event does.
   z.strictObject({
     kind: z.literal("endpoint"),
-    value: z.string().min(1),
+    value: z.string(),
   }),
   z.strictObject({
     kind: z.literal("event"),
@@ -101,7 +104,7 @@ export const javaScriptSemanticQueryResultSchema = z.strictObject({
     relevant_unknowns: z.int().min(0),
   }),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial", "unavailable"]),
+    status: z.enum([...knownCoverageStatusSchema.options, "unavailable"]),
   }),
   limitations: z.array(z.string().min(1)),
 });

@@ -5,8 +5,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../../../src/artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+} from "../../../src/resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { readGhidraLanguageCatalog } from "../../../src/ghidra/GhidraLanguageCatalog.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

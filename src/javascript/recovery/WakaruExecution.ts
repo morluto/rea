@@ -3,9 +3,11 @@ import { join } from "node:path";
 import {
   createAnalysisExecution,
   type ExecutionOptions,
-} from "../../application/AnalysisProvider.js";
-import type { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+} from "../../ports/AnalysisProvider.js";
+import type {
+  SafeOutputTree,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
@@ -25,7 +27,8 @@ import {
 } from "./WakaruCommand.js";
 import { parseWakaruReports } from "./WakaruReport.js";
 import { publishWakaruArtifacts } from "./WakaruPublication.js";
-import { RECOVERY_LIMITS, WAKARU_PROVIDER_IDENTITY } from "./WakaruRelease.js";
+import { RECOVERY_LIMITS } from "./WakaruRelease.js";
+import { WAKARU_PROVIDER_IDENTITY } from "./WakaruProviderIdentity.js";
 import { admitWakaruVersion } from "./WakaruVersion.js";
 
 const OPERATION = "recover_javascript_sources";

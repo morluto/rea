@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
@@ -45,7 +46,7 @@ const digest = (character: string): string => character.repeat(64);
 
 const EVIDENCE_RECORDS = ["1", "2", "3", "4", "5"].map((character) =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       predicateType: "rea.coverage-fixture",

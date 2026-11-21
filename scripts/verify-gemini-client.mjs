@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -23,6 +23,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createGeminiModelFixture } from "./verify/clients/gemini-model-fixture.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const { geminiUnsupportedLiteral } = await importVerifierSource(
   new URL("./lib/gemini-schema-literals.mts", import.meta.url).href,
@@ -33,8 +34,6 @@ const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_GEMINI_COMMAND ?? "gemini";
 const mode = process.argv[2] ?? "call";
-const schemaProfile = process.env.REA_VERIFY_GEMINI_SCHEMA_PROFILE ?? "full";
-assert(["full", "compact"].includes(schemaProfile));
 // npm installs of Gemini CLI provide a JavaScript entry point; on Windows only a gemini.cmd shim reaches
 // PATH, which Node does not spawn without a shell, so a selected .js entry runs under this Node. It is
 // resolved once, because the preflight runs from the caller's directory and the client from the workspace.
@@ -48,7 +47,9 @@ assert(
   "Usage: verify-gemini-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(tmpdir(), "rea-gemini-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-gemini-client-",
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
@@ -65,6 +66,7 @@ let fixture;
 let passed = false;
 let evidenceSeen = false;
 let skillLoaded = false;
+let expectedSkillBody;
 let skillRequested = false;
 let finalSeen = false;
 let catalogSize = null;
@@ -95,7 +97,6 @@ await withVerifierCleanup(async () => {
       GEMINI_CLI_NO_RELAUNCH: "1",
       GEMINI_CLI_TRUST_WORKSPACE: "true",
       REA_PROCESS_RUN_ID: verifier.run_id,
-      REA_MCP_INPUT_SCHEMA_PROFILE: schemaProfile,
     };
     try {
       clientVersion = (
@@ -150,13 +151,21 @@ await withVerifierCleanup(async () => {
         if (args.includes("--dry-run")) {
           assert(parsed.plannedActions.some((a) => a.target === configPath));
           assert(
-            parsed.plannedActions.some((a) =>
-              a.target.startsWith(join(profile, ".agents", "skills") + sep),
-            ),
+            parsed.plannedActions.some((a) => {
+              const skills = join(profile, ".agents", "skills");
+              return (
+                isAbsolute(a.target) &&
+                relative(skills, a.target) !== "" &&
+                isPathWithinRoot(skills, a.target)
+              );
+            }),
           );
           assert(
-            parsed.plannedActions.every((a) =>
-              a.target.startsWith(profile + sep),
+            parsed.plannedActions.every(
+              (a) =>
+                isAbsolute(a.target) &&
+                relative(profile, a.target) !== "" &&
+                isPathWithinRoot(profile, a.target),
             ),
           );
         }
@@ -189,11 +198,15 @@ await withVerifierCleanup(async () => {
     assert.deepEqual(JSON.parse(repeated.stdout).appliedActions, []);
     assert.equal(await readFile(configPath, "utf8"), configured);
     assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    assert(
-      (await readFile(skillPath, "utf8")).includes(
-        "name: reverse-engineer-anything",
-      ),
+    const installedSkill = await readFile(skillPath, "utf8");
+    assert(installedSkill.includes("name: reverse-engineer-anything"));
+    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n([\s\S]*))?/u.exec(
+      installedSkill,
     );
+    assert(frontmatter, "Installed skill must have authored frontmatter");
+    expectedSkillBody = (frontmatter[2] ?? "").trim();
+    assert(expectedSkillBody.length > 0);
+
     const target = join(lab, "fixture α测试");
     await mkdir(target);
     await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
@@ -268,16 +281,32 @@ await withVerifierCleanup(async () => {
           .flatMap((c) => c.parts ?? [])
           .filter((p) => p.functionResponse)
           .map((p) => p.functionResponse);
-        skillLoaded ||= responses.some(
-          (r) =>
-            r.name === "activate_skill" &&
-            r.response?.output?.includes(
-              `<activated_skill name="reverse-engineer-anything">`,
-            ) &&
-            r.response.output.includes(
+        skillLoaded ||= responses.some((response) => {
+          const output = response.response?.output;
+          if (
+            response.name !== "activate_skill" ||
+            typeof output !== "string" ||
+            expectedSkillBody === undefined
+          )
+            return false;
+          const start = `<activated_skill name="reverse-engineer-anything">\n  <instructions>\n    ${expectedSkillBody}\n  </instructions>\n\n  <available_resources>\n    `;
+          const at = output.indexOf(start);
+          if (at < 0) return false;
+          const resourcesStart = at + start.length;
+          const resourcesEnd = output.indexOf(
+            "\n  </available_resources>\n</activated_skill>",
+            resourcesStart,
+          );
+          if (resourcesEnd < 0) return false;
+          const resources = output.slice(resourcesStart, resourcesEnd);
+          return (
+            !resources.includes("</activated_skill>") &&
+            !resources.includes("</available_resources>") &&
+            resources.includes(
               join(profile, ".agents", "skills", "reverse-engineer-anything"),
-            ),
-        );
+            )
+          );
+        });
         const observed = findClientResult(
           responses,
           isClientJavaScriptEvidence,
@@ -385,7 +414,6 @@ await withVerifierCleanup(async () => {
       client: "Gemini CLI",
       clientVersion,
       mode,
-      schemaProfile,
       schemasChecked,
       examplesChecked,
       passed,

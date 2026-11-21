@@ -14,12 +14,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../dist/process/OwnedCommand.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { isOwnershipPsExecution } from "./lib/ownership-ps-trace.mjs";
 import {
   requireMcpOutput,
   requireMcpToolError,
@@ -27,6 +27,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const verifyLargeMcp = process.env.REA_VERIFY_LARGE_ELF_MCP === "1";
 const python = process.env.REA_PWNTOOLS_PYTHON;
@@ -38,15 +39,16 @@ if (
   !isAbsolute(strace ?? "")
 )
   throw new Error(
-    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld, strip and the i686/ARM/MIPS/MIPSel linux-gnu cross gcc and readelf must be available. No target is executed.",
+    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld, strip and the AArch64/i686/ARM/MIPS/MIPSel linux-gnu cross gcc and readelf must be available. No target is executed.",
   );
 const run = createVerifierRun();
 const execute = promisify(execFile);
-const ELF32_TOOLCHAINS = [
-  ["i686-linux-gnu", "EM_386", "little"],
-  ["arm-linux-gnueabi", "EM_ARM", "little"],
-  ["mips-linux-gnu", "EM_MIPS", "big"],
-  ["mipsel-linux-gnu", "EM_MIPS", "little"],
+const CROSS_TOOLCHAINS = [
+  ["aarch64-linux-gnu", "EM_AARCH64", 64, "little"],
+  ["i686-linux-gnu", "EM_386", 32, "little"],
+  ["arm-linux-gnueabi", "EM_ARM", 32, "little"],
+  ["mips-linux-gnu", "EM_MIPS", 32, "big"],
+  ["mipsel-linux-gnu", "EM_MIPS", 32, "little"],
 ];
 for (const command of [
   "gcc",
@@ -54,7 +56,7 @@ for (const command of [
   "strip",
   "/usr/bin/prlimit",
   strace,
-  ...ELF32_TOOLCHAINS.flatMap(([prefix]) => [
+  ...CROSS_TOOLCHAINS.flatMap(([prefix]) => [
     `${prefix}-gcc`,
     `${prefix}-readelf`,
   ]),
@@ -73,7 +75,7 @@ for (const command of [
 }
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-layout-verifier-",
 });
 const environment = Object.fromEntries(
@@ -347,14 +349,15 @@ try {
       cases++;
     }
   }
-  // ELF32 profiles: cross-compiled, never executed, checked against GNU readelf.
+  // Cross profiles: cross-compiled, never executed, checked against GNU readelf.
   for (const [
     prefix,
     machine,
+    bits,
     byteOrder,
     kind,
     flags,
-  ] of ELF32_TOOLCHAINS.flatMap((toolchain) => [
+  ] of CROSS_TOOLCHAINS.flatMap((toolchain) => [
     [...toolchain, "executable", ["-fPIE", "-pie"]],
     [...toolchain, "relocatable", ["-c", "-fPIC"]],
   ])) {
@@ -423,16 +426,18 @@ try {
         `readelf relocation count: ${name}`,
       );
       for (const [entryIndex, [, offset, info]] of rows.entries()) {
-        // ELF32 r_info uses the low byte for type and the upper 24 bits for
-        // the symbol index. readelf has already decoded the file's byte order.
+        // ELF32 r_info packs an 8-bit type under a 24-bit symbol index;
+        // ELF64 packs a 32-bit type under a 32-bit index. readelf has already
+        // decoded the file's byte order.
         const decodedInfo = BigInt(`0x${info}`);
+        const typeBits = bits === 32 ? 8n : 32n;
         expectedRelocations.push({
           section_index: section.index,
           entry_index: entryIndex,
           reported_offset: BigInt(`0x${offset}`),
-          type: Number(decodedInfo & 0xffn),
+          type: Number(decodedInfo & ((1n << typeBits) - 1n)),
           symbol_table_index: section.link,
-          symbol_index: Number(decodedInfo >> 8n),
+          symbol_index: Number(decodedInfo >> typeBits),
         });
       }
     }
@@ -445,7 +450,7 @@ try {
       const value = await inspect(mode, path);
       assert.deepEqual(value.architecture, {
         machine,
-        bits: 32,
+        bits,
         byte_order: byteOrder,
       });
       assert.equal(
@@ -1116,11 +1121,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await limitedClient.close();
-      } finally {
-        await limitedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => limitedClient.close(),
+        () => limitedTransport.close(),
+      ]);
     }
   }
   const unsupported = Buffer.from(object);
@@ -1220,11 +1225,11 @@ try {
     }
     assert.deepEqual(await readFile(memoryHeavyPath), memoryHeavy);
   } finally {
-    try {
-      await memoryClient.close();
-    } finally {
-      await memoryTransport.close();
-    }
+    // A close that fails keeps the root until release confirms it.
+    await root.closeEarly([
+      () => memoryClient.close(),
+      () => memoryTransport.close(),
+    ]);
   }
   // Extended section numbering keeps this valid while providing enough work
   // to reach the one-second CPU limit even on faster CI runners.
@@ -1265,11 +1270,11 @@ try {
     }
     assert.deepEqual(await readFile(cpuHeavyPath), cpuHeavy);
   } finally {
-    try {
-      await cpuClient.close();
-    } finally {
-      await cpuTransport.close();
-    }
+    // A close that fails keeps the root until release confirms it.
+    await root.closeEarly([
+      () => cpuClient.close(),
+      () => cpuTransport.close(),
+    ]);
   }
   for (const limit of [1024, 1]) {
     const fileEnvironment = limitedEnvironment(`--fsize=${limit}:`);
@@ -1305,14 +1310,15 @@ try {
       }
       assert.deepEqual(await readFile(sectionHeavyPath), sectionHeavy);
     } finally {
-      try {
-        await fileClient.close();
-      } finally {
-        await fileTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => fileClient.close(),
+        () => fileTransport.close(),
+      ]);
     }
   }
-  unsupported.writeUInt16LE(183, 18);
+  // EM_RISCV: AArch64 (183) is now an admitted profile.
+  unsupported.writeUInt16LE(243, 18);
   const core = Buffer.from(object);
   core.writeUInt16LE(4, 16);
   for (const [name, bytes, category] of [
@@ -1337,7 +1343,7 @@ try {
       "invalid_input",
     ],
     ["undersized-program-header", undersizedProgramHeader, "invalid_input"],
-    ["arm64", unsupported, "unsupported_target"],
+    ["riscv64", unsupported, "unsupported_target"],
     ["core", core, "unsupported_target"],
   ]) {
     const path = join(root.path, name);
@@ -1419,11 +1425,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await selectedClient.close();
-      } finally {
-        await selectedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => selectedClient.close(),
+        () => selectedTransport.close(),
+      ]);
     }
   }
   for (const mode of ["cli", "mcp"]) {
@@ -1472,9 +1478,7 @@ try {
         line.endsWith(" = 0") || / = -1 [A-Z]+/.test(line),
         `Incomplete exec observation: ${line}`,
       );
-      const ownershipInspection =
-        ["/usr/bin/ps", "/bin/ps"].includes(match[1]) &&
-        line.includes('["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]');
+      const ownershipInspection = isOwnershipPsExecution(line);
       assert.ok(
         [process.execPath, python].includes(match[1]) || ownershipInspection,
         `Unexpected attempted host execution: ${line}`,
@@ -1488,16 +1492,13 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const close of [
-    () => client.close(),
-    () => transport.close(),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  // The root is removed only after the client and transport confirm.
+  root.releaseAfter(() => client.close());
+  root.releaseAfter(() => transport.close());
+  try {
+    await root.release();
+  } catch (cause) {
+    failures.push(cause);
   }
 }
 const verifier = await completeVerifierRun(run);
@@ -1515,9 +1516,13 @@ if (failures.length > 0) {
       2,
     ),
   );
-  throw new AggregateError(
-    failures,
-    "Offline binary layout verification failed; cleanup failures are retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Offline binary layout verification failed; cleanup failures are retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    root.released ? {} : { cleanupLeases: [root] },
   );
 }
 console.log(

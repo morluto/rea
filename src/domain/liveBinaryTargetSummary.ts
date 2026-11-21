@@ -2,24 +2,30 @@ import { z } from "zod";
 
 import {
   BINARY_ARCHITECTURES,
-  ELF_METADATA_ARCHITECTURES,
+  HEADER_ARCHITECTURE_EXCLUSIONS,
   RAW_ONLY_ARCHITECTURES,
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
+import { localPathStringSchema } from "./localPath.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
 } from "./rawBinary.js";
-import { ZIP_PACKAGE_FORMATS } from "./zipPackageFormat.js";
+import { targetFormatsOfKind } from "./targetFormats.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
-const headerArchitectureSchema = architectureSchema.exclude([
-  ...ELF_METADATA_ARCHITECTURES,
-  ...RAW_ONLY_ARCHITECTURES,
-  "hexagon",
-  "arm64_32",
-]);
-const identity = { path: z.string(), sha256: digestSchema };
+const headerArchitectureSchema = architectureSchema.exclude(
+  HEADER_ARCHITECTURE_EXCLUSIONS,
+);
+const identity = {
+  path: z.string(),
+  sha256: digestSchema,
+  caller_input_path: localPathStringSchema
+    .exactOptional()
+    .describe(
+      "Verbatim selected path when it differs from the inspected file path.",
+    ),
+};
 const executable = { ...identity, kind: z.literal("executable") };
 
 /** Live target classifications; historical Evidence and snapshots retain their own admission. */
@@ -67,25 +73,41 @@ export const liveBinaryTargetSummaryVariants = [
   z.object({
     ...identity,
     kind: z.literal("archive"),
-    format: z.enum([
-      ...ZIP_PACKAGE_FORMATS,
-      "asar",
-      "godot-pck",
-      "unityfs",
-      "uimage",
-      "dmg",
-      "pkg",
-      "intel-hex",
-      "srec",
-      "esp-image",
-      "fit",
-    ]),
+    format: z.enum(
+      targetFormatsOfKind("archive").filter(
+        (format) => format !== "esp-flash-image",
+      ),
+    ),
     architecture: z.null(),
   }),
   z.object({
     ...identity,
+    kind: z.literal("archive"),
+    format: z.literal("esp-flash-image"),
+    architecture: z.null(),
+    flash_offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(0xffff_ffff)
+      .nullable()
+      .describe(
+        "Caller-selected flash address of the dump's first byte; null reads it as flash address 0.",
+      ),
+    partition_table_offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(0xffff_ffff)
+      .nullable()
+      .describe(
+        "Caller-selected partition table address; null tries 0x8000, then a scan.",
+      ),
+  }),
+  z.object({
+    ...identity,
     kind: z.literal("artifact"),
-    format: z.enum(["plist", "javascript", "source-map"]),
+    format: z.enum(targetFormatsOfKind("artifact")),
     architecture: z.null(),
   }),
 ] as const;

@@ -11,7 +11,7 @@ import {
   type AnalysisExecution,
   type AnalysisOperation,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -121,6 +121,37 @@ it("retains distinct class locations and excludes compiler bookkeeping", async (
       { address: "0xd", name: "_$s4main7ScoringMp" },
     ],
   });
+});
+
+it("rejects extra protocol arguments before reading an empty name inventory", async () => {
+  const reads: string[] = [];
+  const client = await connect({
+    execute: async (name) => {
+      if (name !== "list_names") throw new Error(`Unexpected read: ${name}`);
+      reads.push(name);
+      return ok([]);
+    },
+  });
+
+  const invalid = await client.callTool({
+    name: "get_objc_protocols",
+    arguments: { unexpected: "benign" },
+  });
+  expect(invalid.isError).toBe(true);
+  expect(parseMcpToolError(invalid).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [{ path: ["unexpected"], reason: "unknown_argument" }],
+    },
+  });
+  expect(reads).toEqual([]);
+
+  const empty = await client.callTool({
+    name: "get_objc_protocols",
+    arguments: {},
+  });
+  expect(jsonResult(empty)).toEqual({ count: 0, protocols: [] });
+  expect(reads).toEqual(["list_names"]);
 });
 
 it("discovers stripped Hopper class labels through MCP with literal filtering", async () => {
@@ -365,6 +396,10 @@ describe("enhanced MCP binary overview", () => {
       segment_count: 2,
       procedure_count: 2,
       string_count: 700,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     });
   });
 
@@ -407,6 +442,10 @@ describe("enhanced MCP binary overview", () => {
       document: "/tmp/fixture.bin",
       procedure_count: 0,
       string_count: 0,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     });
   });
 });

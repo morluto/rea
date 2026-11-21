@@ -7,12 +7,15 @@ import type {
   JavaScriptSemanticScope,
 } from "./javascriptSemanticIr.js";
 import {
+  semanticCallableKind,
+  semanticCallableIdForNode,
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
-import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
+import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
+import { bindingHasMemberWrites } from "./javascriptSemanticEffectLog.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   completeSemanticSteps,
@@ -47,7 +50,7 @@ import {
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
-import { semanticComputedMethodKey } from "./javascriptSemanticEvaluationOrder.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
 
 interface CollectCallableInput {
   readonly node: t.Node;
@@ -60,7 +63,7 @@ interface CollectCallableInput {
 /** Retain callable identity without polluting lexical bindings. */
 export const collectSemanticCallable = (input: CollectCallableInput): void => {
   const { node, parent, containerScope, bodyScope, state } = input;
-  const kind = callableKind(node);
+  const kind = semanticCallableKind(node);
   if (kind === undefined) return;
   const callableId =
     semanticCallableIdForNode(node) ?? "callable:unknown:-1:-1";
@@ -77,7 +80,7 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
     computedKeyLocation:
       "key" in node &&
       t.isNode(node.key) &&
-      semanticComputedMethodKey(node, node.key)
+      semanticMethodDefinitionExpression(node, node.key)
         ? range(node.key)
         : null,
     returnSites: [],
@@ -269,7 +272,7 @@ export const immutableSemanticBindings = (
       mutable: binding.mutable,
       definitions: binding.definitions,
       value: evaluateSemanticBinding(binding, state),
-      ...(binding.memberWrites.length > 0 &&
+      ...(bindingHasMemberWrites(binding) &&
       binding.initializers.length === 1 &&
       binding.initializers[0]?.projection.length === 0
         ? {
@@ -285,20 +288,6 @@ export const immutableSemanticBindings = (
     .sort((left, right) =>
       compareUnicodeCodePoints(left.bindingId, right.bindingId),
     );
-
-const callableKind = (
-  node: t.Node,
-): "function" | "class" | "method" | undefined => {
-  if (
-    t.isClassMethod(node) ||
-    t.isClassPrivateMethod(node) ||
-    t.isObjectMethod(node)
-  )
-    return "method";
-  if (t.isFunction(node)) return "function";
-  if (t.isClass(node)) return "class";
-  return undefined;
-};
 
 const callableName = (node: t.Node, parent: t.Node | null): string | null => {
   if (
@@ -428,7 +417,7 @@ const collectRequireLink = (
   node: t.VariableDeclarator,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
-  const required = readSemanticRequireOrigin(node.init, state);
+  const required = semanticRequireOriginCandidate(node.init, state);
   if (required === undefined) return;
   const { origin, call } = required;
   const bindings = requirePatternBindings(node.id, origin.importedPath);
@@ -437,6 +426,9 @@ const collectRequireLink = (
       state,
       {
         kind: "require",
+        ...(origin.loaderAuthority === "candidate"
+          ? { loaderAuthority: "candidate" as const }
+          : {}),
         specifier: origin.specifier,
         importedName: binding.importedName,
         localName: binding.localName,
@@ -453,12 +445,15 @@ const collectUnboundRequireLink = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   if (state.linkedRequireCalls.has(node)) return;
-  const required = readSemanticRequireOrigin(node, state);
+  const required = semanticRequireOriginCandidate(node, state);
   if (required === undefined) return;
   addModuleLink(
     state,
     {
       kind: "require",
+      ...(required.origin.loaderAuthority === "candidate"
+        ? { loaderAuthority: "candidate" as const }
+        : {}),
       specifier: required.origin.specifier,
       importedName: null,
       localName: null,
@@ -515,6 +510,7 @@ const collectCommonJsExport = (
       exported.exportedName,
       applicability === "uncertain" ? null : exported.value,
       exported.projection,
+      exported.loaderAuthority,
     );
   }
 };
@@ -525,13 +521,14 @@ const addCommonJsExport = (
   exportedName: string,
   exported: t.Node | null,
   projection?: JavaScriptSemanticPropertyPath,
+  loaderAuthority?: "candidate",
 ): void => {
   // Simple assignment chains yield their rightmost assigned value.
   let value = exported;
   while (t.isAssignmentExpression(value, { operator: "=" }))
     value = value.right;
   const required =
-    value === null ? undefined : readSemanticRequireOrigin(value, state);
+    value === null ? undefined : semanticRequireOriginCandidate(value, state);
   // Copies retain their module provenance, but do not export the source object
   // itself. A wildcard with exclusions cannot express one module link.
   const origin = projection?.some(
@@ -545,6 +542,10 @@ const addCommonJsExport = (
     state,
     {
       kind: "commonjs-export",
+      ...(origin?.loaderAuthority === "candidate" ||
+      loaderAuthority === "candidate"
+        ? { loaderAuthority: "candidate" as const }
+        : {}),
       specifier: origin?.specifier ?? null,
       importedName:
         origin === undefined
@@ -606,13 +607,7 @@ const addModuleLink = (
   }
 };
 
-/** Deterministic callable identity shared by collection and return recovery. */
-export const semanticCallableIdForNode = (node: t.Node): string | null => {
-  const kind = callableKind(node);
-  return kind === undefined
-    ? null
-    : `callable:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`;
-};
+export { semanticCallableIdForNode } from "./javascriptSemanticState.js";
 
 const declarationCallableId = (
   declaration: t.Declaration,

@@ -94,16 +94,19 @@ const targetEntity = (
     frameKey: null,
     scriptKey: null,
     location,
-    staticKind: "renderer",
+    staticKind:
+      capture.kind === "v8-inspector" && target.type === "node"
+        ? "javascript"
+        : "renderer",
     sourceSha256: null,
     label: target.title,
     properties: {
       runtime_type: target.type,
-      ...(location.kind === "unresolved"
+      ...("unresolved_location" in target
         ? {
             reported_url: location.value,
             location_kind: "unresolved",
-            location_reason: "unverifiable-file-location",
+            location_reason: target.unresolved_location.reason,
           }
         : { location: location.value }),
       attached: target.attached,
@@ -273,6 +276,7 @@ const runtimeEntity = (
     identity: {
       strategy: "runtime-instance",
       stability: "capture-only",
+      capture_evidence_id: capture.evidence.evidence_id,
       capture_sha256: capture.captureSha256,
       runtime_key: input.runtimeKey,
     },
@@ -417,6 +421,9 @@ const runtimeSectionComplete = (
   if (section === "target") return true;
   if (section === "scripts") return capture.scriptsCompleteWithinScope;
   return (
+    !capture.inspection.completeness.attach_limited_sections.includes(
+      section,
+    ) &&
     !capture.inspection.completeness.truncated_sections.includes(section) &&
     !capture.inspection.completeness.unavailable_sections.includes(section)
   );

@@ -38,7 +38,7 @@ describe("captured script path projection", () => {
     const paths = planned.map(({ record }) =>
       record.content.state === "exported" ? record.content.relative_path : "",
     );
-    expect(paths[0]).toMatch(/^origins\/[a-f0-9]{64}\/app\/main.js$/u);
+    expect(paths[0]).toMatch(/^origins\/[a-f0-9]{64}\/app\/main\.js$/u);
     expect(paths[1]?.replace("lib/value.mjs", "main.js")).toBe(paths[0]);
     expect(paths[2]).not.toBe(paths[0]);
   });
@@ -82,6 +82,31 @@ describe("captured script path projection", () => {
       ).toBe(2);
     },
   );
+
+  it("groups every descendant and duplicate without isolating a lexical neighbor", () => {
+    const planned = planWebScriptExport(
+      [
+        "main.js/one/child.js",
+        "main.js-neighbor.js",
+        "main.js/two/child.js",
+        "main.js",
+        "main.js",
+        "main.jsx/child.js",
+      ].map((part, index) => source(`https://a.test/app/${part}`, index + 1)),
+    );
+    expect(
+      planned.map(({ record }) =>
+        record.content.state === "exported" ? record.content.layout : null,
+      ),
+    ).toEqual([
+      "isolated",
+      "url-path",
+      "isolated",
+      "isolated",
+      "isolated",
+      "url-path",
+    ]);
+  });
 
   it.each([
     "",

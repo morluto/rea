@@ -1,44 +1,40 @@
 import { readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
+import { adbDouble } from "../../../support/adb/adbProcessDouble.js";
 
 import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
 import * as regularFile from "../../../../src/filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
-import {
-  execFileBytes,
-  execFileOutput,
-} from "../../../../src/process/ExecFileOutput.js";
 import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-vi.mock(
-  "../../../../src/process/ExecFileOutput.js",
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import("../../../../src/process/ExecFileOutput.js")
-    >()),
-    execFileBytes: vi.fn(),
-    execFileOutput: vi.fn(),
-  }),
-);
+vi.mock("../../../../src/adb/AdbProcess.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../../src/adb/AdbProcess.js")
+  >()),
+  runAdbProcess: (await import("../../../support/adb/adbProcessDouble.js"))
+    .runAdbProcessDouble,
+}));
+// A running adb server makes `adb start-server` a successful no-op.
+vi.mock("../../../../src/adb/AdbServer.js", () => ({
+  startAdbServer: async () => ({ ok: true, value: undefined }),
+}));
 
 afterEach(() => vi.restoreAllMocks());
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-adb-hash-consumer-");
   const binary = join(root, "adb");
-  vi.mocked(execFileOutput).mockImplementation(async () => {
+  adbDouble.version.mockImplementation(async () => {
     const stdout = `Android Debug Bridge version 1.0.41\nVersion 34.0.5-stub\nInstalled as ${binary}\n`;
     return {
       stdout,
       stderr: "",
-      stdoutBytes: Buffer.byteLength(stdout),
-      stderrBytes: 0,
     };
   });
-  vi.mocked(execFileBytes).mockImplementation(async (_binary, args) => {
+  adbDouble.device.mockImplementation(async (args) => {
     const last = args.at(-1)!;
     if (args.includes("pull")) {
       await writeFile(last, "pulled bytes");
@@ -132,14 +128,13 @@ test.each(digestCases)(
     const f = await fixture();
     f.failFirstClose();
     const result = await f.provider.execute(request(f.root));
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected hash descriptor cleanup failure");
     const returnedError = result.error;
     const originalCause = returnedError.cause;
     expect(returnedError.cleanupIncomplete).toBe(true);
     expect(returnedError.diagnostics).toMatchObject({
       primary_error: {
-        details: { partial_observation: { result: expect.any(Object) } },
+        details: { operation: request(f.root).operation },
       },
     });
     expect(
@@ -212,7 +207,6 @@ for (const closeFails of [false, true]) {
         const result = await f.provider.execute(request(f.root), {
           signal: controller.signal,
         });
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected digest read failure");
         expect(projectAnalysisError(result.error).code).not.toBe("cancelled");
         expect(
@@ -272,7 +266,6 @@ for (const closeFails of [false, true]) {
         const result = await f.provider.execute(request(f.root), {
           signal: controller.signal,
         });
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected completion cancellation");
         expect(projectAnalysisError(result.error).code).toBe(
           closeFails ? "cleanup_incomplete" : "cancelled",

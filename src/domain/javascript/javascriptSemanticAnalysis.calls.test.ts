@@ -336,25 +336,25 @@ describe("JavaScript semantic analysis: computed method keys", () => {
   });
 });
 
-describe("JavaScript semantic analysis: calls 2", () => {
-  it("does not treat a shadowed Promise binding as the intrinsic", () => {
-    const ir = analyzeJavaScriptSemantics(`
+it("does not treat a shadowed Promise binding as the intrinsic", () => {
+  const ir = analyzeJavaScriptSemantics(`
       function run(Promise) {
         return Promise.resolve(1).then(work);
       }
     `);
 
-    expect(ir.promiseOperations).toEqual([
-      expect.objectContaining({
-        kind: "chain",
-        method: "then",
-        ownership: "returned",
-        sourcePromiseIds: [],
-        sourceResolution: "unresolved",
-      }),
-    ]);
-  });
+  expect(ir.promiseOperations).toEqual([
+    expect.objectContaining({
+      kind: "chain",
+      method: "then",
+      ownership: "returned",
+      sourcePromiseIds: [],
+      sourceResolution: "unresolved",
+    }),
+  ]);
+});
 
+describe("JavaScript semantic analysis: callable fingerprints", () => {
   it("fingerprints formatting and local-name changes identically", () => {
     const left = analyzeJavaScriptSemantics(`
       function calculate(value) {
@@ -371,8 +371,15 @@ describe("JavaScript semantic analysis: calls 2", () => {
 
     expect(left.functionFingerprints).toHaveLength(1);
     expect(right.functionFingerprints).toHaveLength(1);
+    expect(changed.functionFingerprints).toHaveLength(1);
     expect(left.functionFingerprints[0]?.components).toEqual(
       right.functionFingerprints[0]?.components,
+    );
+    expect(
+      changed.functionFingerprints[0]?.components.literalSetSha256,
+    ).toEqual(expect.any(String));
+    expect(left.functionFingerprints[0]?.components.literalSetSha256).toEqual(
+      expect.any(String),
     );
     expect(
       changed.functionFingerprints[0]?.components.literalSetSha256,
@@ -432,11 +439,13 @@ describe("JavaScript semantic analysis: calls 2", () => {
         ),
       );
 
-    expect(
-      fingerprint(ordered, "ordered")?.components.relationShapeSha256,
-    ).not.toBe(
-      fingerprint(reversed, "ordered")?.components.relationShapeSha256,
-    );
+    const orderedDigest = fingerprint(ordered, "ordered")?.components
+      .relationShapeSha256;
+    const reversedDigest = fingerprint(reversed, "ordered")?.components
+      .relationShapeSha256;
+    expect(orderedDigest).toEqual(expect.any(String));
+    expect(reversedDigest).toEqual(expect.any(String));
+    expect(orderedDigest).not.toBe(reversedDigest);
     expect(fingerprint(ordered, "timerOwner")?.components.effects).toContain(
       "timer",
     );
@@ -451,9 +460,10 @@ describe("JavaScript semantic analysis: calls 2", () => {
       fingerprint(ordered, "networkOwner")?.components.effects,
     ).not.toContain("timer");
   });
+});
 
-  it("retains ambiguous local callees and explicit dynamic frontiers", () => {
-    const ir = analyzeJavaScriptSemantics(`
+it("retains ambiguous local callees and explicit dynamic frontiers", () => {
+  const ir = analyzeJavaScriptSemantics(`
       function left(value) { return value; }
       function right(value) { return value; }
       const selected = chooseLeft ? left : right;
@@ -462,37 +472,36 @@ describe("JavaScript semantic analysis: calls 2", () => {
       external(input);
     `);
 
-    const selected = ir.callSites.find(
-      ({ resolution }) => resolution === "ambiguous",
-    );
-    expect(selected?.calleeCallableIds).toEqual(
-      [
-        onlyCallable(ir, "left").callableId,
-        onlyCallable(ir, "right").callableId,
-      ].sort(),
-    );
-    expect(
-      ir.argumentFlows.filter(
-        ({ callSiteId }) => callSiteId === selected?.callSiteId,
-      ),
-    ).toHaveLength(2);
-    expect(ir.frontiers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "dynamic-call",
-          reason: expect.stringMatching(/ambiguous/iu),
-        }),
-        expect.objectContaining({
-          kind: "dynamic-property",
-          reason: expect.stringMatching(/computed member/iu),
-        }),
-        expect.objectContaining({
-          kind: "dynamic-call",
-          reason: "Unresolved call target external.",
-        }),
-      ]),
-    );
-  });
+  const selected = ir.callSites.find(
+    ({ resolution }) => resolution === "ambiguous",
+  );
+  expect(selected?.calleeCallableIds).toEqual(
+    [
+      onlyCallable(ir, "left").callableId,
+      onlyCallable(ir, "right").callableId,
+    ].sort(),
+  );
+  expect(
+    ir.argumentFlows.filter(
+      ({ callSiteId }) => callSiteId === selected?.callSiteId,
+    ),
+  ).toHaveLength(2);
+  expect(ir.frontiers).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "dynamic-call",
+        reason: expect.stringMatching(/ambiguous/iu),
+      }),
+      expect.objectContaining({
+        kind: "dynamic-property",
+        reason: expect.stringMatching(/computed member/iu),
+      }),
+      expect.objectContaining({
+        kind: "dynamic-call",
+        reason: "Unresolved call target external.",
+      }),
+    ]),
+  );
 });
 
 describe("JavaScript semantic rest parameter flow", () => {

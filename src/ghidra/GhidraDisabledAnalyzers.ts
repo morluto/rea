@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import {
   MAX_GHIDRA_DISABLED_ANALYZER_NAME_LENGTH,
   MAX_GHIDRA_DISABLED_ANALYZER_NAMES,

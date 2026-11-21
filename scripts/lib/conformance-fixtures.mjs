@@ -4,6 +4,37 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 
 export const LARGE_FIXTURE_COUNT = 1_205;
 
+/** Admit the current producer contract; unversioned substring checks are retired. */
+export const parseConformanceFixtureManifest = (manifest) => {
+  if (
+    manifest?.schemaVersion !== 2 ||
+    !["darwin", "linux"].includes(manifest.platform) ||
+    !Array.isArray(manifest.fixtures)
+  )
+    throw new Error(
+      "Unsupported conformance manifest; regenerate with npm run build:fixtures",
+    );
+  for (const fixture of manifest.fixtures) {
+    if (fixture === null || typeof fixture !== "object")
+      throw new Error("Invalid conformance fixture entry");
+    const expectations = fixture.expectations;
+    if (expectations === undefined) continue;
+    if (
+      expectations === null ||
+      typeof expectations !== "object" ||
+      Object.hasOwn(expectations, "strings") ||
+      ["stringMarkers", "stringFragments"].some(
+        (key) =>
+          expectations[key] !== undefined &&
+          (!Array.isArray(expectations[key]) ||
+            expectations[key].some((value) => typeof value !== "string")),
+      )
+    )
+      throw new Error("Invalid conformance fixture string expectations");
+  }
+  return manifest;
+};
+
 export const HOPPER_C_ORACLE = Object.freeze({
   mainProcedure: "main",
   entryProcedure: "rea_entry",
@@ -16,6 +47,10 @@ export const HOPPER_C_ORACLE = Object.freeze({
 
 export const sha256 = (value) =>
   createHash("sha256").update(value).digest("hex");
+
+/** `nm -j` ends each name with LF. A carriage return before that LF belongs to the name. */
+export const splitNmSymbolRecords = (output) =>
+  output.split("\n").filter((record) => record.length > 0);
 
 export const generateLargeFixture = () => {
   const declarations = Array.from(

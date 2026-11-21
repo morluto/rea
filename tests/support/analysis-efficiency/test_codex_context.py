@@ -23,7 +23,7 @@ class ManagedCoverageTests(unittest.TestCase):
         original = {**expected, 'module_ref_count': 0, 'pinvoke_import_count': 2}
         scope, checks = project(original, expected, {'module_ref_count': 0, 'pinvoke_import_count': 2})
         self.assertEqual(scope, expected)
-        self.assertTrue(all(checks.values()))
+        self.assertEqual(checks, {'module_ref_count': True, 'pinvoke_import_count': True})
         self.assertEqual(original['pinvoke_import_count'], 2)
         for count in [3, '2', True]:
             scope, checks = project({**expected, 'pinvoke_import_count': count}, expected, {'pinvoke_import_count': 2})
@@ -81,7 +81,7 @@ class PcapGraderWorkflowTests(unittest.TestCase):
                    'retained_counts': {'http_request_uris': 3}}
         prefix = ['http://example.test/one', 'http://example.test/two']
         coverage = {'status': 'page', 'examined': 2, 'total': 3, 'next_offset': 2, 'exhausted': False}
-        subject = {'digest': {'sha256': capture['target']['sha256']}, 'local_path': capture['target']['path']}
+        subject = {'identity': {'sha256': capture['target']['sha256']}, 'local_path': capture['target']['path']}
         summary = {'evidence_id': summary_id, 'operation': 'inspect_analysis_view',
                    'subject': copy.deepcopy(subject), 'evidence_links': [parent],
                    'limitations': ['source', 'view'],
@@ -226,7 +226,7 @@ class PcapGraderWorkflowTests(unittest.TestCase):
         self.assertFalse(self.grade(answer, [receipt], reference, ['inspect_analysis_view'])['all_factual_checks_pass'])
         wrong_operation = copy.deepcopy(receipt);wrong_operation['operation'] = 'inspect_analysis_view'
         self.assertFalse(self.grade(answer, [wrong_operation], reference)['all_factual_checks_pass'])
-        for subject in [None, {'digest': {'sha256': 'e' * 64}, 'local_path': source['target']['path']}]:
+        for subject in [None, {'identity': {'sha256': 'e' * 64}, 'local_path': source['target']['path']}]:
             changed = copy.deepcopy(receipt);changed['subject'] = subject
             report = self.grade(answer, [changed], reference)
             self.assertTrue(report['factual_checks']['pcap_cited_capture'])
@@ -252,8 +252,8 @@ class PcapGraderWorkflowTests(unittest.TestCase):
     def test_cited_receipt_subjects_must_identify_the_reference_capture(self):
         for index in [0, 1]:
             for subject in [None, [], 'artifact', {}, {'digest': None},
-                            {'digest': {'sha256': 'e' * 64}, 'local_path': '/fixture/http.pcapng'},
-                            {'digest': {'sha256': 'd' * 64}, 'local_path': '/fixture/other.pcapng'}]:
+                            {'identity': {'sha256': 'e' * 64}, 'local_path': '/fixture/http.pcapng'},
+                            {'identity': {'sha256': 'd' * 64}, 'local_path': '/fixture/other.pcapng'}]:
                 with self.subTest(index=index, subject=subject):
                     answer, records, reference = self.fixture()
                     records[index]['subject'] = subject
@@ -651,6 +651,7 @@ class ContextCaptureTests(unittest.TestCase):
             (runtime / 'scripts').mkdir(parents=True)
             (runtime / 'scripts' / 'rea.mjs').write_text('')
             (runtime / 'package-lock.json').write_text('{}')
+            (runtime / '.nvmrc').write_text('24.22.1\n')
             auth_home = root / 'source-auth'
             auth_home.mkdir()
             (auth_home / 'auth.json').write_text('synthetic-credential')
@@ -664,7 +665,7 @@ class ContextCaptureTests(unittest.TestCase):
             with patch.dict(os.environ, {'CODEX_HOME': str(auth_home)}, clear=True), \
                     patch.object(sys, 'argv', arguments), \
                     patch.object(agent.shutil, 'which', return_value='/fixture/node'), \
-                    patch.object(agent.subprocess, 'check_output', return_value='v24.18.0\n'), \
+                    patch.object(agent.subprocess, 'check_output', return_value='v24.22.1\n'), \
                     patch.object(agent.subprocess, 'Popen', return_value=child), \
                     patch.object(agent, 'capture_tool_context', side_effect=OSError('fixture capture failure')), \
                     patch.object(agent.Path, 'home', side_effect=AssertionError('Explicit CODEX_HOME must not resolve the default home')), \
@@ -672,8 +673,71 @@ class ContextCaptureTests(unittest.TestCase):
                 with self.assertRaisesRegex(OSError, 'fixture capture failure'):
                     agent.main()
             self.assertFalse(list(output.glob('profile-*')))
+            self.assertFalse(list((root / '.cache/rea-agent-trials').glob('profile-*')))
             self.assertTrue(json.loads((output / 'cleanup.json').read_text())['profile_removed'])
             self.assertEqual((auth_home / 'auth.json').read_text(), 'synthetic-credential')
+
+    def test_artifact_directory_does_not_choose_the_codex_workspace_or_enable_mcp_control(self):
+        spec = importlib.util.spec_from_file_location('agent_trial', Path(__file__).with_name('agent-trial.py'))
+        agent = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(agent)
+        for control, drift, mode, account_tools in [
+            (False, False, 'direct', False), (True, False, 'direct', False),
+            (False, True, 'direct', False), (False, False, 'client-code', False),
+            (False, False, 'client-code', True), (True, False, 'client-code', True),
+        ]:
+            with self.subTest(control=control, drift=drift, mode=mode, account_tools=account_tools), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                runtime = root / 'runtime'
+                (runtime / 'scripts').mkdir(parents=True)
+                (runtime / 'scripts/rea.mjs').write_text('')
+                (runtime / 'package-lock.json').write_text('{}')
+                (runtime / '.nvmrc').write_text('24.22.1\n')
+                (runtime / 'AGENTS.md').write_text('Foreign project instructions must not reach the trial')
+                question = root / 'question'
+                question.write_text('Reply with exactly CATALOG_OK.')
+                output = runtime / '.cache/trial'
+                arguments = ['agent-trial.py', '--runtime-root', str(runtime), '--revision', 'fixture',
+                             '--prompt', str(question), '--output', str(output), '--catalog-load', '--mode', mode,
+                             *(['--no-mcp'] if control else []),
+                             *(['--include-account-tools'] if account_tools else [])]
+                observed = {}
+
+                def launch(_invocation, **options):
+                    workspace = options['cwd']
+                    self.assertFalse(workspace.is_relative_to(runtime))
+                    config = Path(options['env']['CODEX_HOME']) / 'config.toml'
+                    observed['config'] = config.read_text()
+                    if drift:
+                        (runtime / 'dist').mkdir()
+                        (runtime / 'dist/changed.js').write_text('Runtime changed during the trial')
+                    child = Mock(stdin=io.StringIO())
+                    child.wait.return_value = 0
+                    return child
+
+                with patch.dict(os.environ, {'CODEX_HOME': str(root / 'source-auth')}, clear=True), \
+                        patch.object(sys, 'argv', arguments), \
+                        patch.object(agent.shutil, 'which', return_value='/fixture/node'), \
+                        patch.object(agent.subprocess, 'check_output', return_value='v24.22.1\n'), \
+                        patch.object(agent.subprocess, 'Popen', side_effect=launch), patch('builtins.print'):
+                    with self.assertRaises(SystemExit) as completed:
+                        agent.main()
+                self.assertEqual(completed.exception.code, 125 if drift else 0)
+                self.assertEqual('[mcp_servers.rea]' in observed['config'], not control)
+                self.assertEqual('required = true' in observed['config'], not control)
+                self.assertNotIn('Use the registered REA MCP server', observed['config'])
+                self.assertIn('code_mode_host = ' + ('true' if mode == 'client-code' else 'false'), observed['config'])
+                settings = json.loads((output / 'trial-settings.json').read_text())
+                for feature in ['apps', 'plugins']:
+                    self.assertIn(feature + ' = ' + str(account_tools).lower(), observed['config'])
+                    self.assertIs(settings['features'][feature], account_tools)
+                for feature, enabled in settings['features'].items():
+                    self.assertIn(feature + ' = ' + str(enabled).lower(), observed['config'])
+                self.assertNotIn('code_mode =', observed['config'])
+                self.assertNotIn('code_mode_only =', observed['config'])
+                self.assertTrue(json.loads((output / 'trial-settings.json').read_text())['workspace_isolated_from_runtime'])
+                self.assertEqual(json.loads((output / 'summary.json').read_text())['runtime_bytes_unchanged'], not drift)
+                self.assertFalse(list((root / '.cache/rea-agent-trials').glob('profile-*')))
 
     def test_refuses_foreign_session_directory_and_symlink_records(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -111,6 +111,11 @@ cliTest.skipIf(process.platform === "win32")(
             stage: "version",
             invalid_utf8_streams: [scenario.stream],
           },
+          captured_output: {
+            stdout: expect.stringContaining(
+              scenario.tool === "tshark" ? "TShark" : "Capinfos",
+            ),
+          },
         },
       });
 

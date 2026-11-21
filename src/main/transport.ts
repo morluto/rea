@@ -1,6 +1,6 @@
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
-import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
 
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { Logger } from "pino";
@@ -8,13 +8,14 @@ import { createServer } from "../server/createServer.js";
 import { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
 import type { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import type { McpServerHandle, RuntimeDependencies } from "./types.js";
-import type { OptionalProviderLoadResult } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadResult } from "../ports/OptionalObservationProviders.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
 import {
   MCP_CONNECTION_START_FAILED,
-  MCP_HTTP_LISTEN_FAILED,
+  mcpHttpListenFailed,
 } from "./messages.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface ServerContext {
   readonly analysisSettings?: AnalysisSettings;
@@ -57,7 +58,7 @@ export const startMcpTransport = async (
   } catch (cause: unknown) {
     serverLogger.warn(
       {
-        error: cause instanceof Error ? cause.message : String(cause),
+        error: errorMessage(cause),
       },
       "Optional MCP providers could not load; affected tools remain unavailable",
     );
@@ -134,6 +135,11 @@ export const startMcpTransport = async (
             serverContext.analysisSettings?.read,
           );
           androidProviders.add(android);
+          const closeAndroidProvider = android.close.bind(android);
+          android.close = async () => {
+            await closeAndroidProvider();
+            androidProviders.delete(android);
+          };
           const server = (dependencies.createServer ?? createServer)(
             { kind: "session", session },
             {
@@ -176,14 +182,11 @@ export const startMcpTransport = async (
     if (!cancelled) {
       const startFailure =
         cause instanceof StreamableHttpListenError
-          ? cause.classification.ok &&
-            cause.classification.value.kind === "host_allowlist"
-            ? cause.remediationAction
-            : MCP_HTTP_LISTEN_FAILED
+          ? mcpHttpListenFailed(cause.remediationAction)
           : MCP_CONNECTION_START_FAILED;
       serverLogger.error(
         {
-          error: cause instanceof Error ? cause.message : String(cause),
+          error: errorMessage(cause),
         },
         startFailure,
       );
@@ -195,10 +198,7 @@ export const startMcpTransport = async (
       optionalProviderCleanup,
     ]) {
       if (cleanup.status === "rejected") {
-        const reason =
-          cleanup.reason instanceof Error
-            ? cleanup.reason.message
-            : String(cleanup.reason);
+        const reason = errorMessage(cleanup.reason);
         serverLogger.error(
           { cleanup_error: reason },
           "Provider cleanup rejected after MCP startup",

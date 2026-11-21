@@ -8,6 +8,20 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
+  "shows how to export inventory rows in command help",
+  async ({ cli }) => {
+    const result = await cli.run({
+      arguments: ["inspect-analysis-view", "--help"],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("--format csv");
+    expect(result.stdout).toContain("--format tsv");
+    expect(result.stdout).toContain("--filter-output normalized_result.items");
+    expect(result.stdout).toContain("--columns logical_path,artifact_id");
+  },
+);
+
+cliTest(
   "exports selected artifact inventory columns through the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-delimited-view-cli-");

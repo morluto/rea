@@ -4,6 +4,7 @@ import {
   numberValue,
   recordValue,
 } from "./CdpCaptureValues.js";
+import { cdpResourceColumnSchema } from "../domain/cdpObservationSchemas.js";
 
 const integer = z.int().min(0);
 const contextAuxDataSchema = z
@@ -31,9 +32,9 @@ export const runtimeScriptParsedSchema = scriptDeclaration.extend({
   scriptId: z.string().min(1),
   executionContextId: integer,
   startLine: integer,
-  startColumn: integer,
+  startColumn: cdpResourceColumnSchema,
   endLine: integer,
-  endColumn: integer,
+  endColumn: cdpResourceColumnSchema,
   hash: z.string().optional(),
   sourceMapURL: z.string().optional(),
   hasSourceURL: z.boolean().optional(),
@@ -42,20 +43,6 @@ export const runtimeScriptParsedSchema = scriptDeclaration.extend({
 });
 export const runtimeContextSchema = z.object({
   context: contextDeclaration.extend({ id: integer }).passthrough(),
-});
-
-/** Private storage seeding keeps its original numeric and text admission policy. */
-export const storageScriptParsedSchema = scriptDeclaration;
-export const storageContextSchema = z.object({
-  context: contextDeclaration
-    .pick({ id: true, origin: true, name: true, auxData: true })
-    .required({ origin: true, name: true })
-    .extend({
-      auxData: contextAuxDataSchema.pick({ frameId: true }).strip().optional(),
-    }),
-});
-export const storageContextDestroyedSchema = z.object({
-  executionContextId: z.number(),
 });
 
 /** Narrow frame claims may be retained without borrowing unbounded auxiliary JSON. */
@@ -88,6 +75,12 @@ const contextIdentity = (reported: unknown) => {
       id !== undefined && Number.isSafeInteger(id) ? String(id) : null,
   };
 };
+
+export type CdpExecutionContextIdentity = ReturnType<typeof contextIdentity>;
+export type CdpExecutionContextCreatedFacts = ReturnType<
+  typeof readCdpExecutionContextCreated
+>;
+export type CdpScriptParsedFacts = ReturnType<typeof readCdpScriptParsed>;
 
 export const readCdpExecutionContextCreated = (params: unknown) => {
   const context = recordValue(recordValue(params)?.context);

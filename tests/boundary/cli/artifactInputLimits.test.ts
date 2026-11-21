@@ -5,16 +5,20 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-for (const { command, limit, recovery } of [
+for (const { command, limit, recovery, cliFlag } of [
   {
     command: "inspect-go-binary",
     limit: 256 * 1024 * 1024,
-    recovery: "input byte allowance",
+    recovery: "max_input_bytes",
+    cliFlag: "--max-input-bytes",
   },
   {
     command: "inspect-rust-binary",
     limit: 256 * 1024 * 1024,
-    recovery: "within the fixed Rust input allowance",
+    recovery: "producer_limits.input_bytes",
+    // The provider binds producer_limits.input_bytes; the CLI names the
+    // option that sets the whole field.
+    cliFlag: "--producer-limits",
   },
   {
     command: "inspect-il2cpp-metadata",
@@ -24,11 +28,17 @@ for (const { command, limit, recovery } of [
   {
     command: "inspect-wasm-artifact",
     limit: 8 * 1024 * 1024,
-    recovery: "input byte allowance",
+    recovery: "max_input_bytes",
+    cliFlag: "--max-input-bytes",
   },
-]) {
+] as readonly {
+  readonly command: string;
+  readonly limit: number;
+  readonly recovery: string;
+  readonly cliFlag?: string;
+}[]) {
   cliTest.skipIf(process.platform === "win32")(
-    `${command} identifies fixed input-size refusal and recovery`,
+    `${command} identifies input-size refusal and applicable recovery`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-artifact-input-limit-");
       const selected = join(root, "oversized.bin");
@@ -71,6 +81,12 @@ exit 1
         .parse(output.json);
       // Raising the evidence-reply allowance cannot admit an oversized input.
       expect(refusal.remediation.action).toContain(recovery);
+      if (cliFlag !== undefined) {
+        expect(output.json).toMatchObject({
+          details: { limit: { parameter: recovery, cli_flag: cliFlag } },
+        });
+        expect(refusal.remediation.action).not.toContain("--");
+      }
       expect(refusal.remediation.action).not.toMatch(
         /allowance for the evidence reply/u,
       );

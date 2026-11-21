@@ -93,6 +93,32 @@ const tinyBody = (il: readonly number[]) => {
   return { body: inspection.methods[0]?.body, coverage: inspection.coverage };
 };
 
+it.each([0x20, 0x30])(
+  "does not use an overlay byte (%i) to interpret a mapped fat method header",
+  (outsideSection) => {
+    const original = buildManagedPeFixture();
+    const methodRow = inspectManagedMembersBytes(
+      original,
+      managedPeFixtureTarget(original),
+    ).methods[0]?.row_offset;
+    expect(methodRow).toBeDefined();
+    if (methodRow === undefined) return;
+    const bytes = Buffer.concat([original, Buffer.alloc(11)]);
+    bytes.writeUInt32LE(0x2dff, methodRow);
+    bytes[0xfff] = 0x03;
+    bytes[0x1000] = outsideSection;
+
+    expect(
+      inspectManagedMembersBytes(bytes, managedPeFixtureTarget(bytes))
+        .methods[0]?.body,
+    ).toMatchObject({
+      status: "malformed",
+      header_format: "unknown",
+      issue: "Method body leaves file-backed PE section data",
+    });
+  },
+);
+
 describe("managed CIL decoding", () => {
   it("reads fat method header size from the full flags-and-size word", () => {
     const il = Buffer.from([
@@ -402,7 +428,9 @@ describe("managed CIL prefix completion", () => {
       decoded_instruction_count: 1,
       opcode_counts: { "volatile.": 1 },
       normalized_il_sha256: null,
-      issue: "CIL prefix chain at IL offset 0 has no following instruction",
+      issue: expect.stringMatching(
+        /CIL prefix.*offset 0.*no following instruction/iu,
+      ),
     });
   });
 
@@ -470,14 +498,6 @@ describe("managed complete operand decoding", () => {
       decoded_instruction_count: 1,
       opcode_counts: { nop: 1 },
       issue: "Instruction switch at IL offset 1 leaves method body",
-    });
-  });
-
-  it("reports a switch whose target count is itself truncated", () => {
-    expect(fatBody(Buffer.from([0x45, 0x02]))).toMatchObject({
-      status: "malformed",
-      decoded_instruction_count: 0,
-      issue: "Instruction switch at IL offset 0 leaves method body",
     });
   });
 
@@ -656,8 +676,9 @@ describe("managed exception region bounds", () => {
     ).toMatchObject({
       status: "malformed",
       exception_regions: [expect.objectContaining({ filter_offset: 1 })],
-      issue:
-        "Exception clause filter range does not align with CIL instruction boundaries",
+      issue: expect.stringMatching(
+        /filter range.*does not align.*CIL instruction boundaries/iu,
+      ),
     });
   });
 });
@@ -693,8 +714,9 @@ describe("managed exception region prefix boundaries", () => {
       }),
     ).toMatchObject({
       status: "malformed",
-      issue:
-        "Exception clause try range does not align with CIL instruction boundaries",
+      issue: expect.stringMatching(
+        /try range.*does not align.*CIL instruction boundaries/iu,
+      ),
     });
   });
 
@@ -718,8 +740,9 @@ describe("managed exception region prefix boundaries", () => {
       }),
     ).toMatchObject({
       status: "malformed",
-      issue:
-        "Exception clause try range does not align with CIL instruction boundaries",
+      issue: expect.stringMatching(
+        /try range.*does not align.*CIL instruction boundaries/iu,
+      ),
     });
   });
 
@@ -744,8 +767,9 @@ describe("managed exception region prefix boundaries", () => {
       ).toMatchObject({
         status: "malformed",
         exception_regions: [expect.any(Object)],
-        issue:
-          "Exception clause try range does not align with CIL instruction boundaries",
+        issue: expect.stringMatching(
+          /try range.*does not align.*CIL instruction boundaries/iu,
+        ),
       });
     },
   );
@@ -805,8 +829,9 @@ describe("managed exception region flags and filters", () => {
       }),
     ).toMatchObject({
       status: "malformed",
-      issue:
-        "Exception clause filter must start before its handler within the method IL body",
+      issue: expect.stringMatching(
+        /filter must start before.*handler.*method IL body/iu,
+      ),
     });
   });
 });

@@ -1,31 +1,38 @@
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArtifactAcquisition.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { z } from "zod";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
+  stableArtifactInputRecovery,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import {
+  type ArtifactResourceScope,
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/index.js";
 import {
   AnalysisError,
   primaryAnalysisError,
 } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../../domain/safeJson.js";
+import {
+  malformedInput,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** The selected artifact and input field owning a reader failure. */
 export interface WebArtifactReadContext {
@@ -34,19 +41,20 @@ export interface WebArtifactReadContext {
   readonly targetPath: string;
   /** Whether the caller named this file, rather than a manifest deriving it. */
   readonly callerSelected: boolean;
+  /** Exact resource recovery supplied by the selected artifact owner. */
+  readonly limitRecovery?: string;
 }
 
-/** A malformed producer document, distinct from host I/O failures. */
-export class WebArtifactFormatFailure extends Error {}
+/** The ParseFailure format of a captured web artifact document. */
+const WEB_ARTIFACT_FORMAT = "captured-web-artifact";
 
 /** Decode exact UTF-8 content, preserving a BOM for digest verification. */
 export const decodeWebArtifact = (bytes: Buffer): string => {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    return decodeStrictUtf8(bytes, "preserve");
   } catch (cause: unknown) {
-    throw new WebArtifactFormatFailure(
+    throw malformedInput(
+      WEB_ARTIFACT_FORMAT,
       "Selected artifact is not valid UTF-8.",
       { cause },
     );
@@ -110,7 +118,7 @@ export class WebArtifactAcquisition {
   ) {
     const data = await this.read(role, path, maximumBytes, signal, scope);
     const value = safeParseJson(decodeWebArtifact(data.bytes));
-    if (!value.ok) throw new WebArtifactFormatFailure(value.error);
+    if (!value.ok) throw malformedInput(WEB_ARTIFACT_FORMAT, value.error);
     return { ...data, value: value.value };
   }
 
@@ -150,11 +158,11 @@ export const webArtifactReadError = (
       { cause, operation: context.operation },
     );
     bindArtifactFileCleanup(cause, cleanup);
-    return analysisErrorWithCleanupFailure(
+    return analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       context.operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    );
   }
   return primary;
 };
@@ -171,21 +179,12 @@ const webArtifactPrimaryError = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(context.operation, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (
-    origin === "owned-or-classified" &&
-    signal?.aborted === true &&
-    (cause === signal.reason ||
-      (cause instanceof Error &&
-        cause.name === "AbortError" &&
-        "code" in cause &&
-        cause.code === "ABORT_ERR"))
-  )
-    return new AnalysisCancelledError(context.operation, {
-      cause: signal.reason,
-    });
+    return cancelledBy(
+      context.operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
+  if (origin === "owned-or-classified" && isAbortOf(cause, signal))
+    return cancelledBy(context.operation, signal);
   const selection = context.callerSelected
     ? selectedFileError({ cause, origin }, context)
     : undefined;
@@ -198,8 +197,18 @@ const webArtifactPrimaryError = (
       context.operation,
       cause.reason,
       cause.details,
-      cause.message,
-      { cause },
+      cause.reason === "limit" && context.limitRecovery !== undefined
+        ? `${cause.message} ${context.limitRecovery}`
+        : cause.message,
+      {
+        cause,
+        ...(cause.reason === "limit" && context.limitRecovery !== undefined
+          ? { remediationAction: context.limitRecovery }
+          : {}),
+        ...(cause.integrityCheck === undefined
+          ? {}
+          : { integrityCheck: cause.integrityCheck }),
+      },
     );
   if (
     cause instanceof Error &&
@@ -215,20 +224,27 @@ const webArtifactPrimaryError = (
       `${context.targetPath}: ${cause.code}: ${cause.message}`,
       { cause },
     );
-  if (!context.callerSelected && cause instanceof WebArtifactFormatFailure)
+  // A malformed producer document, distinct from host I/O failures.
+  const malformed =
+    cause instanceof ParseFailureError && cause.kind === "malformed"
+      ? cause
+      : undefined;
+  if (!context.callerSelected && malformed !== undefined)
     return new ArtifactOperationError(
       context.operation,
       "format",
       undefined,
-      `${context.targetPath}: ${cause.message}`,
+      `${context.targetPath}: ${malformed.message}`,
       { cause },
     );
-  if (cause instanceof WebArtifactFormatFailure || cause instanceof z.ZodError)
+  const invalid =
+    malformed ?? (cause instanceof z.ZodError ? cause : undefined);
+  if (invalid !== undefined)
     return new AnalysisInputError(context.operation, { cause }, [
       {
         path: context.field,
         reason: "invalid_format",
-        message: `${context.targetPath}: ${cause.message}`,
+        message: `${context.targetPath}: ${invalid.message}`,
       },
     ]);
   return new ProviderAdapterError("captured-web-artifacts", context.operation, {
@@ -236,7 +252,7 @@ const webArtifactPrimaryError = (
     diagnostics: {
       target_path: context.targetPath,
       field: context.field.join("."),
-      error_message: cause instanceof Error ? cause.message : String(cause),
+      error_message: errorMessage(cause),
     },
   });
 };
@@ -250,9 +266,16 @@ const selectedFileError = (
   context: WebArtifactReadContext,
 ): AnalysisError | undefined => {
   const selected = (message: string) =>
-    new AnalysisInputError(context.operation, { cause }, [
-      { path: context.field, reason: "invalid_value", message },
-    ]);
+    new AnalysisInputError(
+      context.operation,
+      {
+        cause,
+        ...(cause instanceof ArtifactReaderFailure
+          ? stableArtifactInputRecovery(cause)
+          : {}),
+      },
+      [{ path: context.field, reason: "invalid_value", message }],
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

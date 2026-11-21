@@ -1,0 +1,6 @@
+$ COMPLETE=bash rea -- rea instructions --target-format ""
+exit: 0
+--- stdout
+dos-com<0x0b>raw-binary<0x0b>gamecube-dol<end>
+--- stderr
+<end>

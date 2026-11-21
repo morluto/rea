@@ -37,6 +37,18 @@ it.each([
   ]);
 });
 
+/**
+ * Exactly one channel is required: naming `"ipc"` twice throws ERR_IPC_ONE_PIPE
+ * for the same synchronous reason, so those calls are not spawns either.
+ */
+it.each([
+  ["ipc twice", `["ipc", "ipc"]`],
+  ["three ipc entries", `["ipc", "ipc", "ipc"]`],
+  ["a pipe between two ipc entries", `["pipe", "ipc", "ipc"]`],
+] as const)("emits no fork for a stdio array with %s", (_name, stdio) => {
+  expect(spawnsFor(`fork("worker.js", { stdio: ${stdio} })`)).toEqual([]);
+});
+
 it.each([
   ["a string stdio", `fork("worker.js", { stdio: "pipe" })`],
   ["omitted stdio", `fork("worker.js", {})`],

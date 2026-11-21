@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
   isClientConfigurationCleanupFailure,
@@ -6,6 +7,7 @@ import {
 import {
   ClientConfigurationShapeError,
   clientConfigurationServersKey,
+  clientConfigurationSyntaxName,
   parseClientConfiguration,
   serializeClientConfiguration,
   clientServerPath,
@@ -16,6 +18,12 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  AnalysisError,
+  type AnalysisCleanupObservation,
+} from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
@@ -23,8 +31,11 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { basename, dirname } from "node:path";
 import {
   defaultKunaCacheDirectory,
+  hasParentTraversal,
   sameLexicalDirectory,
-} from "../config/kunaCacheDirectory.js";
+  withinLexicalDirectory,
+} from "../filesystem/cacheDirectory.js";
+import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
@@ -47,19 +58,25 @@ import {
   preserveCurrentRecoveryBackup,
   type RecoveryBackupPreservationOptions,
 } from "./SetupRecoveryBackup.js";
+import { preservePrivateRecoveryBackup } from "./ClientRegistrationBackup.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   InvalidUtf8FileError,
   readRegularFileText,
-} from "./RegularFileRead.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  bindRegularFileCleanup,
+} from "../process/RegularFileRead.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   appDataRedirection,
   clientOwnershipEvidencePaths,
   clientSharedRegistrationPaths,
   manualRegistrationRemediation,
   registrationWriteBlocker,
-  supportedClients,
+  resolveSupportedClients,
+  type ClientSystemPaths,
   type SetupClient,
 } from "./SupportedClients.js";
 import {
@@ -129,6 +146,7 @@ export interface UninstallItem extends UninstallAction {
 export interface UninstallResult {
   readonly status: "complete" | "failed";
   readonly items: readonly UninstallItem[];
+  readonly cleanup?: AnalysisCleanupObservation | undefined;
 }
 
 /** Applicability established once from product-specific discovery evidence. */
@@ -148,8 +166,22 @@ export interface UninstallHost {
   inspectSkill?(): Promise<UninstallItem | undefined>;
   removeSkill(): Promise<UninstallItem>;
   purgeData(): Promise<readonly UninstallItem[]>;
-  close?(): Promise<string | undefined>;
+  close?(): Promise<AnalysisError | undefined>;
 }
+
+/** Preserve the resource owner's explicit retry capabilities through uninstall reporting. */
+const uninstallCleanupError = (cause: unknown): AnalysisError => {
+  if (cause instanceof AnalysisError && cause.carriesCleanup) return cause;
+  const cleanup = ArtifactReaderFailure.cleanupObservation(cause, []);
+  const error = new ProviderCleanupError(
+    "uninstall",
+    cleanup.resources,
+    { reason: cleanup.reason },
+    { cause, cleanup, operation: "uninstall" },
+  );
+  bindRegularFileCleanup(cause, error);
+  return error;
+};
 
 /**
  * Remove only REA-owned registrations and managed files, optionally including
@@ -159,7 +191,7 @@ export interface UninstallHost {
  */
 export const runUninstall = async (
   purgeData: boolean,
-  host: UninstallHost = systemUninstallHost(),
+  host: UninstallHost,
 ): Promise<UninstallResult> => {
   let result: UninstallResult | undefined;
   let primaryFailure: unknown;
@@ -203,19 +235,30 @@ export const runUninstall = async (
     failed = true;
     primaryFailure = cause;
   }
-  let cleanupFailure: string | undefined;
+  let cleanupFailure: AnalysisError | undefined;
   try {
-    cleanupFailure = await host.close?.();
+    const report = await host.close?.();
+    cleanupFailure =
+      report === undefined ? undefined : uninstallCleanupError(report);
   } catch (cause: unknown) {
-    cleanupFailure = `Uninstall resource cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    cleanupFailure = uninstallCleanupError(cause);
   }
+  if (cleanupFailure !== undefined && !cleanupFailure.cleanupIncomplete)
+    cleanupFailure = undefined;
   if (failed) {
-    if (cleanupFailure !== undefined)
+    if (cleanupFailure !== undefined) {
+      if (primaryFailure instanceof AnalysisError)
+        throw analysisErrorWithCleanupDependencies(
+          primaryFailure,
+          cleanupFailure,
+          "uninstall",
+        );
       throw new AggregateError(
-        [primaryFailure, new Error(cleanupFailure)],
+        [primaryFailure, cleanupFailure],
         "Uninstall failed and its resource cleanup remains incomplete.",
         { cause: primaryFailure },
       );
+    }
     throw primaryFailure;
   }
   if (result === undefined)
@@ -223,14 +266,30 @@ export const runUninstall = async (
   if (cleanupFailure === undefined) return result;
   const items = collapseUninstallItems([
     ...result.items,
-    item("uninstall_cleanup", "failed", cleanupFailure),
+    item(
+      "uninstall_cleanup",
+      "failed",
+      `Uninstall resource cleanup failed: ${cleanupFailure.cleanup?.reason ?? cleanupFailure.message}${cleanupFailure.cleanupResources.length === 0 ? "" : ` (${cleanupFailure.cleanupResources.join(", ")})`}`,
+    ),
   ]);
-  return { status: "failed", items };
+  const retained = cleanupFailure;
+  return {
+    status: "failed",
+    items,
+    get cleanup() {
+      return retained.cleanupIncomplete
+        ? {
+            reason: retained.cleanup?.reason ?? retained.message,
+            resources: retained.cleanupResources,
+          }
+        : undefined;
+    },
+  };
 };
 
 /**
- * Each client is reread when it is edited, so a concurrent change is never
- * overwritten. A client that fails then still stops the remaining removals.
+ * Reread each client when editing and refuse detected changes before publication.
+ * A client that fails still stops the remaining removals.
  */
 const removeAll = async (
   clients: readonly UninstallClient[],
@@ -238,20 +297,22 @@ const removeAll = async (
   host: UninstallHost,
 ): Promise<UninstallItem[]> => {
   const items: UninstallItem[] = [];
+  const stopped = (): UninstallItem[] => [
+    ...items,
+    item(
+      "uninstall",
+      "skipped",
+      "Uninstall stopped at this failure; the items above report what changed. Repair the failed removal, then rerun uninstall.",
+    ),
+  ];
   for (const client of clients) {
     const removed = await host.removeClient(client);
     items.push({ ...removed, configuration_path: client.configPath });
-    if (removed.status === "failed")
-      return [
-        ...items,
-        item(
-          "uninstall",
-          "skipped",
-          "Uninstall stopped at this failure; the items above report what changed. Repair the failed configuration, then rerun uninstall.",
-        ),
-      ];
+    if (removed.status === "failed") return stopped();
   }
-  items.push(await host.removeSkill());
+  const skill = await host.removeSkill();
+  items.push(skill);
+  if (skill.status === "failed") return stopped();
   if (purgeData) items.push(...(await host.purgeData()));
   return items;
 };
@@ -444,7 +505,8 @@ export const systemUninstallHost = (
   selectedHome: string | undefined = undefined,
   selectedFileSystem: UninstallFileSystem | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  systemPaths: ClientSystemPaths = {},
 ): UninstallHost => {
   const home =
     selectedHome ?? homeDirectoryFromEnvironment(environment, platform);
@@ -454,6 +516,126 @@ export const systemUninstallHost = (
   const configurationOperations = new ArtifactResourceScope();
   const fileSystem = selectedFileSystem ?? systemFileSystem(resources);
   const preflightOwnedClients = new WeakSet<UninstallClient>();
+  // REA's registration that only layers REA does not edit define: uninstall
+  // cannot remove it, so it is reported instead of being treated as absent.
+  const retainedLowerOnly = new WeakMap<UninstallClient, UninstallItem>();
+  // One report per client although uninstall visits each of its files.
+  const inlineReported = new Set<string>();
+  /**
+   * The effective REA entry across the read-only lower layers, and the user
+   * layer above them when given.
+   */
+  const lowerLayerRegistration = async (
+    client: UninstallClient,
+    ownershipEstablished: boolean,
+    upper?: ClientConfigurationSource,
+    inline?: ClientConfigurationSource,
+  ): Promise<
+    | { readonly kind: "item"; readonly item: UninstallItem }
+    | { readonly kind: "entry"; readonly entry: unknown }
+  > => {
+    const lowerLayers: ClientConfigurationSource[] = [];
+    for (const configPath of client.configPaths ?? []) {
+      if (configPath === client.configPath) {
+        if (upper !== undefined) lowerLayers.push(upper);
+        continue;
+      }
+      const layer = await readClientConfiguration(
+        { ...client, configPath },
+        fileSystem,
+        resources,
+        ownershipEstablished,
+        "read_only",
+      );
+      if (layer.kind === "item") {
+        if (layer.item.status !== "skipped") return layer;
+        continue;
+      }
+      lowerLayers.push({ ...layer.parsed, sourcePath: configPath });
+    }
+    if (upper !== undefined && !client.configPaths?.includes(client.configPath))
+      lowerLayers.push(upper);
+    if (inline !== undefined) lowerLayers.push(inline);
+    return {
+      kind: "entry",
+      entry: effectiveClientConfiguration(lowerLayers, undefined, platform)
+        ?.servers[PRODUCT_IDENTITY.mcpServerKey],
+    };
+  };
+  /**
+   * Record REA's enabled registration that a read-only layer keeps in effect
+   * when uninstall removes nothing from the user layer: absent there, or a
+   * partial user entry inheriting REA's launcher. An unreadable layer leaves
+   * that unknown, so it stops uninstall before any removal.
+   */
+  const retainLowerOnlyRegistration = async (
+    client: UninstallClient,
+    ownershipEstablished: boolean,
+    upper?: ClientConfigurationSource,
+  ): Promise<UninstallItem | undefined> => {
+    // Inline options inherit omitted fields from the files that remain.
+    // In particular, an inline launcher does not override a file's disabled flag.
+    const inline = client.inlineConfiguration;
+    const inlineEntry =
+      inline === undefined
+        ? undefined
+        : effectiveClientConfiguration(
+            [{ ...inline.parsed, inlineOrigin: inline.origin }],
+            undefined,
+            platform,
+          )?.servers[PRODUCT_IDENTITY.mcpServerKey];
+    if (
+      inline !== undefined &&
+      enabledRegistration(inlineEntry) &&
+      clientRegistrationOwnership(inlineEntry, client) === "owned"
+    ) {
+      const remaining = await lowerLayerRegistration(
+        client,
+        ownershipEstablished,
+        upper,
+        { ...inline.parsed, inlineOrigin: inline.origin },
+      );
+      if (remaining.kind === "item") return remaining.item;
+      if (
+        !enabledRegistration(remaining.entry) ||
+        clientRegistrationOwnership(remaining.entry, client) !== "owned"
+      )
+        return undefined;
+      if (!inlineReported.has(client.name)) {
+        inlineReported.add(client.name);
+        const name = client.displayName ?? client.name;
+        retainedLowerOnly.set(
+          client,
+          item(
+            client.name,
+            "failed",
+            `${inline.origin} sets REA's enabled ${name} registration, and REA does not edit it, so the registration stays in effect after uninstall. Remove the ${PRODUCT_IDENTITY.mcpServerKey} entry from ${inline.origin}, then restart ${name}.`,
+          ),
+        );
+      }
+      return undefined;
+    }
+    if (client.readOnlyLowerLayers !== true) return undefined;
+    const lower = await lowerLayerRegistration(
+      client,
+      ownershipEstablished,
+      upper,
+    );
+    if (lower.kind === "item") return lower.item;
+    if (
+      enabledRegistration(lower.entry) &&
+      clientRegistrationOwnership(lower.entry, client) === "owned"
+    )
+      retainedLowerOnly.set(
+        client,
+        item(
+          client.name,
+          "failed",
+          "REA's enabled registration is defined in a read-only configuration layer REA does not change, so it stays in effect after uninstall. Remove it with that layer's owner.",
+        ),
+      );
+    return undefined;
+  };
   // Set with the client list: the package view that redirects this
   // process's AppData writes, if any.
   let redirection: MsixPackageView | undefined;
@@ -464,7 +646,12 @@ export const systemUninstallHost = (
     redirectedWriteBlocker(redirection, [path], "uninstall");
   return {
     clients: async () => {
-      const supported = supportedClients(home, platform, environment);
+      const supported = await resolveSupportedClients(
+        home,
+        platform,
+        environment,
+        systemPaths,
+      );
       redirection = appDataRedirection(supported);
       // Shared configuration alone cannot establish product applicability.
       // Definitive absence leaves the shared paths unverified while owned
@@ -537,8 +724,12 @@ export const systemUninstallHost = (
           resources,
           ownershipEstablished,
         );
-        if (read.kind === "item")
-          return read.item.status === "failed" ? read.item : undefined;
+        if (read.kind === "item") {
+          if (read.item.status === "failed") return read.item;
+          return read.item.status === "skipped"
+            ? retainLowerOnlyRegistration(client, ownershipEstablished)
+            : undefined;
+        }
         const removal = clientRegistrationRemoval(
           read.parsed,
           read.original,
@@ -546,6 +737,14 @@ export const systemUninstallHost = (
         );
         if (!removal.ok)
           return item(client.name, "failed", removal.error.detail);
+        if (!removal.value.removeNative) {
+          const unknown = await retainLowerOnlyRegistration(
+            client,
+            ownershipEstablished,
+            { ...read.parsed, sourcePath: client.configPath },
+          );
+          if (unknown !== undefined) return unknown;
+        }
         // ZCode switches the entire server table to its shared fallback once
         // the last native server disappears. Inspect the table it would load,
         // not just the REA row: unrelated servers may otherwise become active.
@@ -590,8 +789,10 @@ export const systemUninstallHost = (
               );
           }
         }
+        // OpenCode and Kilo merge every layer, so removing REA's entries can
+        // expose or change an entry another layer keeps.
         if (
-          client.format === "opencode" &&
+          (client.format === "opencode" || client.format === "kilo") &&
           (removal.value.removeNative || removal.value.legacyPath !== undefined)
         ) {
           const originalLayers: ClientConfigurationSource[] = [];
@@ -631,14 +832,23 @@ export const systemUninstallHost = (
               sourcePath: configPath,
             });
           }
-          const selected =
-            effectiveClientConfiguration(originalLayers)?.servers[
-              PRODUCT_IDENTITY.mcpServerKey
-            ];
-          const remaining =
-            effectiveClientConfiguration(remainingLayers)?.servers[
-              PRODUCT_IDENTITY.mcpServerKey
-            ];
+          // REA never edits the inline layer, so it survives removal.
+          const inline = client.inlineConfiguration;
+          if (inline !== undefined) {
+            const layer = { ...inline.parsed, inlineOrigin: inline.origin };
+            originalLayers.push(layer);
+            remainingLayers.push(layer);
+          }
+          const selected = effectiveClientConfiguration(
+            originalLayers,
+            undefined,
+            platform,
+          )?.servers[PRODUCT_IDENTITY.mcpServerKey];
+          const remaining = effectiveClientConfiguration(
+            remainingLayers,
+            undefined,
+            platform,
+          )?.servers[PRODUCT_IDENTITY.mcpServerKey];
           const altersEffectiveRegistration =
             clientRegistrationOwnership(selected, client) === "owned"
               ? remaining !== undefined
@@ -647,7 +857,25 @@ export const systemUninstallHost = (
             return item(
               client.name,
               "failed",
-              "Removing REA's registration would activate or change an unowned OpenCode registration in another configuration layer, including a possible V1 fallback; no change was made. Remove or replace that registration manually, then rerun uninstall.",
+              client.format === "opencode"
+                ? "Removing REA's registration would activate or change an unowned OpenCode registration in another configuration layer, including a possible V1 fallback; no change was made. Remove or replace that registration manually, then rerun uninstall."
+                : `Removing REA's registration would activate or change a registration that another Kilo configuration layer${inline === undefined ? "" : ` or ${inline.origin}, which REA does not edit,`} keeps in effect; no change was made. Remove or replace that registration manually, then rerun uninstall.`,
+            );
+        }
+        // REA writes only the user layer. If the read-only lower layers alone
+        // still define an entry that is not disabled, removal would leave it
+        // (or expose it) in effect, so nothing changes.
+        if (client.readOnlyLowerLayers === true && removal.value.removeNative) {
+          const lower = await lowerLayerRegistration(
+            client,
+            ownershipEstablished,
+          );
+          if (lower.kind === "item") return lower.item;
+          if (enabledRegistration(lower.entry))
+            return item(
+              client.name,
+              "failed",
+              "A read-only configuration layer REA does not change also defines an enabled REA registration, which would stay in effect after removal; no change was made. Remove that registration with its owner, then rerun uninstall.",
             );
         }
         if (
@@ -664,14 +892,17 @@ export const systemUninstallHost = (
           : item(client.name, "failed", blocker);
       }),
     removeClient: (client) =>
-      configurationOperations.run(() =>
-        removeClient(
-          client,
-          fileSystem,
-          resources,
-          () => clientWriteBlocker(client),
-          preflightOwnedClients.has(client),
-        ),
+      configurationOperations.run(
+        async () =>
+          retainedLowerOnly.get(client) ??
+          removeClient(
+            client,
+            fileSystem,
+            resources,
+            platform,
+            () => clientWriteBlocker(client),
+            preflightOwnedClients.has(client),
+          ),
       ),
     inspectSkill: async () => {
       const selection = skillDestinationSelection(
@@ -716,7 +947,7 @@ export const systemUninstallHost = (
         await resources.close();
         return undefined;
       } catch (cause: unknown) {
-        return `Uninstall resource cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return uninstallCleanupError(cause);
       }
     },
   };
@@ -729,7 +960,9 @@ export const systemUninstallHost = (
  */
 const uninstallConfigPaths = (client: SetupClient): readonly string[] => [
   ...new Set([
-    ...(client.configPaths ?? [client.configPath]),
+    ...(client.readOnlyLowerLayers === true
+      ? [client.configPath]
+      : (client.configPaths ?? [client.configPath])),
     ...(client.msixPackage === undefined
       ? []
       : [
@@ -738,6 +971,16 @@ const uninstallConfigPaths = (client: SetupClient): readonly string[] => [
         ]),
   ]),
 ];
+
+/** Whether a client loads this entry: present and not disabled. */
+const enabledRegistration = (entry: unknown): boolean =>
+  entry !== undefined &&
+  !(
+    typeof entry === "object" &&
+    entry !== null &&
+    "enabled" in entry &&
+    entry.enabled === false
+  );
 
 /** Whether removal would change this configuration. */
 const registrationPresent = (parsed: ClientConfigurationDocument): boolean => {
@@ -810,7 +1053,12 @@ const readClientConfiguration = async (
   client: UninstallClient,
   fileSystem: UninstallFileSystem,
   resources: ArtifactResourceScope,
-  ownershipEstablished = false,
+  ownershipEstablished: boolean,
+  /**
+   * `read_only` is a lower layer REA never changes: it is read where the
+   * client reads it, without the write target's ownership check.
+   */
+  access: "write_target" | "read_only" = "write_target",
 ): Promise<ClientConfigurationRead> => {
   const applicabilityUnverified =
     client.applicability === "unverified" && !ownershipEstablished;
@@ -826,7 +1074,8 @@ const readClientConfiguration = async (
     );
   if (client.configPathError !== undefined)
     return configurationFailure(client.configPathError);
-  if (client.format === "unsupported")
+  const { format } = client;
+  if (format === "unsupported")
     return itemRead(
       item(
         client.name,
@@ -835,7 +1084,10 @@ const readClientConfiguration = async (
           "This client has no documented local MCP configuration boundary.",
       ),
     );
-  const resolved = await resolveUninstallConfigPath(client, fileSystem);
+  const resolved =
+    access === "read_only"
+      ? client.configPath
+      : await resolveUninstallConfigPath(client, fileSystem);
   if (typeof resolved !== "string")
     return resolved.status === "failed"
       ? configurationFailure(resolved.detail)
@@ -848,14 +1100,16 @@ const readClientConfiguration = async (
   });
   if (typeof original !== "string") return original;
   try {
-    const parsed = parseClientConfiguration(original, client.format);
+    const parsed = parseClientConfiguration(original, format);
     return { kind: "configuration", transactionPath, original, parsed };
   } catch (cause: unknown) {
     return configurationFailure(
       cause instanceof ClientConfigurationShapeError ||
         cause instanceof ConfigurationError
         ? `Configuration was not changed: ${cause.message}. Repair it, then rerun uninstall.`
-        : `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : client.format === "hermes" || client.format === "dsh" ? "YAML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
+        : format === undefined
+          ? "This client's configuration syntax is unknown, so its configuration was not changed."
+          : `Configuration is not valid ${clientConfigurationSyntaxName(format)} and was not changed. Repair it, then rerun uninstall.`,
     );
   }
 };
@@ -949,12 +1203,21 @@ const backupClientConfiguration = async (
       `Configuration could not be backed up, so no change was made. ${detail}`,
     );
   try {
-    const preserved = await preserveCurrentRecoveryBackup(
-      `${client.configPath}.rea.backup`,
-      transactionPath,
-      original,
-      options,
-    );
+    const preserved =
+      client.privateProfile === undefined
+        ? await preserveCurrentRecoveryBackup(
+            `${client.configPath}.rea.backup`,
+            transactionPath,
+            original,
+            options,
+          )
+        : // A private profile's backup stays owner-only (0600).
+          await preservePrivateRecoveryBackup(
+            `${client.configPath}.rea.backup`,
+            transactionPath,
+            original,
+            options.resources,
+          );
     if (preserved.ok) return preserved.value;
     if (preserved.error.kind === "occupied")
       return failed(
@@ -971,6 +1234,7 @@ const removeClient = async (
   client: UninstallClient,
   fileSystem: UninstallFileSystem,
   resources: ArtifactResourceScope,
+  platform: NodeJS.Platform,
   writeBlocker?: () => string | undefined,
   preflightOwned = false,
 ): Promise<UninstallItem> => {
@@ -1011,6 +1275,7 @@ const removeClient = async (
   const document = withClientServers(
     parsed,
     remaining,
+    platform,
     removeLegacy ? name : undefined,
   );
   const editedPaths = [
@@ -1027,11 +1292,13 @@ const removeClient = async (
       // clientRegistrationRemoval admitted only names whose repeats REA owns.
       { removeShadowedMembersAt: editedPaths },
     );
-  } catch {
+  } catch (cause: unknown) {
     return item(
       client.name,
       "failed",
-      "Configuration could not be updated, so no change was made. Repair the configuration, then rerun uninstall.",
+      cause instanceof ConfigurationError
+        ? `Configuration could not be updated, so no change was made. ${cause.message}.`
+        : "Configuration could not be updated, so no change was made. Repair the configuration, then rerun uninstall.",
     );
   }
   if (!serialized.ok)
@@ -1143,10 +1410,11 @@ const purgeSelectedData = async (
 ): Promise<readonly UninstallItem[]> => {
   const items: UninstallItem[] = [];
   const directories: string[] = [];
+  let custom: string | undefined;
   if (platform === "darwin" || platform === "linux") {
     const defaultCache = defaultKunaCacheDirectory(home, environment, platform);
     directories.push(defaultCache);
-    const custom = environment.REA_KUNA_CACHE_DIR;
+    custom = environment.REA_KUNA_CACHE_DIR;
     // Lexical spellings identify the default namespace for reporting.
     // Removal still uses the owned-path checks below. Other selections
     // remain separately reported without resolving symbolic links.
@@ -1162,27 +1430,94 @@ const purgeSelectedData = async (
           `Caller-selected Kuna cache ${custom} was retained because purge does not establish ownership of that entire directory.`,
         ),
       );
+    else custom = undefined;
   }
+  // The ownership helper cache has no caller-selected location to retain.
+  if (platform === "darwin")
+    directories.push(defaultDarwinHelperCacheDirectory(home));
   if (platform === "linux") {
     const hopper = linuxHopperReleaseCacheDirectory(environment, home);
     if (hopper.ok) directories.push(hopper.value);
     else items.push(item("hopper-releases", "failed", hopper.error.message));
   }
   // Resolve selections before a managed namespace removal can delete cwd.
-  // Keep the existing result and removal order after planning those facts.
-  items.unshift(
-    ...(await purgeManagedData(appendCallerPath(home, ".rea"), fileSystem, [
-      "cache",
-      "state",
-    ])),
-  );
-  for (const directory of directories)
-    items.push(
-      ...(await purgeManagedData(dirname(directory), fileSystem, [
-        basename(directory),
-      ])),
+  // A namespace that contains the caller-selected cache is kept whole, so
+  // the retained report is true.
+  const reaRoot = appendCallerPath(home, ".rea");
+  // A spelling with `..` is judged only where the filesystem resolves it,
+  // because collapsing it lexically is wrong after a symbolic link.
+  // `undefined` means the location could not be established.
+  const resolve = async (path: string): Promise<string[] | undefined> => {
+    const resolved = await existingRealpath(fileSystem, path);
+    return resolved === undefined
+      ? undefined
+      : [...(hasParentTraversal(path) ? [] : [path]), ...resolved];
+  };
+  const selections = custom === undefined ? [] : await resolve(custom);
+  const purge = async (root: string, names: readonly string[]) => {
+    const kept: { readonly name: string; readonly unknown: boolean }[] = [];
+    for (const name of names) {
+      const targets = await resolve(appendCallerPath(root, name));
+      // An unestablished selection or namespace may contain the selection,
+      // so it is kept rather than treated as absent.
+      const contains =
+        custom !== undefined &&
+        (selections === undefined ||
+          targets === undefined ||
+          targets.some((target) =>
+            selections.some((selection) =>
+              withinLexicalDirectory(selection, target, platform),
+            ),
+          ));
+      if (contains)
+        kept.push({
+          name,
+          unknown: selections === undefined || targets === undefined,
+        });
+    }
+    const keptItems = kept.map(({ name, unknown }) =>
+      item(
+        name,
+        "retained",
+        unknown
+          ? `${appendCallerPath(root, name)} was retained because purge could not establish whether it contains the caller-selected Kuna cache ${custom}.`
+          : `${appendCallerPath(root, name)} was retained because it contains the caller-selected Kuna cache ${custom}, which purge does not remove.`,
+      ),
     );
+    const owned = names.filter(
+      (name) => !kept.some((entry) => entry.name === name),
+    );
+    return async () => [
+      ...keptItems,
+      ...(await purgeManagedData(root, fileSystem, owned)),
+    ];
+  };
+  const reaPlan = await purge(reaRoot, ["cache", "state"]);
+  const plans: (() => Promise<readonly UninstallItem[]>)[] = [];
+  for (const directory of directories)
+    plans.push(await purge(dirname(directory), [basename(directory)]));
+  items.unshift(...(await reaPlan()));
+  for (const plan of plans) items.push(...(await plan()));
   return items;
+};
+
+/**
+ * Canonical spelling of an existing path, nothing when the path is absent,
+ * or `undefined` when its location cannot be established (for example an
+ * inaccessible parent, or `..` without a realpath to judge it).
+ */
+const existingRealpath = async (
+  fileSystem: UninstallFileSystem,
+  path: string,
+): Promise<string[] | undefined> => {
+  if (fileSystem.realpath === undefined)
+    return hasParentTraversal(path) ? undefined : [];
+  try {
+    return [await fileSystem.realpath(path)];
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? [] : undefined;
+  }
 };
 
 const purgeManagedData = async (

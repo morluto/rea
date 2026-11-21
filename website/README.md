@@ -10,9 +10,9 @@ English sources are in `website/public/`; translations are standard gettext PO
 catalogs in `website/locales/`. The site uses HTML, CSS and small
 scripts for copying code, following code comparisons and playing the dinosaur
 speed reconstruction. Small Python commands maintain shared HTML, prepare
-downloads and check the site. There is no frontend framework, bundler or npm
-dependency. A build generates all editions in `website/_site/`. The resulting
-files work as ordinary static files; language switching needs no JavaScript.
+downloads and check the site. The site uses ordinary static files without a
+frontend framework or bundler. A build generates all editions in
+`website/_site/`. Language switching needs no JavaScript.
 
 Korean editions load the variable Noto Sans KR webfont through Google Fonts
 (`fonts.googleapis.com` and `fonts.gstatic.com`) so the preferred Korean font
@@ -26,12 +26,15 @@ visual system and review process. Read it before adding or revising a page.
 
 ## Local preview
 
-From the repository root:
+From the repository root, use the Node.js version pinned in `.nvmrc`.
+Preparing and checking the site uses the repository's locked YAML parser
+without building the REA package.
 
 ```sh
 python3 -m venv website/.venv
 source website/.venv/bin/activate
 python3 -m pip install -r website/requirements.txt
+npm ci --omit=dev --ignore-scripts
 python3 scripts/website.py serve
 ```
 
@@ -161,7 +164,7 @@ This network audit runs separately so third-party uptime does not block every PR
 Keep its report outside public assets.
 
 Links are only part of a content review. When updating setup or support claims,
-compare them with [installation.md](../docs/installation.md), the relevant
+compare them with [installation.md](../docs/getting-started/installation.md), the relevant
 provider guide and the released package. A case study's pinned version and date
 describe its recorded investigation; update them only when repeating that work.
 
@@ -486,10 +489,68 @@ The mask SVG is drawn from the seventh decoded mask. It selects zero-based
 position 21 and compares its character code with 55 (`7`). Keep the figure,
 solver constants and evidence notes aligned when changing this case.
 
+## Agent discovery and Markdown
+
+`scripts/website_agents.py` runs during asset preparation, after translations.
+It generates these public files in ignored `_site/`:
+
+- `.well-known/agent-skills/index.json`: the draft v0.2.0 skills discovery index.
+  Its archive contains the maintained
+  `.agents/skills/reverse-engineer-anything/SKILL.md` and Markdown references.
+  The name and description come from the same authored manifest reader used
+  during packaging. The website archives the original manifest as it appears in
+  the repository. SHA-256 covers the complete, reproducible ZIP, so reference
+  changes invalidate the digest too.
+- `.well-known/ard.json`: an ARD manifest with representative analyst queries.
+- `.well-known/ai-catalog.json`: an AI Catalog 1.0 document listing that same
+  downloadable skill. These advertise installation instructions for the local
+  tool, without claiming a hosted analysis endpoint.
+- `index.md` beside each indexable rendered reading page, including translations.
+  Markdown retains code, evidence disclosures and image descriptions, with
+  absolute resource links. Drafts, labeled English fallbacks and target example
+  applications retain their HTML and indexing policy.
+
+The [skills discovery draft](https://github.com/cloudflare/agent-skills-discovery-rfc),
+[ARD proposal](https://agenticresourcediscovery.org/spec/) and
+[AI Catalog proposal](https://ai-catalog.io/) are evolving formats. ARD v0.91
+uses `ard.json` and `rel="ard"`; AI Catalog uses its separate `ai-catalog.json`
+envelope. Both entries point to the same ZIP with the registered
+`application/zip` media type.
+
+Cloudflare's Worker selects Markdown when an explicit `Accept: text/markdown`
+has higher quality than HTML. HTML wins ties and remains the default. Successful
+reading-page responses include `Vary: Accept` and an alternate Markdown Link;
+Markdown uses `Content-Type: text/markdown; charset=utf-8`. Static `_headers`
+advertises discovery resources, sets discovery CORS to `*`, and supplies MIME
+types. Build-generated HTML `<link>` elements also advertise these resources.
+
+GitHub Pages and the Python preview serve the same files and HTML links, with
+direct Markdown URLs such as `guides/javascript/index.md`. They do not execute
+the Worker or apply Cloudflare's `_headers`: content negotiation, custom MIME
+overrides and discovery CORS headers are Cloudflare behavior. The publish
+workflow packages `.well-known` explicitly because `upload-pages-artifact`
+excludes dot directories by default.
+
+`python3 scripts/website.py check` includes artifact/content regressions and
+Worker request-contract tests. To check the actual local Cloudflare runtime
+after preparing assets, use the repository's pinned Node.js and Wrangler:
+
+```sh
+npx wrangler@4.149.0 dev --cwd website --env production --local
+curl -i -H 'Accept: text/markdown' http://localhost:8787/guides/javascript/
+curl -I http://localhost:8787/.well-known/agent-skills/index.json
+```
+
+The `production` environment here skips the preview build and uses the already
+verified artifact; `--local` runs on your machine. Check HTML and Markdown,
+GET and HEAD, discovery CORS, the downloaded ZIP digest, and unknown routes.
+Production remains published only by the manual website workflow.
+
 ## Cloudflare Workers
 
 `wrangler.toml` serves `website/_site/` through Workers Static Assets. There is
-no Worker script or frontend framework. Before a preview or deployment, Wrangler
+one small Worker (`worker.mjs`) for Markdown content negotiation and no frontend
+framework. Before a preview or deployment, Wrangler
 runs the Python scripts to build the language editions, prepare the example ZIP and verify the
 website. Node.js and Python 3 must be available; the commands below use a pinned
 Wrangler version without adding it to REA's package dependencies.

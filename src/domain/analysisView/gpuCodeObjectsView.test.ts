@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
 import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
 import { gpuCodeObjectsSchema } from "../gpu/gpuCodeObjects.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   gpuCodeObjectsItemsSchema,
   projectGpuCodeObjectsView,
@@ -32,6 +32,7 @@ const report = () =>
   });
 
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"b".repeat(64)}`,
   operation: "inspect_gpu_code_objects",
   normalizedResult,

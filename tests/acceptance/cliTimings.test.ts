@@ -41,13 +41,19 @@ cliTest(
     expect(successful.json).toMatchObject({
       normalized_result: { coverage: { status: "complete" } },
     });
+    expect(successful.stdout).toBe(defaultRun.stdout);
     timingRecord(successful.stderr);
 
+    const defaultFailure = await cli.run({
+      arguments: ["inspect-elf-notes", invalid, "--json"],
+    });
+    expect(defaultFailure.exitCode).toBe(1);
     const failed = await cli.run({
       arguments: ["inspect-elf-notes", invalid, "--json", "--timings"],
     });
     expect(failed.exitCode).toBe(1);
     expect(failed.json).toMatchObject({ code: "invalid_request" });
+    expect(failed.stdout).toBe(defaultFailure.stdout);
     timingRecord(failed.stderr);
   },
 );

@@ -9,9 +9,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
-  semanticEffectTiming,
   semanticTopLevelEffectIsOrderable,
   isUnshadowedGlobal,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -42,6 +40,16 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
+import {
+  opaqueCodeMayRebindBinding,
+  semanticAmbientIntrinsicWrites,
+  semanticAmbientEffectGeneration,
+  semanticEffectMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
+import {
+  semanticDirectEvalRecorded,
+  semanticGlobalCodeSites,
+} from "./javascriptSemanticEffectRecord.js";
 
 // Match the complete Rolldown runtime operations, including its live getters.
 // Names and formatting are irrelevant; lexical roles, operators and keys are not.
@@ -71,6 +79,17 @@ const INTRINSICS: Readonly<Record<string, readonly string[]>> = {
   __hasOwnProp: ["Object", "prototype", "hasOwnProperty"],
 };
 
+type InvocationNode =
+  | t.CallExpression
+  | t.OptionalCallExpression
+  | t.NewExpression
+  | t.TaggedTemplateExpression;
+
+type IntrinsicReadObserver = (
+  capture: t.Node,
+  path: readonly string[],
+) => boolean;
+
 interface IntrinsicDependency {
   readonly path: readonly string[];
   readonly capturedAt?: t.Node;
@@ -93,14 +112,25 @@ export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
   options?: {
     readonly intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+    /** The caller's path lookup uses fixed lexical captures for this phase. */
+    readonly fixedIntrinsicPaths?: true;
   },
 ) => {
-  const nativeArrayIteration = (array: t.ArrayExpression) =>
-    semanticKnownArrayIterationAt(array, state);
+  let iterationReads = 0;
+  const nativeArrayIteration = (array: t.ArrayExpression) => {
+    iterationReads += 1;
+    return semanticKnownArrayIterationAt(array, state);
+  };
   const helpers = new Map<string, InteropHelper | null>();
   const origins = new Map<string, InteropOrigin>();
+  const aliasTargets = new Map<
+    string,
+    { targetBinding: JavaScriptSemanticBindingState; node: t.Node }
+  >();
+  const aliasChangedCache = new Map<string, boolean>();
   const calls = new WeakMap<t.Node, InteropOrigin>();
   const intrinsicBindings = new Map<string, readonly string[] | null>();
+  const opaqueAliasPaths = new WeakMap<t.Node, readonly string[]>();
   const writes = new Map<string, SemanticPropertyPathWriteIndex>();
   const deferredIntrinsicWrites = new SemanticPropertyPathWriteIndex();
   let inertPrefixEnd: number | undefined;
@@ -184,6 +214,7 @@ export const createSemanticModuleInterop = (
     }
     return ["intrinsic"];
   };
+  let writeRevision = 0;
   const retainWrite = (
     node: t.Node | undefined,
     path: JavaScriptSemanticPropertyPath,
@@ -199,6 +230,7 @@ export const createSemanticModuleInterop = (
       index = new SemanticPropertyPathWriteIndex();
       writes.set(scope, index);
     }
+    writeRevision += 1;
     index.retain(
       path[0] === "opaque-intrinsic" ? ["intrinsic"] : path,
       // A write takes effect after evaluating its inputs. Its source start
@@ -244,9 +276,9 @@ export const createSemanticModuleInterop = (
   };
   // Consumers created after ambient indexing must see the same invocation
   // mutations as the collector that supplies retainWrite during indexing.
-  for (const effect of state.ambientWriteEffects)
-    if (effect.path[0] === "global")
-      retainWrite(effect.node, ["intrinsic", ...effect.path.slice(1)]);
+  if (!options?.fixedIntrinsicPaths)
+    for (const { site, path } of semanticAmbientIntrinsicWrites(state))
+      retainWrite(site, path);
 
   const intrinsicPath =
     options?.intrinsicPath ??
@@ -255,9 +287,14 @@ export const createSemanticModuleInterop = (
       const visited = new Set<string>();
       const pending: { id: string; suffixLength: number }[] = [];
       let suffix: readonly string[] = [];
+      let mayBeRebound = false;
       const finish = (
         path: readonly string[] | undefined,
       ): readonly string[] | undefined => {
+        if (mayBeRebound) {
+          if (path !== undefined) opaqueAliasPaths.set(node, path);
+          return undefined;
+        }
         for (const binding of pending)
           intrinsicBindings.set(
             binding.id,
@@ -286,11 +323,8 @@ export const createSemanticModuleInterop = (
             return finish(["intrinsic", ...suffix]);
         if (!t.isIdentifier(root)) return finish(undefined);
         const binding = resolveSemanticBindingState(state, root, root.name);
-        if (
-          binding !== undefined &&
-          semanticOpaqueBindingReadMayHaveChanged(binding, root, state)
-        )
-          return undefined;
+        if (binding && opaqueCodeMayRebindBinding(binding, state, root))
+          mayBeRebound = true;
         const cached =
           binding === undefined
             ? undefined
@@ -315,7 +349,9 @@ export const createSemanticModuleInterop = (
   // A nominal alias path is sufficient for conservative mutation lookup, but
   // helper proof also needs each read to follow initialization. An alias copy
   // retains the earlier function capture; a member read captures it anew.
-  const capturedIntrinsic = (node: t.Node): IntrinsicDependency | undefined => {
+  const capturedIntrinsic = (
+    node: t.Node,
+  ): Required<IntrinsicDependency> | undefined => {
     const path = intrinsicPath(node);
     if (path === undefined) return undefined;
     const visited = new Set<string>();
@@ -335,8 +371,7 @@ export const createSemanticModuleInterop = (
       if (!t.isIdentifier(root)) return undefined;
       const binding = resolveSemanticBindingState(state, root, root.name);
       if (binding === undefined) return { path, capturedAt };
-      if (semanticOpaqueBindingReadMayHaveChanged(binding, root, state))
-        return undefined;
+      if (opaqueCodeMayRebindBinding(binding, state, root)) return undefined;
       const initializer = semanticStableInitializer(binding, state);
       if (
         initializer === undefined ||
@@ -375,11 +410,11 @@ export const createSemanticModuleInterop = (
           value.path.every((key, index) =>
             semanticPropertyPathKeyMatches(key, capture.path[index]!),
           ) &&
-          semanticEffectTiming(
+          semanticEffectMayPrecede(
+            state,
             capture.capturedAt ?? node,
             value.node,
-            state,
-          ) !== "after"
+          )
         ) {
           const suffix = capture.path.slice(value.path.length);
           if (t.isAssignmentExpression(value.node)) {
@@ -499,7 +534,7 @@ export const createSemanticModuleInterop = (
         initializer.projection.length !== 0 ||
         (initializer.node.end ?? Infinity) >= (expression.start ?? -1) ||
         visited.has(binding.bindingId) ||
-        semanticOpaqueBindingReadMayHaveChanged(binding, expression, state)
+        opaqueCodeMayRebindBinding(binding, state, expression)
       )
         return undefined;
       visited.add(binding.bindingId);
@@ -510,20 +545,27 @@ export const createSemanticModuleInterop = (
   const intrinsicReadChanged = (
     node: t.Node,
     path: readonly string[],
+    mayObserve?: IntrinsicReadObserver,
   ): boolean => {
+    if (opaqueAliasPaths.has(node)) return true;
     const capture = capturedIntrinsic(node)?.capturedAt ?? node;
     const method = path.at(-1);
-    const invocationMethod =
-      method === "bind" || method === "call" || method === "apply";
+    const inherited =
+      (method === "bind" || method === "call" || method === "apply") &&
+      !(method === "apply" && path.length === 3 && path[1] === "Reflect")
+        ? ["intrinsic", "Function", "prototype", method]
+        : undefined;
     return (
+      mayObserve?.(capture, path) === true ||
+      (inherited !== undefined && mayObserve?.(capture, inherited) === true) ||
       changedBefore(capture, path) ||
-      (invocationMethod &&
-        changedBefore(capture, ["intrinsic", "Function", "prototype", method]))
+      (inherited !== undefined && changedBefore(capture, inherited))
     );
   };
 
   const resolveBoundIntrinsic = (
     node: t.Node,
+    mayObserve?: IntrinsicReadObserver,
   ): JavaScriptIntrinsicInvocation | undefined => {
     const visited = new Set<string>();
     const argumentGroups: t.CallExpression["arguments"][] = [];
@@ -572,8 +614,9 @@ export const createSemanticModuleInterop = (
         const invocation = resolveJavaScriptIntrinsicInvocation(
           current,
           intrinsicPath,
-          boundIntrinsic,
-          intrinsicReadChanged,
+          (callee) => boundIntrinsic(callee, mayObserve),
+          (reference, selected) =>
+            intrinsicReadChanged(reference, selected, mayObserve),
           nativeArrayIteration,
         );
         if (
@@ -600,9 +643,20 @@ export const createSemanticModuleInterop = (
         current = bindTarget;
         continue;
       }
+      if (captured !== undefined && mayObserve !== undefined)
+        opaqueArguments ||= intrinsicReadChanged(
+          captured.capturedAt,
+          path,
+          mayObserve,
+        );
       const boundPath = [...path, "bind"];
       const functionBind = ["intrinsic", "Function", "prototype", "bind"];
       opaqueArguments ||= bindReads.some((capture) => {
+        if (
+          mayObserve?.(capture, boundPath) ||
+          mayObserve?.(capture, functionBind)
+        )
+          return true;
         return (
           changedBefore(capture, boundPath) ||
           changedBefore(capture, functionBind)
@@ -623,11 +677,12 @@ export const createSemanticModuleInterop = (
   const activeBoundValues = new WeakSet<t.Node>();
   const boundIntrinsic = (
     node: t.Node,
+    mayObserve?: IntrinsicReadObserver,
   ): JavaScriptIntrinsicInvocation | undefined => {
     if (activeBoundValues.has(node)) return undefined;
     activeBoundValues.add(node);
     try {
-      return resolveBoundIntrinsic(node);
+      return resolveBoundIntrinsic(node, mayObserve);
     } finally {
       activeBoundValues.delete(node);
     }
@@ -647,7 +702,7 @@ export const createSemanticModuleInterop = (
         (!t.isFunctionDeclaration(initializer) &&
           (initializer.end ?? Infinity) >= (current.start ?? -1)) ||
         visited.has(binding.bindingId) ||
-        semanticOpaqueBindingReadMayHaveChanged(binding, current, state)
+        opaqueCodeMayRebindBinding(binding, state, current)
       )
         return undefined;
       visited.add(binding.bindingId);
@@ -899,40 +954,9 @@ export const createSemanticModuleInterop = (
     return result;
   };
 
-  const origin = (
+  const twoInitializerOrigin = (
     binding: JavaScriptSemanticBindingState,
   ): InteropOrigin | undefined => {
-    const single = semanticStableInitializer(binding, state);
-    if (single !== undefined) {
-      if (
-        !single.projection.every(
-          (key): key is string => typeof key === "string",
-        )
-      )
-        return undefined;
-      const converted = callOrigin(single.node);
-      if (
-        converted?.origin.importedPath.length === 0 &&
-        single.projection[0] === "default" &&
-        !converted.defaultIsModule
-      )
-        return undefined;
-      const result =
-        converted === undefined
-          ? undefined
-          : {
-              ...converted,
-              origin: {
-                ...converted.origin,
-                importedPath: [
-                  ...converted.origin.importedPath,
-                  ...single.projection,
-                ],
-              },
-            };
-      if (result !== undefined) origins.set(binding.bindingId, result);
-      return result;
-    }
     const [initial, converted] = binding.initializers;
     if (
       binding.definitions.length !== 2 ||
@@ -982,13 +1006,126 @@ export const createSemanticModuleInterop = (
     if (required === undefined || required.importedPath.length !== 0)
       return undefined;
     if (convertedCall === undefined) return undefined;
-    const result = {
+    return {
       origin: required,
       dependencies: convertedCall.dependencies,
       defaultIsModule: convertedCall.defaultIsModule,
     };
-    origins.set(binding.bindingId, result);
-    return result;
+  };
+
+  const origin = (
+    binding: JavaScriptSemanticBindingState,
+  ): InteropOrigin | undefined => {
+    const cached = origins.get(binding.bindingId);
+    if (cached !== undefined) return cached;
+
+    let currentBinding: JavaScriptSemanticBindingState | undefined = binding;
+    const visited = new Set<string>();
+    const steps: {
+      binding: JavaScriptSemanticBindingState;
+      segments: readonly string[];
+    }[] = [];
+    let baseOrigin: InteropOrigin | undefined;
+
+    while (currentBinding !== undefined) {
+      const alreadyCached = origins.get(currentBinding.bindingId);
+      if (alreadyCached !== undefined) {
+        baseOrigin = alreadyCached;
+        break;
+      }
+      if (visited.has(currentBinding.bindingId)) return undefined;
+      visited.add(currentBinding.bindingId);
+
+      const single = semanticStableInitializer(currentBinding, state);
+      if (single !== undefined) {
+        if (
+          !single.projection.every(
+            (key): key is string => typeof key === "string",
+          )
+        )
+          return undefined;
+        const converted = callOrigin(single.node);
+        if (converted !== undefined) {
+          if (
+            converted.origin.importedPath.length === 0 &&
+            single.projection[0] === "default" &&
+            !converted.defaultIsModule
+          )
+            return undefined;
+          baseOrigin = {
+            ...converted,
+            origin: {
+              ...converted.origin,
+              importedPath: [
+                ...converted.origin.importedPath,
+                ...(single.projection as readonly string[]),
+              ],
+            },
+          };
+          break;
+        }
+        const { root, members } = electronMemberPath(single.node);
+        if (
+          !t.isIdentifier(root) ||
+          !members.every((member): member is string => member !== null)
+        )
+          return undefined;
+        const targetBinding = resolveSemanticBindingState(
+          state,
+          root,
+          root.name,
+        );
+        if (targetBinding === undefined || targetBinding === currentBinding)
+          return undefined;
+        aliasTargets.set(currentBinding.bindingId, {
+          targetBinding,
+          node: root,
+        });
+        steps.push({
+          binding: currentBinding,
+          segments: [
+            ...(members as readonly string[]),
+            ...(single.projection as readonly string[]),
+          ],
+        });
+        currentBinding = targetBinding;
+        continue;
+      }
+
+      const twoInit = twoInitializerOrigin(currentBinding);
+      if (twoInit !== undefined) {
+        baseOrigin = twoInit;
+        break;
+      }
+      return undefined;
+    }
+
+    if (baseOrigin === undefined) return undefined;
+    origins.set(currentBinding!.bindingId, baseOrigin);
+
+    let currentOrigin = baseOrigin;
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const step = steps[i]!;
+      const firstSegment = step.segments[0];
+      if (
+        currentOrigin.origin.importedPath.length === 0 &&
+        firstSegment === "default" &&
+        !currentOrigin.defaultIsModule
+      )
+        return undefined;
+      currentOrigin = {
+        ...currentOrigin,
+        origin: {
+          ...currentOrigin.origin,
+          importedPath: [
+            ...currentOrigin.origin.importedPath,
+            ...step.segments,
+          ],
+        },
+      };
+      origins.set(step.binding.bindingId, currentOrigin);
+    }
+    return currentOrigin;
   };
   const invalidatedOrigin = (record: InteropOrigin | undefined): boolean =>
     record?.dependencies.some(({ path, capturedAt }) => {
@@ -997,22 +1134,76 @@ export const createSemanticModuleInterop = (
       // properties. Other callable bodies are not execution evidence.
       return changedBefore(capturedAt, path);
     }) ?? false;
+  // Reuse normalized dispatch for the same source site under fixed capture
+  // lookup. Custom observation functions and live iterator proofs still run.
+  const dispatches =
+    options?.fixedIntrinsicPaths === true
+      ? new WeakMap<
+          InvocationNode,
+          {
+            readonly invocation: JavaScriptIntrinsicInvocation | undefined;
+            readonly settled: true;
+            readonly writes: number;
+            readonly opaqueSites: number;
+          }
+        >()
+      : undefined;
+  const resolveIntrinsicInvocation = (
+    node: InvocationNode,
+    callablePath = intrinsicPath,
+    mayObserve?: IntrinsicReadObserver,
+  ) =>
+    resolveJavaScriptIntrinsicInvocation(
+      node,
+      (reference) => callablePath(reference) ?? opaqueAliasPaths.get(reference),
+      mayObserve === undefined
+        ? boundIntrinsic
+        : (callee) => boundIntrinsic(callee, mayObserve),
+      mayObserve === undefined
+        ? intrinsicReadChanged
+        : (reference, path) =>
+            intrinsicReadChanged(reference, path, mayObserve),
+      nativeArrayIteration,
+    );
+  const intrinsicInvocationFacts = (
+    node: InvocationNode,
+  ): {
+    readonly invocation: JavaScriptIntrinsicInvocation | undefined;
+    readonly settled: boolean;
+  } => {
+    const opaqueSites = semanticGlobalCodeSites(state).length;
+    const prior = dispatches?.get(node);
+    if (prior?.writes === writeRevision && prior.opaqueSites === opaqueSites)
+      return prior;
+    const readsBefore = iterationReads;
+    const invocation = resolveIntrinsicInvocation(node);
+    if (dispatches === undefined || readsBefore !== iterationReads)
+      return { invocation, settled: false };
+    const facts = {
+      invocation,
+      settled: true as const,
+      writes: writeRevision,
+      opaqueSites,
+    };
+    dispatches.set(node, facts);
+    return facts;
+  };
   return {
     origin,
     callOrigin,
     intrinsicPath,
+    intrinsicInvocationFacts,
     intrinsicValueReferences,
     intrinsicInvocation: (
-      node: t.CallExpression | t.OptionalCallExpression,
+      node: InvocationNode,
       callablePath = intrinsicPath,
+      mayObserve?: IntrinsicReadObserver,
     ) =>
-      resolveJavaScriptIntrinsicInvocation(
-        node,
-        callablePath,
-        boundIntrinsic,
-        intrinsicReadChanged,
-        nativeArrayIteration,
-      ),
+      dispatches !== undefined &&
+      callablePath === intrinsicPath &&
+      mayObserve === undefined
+        ? intrinsicInvocationFacts(node).invocation
+        : resolveIntrinsicInvocation(node, callablePath, mayObserve),
     boundIntrinsic,
     staticString,
     staticPropertyKey: (node: t.Node | undefined) => staticString(node, true),
@@ -1032,6 +1223,28 @@ export const createSemanticModuleInterop = (
       const result = invalidatedOrigin(calls.get(node));
       invalidatedCalls.set(node, result);
       return result;
+    },
+    aliasMayHaveChanged: (binding: JavaScriptSemanticBindingState): boolean => {
+      if (!semanticDirectEvalRecorded(state)) return false;
+      const cached = aliasChangedCache.get(binding.bindingId);
+      if (cached !== undefined) return cached;
+      origin(binding);
+      let current: JavaScriptSemanticBindingState | undefined = binding;
+      const seen = new Set<string>();
+      let changed = false;
+      while (current !== undefined) {
+        if (seen.has(current.bindingId)) break;
+        seen.add(current.bindingId);
+        const next = aliasTargets.get(current.bindingId);
+        if (next === undefined) break;
+        if (opaqueCodeMayRebindBinding(next.targetBinding, state, next.node)) {
+          changed = true;
+          break;
+        }
+        current = next.targetBinding;
+      }
+      aliasChangedCache.set(binding.bindingId, changed);
+      return changed;
     },
   };
 };
@@ -1161,4 +1374,30 @@ const controlBodyOperation = (node: t.Node): t.Node => {
     node = statement;
   }
   return node;
+};
+
+const ambientWriteInterops = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  {
+    readonly generation: number;
+    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+  }
+>();
+
+/**
+ * Module interop that retains every recorded ambient global write, so an
+ * intrinsic invocation is resolved only while its intrinsic is unreplaced at
+ * the call. It is rebuilt when a later ambient write is recorded.
+ */
+export const semanticModuleInteropWithAmbientWrites = (
+  state: JavaScriptSemanticAnalysisState,
+): ReturnType<typeof createSemanticModuleInterop> => {
+  const generation = semanticAmbientEffectGeneration(state);
+  const prior = ambientWriteInterops.get(state);
+  if (prior?.generation === generation) return prior.interop;
+  const interop = createSemanticModuleInterop(state);
+  for (const { site, path } of semanticAmbientIntrinsicWrites(state))
+    interop.retainWrite(site, path);
+  ambientWriteInterops.set(state, { generation, interop });
+  return interop;
 };

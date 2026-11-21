@@ -11,6 +11,7 @@ import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
 } from "../../fixtures/android/jadx.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const INVENTORY_CLASS_COUNT = 7096;
 
@@ -72,10 +73,13 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
     { kind: "session", session },
     { androidAnalysis: provider },
   );
-  const client = new Client({
-    name: "android-search-inventory-budget",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "android-search-inventory-budget",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -108,7 +112,9 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
   // The inline raw record keeps the pagination audit, not the class names.
   const singleRaw = JSON.stringify(single.raw_result);
   expect(singleRaw).not.toContain("fixture.Class");
-  expect(singleRaw).toContain("items_omitted");
+  const singlePages = listClassCalls(single.raw_result);
+  expect(singlePages).toHaveLength(1);
+  expect(responsePage(singlePages[0]!)).toMatchObject({ items_omitted: 1 });
   expect(Buffer.byteLength(JSON.stringify(single))).toBeLessThan(32 * 1024);
   // Every matching producer row remains in the retained source record.
   const completeId = single.evidence_links[0];
@@ -121,7 +127,11 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
   expect(complete).toBeDefined();
   expect(complete?.operation).toBe("search_android_classes");
   expect(rawInventoryNames(complete?.raw_result)).toBe(1);
-  expect(JSON.stringify(complete?.raw_result)).toContain("fixture.Target");
+  expect(
+    listClassCalls(complete?.raw_result).flatMap(
+      (call) => responsePage(call).items,
+    ),
+  ).toEqual(["fixture.Target"]);
   expect(JSON.stringify(complete?.raw_result)).not.toContain("fixture.Class");
 
   // Selection precedes paging: a match beyond the first unfiltered page is

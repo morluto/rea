@@ -48,9 +48,6 @@ describe("Python pyc stable filesystem boundary", () => {
     const tooSmall = await service.inspect({ path, max_file_bytes: 16 });
     if (tooSmall.ok) throw new Error("Expected resource budget failure");
     expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
-    const tooFewObjects = await service.inspect({ path, max_objects: 1 });
-    if (tooFewObjects.ok) throw new Error("Expected object budget failure");
-    expect(tooFewObjects.error._tag).toBe("AnalysisResourceConstraintError");
     for (const [field, selected] of [
       ["max_objects", 1],
       ["max_depth", 1],
@@ -58,6 +55,8 @@ describe("Python pyc stable filesystem boundary", () => {
     ] as const) {
       const refused = await service.inspect({ path, [field]: selected });
       if (refused.ok) throw new Error(`Expected ${field} refusal`);
+      if (field === "max_objects")
+        expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
       const projected = projectAnalysisError(refused.error);
       expect(projected).toMatchObject({
         code: "resource_constraint",

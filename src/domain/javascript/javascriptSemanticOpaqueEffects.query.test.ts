@@ -4,7 +4,7 @@ import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticA
 import {
   createSemanticOpaqueReferenceEffectQuery,
   semanticOpaqueBindingEffects,
-} from "./javascriptSemanticOpaqueEffects.js";
+} from "./javascriptSemanticEffectLog.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {

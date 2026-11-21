@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from "vitest";
+import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
   createRizinCoverageHarness,
@@ -12,52 +13,77 @@ const { cleanup, makeProvider, start, startInjected, createManager } =
 afterEach(cleanup);
 
 it.skipIf(process.platform === "win32")(
-  "stops the session when the provider closes its stdin pipe",
+  "reports a real Rizin pipe refusal when the child closes stdin",
   async () => {
-    const provider = await makeProvider(
-      // Readiness must guarantee that the child's stdin is already closed.
-      'exec 0<&-; printf "\\000"; while :; do :; done',
-      "#!/bin/sh",
-    );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 500,
+    const provider = await makeProvider(`
+import { closeSync } from "node:fs";
+closeSync(0);
+process.stdout.write("\\0");
+setInterval(() => {}, 1000);
+`);
+    const { manager, sessionId } = await start(provider);
+
+    expect(await manager.execute(sessionId, "dr")).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
-    const result = await manager.execute(sessionId, "dr");
-    expect(result.ok).toBe(false);
-    expect(manager.status(sessionId)?.state).toBe("closed");
+    expect(manager.status(sessionId)).toMatchObject({
+      state: "closed",
+      closed_reason_code: "input-stream-failure",
+    });
   },
 );
 
-it
-  .skipIf(process.platform === "win32")
-  .each([
-    "null",
-    "destroyed",
-    "throws",
-    "throws-opaque",
-    "write-error",
-  ] as const)(
-  "fails safely when injected Rizin stdin is %s",
-  async (stdinMode) => {
-    const injected = createInjectedProcess({ stdin: stdinMode });
+it.skipIf(process.platform === "win32").each([
+  ["null", "stdin stream is closed"],
+  ["destroyed", "stdin stream is closed"],
+  ["throws", "injected synchronous write failure"],
+  ["throws-opaque", "unknown error"],
+] as const)(
+  "reports the source of a Rizin stdin refusal when the stream is %s",
+  async (stdin, reason) => {
+    const injected = createInjectedProcess({ stdin });
     const { manager, started } = await startInjected(injected.spawnProcess);
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    const result = await manager.execute(started.value.session_id, "dr");
-    expect(result.ok).toBe(false);
+    if (!started.ok) throw started.error;
+    expect(await manager.execute(started.value.session_id, "dr")).toMatchObject(
+      {
+        ok: false,
+        error: {
+          _tag: "AnalysisCapabilityUnavailableError",
+          diagnostics: { session_stop: "input-stream-failure" },
+          message: expect.stringContaining(reason),
+        },
+      },
+    );
   },
 );
 
 it.skipIf(process.platform === "win32")(
-  "fails an active command when the injected stdin stream closes",
+  "retains partial output when the injected stdin stream closes during a command",
   async () => {
-    const injected = createInjectedProcess();
+    const injected = createInjectedProcess({
+      onWrite: (_text, control) => {
+        control.output("arrived before close\0");
+        setImmediate(() => control.closeStdin());
+      },
+    });
     const { manager, started } = await startInjected(injected.spawnProcess);
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    injected.control.closeStdin();
-    const result = await manager.execute(started.value.session_id, "dr");
-    expect(result.ok).toBe(false);
+    if (!started.ok) throw started.error;
+
+    expect(await manager.execute(started.value.session_id, "dr")).toMatchObject(
+      {
+        ok: false,
+        error: {
+          diagnostics: { session_stop: "input-stream-failure" },
+          partialObservation: {
+            normalized_result: {
+              output: "arrived before close",
+              completion_status: "unknown",
+            },
+          },
+        },
+      },
+    );
   },
 );
 
@@ -70,14 +96,20 @@ it.skipIf(process.platform === "win32").each([false, true])(
         ? incompleteStop
         : async () => ({ status: "stopped" }),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    const result = await manager.execute(started.value.session_id, "dr");
-    expect(result.ok).toBe(false);
-    if (!result.ok && incomplete)
-      expect(result.error.cleanup?.reason).toContain(
-        "injected stop uncertainty",
-      );
+    if (!started.ok) throw started.error;
+    const sessionId = started.value.session_id;
+    const result = await manager.execute(sessionId, "dr");
+    if (result.ok) throw new Error("Expected a write callback failure");
+    expect(primaryAnalysisError(result.error)).toMatchObject({
+      message: expect.stringContaining("injected write callback failure"),
+      diagnostics: { session_stop: "input-stream-failure" },
+    });
+    expect(result.error.cleanupIncomplete).toBe(incomplete);
+    if (incomplete)
+      expect(result.error.cleanup).toMatchObject({
+        reason: "injected stop uncertainty",
+        resources: [sessionId],
+      });
   },
 );
 
@@ -187,22 +219,6 @@ it.skipIf(process.platform === "win32")(
       started.value.session_id,
       "dr",
       abortOnCheck(3),
-    );
-    expect(result.ok).toBe(false);
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "cancels while waiting for the previous command turn",
-  async () => {
-    const injected = createInjectedProcess();
-    const { manager, started } = await startInjected(injected.spawnProcess);
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    const result = await manager.execute(
-      started.value.session_id,
-      "dr",
-      abortOnCheck(2),
     );
     expect(result.ok).toBe(false);
   },

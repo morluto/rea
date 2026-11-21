@@ -31,7 +31,6 @@ export async function verifyCoreInspectionTrace({
         .filter(isAbsolute)
         .map((directory) => join(directory, name)),
     ]);
-  const psPaths = helperPaths("ps");
   const iconvPaths = helperPaths("iconv");
   const gitPaths = helperPaths("git");
   const observations = [];
@@ -111,7 +110,6 @@ export async function verifyCoreInspectionTrace({
     const ownershipFacts = collectOwnershipTraceFacts({
       traces,
       nodeExecutable: process.execPath,
-      psExecutables: psPaths,
     });
     for (const trace of traces) {
       const { file } = trace;

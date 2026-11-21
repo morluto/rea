@@ -1,4 +1,5 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -11,7 +12,7 @@ it.each([false, true])(
   "awaits cleanup retry and preserves completed output when retry failure is %s",
   async (failAgain) => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Completed capture fixture", version: "1" },
       {
         operation: "inspect_packet_capture",
@@ -27,7 +28,7 @@ it.each([false, true])(
       { operation: "inspect_packet_capture", partialObservation: evidence },
     );
     let closed = false;
-    const cli = Cli.create("capture-cleanup-test", { sync: false });
+    const cli = createCommandCli();
     registerCaptureCommands(
       cli,
       silentLogger,
@@ -47,8 +48,6 @@ it.each([false, true])(
               { reason: "retry failed" },
               { operation: "inspect_packet_capture" },
             );
-          // Only the owner can confirm release of its retained resource.
-          original.resolveCleanup();
         },
       },
     );
@@ -72,29 +71,21 @@ it.each([false, true])(
     );
     const output: unknown = JSON.parse(stdout);
     expect(output).toMatchObject({
-      code: failAgain ? "cleanup_incomplete" : "execution_failure",
-      details: { partial_observation: evidence },
+      code: "cleanup_incomplete",
+      details: {
+        partial_observation: evidence,
+        resources: expect.arrayContaining(["original-workspace"]),
+      },
     });
     if (failAgain)
       expect(output).toMatchObject({
-        details: {
-          cleanup: "incomplete",
-          resources: expect.arrayContaining([
-            "original-workspace",
-            "retry-workspace",
-          ]),
-        },
+        details: { resources: expect.arrayContaining(["retry-workspace"]) },
       });
-    else {
-      expect(original.cleanupIncomplete).toBe(false);
-      expect(output).not.toHaveProperty("details.cleanup");
-      expect(output).not.toHaveProperty("details.resources");
-    }
   },
 );
 
 it("keeps the primary CLI failure when close throws an untyped error", async () => {
-  const cli = Cli.create("capture-cleanup-primary-test", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(
     cli,
     silentLogger,
@@ -144,7 +135,7 @@ it("keeps the primary CLI failure when close throws an untyped error", async () 
 });
 
 it("closes the service and retains an unexpected producer rejection", async () => {
-  const cli = Cli.create("capture-producer-rejection-test", { sync: false });
+  const cli = createCommandCli();
   let closed = false;
   registerCaptureCommands(
     cli,
@@ -203,7 +194,7 @@ const rejectBeforeService = async (
   name: string,
   args: string[],
 ): Promise<string> => {
-  const cli = Cli.create(name, { sync: false });
+  const cli = createCommandCli();
   let called = false;
   registerCaptureCommands(
     cli,

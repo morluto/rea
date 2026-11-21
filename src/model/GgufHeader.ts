@@ -1,5 +1,6 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { isUtf8 } from "node:buffer";
-import { TextDecoder } from "node:util";
 import { setImmediate } from "node:timers/promises";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type {
@@ -8,10 +9,12 @@ import type {
   ModelArtifactPartialTensor,
 } from "../domain/model/modelArtifact.js";
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
+import { unsupportedInput } from "../domain/parseFailure.js";
 import {
   MODEL_ARRAY_PREVIEW,
   MODEL_METADATA_NESTING,
-  ModelFormatFailure,
+  MODEL_FORMAT,
+  modelCapacityFailure,
   ModelReportBudget,
   rejectModel,
 } from "./ModelFormat.js";
@@ -32,7 +35,12 @@ const NAMES = [
   "INT64",
   "FLOAT64",
 ] as const;
-const WIDTHS = [1, 1, 2, 2, 4, 4, 4, 1, 8, 12, 8, 8, 8];
+const STRING_LENGTH_BYTES = 8;
+const WIDTHS = [1, 1, 2, 2, 4, 4, 4, 1, STRING_LENGTH_BYTES, 12, 8, 8, 8];
+const MIN_METADATA_ROW_BYTES = STRING_LENGTH_BYTES + 4 + 1;
+const TENSOR_STORAGE_FIELDS_BYTES = 4 + 8;
+const MIN_TENSOR_DESCRIPTOR_BYTES =
+  STRING_LENGTH_BYTES + 4 + TENSOR_STORAGE_FIELDS_BYTES;
 
 export interface GgufProgress {
   onHeader(info: {
@@ -55,29 +63,30 @@ export class GgufHeader {
   readonly #budget = new ModelReportBudget();
   constructor(readonly reader: ModelHeaderReader) {}
 
-  async #unsigned(width: 4 | 8): Promise<number> {
-    const b = await this.reader.take(width);
-    const value =
-      width === 4
-        ? BigInt(this.#little ? b.readUInt32LE() : b.readUInt32BE())
-        : this.#little
-          ? b.readBigUInt64LE()
-          : b.readBigUInt64BE();
-    if (value > BigInt(Number.MAX_SAFE_INTEGER))
-      throw new ModelFormatFailure(
-        "capacity",
-        "Header length/count exceeds exact host offset precision",
-        "exact-offset",
-      );
-    return Number(value);
+  // take() returns exactly `width` bytes, so field reads at 0 stay in range.
+  async #field(width: number): Promise<BinaryReader> {
+    return new BinaryReader(
+      await this.reader.take(width),
+      this.#little,
+      "gguf",
+    );
   }
 
-  async #text(retain: boolean, maximum?: number): Promise<string> {
-    const length = await this.#unsigned(8);
-    if (maximum !== undefined && length > maximum)
+  async #unsigned(width: 4 | 8): Promise<bigint> {
+    return (await this.#field(width)).word(0, width === 4 ? 32 : 64);
+  }
+
+  async #text(
+    retain: boolean,
+    requiredAfter: number,
+    maximum?: number,
+  ): Promise<string> {
+    const rawLength = await this.#unsigned(STRING_LENGTH_BYTES);
+    if (maximum !== undefined && rawLength > BigInt(maximum))
       rejectModel("GGUF name exceeds its format byte limit");
+    this.reader.guarantee(rawLength + BigInt(requiredAfter));
+    const length = Number(rawLength);
     if (retain) this.#budget.charge(6 * length + 2);
-    this.reader.guarantee(length);
     // Omitted preview entries still need validation, but not decoded strings.
     // Keep the streaming decoder for values spanning multiple read chunks.
     if (!retain && length <= 65536) {
@@ -85,7 +94,7 @@ export class GgufHeader {
         rejectModel("GGUF string is not valid UTF-8");
       return "";
     }
-    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    const decoder = strictUtf8Decoder("preserve");
     let result = "";
     try {
       for (let left = length; left > 0;) {
@@ -109,42 +118,47 @@ export class GgufHeader {
   async #value(
     type: number,
     retain: boolean,
-    depth = 0,
+    requiredAfter: number,
+    enclosingFrames = 0,
   ): Promise<{
     value: JsonValue;
     element_type: string | null;
     element_count: number | null;
     complete: boolean;
   }> {
-    if (NAMES[type] === undefined)
+    const width = WIDTHS[type];
+    if (width === undefined)
       rejectModel(`Unknown GGUF metadata type ${String(type)}`);
-    if (depth > MODEL_METADATA_NESTING)
-      throw new ModelFormatFailure(
-        "capacity",
-        `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
-        "metadata-nesting",
-      );
+    this.reader.guarantee(width + requiredAfter);
     if (type === 8)
       return {
-        value: await this.#text(retain),
+        value: await this.#text(retain, requiredAfter),
         element_type: null,
         element_count: null,
         complete: true,
       };
     if (type === 9) {
-      const element = await this.#unsigned(4);
-      const count = await this.#unsigned(8);
+      // The frame is the counted unit and an empty innermost array still
+      // occupies one, so charge it on entry instead of on a child visit.
+      const frames = enclosingFrames + 1;
+      if (frames > MODEL_METADATA_NESTING)
+        throw modelCapacityFailure(
+          "metadata-nesting",
+          `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
+        );
+      const element = Number(await this.#unsigned(4));
+      const rawCount = await this.#unsigned(8);
       const minimum = WIDTHS[element];
       if (minimum === undefined)
         rejectModel(`Unknown GGUF array element type ${String(element)}`);
-      this.reader.guarantee(count * minimum);
+      this.reader.guarantee(rawCount * BigInt(minimum) + BigInt(requiredAfter));
+      const count = Number(rawCount);
       const preview: JsonValue[] = [];
       if (retain)
         this.#budget.charge(128 + Math.min(count, MODEL_ARRAY_PREVIEW) * 64);
       let complete = count <= MODEL_ARRAY_PREVIEW;
       for (let index = 0; index < count; index++) {
         if (index % 4096 === 4095) await setImmediate();
-        this.reader.guarantee((count - index) * minimum);
         if (
           element !== 8 &&
           element !== 9 &&
@@ -161,7 +175,12 @@ export class GgufHeader {
           break;
         }
         const keep = retain && index < MODEL_ARRAY_PREVIEW;
-        const value = await this.#value(element, keep, depth + 1);
+        const value = await this.#value(
+          element,
+          keep,
+          (count - index - 1) * minimum + requiredAfter,
+          frames,
+        );
         if (keep)
           preview.push(
             element === 9
@@ -183,47 +202,45 @@ export class GgufHeader {
         complete,
       };
     }
-    const b = await this.reader.take(WIDTHS[type] ?? 0);
+    const b = await this.#field(width);
     let value: JsonValue;
     switch (type) {
       case 0:
-        value = b.readUInt8();
+        value = b.u8(0);
         break;
       case 1:
-        value = b.readInt8();
+        value = b.i8(0);
         break;
       case 2:
-        value = this.#little ? b.readUInt16LE() : b.readUInt16BE();
+        value = b.u16(0);
         break;
       case 3:
-        value = this.#little ? b.readInt16LE() : b.readInt16BE();
+        value = b.i16(0);
         break;
       case 4:
-        value = this.#little ? b.readUInt32LE() : b.readUInt32BE();
+        value = b.u32(0);
         break;
       case 5:
-        value = this.#little ? b.readInt32LE() : b.readInt32BE();
+        value = b.i32(0);
         break;
       case 6:
-        value = this.#little ? b.readFloatLE() : b.readFloatBE();
+        value = b.f32(0);
         break;
-      case 7:
-        if (b[0] !== 0 && b[0] !== 1)
+      case 7: {
+        const byte = b.u8(0);
+        if (byte !== 0 && byte !== 1)
           rejectModel("GGUF boolean must be 0 or 1");
-        value = b[0] === 1;
+        value = byte === 1;
         break;
+      }
       case 10:
-        value = (
-          this.#little ? b.readBigUInt64LE() : b.readBigUInt64BE()
-        ).toString();
+        value = b.word(0, 64).toString();
         break;
       case 11:
-        value = (
-          this.#little ? b.readBigInt64LE() : b.readBigInt64BE()
-        ).toString();
+        value = b.i64(0).toString();
         break;
       case 12:
-        value = this.#little ? b.readDoubleLE() : b.readDoubleBE();
+        value = b.f64(0);
         break;
       default:
         return rejectModel("Unsupported GGUF scalar");
@@ -253,8 +270,8 @@ export class GgufHeader {
     limitations: string[];
   }> {
     const versionBytes = await this.reader.take(4);
-    const littleVersion = versionBytes.readUInt32LE();
-    const bigVersion = versionBytes.readUInt32BE();
+    const littleVersion = new BinaryReader(versionBytes, true, "gguf").u32(0);
+    const bigVersion = new BinaryReader(versionBytes, false, "gguf").u32(0);
     let version: number;
     if (littleVersion === 2 || littleVersion === 3) {
       this.#little = true;
@@ -263,30 +280,42 @@ export class GgufHeader {
       this.#little = false;
       version = bigVersion;
     } else {
-      throw new ModelFormatFailure(
-        "unsupported",
+      throw unsupportedInput(
+        MODEL_FORMAT,
         `GGUF version bytes ${versionBytes.toString("hex")} are unsupported (little-endian ${String(littleVersion)}, big-endian ${String(bigVersion)}; byte order unknown); supported versions are 2 and 3`,
       );
     }
     if (!this.#little && version !== 3)
       rejectModel("Big-endian GGUF requires version 3");
-    const tensorCount = await this.#unsigned(8);
-    const metadataCount = await this.#unsigned(8);
+    const rawTensorCount = await this.#unsigned(8);
+    const rawMetadataCount = await this.#unsigned(8);
+    const minimumDirectoryBytes =
+      rawTensorCount * BigInt(MIN_TENSOR_DESCRIPTOR_BYTES) +
+      rawMetadataCount * BigInt(MIN_METADATA_ROW_BYTES);
+    this.reader.requireFileExtent(this.reader.position, minimumDirectoryBytes);
+    const tensorCount = Number(rawTensorCount);
+    const metadataCount = Number(rawMetadataCount);
     progress?.onHeader({
       version,
       byte_order: this.#little ? "little" : "big",
       declared_metadata_count: metadataCount,
       declared_tensor_count: tensorCount,
     });
+    this.reader.guarantee(minimumDirectoryBytes);
     this.#budget.charge((tensorCount + metadataCount) * 512);
-    this.reader.guarantee(tensorCount * 20 + metadataCount * 13);
     const metadata: ModelMetadata[] = [];
     const keys = new Set<string>();
     let alignment = 32;
+    let remainingDirectoryBytes = Number(minimumDirectoryBytes);
     for (let index = 0; index < metadataCount; index++) {
-      this.reader.guarantee((metadataCount - index) * 13 + tensorCount * 20);
+      this.reader.guarantee(remainingDirectoryBytes);
+      remainingDirectoryBytes -= MIN_METADATA_ROW_BYTES;
       const start = this.reader.position;
-      const key = await this.#text(true, 65535);
+      const key = await this.#text(
+        true,
+        remainingDirectoryBytes + MIN_METADATA_ROW_BYTES - STRING_LENGTH_BYTES,
+        65535,
+      );
       // Numeric hierarchy components occur in standardized base_model.{id} keys.
       if (
         !/^[a-z0-9]+(?:[_-][a-z0-9]+)*(?:\.[a-z0-9]+(?:[_-][a-z0-9]+)*)*$/u.test(
@@ -298,8 +327,8 @@ export class GgufHeader {
         );
       if (keys.has(key)) rejectModel(`Duplicate GGUF metadata key ${key}`);
       keys.add(key);
-      const type = await this.#unsigned(4);
-      const parsed = await this.#value(type, true);
+      const type = Number(await this.#unsigned(4));
+      const parsed = await this.#value(type, true, remainingDirectoryBytes);
       const row = {
         index,
         key,
@@ -340,24 +369,35 @@ export class GgufHeader {
       progress?.onLimitation(message);
     };
     for (let index = 0; index < tensorCount; index++) {
-      this.reader.guarantee((tensorCount - index) * 20);
+      this.reader.guarantee(remainingDirectoryBytes);
+      remainingDirectoryBytes -= MIN_TENSOR_DESCRIPTOR_BYTES;
       const start = this.reader.position;
-      const name = await this.#text(true, 64);
+      const name = await this.#text(
+        true,
+        remainingDirectoryBytes +
+          MIN_TENSOR_DESCRIPTOR_BYTES -
+          STRING_LENGTH_BYTES,
+        64,
+      );
       if (names.has(name)) rejectModel(`Duplicate GGUF tensor name ${name}`);
       names.add(name);
-      const dimensions = await this.#unsigned(4);
+      const dimensions = Number(await this.#unsigned(4));
       if (dimensions > 4)
         rejectModel("GGUF tensor dimension count must be at most 4");
+      this.reader.guarantee(
+        dimensions * 8 + TENSOR_STORAGE_FIELDS_BYTES + remainingDirectoryBytes,
+      );
       const shape: string[] = [];
       let parameters = 1n;
       for (let d = 0; d < dimensions; d++) {
-        const b = await this.reader.take(8);
-        const value = this.#little ? b.readBigUInt64LE() : b.readBigUInt64BE();
+        const value = await this.#unsigned(8);
         shape.push(value.toString());
         parameters *= value;
       }
-      const id = await this.#unsigned(4);
-      const offset = await this.#unsigned(8);
+      const id = Number(await this.#unsigned(4));
+      const rawOffset = await this.#unsigned(8);
+      this.reader.requireFileExtent(0, rawOffset);
+      const offset = Number(rawOffset);
       if (offset % alignment !== 0)
         rejectModel(`GGUF tensor ${name} offset is not aligned`);
       const type = ggmlType(id);

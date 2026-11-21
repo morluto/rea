@@ -1,3 +1,4 @@
+import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { fileURLToPath } from "node:url";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
 import {
@@ -6,13 +7,12 @@ import {
   type CaptureDecoderHeap,
 } from "../../config/captureDecoderHeap.js";
 import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
+import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
 import {
-  NODE_CAPTURE_HEAP_ENFORCED,
+  QLOG_CAPTURE_PROVIDER_IDENTITY,
   HAR_CAPTURE_PROVIDER_IDENTITY,
   SAZ_CAPTURE_PROVIDER_IDENTITY,
-  QLOG_CAPTURE_PROVIDER_IDENTITY,
-  captureDecoderProcessMemoryLimitBytes,
-} from "./CaptureRelease.js";
+} from "./CaptureProviderIdentities.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 
 /** Package-backed capture decoders share one bounded offline Node process profile. */
@@ -52,7 +52,7 @@ export class NodeCaptureAdapter implements HistoricalCaptureFormatAdapter {
         : [];
   }
   async command(requestPath: string) {
-    const memoryLimitBytes = captureDecoderProcessMemoryLimitBytes(
+    const memoryLimitBytes = javaScriptWorkerMemoryLimitBytes(
       this.heap.oldGenerationMiB,
     );
     if (

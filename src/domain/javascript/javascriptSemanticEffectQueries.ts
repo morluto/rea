@@ -1,6 +1,8 @@
 import type * as t from "@babel/types";
-import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import {
+  ambientPathWriteSites,
+  semanticEffectMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
 /** Query a completed ambient-effect snapshot, preserving unknown execution order. */
@@ -12,21 +14,11 @@ export const createSemanticAmbientEffectQuery = (
     const key = JSON.stringify(path);
     let effects = matching.get(key);
     if (effects === undefined) {
-      effects = state.ambientWriteEffects
-        .filter(
-          (effect) =>
-            effect.path.length <= path.length &&
-            effect.path.every((part, index) =>
-              semanticPropertyPathKeyMatches(part, path[index]!),
-            ),
-        )
-        .map((effect) => effect.node);
+      effects = ambientPathWriteSites(state, path);
       matching.set(key, effects);
     }
     return effects.some((effect) =>
-      reads.every(
-        (read) => semanticEffectTiming(read, effect, state) !== "after",
-      ),
+      reads.every((read) => semanticEffectMayPrecede(state, read, effect)),
     );
   };
 };

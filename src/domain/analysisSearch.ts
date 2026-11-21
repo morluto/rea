@@ -43,3 +43,27 @@ export const analysisSearchPredicate = (
   }
   return literalSubstringPredicate(query.pattern, query.case_sensitive);
 };
+
+/**
+ * Match one procedure by its primary name and the secondary names its provider
+ * accepts for exact selection. A procedure remains one row whose value is its
+ * primary name; matched_aliases keeps each distinct matching secondary
+ * spelling in provider order, so an alias never becomes a procedure of its own.
+ */
+export const matchProcedureNames = <Row extends { readonly value: string }>(
+  row: Row,
+  aliases: readonly string[],
+  matches: (value: string) => boolean,
+): (Row & { readonly matched_aliases?: string[] }) | undefined => {
+  if (aliases.length === 1) {
+    const alias = aliases[0]!;
+    if (alias !== row.value && matches(alias))
+      return { ...row, matched_aliases: [alias] };
+  } else if (aliases.length > 1) {
+    const matched = [...new Set(aliases)].filter(
+      (alias) => alias !== row.value && matches(alias),
+    );
+    if (matched.length > 0) return { ...row, matched_aliases: matched };
+  }
+  return matches(row.value) ? row : undefined;
+};

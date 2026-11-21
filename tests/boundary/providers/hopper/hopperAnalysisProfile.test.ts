@@ -6,12 +6,21 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { createInspectionResources } from "../../../fixtures/inspectionResources.js";
 
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
+import {
+  elf,
+  fat,
+  thinMach,
+} from "../../../../src/domain/binaryTarget.fixture.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import {
   hopperLoaderArgsForTarget,
   resolveHopperAnalysisProfile,
 } from "../../../../src/hopper/HopperAnalysisProfile.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderMetadata.js";
+import { hopperProducerIdentity } from "../../../../src/hopper/HopperBridgeSources.js";
+import { packagedSourcesDigest } from "../../../../src/filesystem/ProducerIdentity.js";
+import { PRODUCT_IDENTITY } from "../../../../src/identity.js";
 
 let inspectionResources = createInspectionResources();
 let directory: string | undefined;
@@ -117,8 +126,7 @@ describe("Hopper analysis profiles", () => {
         value: {
           profile: {
             parameters: {
-              function_dossier_coverage:
-                "observed-facets-and-call-relationships-v1",
+              producer: hopperProducerIdentity(),
               loader: {
                 source: scenario.source,
                 arguments: scenario.arguments,
@@ -129,6 +137,29 @@ describe("Hopper analysis profiles", () => {
       });
     },
   );
+
+  it("commits the REA release and packaged bridge script it runs", async () => {
+    directory = await createTestTempDirectory("rea-hopper-profile-producer-");
+    const launcherPath = join(directory, "hopper");
+    await writeFile(launcherPath, "Hopper build");
+    const resolved = await resolveHopperAnalysisProfile(
+      target("elf", "x86_64"),
+      {
+        launcherPath,
+        loaderArgsOverride: [],
+        provider: HOPPER_PROVIDER_IDENTITY,
+        resourceScope: inspectionResources.owner,
+      },
+    );
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters.producer).toEqual({
+      rea_version: PRODUCT_IDENTITY.packageVersion,
+      sources_sha256: packagedSourcesDigest(
+        new URL("../../../../bridge/", import.meta.url),
+        ["hopper_bridge.py"],
+      ),
+    });
+  });
 
   it("stops launcher hashing when profile resolution is cancelled", async () => {
     directory = await createTestTempDirectory("rea-hopper-profile-cancel-");
@@ -151,6 +182,61 @@ describe("Hopper analysis profiles", () => {
     });
   });
 });
+
+it.each([
+  { admitted: "thin", replacement: "elf" },
+  { admitted: "thin", replacement: "fat32" },
+  { admitted: "fat32", replacement: "thin" },
+] as const)(
+  "refuses a replacement of kind $replacement for an admitted $admitted Mach-O with loader overrides",
+  async ({ admitted, replacement }) => {
+    const root = await createTestTempDirectory("rea-hopper-profile-magic-");
+    const path = join(root, "selected.macho");
+    const launcherPath = join(root, "hopper");
+    const arm64 = 0x0100000c;
+    const thin = thinMach(0xfeedfacf, arm64);
+    thin.writeUInt32BE(2, 12); // MH_EXECUTE
+    const inputs = { thin, fat32: fat([arm64]), elf: elf(2, 1, 183) };
+    await writeFile(path, inputs[admitted]);
+    await writeFile(launcherPath, "Hopper fixture");
+    const selected = await parseBinaryTarget(path, {
+      hostArchitecture: "arm64",
+    });
+    if (!selected.ok) throw selected.error;
+    const options = {
+      launcherPath,
+      loaderArgsOverride: ["-l", "Custom Loader"],
+      provider: HOPPER_PROVIDER_IDENTITY,
+      resourceScope: inspectionResources.owner,
+    };
+    const control = await resolveHopperAnalysisProfile(selected.value, options);
+    expect(control).toMatchObject({
+      ok: true,
+      value: {
+        profile: {
+          parameters: {
+            macho_container: admitted,
+            loader: {
+              source: "configured_override",
+              arguments: options.loaderArgsOverride,
+            },
+          },
+        },
+      },
+    });
+
+    await writeFile(path, inputs[replacement]);
+    await expect(
+      resolveHopperAnalysisProfile(selected.value, options),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "BinaryTargetError",
+        message: expect.stringContaining("admitted Mach-O format"),
+      },
+    });
+  },
+);
 
 const target = (
   format: "mach-o" | "elf" | "pe" | "dos-mz",

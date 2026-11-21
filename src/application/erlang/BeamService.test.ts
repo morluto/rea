@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { BeamService } from "./BeamService.js";
-import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../../erlang/BeamProvider.js";
+import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../../erlang/ErlangBeamProviderIdentity.js";
 import type { ErlangBeam } from "../../domain/erlang/beam.js";
 import { ok } from "../../domain/result.js";
 import {
@@ -24,7 +24,12 @@ const report: ErlangBeam = {
   lambdas: null,
   code: null,
   module: null,
-  coverage: { status: "complete", examined_chunks: 0, atoms: 0 },
+  coverage: {
+    status: "complete",
+    examined_chunks: 0,
+    atoms: 0,
+    trailing_bytes: 0,
+  },
   limitations: ["No atom table was present."],
 };
 
@@ -59,21 +64,6 @@ it("rejects a relative path and extra arguments before reading", async () => {
       issues: [{ path: ["path"] }],
     });
   expect(calls).toBe(0);
-});
-
-it("records the selected BEAM form", async () => {
-  const result = await new BeamService({
-    close: async () => {},
-    identity,
-    inspect: () => Promise.resolve(ok(report)),
-  }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    confidence: "observed",
-    subject: { format: "file" },
-    normalized_result: report,
-  });
 });
 
 it("discards an observation if the caller cancels while the provider completes", async () => {

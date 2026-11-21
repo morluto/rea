@@ -1,16 +1,13 @@
-import { parseXmlDocument } from "../domain/xmlDocument.js";
-import {
-  androidAttribute,
-  plainAttribute,
-  childNodes,
-  isManifestElement,
-} from "./AndroidManifestXml.js";
+import { parseDecodedAndroidManifest } from "../domain/android/decodedAndroidManifest.js";
+import { isUnqualifiedXmlElement } from "../domain/xmlDocument.js";
+import { androidAttribute, childNodes } from "./AndroidManifestXml.js";
+import type { KnownCoverageStatus } from "../domain/coverage.js";
 import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDetails.js";
 import {
   ANDROID_COMPONENT_KINDS,
   type AndroidComponentKind,
-  type ObservedAndroidManifestComponent,
-  type ObservedAndroidManifestComponentInventory,
+  type AndroidManifestComponent,
+  type AndroidManifestComponentInventory,
 } from "../domain/android/androidManifestComponents.js";
 
 /** Bounds keep a hostile manifest from exhausting the inspection. */
@@ -35,7 +32,7 @@ const PARTIAL_LIMITATION =
 
 const unavailable = (
   limitation: string,
-): ObservedAndroidManifestComponentInventory => ({
+): AndroidManifestComponentInventory => ({
   status: "unavailable",
   items: [],
   limitations: [limitation],
@@ -81,7 +78,7 @@ const containsUnresolvedToken = (value: string): boolean =>
  * dot or a name without any dot is relative to the package, while a dotted
  * name is already fully qualified.
  */
-export const resolveAndroidComponentName = (
+const resolveAndroidComponentName = (
   packageName: string | null,
   declared: string,
 ): string => {
@@ -149,30 +146,24 @@ const providerAuthorities = (
  */
 export const parseAndroidManifestComponents = (
   manifestText: string,
-  coverage: "complete" | "partial",
+  coverage: KnownCoverageStatus,
   declaredTargetSdk: string | null = null,
   minimumSdk: string | null = null,
-): ObservedAndroidManifestComponentInventory => {
+): AndroidManifestComponentInventory => {
   if (coverage === "partial")
     return {
       status: "partial",
       items: [],
       limitations: [PARTIAL_LIMITATION],
     };
-  const parsed = parseXmlDocument(manifestText, {
-    doctype: "reject",
-    lineEndings: "preserve",
-  });
+  const parsed = parseDecodedAndroidManifest(manifestText, "reject");
   if (!parsed.ok)
     return unavailable(
-      `The decoded manifest is not well-formed XML (${parsed.error.reason}), so its component inventory is unavailable.`,
+      parsed.error.kind === "unexpected-root"
+        ? "The decoded manifest root is not <manifest>, so its component inventory is unavailable."
+        : `The decoded manifest is not well-formed XML (${parsed.error.failure.field ?? parsed.error.kind}), so its component inventory is unavailable.`,
     );
-  const root = parsed.value.documentElement;
-  if (!isManifestElement(root) || root.nodeName !== "manifest")
-    return unavailable(
-      "The decoded manifest root is not <manifest>, so its component inventory is unavailable.",
-    );
-  const rawPackageName = plainAttribute(root, "package");
+  const { root, packageName: rawPackageName } = parsed.value;
   const packageName = rawPackageName?.trim() || null;
   const packageHasInvalidWhitespace =
     rawPackageName !== null && rawPackageName !== rawPackageName.trim();
@@ -185,7 +176,7 @@ export const parseAndroidManifestComponents = (
   const packageNameBytes =
     packageName === null ? 0 : Buffer.byteLength(packageName);
   const limitations: string[] = [];
-  const items: ObservedAndroidManifestComponent[] = [];
+  const items: AndroidManifestComponent[] = [];
   let truncated = false;
   let applicationSeen = false;
   let unnamed = 0;
@@ -211,6 +202,7 @@ export const parseAndroidManifestComponents = (
   let permissionBudget = ANDROID_MANIFEST_LIMITS.permissionBytes;
   let detailBudgetLimited = false;
   let unsupportedFilterMembers = 0;
+  let unnamedFilterMembers = 0;
   const readDetails = createAndroidManifestDetailsReader(
     manifestText,
     ANDROID_MANIFEST_LIMITS,
@@ -219,7 +211,8 @@ export const parseAndroidManifestComponents = (
   let targetSdkDeclared = false;
   let minimumSdkDeclared = false;
   for (const child of children) {
-    if (!isManifestElement(child) || child.nodeName !== "uses-sdk") continue;
+    if (!isUnqualifiedXmlElement(child) || child.nodeName !== "uses-sdk")
+      continue;
     // Match the bridge's declaration owner: the last uses-sdk supplies values.
     targetSdkDeclared = androidAttribute(child, "targetSdkVersion") !== null;
     minimumSdkDeclared = androidAttribute(child, "minSdkVersion") !== null;
@@ -236,7 +229,7 @@ export const parseAndroidManifestComponents = (
   // Parse the effective SDK once even when hundreds of providers share it.
   const providerDefault = targetSdkLevel === null ? null : targetSdkLevel <= 16;
   for (const node of children) {
-    if (!isManifestElement(node)) continue;
+    if (!isUnqualifiedXmlElement(node)) continue;
     const element = node;
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
@@ -258,7 +251,7 @@ export const parseAndroidManifestComponents = (
         ? null
         : Buffer.byteLength(applicationPermission);
     for (const child of childNodes(element)) {
-      if (!isManifestElement(child)) continue;
+      if (!isUnqualifiedXmlElement(child)) continue;
       const component = child;
       if (!isComponentKind(component.nodeName)) continue;
       // Every declaration counts against the bound, named or not, so an
@@ -283,6 +276,7 @@ export const parseAndroidManifestComponents = (
       if (details.partial) truncated = true;
       if (details.detailLimited) detailBudgetLimited = true;
       unsupportedFilterMembers += details.unsupported;
+      unnamedFilterMembers += details.unnamedFilterMembers;
       if (details.processLimited) {
         processBudgetLimited = true;
         capacityTruncated = true;
@@ -454,11 +448,18 @@ export const parseAndroidManifestComponents = (
             : null;
       const exportedNonliteral =
         declaredExported !== null && exportedLiteral === null;
+      // Android discards an activity, alias or receiver filter that declares
+      // no action, while a service keeps it. Only kept filters select the
+      // export default and the API 31 explicit-export requirement.
+      const keptFilters =
+        component.nodeName === "service"
+          ? details.filterCount > 0
+          : details.actionFilter;
       const explicitExportRequired =
         declaredExported === null &&
         targetSdkLevel !== null &&
         targetSdkLevel >= 31 &&
-        details.filterCount > 0 &&
+        keptFilters &&
         (component.nodeName === "activity" ||
           component.nodeName === "activity-alias" ||
           component.nodeName === "service" ||
@@ -466,7 +467,7 @@ export const parseAndroidManifestComponents = (
       const filteredExportUnknown =
         declaredExported === null &&
         targetSdkLevel === null &&
-        details.filterCount > 0 &&
+        keptFilters &&
         (component.nodeName === "activity" ||
           component.nodeName === "activity-alias" ||
           component.nodeName === "service" ||
@@ -491,7 +492,7 @@ export const parseAndroidManifestComponents = (
             ? null
             : component.nodeName === "provider"
               ? providerDefault
-              : details.filterCount > 0,
+              : keptFilters,
         permission,
         permission_source: effectivePermissionSource,
         intent_filter_count: details.filterCount,
@@ -593,6 +594,10 @@ export const parseAndroidManifestComponents = (
   if (unsupportedFilterMembers > 0)
     limitations.push(
       `${String(unsupportedFilterMembers)} intent-filter child declaration(s) use unsupported constructs; affected filter coverage is partial and the declarations remain in the retained manifest.`,
+    );
+  if (unnamedFilterMembers > 0)
+    limitations.push(
+      `${String(unnamedFilterMembers)} intent-filter action or category declaration(s) without android:name were omitted. Read the retained manifest at each affected filter's source location.`,
     );
   if (processBudgetLimited)
     limitations.push(

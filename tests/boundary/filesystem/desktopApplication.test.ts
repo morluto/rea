@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   mkdir,
   writeFile,
@@ -12,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import { createServer as createNetServer } from "node:net";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
 import {
   desktopApplicationSchema,
@@ -24,9 +26,9 @@ import {
   buildManagedPeFixture,
   buildNativePeFixture,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "../../../src/dotnet/ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "../../../src/dotnet/ManagedPeReader.js";
-import { readAssemblyReference } from "../../../src/dotnet/ManagedMetadataInventoryRows.js";
+import { readManagedMetadataLayout } from "../../../src/domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
+import { readAssemblyReference } from "../../../src/domain/managed/managedMetadataInventoryRows.js";
 import {
   CPU,
   FILE_TYPE,
@@ -34,12 +36,12 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { artifactFilePrimaryFacts } from "../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { artifactFilePrimaryFacts } from "../../../src/resources/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const inspect = async (path: string, extra: Record<string, number> = {}) => {
   const service = createDesktopApplicationService();
@@ -500,6 +502,224 @@ it.each(["Game_Data/Managed", "Contents/Resources/Data/Managed"])(
   },
 );
 
+it("retains PE/CLI evidence without inferring Unity from competing managed table streams", async () => {
+  const root = await createTestTempDirectory("rea-desktop-table-conflict-");
+  const managedPath = "Game_Data/Managed/Assembly-CSharp.dll";
+  await put(
+    root,
+    managedPath,
+    buildManagedPeFixture({
+      references: ["UnityEngine.CoreModule"],
+      competingTableStream: "distinct",
+    }),
+  );
+  const { report } = await inspect(root);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.candidates.map(({ family }) => family)).toEqual(["dotnet"]);
+  const file = report.files.find(({ path }) => path === managedPath);
+  expect(file?.facts.map(({ kind }) => kind)).toContain("pe-cli-directory");
+  expect(file?.facts.map(({ kind }) => kind)).not.toContain(
+    "unity-assembly-reference",
+  );
+  expect(file?.issues).toContainEqual(
+    expect.stringContaining("Metadata row layout is unknown."),
+  );
+});
+
+it("orders member probes for Unity predefined script assemblies before every managed artifact probe", async () => {
+  const root = await createTestTempDirectory("rea-desktop-mono-members-");
+  const unity = buildManagedPeFixture({
+    references: ["UnityEngine.CoreModule"],
+  });
+  const plain = buildManagedPeFixture({ references: ["System.Runtime"] });
+  await put(root, "Game_Data/Managed/Assembly-CSharp.dll", unity);
+  await put(root, "Game_Data/Managed/ASSEMBLY-CSHARP-FIRSTPASS.DLL", plain);
+  await put(root, "Game_Data/Managed/Game.Logic.dll", unity);
+  await put(root, "Game_Data/Managed/UnityEngine.CoreModule.dll", plain);
+  await put(root, "Game_Data/Managed/Nested/Assembly-CSharp.dll", plain);
+  await put(root, "Other_Data/Managed/Assembly-CSharp.dll", plain);
+  await put(root, "Plugins/Assembly-CSharp.dll", unity);
+  const { report } = await inspect(root);
+  const relative = new Map(
+    report.files.map((file) => [file.file_id, file.path]),
+  );
+  const rows = report.next_probes.map((probe) => [
+    probe.operation,
+    relative.get(probe.file_id),
+  ]);
+  expect(
+    rows.filter(([operation]) => operation === "inspect_managed_members"),
+  ).toEqual([
+    [
+      "inspect_managed_members",
+      "Game_Data/Managed/ASSEMBLY-CSHARP-FIRSTPASS.DLL",
+    ],
+    ["inspect_managed_members", "Game_Data/Managed/Assembly-CSharp.dll"],
+  ]);
+  expect(rows.slice(0, 2).map(([operation]) => operation)).toEqual([
+    "inspect_managed_members",
+    "inspect_managed_members",
+  ]);
+  expect(
+    rows.filter(([operation]) => operation === "inspect_managed_artifact"),
+  ).toHaveLength(7);
+  for (const probe of report.next_probes)
+    if (probe.operation === "inspect_managed_members")
+      expect(probe.rationale).toContain(
+        'Start with detail "summary" and page rows through inspect_analysis_view.',
+      );
+});
+
+it("offers member probes for predefined script assemblies in a macOS bundle's managed directory", async () => {
+  const root = await createTestTempDirectory("rea-desktop-mono-bundle-");
+  const managed = "Contents/Resources/Data/Managed";
+  await put(
+    root,
+    `${managed}/Assembly-CSharp.dll`,
+    buildManagedPeFixture({ references: ["UnityEngine.CoreModule"] }),
+  );
+  await put(
+    root,
+    `${managed}/Game.Logic.dll`,
+    buildManagedPeFixture({ references: ["System.Runtime"] }),
+  );
+  const { report } = await inspect(root);
+  const relative = new Map(
+    report.files.map((file) => [file.file_id, file.path]),
+  );
+  expect(
+    report.next_probes
+      .filter((probe) => probe.operation === "inspect_managed_members")
+      .map((probe) => relative.get(probe.file_id)),
+  ).toEqual([`${managed}/Assembly-CSharp.dll`]);
+  expect(report.next_probes[0]?.operation).toBe("inspect_managed_members");
+});
+
+it.each(["Game_Data", "Game_Data/Managed"])(
+  "offers no member probe when the root is %s itself",
+  async (rootDirectory) => {
+    const root = await createTestTempDirectory("rea-desktop-mono-data-root-");
+    await put(
+      root,
+      "Game_Data/Managed/Assembly-CSharp.dll",
+      buildManagedPeFixture({ references: ["UnityEngine.CoreModule"] }),
+    );
+    const { report } = await inspect(join(root, rootDirectory));
+    const operations = report.next_probes.map((probe) => probe.operation);
+    expect(operations).toContain("inspect_managed_artifact");
+    expect(operations).not.toContain("inspect_managed_members");
+  },
+);
+
+it("offers no member probes when no managed directory has a Unity reference witness", async () => {
+  const root = await createTestTempDirectory("rea-desktop-mono-no-witness-");
+  const plain = buildManagedPeFixture({ references: ["System.Runtime"] });
+  await put(root, "Game_Data/Managed/Assembly-CSharp.dll", plain);
+  await put(root, "Game_Data/Managed/Assembly-CSharp-firstpass.dll", plain);
+  await put(root, "Contents/Resources/Data/Managed/Assembly-CSharp.dll", plain);
+  const { report } = await inspect(root);
+  expect(report.candidates.map((row) => row.family)).toEqual(["dotnet"]);
+  expect(report.next_probes.map((probe) => probe.operation)).toEqual([
+    "inspect_managed_artifact",
+    "inspect_managed_artifact",
+    "inspect_managed_artifact",
+  ]);
+});
+
+const BACKUP = "Game_BackUpThisFolder_ButDontShipItWithYourGame";
+
+it("offers member probes for predefined script assemblies in a game directory's IL2CPP backup folder", async () => {
+  const root = await createTestTempDirectory("rea-desktop-il2cpp-backup-");
+  const plain = buildManagedPeFixture({ references: ["System.Runtime"] });
+  await put(root, `${BACKUP}/Managed/Assembly-CSharp.dll`, plain);
+  await put(
+    root,
+    "OTHER_BACKUPTHISFOLDER_BUTDONTSHIPITWITHYOURGAME/MANAGED/ASSEMBLY-CSHARP-FIRSTPASS.DLL",
+    plain,
+  );
+  await put(root, `${BACKUP}/Managed/Game.Logic.dll`, plain);
+  await put(root, `${BACKUP}/Managed/Nested/Assembly-CSharp.dll`, plain);
+  await put(root, `${BACKUP}/Assembly-CSharp.dll`, plain);
+  await put(
+    root,
+    "_BackUpThisFolder_ButDontShipItWithYourGame/Managed/Assembly-CSharp.dll",
+    plain,
+  );
+  await put(root, "Game_BackUpThisFolder/Managed/Assembly-CSharp.dll", plain);
+  const metadata = Buffer.alloc(8);
+  metadata.writeUInt32LE(0xfab11baf);
+  metadata.writeUInt32LE(31, 4);
+  await put(
+    root,
+    "Game_Data/il2cpp_data/Metadata/global-metadata.dat",
+    metadata,
+  );
+  const { report } = await inspect(root);
+  const relative = new Map(report.files.map((file) => [file.file_id, file]));
+  const members = report.next_probes.filter(
+    (probe) => probe.operation === "inspect_managed_members",
+  );
+  expect(
+    members.map((probe) => relative.get(probe.file_id)?.path).sort(),
+  ).toEqual(
+    [
+      `${BACKUP}/Managed/Assembly-CSharp.dll`,
+      "OTHER_BACKUPTHISFOLDER_BUTDONTSHIPITWITHYOURGAME/MANAGED/ASSEMBLY-CSHARP-FIRSTPASS.DLL",
+    ].sort(),
+  );
+  for (const probe of members) {
+    expect(probe.rationale).toContain(
+      "correspondence to the shipped native code is unknown",
+    );
+    expect(relative.get(probe.file_id)?.facts).toContainEqual({
+      kind: "unity-il2cpp-backup-convention",
+      offset: null,
+      value: {
+        backup_directory: relative.get(probe.file_id)!.path.split("/")[0],
+      },
+    });
+  }
+  const order = report.next_probes.map((probe) => probe.operation);
+  expect(order.lastIndexOf("inspect_managed_members")).toBeLessThan(
+    order.indexOf("inspect_il2cpp_metadata"),
+  );
+  expect(report.candidates.map((row) => row.family)).not.toContain(
+    "unity-mono",
+  );
+  expect(
+    report.files.filter((file) =>
+      file.facts.some((fact) => fact.kind === "unity-il2cpp-backup-convention"),
+    ),
+  ).toHaveLength(2);
+});
+
+it("recognizes an admitted root that is itself the IL2CPP backup folder", async () => {
+  const parent = await createTestTempDirectory(
+    "rea-desktop-il2cpp-backup-root-",
+  );
+  const plain = buildManagedPeFixture({ references: ["System.Runtime"] });
+  await put(parent, `${BACKUP}/Managed/Assembly-CSharp.dll`, plain);
+  await put(parent, "Ordinary/Managed/Assembly-CSharp.dll", plain);
+  const backup = await inspect(join(parent, BACKUP));
+  expect(backup.report.next_probes.map((probe) => probe.operation)).toEqual([
+    "inspect_managed_members",
+    "inspect_managed_artifact",
+  ]);
+  expect(
+    backup.report.files.find(
+      (file) => file.path === "Managed/Assembly-CSharp.dll",
+    )?.facts,
+  ).toContainEqual({
+    kind: "unity-il2cpp-backup-convention",
+    offset: null,
+    value: { backup_directory: "." },
+  });
+  const ordinary = await inspect(join(parent, "Ordinary"));
+  expect(ordinary.report.next_probes.map((probe) => probe.operation)).toEqual([
+    "inspect_managed_artifact",
+  ]);
+});
+
 it("retains complete observations through cancellation during directory finalization", async () => {
   const root = await createTestTempDirectory("rea-desktop-finalize-cancel-");
   await put(root, "notes.txt", "target content");
@@ -520,7 +740,6 @@ it("retains complete observations through cancellation during directory finaliza
     { path: root },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toMatchObject({ reason: "cancelled", cause: reason });
   const retained = parseEvidence(result.error.partialObservation);
@@ -563,21 +782,13 @@ it("keeps a completed directory report and exact cleanup authority until retry c
 it("bounds simultaneous directory scans without cancelling the admitted caller", async () => {
   const root = await createTestTempDirectory("rea-desktop-capacity-");
   await put(root, "notes.txt", "observed");
-  let release!: () => void;
-  let entered!: () => void;
-  const barrier = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  const desktopDirectoryScan = phaseGate();
   const service = new DesktopApplicationService(
     new DesktopApplicationReader((path) => {
       const reader = new DirectoryArtifactReader(path);
       const entries = reader.entries.bind(reader);
       reader.entries = async function* (...args: Parameters<typeof entries>) {
-        entered();
-        await barrier;
+        await desktopDirectoryScan.hold();
         yield* entries(...args);
       };
       return reader;
@@ -585,7 +796,7 @@ it("bounds simultaneous directory scans without cancelling the admitted caller",
   );
   const first = service.inspect({ path: root });
   try {
-    await started;
+    await desktopDirectoryScan.reached(first, "desktop directory scan");
     const second = await service.inspect({ path: root });
     expect(second.ok).toBe(false);
     if (!second.ok)
@@ -594,15 +805,20 @@ it("bounds simultaneous directory scans without cancelling the admitted caller",
         resource: "capacity",
         retryable: true,
       });
+    desktopDirectoryScan.release();
+    const result = await first;
+    if (!result.ok) throw result.error;
+    expect(
+      desktopApplicationSchema.parse(result.value.normalized_result).files,
+    ).toHaveLength(1);
   } finally {
-    release();
+    desktopDirectoryScan.release();
+    try {
+      await first;
+    } finally {
+      await service.close();
+    }
   }
-  const result = await first;
-  if (!result.ok) throw result.error;
-  expect(
-    desktopApplicationSchema.parse(result.value.normalized_result).files,
-  ).toHaveLength(1);
-  await service.close();
 });
 
 it("keeps directory-only marker identities separate across installation roots", async () => {
@@ -743,7 +959,7 @@ const inspectSimulatedRows = async (
   const service = new DesktopApplicationService(
     new DesktopApplicationReader((selected) => {
       const reader = new DirectoryArtifactReader(selected);
-      reader.entries = async function* () {
+      reader.entries = async function* (_signal, options) {
         for (let index = 0; index < count; index++) {
           yielded++;
           yield {
@@ -760,6 +976,8 @@ const inspectSimulatedRows = async (
             adapterKey: `${root}/${path(index)}`,
           };
         }
+        if (typeof options !== "function")
+          options?.onCoverage?.({ status: "complete", limitations: [] });
       };
       return reader;
     }),
@@ -1186,16 +1404,13 @@ it.each([
       metadataOffset,
       image.length - metadataOffset,
     );
-    if (layout.blob === null)
-      throw new Error("Fixture requires a #Blob stream");
-    const blobSize = layout.blob.size;
     const reference = layout.table(35)!;
     // ECMA-335 AssemblyRef: 8 version bytes, 4 flag bytes, then PublicKeyOrToken.
     // Keep its name valid while making that unrelated blob index invalid.
     if (layout.blobIndexSize === 2)
       image.writeUInt16LE(0xffff, reference.offset + 12);
     else image.writeUInt32LE(0xffff_ffff, reference.offset + 12);
-    expect(() => readAssemblyReference(image, layout, 1, blobSize)).toThrow();
+    expect(() => readAssemblyReference(image, layout, 1)).toThrow();
     await put(root, `${managedDirectory}/Assembly-CSharp.dll`, image);
     const { report } = await inspect(root);
     expect(report.candidates.map((candidate) => candidate.family)).toEqual([
@@ -1583,8 +1798,8 @@ it("keeps snapshot identity stable across limits that preserve source observatio
   expect(first.report.root.snapshot_sha256).toBe(
     second.report.root.snapshot_sha256,
   );
-  expect(first.evidence.subject?.digest.sha256).toBe(
-    second.evidence.subject?.digest.sha256,
+  expect(fileIdentity(first.evidence.subject).sha256).toBe(
+    fileIdentity(second.evidence.subject).sha256,
   );
   expect(first.evidence.evidence_id).not.toBe(second.evidence.evidence_id);
   expect(first.evidence.parameters).toMatchObject({

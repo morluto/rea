@@ -230,13 +230,38 @@ export class SemanticPropertyPathCoverage {
     path: JavaScriptSemanticPropertyPath,
     contexts?: readonly (string | undefined)[],
   ): boolean {
+    return this.#reaches(path, contexts, false);
+  }
+
+  /** Whether a retained prefix covers this path or any member below it. */
+  touches(
+    path: JavaScriptSemanticPropertyPath,
+    contexts?: readonly (string | undefined)[],
+  ): boolean {
+    return this.#reaches(path, contexts, true);
+  }
+
+  #reaches(
+    path: JavaScriptSemanticPropertyPath,
+    contexts: readonly (string | undefined)[] | undefined,
+    below: boolean,
+  ): boolean {
     const pending = [{ node: this.#root, offset: 0 }];
     while (pending.length > 0) {
       const current = pending.pop();
       if (current === undefined) break;
       if (current.node.terminal) return true;
       const key = path[current.offset];
-      if (key === undefined) continue;
+      if (key === undefined) {
+        // Retained prefixes only create nodes along their own path, so any
+        // child here belongs to a member below the queried path.
+        if (
+          below &&
+          (current.node.exact.size > 0 || current.node.selectors.size > 0)
+        )
+          return true;
+        continue;
+      }
       const context = contexts?.[current.offset];
       if (key !== null && typeof key !== "object") {
         const exact = current.node.exact.get(

@@ -106,9 +106,9 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
     "const fs=require('fs'); fs.globSync('*'); fs.readFileSync('glob-kept.json');",
     "let fs=require('fs'); {{fs.readFileSync('nested-timeline.json');}} fs={};",
     "const fs=require('fs'); const target={__proto__:{set hook(v){this.fs.readFileSync=custom;}}}; Reflect.set(target,'hook',1,{fs}); fs.readFileSync('wrong-inherited-setter');",
-    "const {promises:fsp}=require('fs'); delete require('fs').promises; const handle=fsp.open('saved-promises'); handle.close();",
+    "const {promises:fsp}=require('fs'); delete require('fs').promises; async function release(){ const handle=await fsp.open('saved-promises'); await handle.close(); } release();",
     "Object.assign=(target,source)=>{target.require=source.require;}; Object.assign(module,{require:replacement}); require('fs').readFileSync('wrong-opaque-mutator');",
-    "const {promises:fsp}=require('fs'); patch(require('fs/promises')); const h=fsp.open('wrong-escaped-object'); h.close();",
+    "const {promises:fsp}=require('fs'); patch(require('fs/promises')); async function release(){ const h=await fsp.open('wrong-escaped-object'); await h.close(); } release();",
     "const fs=require('fs'); Reflect.set(Object.create(null),'hook',1,{fs}); fs.readFileSync('null-prototype-kept.json');",
     "const fs=require('fs'); delete fs.statSync; Object.defineProperty(Object.prototype,'statSync',{set(){this.readFileSync=custom;}}); Reflect.set(fs,'statSync',custom); fs.readFileSync('wrong-removed-descriptor');",
     "let fs=require('fs'); fs.readFileSync('outer-before-nested.json'); {fs={};}",
@@ -294,106 +294,123 @@ const writeBuiltinIdentitySources = async (root: string): Promise<void> => {
   );
 };
 
-it("preserves earlier and sibling effects without inventing replaced cached-module or process effects", async () => {
-  const root = await createTestTempDirectory("rea-builtin-identity-");
-  await writeBuiltinIdentitySources(root);
-  await writeReceiverReviewSources(root);
-  const { stdout } = await execute(
-    process.execPath,
-    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
-    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
-  );
-  const evidence = parseEvidence(JSON.parse(stdout));
-  const result = javascriptApplicationAnalysisResultSchema.parse(
-    evidence.normalized_result,
-  );
-  expect(
-    result.semantic_graph.nodes
-      .filter(({ kind }) => kind === "config-source")
-      .map(({ properties }) => properties.key)
-      .sort(),
-  ).toEqual([
-    "REVIEW_MODE",
-    "SEPARATE_MODE",
-    "aliased-mutator.json",
-    "allocated-before.json",
-    "before-write.json",
-    "before.json",
-    "bound-separate.json",
-    "callable-captured.json",
-    "callable-name.json",
-    "callable-prefix.json",
-    "commonjs-primitive-union.json",
-    "constructed-receiver.json",
-    "copied-unrelated.json",
-    "deferred-descriptor.json",
-    "direct.json",
-    "escaped.json",
-    "fresh-sequence-receiver.json",
-    "glob-kept.json",
-    "harmless-descriptor.json",
-    "harmless-written.json",
-    "immediate-descriptor.json",
-    "late-prototype-kept.json",
-    "later.json",
-    "loader-after.json",
-    "loader-before.json",
-    "namespace-bound-set.json",
-    "namespace-descriptor.json",
-    "namespace-receiver.json",
-    "namespace-set.json",
-    "native-member-kept.json",
-    "native-replacement-define.json",
-    "native-replacement-set.json",
-    "nested-kept.json",
-    "nested-timeline.json",
-    "nested-write-kept.json",
-    "null-prototype-kept.json",
-    "omitted-key.json",
-    "opaque-unrelated.json",
-    "ordered-kept.json",
-    "outer-before-nested.json",
-    "primitive-receiver-binding.json",
-    "projected-scalar.json",
-    "receiver-data.json",
-    "receiver-expression.json",
-    "receiver-primitive.json",
-    "reflect-before.json",
-    "reflect-independent-kept.json",
-    "reflect-receiver-kept.json",
-    "replacement-kept.json",
-    "saved-destructured.json",
-    "saved.json",
-    "sequence-one.json",
-    "sequence-two.json",
-    "sibling.json",
-    "timeline-first.json",
-    "timeline-second.json",
-    "wrapped-kept.json",
-    "wrapper-descriptor-before.json",
-  ]);
-  expect(
-    result.semantic_graph.nodes.filter(({ kind }) => kind === "resource"),
-  ).toHaveLength(3);
-  expect(
-    result.semantic_graph.relations.filter(
-      ({ relation }) => relation === "releases",
-    ),
-  ).toHaveLength(2);
-  // This combined regression corpus includes the complete retained analysis.
-  const { client, call } = await connectLocalToolsMcp(
-    { REA_MCP_MAX_RESPONSE_BYTES: String(16 * 1024 * 1024) },
-    undefined,
-    { maxBufferSize: 16 * 1024 * 1024 },
-  );
-  const response = await call("analyze_javascript_application", {
-    input_path: root,
-    format: "auto",
-  });
-  expect(response.isError, JSON.stringify(response)).not.toBe(true);
-  expect(response.structuredContent).toEqual(evidence);
-  await client.ping();
-}, 60000);
+it.each(["unknown", "commonjs"] as const)(
+  "preserves earlier and sibling effects with %s package context",
+  async (packageContext) => {
+    const root = await createTestTempDirectory("rea-builtin-identity-");
+    if (packageContext === "commonjs")
+      await writeFile(
+        join(root, "package.json"),
+        JSON.stringify({ type: "commonjs" }),
+      );
+    await writeBuiltinIdentitySources(root);
+    await writeReceiverReviewSources(root);
+    const { stdout } = await execute(
+      process.execPath,
+      ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
+      { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
+    );
+    const evidence = parseEvidence(JSON.parse(stdout));
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(
+      result.semantic_graph.nodes
+        .filter(({ kind }) => kind === "config-source")
+        .map(({ properties }) => properties.key)
+        .sort(),
+    ).toEqual(
+      [
+        // A write through a separate receiver is harmless here only when the
+        // unbound require can be identified as the host's CommonJS loader.
+        ...(packageContext === "commonjs"
+          ? [
+              "SEPARATE_MODE",
+              "late-prototype-kept.json",
+              "namespace-receiver.json",
+              "nested-write-kept.json",
+              "receiver-data.json",
+              "reflect-before.json",
+            ]
+          : []),
+        "REVIEW_MODE",
+        "aliased-mutator.json",
+        "allocated-before.json",
+        "before-write.json",
+        "before.json",
+        "bound-separate.json",
+        "callable-captured.json",
+        "callable-name.json",
+        "callable-prefix.json",
+        "commonjs-primitive-union.json",
+        "constructed-receiver.json",
+        "copied-unrelated.json",
+        "deferred-descriptor.json",
+        "direct.json",
+        "escaped.json",
+        "fresh-sequence-receiver.json",
+        "glob-kept.json",
+        "harmless-descriptor.json",
+        "harmless-written.json",
+        "immediate-descriptor.json",
+        "later.json",
+        "loader-after.json",
+        "loader-before.json",
+        "namespace-bound-set.json",
+        "namespace-descriptor.json",
+        "namespace-set.json",
+        "native-member-kept.json",
+        "native-replacement-define.json",
+        "native-replacement-set.json",
+        "nested-kept.json",
+        "nested-timeline.json",
+        "null-prototype-kept.json",
+        "omitted-key.json",
+        "opaque-unrelated.json",
+        "ordered-kept.json",
+        "outer-before-nested.json",
+        "primitive-receiver-binding.json",
+        "projected-scalar.json",
+        "receiver-expression.json",
+        "receiver-primitive.json",
+        "reflect-independent-kept.json",
+        "reflect-receiver-kept.json",
+        "replacement-kept.json",
+        "saved-destructured.json",
+        "saved.json",
+        "sequence-one.json",
+        "sequence-two.json",
+        "sibling.json",
+        "timeline-first.json",
+        "timeline-second.json",
+        "wrapped-kept.json",
+        "wrapper-descriptor-before.json",
+      ].sort(),
+    );
+    expect(
+      result.semantic_graph.nodes.filter(({ kind }) => kind === "resource"),
+    ).toHaveLength(3);
+    expect(
+      result.semantic_graph.relations.filter(
+        ({ relation }) => relation === "releases",
+      ),
+    ).toHaveLength(2);
+    // This combined regression corpus includes the complete retained analysis.
+    const { client, call } = await connectLocalToolsMcp(
+      { REA_MCP_MAX_RESPONSE_BYTES: String(16 * 1024 * 1024) },
+      undefined,
+      { maxBufferSize: 16 * 1024 * 1024 },
+    );
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "auto",
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(response.structuredContent).toEqual(evidence);
+    await client.ping();
+  },
+  60000,
+);
 
 it("preserves opaque-write and suspension boundaries through CLI and MCP", async () => {
   const root = await createTestTempDirectory("rea-builtin-opaque-");
@@ -428,7 +445,7 @@ it("preserves opaque-write and suspension boundaries through CLI and MCP", async
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(response.structuredContent).toEqual(evidence);
   await client.ping();
-}, 60000);
+});
 
 it("excludes monkey-patched CommonJS effects from CLI and MCP evidence", async () => {
   const root = await createTestTempDirectory("rea-builtin-mutated-");
@@ -507,7 +524,7 @@ it("excludes monkey-patched CommonJS effects from CLI and MCP evidence", async (
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(response.structuredContent).toEqual(evidence);
   await client.ping();
-}, 60000);
+});
 
 it("retains CommonJS builtin effects and handle links through CLI and MCP", async () => {
   const root = await createTestTempDirectory("rea-builtin-commonjs-");
@@ -586,7 +603,7 @@ it("retains CommonJS builtin effects and handle links through CLI and MCP", asyn
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(response.structuredContent).toEqual(evidence);
   await client.ping();
-}, 60000);
+});
 
 it.each([
   "import fs from 'node:fs';",
@@ -628,7 +645,6 @@ it.each([
       ]),
     );
   },
-  20_000,
 );
 
 it("keeps only direct logical defaults and actual argv elements in the public CLI graph", async () => {
@@ -733,4 +749,4 @@ function shadowed(process) { return process.argv[3]; }`,
       },
     ),
   ).toHaveLength(1);
-}, 20_000);
+});

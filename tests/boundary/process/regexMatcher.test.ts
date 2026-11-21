@@ -1,12 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { expect, it } from "vitest";
 
-import { regexMatchingDeadlineRecovery } from "../../../src/config/regexMatchingDeadline.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { regexMatchingDeadlineContinuingRecovery } from "../../../src/config/regexMatchingDeadline.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
   MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
@@ -18,7 +18,6 @@ import {
   matchRegexValues,
   REGEX_MATCHING_LIMITATION,
   regexMatchingDeadlineError,
-  regexMatchingLimitation,
   regexWorkerHeapError,
   execArgvFromCommandLine,
   resolveLaunchRegexWorkerHeap,
@@ -70,10 +69,24 @@ const probeWorkerHeap = (
 
 it("names the configurable regex deadline and the effective worker heap", () => {
   const heap = resolveLaunchRegexWorkerHeap(
-    readLaunchExecArgv(),
-    readLaunchNodeOptions(),
+    readLaunchExecArgv(process.platform),
+    readLaunchNodeOptions(process.platform),
   );
-  expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /5000 ms matching deadline \(source default\)/iu,
+  );
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /128 MiB worker heap request \(source default\)/iu,
+  );
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /regex\.matching_deadline_ms.*regex\.worker_heap_request_mib/iu,
+  );
+  if (heap.kind === "effective")
+    expect(REGEX_MATCHING_LIMITATION).toContain(`effective ${heap.mib} MiB`);
+  else
+    expect(REGEX_MATCHING_LIMITATION).toMatch(
+      /effective old-generation heap.*not established/iu,
+    );
   const deadline = projectAnalysisError(
     regexMatchingDeadlineError("search_procedures"),
   );
@@ -134,83 +147,72 @@ it("leaves a heap percentage unestablished without reading host memory", () => {
     });
 });
 
-it("does not report the 128 MiB request for NODE_OPTIONS supplied by an env file", () => {
-  const directory = mkdtempSync(join(tmpdir(), "rea-regex-env-file-"));
+it("does not report the 128 MiB request for NODE_OPTIONS supplied by an env file", async () => {
+  const directory = await createTestTempDirectory("rea-regex-env-file-");
   const file = join(directory, "heap.env");
   writeFileSync(file, "NODE_OPTIONS=--max-old-space-size=256\n");
-  try {
-    const fromFile = probeWorkerHeap([`--env-file=${file}`], undefined);
-    const ifExists = probeWorkerHeap(
-      [`--env-file-if-exists=${file}`],
-      undefined,
-    );
-    const small = probeWorkerHeap(["--max-old-space-size=64"], undefined);
-    const large = probeWorkerHeap(["--max-old-space-size=256"], undefined);
-    expect(fromFile.resourceOld).toBe(128);
-    expect(ifExists.resourceOld).toBe(128);
-    expect(small.resourceOld).toBe(128);
-    expect(large.resourceOld).toBe(128);
-    expect(relativeHeapGap(fromFile.heap, large.heap)).toBeLessThan(0.05);
-    expect(relativeHeapGap(ifExists.heap, large.heap)).toBeLessThan(0.05);
-    expect(fromFile.heap).toBeGreaterThan(small.heap);
-    expect(ifExists.heap).toBeGreaterThan(small.heap);
-    for (const execArgv of [
-      [`--env-file=${file}`],
-      [`--env-file-if-exists=${file}`],
-      [`--env-file=${file}`, "--max-old-space-size=64"],
-    ])
-      expect(resolveRegexWorkerHeap(execArgv, undefined)).toEqual({
-        kind: "unknown",
-      });
-    expect(
-      resolveRegexWorkerHeap([`--env-file=${file}`], "--max-old-space-size=64"),
-    ).toEqual({ kind: "effective", mib: 64, overridden: true });
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  const fromFile = probeWorkerHeap([`--env-file=${file}`], undefined);
+  const ifExists = probeWorkerHeap([`--env-file-if-exists=${file}`], undefined);
+  const small = probeWorkerHeap(["--max-old-space-size=64"], undefined);
+  const large = probeWorkerHeap(["--max-old-space-size=256"], undefined);
+  expect(fromFile.resourceOld).toBe(128);
+  expect(ifExists.resourceOld).toBe(128);
+  expect(small.resourceOld).toBe(128);
+  expect(large.resourceOld).toBe(128);
+  expect(relativeHeapGap(fromFile.heap, large.heap)).toBeLessThan(0.05);
+  expect(relativeHeapGap(ifExists.heap, large.heap)).toBeLessThan(0.05);
+  expect(fromFile.heap).toBeGreaterThan(small.heap);
+  expect(ifExists.heap).toBeGreaterThan(small.heap);
+  for (const execArgv of [
+    [`--env-file=${file}`],
+    [`--env-file-if-exists=${file}`],
+    [`--env-file=${file}`, "--max-old-space-size=64"],
+  ])
+    expect(resolveRegexWorkerHeap(execArgv, undefined)).toEqual({
+      kind: "unknown",
+    });
+  expect(
+    resolveRegexWorkerHeap([`--env-file=${file}`], "--max-old-space-size=64"),
+  ).toEqual({ kind: "effective", mib: 64, overridden: true });
 });
 
-it("does not report the 128 MiB request for a heap percentage in a Node config file", () => {
-  const directory = mkdtempSync(join(tmpdir(), "rea-regex-config-file-"));
+it("does not report the 128 MiB request for a heap percentage in a Node config file", async () => {
+  const directory = await createTestTempDirectory("rea-regex-config-file-");
   const file = join(directory, "heap.config.json");
   const config = '{"nodeOptions":{"max-old-space-size-percentage":"1"}}\n';
   writeFileSync(file, config);
   writeFileSync(join(directory, "node.config.json"), config);
-  try {
-    const fromFile = probeWorkerHeap(
-      [`--experimental-config-file=${file}`],
-      undefined,
-    );
-    const withAbsolute = probeWorkerHeap(
-      [`--experimental-config-file=${file}`, "--max-old-space-size=256"],
-      undefined,
-    );
-    const fromDefault = probeWorkerHeap(
-      ["--experimental-default-config-file"],
-      undefined,
-      directory,
-    );
-    expect(fromFile.resourceOld).toBe(128);
-    expect(withAbsolute.resourceOld).toBe(128);
-    expect(fromDefault.resourceOld).toBe(128);
-    for (const execArgv of [
-      [`--experimental-config-file=${file}`],
-      ["--experimental-config-file", file],
-      [`--experimental-config-file=${file}`, "--max-old-space-size=64"],
-      ["--experimental-default-config-file"],
-    ])
-      expect(resolveRegexWorkerHeap(execArgv, undefined)).toEqual({
-        kind: "unknown",
-      });
-    expect(
-      resolveRegexWorkerHeap(
-        ["--experimental-config-file=node.config.json"],
-        "--max-old-space-size=64",
-      ),
-    ).toEqual({ kind: "unknown" });
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  const fromFile = probeWorkerHeap(
+    [`--experimental-config-file=${file}`],
+    undefined,
+  );
+  const withAbsolute = probeWorkerHeap(
+    [`--experimental-config-file=${file}`, "--max-old-space-size=256"],
+    undefined,
+  );
+  const fromDefault = probeWorkerHeap(
+    ["--experimental-default-config-file"],
+    undefined,
+    directory,
+  );
+  expect(fromFile.resourceOld).toBe(128);
+  expect(withAbsolute.resourceOld).toBe(128);
+  expect(fromDefault.resourceOld).toBe(128);
+  for (const execArgv of [
+    [`--experimental-config-file=${file}`],
+    ["--experimental-config-file", file],
+    [`--experimental-config-file=${file}`, "--max-old-space-size=64"],
+    ["--experimental-default-config-file"],
+  ])
+    expect(resolveRegexWorkerHeap(execArgv, undefined)).toEqual({
+      kind: "unknown",
+    });
+  expect(
+    resolveRegexWorkerHeap(
+      ["--experimental-config-file=node.config.json"],
+      "--max-old-space-size=64",
+    ),
+  ).toEqual({ kind: "unknown" });
 });
 
 it("does not report the 128 MiB request when --max-heap-size lowers the worker heap", () => {
@@ -246,7 +248,7 @@ it("lets a launch --max-old-space-size override the 128 MiB worker request", () 
 
 const assertUnrecoverableOffLinux = (): boolean => {
   if (process.platform === "linux") return false;
-  const launchExecArgv = readLaunchExecArgv();
+  const launchExecArgv = readLaunchExecArgv(process.platform);
   expect(launchExecArgv).toEqual({ kind: "unrecoverable" });
   expect(
     resolveLaunchRegexWorkerHeap(launchExecArgv, {
@@ -312,97 +314,85 @@ worker.once("error", (error) => {
   };
 };
 
-it("does not report the 128 MiB request after a preload clears process.execArgv", () => {
+it("does not report the 128 MiB request after a preload clears process.execArgv", async () => {
   if (assertUnrecoverableOffLinux()) return;
-  const directory = mkdtempSync(join(tmpdir(), "rea-regex-exec-argv-"));
-  try {
-    const reported = spawnCommandLineReport(
-      directory,
-      ["--max-old-space-size=64"],
-      "process.execArgv.length = 0;\n",
-    );
-    const preload = join(directory, "preload.cjs");
-    const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
-    const larger = probeWorkerHeap(["--max-old-space-size=256"], undefined);
-    expect(reported.execLen).toBe(0);
-    expect(reported.resourceOld).toBe(128);
-    expect(relativeHeapGap(reported.heap, pinned.heap)).toBeLessThan(0.05);
-    expect(reported.heap).toBeLessThan(larger.heap);
-    const recovered = execArgvFromCommandLine(
-      Buffer.from(reported.cmdline, "base64"),
-    );
-    expect(recovered).toEqual({
+  const directory = await createTestTempDirectory("rea-regex-exec-argv-");
+  const reported = spawnCommandLineReport(
+    directory,
+    ["--max-old-space-size=64"],
+    "process.execArgv.length = 0;\n",
+  );
+  const preload = join(directory, "preload.cjs");
+  const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
+  const larger = probeWorkerHeap(["--max-old-space-size=256"], undefined);
+  expect(reported.execLen).toBe(0);
+  expect(reported.resourceOld).toBe(128);
+  expect(relativeHeapGap(reported.heap, pinned.heap)).toBeLessThan(0.05);
+  expect(reported.heap).toBeLessThan(larger.heap);
+  const recovered = execArgvFromCommandLine(
+    Buffer.from(reported.cmdline, "base64"),
+  );
+  expect(recovered).toEqual({
+    kind: "recovered",
+    value: ["--max-old-space-size=64", `--require=${preload}`],
+  });
+  expect(
+    resolveLaunchRegexWorkerHeap(recovered, {
       kind: "recovered",
-      value: ["--max-old-space-size=64", `--require=${preload}`],
-    });
-    expect(
-      resolveLaunchRegexWorkerHeap(recovered, {
-        kind: "recovered",
-        value: undefined,
-      }),
-    ).toEqual({ kind: "effective", mib: 64, overridden: true });
-    expect(resolveRegexWorkerHeap([], undefined)).toEqual({
-      kind: "effective",
-      mib: 128,
-      overridden: false,
-    });
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+      value: undefined,
+    }),
+  ).toEqual({ kind: "effective", mib: 64, overridden: true });
+  expect(resolveRegexWorkerHeap([], undefined)).toEqual({
+    kind: "effective",
+    mib: 128,
+    overridden: false,
+  });
 });
 
-it("leaves the heap unknown when a preload title overwrites the command line", () => {
+it("leaves the heap unknown when a preload title overwrites the command line", async () => {
   if (assertUnrecoverableOffLinux()) return;
-  const directory = mkdtempSync(join(tmpdir(), "rea-regex-title-"));
-  try {
-    const reported = spawnCommandLineReport(
-      directory,
-      ["--max-old-space-size=64"],
-      'process.title = "rea";\n',
-    );
-    const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
-    expect(reported.resourceOld).toBe(128);
-    expect(relativeHeapGap(reported.heap, pinned.heap)).toBeLessThan(0.05);
-    const recovered = execArgvFromCommandLine(
-      Buffer.from(reported.cmdline, "base64"),
-    );
-    expect(recovered).toEqual({ kind: "unrecoverable" });
-    expect(
-      resolveLaunchRegexWorkerHeap(recovered, {
-        kind: "recovered",
-        value: undefined,
-      }),
-    ).toEqual({ kind: "unknown" });
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  const directory = await createTestTempDirectory("rea-regex-title-");
+  const reported = spawnCommandLineReport(
+    directory,
+    ["--max-old-space-size=64"],
+    'process.title = "rea";\n',
+  );
+  const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
+  expect(reported.resourceOld).toBe(128);
+  expect(relativeHeapGap(reported.heap, pinned.heap)).toBeLessThan(0.05);
+  const recovered = execArgvFromCommandLine(
+    Buffer.from(reported.cmdline, "base64"),
+  );
+  expect(recovered).toEqual({ kind: "unrecoverable" });
+  expect(
+    resolveLaunchRegexWorkerHeap(recovered, {
+      kind: "recovered",
+      value: undefined,
+    }),
+  ).toEqual({ kind: "unknown" });
 });
 
-it("leaves the heap unknown when --title overwrites the command line", () => {
+it("leaves the heap unknown when --title overwrites the command line", async () => {
   if (assertUnrecoverableOffLinux()) return;
-  const directory = mkdtempSync(join(tmpdir(), "rea-regex-title-flag-"));
-  try {
-    const reported = spawnCommandLineReport(
-      directory,
-      ["--title=rea", "--max-old-space-size=64"],
-      undefined,
-    );
-    const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
-    expect(reported.resourceOld).toBe(128);
-    expect(relativeHeapGap(reported.heap, pinned.heap)).toBeLessThan(0.05);
-    const recovered = execArgvFromCommandLine(
-      Buffer.from(reported.cmdline, "base64"),
-    );
-    expect(recovered).toEqual({ kind: "unrecoverable" });
-    expect(
-      resolveLaunchRegexWorkerHeap(recovered, {
-        kind: "recovered",
-        value: undefined,
-      }),
-    ).toEqual({ kind: "unknown" });
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  const directory = await createTestTempDirectory("rea-regex-title-flag-");
+  const reported = spawnCommandLineReport(
+    directory,
+    ["--title=rea", "--max-old-space-size=64"],
+    undefined,
+  );
+  const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
+  expect(reported.resourceOld).toBe(128);
+  expect(relativeHeapGap(reported.heap, pinned.heap)).toBeLessThan(0.05);
+  const recovered = execArgvFromCommandLine(
+    Buffer.from(reported.cmdline, "base64"),
+  );
+  expect(recovered).toEqual({ kind: "unrecoverable" });
+  expect(
+    resolveLaunchRegexWorkerHeap(recovered, {
+      kind: "recovered",
+      value: undefined,
+    }),
+  ).toEqual({ kind: "unknown" });
 });
 
 it("arms the worker timer with an overridden matching deadline", async () => {
@@ -430,7 +420,8 @@ it("arms the worker timer with an overridden matching deadline", async () => {
 });
 
 it("stops a slow match at the configured deadline and names the setting", async () => {
-  const started = performance.now();
+  // Catastrophic backtracking outlives the test deadline, so only a stop
+  // reports; the previous test pins the timer to the configured deadline.
   const matched = await matchRegexValues({
     operation: "search_procedures",
     pattern: "^(a+)+$",
@@ -438,7 +429,6 @@ it("stops a slow match at the configured deadline and names the setting", async 
     values: [`${"a".repeat(30)}!`],
     deadline: { deadlineMs: 100, source: "setting" },
   });
-  expect(performance.now() - started).toBeLessThan(4_000);
   expect(matched.ok).toBe(false);
   if (matched.ok) return;
   const projected = projectAnalysisError(matched.error);
@@ -457,10 +447,14 @@ it("stops a slow match at the configured deadline and names the setting", async 
     effective_value: 100,
     source: "setting",
     agent_editable: true,
-    rea_restart_required: false,
+    update_mode: "runtime",
+    pending_restart: false,
   });
   expect(projected.remediation.action).toContain(
-    regexMatchingDeadlineRecovery({ deadlineMs: 100, source: "setting" }),
+    regexMatchingDeadlineContinuingRecovery({
+      deadlineMs: 100,
+      source: "setting",
+    }),
   );
   expect(matched.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
@@ -472,8 +466,8 @@ it("stops a slow match at the configured deadline and names the setting", async 
   });
 });
 
-it("matches a trivial pattern in a real worker at the heap floor", () => {
-  const directory = mkdtempSync(join(tmpdir(), "rea-regex-heap-floor-"));
+it("matches a trivial pattern in a real worker at the heap floor", async () => {
+  const directory = await createTestTempDirectory("rea-regex-heap-floor-");
   const probe = join(directory, "probe.mjs");
   const repository = fileURLToPath(new URL("../../../", import.meta.url));
   const tsxApi = pathToFileURL(
@@ -506,17 +500,13 @@ if (!result.ok) process.exitCode = 1;
   );
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
-  try {
-    const result = spawnSync(process.execPath, [probe], {
-      env,
-      encoding: "utf8",
-      timeout: 30_000,
-    });
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ ok: true, indices: [0] });
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  const result = spawnSync(process.execPath, [probe], {
+    env,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({ ok: true, indices: [0] });
 });
 
 it("preserves Unicode matching order and refuses a pre-cancelled match", async () => {
@@ -583,6 +573,7 @@ it("names the rejected pattern field for a default invalid-pattern refusal", asy
   expect(projectAnalysisError(matched.error)).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
+    remediation: { action: expect.stringMatching(/pattern.*mode literal/u) },
     recovery: {
       kind: "inspect_input_contract",
       operation: "search_procedures",
@@ -593,7 +584,7 @@ it("names the rejected pattern field for a default invalid-pattern refusal", asy
         {
           path: ["pattern"],
           reason: "invalid_format",
-          message: "Supply a valid regular expression.",
+          message: expect.stringContaining("Invalid regular expression"),
         },
       ],
     },
@@ -620,6 +611,7 @@ it("keeps Hopper's result projection and invalid-pattern contract with the share
     code: "invalid_request",
     category: "invalid_input",
     message: expect.stringContaining("Invalid regex pattern"),
+    remediation: { action: expect.stringMatching(/pattern.*mode literal/u) },
     recovery: { kind: "inspect_input_contract", operation: "search_strings" },
     details: {
       operation: "search_strings",
@@ -627,7 +619,7 @@ it("keeps Hopper's result projection and invalid-pattern contract with the share
         {
           path: ["pattern"],
           reason: "invalid_format",
-          message: "Supply a valid regular expression.",
+          message: expect.stringContaining("Invalid regular expression"),
         },
       ],
     },

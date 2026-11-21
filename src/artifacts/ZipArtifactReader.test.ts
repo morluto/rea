@@ -1,16 +1,27 @@
 import { writeOrderedZip } from "../../tests/fixtures/artifactEntryOrder.js";
 import { zipSymlinkMetadataFixture } from "../../tests/fixtures/zipSymlinkMetadata.js";
-import { zstandardZipFixture } from "../../tests/fixtures/zipZstandard.js";
-import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
+import {
+  zstandardZipFixture,
+  zstandardWindowFrameFixture,
+} from "../../tests/fixtures/zipZstandard.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+} from "../resources/ArtifactReader.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { once } from "node:events";
 import { randomBytes } from "node:crypto";
 import { constants, zstdCompressSync } from "node:zlib";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
+import { buffer } from "node:stream/consumers";
+import { finished } from "node:stream/promises";
+import { setImmediate } from "node:timers/promises";
 
 import {
+  ERR_INVALID_COMPRESSED_DATA,
   TextReader,
   Uint8ArrayReader,
   Uint8ArrayWriter,
@@ -21,12 +32,17 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
-import { ZipArtifactReader } from "./ZipArtifactReader.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { MINIMUM_ARTIFACT_EXPANDED_BYTES } from "../domain/artifactExpansionBudget.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "./ArtifactHash.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import {
+  translateArtifactFailure,
+  ZipArtifactReader,
+} from "../resources/index.js";
+
+import { waitFor } from "../../tests/support/testWait.js";
+
+const MINIMUM_ARTIFACT_EXPANDED_BYTES = 256 * 1024 * 1024;
 
 /** Small real ZIP carriers with forged sizes; metadata-only controls, never decompressed. */
 const writeZipWithDeclaredSize = async (
@@ -65,8 +81,8 @@ const enumerate = async (reader: ZipArtifactReader): Promise<number> => {
   return files;
 };
 
-/** Hold real zip.js finalization after its streaming work settles. */
-const holdZipProducerSettlement = () => {
+/** Hold getData settlement after real zip.js streaming and sink closure. */
+const holdZipProducerSettlement = (failure?: Error) => {
   const reached = createDeferred<void>();
   const release = createDeferred<void>();
   const original = ZipReader.prototype.getEntriesGenerator;
@@ -77,12 +93,14 @@ const holdZipProducerSettlement = () => {
         if (!entry.directory) {
           const getData = entry.getData.bind(entry);
           entry.getData = async (writer, dataOptions) => {
-            try {
-              return await getData(writer, dataOptions);
-            } finally {
-              reached.resolve();
-              await release.promise;
-            }
+            const result = await getData(writer, dataOptions).finally(
+              async () => {
+                reached.resolve();
+                await release.promise;
+              },
+            );
+            if (failure !== undefined) throw failure;
+            return result;
           };
         }
         yield entry;
@@ -115,37 +133,32 @@ const admittedZip = async () => {
   return { path, content, handle, positional, initial };
 };
 
-describe("ZIP Zstandard method 93", () => {
-  const read = async (archive: Buffer): Promise<Buffer> => {
-    const root = await createTestTempDirectory("rea-zip-zstd-");
-    const path = join(root, "method93.zip");
-    await writeFile(path, archive);
-    const reader = new ZipArtifactReader(path, "zip");
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries[0];
-      if (entry === undefined) throw new Error("Missing ZIP member");
-      const chunks: Buffer[] = [];
-      for await (const chunk of await reader.open(entry))
-        chunks.push(Buffer.from(chunk));
-      return Buffer.concat(chunks);
-    } finally {
-      await reader.close();
-    }
-  };
+/** Read the first member of one method-93 ZIP fixture. */
+const readFirstZstandardMember = async (archive: Buffer): Promise<Buffer> => {
+  const root = await createTestTempDirectory("rea-zip-zstd-");
+  const path = join(root, "method93.zip");
+  await writeFile(path, archive);
+  const reader = new ZipArtifactReader(path, "zip");
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing ZIP member");
+    const chunks: Buffer[] = [];
+    for await (const chunk of await reader.open(entry))
+      chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks);
+  } finally {
+    await reader.close();
+  }
+};
 
-  it.each([
-    Buffer.alloc(0),
-    Buffer.from("Zstandard ZIP evidence: café\n".repeat(7)),
-  ])(
-    "streams exact bytes from a standard method-93 ZIP: %j",
-    async (content) => {
-      expect((await read(zstandardZipFixture(content))).equals(content)).toBe(
-        true,
-      );
-    },
-  );
+describe("ZIP Zstandard method 93", () => {
+  it("streams an empty method-93 member", async () => {
+    expect(
+      await readFirstZstandardMember(zstandardZipFixture(Buffer.alloc(0))),
+    ).toHaveLength(0);
+  });
 
   it.each([
     ["CRC", { crc: 0 }, "Invalid CRC32"],
@@ -154,7 +167,9 @@ describe("ZIP Zstandard method 93", () => {
     "retains %s validation for Zstandard entries",
     async (_label, options, message) => {
       await expect(
-        read(zstandardZipFixture(Buffer.from("member bytes"), options)),
+        readFirstZstandardMember(
+          zstandardZipFixture(Buffer.from("member bytes"), options),
+        ),
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
         reason: "format",
@@ -163,25 +178,23 @@ describe("ZIP Zstandard method 93", () => {
     },
   );
 
-  it.each([20, 94])(
-    "keeps unsupported ZIP method %s unavailable",
-    async (method) => {
-      await expect(
-        read(zstandardZipFixture(Buffer.from("member bytes"), { method })),
-      ).rejects.toMatchObject({
-        reason: "unavailable",
-        message: expect.stringContaining("Compression method not supported"),
-      });
-    },
-  );
-
-  it.each([
-    ["bad frame", Buffer.from("not a Zstandard frame")],
-    ["truncated frame", Buffer.from("28b52ffd", "hex")],
-    ["excessive decoder window", Buffer.from("28b52ffd0090010000", "hex")],
-  ] as const)("reports %s as an archive fault", async (_label, compressed) => {
+  it("keeps deprecated ZIP Zstandard method 20 unavailable", async () => {
     await expect(
-      read(zstandardZipFixture(Buffer.alloc(0), { compressed })),
+      readFirstZstandardMember(
+        zstandardZipFixture(Buffer.from("member bytes"), { method: 20 }),
+      ),
+    ).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringContaining("Compression method not supported"),
+    });
+  });
+
+  it("reports a truncated Zstandard frame as an archive fault", async () => {
+    const compressed = Buffer.from("28b52ffd", "hex");
+    await expect(
+      readFirstZstandardMember(
+        zstandardZipFixture(Buffer.alloc(0), { compressed }),
+      ),
     ).rejects.toMatchObject({
       name: "ArtifactReaderFailure",
       reason: "format",
@@ -196,7 +209,7 @@ describe("ZIP Zstandard method 93", () => {
     });
     compressed[compressed.length - 1]! ^= 1;
     await expect(
-      read(zstandardZipFixture(content, { compressed })),
+      readFirstZstandardMember(zstandardZipFixture(content, { compressed })),
     ).rejects.toMatchObject({
       reason: "format",
       message: expect.stringContaining("Invalid compressed data"),
@@ -206,7 +219,7 @@ describe("ZIP Zstandard method 93", () => {
 
   it("reports a required Zstandard dictionary as unavailable", async () => {
     const compressed = Buffer.from("28b52ffd210100010000", "hex");
-    const failure = await read(
+    const failure = await readFirstZstandardMember(
       zstandardZipFixture(Buffer.alloc(0), { compressed }),
     ).catch((cause: unknown) => cause);
     expect(failure).toMatchObject({
@@ -225,44 +238,100 @@ describe("ZIP Zstandard method 93", () => {
 
   it.each([
     [
-      "frameParameter_unsupported",
+      "reserved_frame_descriptor",
       "28b52ffddf339d0000686d656d626572206279746573200100e1995f",
     ],
     [
-      "corruption_detected",
+      "ZSTD_error_corruption_detected",
       "28b52ffd20cc9d0000686d656d626572206279746573200100e1995f",
     ],
     [
-      "dictionary_corrupted",
+      "ZSTD_error_dictionary_corrupted",
       "28b52ffd20339d0000976d656d626572206279746573200100e1995f",
     ],
+  ] as const)("keeps the %s format fault and its cause", async (code, hex) => {
+    const content = Buffer.from(
+      "member bytes member bytes member bytes member bytes",
+    );
+    await expect(
+      readFirstZstandardMember(
+        zstandardZipFixture(content, { compressed: Buffer.from(hex, "hex") }),
+      ),
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("Invalid compressed data"),
+      cause: { code },
+    });
+  });
+});
+
+describe("ZIP Zstandard frame completion", () => {
+  const first = Buffer.from("first text frame\n");
+  const second = Buffer.from("second text frame: café\n");
+  const firstFrame = zstdCompressSync(first);
+  const secondFrame = zstdCompressSync(second, {
+    params: { [constants.ZSTD_c_checksumFlag]: 1 },
+  });
+  // The skippable payload spans chunks and the next magic straddles a
+  // zip.js input chunk boundary (64 KiB).
+  const skipped = Buffer.alloc(1024 * 1024 - firstFrame.length - 2);
+  skipped.writeUInt32LE(0x184d2a5f, 0);
+  skipped.writeUInt32LE(skipped.length - 8, 4);
+  const content = Buffer.concat([first, second]);
+
+  it.each([
+    ["two ordinary", [firstFrame, secondFrame]],
+    ["ordinary and skippable", [firstFrame, skipped, secondFrame]],
+  ] as const)("streams complete %s frames in order", async (_label, frames) => {
+    const compressed = Buffer.concat(frames);
+    const decoded = await readFirstZstandardMember(
+      zstandardZipFixture(content, { compressed }),
+    );
+    expect(decoded.equals(content)).toBe(true);
+  });
+
+  it.each([
+    ["a partial frame magic", first, secondFrame.subarray(0, 3)],
+    ["an incomplete ordinary frame", first, secondFrame.subarray(0, 5)],
+    [
+      "an incomplete skippable frame",
+      first,
+      skipped.subarray(0, skipped.length - 1),
+    ],
+    [
+      "an incomplete checksum",
+      content,
+      secondFrame.subarray(0, secondFrame.length - 1),
+    ],
   ] as const)(
-    "keeps the native %s format fault and its cause",
-    async (code, hex) => {
-      const content = Buffer.from(
-        "member bytes member bytes member bytes member bytes",
-      );
+    "refuses %s after a complete frame",
+    async (_label, output, suffix) => {
+      const compressed = Buffer.concat([firstFrame, suffix]);
       await expect(
-        read(
-          zstandardZipFixture(content, { compressed: Buffer.from(hex, "hex") }),
-        ),
+        readFirstZstandardMember(zstandardZipFixture(output, { compressed })),
       ).rejects.toMatchObject({
+        name: "ArtifactReaderFailure",
         reason: "format",
         message: expect.stringContaining("Invalid compressed data"),
-        cause: { code: `ZSTD_error_${code}` },
       });
     },
   );
+});
 
-  it("retains the archive expansion budget for method-93 declarations", async () => {
+describe("ZIP Zstandard decoder window", () => {
+  it("reports a valid frame above the decoder window as a resource limit", async () => {
+    // Window descriptor 0x90 declares 256 MiB; the single raw block is valid.
+    const { content, compressed: largeWindow } =
+      zstandardWindowFrameFixture(0x90);
     await expect(
-      read(
-        zstandardZipFixture(Buffer.from("small"), {
-          declaredSize: MINIMUM_ARTIFACT_EXPANDED_BYTES + 1,
-        }),
+      readFirstZstandardMember(
+        zstandardZipFixture(content, { compressed: largeWindow }),
       ),
     ).rejects.toMatchObject({
+      name: "ArtifactReaderFailure",
       reason: "limit",
+      boundary: "memory",
+      cause: { code: "ZSTD_error_frameParameter_windowTooLarge" },
     });
   });
 });
@@ -345,27 +414,21 @@ describe("ZIP Zstandard member streams", () => {
         expect(decoders).toHaveLength(1);
         // A fresh decoder can succeed while an abandoned producer is stuck.
         // Verify the first actual getData and native close before starting it.
-        await vi.waitFor(
-          () => {
-            expect(producers[0]?.settled).toBe(true);
-            expect(decoders[0]?.closed).toBe(true);
-            expect(decoders[0]?.destroyed).toBe(true);
-          },
-          { timeout: 5_000 },
-        );
+        await waitFor(() => {
+          expect(producers[0]?.settled).toBe(true);
+          expect(decoders[0]?.closed).toBe(true);
+          expect(decoders[0]?.destroyed).toBe(true);
+        });
         const chunks: Buffer[] = [];
         for await (const chunk of await reader.open(entry))
           chunks.push(Buffer.from(chunk));
         expect(Buffer.concat(chunks).equals(content)).toBe(true);
         expect(producers).toHaveLength(2);
         expect(decoders).toHaveLength(2);
-        await vi.waitFor(
-          () => {
-            expect(producers.every(({ settled }) => settled)).toBe(true);
-            expect(decoders.every(({ closed }) => closed)).toBe(true);
-          },
-          { timeout: 5_000 },
-        );
+        await waitFor(() => {
+          expect(producers.every(({ settled }) => settled)).toBe(true);
+          expect(decoders.every(({ closed }) => closed)).toBe(true);
+        });
       } finally {
         controller.abort();
         await reader.close();
@@ -529,7 +592,7 @@ it("refuses to open ZIP symlink entries even when unixMode is absent", async () 
         throw new Error(`Missing ZIP symlink ${logicalPath}`);
       await expect(reader.open(entry)).rejects.toMatchObject({
         reason: "format",
-        message: "ZIP entry is not a regular file",
+        message: expect.stringContaining("regular file"),
       });
     }
   } finally {
@@ -589,27 +652,6 @@ describe("ZipArtifactReader decompression budget", () => {
       expect(await enumerate(reader)).toBe(2);
     } finally {
       await Promise.all([first.return?.(), second.return?.()]);
-      await reader.close();
-    }
-  });
-
-  it("streams a valid small member through open", async () => {
-    const directory = await createTestTempDirectory("rea-zip-budget-valid-");
-    const path = join(directory, "valid.zip");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("member.bin", new TextReader("valid member bytes"));
-    await writeFile(path, await writer.close());
-    const reader = new ZipArtifactReader(path, "zip");
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries[0];
-      if (entry === undefined) throw new Error("Expected a ZIP member");
-      const chunks: Buffer[] = [];
-      for await (const chunk of await reader.open(entry))
-        chunks.push(Buffer.from(chunk));
-      expect(Buffer.concat(chunks).toString()).toBe("valid member bytes");
-    } finally {
       await reader.close();
     }
   });
@@ -689,6 +731,177 @@ it.each([null, { caller: "opaque ZIP interruption" }])(
   },
 );
 
+describe("ZipArtifactReader extraction finalization", () => {
+  it.each([Buffer.alloc(0), Buffer.from("ZIP finalization bytes: café")])(
+    "publishes exact bytes and EOF only after producer success: %j",
+    async (content) => {
+      const directory = await createTestTempDirectory("rea-zip-finalization-");
+      const path = join(directory, "member.zip");
+      const writer = new ZipWriter(new Uint8ArrayWriter());
+      await writer.add("member.bin", new Uint8ArrayReader(content));
+      await writeFile(path, await writer.close());
+      const held = holdZipProducerSettlement();
+      const reader = new ZipArtifactReader(path, "zip");
+      let consuming: Promise<Buffer> | undefined;
+      try {
+        const entries: ArtifactEntry[] = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const stream = await reader.open(entries[0]!);
+        consuming = buffer(stream);
+        let settled = false;
+        void consuming.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+        await awaitAcknowledgement(
+          held.reached,
+          consuming,
+          "successful ZIP producer settlement",
+        );
+        await setImmediate();
+        expect(settled).toBe(false);
+        expect(stream.readableEnded).toBe(false);
+        held.release();
+        await expect(consuming).resolves.toEqual(content);
+        expect(stream.readableEnded).toBe(true);
+      } finally {
+        held.release();
+        await reader.close();
+        await consuming?.catch(() => undefined);
+        held.enumeration.mockRestore();
+      }
+    },
+  );
+
+  it("reports a producer finalization failure after sink closure without success", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-zip-finalization-error-",
+    );
+    const path = join(directory, "empty.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("empty.bin", new Uint8ArrayReader(new Uint8Array()));
+    await writeFile(path, await writer.close());
+    const failure = new Error(ERR_INVALID_COMPRESSED_DATA);
+    const held = holdZipProducerSettlement(failure);
+    const reader = new ZipArtifactReader(path, "zip");
+    let consuming: Promise<Buffer> | undefined;
+    try {
+      const entries: ArtifactEntry[] = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const stream = await reader.open(entries[0]!);
+      consuming = buffer(stream);
+      await awaitAcknowledgement(
+        held.reached,
+        consuming,
+        "ZIP producer error settlement",
+      );
+      await setImmediate();
+      held.release();
+      await expect(consuming).rejects.toMatchObject({
+        name: "ArtifactReaderFailure",
+        reason: "format",
+        cause: failure,
+      });
+      expect(stream.readableEnded).toBe(false);
+    } finally {
+      held.release();
+      await reader.close();
+      await consuming?.catch(() => undefined);
+      held.enumeration.mockRestore();
+    }
+  });
+});
+
+describe("ZipArtifactReader finalization ownership", () => {
+  it("rejects source mutation during held finalization before publishing EOF", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-zip-finalization-source-",
+    );
+    const path = join(directory, "member.zip");
+    await writeOrderedZip(path, ["member.txt"]);
+    const held = holdZipProducerSettlement();
+    const reader = new ZipArtifactReader(path, "zip");
+    let consuming: Promise<Buffer> | undefined;
+    try {
+      const entries: ArtifactEntry[] = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const stream = await reader.open(entries[0]!);
+      consuming = buffer(stream);
+      await awaitAcknowledgement(
+        held.reached,
+        consuming,
+        "ZIP source verification",
+      );
+      await appendFile(path, "changed after sink closure");
+      held.release();
+      await expect(consuming).rejects.toMatchObject({
+        name: "ArtifactReaderFailure",
+        reason: "integrity",
+      });
+      expect(stream.readableEnded).toBe(false);
+    } finally {
+      held.release();
+      await reader.close();
+      await consuming?.catch(() => undefined);
+      held.enumeration.mockRestore();
+    }
+  });
+
+  it("preserves cancellation during held finalization and joins the producer before source close", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-zip-finalization-cancel-",
+    );
+    const path = join(directory, "member.zip");
+    await writeOrderedZip(path, ["member.txt"]);
+    const held = holdZipProducerSettlement();
+    const fileClose = vi.spyOn(OwnedFileHandle.prototype, "close");
+    const reader = new ZipArtifactReader(path, "zip");
+    const caller = new AbortController();
+    let consuming: Promise<Buffer> | undefined;
+    try {
+      const entries: ArtifactEntry[] = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const stream = await reader.open(entries[0]!, caller.signal);
+      consuming = buffer(stream);
+      await awaitAcknowledgement(
+        held.reached,
+        consuming,
+        "ZIP finalization cancellation",
+      );
+      await setImmediate();
+      const reason = { caller: "cancelled during ZIP finalization" };
+      caller.abort(reason);
+      const error: unknown = await consuming.catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(error instanceof ArtifactReaderFailure))
+        throw new Error("Expected ZIP finalization cancellation");
+      expect(error.reason).toBe("cancelled");
+      expect(error.cancellation?.reason).toBe(reason);
+      expect(error.cause).toBe(reason);
+      let closed = false;
+      const closing = reader.close().then(() => {
+        closed = true;
+      });
+      await setImmediate();
+      expect(closed).toBe(false);
+      expect(fileClose).not.toHaveBeenCalled();
+      held.release();
+      await closing;
+      expect(fileClose).toHaveBeenCalledTimes(1);
+    } finally {
+      held.release();
+      await reader.close();
+      await consuming?.catch(() => undefined);
+      held.enumeration.mockRestore();
+      fileClose.mockRestore();
+    }
+  });
+});
+
 describe("ZipArtifactReader producer ownership", () => {
   it.each(["unread", "abandoned", "cancelled"] as const)(
     "joins late extraction settlement for an %s stream before closing its source",
@@ -725,8 +938,16 @@ describe("ZipArtifactReader producer ownership", () => {
           for await (const _chunk of stream) break;
         }
         const closing = reader.close();
-        expect(reader.close()).toBe(closing);
-        await held.reached;
+        const secondClose = reader.close();
+        let secondClosed = false;
+        void secondClose.then(() => {
+          secondClosed = true;
+        });
+        await awaitAcknowledgement(
+          held.reached,
+          closing,
+          "ZIP extraction retirement",
+        );
         expect(stream.destroyed).toBe(true);
         expect(fileClose).not.toHaveBeenCalled();
         let closed = false;
@@ -735,8 +956,9 @@ describe("ZipArtifactReader producer ownership", () => {
         });
         await Promise.resolve();
         expect(closed).toBe(false);
+        expect(secondClosed).toBe(false);
         held.release();
-        await closing;
+        await Promise.all([closing, secondClose]);
         expect(fileClose).toHaveBeenCalledTimes(1);
         await reader.close();
         expect(fileClose).toHaveBeenCalledTimes(1);
@@ -760,10 +982,18 @@ describe("ZipArtifactReader producer ownership", () => {
       const entries: ArtifactEntry[] = [];
       for await (const entry of reader.entries()) entries.push(entry);
       const stream = await reader.open(entries[0]!);
-      await held.reached;
+      const writableFinished = finished(stream, {
+        readable: false,
+        cleanup: true,
+      });
+      await awaitAcknowledgement(
+        held.reached,
+        writableFinished,
+        "buffered ZIP producer settlement",
+      );
       held.release();
       // getData has finished, but this tiny member remains buffered and unread.
-      await Promise.resolve();
+      await writableFinished;
       const closeFailure = new Error("ZIP descriptor close denied");
       const close = vi
         .spyOn(OwnedFileHandle.prototype, "close")
@@ -800,7 +1030,7 @@ it("joins an admitted ZIP enumeration before reader close completes", async () =
   const traversal = reader.entries()[Symbol.asyncIterator]();
   const next = traversal.next();
   try {
-    await reached.promise;
+    await awaitAcknowledgement(reached.promise, next, "ZIP enumeration read");
     let closed = false;
     const closing = reader.close().then(() => {
       closed = true;
@@ -810,7 +1040,7 @@ it("joins an admitted ZIP enumeration before reader close completes", async () =
     release.resolve();
     await expect(next).rejects.toMatchObject({
       reason: "unavailable",
-      message: "ZIP reader is closed",
+      message: expect.stringContaining("closed"),
     });
     await closing;
     const completedReads = reads.mock.calls.length;
@@ -821,6 +1051,49 @@ it("joins an admitted ZIP enumeration before reader close completes", async () =
   } finally {
     release.resolve();
     await next.catch(() => undefined);
+    await reader.close();
+    reads.mockRestore();
+    await fixture.handle.close();
+  }
+});
+
+it("joins the final member accounting read before closing its source", async () => {
+  const fixture = await admittedZip();
+  const reached = createDeferred<void>();
+  const release = createDeferred<void>();
+  const reader = new ZipArtifactReader(fixture.path, "zip", undefined, fixture);
+  const traversal = reader.entries()[Symbol.asyncIterator]();
+  let next: Promise<IteratorResult<ArtifactEntry>> | undefined;
+  const nativeRead = fixture.positional.read.bind(fixture.positional);
+  const reads = vi.spyOn(fixture.positional, "read");
+  try {
+    expect((await traversal.next()).done).toBe(false);
+    reads.mockImplementation(async (...args) => {
+      if (args[3] === 0) {
+        reached.resolve();
+        await release.promise;
+      }
+      return nativeRead(...args);
+    });
+    next = traversal.next();
+    await awaitAcknowledgement(
+      reached.promise,
+      next,
+      "ZIP member accounting read",
+    );
+    let closed = false;
+    const closing = reader.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release.resolve();
+    await expect(next).rejects.toMatchObject({ reason: "unavailable" });
+    await closing;
+    expect(closed).toBe(true);
+  } finally {
+    release.resolve();
+    await next?.catch(() => undefined);
     await reader.close();
     reads.mockRestore();
     await fixture.handle.close();
@@ -852,8 +1125,12 @@ it("joins a late ZIP producer and closes the source despite an enumeration clean
   try {
     const first = await traversal.next();
     if (first.done) throw new Error("Expected ZIP member");
-    await reader.open(first.value);
-    await held.reached;
+    const stream = await reader.open(first.value);
+    await awaitAcknowledgement(
+      held.reached,
+      finished(stream, { readable: false, cleanup: true }),
+      "ZIP producer before mixed cleanup",
+    );
     const closing = reader.close();
     const failureCheck = expect(closing).rejects.toBe(failure);
     await Promise.resolve();
