@@ -21,7 +21,7 @@
 
 <a href="https://discord.com/invite/GkcryMnJDM"><img alt="Join the REA community on Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
-[Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [Build RL environments](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
+[Quick start](#quick-start) · [Showcases](#showcases) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Build RL environments](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
 <code>npx rea-agents setup</code>
 
@@ -65,48 +65,27 @@ REA connects your agent to tools for inspecting native binaries, JavaScript and 
 
 Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper, Ghidra, IDA or Kuna installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs no native analysis engine.
 
-> **[Visit the REA website](https://rea.tools/)** for setup instructions, illustrated guides, and real case studies.
-
 ## Quick start
 
-On Linux, Ghidra, JADX, firmware tool launches and static JavaScript/Electron
-analysis require a procps-compatible system `ps` for process ownership
-checks. Recovery steps are in `docs/getting-started/installation.md` under
-"Linux owned-process prerequisite".
+**[Get started at rea.tools](https://rea.tools/get-started/)** for step-by-step
+instructions by operating system, agent, and analysis provider.
 
-### Set up your agent
+### Connect your agent (MCP)
 
-With Node.js and npm installed, run:
+With [Node.js and npm](#what-you-can-analyze) installed, run this from a trusted
+directory outside the project you plan to analyze.
 
 ```bash
 npx rea-agents setup
 ```
 
-Choose your agents, review the proposed changes, and approve them. Setup adds
-REA's MCP server and matching workflow instructions, with backups of existing
-configuration. Restart your agent afterward. Setup records the selected runtime and REA
-entry script directly. If acquired through a package runner, keep its cache entry
-available. Run package acquisition from a trusted directory outside the target
-project. Installation and recovery details are in the setup guide below.
+Choose your agent, review and approve the setup plan, then restart your agent.
+Setup backs up existing configuration and adds REA's MCP connection and
+investigation skill. See the
+[installation guide](docs/getting-started/installation.md) for supported clients,
+plugins, manual registration, and troubleshooting.
 
-Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
-[other agents](docs/getting-started/installation.md#supported-agents). See
-[installation and setup](docs/getting-started/installation.md) for provider configuration,
-manual MCP registration, Claude Code/Codex plugins, and the Cursor Marketplace
-plugin.
-
-MCP advertises compact input schemas to reduce context overhead; guidance a
-compact schema omits follows the tool description. The full tool set and
-canonical server validation are unchanged. See "Compact input schema profile"
-in the MCP contracts guide.
-
-Output schemas are omitted from `tools/list` by default: no model API reads
-them, and REA validates every result itself. Set
-`REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to advertise each output schema within
-a 4,096-byte budget. Both settings keep canonical server-side validation and
-complete structured results. See "Output schemas" in the MCP contracts guide.
-
-### Ask your agent
+Try asking your agent:
 
 ```text
 Understand how search works in the Notes app, show me the evidence, and build a
@@ -115,7 +94,7 @@ similar feature for my project.
 
 Replace Notes with your target app and the feature you want to understand.
 
-### Use the terminal
+### Use REA from the terminal (CLI)
 
 Inspect an extracted JavaScript/Electron app directory or ASAR:
 
@@ -133,130 +112,29 @@ npm install --global rea-agents
 rea --help
 ```
 
-For native analysis, configure a provider first. See the
-[CLI and Evidence guide](docs/getting-started/cli.md) for native commands, provider selection,
-snapshots and scripting.
+For native analysis, configure a provider first. The
+[CLI and Evidence guide](docs/getting-started/cli.md) covers provider selection,
+native commands, snapshots, and scripting. For Linux prerequisites, see the
+[installation guide](docs/getting-started/installation.md#linux-owned-process-prerequisite).
 
 ### Update REA
 
-REA changes quickly, and new releases include frequent bug fixes. Keep your
-installation up to date.
-
-For a CLI installed with `npm install --global` or `bun add --global`:
+For a global npm or Bun installation, run the updater and follow its setup
+instructions.
 
 ```bash
 rea update
 ```
 
-`rea --update` is an alias for this verified workflow and accepts the same global
-output flags. Use `rea update` when combining it with other command controls.
-
-Updater commands retain at most 4 MiB of stdout and stderr combined. Oversized
-metadata replies are rejected after the command exits; verbose installs continue
-with bounded diagnostics. Human progress output respects terminal backpressure
-and waits for submitted writes to finish.
-
-Bun global updates require Bun 1.2.17 or later. With an older Bun release,
-upgrade Bun manually before running `rea update`.
-
-To refresh your agent registrations and skill, run the setup command printed
-by the update.
-
-If you use `npx`, update your agent setup with:
+If you use `npx`, refresh your agent setup with:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-Review the setup changes and restart your agent. For one-off CLI commands,
-use `npx rea-agents@latest` followed by the command. With Bun, use
-`bunx rea-agents@latest` in place of `npx rea-agents@latest`.
-
-## How REA works
-
-Your agent calls REA through MCP to inspect the target and trace relevant code.
-REA returns findings with their evidence. The agent uses them to ask follow-up
-questions, explain the behavior, or write and test an implementation.
-CLI commands use the same workflows.
-
-![REA investigation flow: your agent asks about a local target, REA inspects and traces it using analysis tools, and the agent uses the returned code, references and unknowns to explain, implement and test.](website/public/assets/figures/rea-investigation-flow.svg)
-
-[Open the full-size figure](website/public/assets/figures/rea-investigation-flow.svg).
-
-<a id="current-status"></a>
-
-## What you can analyze
-
-REA requires Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+, plus npm.
-Additional tools and host support depend on the target:
-
-| Target                  | What REA returns                                                                                  | Requirements and guide                                                                                                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Desktop installations   | Runtime candidates, supporting files, component markers and next probes                           | Built-in bounded directory/header inspection; [desktop applications](docs/desktop-applications.md)                                                                   |
-| Native binaries         | Pseudocode, assembly, strings, symbols, calls and references                                      | Hopper, Ghidra, IDA or Kuna; [native analysis](docs/guides/native/native-investigation.md)                                                                           |
-| Offline ELF layout      | Sections, segments, original symbols/relocations and static mitigation candidates                 | Caller-supplied pwntools on Linux x64; [binary diagnostics](docs/guides/native/binary-diagnostics.md)                                                                |
-| Go binaries             | Embedded compiler version, modules, replacements and build settings                               | Built-in static ELF/PE/thin Mach-O inspection; no Go installation required                                                                                           |
-| GPU code objects        | CUDA/HIP targets, selected kernel parameters and resources, retained PTX text                     | Built-in static ELF/PE/fatbin/CUBIN/PTX inspection; [GPU code objects](docs/gpu-code-objects.md)                                                                     |
-| Model artifacts         | GGUF / safetensors metadata, tensor declarations and derived totals                               | Built-in header inspection; optional full-file hash; [model files](docs/model-artifacts.md)                                                                          |
-| IL2CPP metadata         | Unity global-metadata.dat assembly images, type and method names and index ranges                 | Built-in static decoding of versions 24, 27, 29, 31 and 39; no Unity required                                                                                        |
-| Godot PCK               | Archive inventory and extraction, original header/directory facts and selected content identities | Built-in static formats 2, 3 and 4; no Godot required                                                                                                                |
-| Rust binaries           | Embedded cargo-auditable crate names, versions, sources and dependency edges                      | Built-in static ELF/PE/thin Mach-O/WebAssembly module inspection; [Rust binaries](docs/rust-binaries.md)                                                             |
-| PE certificates         | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                      | Built-in static PE inspection; [PE certificates](docs/pe-certificates.md)                                                                                            |
-| PE imports              | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                        | Built-in static PE inspection; [PE imports](docs/pe-imports.md)                                                                                                      |
-| Windows shortcuts       | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                      | Built-in static LNK inspection; [Windows shortcuts](docs/guides/native/windows-shortcut.md)                                                                          |
-| ELF notes               | PT_NOTE/SHT_NOTE owners, types, and supported note metadata                                       | Built-in static ELF inspection; [ELF notes](docs/elf-notes.md)                                                                                                       |
-| DWARF compile units     | Compile-unit name, directory, producer, language, and dwo_name                                    | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](docs/guides/native/dwarf-units.md)                                                             |
-| ELF dependencies        | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                             | Built-in static ELF inspection; [ELF dependencies](docs/elf-dependencies.md)                                                                                         |
-| Binary hardening        | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                               | Built-in static header inspection; [binary hardening](docs/binary-hardening.md)                                                                                      |
-| Apple IPS crashes       | .ips metadata, threads, images, registers and documented crash classes                            | Built-in static JSON inspection; [Apple IPS](docs/apple-ips.md)                                                                                                      |
-| Linux kernel modules    | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                       | Built-in static ELF inspection; [kernel modules](docs/kernel-modules.md)                                                                                             |
-| Erlang BEAM             | IFF chunks, atoms, exports, imports, lambdas and the Code header                                  | Built-in static BEAM inspection; [Erlang BEAM](docs/erlang-beam.md)                                                                                                  |
-| NuGet packages          | Package identity, dependency groups, license, repository and ZIP contents                         | Built-in static .nupkg inspection; [NuGet packages](docs/guides/managed/nuget-nupkg.md)                                                                              |
-| WASM artifact           | Validation, sections, exact import/export WAT forms and decoded WAT                               | Caller-supplied WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                 |
-| EVM bytecode            | Dispatch selectors, byte offsets, inferred arguments and mutability                               | Local raw/hex carrier on Linux x64; [offline EVM guide](docs/guides/evm/evm-bytecode.md)                                                                             |
-| SQLite databases        | Tables, columns, indexes, views, triggers and selected ordinary-table rows                        | Local database/WAL snapshot; Node.js 24.x >=24.15 or 26+ with native SQLite limits                                                                                   |
-| Recorded Linux crashes  | Raw notes, every recorded thread's registers/signals and optional mapping candidates              | Caller-supplied pwntools on Linux x64; optional GDB/pwndbg; [recorded crashes](docs/guides/native/recorded-crashes.md)                                               |
-| JavaScript / Electron   | Modules, imports, source maps, routes, IPC, native add-ons, `rea audit-release-exposure`          | Node.js and npm; Linux: procps-compatible `ps`; [application analysis](docs/guides/javascript/javascript-application-workflows.md)                                   |
-| Websites                | Page structure, scripts, network observations and requested screenshots                           | A Chrome-family browser; [browser analysis](docs/guides/web/browser-observation.md)                                                                                  |
-| Saved network captures  | Requests, responses, exposed payloads and source locations                                        | HAR or Fiddler Everywhere SAZ; mitmdump on Linux for native mitmproxy; [capture guide](docs/guides/web/web-network-captures.md)                                      |
-| .NET assemblies         | Metadata, CIL instructions, declared native dependencies and build comparisons                    | None (static only); [managed-code guide](docs/guides/managed/managed-code-analysis.md)                                                                               |
-| Android APKs            | Manifest declarations, classes, decompiled methods and references                                 | Headless JADX and a full JDK on Linux/macOS/Windows x64; [Android guide](docs/guides/android/android-analysis.md)                                                    |
-| APK signatures          | v1/v2/v3/v3.1 signers, certificate fingerprints, key rotation and digest self-consistency         | None (static only); `inspect_apk_signature`                                                                                                                          |
-| Android devices         | Devices, packages, processes, logs, dumps, screen captures, and APK/file transfers                | Caller-supplied adb (emulator or hardware); [ADB guide](docs/guides/android/adb-device-analysis.md)                                                                  |
-| JEB projects            | Engine-backed project units, artifact digests and type/method pseudo-code                         | A caller-started JEB client serving MCP, selected with REA_JEB_MCP_URL; [JEB guide](docs/providers/jeb-analysis.md)                                                  |
-| Android resources       | Decoded manifest, string tables, locales and version facts                                        | Caller-supplied Apktool launcher; [resource guide](docs/guides/android/apktool-resource-analysis.md)                                                                 |
-| Flutter apps            | Dart snapshot hash, per-ABI library digests and engine build provenance                           | None (static APK parsing); [Flutter guide](docs/guides/android/flutter-analysis.md)                                                                                  |
-| Firmware                | Regions, extraction results and native-analysis handoffs                                          | Bundled UEFI/NVAR; external Binwalk/Unblob on Linux; [firmware guide](docs/guides/firmware/firmware-analysis.md)                                                     |
-| Recorded packets        | Selected fields, repeated values, filters and decode-as rules                                     | Linux: TShark 4.x + prlimit; [capture guide](docs/guides/data/packet-captures.md)                                                                                    |
-| Packet summaries        | Endpoints, DNS, TLS SNI, protocol distribution and HTTP requests                                  | Caller-supplied tshark and capinfos (Linux-verified); [pcap guide](docs/guides/data/pcap-analysis.md)                                                                |
-| Recorded logic signals  | Decoder annotations, sample ranges and diagnostics                                                | Linux: sigrok-cli 0.7.2 + prlimit; [signal recordings](docs/guides/signals/signal-recordings.md)                                                                     |
-| Packages and resources  | File inventories, digests, plists, Apple bundle anatomy and extracted resources                   | [Artifact and JavaScript guide](docs/guides/javascript/javascript-artifact-reconstruction.md), [Apple applications](docs/guides/apple/apple-application-analysis.md) |
-| Process behavior        | Terminal output, interactions, exit and filesystem observations, and run comparisons              | Linux/macOS with a native PTY; [process capture](docs/guides/runtime/process-capture.md)                                                                             |
-| PyInstaller executables | CArchive members, Python version, entry scripts and extracted bytecode                            | None (static only); [Python packaged applications](docs/python-packaged-applications.md)                                                                             |
-| Deno compile binaries   | Virtual files, entry point, recorded options, npm snapshot length                                 | None (static only); [Deno compile executables](docs/deno-standalone.md)                                                                                              |
-
-Static JavaScript and .NET inspection read the supplied files without running
-the application. Runtime capture runs or interacts with the selected target
-using your user permissions; each runtime guide describes its effects.
-
-For offline native-binary inspection, REA also supports caller-supplied GNU
-objdump and Rizin. See the [reverse-engineering tools guide](docs/reverse-engineering-tools.md)
-for provider setup, CLI commands, and Evidence limitations. REA does not install
-or update either provider.
-
-<a id="choosing-a-deep-analysis-provider"></a>
-
-Native formats and host support vary by provider. See
-[Hopper and Ghidra setup](docs/getting-started/installation.md#hopper), the
-[IDA guide](docs/providers/ida-provider.md) (including an optional native MCP bridge), the
-[Kuna decompiler guide](docs/kuna-provider.md), and
-[experimental Windows Ghidra support](docs/providers/windows-ghidra-p0.md).
-Ghidra also supports [16-bit DOS analysis](docs/providers/ghidra-dos.md).
-For large binaries, raise the provider's startup deadline with
-`REA_GHIDRA_STARTUP_TIMEOUT_MS` or `REA_HOPPER_STARTUP_TIMEOUT_MS`.
-For provider selection, see the [CLI guide](docs/getting-started/cli.md#choose-a-provider).
-Check [release availability](docs/getting-started/installation.md#released-package-and-main)
-for features added since the latest npm release.
+Review the setup changes and restart your agent. See
+[update and uninstall instructions](docs/getting-started/installation.md#diagnose-update-and-remove)
+for package runner options and troubleshooting.
 
 ## Showcases
 
@@ -267,42 +145,65 @@ for features added since the latest npm release.
   </picture>
 </a>
 
-### DX-Ball: reconstruct a sound-pan calculation
-
-Follow a sound call into its position-to-pan helper, inspect the instructions,
-and turn incomplete pseudocode into C. The reconstruction passes 3,205
-original-x86 cases and reproduces all 63 compiled function bytes.
-
-[Read the case study](https://rea.tools/showcase/dx-ball/) ·
-[Reconstruction repository](https://github.com/N0zoM1z0/dx-ball)
-
-### Notion: trace the Electron clipboard bridge
-
-Find the renderer's clipboard API, follow it through preload and IPC into the
-main process, and inspect the rich clipboard format.
-
-[Read the case study](https://rea.tools/showcase/notion/)
-
-### TH04: recover a DOS bullet-ring calculation
-
-Inspect the original PC-98 game's 16-bit instructions, recover the fixed and
-aimed angle calculations, and compare the reconstructed C++ with the
-historical compiler output.
-
-[Read the case study](https://rea.tools/showcase/th04/) ·
-[Reconstruction repository](https://github.com/N0zoM1z0/th04)
-
-### Build RL environments with REA
-
-Record a web app session, turn its API into tools, and export an environment an AI agent can use. Run it with AgentEnv, then add tasks and reward checks for RL training or evaluation.
-
-[Read the guide](https://rea.tools/guides/rl-environments/) ·
-[Watch the video](https://x.com/reatools/status/2112574822584918075?s=20)
+<table>
+<tbody>
+<tr>
+<td>
+<h3>DX-Ball: reconstruct a sound-pan calculation</h3>
+<p>Recover a position-to-pan helper from x86 instructions and verify the C reconstruction against 3,205 original-x86 cases and all 63 compiled function bytes.</p>
+<a href="https://rea.tools/showcase/dx-ball/">Read the case study</a> ·
+<a href="https://github.com/N0zoM1z0/dx-ball">Reconstruction repository</a>
+</td>
+</tr>
+<tr>
+<td>
+<h3>Notion: trace the Electron clipboard bridge</h3>
+<p>Follow the renderer’s clipboard API through preload and IPC into the main process to see how Notion handles rich clipboard data.</p>
+<a href="https://rea.tools/showcase/notion/">Read the case study</a>
+</td>
+</tr>
+<tr>
+<td>
+<h3>TH04: recover a DOS bullet-ring calculation</h3>
+<p>Recover fixed and aimed angle calculations from the PC-98 game’s 16-bit instructions and compare the reconstructed C++ with historical compiler output.</p>
+<a href="https://rea.tools/showcase/th04/">Read the case study</a> ·
+<a href="https://github.com/N0zoM1z0/th04">Reconstruction repository</a>
+</td>
+</tr>
+</tbody>
+</table>
 
 If you've used REA on something interesting, we'd love to see it. Share your
 case in an [issue](https://github.com/morluto/rea/issues) or a
 [pull request](https://github.com/morluto/rea/pulls), including the target,
 your question, how REA helped, and what you found.
+
+## How REA works
+
+Your agent uses REA through MCP to inspect a target and trace the relevant code.
+It can use the evidence REA returns to ask follow-up questions, explain behavior,
+or build and test an implementation. The CLI uses the same workflows.
+
+![REA investigation flow: your agent asks about a local target, REA inspects and traces it using analysis tools, and the agent uses the returned code, references and unknowns to explain, implement and test.](website/public/assets/figures/rea-investigation-flow.svg)
+
+[Open the full-size figure](website/public/assets/figures/rea-investigation-flow.svg).
+
+<a id="current-status"></a>
+
+## What you can analyze
+
+REA covers native binaries, JavaScript and Electron apps, websites, .NET
+assemblies, Android apps, firmware, and recorded runtime and network activity.
+
+REA requires Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+, plus npm.
+[Supported targets and requirements](docs/reference/supported-targets.md) lists
+the formats REA accepts, what it returns, and any additional tools or host
+requirements.
+
+<a id="choosing-a-deep-analysis-provider"></a>
+
+For native decompilation, choose a provider that supports your target format
+and host OS. See [choosing a deep analysis provider](docs/reference/supported-targets.md#choosing-a-deep-analysis-provider).
 
 ## Build RL environments
 
