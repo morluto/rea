@@ -1025,26 +1025,18 @@ process.stdout.write(JSON.stringify({
   expect(invocations).toEqual(["decorated", "decorated"]);
 });
 
-it.each(["stable", "replaced", "readonly", "getter", "proxy"])(
-  "normalizes raw ipcMain on entries before %s removal decorators",
-  async (mode) => {
-    const root = await createTestTempDirectory(
-      "rea-electron-hook-ipc-remove-decorator-",
-    );
-    await writeElectronFixture(root);
-    const script = join(root, "ipc-removal-decorator.cjs");
-    await writeFile(
-      script,
-      `const { ipcMain } = require("electron");
-const { EventEmitter } = require("node:events");
-const scenario = (emitter) => {
+it("preserves native bulk removal through application decorators", async () => {
+  // The readonly registration is irreversible within this child.
+  const modes = ["stable", "replaced", "getter", "proxy", "readonly"];
+  const result = await runIpcHookFixture(`const scenario = (emitter, mode) => {
   const seen = [];
   const onListener = () => undefined;
   const onceListener = () => undefined;
+  const prior = Object.getOwnPropertyDescriptor(emitter, "removeListener");
   const nativeRemove = emitter.removeListener;
   const decorate = (name) => function removalDecorator(channel, listener) {
     if (this !== emitter) throw new Error("decorator receiver changed");
-    if (channel === "ch") {
+    if (channel === mode) {
       const label = listener === onListener ? "on" :
         listener.listener === onceListener ? "once" : "unknown";
       seen.push(name + ":" + label);
@@ -1052,87 +1044,58 @@ const scenario = (emitter) => {
     }
     return nativeRemove.call(this, channel, listener);
   };
-  emitter.on("removeListener", (channel) => {
-    if (${JSON.stringify(mode)} === "replaced" && channel === "ch")
+  const observeRemoval = (channel) => {
+    if (mode === "replaced" && channel === mode)
       emitter.removeListener = decorate("replacement");
-  });
-  emitter.on("ch", onListener);
-  emitter.once("ch", onceListener);
+  };
+  emitter.on("removeListener", observeRemoval);
+  emitter.on(mode, onListener);
+  emitter.once(mode, onceListener);
   emitter.removeListener = decorate("first");
-  if (${JSON.stringify(mode)} === "readonly") Object.defineProperty(emitter, "removeListener", {
+  if (mode === "readonly") Object.defineProperty(emitter, "removeListener", {
     value: emitter.removeListener, writable: false, configurable: false,
   });
-  if (${JSON.stringify(mode)} === "getter") Object.defineProperty(emitter, "removeListener", {
+  if (mode === "getter") Object.defineProperty(emitter, "removeListener", {
+    configurable: true,
     get() {
       if (this !== emitter) throw new Error("getter receiver changed");
       return decorate("first");
     },
   });
-  if (${JSON.stringify(mode)} === "proxy") emitter.removeListener = new Proxy(emitter.removeListener, {
+  if (mode === "proxy") emitter.removeListener = new Proxy(emitter.removeListener, {
     get() { throw new Error("decorator metadata must not be read"); },
   });
-  let failure = null;
-  let returnsEmitter = false;
-  try { returnsEmitter = emitter.removeAllListeners("ch") === emitter; }
+  let failure = null, returnsEmitter = false;
+  try { returnsEmitter = emitter.removeAllListeners(mode) === emitter; }
   catch (cause) { failure = cause.message; }
-  return { seen, returns_emitter: returnsEmitter, remaining: emitter.listenerCount("ch"), failure };
+  finally {
+    if (mode !== "readonly") {
+      if (prior) Object.defineProperty(emitter, "removeListener", prior);
+      else delete emitter.removeListener;
+    }
+    nativeRemove.call(emitter, "removeListener", observeRemoval);
+  }
+  return { seen, returnsEmitter, remaining: emitter.listenerCount(mode), failure };
 };
-process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }) + "\\n");
-`,
-    );
-    const execution = await runNode(script, root);
-    expect(execution.code, execution.stderr).toBe(0);
-    const { plain, hooked } = JSON.parse(execution.stdout) as {
-      plain: Record<string, unknown>;
-      hooked: Record<string, unknown>;
-    };
-    expect(plain).toEqual({
-      seen: [
-        "first:once",
-        `${mode === "replaced" ? "replacement" : "first"}:on`,
-      ],
-      returns_emitter: true,
+console.log(JSON.stringify(${JSON.stringify(modes)}.map(mode => ({
+  mode, plain: scenario(new EventEmitter(), mode), hooked: scenario(ipcMain, mode),
+}))));
+`);
+  const rows = result as {
+    mode: string;
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+  }[];
+  expect(rows.map(({ mode }) => mode)).toEqual(modes);
+  for (const { mode, plain, hooked } of rows) {
+    expect(plain, mode).toEqual({
+      seen: ["first:once", mode === "replaced" ? "replacement:on" : "first:on"],
+      returnsEmitter: true,
       remaining: 0,
       failure: null,
     });
-    expect(hooked).toEqual(plain);
-  },
-);
-
-it("preserves native removal before mutated raw listener metadata throws", async () => {
-  const root = await createTestTempDirectory(
-    "rea-electron-hook-ipc-mutated-metadata-",
-  );
-  await writeElectronFixture(root);
-  const script = join(root, "ipc-mutated-listener-metadata.cjs");
-  await writeFile(
-    script,
-    `const { ipcMain } = require("electron");
-const { EventEmitter } = require("node:events");
-const scenario = (emitter) => {
-  const marker = new Error("application metadata failure");
-  let reads = 0;
-  emitter.on("removeListener", () => undefined);
-  emitter.on("ch", () => undefined);
-  Object.defineProperty(emitter.rawListeners("ch")[0], "listener", { get() {
-    reads += 1;
-    throw marker;
-  }});
-  let failure;
-  try { emitter.removeAllListeners("ch"); } catch (cause) { failure = cause; }
-  return { reads, remaining: emitter.listenerCount("ch"), error_preserved: failure === marker };
-};
-process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }) + "\\n");
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const { plain, hooked } = JSON.parse(execution.stdout) as {
-    plain: Record<string, unknown>;
-    hooked: Record<string, unknown>;
-  };
-  expect(plain).toEqual({ reads: 1, remaining: 0, error_preserved: true });
-  expect(hooked).toEqual(plain);
+    expect(hooked, mode).toEqual(plain);
+  }
 });
 
 it("matches native once dispatch and retains only established invocations", async () => {
@@ -1198,7 +1161,7 @@ it("matches native once dispatch and retains only established invocations", asyn
   }
 });
 
-const runIpcDispatchFixture = async (scenario: string): Promise<unknown> => {
+const runIpcHookFixture = async (scenario: string): Promise<unknown> => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-dispatch-");
   await writeElectronFixture(root);
   const script = join(root, "ipc-dispatch.cjs");
@@ -1215,8 +1178,7 @@ ${scenario}`,
 
 it("preserves native callable method reads for on and once dispatch", async () => {
   const modes = ["single-on", "multiple-on", "empty-once", "event-once"];
-  const result =
-    await runIpcDispatchFixture(`const scenario = (emitter, mode) => {
+  const result = await runIpcHookFixture(`const scenario = (emitter, mode) => {
   const calls = [];
   const reads = [];
   const listener = new Proxy(function() { calls.push("first"); }, {
@@ -1266,8 +1228,7 @@ it("preserves native raw callback apply semantics across argument-list types", a
     "missing",
     "primitive",
   ];
-  const result =
-    await runIpcDispatchFixture(`const scenario = (emitter, mode) => {
+  const result = await runIpcHookFixture(`const scenario = (emitter, mode) => {
   let calls = 0, reads = 0, correctReceiver = false, arity = null;
   const event = { sender: { id: 9 } };
   let first = null;
@@ -1405,8 +1366,7 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
 
 it("records on and once invocations without consulting application Array species", async () => {
   const kinds = ["on", "multiple-on", "once"];
-  const result =
-    await runIpcDispatchFixture(`const countInvocations = (kind) => {
+  const result = await runIpcHookFixture(`const countInvocations = (kind) => {
   let count = 0;
   for (const event of globalThis.__reaElectronActiveSnapshot().events)
     if (event.kind === "main-event-invocation" && event.channel === kind) count++;
@@ -1450,8 +1410,7 @@ console.log(JSON.stringify(${JSON.stringify(kinds)}.map(kind => ({
 
 it("preserves opaque custom apply inputs and records gaps without claiming dispatch", async () => {
   const modes = ["array", "arguments", "array-like", "null"];
-  const result =
-    await runIpcDispatchFixture(`const scenario = (emitter, mode) => {
+  const result = await runIpcHookFixture(`const scenario = (emitter, mode) => {
   let calls = 0, reads = 0, exact = false, methodThis = false, arity = null;
   const token = {};
   const listener = function(...args) { calls++; arity = args.length; return token; };
@@ -1509,7 +1468,7 @@ console.log(JSON.stringify({ rows,
 
 it("preserves borrowed intrinsic and custom raw apply receivers", async () => {
   const result =
-    await runIpcDispatchFixture(`const scenario = (emitter, custom) => {
+    await runIpcHookFixture(`const scenario = (emitter, custom) => {
   let originalCalls = 0, borrowedCalls = 0, sameList = false;
   const token = {}, list = [42, 43];
   const channel = custom ? "custom" : "intrinsic";
@@ -3209,75 +3168,63 @@ process.stdout.write(JSON.stringify({
   });
 });
 
-it("passes canonical owned callbacks through post-hook removeAll decorators despite accessor metadata", async () => {
-  const root = await createTestTempDirectory(
-    "rea-electron-hook-remove-all-decorator-accessor-",
-  );
-  await writeElectronFixture(root);
-  const script = join(root, "remove-all-decorator-accessor.cjs");
-  await writeFile(
-    script,
-    `const { EventEmitter } = require("node:events");
-const { ipcMain } = require("electron");
-const scenario = (emitter, hooked) => {
+it("preserves native bulk removal and the original error when listener metadata throws", async () => {
+  const result =
+    await runIpcHookFixture(`const scenario = (emitter, decorated) => {
+  const channel = decorated ? "decorated" : "direct";
   const listener = function original() {};
+  const failure = new Error("metadata getter");
   const removals = [];
   let reads = 0;
-  emitter.on("removeListener", () => {});
-  emitter.on("ch", listener);
-  Object.defineProperty(emitter.rawListeners("ch")[0], "listener", { configurable: true, get() {
-    reads++;
-    throw new Error("metadata getter");
-  }});
-  const capturedRemove = hooked ? emitter.removeListener : EventEmitter.prototype.removeListener;
-  emitter.removeListener = function(channel, callback) {
-    if (channel === "ch") {
-      removals.push({ receiverIsEmitter: this === emitter, callbackIsOriginal: callback === listener });
-      if (callback !== listener) throw new Error("decorator received noncanonical callback");
-    }
-    return Reflect.apply(capturedRemove, this, arguments);
-  };
-  let failure = null;
-  try { emitter.removeAllListeners("ch"); } catch (cause) { failure = cause.message; }
-  return { reads, failure, remaining: emitter.listenerCount("ch"), removals };
-};
-const plain = scenario(new EventEmitter(), false);
-const hooked = scenario(ipcMain, true);
-console.log(JSON.stringify({ plain, hooked,
-  hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const result = JSON.parse(execution.stdout) as {
-    readonly plain: {
-      readonly reads: number;
-      readonly failure: string | null;
-      readonly remaining: number;
-      readonly removals: readonly {
-        readonly receiverIsEmitter: boolean;
-        readonly callbackIsOriginal: boolean;
-      }[];
-    };
-    readonly hooked: {
-      readonly reads: number;
-      readonly failure: string | null;
-      readonly remaining: number;
-      readonly removals: readonly {
-        readonly receiverIsEmitter: boolean;
-        readonly callbackIsOriginal: boolean;
-      }[];
-    };
-    readonly hook_error: boolean;
-  };
-  expect(result.hook_error).toBe(false);
-  expect(result.hooked).toEqual(result.plain);
-  expect(result.plain).toEqual({
-    reads: 1,
-    failure: "metadata getter",
-    remaining: 0,
-    removals: [{ receiverIsEmitter: true, callbackIsOriginal: true }],
+  const observe = () => {};
+  const nativeRemove = emitter.removeListener;
+  const prior = Object.getOwnPropertyDescriptor(emitter, "removeListener");
+  emitter.on("removeListener", observe);
+  emitter.on(channel, listener);
+  Object.defineProperty(emitter.rawListeners(channel)[0], "listener", {
+    configurable: true,
+    get() { reads++; throw failure; },
   });
+  if (decorated) emitter.removeListener = function(channel, callback) {
+    removals.push({ receiverIsEmitter: this === emitter, callbackIsOriginal: callback === listener });
+    if (callback !== listener) throw new Error("decorator received noncanonical callback");
+    return Reflect.apply(nativeRemove, this, arguments);
+  };
+  let sameFailure = false;
+  try { emitter.removeAllListeners(channel); } catch (cause) { sameFailure = cause === failure; }
+  finally {
+    if (prior) Object.defineProperty(emitter, "removeListener", prior);
+    else delete emitter.removeListener;
+    nativeRemove.call(emitter, "removeListener", observe);
+  }
+  return { reads, sameFailure, remaining: emitter.listenerCount(channel), removals };
+};
+const rows = [false, true].map(decorated => ({
+  decorated, plain: scenario(new EventEmitter(), decorated), hooked: scenario(ipcMain, decorated),
+}));
+console.log(JSON.stringify({ rows, hookError: globalThis.__reaElectronActiveSnapshot().hook_error }));
+`);
+  const { rows, hookError } = result as {
+    hookError: boolean;
+    rows: {
+      decorated: boolean;
+      plain: Record<string, unknown>;
+      hooked: Record<string, unknown>;
+    }[];
+  };
+  expect(hookError).toBe(false);
+  expect(rows.map(({ decorated }) => decorated)).toEqual([false, true]);
+  for (const { decorated, plain, hooked } of rows) {
+    expect(plain).toEqual({
+      reads: 1,
+      sameFailure: true,
+      remaining: 0,
+      removals: decorated
+        ? [{ receiverIsEmitter: true, callbackIsOriginal: true }]
+        : [],
+    });
+    expect(hooked).toEqual(plain);
+  }
 });
 
 it("preserves direct removeListener and off cleanup for changed or deleted raw listener links", async () => {
