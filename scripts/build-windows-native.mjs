@@ -144,6 +144,9 @@ try {
     "-static-libgcc",
     "-static-libstdc++",
     "-Wl,--no-insert-timestamp",
+    // Use the linker default image base instead of hashing the output path.
+    // Dynamic-base and the relocation directory still allow Windows ASLR.
+    "-Wl,--disable-auto-image-base",
     `-I${headers}`,
     "native/windows/src/addon.cc",
     inspectionFixture
