@@ -45,6 +45,11 @@ const refusal = (bytes: Uint8Array): string => {
   return result.error;
 };
 
+const byteView = (bytes: Buffer, kind: "Uint8Array" | "Buffer"): Uint8Array =>
+  kind === "Buffer"
+    ? bytes
+    : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
 describe("DOL header parsing", () => {
   it("keeps slot identity while deriving gaps in address order", () => {
     const parsed = parseDolHeader(
@@ -77,34 +82,41 @@ describe("DOL header parsing", () => {
       { address: 0x8000_4028, size: 8 },
     ]);
   });
-  it("accepts a minimal header with one text section", () => {
-    const bytes = dol(
-      {
-        text: [{ offset: 0x100, address: 0x8000_3100, size: 0x40 }],
-        entry: 0x8000_3100,
-        bss: { address: 0x8000_4000, size: 0 },
-      },
-      0x140,
-    );
-    expect(parseDolHeader(bytes)).toEqual({
-      ok: true,
-      value: {
-        sections: [
-          {
-            kind: "text",
-            index: 0,
-            fileOffset: 0x100,
-            address: 0x8000_3100,
-            size: 0x40,
-          },
-        ],
-        bss: { address: 0x8000_4000, size: 0 },
-        bssGaps: [],
-        bssOverlaps: [],
-        entryPoint: 0x8000_3100,
-      },
-    });
-  });
+  it.each(["file", "Uint8Array", "Buffer"] as const)(
+    "accepts a minimal header with one text section from %s",
+    (kind) => {
+      const bytes = dol(
+        {
+          text: [{ offset: 0x100, address: 0x8000_3100, size: 0x40 }],
+          entry: 0x8000_3100,
+          bss: { address: 0x8000_4000, size: 0 },
+        },
+        0x140,
+      );
+      const backing = Buffer.alloc(0x120, 0xff);
+      backing.set(bytes.subarray(0, 0x100), 13);
+      const header = backing.subarray(13, 13 + 0x100);
+      const input = kind === "file" ? bytes : byteView(header, kind);
+      expect(parseDolHeader(input, bytes.length)).toEqual({
+        ok: true,
+        value: {
+          sections: [
+            {
+              kind: "text",
+              index: 0,
+              fileOffset: 0x100,
+              address: 0x8000_3100,
+              size: 0x40,
+            },
+          ],
+          bss: { address: 0x8000_4000, size: 0 },
+          bssGaps: [],
+          bssOverlaps: [],
+          entryPoint: 0x8000_3100,
+        },
+      });
+    },
+  );
 
   it("returns a realistic layout with BSS overlapping a data section", () => {
     const bytes = dol(
@@ -195,6 +207,20 @@ describe("DOL section bounds and alignment (rules 1 to 4)", () => {
       "DOL header is truncated: needs 256 bytes; the file has 255",
     );
   });
+
+  it.each(["Uint8Array", "Buffer"] as const)(
+    "refuses an incomplete %s header inside a larger backing buffer",
+    (kind) => {
+      const backing = Buffer.alloc(0x200);
+      const header = backing.subarray(13, 13 + 0xff);
+      const input = byteView(header, kind);
+      expect(parseDolHeader(input, 0x200)).toEqual({
+        ok: false,
+        error:
+          "DOL header bytes are incomplete: needs 256 bytes; 255 were supplied",
+      });
+    },
+  );
 
   it("refuses a section whose file data starts inside the header (rule 3)", () => {
     const bytes = dol(
