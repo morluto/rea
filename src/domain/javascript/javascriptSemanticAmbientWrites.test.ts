@@ -344,6 +344,53 @@ it.each([
   expect(work(64)).toBeLessThan(3 * small);
 });
 
+it("shares settled call continuations at any depth", () => {
+  const work = (count: number): number => {
+    const source =
+      "function make(){return window;}" +
+      widenedStoreCycle +
+      Array.from(
+        { length: count },
+        (_, index) => `a[k[0]][k[1]].p${index}=make();`,
+      ).join("") +
+      "consume(a);";
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected widened calls fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let reads = 0;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (!t.isAssignmentExpression(node) || !t.isCallExpression(node.right))
+          return;
+        const value = node.right;
+        const type = value.type;
+        Object.defineProperty(value, "type", {
+          get: () => {
+            reads += 1;
+            return type;
+          },
+        });
+      },
+    });
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    const consumption = parsed.program.body.at(-1);
+    if (!t.isExpressionStatement(consumption))
+      throw new Error("Expected consumption site");
+    expect(
+      index.bindings.ambientEscapeEffects
+        .filter(({ node }) => node === consumption.expression)
+        .map(({ path }) => path),
+    ).toEqual([["global", null]]);
+    return reads;
+  };
+
+  const small = work(32);
+  expect(small).toBeGreaterThan(0);
+  expect(work(64)).toBeLessThan(3 * small);
+});
+
 it("merges widened effects with their existing canonical path keys", () => {
   const work = (count: number): number => {
     const source =
