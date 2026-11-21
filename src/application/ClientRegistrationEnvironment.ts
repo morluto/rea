@@ -38,12 +38,13 @@ export interface ProviderRequestBudgetResolver {
     environment: Readonly<Record<string, string>>,
   ): Promise<Result<number | undefined, ConfigurationError>>;
   /**
-   * Environment settings this resolver may read. Unresolved expressions in
-   * these settings block budget derivation; expressions in other settings
-   * stay preserved. An omitted set keeps the fail-closed whole-environment
-   * gate: every unresolved expression blocks the budget.
+   * Environment settings this resolver may read for the selected provider.
+   * Unresolved expressions in those settings block budget derivation. With
+   * no declared dependency function, every unresolved expression blocks it.
    */
-  readonly budgetSettings?: ReadonlySet<string>;
+  readonly budgetSettings?: (
+    provider: AnalysisProviderSelector,
+  ) => ReadonlySet<string>;
 }
 
 export interface ClientRegistrationEnvironmentDetails {
@@ -286,14 +287,20 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
   // The budget gate stays fail-closed: settings the resolver may read must be
   // literals, and an undeclared read set keeps every unresolved expression
   // blocking, because an unreadable budget cannot be treated as absent.
-  const budgetSettings = resolveProviderRequestBudget?.budgetSettings;
+  const { timeoutInputs } = details.value;
+  const budgetSettings =
+    timeoutInputs === undefined
+      ? undefined
+      : resolveProviderRequestBudget?.budgetSettings?.(
+          timeoutInputs.analysisProvider,
+        );
   const unresolved = [...details.value.unresolvedSettings].filter(
     (setting) =>
       (resolveProviderRequestBudget !== undefined &&
         (budgetSettings === undefined || budgetSettings.has(setting))) ||
       TIMEOUT_INPUT_SETTINGS.has(setting),
   );
-  if (details.value.timeoutInputs === undefined || unresolved.length > 0)
+  if (timeoutInputs === undefined || unresolved.length > 0)
     return err(
       new ConfigurationError(
         "Cannot derive a provider request budget from expression-backed settings",
@@ -308,7 +315,7 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
     );
   const resolved = {
     ...details.value,
-    timeoutInputs: details.value.timeoutInputs,
+    timeoutInputs,
   };
   if (resolveProviderRequestBudget === undefined) return ok(resolved);
   return validatedBudget(resolved, resolveProviderRequestBudget, platform);

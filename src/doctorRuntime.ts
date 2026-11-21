@@ -34,6 +34,7 @@ import {
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
+import type { AnalysisProviderSelector } from "./domain/providerSelection.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import {
@@ -390,13 +391,18 @@ export const createSystemDoctorHost = (
     }
     return registration;
   };
-  const budgetProviders = {
-    ida: { setting: IDA_DOCTOR_SETTINGS[0], read: readRegistration },
-    "binary-ninja": {
+  const budgetProviders = [
+    { id: "ida", setting: IDA_DOCTOR_SETTINGS[0], read: readRegistration },
+    {
+      id: "binary-ninja",
       setting: BINARY_NINJA_DOCTOR_SETTINGS[0],
       read: readBinaryNinjaRegistration,
     },
-  } as const;
+  ] as const;
+  const budgetCandidates = (selection: AnalysisProviderSelector) =>
+    budgetProviders.filter(
+      ({ id }) => selection === "auto" || selection === id,
+    );
   const resolveProviderRequestBudget: RetainedProviderRequestBudgetResolver =
     async (
       analysisProvider,
@@ -404,18 +410,8 @@ export const createSystemDoctorHost = (
       resourceScope,
       inspectionSignal,
     ) => {
-      if (
-        analysisProvider !== "ida" &&
-        analysisProvider !== "binary-ninja" &&
-        analysisProvider !== "auto"
-      )
-        return ok(undefined);
-      const candidates =
-        analysisProvider === "auto"
-          ? Object.values(budgetProviders)
-          : [budgetProviders[analysisProvider]];
       let budget: number | undefined;
-      for (const provider of candidates) {
+      for (const provider of budgetCandidates(analysisProvider)) {
         const path = registrationEnvironment[provider.setting];
         if (path === undefined) continue;
         const registration = await provider.read(
@@ -437,9 +433,8 @@ export const createSystemDoctorHost = (
     architecture: host.architecture,
     ...(signal === undefined ? {} : { signal }),
     resolveProviderRequestBudget: Object.assign(resolveProviderRequestBudget, {
-      budgetSettings: new Set(
-        Object.values(budgetProviders).map(({ setting }) => setting),
-      ),
+      budgetSettings: (provider: AnalysisProviderSelector) =>
+        new Set(budgetCandidates(provider).map(({ setting }) => setting)),
     }),
     providerInspections: async (
       resourceScope: RetainedResourceScope,
