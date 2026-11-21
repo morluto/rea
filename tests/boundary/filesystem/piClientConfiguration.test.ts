@@ -791,56 +791,65 @@ describe("Pi project-scoped launcher provenance and fallback", () => {
     expect(piStatus?.remediation).not.toContain(projectConfigPath);
   });
 
-  it("includes project-file change alongside user-launcher update when project disables inherited outdated user registration", async () => {
-    const { home, client } = await piClient();
-    const projectDir = await createTestTempDirectory(
-      "rea-pi-disabled-user-launcher-cwd-",
-    );
-    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-    await trustPiProject(home, projectDir);
+  it.each([
+    { reference: "rea-agents@1.0.0", expected: "rea setup --client pi" },
+    { reference: "rea-agents", expected: "Run rea setup" },
+    { reference: "other-package", expected: "user-registration-file" },
+  ])(
+    "keeps both repairs when Pi disables a project override of $reference",
+    async ({ reference, expected }) => {
+      const { home, client } = await piClient();
+      const projectDir = await createTestTempDirectory(
+        "rea-pi-disabled-user-launcher-cwd-",
+      );
+      vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+      await trustPiProject(home, projectDir);
 
-    const staleCommand = ["npx", "-y", "rea-agents@1.0.0", "mcp"];
+      const staleCommand = ["npx", "-y", reference, "mcp"];
 
-    await writeFile(
-      client.configPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: {
-            command: staleCommand[0],
-            args: staleCommand.slice(1),
+      await writeFile(
+        client.configPath,
+        JSON.stringify({
+          mcpServers: {
+            rea: {
+              command: staleCommand[0],
+              args: staleCommand.slice(1),
+            },
           },
-        },
-      }),
-    );
+        }),
+      );
 
-    const projectConfigDir = join(projectDir, ".pi");
-    await mkdir(projectConfigDir, { recursive: true });
-    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
-    await writeFile(
-      projectConfigPath,
-      JSON.stringify({
-        mcpServers: {
-          rea: {
-            enabled: false,
+      const projectConfigDir = join(projectDir, ".pi");
+      await mkdir(projectConfigDir, { recursive: true });
+      const projectConfigPath = resolve(projectConfigDir, "mcp.json");
+      await writeFile(
+        projectConfigPath,
+        JSON.stringify({
+          mcpServers: {
+            rea: {
+              enabled: false,
+            },
           },
-        },
-      }),
-    );
+        }),
+      );
 
-    const statuses = await readClientRegistrationStatuses(home, undefined, {
-      environment: {},
-    });
-    const piStatus = statuses.find(({ client }) => client === "pi");
-    expect(piStatus).toMatchObject({
-      client: "pi",
-      state: "stale",
-      scope: "project",
-      launcher_scope: "user",
-      config_path: projectConfigPath,
-    });
-    expect(piStatus?.remediation).toContain("rea setup --client pi");
-    expect(piStatus?.remediation).toContain(projectConfigPath);
-  });
+      const statuses = await readClientRegistrationStatuses(home, undefined, {
+        environment: {},
+      });
+      const piStatus = statuses.find(({ client }) => client === "pi");
+      expect(piStatus).toMatchObject({
+        client: "pi",
+        state: "stale",
+        scope: "project",
+        launcher_scope: "user",
+        config_path: projectConfigPath,
+      });
+      expect(piStatus?.remediation).toContain(
+        expected === "user-registration-file" ? client.configPath : expected,
+      );
+      expect(piStatus?.remediation).toContain(projectConfigPath);
+    },
+  );
 });
 
 describe("Pi project-scoped disabled launcher package update", () => {
