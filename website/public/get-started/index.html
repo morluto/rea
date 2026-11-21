@@ -1694,8 +1694,9 @@ npx rea-agents@latest setup</code></pre>
                 the target's function list. Ghidra must be configured first.
               </p>
               <p id="curl-installation">
-                On macOS or Linux, you can also use the curl installer after
-                preparing Node.js:
+                On macOS or Linux, review a release-tagged installer before
+                running it. This example pins 6.9.0. The default-branch script
+                tracks main and is not a pinned release.
               </p>
               <div class="code-block">
                 <div class="code-header">
@@ -1709,7 +1710,10 @@ npx rea-agents@latest setup</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="install-curl">curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash</code></pre>
+                <pre><code id="install-curl">rea_version=6.9.0
+curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh
+less rea-install.sh
+bash rea-install.sh --version "$rea_version"</code></pre>
               </div>
               <p>
                 Follow the setup prompts to connect your agent. If they don't

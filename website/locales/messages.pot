@@ -168,7 +168,7 @@ msgstr ""
 #: website/public/contributors/index.html:1133
 #: website/public/examples/dino-lab/index.html:477 website/public/faq/index.html:575
 #: website/public/first-investigation/index.html:536
-#: website/public/get-started/index.html:1853
+#: website/public/get-started/index.html:1857
 #: website/public/guides/browser/index.html:509 website/public/guides/index.html:303
 #: website/public/guides/javascript/index.html:513
 #: website/public/guides/native/index.html:514
@@ -188,7 +188,7 @@ msgstr ""
 #: website/public/contributors/index.html:1134
 #: website/public/examples/dino-lab/index.html:478 website/public/faq/index.html:576
 #: website/public/first-investigation/index.html:537
-#: website/public/get-started/index.html:1854
+#: website/public/get-started/index.html:1858
 #: website/public/guides/browser/index.html:510 website/public/guides/index.html:304
 #: website/public/guides/javascript/index.html:514
 #: website/public/guides/native/index.html:515
@@ -208,7 +208,7 @@ msgstr ""
 #: website/public/contributors/index.html:1135
 #: website/public/examples/dino-lab/index.html:479 website/public/faq/index.html:577
 #: website/public/first-investigation/index.html:538
-#: website/public/get-started/index.html:1855
+#: website/public/get-started/index.html:1859
 #: website/public/guides/browser/index.html:511 website/public/guides/index.html:305
 #: website/public/guides/javascript/index.html:515
 #: website/public/guides/native/index.html:516
@@ -228,7 +228,7 @@ msgstr ""
 #: website/public/contributors/index.html:1136
 #: website/public/examples/dino-lab/index.html:480 website/public/faq/index.html:578
 #: website/public/first-investigation/index.html:539
-#: website/public/get-started/index.html:1856
+#: website/public/get-started/index.html:1860
 #: website/public/guides/browser/index.html:512 website/public/guides/index.html:306
 #: website/public/guides/javascript/index.html:516
 #: website/public/guides/native/index.html:517
@@ -248,7 +248,7 @@ msgstr ""
 #: website/public/contributors/index.html:1137
 #: website/public/examples/dino-lab/index.html:481 website/public/faq/index.html:579
 #: website/public/first-investigation/index.html:540
-#: website/public/get-started/index.html:1857
+#: website/public/get-started/index.html:1861
 #: website/public/guides/browser/index.html:513 website/public/guides/index.html:307
 #: website/public/guides/javascript/index.html:517
 #: website/public/guides/native/index.html:518
@@ -270,7 +270,7 @@ msgstr ""
 #: website/public/contributors/index.html:1142
 #: website/public/examples/dino-lab/index.html:486 website/public/faq/index.html:584
 #: website/public/first-investigation/index.html:545
-#: website/public/get-started/index.html:1862
+#: website/public/get-started/index.html:1866
 #: website/public/guides/browser/index.html:518 website/public/guides/index.html:312
 #: website/public/guides/javascript/index.html:522
 #: website/public/guides/native/index.html:523
@@ -4342,9 +4342,9 @@ msgstr ""
 #: website/public/get-started/index.html:1242 website/public/get-started/index.html:1317
 #: website/public/get-started/index.html:1343 website/public/get-started/index.html:1360
 #: website/public/get-started/index.html:1603 website/public/get-started/index.html:1662
-#: website/public/get-started/index.html:1681 website/public/get-started/index.html:1703
-#: website/public/get-started/index.html:1746 website/public/get-started/index.html:1776
-#: website/public/get-started/index.html:1797
+#: website/public/get-started/index.html:1681 website/public/get-started/index.html:1704
+#: website/public/get-started/index.html:1750 website/public/get-started/index.html:1780
+#: website/public/get-started/index.html:1801
 msgctxt "page:get-started/index.html"
 msgid "Copy"
 msgstr ""
@@ -4946,7 +4946,7 @@ msgid ""
 "{ph0}Any system:{ph1} drag the folder into a terminal window and its path appears."
 msgstr ""
 
-#: website/public/get-started/index.html:1008 website/public/get-started/index.html:1769
+#: website/public/get-started/index.html:1008 website/public/get-started/index.html:1773
 msgctxt "page:get-started/index.html"
 msgid "In a terminal, put quotes around a path that contains spaces."
 msgstr ""
@@ -5587,11 +5587,13 @@ msgstr ""
 
 #: website/public/get-started/index.html:1696
 msgctxt "page:get-started/index.html"
-msgid "On macOS or Linux, you can also use the curl installer after preparing Node.js:"
+msgid ""
+"On macOS or Linux, review a release-tagged installer before running it. This example "
+"pins 6.9.0. The default-branch script tracks main and is not a pinned release."
 msgstr ""
 
 #. {ph0}: <code>rea setup</code>
-#: website/public/get-started/index.html:1714
+#: website/public/get-started/index.html:1718
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Follow the setup prompts to connect your agent. If they don't appear, run {ph0}."
@@ -5599,7 +5601,7 @@ msgstr ""
 
 #. {ph0}: <code>rea</code>
 #. {ph1}: <code>"$HOME/.local/bin/rea" setup</code>
-#: website/public/get-started/index.html:1718
+#: website/public/get-started/index.html:1722
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5607,18 +5609,18 @@ msgid ""
 "Linux, the default setup command is {ph1}."
 msgstr ""
 
-#: website/public/get-started/index.html:1727
+#: website/public/get-started/index.html:1731
 msgctxt "page:get-started/index.html"
 msgid "Getting help"
 msgstr ""
 
-#: website/public/get-started/index.html:1729
+#: website/public/get-started/index.html:1733
 msgctxt "page:get-started/index.html"
 msgid "If your agent doesn't see REA"
 msgstr ""
 
 #. {ph0}: <code>doctor</code>
-#: website/public/get-started/index.html:1730
+#: website/public/get-started/index.html:1734
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5626,39 +5628,39 @@ msgid ""
 "Codex:"
 msgstr ""
 
-#: website/public/get-started/index.html:1734
+#: website/public/get-started/index.html:1738
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the client check in step 3 with your setup ID. In editor clients, enable REA in "
 "MCP settings and allow its tools in the agent chat."
 msgstr ""
 
-#: website/public/get-started/index.html:1741
+#: website/public/get-started/index.html:1745
 msgctxt "page:get-started/index.html"
 msgid "If a provider needs attention"
 msgstr ""
 
-#: website/public/get-started/index.html:1742
+#: website/public/get-started/index.html:1746
 msgctxt "page:get-started/index.html"
 msgid "Check the provider you're using. For Ghidra:"
 msgstr ""
 
-#: website/public/get-started/index.html:1745
+#: website/public/get-started/index.html:1749
 msgctxt "page:get-started/index.html"
 msgid "Check one provider"
 msgstr ""
 
-#: website/public/get-started/index.html:1757
+#: website/public/get-started/index.html:1761
 msgctxt "page:get-started/index.html"
 msgid "The report gives the failed check and a suggested next step."
 msgstr ""
 
-#: website/public/get-started/index.html:1762
+#: website/public/get-started/index.html:1766
 msgctxt "page:get-started/index.html"
 msgid "Windows, WSL and paths with spaces"
 msgstr ""
 
-#: website/public/get-started/index.html:1763
+#: website/public/get-started/index.html:1767
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use Windows PowerShell for Windows clients and analysis tools. If your agent runs "
@@ -5666,17 +5668,17 @@ msgid ""
 "there. Headless providers run on the same host as REA."
 msgstr ""
 
-#: website/public/get-started/index.html:1772
+#: website/public/get-started/index.html:1776
 msgctxt "page:get-started/index.html"
 msgid "Windows setup command:"
 msgstr ""
 
-#: website/public/get-started/index.html:1789
+#: website/public/get-started/index.html:1793
 msgctxt "page:get-started/index.html"
 msgid "Update or remove REA"
 msgstr ""
 
-#: website/public/get-started/index.html:1790
+#: website/public/get-started/index.html:1794
 msgctxt "page:get-started/index.html"
 msgid ""
 "To refresh your agent connection, run the latest setup command again, review its plan "
@@ -5685,7 +5687,7 @@ msgstr ""
 
 #. {ph0}: <code>rea update</code>
 #. {ph1}: <code>npx rea-agents@latest uninstall</code>
-#: website/public/get-started/index.html:1808
+#: website/public/get-started/index.html:1812
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5696,7 +5698,7 @@ msgstr ""
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
 #. started/installation.md#diagnose-update-and-remove" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1814
+#: website/public/get-started/index.html:1818
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Update and uninstall details{ph1}"
@@ -5706,7 +5708,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1822
+#: website/public/get-started/index.html:1826
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}REA FAQ{ph1}{ph2}Quick answers on updates, agents and analysis.{ph3}"
@@ -5716,7 +5718,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <span >
 #. {ph3}: </span >
-#: website/public/get-started/index.html:1826
+#: website/public/get-started/index.html:1830
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5728,7 +5730,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1833
+#: website/public/get-started/index.html:1837
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -5739,7 +5741,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1837
+#: website/public/get-started/index.html:1841
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}REA community{ph1}{ph2}Questions, investigations and work in progress.{ph3}"
@@ -5802,8 +5804,8 @@ msgstr ""
 #: website/public/get-started/index.html:1170 website/public/get-started/index.html:1194
 #: website/public/get-started/index.html:1242 website/public/get-started/index.html:1317
 #: website/public/get-started/index.html:1343 website/public/get-started/index.html:1360
-#: website/public/get-started/index.html:1681 website/public/get-started/index.html:1703
-#: website/public/get-started/index.html:1776 website/public/get-started/index.html:1797
+#: website/public/get-started/index.html:1681 website/public/get-started/index.html:1704
+#: website/public/get-started/index.html:1780 website/public/get-started/index.html:1801
 msgctxt "page:get-started/index.html"
 msgid "Copy command"
 msgstr ""
@@ -5828,12 +5830,12 @@ msgctxt "page:get-started/index.html"
 msgid "Copy CLI installation command"
 msgstr ""
 
-#: website/public/get-started/index.html:1746
+#: website/public/get-started/index.html:1750
 msgctxt "page:get-started/index.html"
 msgid "Copy provider diagnosis command"
 msgstr ""
 
-#: website/public/get-started/index.html:1862
+#: website/public/get-started/index.html:1866
 msgctxt "page:get-started/index.html"
 msgid "Back to top"
 msgstr ""
