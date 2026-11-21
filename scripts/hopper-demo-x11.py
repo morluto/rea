@@ -273,9 +273,9 @@ def descendants(pid: int) -> set[int]:
     changed = True
     while changed:
         changed = False
-        for stat in Path("/proc").glob("[0-9]*/stat"):
+        for stat_path in Path("/proc").glob("[0-9]*/stat"):
             try:
-                fields = stat.read_text().split()
+                fields = stat_path.read_text().split()
                 child = int(fields[0])
                 parent = int(fields[3])
             except (OSError, ValueError, IndexError):
