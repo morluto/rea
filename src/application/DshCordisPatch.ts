@@ -1,5 +1,13 @@
 import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
-import { isMap, isSeq, type Node, type YAMLMap, type YAMLSeq } from "yaml";
+import {
+  isAlias,
+  isMap,
+  isNode,
+  isSeq,
+  type Node,
+  type YAMLMap,
+  type YAMLSeq,
+} from "yaml";
 import type { Environment } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -23,6 +31,7 @@ interface PatchOperation {
 }
 
 interface OwnedInsertion {
+  readonly source: unknown;
   readonly list: YAMLSeq<unknown>;
   readonly ownedRows: ReadonlyMap<number, YAMLMap<unknown, unknown>>;
   readonly groups: ReadonlyMap<number, OwnedInsertion>;
@@ -57,11 +66,12 @@ export class DshCordisDocument {
         else this.#malformedStructure = true;
         continue;
       }
-      const inserted = this.#yaml.resolve(this.#yaml.field(map, "insert"));
+      const insertionSource = this.#yaml.field(map, "insert");
+      const inserted = this.#yaml.resolve(insertionSource);
       const targetId = this.#id(map);
       const direct = !isSeq(inserted) && targetId === DSH_ENTRY_ID;
       const insertion = isSeq(inserted)
-        ? this.#inspectInsertion(inserted)
+        ? this.#inspectInsertion(inserted, insertionSource)
         : undefined;
       const insertedValue = this.#yaml.value(inserted);
       if (insertedValue instanceof CordisExpression)
@@ -133,7 +143,10 @@ export class DshCordisDocument {
     const map = this.#yaml.resolve(node);
     return isMap(map) ? map : undefined;
   }
-  #inspectInsertion(list: YAMLSeq<unknown>): OwnedInsertion | undefined {
+  #inspectInsertion(
+    list: YAMLSeq<unknown>,
+    source: unknown,
+  ): OwnedInsertion | undefined {
     const ownedRows = new Map<number, YAMLMap<unknown, unknown>>();
     const groups = new Map<number, OwnedInsertion>();
     for (const [index, source] of list.items.entries()) {
@@ -150,13 +163,14 @@ export class DshCordisDocument {
       }
       // Only a Cordis group gives its config list entry identity.
       if (this.#yaml.value(this.#yaml.field(row, "group")) !== true) continue;
-      const config = this.#yaml.resolve(this.#yaml.field(row, "config"));
+      const configSource = this.#yaml.field(row, "config");
+      const config = this.#yaml.resolve(configSource);
       if (!isSeq(config)) continue;
-      const nested = this.#inspectInsertion(config);
+      const nested = this.#inspectInsertion(config, configSource);
       if (nested !== undefined) groups.set(index, nested);
     }
     return ownedRows.size > 0 || groups.size > 0
-      ? { list, ownedRows, groups }
+      ? { source, list, ownedRows, groups }
       : undefined;
   }
 
@@ -333,15 +347,18 @@ export class DshCordisDocument {
         continue;
       }
       if (op.insertion === undefined) continue;
-      const copy = this.#yaml.detach(op.map, invalidated);
+      const copy = this.#detachContainer(op.source, invalidated);
       if (!isMap(copy))
         throw new ConfigurationError("Cordis operation is not a mapping");
-      const inserted = this.#editInsertion(op.insertion, invalidated, () => {
+      const inserted = this.#detachContainer(op.insertion.source, invalidated);
+      if (!isSeq(inserted))
+        throw new ConfigurationError("Cordis insertion is not a list");
+      copy.set("insert", inserted);
+      this.#editInsertion(inserted, op.insertion, invalidated, () => {
         if (carried || edit === undefined) return undefined;
         carried = true;
         return this.#entry(edit.desired, edit.platform, invalidated);
       });
-      copy.set("insert", inserted);
       if (inserted.items.length === 0) copy.delete("insert");
       // An emptied operation keeps caller fields unless it would patch REA's row.
       const kept =
@@ -373,14 +390,28 @@ export class DshCordisDocument {
     return output.toString({ lineWidth: 0 });
   }
 
+  /** Edit this use of an aliased container without changing other uses. */
+  #detachContainer(source: unknown, invalidated: ReadonlySet<Node>): unknown {
+    const copy = this.#yaml.detach(this.#yaml.resolve(source), invalidated);
+    if (isAlias(source) && isNode(copy)) {
+      const comments = [
+        source.commentBefore,
+        source.comment,
+        copy.commentBefore,
+      ].filter((comment): comment is string => comment !== undefined);
+      if (comments.length > 0) copy.commentBefore = comments.join("\n");
+      if (source.spaceBefore !== undefined)
+        copy.spaceBefore = source.spaceBefore;
+    }
+    return copy;
+  }
+
   #editInsertion(
+    copy: YAMLSeq<unknown>,
     insertion: OwnedInsertion,
     invalidated: ReadonlySet<Node>,
     replaceOwned?: () => YAMLMap<unknown, unknown> | undefined,
-  ): YAMLSeq<unknown> {
-    const copy = this.#yaml.detach(insertion.list, invalidated);
-    if (!isSeq(copy))
-      throw new ConfigurationError("Cordis insertion is not a list");
+  ): void {
     copy.items = copy.items.flatMap((entry, index) => {
       if (insertion.ownedRows.has(index)) {
         const replacement = replaceOwned?.();
@@ -388,18 +419,19 @@ export class DshCordisDocument {
       }
       const nested = insertion.groups.get(index);
       if (nested === undefined) return [entry];
-      const group = isMap(entry)
-        ? entry
-        : this.#yaml.detach(
-            this.#map(insertion.list.items[index]),
-            invalidated,
-          );
+      const source = insertion.list.items[index];
+      const group = isAlias(source)
+        ? this.#detachContainer(source, invalidated)
+        : entry;
       if (!isMap(group))
         throw new ConfigurationError("Cordis group is not a mapping");
-      group.set("config", this.#editInsertion(nested, invalidated));
+      const config = this.#detachContainer(nested.source, invalidated);
+      if (!isSeq(config))
+        throw new ConfigurationError("Cordis group config is not a list");
+      this.#editInsertion(config, nested, invalidated);
+      group.set("config", config);
       return [group];
     });
-    return copy;
   }
 
   #entry(
