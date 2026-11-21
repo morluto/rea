@@ -190,6 +190,21 @@ const expectOk = <
   return executed as Extract<T, { readonly ok: true }>;
 };
 
+const expectErr = <
+  T extends
+    | { readonly ok: true; readonly value: unknown }
+    | { readonly ok: false; readonly error: unknown },
+>(
+  executed: T,
+): Extract<T, { readonly ok: false }> => {
+  if (executed.ok) {
+    throw new Error(
+      `Expected error but received ok: ${JSON.stringify(executed.value, null, 2)}`,
+    );
+  }
+  return executed as Extract<T, { readonly ok: false }>;
+};
+
 const createMinimalPeBuffer = (
   machine = 0x8664,
   numSections = 1,
@@ -2101,26 +2116,32 @@ it("truncates raw executable payload staging when reaching aggregate budget of 1
   const { mkdir: mkdirFs } = await import("node:fs/promises");
   await mkdirFs(inDir, { recursive: true });
 
-  // 128 MiB budget: create module A (20 MiB), module B (20 MiB), and verify tracking
-  const peHeader = createMinimalPeBuffer();
-  peHeader.write("TEST_HEADER", 64, "utf8");
+  const pe = Buffer.alloc(25 * 1024 * 1024);
+  createMinimalPeBuffer().copy(pe);
 
-  await writeFile(join(inDir, "mod_a.efi"), peHeader);
-  await writeFile(join(inDir, "mod_b.efi"), peHeader);
+  for (let i = 0; i < 6; i++) {
+    await writeFile(join(inDir, `mod_${i}.efi`), pe);
+  }
 
   const provider = new UefiAnalysisProvider();
   try {
     const executed = expectOk(
-      await provider.execute(decompileRequest(inDir, outDir)),
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
     );
     const result = executed.value.result as UefiDecompileResult;
-    expect(result.total_modules_decompiled).toBe(2);
-
-    for (const mod of result.modules) {
-      expect(mod.payload_file).toBeDefined();
-      expect(mod.payload_sha256).toBeDefined();
-      expect(existsSync(mod.payload_file!)).toBe(true);
-    }
+    expect(result.total_modules_decompiled).toBe(6);
+    expect(result.coverage).toBe("partial");
+    expect(typeof result.modules[4]?.payload_file).toBe("string");
+    expect(result.modules[5]?.payload_file).toBeNull();
+    expect(
+      result.limitations.some((l) =>
+        l.includes(
+          "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget.",
+        ),
+      ),
+    ).toBe(true);
   } finally {
     await provider.close();
   }
@@ -5177,14 +5198,13 @@ it("retains process cleanup lease when owned Ghidra command cleanup fails on Win
     hostPlatform: { platform: "win32", architecture: "x64" },
   });
   try {
-    const executed = expectOk(
+    const executionResult = expectErr(
       await provider.execute(
         decompileRequest(inDir, outDir, { include_disassembly: false }),
       ),
     );
+    expect(executionResult.error).toBeInstanceOf(ProviderCleanupError);
     expect(retainCleanupCalled).toBe(true);
-    const result = executed.value.result as UefiDecompileResult;
-    expect(result.modules.length).toBe(1);
     await provider.close();
     expect(mockSupervisor.stop).toHaveBeenCalled();
   } finally {
@@ -5194,5 +5214,62 @@ it("retains process cleanup lease when owned Ghidra command cleanup fails on Win
     } else {
       delete process.env.GHIDRA_INSTALL_DIR;
     }
+  }
+});
+
+it("scaffolds mm-standalone module with Standalone MM ABI", () => {
+  const scaffold = buildUefiEntryPointScaffolding(
+    "StandaloneMmDriver",
+    "StandaloneMmDriver",
+    4096,
+    "DXE",
+    "mm-standalone",
+    "64",
+  );
+  expect(scaffold.prototype).toContain(
+    "EFI_STATUS EFIAPI StandaloneMmDriverEntryPoint(EFI_HANDLE ImageHandle, EFI_MM_SYSTEM_TABLE *MmSystemTable);",
+  );
+  expect(scaffold.functionDefinition).toContain(
+    "EFI_MM_SYSTEM_TABLE *MmSystemTable",
+  );
+  expect(scaffold.typedefs.some((t) => t.includes("EFI_MM_SYSTEM_TABLE"))).toBe(
+    true,
+  );
+  expect(
+    scaffold.typedefs.some((t) => t.includes("struct _EFI_MM_SYSTEM_TABLE;")),
+  ).toBe(true);
+});
+
+it("skips manifest entry with excessive payload_file path length (> 4096 bytes)", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-excessive-path-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const longPath = "a/".repeat(2049) + "Sample.efi";
+  const manifest = {
+    modules: [{ payload_file: longPath, name: "LongPathModule" }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(
+      result.limitations.some((l) =>
+        l.includes("excessive payload_file path length"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
   }
 });

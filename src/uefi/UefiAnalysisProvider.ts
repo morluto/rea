@@ -359,6 +359,32 @@ export const buildUefiEntryPointScaffolding = (
     };
   }
 
+  if (normType === "mm-standalone") {
+    return {
+      typedefs: [
+        ...statusTypedefs,
+        "typedef void* EFI_HANDLE;",
+        "struct _EFI_MM_SYSTEM_TABLE;",
+        "typedef struct _EFI_MM_SYSTEM_TABLE EFI_MM_SYSTEM_TABLE;",
+        "#define EFI_SUCCESS 0",
+      ],
+      prototype: `EFI_STATUS EFIAPI ${identifier}EntryPoint(EFI_HANDLE ImageHandle, EFI_MM_SYSTEM_TABLE *MmSystemTable);`,
+      functionDefinition: [
+        `EFI_STATUS EFIAPI ${identifier}EntryPoint(`,
+        "    EFI_HANDLE ImageHandle,",
+        "    EFI_MM_SYSTEM_TABLE *MmSystemTable",
+        ") {",
+        `    // Reconstructed Standalone MM EntryPoint scaffolding for ${safeName}`,
+        `    // Size: ${byteLength} bytes`,
+        "    EFI_STATUS Status = EFI_SUCCESS;",
+        "    (void)ImageHandle;",
+        "    (void)MmSystemTable;",
+        "    return Status;",
+        "}",
+      ].join("\n"),
+    };
+  }
+
   return {
     typedefs: [
       ...statusTypedefs,
@@ -1221,6 +1247,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     let establishedError: unknown;
 
     try {
+      let pendingGhidraCleanupFailure: ProviderCleanupError | undefined;
       const allocatedRelDirs = new Set<string>();
       let moduleSeq = 0;
       const phaseCounts = {
@@ -1258,6 +1285,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const publicationEntries: UefiPublicationEntry[] = [];
 
       for (const mod of modulesToProcess) {
+        if (pendingGhidraCleanupFailure !== undefined) {
+          throw pendingGhidraCleanupFailure;
+        }
         checkpoint();
         signal.throwIfAborted();
 
@@ -1349,6 +1379,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget.",
           )
         ) {
+          isCoveragePartial = true;
           effectiveLimitations.push(
             "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget.",
           );
@@ -1613,7 +1644,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           let cContent: string | null = null;
           let cGenerator: "ghidra" | "scaffold" = "scaffold";
 
-          if (ghidraBin !== null) {
+          if (ghidraBin !== null && pendingGhidraCleanupFailure === undefined) {
             const remainingCBytes =
               MAX_DECOMPILE_TOTAL_BYTES - totalStagedCBytes;
             const timeLeftForGhidra =
@@ -1650,24 +1681,33 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 if (ghidraCleanupRetained) return;
                 ghidraCleanupRetained = true;
                 const ownership = owner.launch.ownership;
+                const leaseResources =
+                  ownership === undefined
+                    ? [tempRoot.path]
+                    : ownedCommandResources(ownership, tempRoot.path);
+                const cleanupLease = new AnalysisCleanupLease(async () => {
+                  const stopped = await owner.stop();
+                  if (stopped.status === "incomplete") {
+                    throw new Error(stopped.reason);
+                  }
+                }, leaseResources);
                 this.#resources.retain({
                   kind: "lease",
                   resource:
                     ownership === undefined
                       ? `ghidra-process-${ghidraRunId}`
                       : `ghidra-process-${ownership.runId}`,
-                  lease: new AnalysisCleanupLease(
-                    async () => {
-                      const stopped = await owner.stop();
-                      if (stopped.status === "incomplete") {
-                        throw new Error(stopped.reason);
-                      }
-                    },
-                    ownership === undefined
-                      ? [tempRoot.path]
-                      : ownedCommandResources(ownership, tempRoot.path),
-                  ),
+                  lease: cleanupLease,
                 });
+                pendingGhidraCleanupFailure = new ProviderCleanupError(
+                  UEFI_PROVIDER_IDENTITY.id,
+                  leaseResources,
+                  { reason: "Ghidra process termination failed on Windows" },
+                  { operation: "decompile_uefi_firmware" },
+                );
+                new AnalysisCleanupLeaseGroup(pendingGhidraCleanupFailure, [
+                  cleanupLease,
+                ]);
               };
               try {
                 const bridgeDir = fileURLToPath(
@@ -1839,6 +1879,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   ghidraErr.cleanupOwner !== undefined
                 ) {
                   retainGhidraCleanup(ghidraErr.cleanupOwner);
+                }
+                if (pendingGhidraCleanupFailure !== undefined) {
+                  throw pendingGhidraCleanupFailure;
                 }
                 let rawErrMsg = errorMessage(ghidraErr);
                 if (ghidraErr instanceof OwnedCommandFailure) {
@@ -2509,14 +2552,30 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 }
                 const m = parsed.modules[mIdx];
                 if (!m || typeof m !== "object") continue;
-                if (typeof m.payload_file !== "string") continue;
+                if (
+                  typeof m.payload_file !== "string" ||
+                  m.payload_file.length === 0 ||
+                  m.payload_file.length > 4096
+                ) {
+                  if (
+                    typeof m.payload_file === "string" &&
+                    m.payload_file.length > 4096 &&
+                    limitations.length < 50
+                  ) {
+                    limitations.push(
+                      `Manifest module at index ${mIdx} has excessive payload_file path length (> 4096 bytes); ignored.`,
+                    );
+                  }
+                  continue;
+                }
                 const exactNorm = isWindows
-                  ? m.payload_file.split(/[/\\]+/).join("/")
-                  : m.payload_file.split(/\/+/).join("/");
+                  ? m.payload_file.replace(/[/\\]+/g, "/")
+                  : m.payload_file.replace(/\/+/g, "/");
                 const foldedNorm = exactNorm.toLowerCase();
-                const crossPlatformNorm = m.payload_file
-                  .split(/[/\\]+/)
-                  .join("/");
+                const crossPlatformNorm = m.payload_file.replace(
+                  /[/\\]+/g,
+                  "/",
+                );
                 const crossPlatformFolded = crossPlatformNorm.toLowerCase();
 
                 let validGuid: string | null | undefined = undefined;

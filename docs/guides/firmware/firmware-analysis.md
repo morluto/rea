@@ -164,6 +164,7 @@ The tool accepts two input formats:
   - `PEI_CORE`: `void EFIAPI ModuleEntryPoint(const EFI_SEC_PEI_HAND_OFF *, const EFI_PEI_PPI_DESCRIPTOR *, void *Context)`
   - `SEC` / `security-core`: `void EFIAPI ModuleEntryPoint(void *PeiCoreEntryPoint)`
   - `DXE_CORE`: `void EFIAPI ModuleEntryPoint(void *HobStart)`
+  - `mm-standalone`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_HANDLE, EFI_MM_SYSTEM_TABLE *)`
   - `DXE` driver, `SMM`, and `APP`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_HANDLE, EFI_SYSTEM_TABLE *)`
 - **Disassembly**: When `include_disassembly` is enabled (default `true`), instructions are disassembled
   using system `llvm-objdump` (or `objdump`) bounded at 2 MiB per module and 64 MiB total.
