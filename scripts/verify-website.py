@@ -11,7 +11,7 @@ from urllib.parse import unquote
 import xml.etree.ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
-from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, ranked_contributors, sync_pages
+from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, ranked_contributors, social_image_path, sync_pages
 from website_i18n import is_language_code
 from website_references import markdown_references, split_reference
 
@@ -174,6 +174,7 @@ def check_search_metadata(site, pages):
     errors = []
     indexable = set()
     titles = set()
+    previews = {"assets/social-card.png"}
     for path, page in pages.items():
         label = path.relative_to(site).as_posix()
         title = page.titles[0].strip() if len(page.titles) == 1 else ""
@@ -208,13 +209,19 @@ def check_search_metadata(site, pages):
         description = descriptions[0].strip() if len(descriptions) == 1 else ""
         if not description:
             errors.append(f"{label}: needs exactly one nonempty head description")
+        relative = path.relative_to(site)
+        if is_language_code(relative.parts[0]):
+            relative = Path(*relative.parts[1:])
+        route = relative.as_posix().removesuffix("index.html")
+        preview = social_image_path(route)
+        previews.add(preview)
         expected_og = {
-            "og:type": "website",
+            "og:type": "article" if route.startswith("blog/") and route != "blog/" else "website",
             "og:site_name": "REA",
             "og:title": title,
             "og:description": description,
             "og:url": url,
-            "og:image": f"{SITE_ORIGIN}/assets/social-card.png",
+            "og:image": f"{SITE_ORIGIN}/{preview}",
             "og:image:type": "image/png",
             "og:image:width": "1200",
             "og:image:height": "630",
@@ -308,17 +315,18 @@ def check_search_metadata(site, pages):
                 "robots.txt: expected crawl access and one absolute rea.tools sitemap directive"
             )
 
-    image = site / "assets/social-card.png"
-    if not image.is_file():
-        errors.append("Social preview PNG is missing; run scripts/prepare-website.py")
-    else:
-        header = image.read_bytes()[:24]
-        if (
-            len(header) != 24
-            or header[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-            or struct.unpack(">II", header[16:24]) != (1200, 630)
-        ):
-            errors.append("Social preview must be a 1200 × 630 PNG")
+    for preview in sorted(previews):
+        image = site / preview
+        if not image.is_file():
+            errors.append(f"Social preview PNG is missing: {preview}; run scripts/prepare-website.py")
+        else:
+            header = image.read_bytes()[:24]
+            if (
+                len(header) != 24
+                or header[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+                or struct.unpack(">II", header[16:24]) != (1200, 630)
+            ):
+                errors.append("Social preview must be a 1200 × 630 PNG")
     return len(indexable), errors
 
 

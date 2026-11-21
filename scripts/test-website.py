@@ -501,6 +501,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             site = root / "website/public"
             WEBSITE.sync_pages(root)
             shutil.copyfile(ROOT / "website/_site/assets/social-card.png", site / "assets/social-card.png")
+            shutil.copytree(ROOT / "website/_site/assets/share", site / "assets/share")
             PREPARE.prepare_notes_example(site)
             page = WEBSITE.new_page(root, "blog/new-example", 'A <test> & "result"', 'Check "quotes" & <markup>.')
             source = page.read_text()
@@ -580,7 +581,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             alias = Path(directory) / "site-alias"
             alias.symlink_to(site, target_is_directory=True)
             # The tiny link fixture intentionally omits the social preview.
-            expected = ["Social preview PNG is missing; run scripts/prepare-website.py"]
+            expected = ["Social preview PNG is missing: assets/social-card.png; run scripts/prepare-website.py"]
             self.assertEqual(VERIFY.check_site(site)[3], expected)
             self.assertEqual(VERIFY.check_site(alias)[3], expected)
             (site.parent / "outside.html").write_text("<p>Outside</p>")
