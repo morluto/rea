@@ -53,6 +53,11 @@
 
 ### Code Refactoring
 
+* **errors:** list distinct resources in providerCleanupErrorFromFailures ([13725d2](https://github.com/morluto/rea/commit/13725d2986dda6bb8b9a3ae449408da67da5c360)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **hopper:** compose bridge image cleanup through the shared owner ([3ba20f0](https://github.com/morluto/rea/commit/3ba20f0eb8387c2eede14249a32c86ba15fef294)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **inspector:** compose provider close failures through the shared owner ([a5f3689](https://github.com/morluto/rea/commit/a5f36891793f2a901326f7443d177ff9e277065d)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **native:** compose LLDB resolver cleanup through the shared owner ([3af56cc](https://github.com/morluto/rea/commit/3af56cc7d50a5f41ea4753d2d0570082611ee0a4)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **process:** compose analysis runtime cleanup through the shared owner ([2d36025](https://github.com/morluto/rea/commit/2d360253ddf8c2ab2c0c4a6a3186a8e981a8e090)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **verify:** exclude negated .ok checks from the abort-reclassification guard ([a80dc68](https://github.com/morluto/rea/commit/a80dc68318d2b9e2abca08ae5d4eaf1206b83bde)), closes [#11920](https://github.com/morluto/rea/issues/11920)
 
 
@@ -372,6 +377,7 @@
 * **v8:** consolidate relative CLI and source-byte checks ([#12867](https://github.com/morluto/rea/issues/12867)) ([aa16513](https://github.com/morluto/rea/commit/aa1651311d27a4a0a224d00f427eaee9c4fd1387))
 * **wasm:** consolidate WABT and glue parser checks ([c11e73b](https://github.com/morluto/rea/commit/c11e73bd642cee0e12f0dfd7826d412dd9332506))
 * **wasm:** consolidate WABT output and glue scanner checks ([#12822](https://github.com/morluto/rea/issues/12822)) ([c11e73b](https://github.com/morluto/rea/commit/c11e73bd642cee0e12f0dfd7826d412dd9332506))
+* **web:** acknowledge CDP socket timeout phases before advancing time ([#13181](https://github.com/morluto/rea/issues/13181)) ([8691cfa](https://github.com/morluto/rea/commit/8691cfa96b9130262491b7af991583c1aca63f1d))
 * **web:** consolidate accessibility and storage comparison proofs ([#13085](https://github.com/morluto/rea/issues/13085)) ([3f494e1](https://github.com/morluto/rea/commit/3f494e18fa6aac74199bda740a11c6c94e242d5c))
 * **web:** consolidate artifact cleanup ownership proofs ([#13077](https://github.com/morluto/rea/issues/13077)) ([82224d9](https://github.com/morluto/rea/commit/82224d9f6ccd845a87ff9ff45643c560e4c625f5))
 * **web:** consolidate attached emulation and CDP admission checks ([#13156](https://github.com/morluto/rea/issues/13156)) ([32549cb](https://github.com/morluto/rea/commit/32549cb3f535ca61bb8441b790531116b047fe88))
@@ -442,6 +448,7 @@
 * **web:** consolidate storage fingerprint comparison proofs ([#13084](https://github.com/morluto/rea/issues/13084)) ([251f863](https://github.com/morluto/rea/commit/251f863f30388f02017d0e34c790e529e8a7c183))
 * **web:** consolidate transaction admission and omission checks ([#13127](https://github.com/morluto/rea/issues/13127)) ([c9a6f5d](https://github.com/morluto/rea/commit/c9a6f5dedc7766424e9d82d29a94d8ed39064fd9))
 * **web:** consolidate UI response observation lifecycle checks ([#13121](https://github.com/morluto/rea/issues/13121)) ([648d1f8](https://github.com/morluto/rea/commit/648d1f8f9d45822fbb729492a9519d12d4cf6fa6))
+* **web:** consolidate warm CDP peer cleanup checks ([#13179](https://github.com/morluto/rea/issues/13179)) ([faab3d9](https://github.com/morluto/rea/commit/faab3d98d1d26b3bbc395c5d89a8f90f076f57bb))
 * **web:** consolidate WebSocket payload comparison proofs ([#13086](https://github.com/morluto/rea/issues/13086)) ([ccfdd61](https://github.com/morluto/rea/commit/ccfdd6157282d3eaaeb7e6cfe9779bbe445b6ac9))
 * **web:** consolidate wide scenario reference admission ([#13163](https://github.com/morluto/rea/issues/13163)) ([03795d5](https://github.com/morluto/rea/commit/03795d55b3914a646a82d0e300836ce4c002b990))
 * **web:** consolidate XHTML SVG namespace proofs ([#13105](https://github.com/morluto/rea/issues/13105)) ([c451857](https://github.com/morluto/rea/commit/c451857d380a809ba276b9c16f01865bd29494b0))
