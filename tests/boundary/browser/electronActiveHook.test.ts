@@ -63,9 +63,9 @@ const utilityProcess = {
 };
 globalThis.__nativeShellCalls = [];
 const shell = {
-  openExternal: () => Promise.resolve(),
-  openPath: () => Promise.resolve(),
-  trashItem: (path) => require("node:fs/promises").unlink(path),
+  openExternal: (url) => { globalThis.__nativeShellCalls.push(["openExternal", url]); return Promise.resolve(); },
+  openPath: (path) => { globalThis.__nativeShellCalls.push(["openPath", path]); return Promise.resolve(""); },
+  trashItem: (path) => { globalThis.__nativeShellCalls.push(["trashItem", path]); return require("node:fs/promises").unlink(path); },
   showItemInFolder: (path) => { globalThis.__nativeShellCalls.push(["showItemInFolder", path]); },
   writeShortcutLink: (path) => { globalThis.__nativeShellCalls.push(["writeShortcutLink", path]); return true; },
 };
@@ -73,7 +73,7 @@ const createSession = () => {
   const value = new EventEmitter();
   value.setPermissionRequestHandler = function(handler) { this.requestHandler = handler; };
   value.setPermissionCheckHandler = function(handler) { this.checkHandler = handler; };
-  value.setCertificateVerifyProc = () => undefined;
+  value.setCertificateVerifyProc = function(handler) { this.certificateHandler = handler; };
   app.emit("session-created", value);
   return value;
 };
@@ -252,141 +252,180 @@ it("retains active hook evidence within its event-retention budget", async () =>
   );
 });
 
-it.each([
-  "ready-default",
-  "deferred-default",
-  "partition",
-  "path",
-  "window",
-  "engine",
-])(
-  "denies permissions before app registration and after replacement for %s sessions",
-  async (admission) => {
+it.each([true, false])(
+  "denies permissions before registration and after a handler is replaced or cleared (app ready: %s)",
+  async (ready) => {
     const root = await createTestTempDirectory("rea-electron-session-policy-");
     await writeElectronFixture(
       root,
-      admission === "deferred-default"
-        ? electronModuleSource.replace(
-            "app.isReady = () => true",
-            "app.isReady = () => false",
-          )
-        : electronModuleSource,
+      electronModuleSource +
+        `
+let ready = ${String(ready)};
+app.isReady = () => ready;
+app.once("ready", () => { ready = true; });
+Object.defineProperty(module.exports.session, "defaultSession", {
+  get() {
+    if (!ready) throw new Error("default session requested before app ready");
+    return session;
+  },
+});
+const pathSession = createSession();
+module.exports.session.fromPath = () => pathSession;
+`,
     );
     const script = join(root, "permissions.cjs");
     await writeFile(
       script,
-      `const electron = require("electron");
-const admission = ${JSON.stringify(admission)};
-if (admission === "deferred-default") electron.app.emit("ready");
-const engineSession = {
-  setPermissionRequestHandler(handler) { this.requestHandler = handler; },
-  setPermissionCheckHandler(handler) { this.checkHandler = handler; },
+      `const { app, BrowserWindow, session } = require("electron");
+const exercise = (selected, id) => {
+  const query = () => {
+    let granted = true;
+    selected.requestHandler?.({ id }, "notifications", value => { granted = value; });
+    return { granted, checked: selected.checkHandler?.({ id }, "notifications") ?? true };
+  };
+  const initial = query();
+  let applicationCalls = 0;
+  selected.setPermissionRequestHandler((_contents, _permission, callback) => { applicationCalls++; callback(true); });
+  selected.setPermissionCheckHandler(() => { applicationCalls++; return true; });
+  const replaced = query();
+  selected.setPermissionRequestHandler(null);
+  selected.setPermissionCheckHandler(null);
+  return { outcomes: [initial, replaced, query()], applicationCalls };
 };
-if (admission === "engine") electron.app.emit("session-created", engineSession);
-const selected = admission === "partition" ? electron.session.fromPartition("persist:caller")
-  : admission === "path" ? electron.session.fromPath("/caller/profile")
-  : admission === "window" ? new electron.BrowserWindow({ webPreferences: { partition: "caller" } }).webContents.session
-  : admission === "engine" ? engineSession : electron.session.defaultSession;
-const webContents = { id: 45 };
-const query = () => {
-  let granted = true;
-  if (selected.requestHandler) selected.requestHandler(webContents, "notifications", value => { granted = value; });
-  return { granted, checked: selected.checkHandler ? selected.checkHandler(webContents, "notifications") : true };
-};
-const initial = query();
-let applicationCalls = 0;
-selected.setPermissionRequestHandler((_contents, _permission, callback) => { applicationCalls++; callback(true); });
-selected.setPermissionCheckHandler(() => { applicationCalls++; return true; });
-const replaced = query();
-selected.setPermissionRequestHandler(null);
-selected.setPermissionCheckHandler(null);
-const cleared = query();
-new electron.BrowserWindow({ webPreferences: { session: selected } });
-console.log(JSON.stringify({ initial, replaced, cleared, applicationCalls,
-  snapshot: globalThis.__reaElectronActiveSnapshot() }));`,
+const rows = [];
+const initiallyReady = app.isReady();
+if (!initiallyReady) app.emit("ready");
+rows.push(exercise(session.defaultSession, 45));
+if (initiallyReady) {
+  rows.push(exercise(session.fromPartition("persist:caller"), 46));
+  rows.push(exercise(session.fromPath("/caller/profile"), 47));
+  rows.push(exercise(new BrowserWindow({ webPreferences: { partition: "caller" } }).webContents.session, 48));
+  const engine = {
+    setPermissionRequestHandler(handler) { this.requestHandler = handler; },
+    setPermissionCheckHandler(handler) { this.checkHandler = handler; },
+  };
+  app.emit("session-created", engine);
+  rows.push(exercise(engine, 49));
+}
+const certificate = [];
+session.defaultSession.setCertificateVerifyProc((_request, done) => done(0));
+session.defaultSession.certificateHandler({ hostname: "certificate-private.invalid" }, code => certificate.push(code));
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+console.log(JSON.stringify({ rows, certificate, snapshot }));`,
     );
     const execution = await runNode(script, root);
     expect(execution.code, execution.stderr).toBe(0);
-    const result = JSON.parse(execution.stdout.trim());
-    expect(result.initial).toEqual({ granted: false, checked: false });
-    expect(result.replaced).toEqual(result.initial);
-    expect(result.cleared).toEqual(result.initial);
-    expect(result.applicationCalls).toBe(0);
-    expect(result.snapshot.hook_error).toBe(false);
-    expect(
-      result.snapshot.events.filter(
-        (event: { kind: string }) => event.kind === "permission",
-      ),
-    ).toEqual(
-      Array.from({ length: 3 }, () => [
-        expect.objectContaining({
-          event: "permission-request",
-          phase: "blocked",
-          target: "webContents:45",
-        }),
-        expect.objectContaining({
-          event: "permission-check",
-          phase: "blocked",
-          target: "webContents:45",
-        }),
-      ]).flat(),
+    const { rows, certificate, snapshot } = JSON.parse(execution.stdout) as {
+      rows: unknown;
+      certificate: unknown;
+      snapshot: { hook_error: boolean; events: unknown };
+    };
+    const ids = ready ? [45, 46, 47, 48, 49] : [45];
+    const denied = { granted: false, checked: false };
+    expect(rows).toEqual(
+      ids.map(() => ({
+        outcomes: [denied, denied, denied],
+        applicationCalls: 0,
+      })),
     );
-    expect(JSON.stringify(result.snapshot)).not.toContain("notifications");
-    electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
+    expect(snapshot.hook_error).toBe(false);
+    const events = electronActiveTimelineEventSchema
+      .array()
+      .parse(snapshot.events);
+    const requestAndCheck = ["permission-request", "permission-check"];
+    expect(events.filter(({ kind }) => kind === "permission")).toEqual([
+      ...ids.flatMap((id) =>
+        [...requestAndCheck, ...requestAndCheck, ...requestAndCheck].map(
+          (event) =>
+            expect.objectContaining({
+              event,
+              phase: "blocked",
+              target: `webContents:${String(id)}`,
+              argument_shapes: ["string"],
+              error: true,
+            }),
+        ),
+      ),
+      expect.objectContaining({
+        event: "certificate-error",
+        phase: "blocked",
+        argument_shapes: ["object"],
+        error: true,
+      }),
+    ]);
+    expect(certificate).toEqual([-2]);
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /notifications|certificate-private/,
+    );
   },
 );
 
-it("blocks synchronous shell effects with their native return contracts and retains argument shapes only", async () => {
+it("blocks shell effects, preserves return contracts, and keeps argument values out of evidence", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-shell-");
   await writeElectronFixture(root);
+  const selected = join(root, "retained.txt");
+  await writeFile(selected, "must remain");
   const script = join(root, "shell.cjs");
   await writeFile(
     script,
     `const { shell } = require("electron");
-const revealed = shell.showItemInFolder("/host/secret-folder/file.txt");
-const written = shell.writeShortcutLink("C:\\\\Users\\\\host\\\\app.lnk", "create", { target: "C:\\\\payload.exe" });
-const snapshot = globalThis.__reaElectronActiveSnapshot();
-process.stdout.write(JSON.stringify({
-  revealed: revealed === undefined ? "undefined" : revealed,
-  written,
-  native_calls: globalThis.__nativeShellCalls,
-  snapshot,
-}) + "\\n");
+(async () => {
+  const selected = ${JSON.stringify(selected)};
+  const revealed = shell.showItemInFolder("/host/secret-folder/file.txt");
+  const written = shell.writeShortcutLink("caller-private.lnk", "create", { target: "payload.exe" });
+  const calls = [shell.openExternal("https://example.invalid/caller-private"), shell.openPath(selected), shell.trashItem(selected)];
+  const settlements = await Promise.allSettled(calls);
+  console.log(JSON.stringify({
+    revealReturnsVoid: revealed === undefined,
+    written,
+    promises: calls.map(call => call instanceof Promise),
+    settlements: settlements.map(entry => entry.status === "rejected" ? entry.reason.message : entry),
+    nativeCalls: globalThis.__nativeShellCalls,
+    snapshot: globalThis.__reaElectronActiveSnapshot(),
+  }));
+})();
 `,
   );
   const execution = await runNode(script, root);
   expect(execution.code, execution.stderr).toBe(0);
-  const result = JSON.parse(execution.stdout.trim()) as {
-    readonly revealed: string;
-    readonly written: boolean;
-    readonly native_calls: readonly unknown[];
-    readonly snapshot: {
-      readonly hook_error: boolean;
-      readonly events: readonly Record<string, unknown>[];
-    };
-  };
-  expect(result.revealed).toBe("undefined");
-  expect(result.written).toBe(false);
-  expect(result.native_calls).toEqual([]);
-  expect(result.snapshot.hook_error).toBe(false);
-  const attempts = result.snapshot.events.filter(
-    (event) => event.kind === "shell-attempt",
-  );
-  expect(attempts).toEqual([
-    expect.objectContaining({
-      event: "showItemInFolder",
-      phase: "blocked",
-      argument_shapes: ["string"],
-    }),
-    expect.objectContaining({
+  const { snapshot, ...outcomes } = JSON.parse(execution.stdout) as {
+    snapshot: { hook_error: boolean; events: unknown };
+  } & Record<string, unknown>;
+  expect(outcomes).toEqual({
+    revealReturnsVoid: true,
+    written: false,
+    promises: [true, true, true],
+    settlements: Array(3).fill("External shell effects are blocked"),
+    nativeCalls: [],
+  });
+  expect(await readFile(selected, "utf8")).toBe("must remain");
+  expect(snapshot.hook_error).toBe(false);
+  const events = electronActiveTimelineEventSchema
+    .array()
+    .parse(snapshot.events);
+  const attempts = [
+    { event: "showItemInFolder", argument_shapes: ["string"] },
+    {
       event: "writeShortcutLink",
-      phase: "blocked",
       argument_shapes: ["string", "string", "object"],
-    }),
-  ]);
-  expect(JSON.stringify(result.snapshot)).not.toContain("secret-folder");
-  expect(JSON.stringify(result.snapshot)).not.toContain("payload.exe");
-  electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
+    },
+    { event: "openExternal", argument_shapes: ["string"] },
+    { event: "openPath", argument_shapes: ["string"] },
+    { event: "trashItem", argument_shapes: ["string"] },
+  ];
+  expect(events.filter(({ kind }) => kind === "shell-attempt")).toEqual(
+    attempts.map((attempt) =>
+      expect.objectContaining({ ...attempt, phase: "blocked", error: true }),
+    ),
+  );
+  const evidence = JSON.stringify(snapshot);
+  for (const value of [
+    "secret-folder",
+    "caller-private",
+    "payload.exe",
+    selected,
+  ])
+    expect(evidence).not.toContain(value);
 });
 
 it.each([
@@ -446,41 +485,6 @@ process.stdout.write(JSON.stringify({ application_continued: primary }) + "\\n")
     ]);
   },
 );
-
-it("blocks trashItem asynchronously, records the attempt, and preserves the selected file", async () => {
-  const root = await createTestTempDirectory("rea-electron-hook-trash-");
-  await writeElectronFixture(root);
-  const selected = join(root, "retained.txt");
-  await writeFile(selected, "must remain");
-  const script = join(root, "trash.cjs");
-  await writeFile(
-    script,
-    `const { shell } = require("electron");
-const result = shell.trashItem(${JSON.stringify(selected)});
-const promise = result instanceof Promise;
-result.then(
-  () => { throw new Error("trashItem unexpectedly succeeded"); },
-  error => process.stdout.write(JSON.stringify({ promise, message: error.message, snapshot: globalThis.__reaElectronActiveSnapshot() }) + "\\n"),
-);
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const result = JSON.parse(execution.stdout.trim());
-  expect(result.promise).toBe(true);
-  expect(result.message).toBe("External shell effects are blocked");
-  expect(await readFile(selected, "utf8")).toBe("must remain");
-  expect(result.snapshot.events).toContainEqual(
-    expect.objectContaining({
-      kind: "shell-attempt",
-      event: "trashItem",
-      phase: "blocked",
-      argument_shapes: ["string"],
-      error: true,
-    }),
-  );
-  expect(JSON.stringify(result.snapshot)).not.toContain(selected);
-});
 
 it("classifies a dropped browser preload as preload configuration at capture", async () => {
   const root = await createTestTempDirectory(
