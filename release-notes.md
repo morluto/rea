@@ -348,6 +348,7 @@
 * **web:** consolidate interrupted module resolution evidence ([#13072](https://github.com/morluto/rea/issues/13072)) ([f63915d](https://github.com/morluto/rea/commit/f63915d6f2bc55328bd3e38a337079b127d8113d))
 * **web:** consolidate module context and resolver evidence checks ([#13071](https://github.com/morluto/rea/issues/13071)) ([56a0617](https://github.com/morluto/rea/commit/56a0617f518432f14ba981c8c55f1b920f857f5e))
 * **web:** consolidate module syntax and capture identity fixtures ([#13073](https://github.com/morluto/rea/issues/13073)) ([8322b55](https://github.com/morluto/rea/commit/8322b555523ed83aa895af5e4ff666023ca511fc))
+* **web:** consolidate scenario alignment and ordering proofs ([#13078](https://github.com/morluto/rea/issues/13078)) ([b723393](https://github.com/morluto/rea/commit/b7233936118915a1f9c230873c95be08f7ae06e7))
 * **web:** isolate captured module artifact checks ([#13075](https://github.com/morluto/rea/issues/13075)) ([4304a66](https://github.com/morluto/rea/commit/4304a6697446f2342a7052b580306c521d944a73))
 * **website:** consolidate generated site verification checks ([#12783](https://github.com/morluto/rea/issues/12783)) ([e174349](https://github.com/morluto/rea/commit/e17434945f0d1108018363db379eb1c65c7eeb81))
 * **website:** consolidate verifier and fallback coverage ([e174349](https://github.com/morluto/rea/commit/e17434945f0d1108018363db379eb1c65c7eeb81))
