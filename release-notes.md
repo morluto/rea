@@ -273,6 +273,7 @@
 * **process:** consolidate process inventory and native row checks ([#12889](https://github.com/morluto/rea/issues/12889)) ([880e623](https://github.com/morluto/rea/commit/880e62351e010a008b6373e3d23d5072e3fd8138))
 * **process:** consolidate provider startup deadline coverage ([#12773](https://github.com/morluto/rea/issues/12773)) ([eb1e75b](https://github.com/morluto/rea/commit/eb1e75b809a8169f06f6980fe6245582b183b744))
 * **process:** consolidate run-token fallback and native retry coverage ([#12892](https://github.com/morluto/rea/issues/12892)) ([afc8c0a](https://github.com/morluto/rea/commit/afc8c0ae7ba35009b4a9aace530f01cefc149f54))
+* **process:** consolidate selected child environment proofs ([#13074](https://github.com/morluto/rea/issues/13074)) ([9626788](https://github.com/morluto/rea/commit/96267880c3dec7715f8e71293ed2bc13c9eacf24))
 * **process:** consolidate supervised output closure and cleanup checks ([#12906](https://github.com/morluto/rea/issues/12906)) ([3a002fb](https://github.com/morluto/rea/commit/3a002fb708991e9f3b0933c315e96bdfcd0aa703))
 * **process:** consolidate worker and transport ownership checks ([#12887](https://github.com/morluto/rea/issues/12887)) ([819a726](https://github.com/morluto/rea/commit/819a72678f8a05b5f892f65ae3b8b7b23656cc70))
 * **process:** exercise Ghidra reserved reply IDs ([5f7a586](https://github.com/morluto/rea/commit/5f7a586aa59f25b99095a71903effcdba9b4d1d7))
