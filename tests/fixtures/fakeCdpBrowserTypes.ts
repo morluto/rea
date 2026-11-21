@@ -105,7 +105,6 @@ export interface FakeOptions {
   readonly sensitiveShapes?: boolean;
   /** Deliver a console argument the protocol spells as `{ type: "object", subtype: "null" }`. */
   readonly nullConsoleArgument?: boolean;
-  readonly cachedResponseBody?: string;
   readonly webMcpTools?: boolean;
   /** Replaces the primary tool's registration stack; returning `undefined` omits it. */
   readonly webMcpStackTrace?: (origin: string) => JsonValue | undefined;
