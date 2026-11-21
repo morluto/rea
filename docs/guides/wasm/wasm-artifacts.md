@@ -130,7 +130,7 @@ To change the default across new MCP operations, set `wasm.command_timeout_ms`
 through `update_analysis_settings`. An explicit `command_timeout_ms` still wins;
 correct that argument if it caused the timeout. Runtime defaults do not insert
 omitted arguments into Evidence parameters. See the
-[settings design](../../design/limits-and-recovery.md#precedence-and-lifetime).
+[analysis settings and recovery](../../reference/limits-and-recovery.md#precedence-and-lifetime).
 
 For example, `rea inspect-wasm-artifact /artifacts/module.wasm
 --command-timeout-ms 60000 --format json` uses a 60-second per-command deadline;
@@ -196,7 +196,7 @@ Candidates are caller-selected files; their identity does not imply validation.
 Both CLI and MCP use the same typed port and application service. MCP publishes
 SDK-compatible schemas and records Evidence for `get_evidence_bundle` readback.
 See [WABT provenance](https://github.com/morluto/rea/blob/main/third_party/wabt/README.md) and
-[testing](../../development/testing.md#offline-wasm-artifacts) for real-tool verification.
+[testing lanes](../../testing-lanes.md#offline-wasm-artifacts) for real-tool verification.
 
 ## Compare core-module interfaces
 

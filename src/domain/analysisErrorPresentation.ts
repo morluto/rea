@@ -11,7 +11,10 @@ import {
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
-import { OPENABLE_APPLE_BUNDLE_TYPES_TEXT } from "./apple/appleBundleTypes.js";
+import {
+  INFO_PLIST_DECODE_MIB,
+  OPENABLE_APPLE_BUNDLE_TYPES_TEXT,
+} from "./apple/appleBundleTypes.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -186,6 +189,11 @@ export const analysisErrorRemediationAction = (
     error.infoPlist !== undefined
   )
     return `Read ${error.infoPlist} with inspect_plist to review its CFBundleExecutable, then select an existing program file directly.`;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "bundle_info_plist_decode_budget_exceeded"
+  )
+    return `Reduce the Info.plist below the ${INFO_PLIST_DECODE_MIB} MiB decoded representation allowance, then retry opening the bundle.`;
   if (
     error instanceof BinaryTargetError &&
     (error.constraint === "bundle_info_plist_missing" ||
@@ -550,6 +558,12 @@ const artifactMessage = ({
       detail ??
       "Artifact processing reached a resource limit. Select an artifact within the reported limits and retry."
     );
+  if (reason === "unsupported")
+    return "Artifact structure uses an unsupported format or revision. Use a decoder that supports the reported form.";
+  if (reason === "truncated")
+    return "A declared artifact structure is truncated. Select a complete copy and retry; do not pad or truncate required bytes.";
+  if (reason === "malformed")
+    return "Artifact bytes contain malformed format structure. Review the reported field and select a valid copy.";
   if (reason === "path")
     return (
       detail ??

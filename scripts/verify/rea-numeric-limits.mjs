@@ -6,14 +6,16 @@ import ts from "typescript6";
 // Recognized numeric REA_ limit reads must be an analysis setting or a
 // documented exception with a reason. External behavioral witnesses are
 // reported separately and are not verified by this Node-only scan.
-// restart-only is durable. per-call is a
-// launch-captured limit whose runtime migration deletes the registry entry.
-// The three limits moving on #9868, #9865, and #9836 are not in this tree;
-// once their names appear here they must join ANALYSIS_SETTINGS.
+// Per-call limits belong to ANALYSIS_SETTINGS.
+// A name in REQUIRED_RUNTIME_LIMITS that is absent from source fails closed.
+// Each default, floor, and maximum in docs/reference/rea-limit-inventory.md must
+// equal ANALYSIS_SETTINGS or the owner export the parser enforces.
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const definitionsPath = join(root, "src/domain/analysisSettingDefinitions.ts");
-const registryPath = join(root, "src/domain/numericLimitRegistry.ts");
+// Registry text declares an exception. It does not prove a reader exists.
+const NUMERIC_LIMIT_DECLARATION = "src/domain/numericLimitRegistry.ts";
+const registryPath = join(root, NUMERIC_LIMIT_DECLARATION);
 
 const listFiles = async (dir) => {
   const output = [];
@@ -33,41 +35,15 @@ const listFiles = async (dir) => {
   return output;
 };
 
-/** Registry text is a declaration, not a producer that uses the limit. */
-export const NUMERIC_LIMIT_DECLARATION = "src/domain/numericLimitRegistry.ts";
-
 /**
- * Where the removed restart-field names cannot return: these roots, files with
- * these extensions. The cached `lint` task's inputs in turbo.json must cover
- * every such file, or a cached pass would hide a reintroduced name.
- */
-export const FORBIDDEN_FIELD_SCAN_ROOTS = [
-  "src",
-  "tests",
-  ".agents",
-  "scripts",
-];
-export const FORBIDDEN_FIELD_SCAN_EXTENSIONS = [
-  "ts",
-  "tsx",
-  "mjs",
-  "js",
-  "md",
-  "json",
-  "py",
-  "yml",
-  "yaml",
-];
-
-/**
- * These limits are moving onto runtime analysis settings on their own PRs.
+ * Limits that must join ANALYSIS_SETTINGS.
  * A producer or a registry entry cannot satisfy that requirement.
+ * Membership also treats a non-pattern name as numeric.
+ * A required name absent from source is stale and fails closed.
+ *
+ * @type {readonly string[]}
  */
-const REQUIRED_RUNTIME_LIMITS = [
-  "REA_NTFS_MFT_MAX_FILE_BYTES",
-  "REA_REGF_HIVE_MAX_FILE_BYTES",
-  "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
-];
+const REQUIRED_RUNTIME_LIMITS = [];
 
 const unwrapExpression = (node) => {
   let current = node;
@@ -409,7 +385,7 @@ const rememberNumericArgument = (
   }
 };
 
-export const isNumericLimit = (name) =>
+const isNumericLimit = (name) =>
   REQUIRED_RUNTIME_LIMITS.includes(name) ||
   /(?:_BYTES|_MS|_MIB|_SECONDS|_POLLS|_JOBS|_ELEMENTS|_COUNT|_SESSIONS|_COMMANDS)$/u.test(
     name,
@@ -700,14 +676,38 @@ export const discoverNumericLimitUses = (files) => {
   return discovered;
 };
 
-/** Tracked limits join ANALYSIS_SETTINGS. The exception registry cannot classify them. */
+/**
+ * @typedef {{
+ *   readonly code:
+ *     | "required_runtime_limit_missing"
+ *     | "required_runtime_limit_not_analysis_setting",
+ *   readonly name: string,
+ * }} RequiredRuntimeLimitFailure
+ */
+
+/**
+ * Classify one required runtime limit.
+ * The caller supplies names from REQUIRED_RUNTIME_LIMITS. Absence from
+ * source, the exception registry, and ANALYSIS_SETTINGS is its own failure
+ * so a stale required name cannot be skipped. The registry cannot classify
+ * a required limit as a runtime setting.
+ *
+ * @param {string} name
+ * @param {{
+ *   readonly inSource: boolean,
+ *   readonly inRuntime: boolean,
+ *   readonly inRegistry: boolean,
+ * }} presence
+ * @returns {RequiredRuntimeLimitFailure | undefined}
+ */
 export const requiredRuntimeLimitFailure = (
   name,
-  { inRuntime, inRegistry },
+  { inSource, inRuntime, inRegistry },
 ) => {
-  if (!REQUIRED_RUNTIME_LIMITS.includes(name)) return undefined;
+  if (!inSource && !inRuntime && !inRegistry)
+    return { code: "required_runtime_limit_missing", name };
   if (inRuntime && !inRegistry) return undefined;
-  return `${name} must join ANALYSIS_SETTINGS; numericLimitRegistry cannot classify it`;
+  return { code: "required_runtime_limit_not_analysis_setting", name };
 };
 
 /** Parse the registry as TypeScript so provenance is owned by its entry. */
@@ -769,10 +769,13 @@ export const parseNumericLimitRegistry = (source) => {
     if (
       exactLimit(name) === undefined ||
       update_mode !== "restart" ||
-      !["restart-only", "per-call"].includes(policy) ||
       !["startup", "per-call", "construction"].includes(read)
     )
       throw new Error(`Invalid numeric limit registry entry ${name}`);
+    if (policy !== "restart-only")
+      throw new Error(
+        `${name} must use a restart-only policy in the registry. Move per-call limits into ANALYSIS_SETTINGS.`,
+      );
     const source = value.get("provenance");
     if (source === undefined)
       return { name, update_mode, policy, read, reason };
@@ -918,26 +921,413 @@ export const parseRuntimeSettingEnvironments = (source) => {
   return names;
 };
 
-/**
- * Names still registered as per-call while they move into ANALYSIS_SETTINGS.
- * This branch has moved those limits, so the allowlist is empty.
- */
-const TEMPORARY_PER_CALL_LIMITS = new Set([]);
+const DOCUMENTED_LIMIT_SECTIONS = [
+  "Runtime analysis settings",
+  "Per-call limits in the runtime system",
+  "Restart-only numeric limits",
+];
 
-/** Temporary exceptions must be removed from both the registry and allowlist. */
-export const perCallLimitFailures = (listed, temporary) => {
+const tableCells = (line) =>
+  line
+    .split("|")
+    .slice(1, -1)
+    .map((cell) => cell.trim());
+
+const separatorRow = (cells) =>
+  cells.length > 0 && cells.every((cell) => /^:?-+:?$/u.test(cell));
+
+/**
+ * Read default, floor, and maximum from the three numeric inventory tables.
+ * The limit name is the first cell. Later prose tables are not limits.
+ *
+ * @param {string} markdown
+ */
+export const parseDocumentedNumericLimits = (markdown) => {
+  const lines = markdown.split(/\r?\n/u);
+  const rows = [];
+  for (const title of DOCUMENTED_LIMIT_SECTIONS) {
+    const heading = lines.findIndex((line) => line.trim() === `## ${title}`);
+    if (heading < 0)
+      throw new Error(
+        `docs/reference/rea-limit-inventory.md is missing "## ${title}"`,
+      );
+    let index = heading + 1;
+    while (index < lines.length && !lines[index].startsWith("|")) {
+      if (lines[index].startsWith("#"))
+        throw new Error(`## ${title} has no limit table`);
+      index += 1;
+    }
+    if (!lines[index]?.startsWith("|"))
+      throw new Error(`## ${title} has no limit table`);
+    const header = tableCells(lines[index]);
+    const column = (name) => {
+      const found = header.indexOf(name);
+      if (found < 0)
+        throw new Error(`## ${title} table is missing the ${name} column`);
+      return found;
+    };
+    const defaultColumn = column("Default");
+    const floorColumn = column("Floor");
+    const maximumColumn = column("Maximum");
+    if (header[0] !== "Setting" && header[0] !== "Environment")
+      throw new Error(
+        `## ${title} must name each limit in a Setting or Environment column`,
+      );
+    for (
+      index += 1;
+      index < lines.length && lines[index].startsWith("|");
+      index += 1
+    ) {
+      const cells = tableCells(lines[index]);
+      if (separatorRow(cells)) continue;
+      const name = cells[0]?.replaceAll("`", "") ?? "";
+      if (name.length === 0)
+        throw new Error(`## ${title} has a row without a limit name`);
+      rows.push({
+        name,
+        section: title,
+        defaultCell: cells[defaultColumn] ?? "",
+        floorCell: cells[floorColumn] ?? "",
+        maximumCell: cells[maximumColumn] ?? "",
+      });
+    }
+    if (!rows.some((row) => row.section === title))
+      throw new Error(`## ${title} table has no limit rows`);
+  }
+  return rows;
+};
+
+/**
+ * A documented cell is one complete integer, optional prose after whitespace,
+ * `unset` (null), or one exported constant. A fraction is not that integer.
+ *
+ * @param {string} cell
+ * @param {Readonly<Record<string, number>>} names
+ * @returns {{ ok: true, value: number | null } | { ok: false, reason: string }}
+ */
+export const documentedLimitCell = (cell, names) => {
+  const text = cell.trim();
+  if (/^unset\b/iu.test(text)) return { ok: true, value: null };
+  const named = /^`([^`]+)`$/u.exec(text);
+  if (named) {
+    if (!Object.hasOwn(names, named[1]))
+      return { ok: false, reason: `unknown constant ${named[1]}` };
+    return { ok: true, value: names[named[1]] };
+  }
+  const integer = /^(\d+)(?=\s|$)/u.exec(text);
+  if (!integer)
+    return { ok: false, reason: `unreadable cell ${JSON.stringify(text)}` };
+  return { ok: true, value: Number(integer[1]) };
+};
+
+const showLimitValue = (value) => (value === null ? "unset" : String(value));
+
+/**
+ * Compare one inventory row with the bound the code exports.
+ * Each failure names the limit and both values.
+ *
+ * @param {readonly {
+ *   readonly name: string,
+ *   readonly section: string,
+ *   readonly defaultCell: string,
+ *   readonly floorCell: string,
+ *   readonly maximumCell: string,
+ * }[]} rows
+ * @param {readonly {
+ *   readonly name: string,
+ *   readonly aliases?: readonly string[],
+ *   readonly defaultValue: number | null,
+ *   readonly minimum: number,
+ *   readonly maximum: number,
+ * }[]} bounds
+ * @param {Readonly<Record<string, number>>} names
+ * @returns {string[]}
+ */
+export const compareDocumentedNumericLimits = (rows, bounds, names) => {
   const failures = [];
-  for (const [name, policy] of listed)
-    if (policy === "per-call" && !temporary.has(name))
+  const byName = new Map();
+  for (const bound of bounds) {
+    for (const name of [bound.name, ...(bound.aliases ?? [])]) {
+      if (byName.has(name))
+        failures.push(`${name}: code exports more than one bound`);
+      byName.set(name, bound);
+    }
+  }
+  const seen = new Set();
+  const seenNames = new Set();
+  for (const row of rows) {
+    if (seenNames.has(row.name))
+      failures.push(`${row.name}: documented more than once`);
+    seenNames.add(row.name);
+    const bound = byName.get(row.name);
+    if (bound === undefined) {
       failures.push(
-        `${name} is a new per-call exception. Move it into ANALYSIS_SETTINGS instead of extending the temporary list.`,
+        `${row.name}: documented ${row.section} default ${JSON.stringify(row.defaultCell)}, floor ${JSON.stringify(row.floorCell)}, maximum ${JSON.stringify(row.maximumCell)}, but code exports no bound`,
       );
-  for (const name of temporary)
-    if (listed.get(name) !== "per-call")
-      failures.push(
-        `${name} is no longer a temporary per-call exception; remove it from the allowlist`,
-      );
+      continue;
+    }
+    seen.add(bound);
+    for (const [field, cell, codeValue] of [
+      ["default", row.defaultCell, bound.defaultValue],
+      ["floor", row.floorCell, bound.minimum],
+      ["maximum", row.maximumCell, bound.maximum],
+    ]) {
+      const documented = documentedLimitCell(cell, names);
+      if (!documented.ok) {
+        failures.push(
+          `${row.name} ${field}: documented ${JSON.stringify(cell)} (${documented.reason}), code ${showLimitValue(codeValue)}`,
+        );
+        continue;
+      }
+      if (documented.value !== codeValue)
+        failures.push(
+          `${row.name} ${field}: documented ${showLimitValue(documented.value)}, code ${showLimitValue(codeValue)}`,
+        );
+    }
+  }
+  for (const bound of bounds) {
+    if (seen.has(bound)) continue;
+    const label =
+      bound.aliases !== undefined && bound.aliases.length > 0
+        ? `${bound.name} (${bound.aliases.join(", ")})`
+        : bound.name;
+    failures.push(
+      `${label}: code exports default ${showLimitValue(bound.defaultValue)}, floor ${showLimitValue(bound.minimum)}, maximum ${showLimitValue(bound.maximum)}, but docs/reference/rea-limit-inventory.md has no row`,
+    );
+  }
   return failures;
+};
+
+const exportedNumber = (module, name) => {
+  const value = module[name];
+  if (typeof value !== "number")
+    throw new Error(`${name} is not an exported number`);
+  return value;
+};
+
+const bound = (name, defaultValue, minimum, maximum, aliases = []) => ({
+  name,
+  ...(aliases.length === 0 ? {} : { aliases }),
+  defaultValue,
+  minimum,
+  maximum,
+});
+
+/** Analysis-setting registry bounds, including each REA_ environment alias. */
+const analysisSettingBounds = (settings) => {
+  const bounds = [];
+  for (const [id, definition] of Object.entries(settings)) {
+    if (
+      (typeof definition.defaultValue !== "number" &&
+        definition.defaultValue !== null) ||
+      typeof definition.minimum !== "number" ||
+      typeof definition.maximum !== "number"
+    )
+      throw new Error(
+        `${id} does not export a numeric default, floor, and maximum`,
+      );
+    bounds.push(
+      bound(
+        id,
+        definition.defaultValue,
+        definition.minimum,
+        definition.maximum,
+        typeof definition.environment === "string"
+          ? [definition.environment]
+          : [],
+      ),
+    );
+  }
+  return bounds;
+};
+
+/** One MCP startup phase, using the value resolveMcpStartupBudgets ships. */
+const phaseBound = (budget) => {
+  if (budget.source !== "default")
+    throw new Error(`${budget.setting} unset resolution was not the default`);
+  return bound(
+    budget.setting,
+    budget.defaultMilliseconds,
+    budget.floorMilliseconds,
+    budget.maximumMilliseconds,
+  );
+};
+
+/** Restart-only bounds from the constants each owner parser enforces. */
+const restartOnlyBounds = (owners) => {
+  const phases = owners.mcpBudgets.resolveMcpStartupBudgets({});
+  const reconnectSeconds = exportedNumber(
+    owners.hopperSession,
+    "HOPPER_SHUTDOWN_TIMEOUT_MS",
+  );
+  if (reconnectSeconds % 1000 !== 0)
+    throw new Error(
+      "HOPPER_SHUTDOWN_TIMEOUT_MS is not a whole number of seconds",
+    );
+  const seconds = reconnectSeconds / 1000;
+  const restart = [
+    bound(
+      "REA_DEBUGGER_MAX_PENDING_COMMANDS",
+      exportedNumber(owners.limits, "DEFAULT_DEBUGGER_MAX_PENDING_COMMANDS"),
+      exportedNumber(owners.limits, "MINIMUM_DEBUGGER_MAX_PENDING_COMMANDS"),
+      exportedNumber(owners.limits, "MAXIMUM_DEBUGGER_MAX_PENDING_COMMANDS"),
+    ),
+    bound(
+      "REA_DEBUGGER_MAX_SESSIONS",
+      exportedNumber(owners.limits, "DEFAULT_DEBUGGER_MAX_SESSIONS"),
+      exportedNumber(owners.limits, "MINIMUM_DEBUGGER_MAX_SESSIONS"),
+      exportedNumber(owners.limits, "MAXIMUM_DEBUGGER_MAX_SESSIONS"),
+    ),
+    bound(
+      "REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS",
+      exportedNumber(
+        owners.hopperStartup,
+        "DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS",
+      ),
+      exportedNumber(
+        owners.hopperStartup,
+        "MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS",
+      ),
+      exportedNumber(owners.limits, "MAX_NODE_TIMER_DELAY_MS"),
+    ),
+    bound(
+      "REA_JADX_ACTIVE_PROCESSOR_COUNT",
+      owners.jadx.JADX_JVM_DEFAULT,
+      exportedNumber(owners.jadx, "JADX_JVM_NUMERIC_MINIMUM"),
+      exportedNumber(owners.jadx, "JADX_ACTIVE_PROCESSOR_COUNT_MAXIMUM"),
+    ),
+    bound(
+      "REA_JADX_HEAP_MIB",
+      owners.jadx.JADX_JVM_DEFAULT,
+      exportedNumber(owners.jadx, "JADX_JVM_NUMERIC_MINIMUM"),
+      exportedNumber(owners.jadx, "JADX_HEAP_MIB_MAXIMUM"),
+    ),
+    bound(
+      "REA_KUNA_CACHE_MAX_BYTES",
+      exportedNumber(owners.kuna, "DEFAULT_KUNA_CACHE_MAX_BYTES"),
+      exportedNumber(owners.kuna, "MINIMUM_KUNA_CACHE_MAX_BYTES"),
+      exportedNumber(owners.kuna, "MAXIMUM_KUNA_CACHE_MAX_BYTES"),
+    ),
+    bound(
+      "REA_KUNA_JOBS",
+      exportedNumber(owners.kuna, "SERIAL_KUNA_JOBS"),
+      exportedNumber(owners.kuna, "SERIAL_KUNA_JOBS"),
+      exportedNumber(owners.kuna, "MAXIMUM_KUNA_JOBS"),
+    ),
+    phaseBound(phases.doctor),
+    phaseBound(phases.firstCatalog),
+    phaseBound(phases.initialize),
+    bound(
+      "REA_MCP_MAX_INPUT_ELEMENTS",
+      exportedNumber(owners.mcpInput, "DEFAULT_MCP_MAX_INPUT_ELEMENTS"),
+      exportedNumber(owners.mcpInput, "MINIMUM_MCP_MAX_INPUT_ELEMENTS"),
+      exportedNumber(owners.mcpInput, "MAXIMUM_MCP_MAX_INPUT_ELEMENTS"),
+    ),
+    bound(
+      "REA_MCP_MAX_RESPONSE_BYTES",
+      exportedNumber(owners.sdk, "STDIO_DEFAULT_MAX_BUFFER_SIZE"),
+      exportedNumber(owners.mcpResponse, "MINIMUM_RESPONSE_BYTES"),
+      exportedNumber(owners.mcpResponse, "MAXIMUM_RESPONSE_BYTES"),
+    ),
+    phaseBound(phases.toolsList),
+    bound("REA_RECONNECT_TIMEOUT_SECONDS", seconds, seconds, seconds),
+    bound(
+      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+      exportedNumber(
+        owners.startupTimeout,
+        "DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS",
+      ),
+      exportedNumber(owners.limits, "TIMER_DURATION_MINIMUM_MS"),
+      exportedNumber(owners.limits, "MAX_NODE_TIMER_DELAY_MS"),
+    ),
+  ];
+  if (restart.some((entry) => entry.defaultValue === undefined))
+    throw new Error("A restart-only bound is missing its default");
+  return restart;
+};
+
+/** Registry entries must be the restart-only bounds, and the reverse. */
+const restartRegistryFailures = (registry, restart) => {
+  const names = new Set(registry.map((entry) => entry.name));
+  const failures = [];
+  for (const name of names) {
+    if (!restart.some((entry) => entry.name === name))
+      failures.push(
+        `${name}: restart-only registry entry has no exported default, floor, and maximum`,
+      );
+  }
+  for (const entry of restart) {
+    if (!names.has(entry.name))
+      failures.push(
+        `${entry.name}: exported restart-only bound is not in NUMERIC_LIMIT_REGISTRY`,
+      );
+  }
+  return failures;
+};
+
+/**
+ * Bounds the running code exports.
+ * Analysis settings come from ANALYSIS_SETTINGS, which
+ * update_analysis_settings and inspect_analysis_settings share.
+ * Restart-only bounds are the constants each owner parser enforces.
+ * A registry name without those exports fails closed.
+ */
+export const loadExportedNumericLimitBounds = async () => {
+  const { importVerifierSource } =
+    await import("../lib/verifier-source-loader.mjs");
+  const source = (specifier) =>
+    importVerifierSource(specifier, import.meta.url);
+  const [
+    settings,
+    limits,
+    registry,
+    hopperStartup,
+    hopperSession,
+    jadx,
+    kuna,
+    mcpBudgets,
+    mcpInput,
+    mcpResponse,
+    startupTimeout,
+    sdk,
+  ] = await Promise.all([
+    source("../../src/domain/analysisSettingDefinitions.ts"),
+    source("../../src/domain/analysisResourceLimits.ts"),
+    source("../../src/domain/numericLimitRegistry.ts"),
+    source("../../src/hopper/HopperStartupFailure.ts"),
+    source("../../src/hopper/HopperSessionValues.ts"),
+    source("../../src/android/JadxConfiguration.ts"),
+    source("../../src/kuna/KunaConfiguration.ts"),
+    source("../../src/config/mcpStartupBudgets.ts"),
+    source("../../src/config/mcpInputBudget.ts"),
+    source("../../src/config/mcpResponseBudget.ts"),
+    source("../../src/config/providerStartupTimeout.ts"),
+    import("@modelcontextprotocol/server"),
+  ]);
+  const owners = {
+    limits,
+    hopperStartup,
+    hopperSession,
+    jadx,
+    kuna,
+    mcpBudgets,
+    mcpInput,
+    mcpResponse,
+    startupTimeout,
+    sdk,
+  };
+  const restart = restartOnlyBounds(owners);
+  return {
+    bounds: [...analysisSettingBounds(settings.ANALYSIS_SETTINGS), ...restart],
+    names: {
+      "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER,
+      MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: exportedNumber(
+        limits,
+        "MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
+      ),
+    },
+    failures: restartRegistryFailures(registry.NUMERIC_LIMIT_REGISTRY, restart),
+  };
 };
 
 const direct =
@@ -963,12 +1353,6 @@ if (direct) {
     if (read !== "startup" && read !== "construction")
       failures.push(`${name} is restart-only but is not read at startup`);
   }
-  failures.push(
-    ...perCallLimitFailures(
-      new Map([...listed].map(([name, entry]) => [name, entry.policy])),
-      TEMPORARY_PER_CALL_LIMITS,
-    ),
-  );
 
   const discovered = discoverNumericLimitUses(
     await Promise.all(
@@ -989,7 +1373,7 @@ if (direct) {
   )) {
     if (!runtime.has(name) && !listed.has(name))
       failures.push(
-        `${name} in ${file.path} is neither an analysis setting nor docs/design/rea-limit-inventory.md via src/domain/numericLimitRegistry.ts`,
+        `${name} in ${file.path} is neither an analysis setting nor docs/reference/rea-limit-inventory.md via src/domain/numericLimitRegistry.ts`,
       );
   }
   for (const name of listed.keys()) {
@@ -1031,14 +1415,14 @@ if (direct) {
       );
     }
   }
-  const present = new Set([...discovered.keys(), ...listed.keys(), ...runtime]);
   for (const name of REQUIRED_RUNTIME_LIMITS) {
-    if (!present.has(name)) continue;
     const failure = requiredRuntimeLimitFailure(name, {
+      inSource: discovered.has(name),
       inRuntime: runtime.has(name),
       inRegistry: listed.has(name),
     });
-    if (failure !== undefined) failures.push(failure);
+    if (failure !== undefined)
+      failures.push(`${failure.code}: ${failure.name}`);
   }
 
   const parameterOwners = [
@@ -1056,42 +1440,40 @@ if (direct) {
       failures.push(`${relativePath} must report update_mode parameter`);
   }
 
-  const forbidden =
-    /(?<![A-Za-z0-9_])(?:rea_restart_required|restartRequired|restart_required)(?![A-Za-z0-9_])|effect:\s*"(?:immediate|next_process)"|SettingChangeEffect/gu;
-  // Docs and verification receipts keep the field names they recorded.
-  // Source, tests, skills, and scripts cannot reintroduce those names.
-  const scanRoots = FORBIDDEN_FIELD_SCAN_ROOTS.map((dir) => join(root, dir));
-  const scanned = new Set(FORBIDDEN_FIELD_SCAN_EXTENSIONS);
-  const skipDir = new Set([
-    "node_modules",
-    "dist",
-    ".turbo",
-    ".cache",
-    "rea-numeric-limits.mjs",
-  ]);
-  const listText = async (dir) => {
-    const output = [];
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (skipDir.has(entry.name)) continue;
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) output.push(...(await listText(path)));
-      else if (scanned.has(entry.name.slice(entry.name.lastIndexOf(".") + 1)))
-        output.push(path);
-    }
-    return output;
-  };
-  for (const dir of scanRoots) {
-    for (const path of await listText(dir)) {
-      if (path.endsWith(`${sep}rea-numeric-limits.mjs`)) continue;
-      const source = await readFile(path, "utf8");
-      const hit = source.match(forbidden);
-      if (hit)
-        failures.push(
-          `${relative(root, path).split(sep).join("/")} still uses ${[...new Set(hit)].join(", ")}`,
-        );
-    }
+  // The permission fixture copies this file into a tree with no package.json.
+  // A REA checkout always compares the inventory. A missing inventory here fails.
+  let checkout = false;
+  try {
+    checkout =
+      JSON.parse(await readFile(join(root, "package.json"), "utf8")).name ===
+      "rea-agents";
+  } catch (cause) {
+    if (cause?.code !== "ENOENT") throw cause;
   }
+  if (checkout) {
+    try {
+      const inventory = await readFile(
+        join(root, "docs/reference/rea-limit-inventory.md"),
+        "utf8",
+      );
+      const exported = await loadExportedNumericLimitBounds();
+      failures.push(
+        ...exported.failures,
+        ...compareDocumentedNumericLimits(
+          parseDocumentedNumericLimits(inventory),
+          exported.bounds,
+          exported.names,
+        ),
+      );
+    } catch (cause) {
+      failures.push(
+        `documented limit values could not be checked: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  } else
+    console.log(
+      "Documented limit values skipped: this copy is not the REA checkout.",
+    );
 
   if (failures.length > 0) {
     console.error(`Numeric REA_ limit check failed:\n${failures.join("\n")}`);

@@ -165,6 +165,8 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | EVM バイトコード                 | ディスパッチセレクター、バイトオフセット、推定された引数と状態変更の可否                    | Linux x64 上のローカルの生バイト／16 進数の入力ファイル；[オフライン EVM ガイド](../guides/evm/evm-bytecode.md)                                                               |
 | Rust binaries                    | Embedded cargo-auditable dependency list                                                    | [Rust binaries](../rust-binaries.md)                                                                                                                                          |
 | ELF notes                        | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                                  |
+| DWARF compile units              | Compile-unit name, directory, producer, language, and dwo_name                              | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                                        |
+| ELF dependencies                 | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                       | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                                    |
 | Binary hardening                 | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                                 |
 | Apple IPS crashes                | .ips metadata, threads, images, registers and crash classes                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                                 |
 | Linux kernel modules             | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                        |
@@ -194,6 +196,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | モデルファイル                   | GGUF / safetensors メタデータ、テンソル宣言、導出した合計                                   | ヘッダー解析。任意でファイル全体をハッシュ; [GGUF / safetensors](../model-artifacts.md)                                                                                       |
 | IL2CPP メタデータ                | Unity global-metadata.dat のアセンブリ、型・メソッド名、インデックス範囲                    | バージョン 24、27、29、31、39 を静的デコード。Unity 不要                                                                                                                      |
 | Godot PCK                        | アーカイブ一覧と展開、元のヘッダー・ディレクトリ情報、選択内容の識別情報                    | 形式 2、3、4 を静的解析。Godot 不要                                                                                                                                           |
+| NuGet パッケージ                 | パッケージ ID、依存関係グループ、ライセンス、リポジトリ、ZIP の内容                         | 組み込みの静的 .nupkg 検査; [NuGet パッケージ](../guides/managed/nuget-nupkg.md)                                                                                              |
 | WASM アーティファクト            | 検証、セクション、正確なインポート/エクスポート WAT 形式、デコード済み WAT                  | 利用者が用意 WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                             |
 | APK 署名                         | v1/v2/v3/v3.1 署名者、証明書指紋、鍵ローテーション、ダイジェストの自己整合性                | 組み込みの静的解析; `inspect_apk_signature`                                                                                                                                   |
 
@@ -361,7 +364,6 @@ npx rea-agents@latest setup
 - [CLI と Evidence](../getting-started/cli.md)：コマンド、プロバイダーの選択、スナップショット、インポート／エクスポート、終了ステータス。
 - [MCP 契約](../reference/mcp-contracts.md)と[エージェント向けプロンプト](../getting-started/mcp-prompts.md)：ツールの結果、セッション、ガイド付き調査。
 - [ツールカタログ](../reference/mcp-contracts.md#generated-catalog)：ビルド時に生成されるツール、プロバイダー、CLI コマンドの一覧。
-- [ロードマップ](../development/roadmap.md)：計画中の作業と機能の進捗。
 
 脆弱性の報告は [SECURITY.md](../../SECURITY.md) に従ってください。
 
@@ -391,7 +393,7 @@ REA は、法令に従った研究、教育、相互運用性の確保、ソフ�
 
 REA への貢献を歓迎します！[issue を作成](https://github.com/morluto/rea/issues)してバグや機能の提案を報告したり、[pull request を送信](https://github.com/morluto/rea/pulls)してコードやドキュメントを改善したりできます。
 
-開発環境とチェックは [CONTRIBUTING.md](../../CONTRIBUTING.md)、検証レーンは[テストガイド](../development/testing.md)、プロジェクト構造は[アーキテクチャ図](../architecture/architecture.mermaid)を参照してください。
+開発環境とチェックは [CONTRIBUTING.md](../../CONTRIBUTING.md)、検証レーンは[テストガイド](../development/testing.md)を参照してください。
 
 ## ライセンス
 

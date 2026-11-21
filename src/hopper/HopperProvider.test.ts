@@ -295,6 +295,7 @@ describe("Hopper relationship coverage", () => {
         sha256: "a".repeat(64),
         kind: "database",
         format: "analysis-database",
+        databaseEngine: "hopper",
       });
       try {
         const observed = await client.execute(operation, {
@@ -404,6 +405,7 @@ describe("Hopper caller reconciliation failures", () => {
       sha256: "a".repeat(64),
       kind: "database",
       format: "analysis-database",
+      databaseEngine: "hopper",
     });
     try {
       const observed = await client.execute("procedure_callers", {
@@ -492,6 +494,7 @@ it("preserves pre-abort with invalid startup seed", async () => {
     sha256: "a".repeat(64),
     kind: "database",
     format: "analysis-database",
+    databaseEngine: "hopper",
   });
   const result = await client.execute(
     "health",

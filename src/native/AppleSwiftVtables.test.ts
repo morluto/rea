@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
+import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 import { createSwiftClassVtableDecoder } from "./AppleSwiftVtables.js";
 import {
   decodeSwiftNominalTypes,
@@ -69,37 +70,68 @@ it("propagates unexpected vtable reader failures", () => {
   ).toThrow(failure);
 });
 
-it("reports the vtable decoder's slot limit separately from malformed bounds", () => {
-  const vtables = createSwiftClassVtableDecoder({
-    result: objcSwiftMetadataSchema.parse({ db_save_result: null }),
-    readers: {
-      u32: (address) =>
-        address === 0x230n ? 20_001 : address === 0x21cn ? 30_000 : 0,
-      relative: () => ({ kind: "null" }),
-      location: () => ({ address: null, file_offset: null }),
-      evidence: () => [],
-      executable: () => false,
-      admit: () => true,
-    },
-  });
-  vtables.visitor.descriptor({
-    record: 0x100n,
-    descriptor: 0x200n,
-    flags: 0x80000010,
-    name: "Widget",
-    context: {
-      module: "Test",
-      path: "Widget",
-      depth: 2,
-      anonymous: false,
-      reason: null,
-      walkLimited: false,
-    },
-  });
-  expect(vtables.facts().issues).toContainEqual(
-    expect.objectContaining({ message: "Swift vtable count exceeds 20000" }),
-  );
-});
+it.each([
+  [20_001, "Swift vtable count or offset exceeds declared metadata bounds"],
+  [20_002, "Swift vtable count exceeds 20000"],
+] as const)(
+  "distinguishes vtable metadata bounds from the slot limit with %i metadata words",
+  (positiveWords, reason) => {
+    const base = 0x100000000n;
+    const descriptor = 0x300;
+    const slotCount = 20_001;
+    // Both controls have room for every serialized slot; only the class's
+    // declared metadata extent differs.
+    const bytes = Buffer.alloc(descriptor + 52 + slotCount * 8);
+    const u32 = (at: number, value: number) => bytes.writeUInt32LE(value, at);
+    u32(0, 0xfeedfacf);
+    u32(4, 0x0100000c);
+    u32(12, 2);
+    u32(16, 1);
+    u32(20, 152);
+    u32(32, 0x19);
+    u32(36, 152);
+    bytes.write("__TEXT", 40);
+    bytes.writeBigUInt64LE(base, 56);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 64);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+    u32(88, 5);
+    u32(92, 5);
+    u32(96, 1);
+    bytes.write("__swift5_types", 104);
+    bytes.write("__TEXT", 120);
+    bytes.writeBigUInt64LE(base + 0x200n, 136);
+    bytes.writeBigUInt64LE(4n, 144);
+    u32(152, 0x200);
+    bytes.writeInt32LE(descriptor - 0x200, 0x200);
+    bytes.writeInt32LE(0x260 - (0x240 + 8), 0x240 + 8);
+    bytes.write("Fixture\0", 0x260);
+    bytes.write("Widget\0", 0x280);
+    u32(descriptor, 0x80000010);
+    bytes.writeInt32LE(0x240 - (descriptor + 4), descriptor + 4);
+    bytes.writeInt32LE(0x280 - (descriptor + 8), descriptor + 8);
+    u32(descriptor + 28, positiveWords);
+    u32(descriptor + 44, 1);
+    u32(descriptor + 48, slotCount);
+
+    const report = decodeAppleDispatchMetadata(bytes, 100, {
+      path: "/fixture/widget",
+      sha256: "a".repeat(64),
+    });
+    expect(report.swift_decls).toContainEqual(
+      expect.objectContaining({ name: "Widget", module: "Fixture" }),
+    );
+    expect(report.swift_dispatch_slots).toEqual([]);
+    expect(report.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "swift_class_vtable_descriptors",
+        status: "partial",
+        examined: 0,
+        decoded: 0,
+        reason: expect.stringContaining(reason),
+      }),
+    );
+  },
+);
 
 it("preserves unsupported type-metadata tag reasons instead of reporting null", () => {
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
@@ -133,7 +165,7 @@ it("preserves unsupported type-metadata tag reasons instead of reporting null", 
     admit: () => true,
   };
   const nominal = decodeSwiftNominalTypes({
-    entries: [0x100n],
+    entries: [{ address: 0x100n, section: "__swift5_types" }],
     result,
     visitor: vtables.visitor,
     readers: nominalReaders,

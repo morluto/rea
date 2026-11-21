@@ -7,7 +7,11 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
-import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
+import {
+  elfNote,
+  elfNoteFixture,
+  withElf64DirectSectionCount,
+} from "../../native/elf/ElfNotes.fixture.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
@@ -325,42 +329,53 @@ it("reports cancellation and keeps indexed paths for an unsupported remote listi
   });
 });
 
-it("keeps a resolved remote module beside one with a missing specifier", async () => {
-  const url = "https://example.com/mod.ts";
-  const snapshot = await inventoryOf(
-    "partial-remote",
-    denoElf(
-      buildDenoSection({
-        metadata: { ...defaultDenoMetadata(), entrypoint_key: url },
-        specifiers: [{ text: url, id: 1 }],
-        remoteModules: [
-          { specifierId: 1, data: "known" },
-          { specifierId: 2, data: "missing" },
-        ],
-      }),
-    ),
-  );
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "."),
-  ).toMatchObject({
-    format_metadata: { remote_module_listing: "unsupported" },
-  });
-  expect(
-    snapshot.occurrences.find(
-      (row) => row.logical_path === "deno-remote/example.com/mod.ts",
-    ),
-  ).toMatchObject({
-    format_metadata: { source_path: url, entry_point: true },
-  });
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
-  ).toMatchObject({
-    format_metadata: { source_path: null, entry_point: false },
-    limitations: expect.arrayContaining([
-      expect.stringContaining("not available as a logical path"),
-    ]),
-  });
-});
+it.each(["missing", "invalid UTF-8"] as const)(
+  "keeps a resolved remote module beside a %s specifier",
+  async (specifier) => {
+    const url = "https://example.com/mod.ts";
+    const snapshot = await inventoryOf(
+      "partial-remote",
+      denoElf(
+        buildDenoSection({
+          metadata: { ...defaultDenoMetadata(), entrypoint_key: url },
+          specifiers: [
+            { text: url, id: 1 },
+            ...(specifier === "invalid UTF-8"
+              ? [{ bytes: Buffer.from([0xff]), id: 2 }]
+              : []),
+          ],
+          remoteModules: [
+            { specifierId: 1, data: "known" },
+            { specifierId: 2, data: "missing" },
+          ],
+        }),
+      ),
+    );
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "."),
+    ).toMatchObject({
+      format_metadata: {
+        specifier_listing: specifier === "missing" ? "listed" : "unsupported",
+        remote_module_listing: "unsupported",
+      },
+    });
+    expect(
+      snapshot.occurrences.find(
+        (row) => row.logical_path === "deno-remote/example.com/mod.ts",
+      ),
+    ).toMatchObject({
+      format_metadata: { index: 0, source_path: url, entry_point: true },
+    });
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
+    ).toMatchObject({
+      format_metadata: { index: 1, source_path: null, entry_point: false },
+      limitations: expect.arrayContaining([
+        expect.stringContaining("not available as a logical path"),
+      ]),
+    });
+  },
+);
 
 it.each([
   ["a port", "http://localhost:8000/mod.ts", "localhost%3A8000/mod.ts"],
@@ -945,6 +960,29 @@ it("fails closed when a SUI note sits beside extended section numbering", async 
   });
 });
 
+it("records a reserved direct section count beside an independently confirmed program note", async () => {
+  const bytes = withElf64DirectSectionCount(denoElf(), 0xff00);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("reserved direct section count"),
+    },
+  });
+});
+
+it("does not confirm a Deno carrier from a section note in a malformed table", async () => {
+  const bytes = withElf64DirectSectionCount(
+    gnuElf("section", suiNote()),
+    0xff00,
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({ status: "absent" });
+});
+
 it("reaches a SUI section note past an unreadable program table", async () => {
   const bytes = patched(gnuElf("both", suiNote()), (image) => {
     image.writeBigUInt64LE(BigInt(image.length + 8), ELF64_PHOFF);
@@ -1321,6 +1359,30 @@ it("refuses a confirmed Intel trailer when the allowance ends the outer search",
   });
 });
 
+it("locates a PE resource past a distant DOS stub using positional reads", async () => {
+  const section = buildDenoSection();
+  const { bytes: image } = peResourceFixture(
+    true,
+    [{ type: 10, name: "D3N0L4ND", language: 0, payload: section }],
+    65536,
+    4,
+    0x20080,
+  );
+  const handle = bytesHandle(image, (length) => {
+    if (length > 512) throw new Error("Read exceeded the header record bounds");
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      carrier: "pe",
+      embedding: "pe-resource",
+      length: section.length,
+    },
+  });
+});
+
 it("locates a small D3N0L4ND resource in a PE larger than 512 MiB", async () => {
   const section = buildDenoSection();
   const image = denoPe([section]);
@@ -1340,6 +1402,23 @@ it("locates a small D3N0L4ND resource in a PE larger than 512 MiB", async () => 
       length: section.length,
     },
   });
+});
+
+it("keeps a PE resource read failure when the caller aborts with that same error", async () => {
+  const image = denoPe([buildDenoSection()]);
+  const controller = new AbortController();
+  const failure = Object.assign(new Error("PE resource read failed"), {
+    code: "EIO",
+  });
+  const handle = bytesHandle(image, (length) => {
+    if (length === 16) {
+      controller.abort(failure);
+      throw failure;
+    }
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length, controller.signal),
+  ).rejects.toBe(failure);
 });
 
 it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_RCDATA branch", async () => {
@@ -1363,7 +1442,7 @@ it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1388,7 +1467,7 @@ it("fails closed when a readable D3N0L4ND resource sits beside a non-directory R
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1401,7 +1480,7 @@ it("fails closed when a D3N0L4ND payload is not file-backed", async () => {
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 

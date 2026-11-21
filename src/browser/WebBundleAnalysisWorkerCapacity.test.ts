@@ -51,12 +51,15 @@ it("refuses before spawning or reading source when no host result capacity remai
     if (result.ok) throw new Error("Expected result-capacity refusal");
     const refusal = result.error.error;
     expect(refusal).toBeInstanceOf(AnalysisResourceConstraintError);
-    if (!(refusal instanceof AnalysisResourceConstraintError))
-      throw new Error("Expected a result-capacity refusal");
-    expect(refusal.message).toContain("host result capacity 0 bytes");
-    expect(refusal.message).toContain("still has 8388608 bytes");
-    expect(refusal.message).not.toContain("has no further room");
-    expect(refusal.remediationAction).toContain("NODE_OPTIONS");
+    expect(refusal).toMatchObject({
+      resource: "memory",
+      remediationAction: expect.stringContaining("NODE_OPTIONS"),
+      reportedLimits: {
+        result_bytes: 8_388_608,
+        result_budget_remaining_bytes: 8_388_608,
+        host_result_capacity_bytes: 0,
+      },
+    });
     expect(result.error.continuation).toBe("result_capacity_exhausted");
     expect(result.error.completed).toBeNull();
     expect(sourceReads).toBe(0);

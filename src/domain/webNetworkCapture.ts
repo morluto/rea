@@ -93,13 +93,15 @@ export const webNetworkCaptureBudgetFacts = (
 export const webNetworkCaptureBudgetRecovery = (
   input: Parameters<typeof selectedWebNetworkCaptureBudgets>[0],
   parameter: Parameters<typeof webNetworkCaptureBudgetFacts>[1],
+  enforcedMaximum?: number,
 ): string => {
   const facts = webNetworkCaptureBudgetFacts(input, parameter);
+  const effective = enforcedMaximum ?? facts.effective_value;
   const next =
-    facts.effective_value < facts.maximum
-      ? `Increase ${parameter} above ${String(facts.effective_value)} on the next inspect_web_network_capture call`
+    effective < facts.maximum
+      ? `Increase ${parameter} above ${String(effective)} on the next inspect_web_network_capture call`
       : `${parameter} is at its maximum; select a smaller complete producer export when that preserves the required observation`;
-  return `${next}. Effective ${parameter}: ${String(facts.effective_value)} ${facts.unit} (source ${facts.source}, default ${String(facts.default_value)}, floor ${String(facts.minimum)}, maximum ${String(facts.maximum)}). No REA restart is required. Other capture budgets, worker limits and client limits remain separate. Selection and delivery do not recreate a completed report from a refused decode.`;
+  return `${next}. Effective ${parameter}: ${String(effective)} ${facts.unit} (source ${facts.source}, default ${String(facts.default_value)}, floor ${String(facts.minimum)}, maximum ${String(facts.maximum)}). No REA restart is required. Other capture budgets, worker limits and client limits remain separate. Selection and delivery do not recreate a completed report from a refused decode.`;
 };
 
 /** Capture deadline used when capture_timeout_ms is omitted. */

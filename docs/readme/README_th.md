@@ -165,6 +165,8 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 | ไบต์โค้ด EVM                   | ตัวเลือกฟังก์ชันสำหรับการเรียก ออฟเซ็ตไบต์ อาร์กิวเมนต์และความสามารถในการเปลี่ยนสถานะที่อนุมานได้ | ไฟล์บนเครื่องที่มีไบต์ดิบหรือข้อมูลเลขฐานสิบหกบน Linux x64; [คู่มือ EVM แบบออฟไลน์](../guides/evm/evm-bytecode.md)                                                        |
 | Rust binaries                | Embedded cargo-auditable dependency list                                        | [Rust binaries](../rust-binaries.md)                                                                                                                      |
 | ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                              |
+| DWARF compile units          | Compile-unit name, directory, producer, language, and dwo_name                  | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                    |
+| ELF dependencies             | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports           | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                |
 | Binary hardening             | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O             | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                             |
 | Linux kernel modules         | .modinfo keys, __versions CRCs, this_module presence, and signature trailer     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                    |
 | Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                          | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                         |
@@ -194,6 +196,7 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 | ไฟล์โมเดล                     | เมทาดาทา GGUF / safetensors การประกาศเทนเซอร์ และยอดรวมที่คำนวณได้                  | ตรวจสอบส่วนหัว; เลือกแฮชทั้งไฟล์ได้; [GGUF / safetensors](../model-artifacts.md)                                                                                 |
 | เมทาดาทา IL2CPP              | อิมเมจแอสเซมบลี Unity global-metadata.dat ชื่อชนิด/เมธอด และช่วงดัชนี                   | ถอดรหัสสแตติกเวอร์ชัน 24, 27, 29, 31, 39; ไม่ต้องใช้ Unity                                                                                                       |
 | Godot PCK                    | รายการและการแตกไฟล์ ข้อมูลส่วนหัว/ไดเรกทอรีต้นฉบับ และตัวตนเนื้อหาที่เลือก                    | รูปแบบสแตติก 2, 3, 4; ไม่ต้องใช้ Godot                                                                                                                         |
+| แพ็กเกจ NuGet                 | ตัวตนของแพ็กเกจ กลุ่ม dependency ใบอนุญาต repository และเนื้อหา ZIP                    | การตรวจสอบ .nupkg แบบสแตติกในตัว; [แพ็กเกจ NuGet](../guides/managed/nuget-nupkg.md)                                                                          |
 | อาร์ติแฟกต์ WASM                | การตรวจสอบ เซกชัน รูปแบบ WAT นำเข้า/ส่งออกที่ตรงต้นฉบับ และ WAT ที่ถอดรหัส                 | ผู้เรียกจัดเตรียม WABT 1.0.42; `inspect_wasm_artifact`                                                                                                         |
 | ลายเซ็น APK                   | ผู้ลงนาม v1/v2/v3/v3.1 ลายนิ้วมือใบรับรอง การหมุนเวียนคีย์ และความสอดคล้องภายในของไดเจสต์   | การตรวจสอบสแตติกในตัว; `inspect_apk_signature`                                                                                                              |
 
@@ -359,7 +362,6 @@ npx rea-agents@latest setup
 - [CLI และ Evidence](../getting-started/cli.md): คำสั่ง การเลือกผู้ให้บริการ สแนปช็อต การนำเข้า/ส่งออก และรหัสการสิ้นสุด
 - [สัญญา MCP](../reference/mcp-contracts.md) และ[พรอมป์ต์สำหรับเอเจนต์](../getting-started/mcp-prompts.md): ผลลัพธ์เครื่องมือ เซสชัน และการตรวจสอบตามคำแนะนำ
 - [แค็ตตาล็อกเครื่องมือ](../reference/mcp-contracts.md#generated-catalog): รายการเครื่องมือ ผู้ให้บริการ และคำสั่ง CLI ที่สร้างระหว่างการบิลด์
-- [แผนพัฒนา](../development/roadmap.md): งานที่วางแผนไว้และรายการติดตามความสามารถ
 
 รายงานช่องโหว่ผ่าน [SECURITY.md](../../SECURITY.md)
 
@@ -391,7 +393,7 @@ applicable licenses.
 
 เรายินดีรับความช่วยเหลือในการพัฒนา REA! [เปิด issue](https://github.com/morluto/rea/issues) เพื่อรายงานบั๊กหรือเสนอฟีเจอร์ หรือ[ส่ง pull request](https://github.com/morluto/rea/pulls) เพื่อปรับปรุงโค้ดหรือเอกสาร
 
-ดู [CONTRIBUTING.md](../../CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](../development/testing.md) สำหรับแนวทางการตรวจยืนยัน และ[แผนผังสถาปัตยกรรม](../architecture/architecture.mermaid) สำหรับโครงสร้างโปรเจกต์
+ดู [CONTRIBUTING.md](../../CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](../development/testing.md) สำหรับแนวทางการตรวจยืนยัน
 
 ## สัญญาอนุญาต
 

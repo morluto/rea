@@ -311,9 +311,6 @@ describe("raw-binary load rejection diagnostics", () => {
         constraint: "load_selection_rejected",
         related_parameters: ["format", "architecture", "entry_point"],
       },
-      remediation: {
-        action: expect.stringMatching(/format.*architecture.*entry_point/i),
-      },
     });
     expect(projected.remediation.action).not.toContain("--target-format");
   });

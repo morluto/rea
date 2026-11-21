@@ -98,6 +98,9 @@ const RETRYABLE_CAPABILITY_UNAVAILABLE = classified(
 
 const ARTIFACT_OPERATION_CLASSIFICATIONS = {
   cancelled: classified("cancelled", "cancelled"),
+  malformed: classified("invalid_request", "invalid_input"),
+  truncated: classified("truncated", "truncated"),
+  unsupported: classified("unsupported_target", "unsupported_target"),
   format: classified("artifact_operation_failed", "execution_failure"),
   integrity: classified("artifact_operation_failed", "integrity_mismatch"),
   limit: classified("truncated", "truncated"),
@@ -177,6 +180,10 @@ const BINARY_TARGET_CLASSIFICATIONS = {
   bundle_type_unsupported: classified(
     "target_unavailable",
     "unsupported_target",
+  ),
+  bundle_info_plist_decode_budget_exceeded: classified(
+    "target_unavailable",
+    "unavailable",
   ),
   bundle_info_plist_missing: classified("target_unavailable", "unavailable"),
   bundle_layout_ambiguous: classified("target_unavailable", "unavailable"),

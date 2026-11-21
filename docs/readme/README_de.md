@@ -165,6 +165,8 @@ REA benötigt Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) oder 26+ (>=26.12.1) so
 | EVM-Bytecode                        | Dispatch-Selektoren, Byte-Offsets, abgeleitete Argumente und Veränderbarkeit des Zustands                       | Lokale Eingabe mit Rohbytes oder Hexdarstellung unter Linux x64; [Offline-EVM-Leitfaden](../guides/evm/evm-bytecode.md)                                                         |
 | Rust binaries                       | Embedded cargo-auditable dependency list                                                                        | [Rust binaries](../rust-binaries.md)                                                                                                                                            |
 | ELF notes                           | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                                    |
+| DWARF compile units                 | Compile-unit name, directory, producer, language, and dwo_name                                                  | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                                          |
+| ELF dependencies                    | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                           | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                                      |
 | Binary hardening                    | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                             | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                                   |
 | Linux kernel modules                | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                          |
 | Erlang BEAM                         | IFF chunks, atoms, exports, and tables                                                                          | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                               |
@@ -194,6 +196,7 @@ REA benötigt Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) oder 26+ (>=26.12.1) so
 | Modelldateien                       | GGUF-/safetensors-Metadaten, Tensordeklarationen und abgeleitete Summen                                         | Headerprüfung; optionaler Hash der gesamten Datei; [GGUF / safetensors](../model-artifacts.md)                                                                                  |
 | IL2CPP-Metadaten                    | Unity global-metadata.dat: Assembly-Images, Typ-/Methodennamen und Indexbereiche                                | Statische Dekodierung der Versionen 24, 27, 29, 31, 39; kein Unity nötig                                                                                                        |
 | Godot PCK                           | Archivinventar und Extraktion, originale Header-/Verzeichnisdaten und ausgewählte Inhaltsidentitäten            | Statische Formate 2, 3, 4; kein Godot nötig                                                                                                                                     |
+| NuGet-Pakete                        | Paketidentität, Abhängigkeitsgruppen, Lizenz, Repository und ZIP-Inhalt                                         | Integrierte statische .nupkg-Prüfung; [NuGet-Pakete](../guides/managed/nuget-nupkg.md)                                                                                          |
 | WASM-Artefakte                      | Validierung, Sektionen, exakte Import-/Export-WAT-Formen und dekodiertes WAT                                    | Vom Aufrufer bereitgestellt WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                |
 | APK-Signaturen                      | v1/v2/v3/v3.1-Signer, Zertifikatfingerabdrücke, Schlüsselrotation und Digest-Selbstkonsistenz                   | Integrierte statische Prüfung; `inspect_apk_signature`                                                                                                                          |
 
@@ -359,7 +362,6 @@ Beginne mit den [praxisnahen Anleitungen](https://rea.tools/de/guides/) auf der 
 - [CLI und Evidence](../getting-started/cli.md): Befehle, Provider-Auswahl, Snapshots, Import/Export und Exit-Status.
 - [MCP-Kontrakte](../reference/mcp-contracts.md) und [Agenten-Prompts](../getting-started/mcp-prompts.md): Werkzeugergebnisse, Sitzungen und geführte Untersuchungen.
 - [Werkzeugkatalog](../reference/mcp-contracts.md#generated-catalog): Beim Build erzeugtes Inventar von Werkzeugen, Providern und CLI-Befehlen.
-- [Roadmap](../development/roadmap.md): Geplante Arbeiten und Fortschrittsübersichten zu Fähigkeiten.
 
 Melde Sicherheitslücken gemäß [SECURITY.md](../../SECURITY.md).
 
@@ -391,7 +393,7 @@ applicable licenses.
 
 Wir freuen uns über deine Hilfe bei REA! [Öffne ein Issue](https://github.com/morluto/rea/issues), um einen Fehler zu melden oder eine Funktion vorzuschlagen, oder [sende einen Pull Request](https://github.com/morluto/rea/pulls), um Code oder Dokumentation zu verbessern.
 
-Die Entwicklungsumgebung und Prüfungen beschreibt [CONTRIBUTING.md](../../CONTRIBUTING.md), die Verifikationspfade der [Testleitfaden](../development/testing.md) und die Projektstruktur die [Architekturübersicht](../architecture/architecture.mermaid).
+Die Entwicklungsumgebung und Prüfungen beschreibt [CONTRIBUTING.md](../../CONTRIBUTING.md), die Verifikationspfade der [Testleitfaden](../development/testing.md).
 
 ## Lizenz
 

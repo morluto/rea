@@ -57,7 +57,7 @@ export const validateDirectory = async (
     const rootNow = await bigLstat(root);
     if (!sameFile(rootIdentity, rootNow))
       return { ok: false, code: "changed", message: "Reference root changed" };
-    const stats = await bigLstat(path);
+    const stats = path === root ? rootNow : await bigLstat(path);
     if (stats.isSymbolicLink())
       return {
         ok: false,

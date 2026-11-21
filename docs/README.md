@@ -1,8 +1,7 @@
 # Documentation directory
 
-REA documentation is organized by reader task and document owner. This directory
-links every authored guide; the [site](https://rea.tools/) also serves separate
-product pages. The VitePress documentation source is this `docs/` tree.
+Find an installation step, investigation guide, or contributor reference by task.
+The [REA website](https://rea.tools/) has worked examples and product pages.
 
 ## Getting started
 
@@ -11,17 +10,44 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [CLI and Evidence](getting-started/cli.md)
 - [Guided MCP prompts and completion](getting-started/mcp-prompts.md)
 
+## Desktop applications
+
+- [Desktop installation directories](desktop-applications.md)
+- [Desktop application capture](desktop-application-capture.md)
+- [Desktop application state](desktop-application-state.md)
+- [Desktop application tasks](desktop-application-tasks.md)
+- [Desktop application export](desktop-application-export.md)
+- [Desktop build computer](desktop-build-computer.md)
+- [Desktop build witness](desktop-build-witness.md)
+
+## Agent environments
+
+- [Build RL environments with REA](agent-environments-quickstart.md)
+- [Agent environments from recorded captures](agent-environments.md)
+
 ## Native binaries
 
 - [Native binary investigation](guides/native/native-investigation.md)
 - [Go binary build metadata](guides/native/go-binaries.md)
+- [DWARF compile units](guides/native/dwarf-units.md)
 - [Offline binary diagnostics](guides/native/binary-diagnostics.md)
+- [ELF separate debug files](guides/native/elf-debug-link.md)
 - [ELF and Mach-O initializer functions](guides/native/native-initializers.md)
 - [ELF unwind function ranges](guides/native/elf-unwind-ranges.md)
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
-- [Acquired NTFS metadata and change journals](guides/native/ntfs-metadata.md)
+- [Acquired NTFS metadata](guides/native/ntfs-metadata.md)
+- [Binary hardening](binary-hardening.md)
+- [ELF note tables](elf-notes.md)
+- [ELF dependency tables](elf-dependencies.md)
+- [Linux kernel modules](kernel-modules.md)
+- [PE Authenticode certificate tables](pe-certificates.md)
+- [PE import and delay-load tables](pe-imports.md)
+- [PE TLS callbacks and load configuration](pe-load-config.md)
+- [Match native functions across builds](native-function-matching.md)
+- [Rust binary dependency metadata](rust-binaries.md)
+- [Static CUDA and HIP code objects](gpu-code-objects.md)
 
 ## JavaScript and Electron
 
@@ -33,6 +59,11 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [JavaScript static/runtime reconciliation](guides/javascript/javascript-runtime-reconciliation.md)
 - [Electron file-page observation](guides/javascript/electron-observation.md)
 - [V8 code cache inspection](guides/javascript/v8-code-cache.md)
+- [Electron fuse state](electron-fuses.md)
+- [Static JavaScript route inventory](javascript-route-inventory.md)
+- [Bun standalone executables](bun-standalone.md)
+- [Deno compile executables](deno-standalone.md)
+- [Node.js single executable applications](node-sea.md)
 
 ## Browser and captured websites
 
@@ -44,6 +75,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Captured website source locations](guides/web/web-source-location.md)
 - [Captured website module relationships](guides/web/website-module-trace.md)
 - [Captured website scripts and static JavaScript analysis](guides/web/website-script-export.md)
+- [Offline Playwright traces](playwright-traces.md)
 
 ## Android applications
 
@@ -51,22 +83,53 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Apktool resource decoding](guides/android/apktool-resource-analysis.md)
 - [ADB device inspection and acquisition](guides/android/adb-device-analysis.md)
 - [Flutter build identification](guides/android/flutter-analysis.md)
+- [Android boot and vendor_boot images](android-boot-image.md)
+- [APK signature schemes](apk-signature.md)
 
 ## Apple applications
 
 - [Apple Application Inventory Projection](guides/apple/apple-application-analysis.md)
+- [Apple IPS crash reports](apple-ips.md)
 
 ## .NET assemblies
 
 - [Managed-code analysis](guides/managed/managed-code-analysis.md)
+- [NuGet packages](guides/managed/nuget-nupkg.md)
+- [.NET single-file bundles](dotnet-bundles.md)
+- [IL2CPP metadata](il2cpp-metadata.md)
 
 ## Firmware
 
 - [Firmware analysis](guides/firmware/firmware-analysis.md)
+- [Android OTA update payloads](guides/firmware/android-ota-payload.md)
+- [Flattened devicetree inspection](devicetree.md)
+- [ESP flash images](esp-flash-image.md)
+- [ESP images](esp-image.md)
+- [U-Boot FIT images](fit-images.md)
+- [Intel HEX and S-record images](hex-records.md)
+- [UF2 and DfuSe images](uf2-dfuse.md)
+- [U-Boot legacy uImage containers](uimage.md)
 
 ## HarmonyOS packages
 
 - [Static HarmonyOS package inventory](guides/harmony/harmony-analysis.md)
+
+<a id="additional-guides"></a>
+
+## Packages and metadata
+
+- [Offline API contract inventory](api-contracts.md)
+- [CycloneDX dependencies](guides/native/cyclonedx-view.md)
+- [Maven POM and Gradle module metadata](maven-gradle-metadata.md)
+- [Release exposure](release-exposure.md)
+- [Model file declarations](model-artifacts.md)
+- [Python packaged applications](python-packaged-applications.md)
+- [CPython pyc inspection](python-pyc.md)
+- [Erlang BEAM files](erlang-beam.md)
+- [Godot PCK archives](godot-pck.md)
+- [UnityFS AssetBundle archives](unityfs.md)
+- [iNES containers](ines-containers.md)
+- [WeChat mini-program wxapkg archives](wxapkg.md)
 
 ## WebAssembly
 
@@ -87,10 +150,6 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Process capture](guides/runtime/process-capture.md)
 - [Frida instrumentation](guides/runtime/frida-instrumentation.md)
 
-## Signal recordings
-
-- [Recorded signal inspection](guides/signals/signal-recordings.md)
-
 ## Provider setup and formats
 
 - [Ghidra provider semantics](providers/ghidra-provider.md)
@@ -104,35 +163,42 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Mach-O dSYM companion](providers/dsym.md)
 - [IDA provider](providers/ida-provider.md)
 - [JEB instrumentation and analysis](providers/jeb-analysis.md)
+- [GameCube DOL analysis through Ghidra](ghidra-dol.md)
+- [PowerPC ELF analysis through Ghidra](ghidra-ppc.md)
+- [Kuna provider](kuna-provider.md)
+- [Reverse-engineering tool integrations](reverse-engineering-tools.md)
 
 ## Contracts and evidence
 
 - [MCP runtime contracts](reference/mcp-contracts.md)
 - [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md)
+- [Reconstruction coverage](reconstruction-coverage.md)
 
 ## Development and verification
 
-- [Settings and recovery](design/limits-and-recovery.md)
-- [REA limit inventory](design/rea-limit-inventory.md)
+- [Documentation ownership and authoring](development/documentation.md)
+- [Settings and recovery](reference/limits-and-recovery.md)
+- [REA limit inventory](reference/rea-limit-inventory.md)
 - [MCP tool design](development/tool-design.md)
 - [Testing REA](development/testing.md)
 - [Client and agent verification](development/client-verification.md)
 - [Reconstruction readiness conformance](development/reconstruction-readiness.md)
 - [Releasing REA](development/releasing.md)
-- [REA roadmap](development/roadmap.md)
+- [Testing lanes and provider verification](testing-lanes.md)
+- [Measure MCP catalog costs in Codex](mcp-catalog-evaluation.md)
+- [Static analysis in GitHub Actions](ci-analysis.md)
 
 ## Release migrations
 
 - [Upgrading from REA 6.1 to 6.2](migrations/migration-6.2.md)
 
-## Architecture and authoring
+## Signal recordings
 
-- [Architecture map](https://github.com/morluto/rea/blob/main/docs/architecture/architecture.mermaid)
-- [Documentation ownership and contribution model](development/documentation.md)
-- [Feature specifications](specs/README.md)
-- [Architectural decision records](adr/README.md)
+- [Recorded signal inspection](guides/signals/signal-recordings.md)
 
-## Machine-owned documentation
+<a id="machine-owned-documentation"></a>
+
+## Generated files and release records
 
 | Path                                      | Owner and update command                                                                                |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -141,65 +207,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 | `error-contract.schema.json`              | Tracked schema from contracts; `npm run docs:error-schema`                                              |
 | `user-visible-errors.csv`                 | Generated error code and category per domain and provider-owned error case; `npm run docs:error-schema` |
 | `releases/<version>.contributions.json`   | Durable release contribution record; follow the [release guide](development/releasing.md)               |
-| `assets/`                                 | Shared authored images referenced by guides                                                             |
 
-Do not edit generated catalogs or evidence to change product facts. Change their
-canonical contracts or producer and regenerate. Historical release records retain
-the exact commit messages and references from the release they describe.
-
-## Additional guides
-
-- [Offline API contract inventory](api-contracts.md)
-- [Bun standalone executables](bun-standalone.md)
-- [Deno compile executables](deno-standalone.md)
-- [Capability composition and ownership](capability-composition.md)
-- [.NET single-file bundles](dotnet-bundles.md)
-- [ESP flash images](esp-flash-image.md)
-- [U-Boot FIT images](fit-images.md)
-- [Measure MCP catalog costs in Codex](mcp-catalog-evaluation.md)
-- [Offline Playwright traces](playwright-traces.md)
-- [Testing lanes and provider verification](testing-lanes.md)
-- [UF2 and DfuSe images](uf2-dfuse.md)
-- [WeChat mini-program wxapkg archives](wxapkg.md)
-- [Binary hardening](binary-hardening.md)
-- [Desktop application capture](desktop-application-capture.md)
-- [Desktop application export](desktop-application-export.md)
-- [Desktop application state](desktop-application-state.md)
-- [Desktop application tasks](desktop-application-tasks.md)
-- [Desktop build computer](desktop-build-computer.md)
-- [Desktop build witness](desktop-build-witness.md)
-- [iNES containers](ines-containers.md)
-- [Build RL environments with REA](agent-environments-quickstart.md)
-- [Agent environments from recorded captures](agent-environments.md)
-- [APK signature schemes](apk-signature.md)
-- [Apple IPS crash reports](apple-ips.md)
-- [Static analysis in GitHub Actions](ci-analysis.md)
-- [Desktop installation directories](desktop-applications.md)
-- [Flattened devicetree inspection](devicetree.md)
-- [Electron fuse state](electron-fuses.md)
-- [ELF note tables](elf-notes.md)
-- [Erlang BEAM files](erlang-beam.md)
-- [ESP images](esp-image.md)
-- [GameCube DOL analysis through Ghidra](ghidra-dol.md)
-- [PowerPC ELF analysis through Ghidra](ghidra-ppc.md)
-- [Godot PCK archives](godot-pck.md)
-- [Static CUDA and HIP code objects](gpu-code-objects.md)
-- [Intel HEX and S-record images](hex-records.md)
-- [IL2CPP metadata](il2cpp-metadata.md)
-- [Static JavaScript route inventory](javascript-route-inventory.md)
-- [Linux kernel modules](kernel-modules.md)
-- [Kuna provider](kuna-provider.md)
-- [Model file declarations](model-artifacts.md)
-- [Match native functions across builds](native-function-matching.md)
-- [Node.js single executable applications](node-sea.md)
-- [PE Authenticode certificate tables](pe-certificates.md)
-- [PE import and delay-load tables](pe-imports.md)
-- [PE TLS callbacks and load configuration](pe-load-config.md)
-- [Python packaged applications](python-packaged-applications.md)
-- [CPython pyc inspection](python-pyc.md)
-- [Reconstruction coverage](reconstruction-coverage.md)
-- [Release exposure](release-exposure.md)
-- [Reverse-engineering tool integrations](reverse-engineering-tools.md)
-- [Rust binary dependency metadata](rust-binaries.md)
-- [U-Boot legacy uImage containers](uimage.md)
-- [UnityFS AssetBundle archives](unityfs.md)
+Regenerate catalogs and Evidence projections from their canonical source.
+Release records preserve the exact commit messages and references for each release.
+Guides share authored images in `assets/`.

@@ -1,13 +1,7 @@
-import {
-  mkdtemp,
-  mkdir,
-  rm,
-  writeFile,
-  type FileHandle,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
@@ -79,8 +73,7 @@ const prepare = async () => {
   fixture.onReadFailure = undefined;
   fixture.onClosed = undefined;
   fixture.onDeniedClose = undefined;
-  const root = await mkdtemp(join(tmpdir(), "rea-inspection-descriptor-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-inspection-descriptor-");
   const rows = [42, 43, 44].map((pid) => ({
     pid,
     parentPid: 1,
@@ -125,7 +118,6 @@ it("joins a pending successful native read before reporting explicit cancellatio
   const { rows, host } = await prepare();
   const entered = createDeferred<void>();
   const release = createDeferred<void>();
-  onTestFinished(() => release.resolve());
   const completed = createDeferred<void>();
   fixture.onClosed = (path) => {
     if (path === "/proc/44/stat") completed.resolve();
@@ -147,20 +139,24 @@ it("joins a pending successful native read before reporting explicit cancellatio
     .finally(() => {
       settled = true;
     });
-  await awaitAcknowledgement(entered.promise, pending, "identity read");
-  await awaitAcknowledgement(
-    completed.promise,
-    pending,
-    "sibling identity close",
-  );
-  // Let the completed sibling publish its parsed identity after descriptor close.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  controller.abort(reason);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(settled).toBe(false);
-  expect(fixture.handles.get("/proc/42/stat")?.fd).toBeGreaterThanOrEqual(0);
-  release.resolve();
-  const failure = await pending;
+  let failure: unknown;
+  try {
+    await awaitAcknowledgement(entered.promise, pending, "identity read");
+    await awaitAcknowledgement(
+      completed.promise,
+      pending,
+      "sibling identity close",
+    );
+    // Let the completed sibling publish its parsed identity after descriptor close.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort(reason);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(fixture.handles.get("/proc/42/stat")?.fd).toBeGreaterThanOrEqual(0);
+  } finally {
+    release.resolve();
+    failure = await pending;
+  }
   expect(failure).toBeInstanceOf(ProcessOwnershipIdentityBatchFailure);
   if (!(failure instanceof ProcessOwnershipIdentityBatchFailure)) throw failure;
   expect(failure.origin).toBe("cancelled");
@@ -186,7 +182,6 @@ it("drains mixed identity outcomes and transfers every exact failed-close owner 
   fixture.denied.set("/proc/43/stat", secondClose);
   const entered = createDeferred<void>();
   const release = createDeferred<void>();
-  onTestFinished(() => release.resolve());
   fixture.onRead = async (path) => {
     if (path === "/proc/43/stat") {
       entered.resolve();
@@ -199,11 +194,15 @@ it("drains mixed identity outcomes and transfers every exact failed-close owner 
     .finally(() => {
       settled = true;
     });
-  await awaitAcknowledgement(entered.promise, pending, "identity read");
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(settled).toBe(false);
-  release.resolve();
-  const failure = await pending;
+  let failure: unknown;
+  try {
+    await awaitAcknowledgement(entered.promise, pending, "identity read");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+  } finally {
+    release.resolve();
+    failure = await pending;
+  }
   expect(failure).toBeInstanceOf(ProcessOwnershipIdentityBatchFailure);
   if (!(failure instanceof ProcessOwnershipIdentityBatchFailure)) throw failure;
   expect(failure.observations.get(44)).toMatchObject({
@@ -242,10 +241,6 @@ it("keeps an actual physical read primary alongside a sibling's explicit cancell
   const siblingStarted = createDeferred<void>();
   const completed = createDeferred<void>();
   const observedFailure = createDeferred<void>();
-  onTestFinished(() => {
-    physical.resolve();
-    sibling.resolve();
-  });
   fixture.onClosed = (path) => {
     if (path === "/proc/44/stat") completed.resolve();
   };
@@ -268,24 +263,29 @@ it("keeps an actual physical read primary alongside a sibling's explicit cancell
     host,
     controller.signal,
   ).catch((cause: unknown) => cause);
-  await awaitAcknowledgement(
-    completed.promise,
-    pending,
-    "sibling identity close",
-  );
-  await awaitAcknowledgement(
-    siblingStarted.promise,
-    pending,
-    "sibling identity read",
-  );
-  physical.resolve();
-  await awaitAcknowledgement(
-    observedFailure.promise,
-    pending,
-    "physical read failure",
-  );
-  sibling.resolve();
-  const failure = await pending;
+  let failure: unknown;
+  try {
+    await awaitAcknowledgement(
+      completed.promise,
+      pending,
+      "sibling identity close",
+    );
+    await awaitAcknowledgement(
+      siblingStarted.promise,
+      pending,
+      "sibling identity read",
+    );
+    physical.resolve();
+    await awaitAcknowledgement(
+      observedFailure.promise,
+      pending,
+      "physical read failure",
+    );
+  } finally {
+    physical.resolve();
+    sibling.resolve();
+    failure = await pending;
+  }
   expect(failure).toBeInstanceOf(ProcessOwnershipIdentityBatchFailure);
   if (!(failure instanceof ProcessOwnershipIdentityBatchFailure)) throw failure;
   expect(nativeFailure).toMatchObject({ code: "EISDIR" });

@@ -11,7 +11,7 @@ import {
 import {
   decodeRetainedBase64,
   readRecordedResponseBody,
-  type RecordedResponseBody,
+  type RecordedResponseBodyRead,
 } from "../../domain/analysisView/recordedResponseBody.js";
 import { scenarioContentMediaType } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
@@ -96,7 +96,7 @@ const member = (value: unknown, name: string): unknown =>
     ? Reflect.get(value, name)
     : undefined;
 
-/** A recorded body: a JSON value to walk, form fields in order with every occurrence kept, as headers and query strings are, or text too large to scan. */
+/** A recorded body: JSON or form fields to walk, or a body the scan could not examine. */
 type ScannedBody =
   | { readonly kind: "json"; readonly value: unknown }
   | { readonly kind: "form"; readonly fields: readonly [string, string][] }
@@ -138,14 +138,16 @@ const parsedBody = (
   }
 };
 
-/** Decoded body text as the scan reads it; binary bytes hold no JSON or form text. */
+/** Unproven body sources remain unscanned; binary bytes hold no JSON or form text. */
 const decodedBody = (
-  body: RecordedResponseBody,
+  body: RecordedResponseBodyRead,
   mediaType: unknown,
 ): ScannedBody | undefined =>
-  body.bodyEncoding === "base64"
-    ? undefined
-    : parsedBody(body.bodyText, mediaType, body.bodyCut === true);
+  body.sourceUnavailable === true
+    ? { kind: "skipped" }
+    : body.bodyEncoding === "base64"
+      ? undefined
+      : parsedBody(body.bodyText, mediaType, body.bodyCut === true);
 
 /** Name/value pairs such as HAR headers and query strings. */
 const namedValues = (value: unknown): (readonly [string, unknown])[] =>
@@ -326,7 +328,7 @@ export const credentialScanWarnings = (capture: {
   if (scanned.skipped.count > 0)
     warnings.push({
       code: "credential-scan-incomplete",
-      message: `${String(scanned.skipped.count)} recorded bodies exceed the credential-name scan's 4 MiB limit and were not scanned; evidence.json ships them, so review them before sharing.`,
+      message: `${String(scanned.skipped.count)} recorded bodies could not be completely scanned for credential-like names (4 MiB limit or unavailable response-body source); evidence.json ships their retained representation, so review it before sharing.`,
       pointers: scanned.skipped.pointers,
     });
   return warnings;

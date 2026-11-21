@@ -165,6 +165,8 @@ REA требует Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) или 26+ (>=26.1
 | PE imports                          | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                 | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                           |
 | Windows shortcuts                   | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                               | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                               |
 | ELF notes                           | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                            | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                            |
+| DWARF compile units                 | Compile-unit name, directory, producer, language, and dwo_name                                                             | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                                  |
+| ELF dependencies                    | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                                      | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                              |
 | Binary hardening                    | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                        | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                           |
 | Linux kernel modules                | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                  |
 | Erlang BEAM                         | IFF chunks, atoms, exports, and tables                                                                                     | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                       |
@@ -194,6 +196,7 @@ REA требует Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) или 26+ (>=26.1
 | Файлы моделей                       | Метаданные GGUF / safetensors, объявления тензоров и вычисленные итоги                                                     | Анализ заголовков; полный хеш файла по выбору; [GGUF / safetensors](../model-artifacts.md)                                                                              |
 | Метаданные IL2CPP                   | Образы сборок Unity global-metadata.dat, имена типов/методов и диапазоны индексов                                          | Статическое декодирование версий 24, 27, 29, 31, 39; Unity не нужен                                                                                                     |
 | Godot PCK                           | Список и извлечение файлов, исходные заголовки/каталоги и идентификаторы выбранного содержимого                            | Статические форматы 2, 3, 4; Godot не нужен                                                                                                                             |
+| Пакеты NuGet                        | Идентичность пакета, группы зависимостей, лицензия, репозиторий и содержимое ZIP                                           | Встроенная статическая проверка .nupkg; [Пакеты NuGet](../guides/managed/nuget-nupkg.md)                                                                                |
 | Артефакты WASM                      | Валидация, секции, точные WAT-формы импорта/экспорта и декодированный WAT                                                  | Предоставляется пользователем WABT 1.0.42; `inspect_wasm_artifact`                                                                                                      |
 | Подписи APK                         | Подписанты v1/v2/v3/v3.1, отпечатки сертификатов, ротация ключей и внутренняя согласованность хешей                        | Встроенный статический анализ; `inspect_apk_signature`                                                                                                                  |
 
@@ -359,7 +362,6 @@ npx rea-agents@latest setup
 - [CLI и Evidence](../getting-started/cli.md): команды, выбор провайдера, снимки, импорт/экспорт и коды завершения.
 - [Контракты MCP](../reference/mcp-contracts.md) и [промпты агентов](../getting-started/mcp-prompts.md): результаты инструментов, сеансы и исследования с подсказками.
 - [Каталог инструментов](../reference/mcp-contracts.md#generated-catalog): создаваемый при сборке перечень инструментов, провайдеров и команд CLI.
-- [План развития](../development/roadmap.md): запланированные работы и отслеживание возможностей.
 
 Сообщайте об уязвимостях согласно [SECURITY.md](../../SECURITY.md).
 
@@ -391,7 +393,7 @@ applicable licenses.
 
 Будем рады вашей помощи с REA! [Откройте issue](https://github.com/morluto/rea/issues), чтобы сообщить об ошибке или предложить функцию, либо [отправьте pull request](https://github.com/morluto/rea/pulls) с улучшениями кода или документации.
 
-Настройка среды разработки и проверки описаны в [CONTRIBUTING.md](../../CONTRIBUTING.md), направления проверки — в [руководстве по тестированию](../development/testing.md), а структура проекта — на [схеме архитектуры](../architecture/architecture.mermaid).
+Настройка среды разработки и проверки описаны в [CONTRIBUTING.md](../../CONTRIBUTING.md), направления проверки — в [руководстве по тестированию](../development/testing.md).
 
 ## Лицензия
 

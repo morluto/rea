@@ -6,7 +6,10 @@ import {
   browserNetworkBodySchema,
   browserNetworkHeadersSchema,
 } from "./browserNetworkEvidence.js";
-import { sanitizedBrowserUrlSchema } from "./browserObservation.js";
+import {
+  browserResponseStatusSchema,
+  sanitizedBrowserUrlSchema,
+} from "./browserObservation.js";
 import { webScreenshotArtifactSchema } from "./webScreenshot.js";
 import { digestSchema } from "./../domain/digests.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -209,7 +212,7 @@ export const browserScenarioEventSchema = z
     z.strictObject({
       ...networkEventShape,
       kind: z.literal("response"),
-      status: z.int().min(100).max(999),
+      status: browserResponseStatusSchema,
       failure: z.null(),
     }),
     z.strictObject({

@@ -64,6 +64,8 @@ export interface IdaRawObservation {
   readonly tool: string;
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly result: JsonValue;
+  /** Engine output the upstream reported beside the result, when nonempty. */
+  readonly output?: { readonly stdout: string; readonly stderr: string };
 }
 
 const unknownBody = {
@@ -118,6 +120,11 @@ export class IdaOperationRunner {
       readonly surveyAvailable?: boolean;
       /** The program identity REA admitted, reported by `list_documents`. */
       readonly admittedDocument?: string;
+      /** Answers modern reads through another upstream tool and reports that actual observation. */
+      readonly invoke?: (
+        tool: string,
+        args: Readonly<Record<string, JsonValue>>,
+      ) => Promise<IdaRawObservation>;
     } = {},
   ) {}
 
@@ -129,13 +136,20 @@ export class IdaOperationRunner {
       throw cancelledBy(tool, this.options.signal);
     const scoped =
       this.database === undefined ? args : { ...args, database: this.database };
-    const result = await this.connection.call(tool, scoped, {
-      signal: this.options.signal,
-    });
-    this.raw.push({ tool, arguments: scoped, result });
+    const observation =
+      this.options.invoke === undefined
+        ? {
+            tool,
+            arguments: scoped,
+            result: await this.connection.call(tool, scoped, {
+              signal: this.options.signal,
+            }),
+          }
+        : await this.options.invoke(tool, scoped);
+    this.raw.push(observation);
     if (this.options.signal?.aborted)
       throw cancelledBy(tool, this.options.signal);
-    return result;
+    return observation.result;
   }
 
   async functions(): Promise<IdaFunction[]> {

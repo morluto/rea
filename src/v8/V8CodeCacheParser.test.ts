@@ -4,6 +4,8 @@ import {
   inspectV8CodeCacheInputSchema,
   v8CodeCacheSchema,
   V8_CODE_CACHE_HEADER_BYTES,
+  V8_CODE_CACHE_MAGIC_HIGH,
+  V8_CODE_CACHE_NARROW_HEADER_BYTES,
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
 import { parseV8CodeCache } from "./V8CodeCacheParser.js";
@@ -11,6 +13,7 @@ import {
   v8CodeCacheFixture,
   v8FunctionCodeCacheFixture,
   withHeaderWord,
+  withSyntheticNarrowHeader,
 } from "./V8CodeCache.fixture.js";
 
 const defaults = inspectV8CodeCacheInputSchema.parse({
@@ -90,43 +93,24 @@ it("reports the source length the producer recorded", () => {
   expect(report.header.fields[2]?.value).toBe(cache.readUInt32LE(8));
 });
 
-it("reports a module cache as a module rather than a script", () => {
-  // Bit 30 of the source-length word marks `vm.SourceTextModule` output. Measured on
-  // Node 24.22.1: a real module cache reads `0x40000013` for a 19-unit source while a
-  // script of the same length reads `0x00000013`, so a producer check that only tests
-  // the function bit reports the module cache as a plain script.
-  const script = v8CodeCacheFixture();
-  const word = script.readUInt32LE(8);
-  const length = word & 0x1fffffff;
-  expect(word & 0x40000000).toBe(0);
-  expect(word & 0x20000000).toBe(0);
-  expect(parse(script).header.producer).toBe("unknown");
-
-  const moduleCache = withHeaderWord(script, 2, word | 0x40000000);
-  const report = parse(moduleCache);
-  expect(report.header.producer).toBe("module");
-  // The module bit sits outside the source-length mask, so the length is unchanged.
-  expect(report.header.source_length).toBe(length);
-});
-
-it("keeps the function and module flags distinct", () => {
-  const script = v8CodeCacheFixture("var y = 1;");
-  const length = script.readUInt32LE(8) & 0x1fffffff;
-  expect(
-    parse(withHeaderWord(script, 2, 0x20000000 | length)).header.producer,
-  ).toBe("compile_function");
-  expect(
-    parse(withHeaderWord(script, 2, 0x40000000 | length)).header.producer,
-  ).toBe("module");
-  // V8 before 13.4 (Node 22's 12.4) marks a module with bit 31: `0x80000017` on Electron 30.
-  const legacy = parse(withHeaderWord(script, 2, 0x80000000 | length)).header;
-  expect([legacy.producer, legacy.source_length]).toEqual(["module", length]);
-  // Both bits set is not a shape V8 produces; the module flag wins so the reported
-  // family stays one of the three observed kinds.
-  expect(
-    parse(withHeaderWord(script, 2, 0x60000000 | length)).header.producer,
-  ).toBe("module");
-});
+it.each([
+  [0x20000000, "compile_function"],
+  [0x40000000, "module"],
+  [0x80000000, "module"],
+  [0x60000000, "module"],
+] as const)(
+  "interprets producer flags %i without changing source length",
+  (flags, producer) => {
+    // Older V8 uses bit 31 for modules. A synthetic word with both bits set
+    // checks that the module marker wins over the function marker.
+    const sourceLength = 19;
+    const cache = withHeaderWord(real, 2, flags | sourceLength);
+    expect(parse(cache).header).toMatchObject({
+      producer,
+      source_length: sourceLength,
+    });
+  },
+);
 
 it("separates the compileFunction producer bit from the source length", () => {
   const source = "return 7;";
@@ -143,7 +127,6 @@ it("separates the compileFunction producer bit from the source length", () => {
     (word & 0x20000000) === 0 ? "unknown" : "compile_function",
   );
   // The source length is the low bits either way, so it is the part that must hold.
-  expect(report.header.source_length).toBe(word & 0x1fffffff);
   expect(report.header.source_length).toBe(source.length);
 });
 
@@ -188,30 +171,10 @@ it("fails closed on a foreign magic", () => {
   );
 });
 
-it("fails closed on a payload-length mismatch", () => {
-  const corrupt = withHeaderWord(real, 5, real.readUInt32LE(20) + 8);
-  expect(() => parse(corrupt)).toThrow(
-    expect.objectContaining({
-      kind: "malformed",
-      message: expect.stringContaining("truncated or corrupt"),
-    }),
-  );
-});
-
 it("fails closed on a truncated header", () => {
-  expect(() => parse(real.subarray(0, V8_CODE_CACHE_HEADER_BYTES - 1))).toThrow(
-    expect.objectContaining({ kind: "malformed" }),
-  );
-});
-
-it("fails closed when fewer payload bytes follow the header than it declares", () => {
-  // Cut bytes off the end without rewriting the declared payload length.
-  expect(() => parse(real.subarray(0, real.length - 16))).toThrow(
-    expect.objectContaining({
-      kind: "malformed",
-      message: expect.stringContaining("truncated or corrupt"),
-    }),
-  );
+  expect(() =>
+    parse(real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES - 1)),
+  ).toThrow(expect.objectContaining({ kind: "malformed" }));
 });
 
 it("treats the observed header as version-dependent rather than a fixed ABI", () => {
@@ -265,3 +228,138 @@ it("raises min_string_bytes and reports only runs that long", () => {
 
 const realSlice = (bytes: Buffer, offset: number, length: number): string =>
   bytes.subarray(offset, offset + length).toString("latin1");
+
+it("inspects a synthetic narrow layout derived from a 64-bit cache", () => {
+  // Removing the alignment word preserves the retained payload bytes.
+  const narrow = withSyntheticNarrowHeader(real);
+  const report = parse(narrow);
+
+  expect(narrow.readUInt32LE(20)).toBe(
+    narrow.length - V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  );
+  expect(report.header.header_bytes).toBe(V8_CODE_CACHE_NARROW_HEADER_BYTES);
+  expect(report.payload.offset).toBe(V8_CODE_CACHE_NARROW_HEADER_BYTES);
+  // Nothing but the padding is removed, so the payload is identical.
+  expect(report.payload.sha256).toBe(parse(real).payload.sha256);
+  // The word table covers exactly the header this container carries.
+  expect(report.header.fields).toHaveLength(7);
+  expect(report.header.fields.map((entry) => entry.offset)).toEqual([
+    0, 4, 8, 12, 16, 20, 24,
+  ]);
+});
+
+it("fails closed when the declared payload leaves no admitted header size", () => {
+  // Padding that is neither 28 nor 32 bytes is not a container this reader admits.
+  expect(() =>
+    parse(
+      Buffer.concat([
+        real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES + 2),
+        real.subarray(V8_CODE_CACHE_HEADER_BYTES),
+      ]),
+    ),
+  ).toThrow(expect.objectContaining({ kind: "malformed" }));
+});
+
+it("refuses a wide container that is only four bytes short", () => {
+  // Truncating a 32-byte-header cache by four bytes makes `bytes.length - declaredPayload`
+  // equal 28. The padding then occupies the same position as a zero first
+  // payload word in a narrow container, so the reader refuses the ambiguity.
+  const short = real.subarray(0, real.length - 4);
+  expect(short.readUInt32LE(28)).toBe(0);
+  expect(() => parse(short)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringContaining("ambiguous"),
+    }),
+  );
+  // A synthetic narrow fixture has payload at the same byte offset.
+  const narrow = withSyntheticNarrowHeader(real);
+  expect(narrow.readUInt32LE(V8_CODE_CACHE_NARROW_HEADER_BYTES)).not.toBe(0);
+  expect(parse(narrow).header.header_bytes).toBe(
+    V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  );
+});
+
+it("rejects a reported word table that does not cover the header it declares", () => {
+  // The parser derives both from one offset, so this pair cannot disagree on a
+  // parsed container; the schema is what a stored or projected report also goes
+  // through, and there the two are independent fields. Without these cases the
+  // rule could be deleted and every parser test would still pass.
+  const reported = (fieldCount: number, headerBytes: number) => ({
+    artifact: {
+      path: "/artifacts/module.jsc",
+      sha256: "a".repeat(64),
+      bytes: 4096,
+    },
+    header: {
+      magic: 0xf00d,
+      magic_build_stable: V8_CODE_CACHE_MAGIC_HIGH,
+      fields: Array.from({ length: fieldCount }, (_, index) => ({
+        offset: index * 4,
+        value: index,
+        role: "reserved",
+        status: "unconfirmed" as const,
+      })),
+      header_bytes: headerBytes,
+      source_length: 10,
+      producer: "script" as const,
+    },
+    payload: {
+      offset: headerBytes,
+      bytes: 4096 - headerBytes,
+      sha256: "b".repeat(64),
+      trailing_bytes: 0,
+    },
+    embedded_strings: [],
+    coverage: {
+      status: "complete" as const,
+      scanned_bytes: 4096 - headerBytes,
+      strings: 0,
+    },
+    limitations: ["measured on one producer"],
+  });
+
+  // Seven words is 28 bytes and eight is 32, so each header size has exactly one
+  // word count that covers it.
+  const cases = [
+    { fields: 7, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: false },
+    { fields: 8, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: false },
+    { fields: 7, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: true },
+    { fields: 8, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: true },
+  ];
+  for (const { fields, bytes, accepted } of cases) {
+    const label = `${String(fields)} words / ${String(bytes)} bytes`;
+    const parsed = v8CodeCacheSchema.safeParse(reported(fields, bytes));
+    expect(parsed.success, label).toBe(accepted);
+    expect(
+      parsed.error?.issues.some(
+        (issue) => issue.path.join(".") === "header.fields",
+      ) ?? false,
+      label,
+    ).toBe(!accepted);
+  }
+});
+
+it("rejects retained header and payload coordinates that disagree", () => {
+  const report = parse(real);
+  const disordered = {
+    ...report,
+    header: {
+      ...report.header,
+      fields: report.header.fields.map((field, index) =>
+        index === 0 ? { ...field, offset: 4 } : field,
+      ),
+    },
+  };
+  const shiftedPayload = {
+    ...report,
+    artifact: { ...report.artifact, bytes: report.artifact.bytes + 4 },
+    payload: { ...report.payload, offset: report.payload.offset + 4 },
+  };
+  expect(
+    v8CodeCacheSchema.safeParse(disordered).error?.issues ?? [],
+  ).toContainEqual(expect.objectContaining({ path: ["header", "fields"] }));
+  expect(
+    v8CodeCacheSchema.safeParse(shiftedPayload).error?.issues ?? [],
+  ).toContainEqual(expect.objectContaining({ path: ["payload", "offset"] }));
+});

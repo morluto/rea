@@ -94,9 +94,9 @@ The observed mitmproxy 12.2.3 `SaveHar` profile can emit `postData.text: null`
 for a missing request body. REA preserves that reported null, omitting the
 optional field only from its validation copy for this exact producer profile;
 it does not invent an empty string or body bytes.
-The observed Playwright 1.58.2 profile can report a bracketed IPv6
+The observed Playwright 1.58.2 and 1.64.1 profiles can report a bracketed IPv6
 `serverIPAddress`, forwarded from Chromium's `remoteIPAddress` through
-[Playwright's HAR tracer](https://github.com/microsoft/playwright/blob/v1.58.2/packages/playwright-core/src/server/har/harTracer.ts).
+[Playwright's HAR tracer](https://github.com/microsoft/playwright/blob/v1.64.1/packages/playwright-core/src/server/har/harTracer.ts).
 Chromium DevTools exports (declared as `WebInspector` `537.36`, the frozen
 AppleWebKit version in Chromium's user agent) report the same bracketed form:
 [its HAR writer](https://github.com/ChromeDevTools/devtools-frontend/blob/63739e8ec45ca01b9e4be9b8b05946acdadd8f1f/front_end/models/har/Log.ts)
@@ -1136,7 +1136,7 @@ host memory or `NODE_OPTIONS` does not raise the old-generation heap. Update
 `capture.decoder_old_generation_mib` through MCP, or set
 `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` before starting a new REA process.
 Retry after owned cleanup completes; the update does not release resources.
-See the [settings design](../../design/limits-and-recovery.md#failure-and-retry).
+See the [analysis settings and recovery](../../reference/limits-and-recovery.md#failure-and-retry).
 Record selection happens after complete decoding and does not reduce that
 workload. Use a smaller capture exported by its producer or another decoder
 with sufficient capacity, retaining the original for provenance. Subsets do
