@@ -332,20 +332,39 @@ const hashBlob = async (
 const envBindings = (
   value: unknown,
   includeValues: boolean,
+  defects: string[],
 ): OciImageLayoutImage["env"] => {
-  if (!Array.isArray(value)) return [];
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    defects.push("config.Env is not an array; it is not modeled");
+    return [];
+  }
   const bindings: OciImageLayoutImage["env"] = [];
-  for (const item of value) {
-    if (typeof item !== "string" || item.length === 0) continue;
-    const separator = item.indexOf("=");
-    const name = separator === -1 ? item : item.slice(0, separator);
-    if (name.length === 0) continue;
+  let invalid = 0;
+  let first = -1;
+  for (const [position, item] of value.entries()) {
+    const separator = typeof item === "string" ? item.indexOf("=") : -1;
+    const name =
+      typeof item !== "string"
+        ? ""
+        : separator === -1
+          ? item
+          : item.slice(0, separator);
+    if (typeof item !== "string" || name.length === 0) {
+      invalid += 1;
+      if (first === -1) first = position;
+      continue;
+    }
     bindings.push({
       name,
       value:
         includeValues && separator !== -1 ? item.slice(separator + 1) : null,
     });
   }
+  if (invalid > 0)
+    defects.push(
+      `config.Env has ${String(invalid)} member${invalid === 1 ? "" : "s"} that ${invalid === 1 ? "is" : "are"} not a named string, first at [${String(first)}]; ${invalid === 1 ? "it is" : "they are"} omitted`,
+    );
   return bindings;
 };
 
@@ -422,6 +441,8 @@ const configKeys = (
   label: string,
   defects: string[],
 ): string[] => {
+  if (value !== undefined && value !== null && !isRecord(value))
+    defects.push(`${label} is not a JSON object; it is not modeled`);
   const keys = objectKeys(value);
   const named = keys.filter((key) => key !== "");
   if (named.length !== keys.length)
@@ -470,6 +491,55 @@ const configSubobject = (
 };
 
 /**
+ * A string config field. A present value of another type is reported rather
+ * than read as an omitted declaration; null is treated as omitted.
+ */
+const stringField = (
+  value: unknown,
+  label: string,
+  defects: string[],
+): string | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    defects.push(`${label} is not a string; it is not modeled`);
+    return null;
+  }
+  return nonempty(value);
+};
+
+/** A string-array config field such as Cmd, reported when malformed. */
+const stringArrayField = (
+  value: unknown,
+  label: string,
+  defects: string[],
+): string[] | null => {
+  if (value === undefined || value === null) return null;
+  const items = asStringArray(value);
+  if (items === null)
+    defects.push(`${label} is not an array of strings; it is not modeled`);
+  return items;
+};
+
+/** Config labels, with a defect for a non-object or non-string values. */
+const labelsField = (
+  value: unknown,
+  defects: string[],
+): { name: string; value: string }[] => {
+  if (value === undefined || value === null) return [];
+  if (!isRecord(value)) {
+    defects.push("config.Labels is not a JSON object; it is not modeled");
+    return [];
+  }
+  const labels = annotationsOf(value);
+  const dropped = Object.keys(value).length - labels.length;
+  if (dropped > 0)
+    defects.push(
+      `config.Labels has ${String(dropped)} value${dropped === 1 ? "" : "s"} that ${dropped === 1 ? "is" : "are"} not a string; ${dropped === 1 ? "it is" : "they are"} omitted`,
+    );
+  return labels;
+};
+
+/**
  * Image facts from one config document, with the defects that left any of
  * them out. Defects are reported once per config blob by the caller.
  */
@@ -491,16 +561,24 @@ const parseConfig = (
   );
   return {
     facts: {
-      architecture: nonempty(value.architecture),
-      os: nonempty(value.os),
-      variant: nonempty(value.variant),
-      created: nonempty(value.created),
-      author: nonempty(value.author),
-      user: nonempty(config.User) ?? nonempty(config.user),
-      env: envBindings(config.Env ?? config.env, includeEnvValues),
-      entrypoint: asStringArray(config.Entrypoint ?? config.entrypoint),
-      cmd: asStringArray(config.Cmd ?? config.cmd),
-      working_dir: nonempty(config.WorkingDir) ?? nonempty(config.workingDir),
+      architecture: stringField(value.architecture, "architecture", defects),
+      os: stringField(value.os, "os", defects),
+      variant: stringField(value.variant, "variant", defects),
+      created: stringField(value.created, "created", defects),
+      author: stringField(value.author, "author", defects),
+      user: stringField(config.User ?? config.user, "config.User", defects),
+      env: envBindings(config.Env ?? config.env, includeEnvValues, defects),
+      entrypoint: stringArrayField(
+        config.Entrypoint ?? config.entrypoint,
+        "config.Entrypoint",
+        defects,
+      ),
+      cmd: stringArrayField(config.Cmd ?? config.cmd, "config.Cmd", defects),
+      working_dir: stringField(
+        config.WorkingDir ?? config.workingDir,
+        "config.WorkingDir",
+        defects,
+      ),
       exposed_ports: configKeys(
         config.ExposedPorts ?? config.exposedPorts,
         "config.ExposedPorts",
@@ -511,8 +589,12 @@ const parseConfig = (
         "config.Volumes",
         defects,
       ),
-      labels: annotationsOf(config.Labels ?? config.labels),
-      stop_signal: nonempty(config.StopSignal) ?? nonempty(config.stopSignal),
+      labels: labelsField(config.Labels ?? config.labels, defects),
+      stop_signal: stringField(
+        config.StopSignal ?? config.stopSignal,
+        "config.StopSignal",
+        defects,
+      ),
       rootfs_diff_ids: diffIdsOf(rootfs, defects),
       history: historyOf(value.history),
     },

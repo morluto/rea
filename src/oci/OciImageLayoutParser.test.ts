@@ -2224,6 +2224,85 @@ it("reports a non-object rootfs subobject and keeps the other image facts", asyn
   expect(report.coverage.status).toBe("partial");
 });
 
+it("reports malformed config leaf fields and keeps the readable facts", async () => {
+  const root = await createTestTempDirectory("rea-oci-config-leaves-");
+  const written = await writeLayoutWithConfigPatch(root, (doc) => {
+    const config = doc.config as Record<string, unknown>;
+    doc.created = 7;
+    config.Env = "A=1";
+    config.Cmd = ["/bin/sh", false];
+    config.WorkingDir = ["/srv"];
+    config.Labels = { team: "core", build: 3 };
+    config.ExposedPorts = ["80/tcp"];
+  });
+  const report = await inspectLayout(root);
+  const at = `Config ${written.configDigest}`;
+  expect(report.findings.map((finding) => finding.message)).toEqual([
+    `${at} created is not a string; it is not modeled.`,
+    `${at} config.Env is not an array; it is not modeled.`,
+    `${at} config.Cmd is not an array of strings; it is not modeled.`,
+    `${at} config.WorkingDir is not a string; it is not modeled.`,
+    `${at} config.ExposedPorts is not a JSON object; it is not modeled.`,
+    `${at} config.Labels has 1 value that is not a string; it is omitted.`,
+  ]);
+  expect(
+    report.findings.every(
+      (finding) =>
+        finding.kind === "malformed_blob_json" &&
+        finding.digest === written.configDigest,
+    ),
+  ).toBe(true);
+  expect(report.images[0]).toMatchObject({
+    architecture: "amd64",
+    os: "linux",
+    created: null,
+    user: "nobody",
+    env: [],
+    entrypoint: ["/bin/sh"],
+    cmd: null,
+    working_dir: null,
+    exposed_ports: [],
+    labels: [{ name: "team", value: "core" }],
+    rootfs_diff_ids: [written.layerDigest],
+  });
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("reports Env members that name nothing and keeps the named ones", async () => {
+  const root = await createTestTempDirectory("rea-oci-env-members-");
+  const written = await writeLayoutWithConfigPatch(root, (doc) => {
+    (doc.config as Record<string, unknown>).Env = ["A=1", 2, "=x", "B"];
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings.map((finding) => finding.message)).toEqual([
+    `Config ${written.configDigest} config.Env has 2 members that are not a named string, first at [1]; they are omitted.`,
+  ]);
+  expect(report.images[0]?.env.map((binding) => binding.name)).toEqual([
+    "A",
+    "B",
+  ]);
+});
+
+it("treats null config leaf fields as omitted", async () => {
+  const root = await createTestTempDirectory("rea-oci-null-leaves-");
+  await writeLayoutWithConfigPatch(root, (doc) => {
+    const config = doc.config as Record<string, unknown>;
+    config.Env = null;
+    config.Entrypoint = null;
+    config.Cmd = null;
+    config.Labels = null;
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([]);
+  expect(report.images[0]).toMatchObject({
+    env: [],
+    entrypoint: null,
+    cmd: null,
+    labels: [],
+  });
+  expect(report.coverage.status).toBe("complete");
+});
+
 it("keeps absent config and rootfs subobjects defect-free while reporting null subobjects", async () => {
   const absentRoot = await createTestTempDirectory("rea-oci-absent-subobject-");
   await writeLayoutWithConfigPatch(absentRoot, (doc) => {
