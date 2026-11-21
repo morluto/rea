@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import type { Page, Route } from "playwright-core";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
@@ -363,99 +364,99 @@ describe("request route cleanup", () => {
     vi.unstubAllGlobals();
   });
 
-  it("preserves the primary request failure when removing its route also fails", async () => {
-    const parsed = scenario([requestStep({})]);
-    const page = fakePage({});
-    const primary = new Error("page.evaluate: Target page has been closed");
-    const cleanup = new Error("page.unroute: Target page has been closed");
-    vi.spyOn(page, "evaluate").mockRejectedValue(primary);
-    const unroute = vi.spyOn(page, "unroute").mockRejectedValue(cleanup);
-    const failure = await perform(
-      page,
-      parsed.actions[0]!,
-      resolved(parsed),
-    ).catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).cause).toBe(primary);
-    expect((failure as AggregateError).errors).toEqual([primary, cleanup]);
-    expect(unroute).toHaveBeenCalledOnce();
-  });
-
-  it("preserves an unsuccessful page response when removing its route fails", async () => {
-    stubFetch(503);
-    const parsed = scenario([requestStep({ expected_status: [200] })]);
-    const page = fakePage({});
-    const cleanup = new Error("route cleanup failed");
-    vi.spyOn(page, "unroute").mockRejectedValue(cleanup);
-    const failure = await perform(
-      page,
-      parsed.actions[0]!,
-      resolved(parsed),
-    ).catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).errors[0].message).toContain(
-      "answered 503",
-    );
-    expect((failure as AggregateError).errors[1]).toBe(cleanup);
-    expect((failure as AggregateError).cause).toBe(
-      (failure as AggregateError).errors[0],
-    );
-  });
-
-  it("publishes no saved values if route cleanup fails after a successful response", async () => {
-    stubFetch(200, [JSON.stringify({ id: "created" })]);
-    const parsed = scenario([
-      requestStep({ save: [{ name: "id", json_pointer: "/id" }] }),
-    ]);
-    const page = fakePage({});
-    const secrets = resolved(parsed);
-    const save = vi.spyOn(secrets, "save");
-    const ready = vi.spyOn(secrets, "markResponseSecretsReady");
-    const cleanup = new Error("route cleanup failed");
-    vi.spyOn(page, "unroute").mockRejectedValue(cleanup);
-    await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toBe(
-      cleanup,
-    );
-    expect(save).not.toHaveBeenCalled();
-    expect(ready).not.toHaveBeenCalled();
-  });
-
   it.each([
-    { status: 200, end: "cancellation" },
-    { status: 503, end: "cancellation" },
-    { status: 200, end: "deadline" },
-    { status: 503, end: "deadline" },
-  ])(
-    "publishes nothing after $end during final route cleanup (status $status)",
-    async ({ status, end }) => {
-      stubFetch(status, ['{"id":"late-object"}']);
+    [200, "evaluation"],
+    [503, "cleanup"],
+    [200, "cleanup"],
+    [200, "cancellation"],
+    [503, "cancellation"],
+    [200, "deadline"],
+    [503, "deadline"],
+    [200, "complete"],
+  ] as const)(
+    "settles response publication for status %i at %s",
+    async (status, end) => {
+      const evaluationFails = end === "evaluation";
+      const cleanupFails = evaluationFails || end === "cleanup";
+      const events = new EventEmitter();
+      const page = Object.assign(fakePage({}), {
+        on: events.on.bind(events),
+        off: events.off.bind(events),
+      });
+      const sent = {
+        url: () => `${ORIGIN}/api/folders`,
+        method: () => "POST",
+        postData: () => null,
+      };
       const parsed = scenario([
         requestStep({
           expected_status: [200],
-          timeout_ms: 5000,
-          save: [{ name: "id", json_pointer: "/id" }],
+          timeout_ms: 5_000,
+          save: [{ name: "id", json_pointer: "/id", secret: true }],
         }),
       ]);
-      const page = fakePage({});
       const secrets = resolved(parsed);
+      const savedValue = "scenario-saved-id";
+      vi.stubGlobal("fetch", async () => {
+        events.emit("request", sent);
+        return new Response(JSON.stringify({ id: savedValue }), { status });
+      });
+
+      const primary = new Error("page.evaluate: Target page has been closed");
+      const cleanup = new Error("page.unroute: Target page has been closed");
       const cancel = new AbortController();
       const began = performance.now();
+      if (evaluationFails)
+        vi.spyOn(page, "evaluate").mockRejectedValue(primary);
       const unroute = vi.spyOn(page, "unroute").mockImplementation(async () => {
+        if (cleanupFails) throw cleanup;
         if (end === "cancellation")
           cancel.abort("cancelled during final route cleanup");
-        else {
-          // The step deadline is monotonic; move that clock past it.
+        if (end === "deadline") {
           const now = vi
             .spyOn(performance, "now")
             .mockReturnValue(began + 6_000);
           onTestFinished(() => now.mockRestore());
         }
       });
-      await expect(
-        perform(page, parsed.actions[0]!, secrets, cancel.signal),
-      ).rejects.toThrow(status === 503 ? "answered 503" : "ended before");
-      expect(() => secrets.savedValue("id")).toThrow("No earlier step saved");
+      const failure = await perform(
+        page,
+        parsed.actions[0]!,
+        secrets,
+        cancel.signal,
+      ).catch((cause: unknown) => cause);
       expect(unroute).toHaveBeenCalledOnce();
+      expect(events.listenerCount("request")).toBe(0);
+      expect(secrets.hasResponseProtection(sent)).toBe(
+        evaluationFails !== true,
+      );
+      if (end === "complete") {
+        expect(failure).toBeUndefined();
+        cancel.abort("cancelled after publication");
+        expect(secrets.savedValue("id")).toBe(savedValue);
+        expect(secrets.responseSecretsReady(sent)).toBe(true);
+        return;
+      }
+
+      expect(() => secrets.savedValue("id")).toThrow("No earlier step saved");
+      expect(secrets.responseSecretsReady(sent)).toBe(false);
+      if (cleanupFails && (evaluationFails || status === 503)) {
+        if (!(failure instanceof AggregateError))
+          throw new Error("Expected request and cleanup errors");
+        expect(failure.errors).toHaveLength(2);
+        expect(failure.errors[1]).toBe(cleanup);
+        if (evaluationFails) expect(failure.cause).toBe(primary);
+        else expect(failure.errors[0].message).toContain("answered 503");
+        expect(failure.cause).toBe(failure.errors[0]);
+      } else if (cleanupFails) {
+        expect(failure).toBe(cleanup);
+      } else {
+        expect(failure).toMatchObject({
+          message: expect.stringContaining(
+            status === 503 ? "answered 503" : "ended before",
+          ),
+        });
+      }
     },
   );
 });
@@ -487,25 +488,50 @@ describe("request page boundaries", () => {
     expect(calls).toEqual([]);
   });
 
-  it("drains response chunks and releases the reader without materializing the body", async () => {
-    const read = vi
-      .fn()
-      .mockResolvedValueOnce({ done: false, value: new Uint8Array(8) })
-      .mockResolvedValueOnce({ done: true });
-    const releaseLock = vi.fn();
-    const arrayBuffer = vi.fn();
-    vi.stubGlobal("fetch", async () => ({
-      status: 200,
-      type: "basic",
-      body: { getReader: () => ({ read, releaseLock }) },
-      arrayBuffer,
-    }));
-    const parsed = scenario([requestStep({})]);
-    await perform(fakePage({}), parsed.actions[0]!, resolved(parsed));
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(releaseLock).toHaveBeenCalledOnce();
-    expect(arrayBuffer).not.toHaveBeenCalled();
-  });
+  it.each([
+    { label: "discarded response", chunks: 8, save: [] },
+    {
+      label: "oversized saved response",
+      chunks: 3_000_000,
+      save: [{ name: "folder", json_pointer: "/id" }],
+    },
+  ])(
+    "bounds response retention and releases the reader for a $label",
+    async ({ chunks, save }) => {
+      const packet = { done: false, value: new Uint8Array(chunks).fill(97) };
+      const read = vi
+        .fn()
+        .mockResolvedValueOnce(packet)
+        .mockResolvedValueOnce(packet)
+        .mockResolvedValue({ done: true });
+      const cancel = vi.fn();
+      const releaseLock = vi.fn();
+      const arrayBuffer = vi.fn();
+      vi.stubGlobal("fetch", async () => ({
+        status: 200,
+        type: "basic",
+        body: { getReader: () => ({ read, cancel, releaseLock }) },
+        arrayBuffer,
+      }));
+      const parsed = scenario([requestStep({ save })]);
+      const request = perform(
+        fakePage({}),
+        parsed.actions[0]!,
+        resolved(parsed),
+      );
+      if (save.length > 0) {
+        await expect(request).rejects.toThrow("too large to save values from");
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(cancel).toHaveBeenCalledOnce();
+      } else {
+        await request;
+        expect(read).toHaveBeenCalledTimes(3);
+        expect(cancel).not.toHaveBeenCalled();
+      }
+      expect(releaseLock).toHaveBeenCalledOnce();
+      expect(arrayBuffer).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("request step confinement", () => {
@@ -1018,30 +1044,6 @@ describe("saved value credentials and limits", () => {
     for (const action of parsed.actions)
       await perform(fakePage({}), action, secrets);
     expect(calls[1]!.init.body).toBe('{"note":"%7Bsaved:item%7D","id":7}');
-  });
-
-  it("stops reading a response to save from once it passes the limit", async () => {
-    const chunk = new Uint8Array(3_000_000).fill(97);
-    const read = vi
-      .fn()
-      .mockResolvedValueOnce({ done: false, value: chunk })
-      .mockResolvedValueOnce({ done: false, value: chunk })
-      .mockResolvedValueOnce({ done: false, value: chunk })
-      .mockResolvedValueOnce({ done: true });
-    const cancel = vi.fn(async () => undefined);
-    vi.stubGlobal("fetch", async () => ({
-      status: 200,
-      type: "basic",
-      body: { getReader: () => ({ read, cancel, releaseLock: vi.fn() }) },
-    }));
-    const parsed = scenario([
-      requestStep({ save: [{ name: "folder", json_pointer: "/id" }] }),
-    ]);
-    await expect(
-      perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
-    ).rejects.toThrow("too large to save values from");
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("fails a step whose response holds no value to save", async () => {
@@ -1839,37 +1841,22 @@ it.each([false, true])(
   },
 );
 
-it.each(["request", "click"])(
-  "retains saved values when cancellation follows completed %s publication",
-  async (kind) => {
-    onTestFinished(() => {
-      vi.unstubAllGlobals();
-    });
-    const parsed =
-      kind === "request"
-        ? scenario([
-            requestStep({ save: [{ name: "item", json_pointer: "/id" }] }),
-          ])
-        : clickSaving("/api/items");
-    stubFetch(200, ['{"id":"committed-object"}']);
-    const page =
-      kind === "request"
-        ? fakePage({})
-        : uiPage([
-            {
-              method: "POST",
-              url: `${ORIGIN}/api/items`,
-              status: 201,
-              body: '{"id":"committed-object"}',
-            },
-          ]).page;
-    const secrets = resolved(parsed);
-    const cancel = new AbortController();
-    await perform(page, parsed.actions[0]!, secrets, cancel.signal);
-    cancel.abort("cancelled after publication");
-    expect(secrets.savedValue("item")).toBe("committed-object");
-  },
-);
+it("retains saved values when cancellation follows completed click publication", async () => {
+  const parsed = clickSaving("/api/items");
+  const { page } = uiPage([
+    {
+      method: "POST",
+      url: `${ORIGIN}/api/items`,
+      status: 201,
+      body: '{"id":"committed-object"}',
+    },
+  ]);
+  const secrets = resolved(parsed);
+  const cancel = new AbortController();
+  await perform(page, parsed.actions[0]!, secrets, cancel.signal);
+  cancel.abort("cancelled after publication");
+  expect(secrets.savedValue("item")).toBe("committed-object");
+});
 
 describe("saving from a compressed or cached UI response", () => {
   it.each([
