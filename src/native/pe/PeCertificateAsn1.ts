@@ -4,6 +4,7 @@ import {
   Asn1BerReader,
   type Asn1BerNode,
 } from "../../domain/asn1Ber.js";
+import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
 
 const OID_NAMES: Readonly<Record<string, string>> = {
@@ -188,11 +189,9 @@ const decodeUtf32Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
 
 const decodeUtf8 = (bytes: Buffer, budget: DecodedNameBudget): string => {
   chargeDecodedName(budget, bytes.length);
-  const decoded = bytes.toString("utf8");
   // U+FFFD would hide the original bytes and collapse distinct invalid names.
-  if (!Buffer.from(decoded, "utf8").equals(bytes))
-    return fail("DirectoryString is not valid UTF-8.");
-  return decoded;
+  if (!isStrictUtf8(bytes)) return fail("DirectoryString is not valid UTF-8.");
+  return bytes.toString("utf8");
 };
 
 const decodeDirectoryString = (

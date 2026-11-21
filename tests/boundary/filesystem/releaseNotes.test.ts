@@ -396,6 +396,7 @@ it("inventories side branches and paginated credits, then checks and renders syn
     pullRequests: 1,
     unresolvedAuthors: [{ name: "Unknown", user: null }],
   });
+  expect(JSON.parse(report.stdout)).not.toHaveProperty("notes");
   const output = join(f.directory, "rendered.md");
   await f.invoke(["render", "--manifest", f.manifest, "--output", output]);
   expect(await readFile(output, "utf8")).toBe(f.notes.trim() + "\n");
@@ -861,5 +862,97 @@ it("treats non-pin Cursor skill edits as a product change", async () => {
     stderr: expect.stringContaining(
       `Product changed after notes target; regenerate inventory: ${versionOnlyCursorSkill}`,
     ),
+  });
+});
+
+it.each([
+  {
+    container: "root",
+    example: [
+      "~~~markdown",
+      "~~~not a closing fence",
+      "## [example]",
+      "- Example issue #999.",
+      "~~~~",
+    ],
+  },
+  {
+    container: "list",
+    example: [
+      "- ~~~markdown",
+      "  ## [example]",
+      "  - Example issue #999.",
+      "  ~~~",
+    ],
+  },
+  {
+    container: "quoted list",
+    example: [
+      "> - ~~~markdown",
+      ">   ## [example]",
+      ">   - Example issue #999.",
+      ">   ~~~",
+    ],
+  },
+])(
+  "keeps release credit examples inside a $container fence",
+  async ({ example }) => {
+    const f = await fixture();
+    const block = example.join("\n");
+    const notes = f.notes.replace(
+      "### Changes\n",
+      `### Changes\n\n${block}\n\n`,
+    );
+    const changelog = `${notes.trimEnd()}\n\n## [6.3.0]\n\n- Historical issue #999.\n`;
+    const body = join(f.directory, "release-body.md");
+    await writeFile(join(f.directory, "CHANGELOG.md"), changelog);
+    await writeFile(body, releaseBody(notes));
+    await f.invoke(["check", "--manifest", f.manifest, "--pr-body", body]);
+
+    await writeFile(
+      join(f.directory, "CHANGELOG.md"),
+      changelog.replace(block, `${block}\n\n- Real issue #999.`),
+    );
+    await expect(
+      f.invoke(["check", "--manifest", f.manifest]),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("Unknown release reference #999"),
+    });
+  },
+);
+
+it("verifies complete bullets without counting inline code as credit or references", async () => {
+  const f = await fixture();
+  const changelog = join(f.directory, "CHANGELOG.md");
+  const example = "`literal #999\n  and @unverified`";
+  const bullet = f.bullet
+    .replace(
+      "#101",
+      "[the implementation](https://github.com/fixture/rea/pull/101)",
+    )
+    .replace("Thanks", `Example ${example}.\n  Thanks`);
+  const notes = f.notes.replace(f.bullet, bullet);
+  await writeFile(changelog, notes);
+  await f.invoke(["check", "--manifest", f.manifest]);
+
+  await writeFile(changelog, notes.replace(", @bob", ", `@bob`"));
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("Missing Thanks @bob for PR #101"),
+  });
+});
+
+it("requires editorial headings in release prose outside code fences", async () => {
+  const f = await fixture();
+  const notes = f.notes.replace(
+    "### Changes\n",
+    "~~~markdown\n### Changes\n~~~\n",
+  );
+  await writeFile(join(f.directory, "CHANGELOG.md"), notes);
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("Missing Changes section"),
   });
 });

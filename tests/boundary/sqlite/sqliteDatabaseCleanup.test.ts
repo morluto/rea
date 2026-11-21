@@ -162,6 +162,17 @@ it("shrinks inspect and close errors as each retained root is released", async (
   );
   if (!(initialCloseFailure instanceof ProviderCleanupError))
     throw new Error("Expected aggregate provider cleanup failure");
+  const aggregate = initialCloseFailure.cause;
+  expect(aggregate).toBeInstanceOf(AggregateError);
+  if (!(aggregate instanceof AggregateError)) throw initialCloseFailure;
+  expect(aggregate.errors).toHaveLength(2);
+  const children = aggregate.errors.map((child: unknown) => {
+    if (!(child instanceof ProviderCleanupError)) throw initialCloseFailure;
+    return child;
+  });
+  expect(new Set(children.flatMap((child) => child.cleanupResources))).toEqual(
+    new Set(roots.map(({ root }) => root.path)),
+  );
   expect(initialCloseFailure.cleanupResources).toHaveLength(2);
   expect(new Set(initialCloseFailure.cleanupResources)).toEqual(
     new Set(roots.map(({ root }) => root.path)),

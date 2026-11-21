@@ -217,11 +217,12 @@ export const elfBunSection = (section: Buffer, nameOffset = 11): Buffer => {
   bytes.writeUInt16LE(1, 62);
   shstr.copy(bytes, shstrOffset);
   section.copy(bytes, sectionOffset);
-  writeElfSection(bytes, tableOffset + 64, 1, shstrOffset, shstr.length);
+  writeElfSection(bytes, tableOffset + 64, 1, 3, shstrOffset, shstr.length);
   writeElfSection(
     bytes,
     tableOffset + 128,
     nameOffset,
+    1,
     sectionOffset,
     section.length,
   );
@@ -232,10 +233,12 @@ const writeElfSection = (
   bytes: Buffer,
   header: number,
   name: number,
+  type: number,
   offset: number,
   size: number,
 ): void => {
   bytes.writeUInt32LE(name, header);
+  bytes.writeUInt32LE(type, header + 4);
   bytes.writeBigUInt64LE(BigInt(offset), header + 24);
   bytes.writeBigUInt64LE(BigInt(size), header + 32);
 };

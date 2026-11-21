@@ -37,15 +37,6 @@ it("locks one attached browser for spellings that discover the same endpoint", (
   expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).not.toBe(
     attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-2"),
   );
-});
-
-it("locks one attached browser across loopback spellings of one endpoint", () => {
-  expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).toBe(
-    attachedScenarioLeaseKey("http://[::1]:9222", "page-1"),
-  );
-  expect(attachedScenarioLeaseKey("http://[::1]:9222", "page-1")).not.toBe(
-    attachedScenarioLeaseKey("http://[::1]:9222", "page-2"),
-  );
   expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).not.toBe(
     attachedScenarioLeaseKey("http://127.0.0.1:9223", "page-1"),
   );
@@ -930,75 +921,71 @@ it("cancels same-target queued connection before acquiring a browser", async () 
 });
 
 it("serializes concurrent attach across loopback spellings of one browser", async () => {
-  const makeScenario = (endpoint: string) =>
-    browserScenarioSchema.parse({
-      browser: { mode: "connect", cdp_endpoint: endpoint, target_id: "page-1" },
-      start_url: { url: "https://example.test" },
-      actions: [
-        {
-          step_id: "wait",
-          action: "wait_for_timeout",
-          duration_ms: 1,
+  const open = (endpoint: string) =>
+    openPlaywrightScenarioBrowser(
+      browserScenarioSchema.parse({
+        browser: {
+          mode: "connect",
+          cdp_endpoint: endpoint,
+          target_id: "page-1",
         },
-      ],
-    });
+        start_url: { url: "https://example.test" },
+        actions: scenarioActions,
+      }),
+      {},
+      { launcher },
+    );
   const firstConnection = phaseGate<
     void,
     Pick<Browser, "contexts" | "close" | "isConnected" | "version">
   >();
-  let rejectFirstConnection: ((cause: Error) => void) | undefined;
-  const failingConnection = new Promise<never>((_resolve, reject) => {
-    rejectFirstConnection = reject;
-  });
-  const endpoints: string[] = [];
-  const connectOverCDP = vi.fn((endpoint: string) => {
-    endpoints.push(endpoint);
-    if (endpoints.length === 1) return firstConnection.hold();
-    return failingConnection;
-  });
+  const firstClose = phaseGate();
+  const secondFailure = new Error("second connection failed");
+  const order: string[] = [];
   const launcher = {
-    connectOverCDP,
+    connectOverCDP: async (endpoint: string) => {
+      order.push(endpoint);
+      if (endpoint === "http://127.0.0.1:9222") return firstConnection.hold();
+      throw secondFailure;
+    },
     launchPersistentContext: async () => {
       throw new Error("Unexpected launch");
     },
   };
 
-  const first = openPlaywrightScenarioBrowser(
-    makeScenario("http://127.0.0.1:9222"),
-    {},
-    { launcher },
-  );
+  const first = open("http://127.0.0.1:9222");
   await firstConnection.reached(first, "first CDP connection");
-
-  const second = openPlaywrightScenarioBrowser(
-    makeScenario("http://[::1]:9222"),
-    {},
-    { launcher },
-  );
-  const race = await Promise.race([
-    second.then(
-      () => "settled" as const,
-      () => "settled" as const,
-    ),
-    new Promise((resolve) => setTimeout(() => resolve("queued"), 100)),
-  ]);
-  // The loopback spelling is the same browser, so the second attach must wait
-  // for the lease instead of dialing in parallel and being rejected.
-  expect(race).toBe("queued");
-  expect(connectOverCDP).toHaveBeenCalledTimes(1);
+  const outcomes = Promise.allSettled([first, open("http://[::1]:9222")]);
 
   firstConnection.release({
-    close: vi.fn(async () => undefined),
-    contexts: vi.fn(() => []),
-    isConnected: vi.fn(() => true),
+    close: async () => {
+      await firstClose.hold();
+      order.push("first transport closed");
+    },
+    contexts: () => [],
+    isConnected: () => true,
     version: () => "fixture",
   });
-  await expect(first).rejects.toThrow();
-  if (rejectFirstConnection === undefined)
-    throw new Error("second connection did not begin");
-  rejectFirstConnection(new Error("second connection failed"));
-  await expect(second).rejects.toThrow("second connection failed");
-  expect(endpoints).toEqual(["http://127.0.0.1:9222", "http://[::1]:9222"]);
+  let settled: Awaited<typeof outcomes>;
+  try {
+    await firstClose.reached(first, "first transport close");
+  } finally {
+    firstClose.release();
+    settled = await outcomes;
+  }
+
+  expect(settled).toMatchObject([
+    {
+      status: "rejected",
+      reason: { _tag: "BrowserObservationError", reason: "target_not_found" },
+    },
+    { status: "rejected", reason: secondFailure },
+  ]);
+  expect(order).toEqual([
+    "http://127.0.0.1:9222",
+    "first transport closed",
+    "http://[::1]:9222",
+  ]);
 });
 
 it("tracks only pending browser cleanup resources and resolves prior errors after exact recovery", async () => {

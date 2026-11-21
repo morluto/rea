@@ -24,6 +24,7 @@ import {
   MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES,
   type InspectKernelBuildConfigInput,
 } from "../../domain/native/kernelBuildConfig.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_BUILD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -92,40 +93,46 @@ const ceiling = (
     ? `The image exceeds the ${String(maximum)} ${knob} ceiling this operation accepts; select a smaller artifact.`
     : `Raise ${knob} above ${String(selected)} or select a smaller artifact; the limit is the caller-selected ${description}.`;
 
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectKernelBuildConfigInput,
-  cause: ArtifactReaderFailure,
-): string => {
-  if (boundary === "file-size")
-    return input.max_file_bytes >= MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES
-      ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-  const knob =
-    cause instanceof KernelBuildConfigBudgetFailure ? cause.knob : null;
-  if (knob === "max_entries")
-    return ceiling(
-      knob,
-      MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
-      input.max_entries,
-      "CONFIG_* entry budget",
-    );
-  if (knob === "max_config_bytes")
-    return ceiling(
-      knob,
-      MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES,
-      input.max_config_bytes,
-      "inflated IKCFG gzip budget",
-    );
-  if (knob === "max_payload_bytes")
-    return ceiling(
-      knob,
-      MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES,
-      input.max_payload_bytes,
-      "inflated bzImage payload budget",
-    );
-  return "Select a smaller artifact. The caller-selected kernel build config budgets refused this image.";
+const fileSizeRemediation = (input: InspectKernelBuildConfigInput): string =>
+  input.max_file_bytes >= MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES
+    ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
+    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
+
+const parserBudgetRemediation = ({
+  name,
+  maximum,
+}: KernelBuildConfigBudgetFailure["failure"]["limit"]): string => {
+  switch (name) {
+    case "max_entries":
+      return ceiling(
+        name,
+        MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
+        maximum,
+        "CONFIG_* entry budget",
+      );
+    case "max_config_bytes":
+      return ceiling(
+        name,
+        MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES,
+        maximum,
+        "inflated IKCFG gzip budget",
+      );
+    case "max_payload_bytes":
+      return ceiling(
+        name,
+        MAX_INSPECT_KERNEL_BUILD_CONFIG_PAYLOAD_BYTES,
+        maximum,
+        "inflated bzImage payload budget",
+      );
+  }
 };
+
+const reportedBudgetContext = (input: InspectKernelBuildConfigInput) => ({
+  max_file_bytes: input.max_file_bytes,
+  max_entries: input.max_entries,
+  max_config_bytes: input.max_config_bytes,
+  max_payload_bytes: input.max_payload_bytes,
+});
 
 const kernelBuildConfigFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -140,6 +147,20 @@ const kernelBuildConfigFailurePrimary = (
   if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
+    cause instanceof KernelBuildConfigBudgetFailure
+  ) {
+    const { limit } = cause.failure;
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      reportedLimitContext: {
+        ...reportedBudgetContext(input),
+        [limit.name]: limit.maximum,
+      },
+      retryable: false,
+      remediationAction: parserBudgetRemediation(limit),
+    });
+  }
+  if (
+    origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit") {
@@ -147,23 +168,17 @@ const kernelBuildConfigFailurePrimary = (
         OPERATION,
         cause.boundary ?? "memory",
         cause.message,
-        {
-          max_file_bytes: input.max_file_bytes,
-          max_entries: input.max_entries,
-          max_config_bytes: input.max_config_bytes,
-          max_payload_bytes: input.max_payload_bytes,
-        },
+        reportedBudgetContext(input),
         {
           cause,
           ...(cause.boundary !== "capacity" && cause.boundary !== "file-size"
             ? {}
             : {
                 retryable: false as const,
-                remediationAction: inputBudgetRemediation(
-                  cause.boundary,
-                  input,
-                  cause,
-                ),
+                remediationAction:
+                  cause.boundary === "file-size"
+                    ? fileSizeRemediation(input)
+                    : "Select a smaller artifact. The caller-selected kernel build config budgets refused this image.",
               }),
         },
       );

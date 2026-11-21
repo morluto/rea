@@ -46,51 +46,36 @@ const enumeration = (
 };
 
 describe("consumeWithOrderedReads", () => {
-  it("consumes in enumeration order when a later read finishes first", async () => {
-    const reads = new Map(
-      ["a", "b", "c"].map((item) => [item, controlled<string>()]),
-    );
+  it("bounds concurrent reads and consumes eligible entries in enumeration order", async () => {
+    const first = controlled<string>();
+    const second = controlled<string>();
+    const started: string[] = [];
     const consumed: string[] = [];
     const done = consumeWithOrderedReads(
-      enumeration(["a", "b", "c"]).items,
-      8,
-      (item) => reads.get(item)!.promise,
+      enumeration(["a", "skip", "b", "c"]).items,
+      2,
+      (item) => {
+        if (item === "skip") return undefined;
+        started.push(item);
+        if (item === "a") return first.promise;
+        if (item === "b") return second.promise;
+        return Promise.resolve("3");
+      },
       async (item, value) => {
         consumed.push(`${item}=${value}`);
       },
     );
     await drain();
-    reads.get("c")!.resolve("3");
-    reads.get("b")!.resolve("2");
+    const startedBeforeEitherCompleted = [...started];
+    second.resolve("2");
     await drain();
-    expect(consumed).toEqual([]);
-    reads.get("a")!.resolve("1");
+    const consumedBeforeFirstCompleted = [...consumed];
+    first.resolve("1");
     await done;
-    expect(consumed).toEqual(["a=1", "b=2", "c=3"]);
-  });
 
-  it("keeps at most width reads in flight and skips undefined reads", async () => {
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const consumed: string[] = [];
-    await consumeWithOrderedReads(
-      enumeration(["a", "skip", "b", "c", "d", "e"]).items,
-      2,
-      (item) => {
-        if (item === "skip") return undefined;
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        return drain().then(() => {
-          inFlight -= 1;
-          return item;
-        });
-      },
-      async (item) => {
-        consumed.push(item);
-      },
-    );
-    expect(maxInFlight).toBe(2);
-    expect(consumed).toEqual(["a", "b", "c", "d", "e"]);
+    expect(startedBeforeEitherCompleted).toEqual(["a", "b"]);
+    expect(consumedBeforeFirstCompleted).toEqual([]);
+    expect(consumed).toEqual(["a=1", "b=2", "c=3"]);
   });
 
   it("reports an earlier read failure before a later one", async () => {
