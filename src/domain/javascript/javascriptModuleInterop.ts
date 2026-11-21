@@ -567,10 +567,12 @@ export const createSemanticModuleInterop = (
     }
   };
 
+  const opaqueIntrinsicRead: IntrinsicReadObserver = (capture, path) =>
+    opaqueCodeMayChangeGlobalRead(capture, state, path[1]!);
   const intrinsicReadChanged = (
     node: t.Node,
     path: readonly string[],
-    mayObserve?: IntrinsicReadObserver,
+    mayObserve: IntrinsicReadObserver = opaqueIntrinsicRead,
   ): boolean => {
     if (opaqueAliasPaths.has(node)) return true;
     const capture = capturedIntrinsic(node)?.capturedAt ?? node;
@@ -705,7 +707,7 @@ export const createSemanticModuleInterop = (
   const activeBoundValues = new WeakSet<t.Node>();
   const boundIntrinsic = (
     node: t.Node,
-    mayObserve?: IntrinsicReadObserver,
+    mayObserve: IntrinsicReadObserver = opaqueIntrinsicRead,
   ): JavaScriptIntrinsicInvocation | undefined => {
     if (activeBoundValues.has(node)) return undefined;
     activeBoundValues.add(node);
@@ -798,12 +800,7 @@ export const createSemanticModuleInterop = (
     if (t.isNewExpression(current))
       return constructsFreshObject(current.callee);
     if (t.isCallExpression(current)) {
-      const invocation = resolveIntrinsicInvocation(
-        current,
-        intrinsicPath,
-        (capture, path) =>
-          opaqueCodeMayChangeGlobalRead(capture, state, path[1]!),
-      );
+      const invocation = resolveIntrinsicInvocation(current);
       return (
         invocation?.kind === "known" &&
         invocation.path.join(".") === "intrinsic.Object.create"

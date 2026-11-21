@@ -20,14 +20,31 @@ export const javaScriptScalarEvaluationSources = (
       | t.CallExpression
       | t.OptionalCallExpression,
   ) => readonly t.Node[] | undefined,
+  ordinaryReceiver: (node: t.Node) => boolean,
 ): readonly t.Node[] => {
   const sources: t.Node[] = [];
-  const pending = [...childNodes(expression)];
+  const pending = [expression];
   const seen = new WeakSet<t.Node>();
   while (pending.length > 0) {
     const node = pending.pop()!;
     if (seen.has(node)) continue;
     seen.add(node);
+    if (t.isUnaryExpression(node, { operator: "delete" })) {
+      const target = unwrapJavaScriptExpression(node.argument).node;
+      if (
+        t.isMemberExpression(target) ||
+        t.isOptionalMemberExpression(target)
+      ) {
+        pending.push(target.object);
+        if (!ordinaryReceiver(target.object)) sources.push(target.object);
+        if (target.computed) sources.push(target.property);
+        continue;
+      }
+    }
+    if (node === expression) {
+      pending.push(...childNodes(node));
+      continue;
+    }
     if (t.isObjectMethod(node)) {
       if (node.computed) sources.push(node.key);
       continue;

@@ -19,11 +19,11 @@ const opaqueMutatorSources = {
   "opaque-key.cjs": `let key='x';eval('key="require"');
     Reflect.set(module,key,replacement);
     require('fs').readFileSync('wrong-opaque-key');`,
-  "opaque-saved-receiver.cjs": `let receiver={};const saved=receiver;eval('receiver=module');
-    Reflect.set(module,'require',replacement,saved);
+  "opaque-saved-receiver.cjs": `const set=Reflect.set;let receiver={};const saved=receiver;eval('receiver=module');
+    set(module,'require',replacement,saved);
     require('fs').readFileSync('opaque-saved-receiver.json');`,
-  "opaque-saved-key.cjs": `let key='x';const saved=key;eval('key="require"');
-    Reflect.set(module,saved,replacement);
+  "opaque-saved-key.cjs": `const set=Reflect.set;let key='x';const saved=key;eval('key="require"');
+    set(module,saved,replacement);
     require('fs').readFileSync('opaque-saved-key.json');`,
   "await-module.cjs": `async function run(){
     Object.assign=(t,v)=>{v.require=replacement};Object.assign({},await module);

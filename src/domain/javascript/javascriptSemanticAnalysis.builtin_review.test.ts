@@ -2129,7 +2129,7 @@ it.each([
     ["kept"],
   ],
   [
-    "const make=Object.create;eval('Object.create=()=>module');Reflect.set(module,'require',replacement,make(null));require('fs').readFileSync('kept')",
+    "const set=Reflect.set,make=Object.create;eval('Object.create=()=>module');set(module,'require',replacement,make(null));require('fs').readFileSync('kept')",
     ["kept"],
   ],
   [
@@ -2259,3 +2259,79 @@ it.each([
     analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
   ).toEqual(["before"]);
 });
+
+it.each([
+  ["", "Reflect.set", []],
+  ["const saved=Reflect.set;", "saved", ["probe"]],
+  ["const saved=Reflect;", "saved.set", []],
+] as const)(
+  "checks the intrinsic at capture: %s %s",
+  (setup, invoke, expected) => {
+    const source = `${setup}eval("Reflect.set=t=>{t.readFileSync=()=>{}}");const fs=require('fs');${invoke}(fs,'readFileSync',null,{});fs.readFileSync('probe')`;
+    expect(
+      analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
+    ).toEqual(expected);
+  },
+);
+
+it.each([
+  ["const box={owner:module}", "box.owner", ["probe"]],
+  [
+    "const box={get owner(){observe(module);return 0}}",
+    "(box.owner)",
+    ["probe"],
+  ],
+  ["const box={get owner(){observe(module);return 0}}", "(0,box.owner)", []],
+  ["const box={get inner(){observe(module);return {}}}", "box.inner.owner", []],
+  [
+    "const key={[Symbol.toPrimitive](){observe(module);return 'id'}}",
+    "({})[key]",
+    [],
+  ],
+  [
+    "const box=new Proxy({}, {deleteProperty(){observe(module);return true}})",
+    "box.owner",
+    [],
+  ],
+] as const)(
+  "evaluates the delete reference: %s %s",
+  (setup, target, expected) => {
+    const source = `${setup};Object.assign=(t,v)=>{if(v&&typeof v==='object')v.require=replacement};Object.assign({},delete ${target});require('fs').readFileSync('probe')`;
+    expect(
+      analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
+    ).toEqual(expected);
+  },
+);
+
+it.each([
+  ["", "f.name", ["probe"]],
+  ["", "f.length", ["probe"]],
+  ["Object.defineProperty(f,'name',{value:module});", "f.name", []],
+  [
+    "const saved=f.name;Object.defineProperty(f,'name',{value:module});",
+    "saved",
+    ["probe"],
+  ],
+] as const)(
+  "reads bound metadata at selection: %s %s",
+  (setup, selected, expected) => {
+    const source = `const f=Reflect.set.bind(null,module,'require',replacement);${setup}Object.assign=(t,k)=>{t[k]=1};Object.assign({},${selected});require('fs').readFileSync('probe')`;
+    expect(
+      analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
+    ).toEqual(expected);
+  },
+);
+
+it.each([
+  ["", ["probe"]],
+  ["delete Function.prototype[Symbol.hasInstance];", ["probe"]],
+  ["Object.setPrototypeOf(Object,Object.prototype);", []],
+] as const)(
+  "stops the instanceof lookup at its own native hook: %s",
+  (setup, expected) => {
+    const source = `Object.defineProperty(Object.prototype,Symbol.hasInstance,{value(v){v.require=replacement;return true},configurable:true});${setup}Object.assign=(t,v)=>{};Object.assign({},module instanceof Object);require('fs').readFileSync('probe')`;
+    expect(
+      analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
+    ).toEqual(expected);
+  },
+);

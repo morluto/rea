@@ -118,18 +118,18 @@ export const isPrimitiveJavaScriptExpression = (node: t.Node): boolean => {
 };
 
 /** Intrinsic scalar slots on a newly created callable, before external writes. */
+export const isPrimitiveCallableMetadataPath = (
+  path: readonly unknown[],
+): boolean =>
+  (path.length === 1 && (path[0] === "name" || path[0] === "length")) ||
+  (path.length === 2 && path[0] === "name" && path[1] === "length");
+
 export const isPrimitiveJavaScriptCallableProperty = (
   node: t.Node,
   path: readonly unknown[],
 ): boolean => {
   if (!t.isFunction(node) && !t.isClass(node)) return false;
-  if (
-    !(
-      (path.length === 1 && (path[0] === "name" || path[0] === "length")) ||
-      (path.length === 2 && path[0] === "name" && path[1] === "length")
-    )
-  )
-    return false;
+  if (!isPrimitiveCallableMetadataPath(path)) return false;
   if (
     t.isClass(node) &&
     ((node.decorators?.length ?? 0) > 0 ||

@@ -81,13 +81,13 @@ export const mutatorEvaluationBoundaryCases = [
 
 export const opaqueMutatorCases = [
   ...[
-    "let r={};const saved=r;eval('r=module');Reflect.set(module,'require',replacement,saved);",
+    "const set=Reflect.set;let r={};const saved=r;eval('r=module');set(module,'require',replacement,saved);",
     "let r={};Reflect.set(module,'require',replacement,r);eval('r=module');",
-    "const r={};eval('void 0');Reflect.set(module,'require',replacement,r);",
+    "const set=Reflect.set;const r={};eval('void 0');set(module,'require',replacement,r);",
     "let r={};const set=Reflect.set.bind(null,module,'require',replacement,r);eval('r=module');set();",
-    "let key='x';const saved=key;eval('key=\"require\"');Reflect.set(module,saved,replacement);",
+    "const set=Reflect.set;let key='x';const saved=key;eval('key=\"require\"');set(module,saved,replacement);",
     "let key='x';Reflect.set(module,key,replacement);eval('key=\"require\"');",
-    "const key='x';eval('void 0');Reflect.set(module,key,replacement);",
+    "const set=Reflect.set;const key='x';eval('void 0');set(module,key,replacement);",
     "let key='x';const set=Reflect.set.bind(null,module,key,replacement);eval('key=\"require\"');set();",
   ].map((body) => ({ source: body + read, kept: true })),
   ...[

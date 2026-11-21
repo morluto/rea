@@ -1,4 +1,3 @@
-import { intrinsicPrototypeMemberMayHaveChanged } from "./javascriptSemanticIntrinsicInstances.js";
 import {
   semanticCapturedSelectionsAfterPropertyRead,
   semanticProjectedSourceFactsAtRead,
@@ -39,6 +38,7 @@ import {
 import {
   isPrimitiveJavaScriptExpression,
   isPrimitiveJavaScriptCallableProperty,
+  isPrimitiveCallableMetadataPath,
   javaScriptExpressionValue,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -1722,7 +1722,11 @@ const writesModuleRequire = (
       interop.isFreshObject(value) ||
       (scalarResult(expression) &&
         !exposesModule(
-          javaScriptScalarEvaluationSources(expression, scalarEvaluationBodies),
+          javaScriptScalarEvaluationSources(
+            expression,
+            scalarEvaluationBodies,
+            interop.isFreshObject,
+          ),
           expression,
         )) ||
       (t.isUnaryExpression(value) && !exposesModule([value.argument], value)) ||
@@ -1835,15 +1839,10 @@ const writesModuleRequire = (
     return node.operator === "in"
       ? isPrimitiveJavaScriptExpression(node.left)
       : isIntrinsicGlobalReference(node.right, state, "Object") &&
+          // Function.prototype owns a non-configurable, non-writable
+          // @@hasInstance. Lookup stops there while Object still inherits it.
           ["Symbol.hasInstance", "__proto__"].every(
             (key) => !ambientEffectAt(["global", "Object", key], node),
-          ) &&
-          !intrinsicPrototypeMemberMayHaveChanged(
-            state,
-            "Function",
-            "Symbol.hasInstance",
-            node,
-            "value",
           );
   };
   const awaitMayAssimilate = (operand: t.Node, at: t.Node): boolean => {
@@ -2786,6 +2785,15 @@ const writesModuleRequire = (
         // Bound intrinsic references were expanded above at their capture sites.
         const bound = interop.boundIntrinsic(value);
         if (bound?.kind === "known") {
+          if (isPrimitiveCallableMetadataPath(path)) {
+            if (
+              changed !== undefined &&
+              (changed !== "parent" ||
+                !isPrimitiveCallableMetadataPath(path.slice(0, -1)))
+            )
+              return true;
+            continue;
+          }
           pending.push(
             ...[
               ...(bound.receiver === undefined ? [] : [bound.receiver]),
@@ -2867,6 +2875,7 @@ const writesModuleRequire = (
             ...javaScriptScalarEvaluationSources(
               value,
               scalarEvaluationBodies,
+              interop.isFreshObject,
             ).map((node) => ({
               node,
               path: [],
@@ -2928,7 +2937,7 @@ const writesModuleRequire = (
               invocation.path[2] ?? "",
             )) ||
             (invocation.path[1] === "Reflect" &&
-              invocation.path[2] === "set")) &&
+              ["set", "defineProperty"].includes(invocation.path[2] ?? ""))) &&
           invocation.path.at(-1) !== "bind"
         ) {
           // An overwritten callable does not retain native mutator argument

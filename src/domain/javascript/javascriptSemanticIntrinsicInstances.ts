@@ -36,14 +36,13 @@ export const intrinsicPrototypeMemberMayHaveChanged = (
   constructor: string,
   member: string,
   read?: t.Node,
-  observes: "value" | "contents" = "contents",
 ): boolean =>
   [constructor, "Object"].some((owner) =>
     [member, "__proto__"].some((key) => {
       const path = ["global", owner, "prototype", key];
       return read === undefined
-        ? ambientPathMayHaveChanged(state, path, observes)
-        : ambientPathMayObserveAt(state, read, path, observes);
+        ? ambientPathMayHaveChanged(state, path, "contents")
+        : ambientPathMayObserveAt(state, read, path, "contents");
     }),
   );
 
