@@ -352,6 +352,11 @@ describe("exhausted CommonJS delegate-write receiver selections", () => {
       0,
     ],
     [
+      "a Module installed through a prior member write",
+      `let receiver={};receiver.host=module;${writes}`,
+      0,
+    ],
+    [
       "an opaque parameter",
       `function mutate(receiver){${writes}}mutate(module);`,
       0,
