@@ -965,230 +965,188 @@ describe("XML SVG roots and namespace scope restoration", () => {
   });
 });
 
-describe("XHTML and XML SVG namespace prefixes", () => {
-  it("reports prefixed svg:a, svg:image, and an svg:a with no svg parent", () => {
-    const result = captureSnapshot(
-      domSnapshot([
-        xhtmlRoot(),
-        { name: "svg:svg", parent: 1 },
-        {
-          name: "svg:a",
-          parent: 2,
-          attributes: [
-            ["xlink:href", "/xl-pa1"],
-            ["xlink:href", "/later"],
-          ],
-        },
-        {
-          name: "svg:image",
-          parent: 2,
-          attributes: [["xlink:href", "guide"]],
-        },
-        {
-          name: "svg:a",
-          parent: 1,
-          attributes: [["xlink:href", "/xl-orphan"]],
-        },
+it("resolves XLink aliases in scope and keeps plain href ahead of them", () => {
+  const anchor = (
+    parent: number,
+    attributes: readonly (readonly [string, string])[],
+  ): SnapshotElement => ({ name: "svg:a", parent, attributes });
+  const result = captureSnapshot(
+    domSnapshot([
+      xhtmlRoot(),
+      { name: "svg:svg", parent: 1 },
+      anchor(2, [
+        ["xlink:href", "/first-duplicate"],
+        ["xlink:href", "/later-duplicate"],
       ]),
-    );
-    expect(result.nodes[3]?.node_name).toBe("svg:a");
-    expect(result.nodes[3]?.attribute_names).toEqual(["xlink:href"]);
-    expect(result.urls).toEqual([
-      approvedHref(3, `${origin}/xl-pa1`),
-      approvedHref(4, `${origin}/screens/assets/guide`),
-      approvedHref(5, `${origin}/xl-orphan`),
-    ]);
-  });
-
-  it("reports svg:a under svg:foreignObject and skips XHTML anchors there", () => {
-    const result = captureSnapshot(
-      domSnapshot([
-        xhtmlRoot([
-          ["xmlns", XHTML_NAMESPACE],
-          ["xmlns:svg", SVG_NAMESPACE],
-          ["xmlns:xlink", XLINK_NAMESPACE],
-          ["xmlns:h", XHTML_NAMESPACE],
-        ]),
-        { name: "svg:svg", parent: 1 },
-        { name: "svg:foreignObject", parent: 2 },
-        {
-          name: "a",
-          svg: true,
-          parent: 3,
-          attributes: [["xlink:href", "/xl-html-fo"]],
-        },
-        {
-          name: "h:a",
-          parent: 3,
-          attributes: [["xlink:href", "/xl-h"]],
-        },
-        {
-          name: "svg:a",
-          parent: 3,
-          attributes: [["xlink:href", "/xl-fo-svg"]],
-        },
+      { name: "svg:image", parent: 2, attributes: [["xlink:href", "guide"]] },
+      anchor(1, [["xlink:href", "/without-svg-parent"]]),
+      anchor(1, [
+        ["x:href", "/alias-out-of-scope"],
+        ["xlink:href", "/restored"],
       ]),
-    );
-    expect(urlFor(result, 4)).toBeUndefined();
-    expect(urlFor(result, 5)).toBeUndefined();
-    expect(result.urls).toEqual([approvedHref(6, `${origin}/xl-fo-svg`)]);
-  });
-
-  it("reads XLink by namespace, including a prefix other than xlink", () => {
-    const result = captureSnapshot(
-      domSnapshot([
-        xhtmlRoot([["xmlns", XHTML_NAMESPACE]]),
-        {
-          name: "svg",
-          parent: 1,
-          attributes: [
-            ["xmlns", SVG_NAMESPACE],
-            ["xmlns:xlink", "http://example.com/not-xlink"],
-            ["xmlns:x", XLINK_NAMESPACE],
-          ],
-        },
-        {
-          name: "a",
-          svg: true,
-          parent: 2,
-          attributes: [
-            ["xlink:href", "/not-xlink"],
-            ["x:href", "/xl-custom"],
-            ["x:href", "/later"],
-          ],
-        },
-      ]),
-    );
-    expect(result.nodes[3]?.attribute_names).toEqual(["xlink:href", "x:href"]);
-    expect(result.urls).toEqual([approvedHref(3, `${origin}/xl-custom`)]);
-  });
-
-  it("keeps plain href ahead of a namespaced XLink href, including an empty href", () => {
-    const baseUrl = `${origin}/screens/assets/`;
-    const anchor = (
-      parent: number,
-      attributes: readonly (readonly [string, string])[],
-    ): SnapshotElement => ({
-      name: "svg:a",
-      parent,
-      attributes,
-    });
-    const result = captureSnapshot(
-      domSnapshot(
-        [
-          xhtmlRoot(),
-          { name: "svg:svg", parent: 1 },
-          anchor(2, [
-            ["xlink:href", "/xlink-loses"],
-            ["href", "/href-wins"],
-          ]),
-          anchor(2, [
-            ["href", "/href-wins"],
-            ["xlink:href", "/xlink-loses"],
-          ]),
-          anchor(2, [
-            ["href", ""],
-            ["xlink:href", "/xlink-should-lose"],
-          ]),
+      {
+        name: "svg",
+        parent: 1,
+        attributes: [
+          ["xmlns", SVG_NAMESPACE],
+          ["xmlns:xlink", "urn:not-xlink"],
+          ["xmlns:x", XLINK_NAMESPACE],
         ],
-        baseUrl,
-      ),
-    );
-    expect(result.urls).toEqual([
-      approvedHref(3, `${origin}/href-wins`),
-      approvedHref(4, `${origin}/href-wins`),
-      approvedHref(5, baseUrl),
-    ]);
+      },
+      {
+        name: "a",
+        svg: true,
+        parent: 7,
+        attributes: [
+          ["xlink:href", "/wrong-namespace"],
+          ["x:href", "/first-custom"],
+          ["x:href", "/later-custom"],
+        ],
+      },
+      { name: "svg:g", parent: 2, attributes: [["xmlns:p", XLINK_NAMESPACE]] },
+      anchor(9, [
+        ["p:href", "/alias-first"],
+        ["xlink:href", "/literal-later"],
+      ]),
+      anchor(9, [
+        ["xlink:href", "/literal-first"],
+        ["p:href", "/alias-later"],
+      ]),
+      anchor(9, [
+        ["p:href", "/xlink-loses"],
+        ["href", "/plain-after"],
+      ]),
+      anchor(9, [
+        ["href", "/plain-before"],
+        ["xlink:href", "/xlink-loses"],
+      ]),
+      anchor(9, [
+        ["href", ""],
+        ["p:href", "/empty-plain-wins"],
+      ]),
+    ]),
+  );
+
+  expect(result.nodes[3]).toMatchObject({
+    node_name: "svg:a",
+    attribute_names: ["xlink:href"],
   });
+  expect(result.nodes[8]?.attribute_names).toEqual(["xlink:href", "x:href"]);
+  expect(result.urls).toEqual([
+    approvedHref(3, `${origin}/first-duplicate`),
+    approvedHref(4, `${origin}/screens/assets/guide`),
+    approvedHref(5, `${origin}/without-svg-parent`),
+    approvedHref(6, `${origin}/restored`),
+    approvedHref(8, `${origin}/first-custom`),
+    approvedHref(10, `${origin}/alias-first`),
+    approvedHref(11, `${origin}/literal-first`),
+    approvedHref(12, `${origin}/plain-after`),
+    approvedHref(13, `${origin}/plain-before`),
+    approvedHref(14, `${origin}/screens/assets/`),
+  ]);
 });
 
-describe("XHTML SVG exclusions, HTML documents, and prefix scope", () => {
-  it("distinguishes foreign element namespaces from foreign SVG destinations", () => {
-    const result = captureSnapshot(
-      domSnapshot([
-        xhtmlRoot([
-          ["xmlns", XHTML_NAMESPACE],
+it("distinguishes SVG elements inside foreignObject from foreign element namespaces and blocked destinations", () => {
+  const result = captureSnapshot(
+    domSnapshot([
+      xhtmlRoot([
+        ["xmlns", XHTML_NAMESPACE],
+        ["xmlns:svg", SVG_NAMESPACE],
+        ["xmlns:xlink", XLINK_NAMESPACE],
+        ["xmlns:h", XHTML_NAMESPACE],
+        ["xmlns:bogus", "urn:not-svg"],
+      ]),
+      { name: "svg:svg", parent: 1 },
+      { name: "svg:foreignObject", parent: 2 },
+      {
+        name: "a",
+        svg: true,
+        parent: 3,
+        attributes: [["xlink:href", "/xhtml"]],
+      },
+      {
+        name: "h:a",
+        parent: 3,
+        attributes: [["xlink:href", "/prefixed-xhtml"]],
+      },
+      {
+        name: "svg:a",
+        parent: 3,
+        attributes: [["xlink:href", "/foreign-object-svg"]],
+      },
+      {
+        name: "bogus:svg",
+        parent: 1,
+        attributes: [["xlink:href", "/foreign-root"]],
+      },
+      {
+        name: "bogus:a",
+        parent: 7,
+        attributes: [["xlink:href", "/foreign-anchor"]],
+      },
+      { name: "svg:a", parent: 1, attributes: [["xlink:href", "/kept"]] },
+      {
+        name: "svg:a",
+        parent: 3,
+        attributes: [["xlink:href", "https://cdn.example.test/out"]],
+      },
+    ]),
+  );
+  expect(result.nodes[7]?.node_name).toBe("bogus:svg");
+  expect(result.urls).toEqual([
+    approvedHref(6, `${origin}/foreign-object-svg`),
+    approvedHref(9, `${origin}/kept`),
+    {
+      node_index: 10,
+      attribute: "href",
+      url: null,
+      destination_scope: "outside_policy",
+    },
+  ]);
+});
+
+it("leaves HTML documents on literal svg and xlink:href names", () => {
+  const result = captureSnapshot(
+    domSnapshot([
+      { name: "HTML", parent: 0 },
+      {
+        name: "svg",
+        parent: 1,
+        attributes: [
+          ["xmlns", SVG_NAMESPACE],
+          ["xmlns:x", XLINK_NAMESPACE],
+        ],
+      },
+      {
+        name: "a",
+        svg: true,
+        parent: 2,
+        attributes: [["xlink:href", "/xl-literal"]],
+      },
+      {
+        name: "a",
+        svg: true,
+        parent: 2,
+        attributes: [["x:href", "/xl-custom-html"]],
+      },
+      {
+        name: "svg:a",
+        parent: 1,
+        attributes: [
           ["xmlns:svg", SVG_NAMESPACE],
           ["xmlns:xlink", XLINK_NAMESPACE],
-          ["xmlns:bogus", "http://example.com/not-svg"],
-        ]),
-        {
-          name: "bogus:svg",
-          parent: 1,
-          attributes: [["xlink:href", "/xl-bogus"]],
-        },
-        {
-          name: "bogus:a",
-          parent: 2,
-          attributes: [["xlink:href", "/xl-bogus-a"]],
-        },
-        {
-          name: "svg:a",
-          parent: 1,
-          attributes: [["xlink:href", "/xl-kept"]],
-        },
-        {
-          name: "svg:a",
-          parent: 1,
-          attributes: [["xlink:href", "https://cdn.example.test/out"]],
-        },
-      ]),
-    );
-    expect(result.nodes[2]?.node_name).toBe("bogus:svg");
-    expect(result.urls).toEqual([
-      approvedHref(4, `${origin}/xl-kept`),
-      {
-        node_index: 5,
-        attribute: "href",
-        url: null,
-        destination_scope: "outside_policy",
+          ["xlink:href", "/xl-prefixed-html"],
+        ],
       },
-    ]);
-  });
-
-  it("leaves HTML documents on literal svg and xlink:href names", () => {
-    const result = captureSnapshot(
-      domSnapshot([
-        { name: "HTML", parent: 0 },
-        {
-          name: "svg",
-          parent: 1,
-          attributes: [
-            ["xmlns", SVG_NAMESPACE],
-            ["xmlns:x", XLINK_NAMESPACE],
-          ],
-        },
-        {
-          name: "a",
-          svg: true,
-          parent: 2,
-          attributes: [["xlink:href", "/xl-literal"]],
-        },
-        {
-          name: "a",
-          svg: true,
-          parent: 2,
-          attributes: [["x:href", "/xl-custom-html"]],
-        },
-        {
-          name: "svg:a",
-          parent: 1,
-          attributes: [
-            ["xmlns:svg", SVG_NAMESPACE],
-            ["xmlns:xlink", XLINK_NAMESPACE],
-            ["xlink:href", "/xl-prefixed-html"],
-          ],
-        },
-        {
-          name: "A",
-          svg: false,
-          parent: 1,
-          attributes: [["xlink:href", "/xl-html-anchor"]],
-        },
-      ]),
-    );
-    expect(result.urls).toEqual([approvedHref(3, `${origin}/xl-literal`)]);
-  });
+      {
+        name: "A",
+        svg: false,
+        parent: 1,
+        attributes: [["xlink:href", "/xl-html-anchor"]],
+      },
+    ]),
+  );
+  expect(result.urls).toEqual([approvedHref(3, `${origin}/xl-literal`)]);
 });
 
 describe("XML namespace resolution ordering and capacity", () => {
