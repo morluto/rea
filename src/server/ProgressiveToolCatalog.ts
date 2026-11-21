@@ -80,23 +80,63 @@ export class ProgressiveToolCatalog {
         ),
         false,
       );
-    const words = (input.query ?? "")
-      .toLowerCase()
-      .split(/\s+/u)
-      .filter(Boolean);
+    const rawQuery = (input.query ?? "").trim().toLowerCase();
+    const tokens = [...new Set(rawQuery.split(/\s+/u).filter(Boolean))];
+    const computeScore = (
+      name: string,
+      tool: { search: string },
+    ): number => {
+      const matchedTokens = tokens.filter((token) =>
+        tool.search.includes(token),
+      );
+      if (matchedTokens.length === 0) return 0;
+
+      let score = matchedTokens.length * 1000;
+      const nameLower = name.toLowerCase();
+      const nameWords = name.replaceAll("_", " ").toLowerCase();
+
+      if (nameLower === rawQuery || nameWords === rawQuery) {
+        score += 600;
+      } else if (
+        tokens.length > 1 &&
+        (nameLower.includes(rawQuery) || nameWords.includes(rawQuery))
+      ) {
+        score += 400;
+      }
+
+      const nameTokens = tokens.filter(
+        (token) => nameLower.includes(token) || nameWords.includes(token),
+      );
+      score += nameTokens.length * 100;
+
+      if (tokens.length > 1 && tool.search.includes(rawQuery)) {
+        score += 200;
+      }
+
+      return score;
+    };
     const matches =
       names ??
-      [...this.tools]
-        .filter(([, tool]) => words.every((word) => tool.search.includes(word)))
-        .map(([name]) => name)
-        .sort((left, right) => {
-          const score = (name: string) =>
-            words.filter((word) => name.includes(word)).length;
-          return (
-            score(right) - score(left) ||
-            (left < right ? -1 : left > right ? 1 : 0)
-          );
-        });
+      (tokens.length === 0
+        ? [...this.tools.keys()].sort((left, right) =>
+            left < right ? -1 : left > right ? 1 : 0,
+          )
+        : [...this.tools.entries()]
+            .map(([name, tool]) => ({
+              name,
+              score: computeScore(name, tool),
+            }))
+            .filter(({ score }) => score > 0)
+            .sort(
+              (left, right) =>
+                right.score - left.score ||
+                (left.name < right.name
+                  ? -1
+                  : left.name > right.name
+                    ? 1
+                    : 0),
+            )
+            .map(({ name }) => name));
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
     const selected = page.map((name) => ({ name, ...this.tools.get(name)! }));
