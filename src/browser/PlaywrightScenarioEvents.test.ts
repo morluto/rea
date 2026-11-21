@@ -4,7 +4,6 @@ import type { BrowserContext, Page, Request, Response } from "playwright-core";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
-import { waitFor } from "../../tests/support/testWait.js";
 
 describe("declared secrets in scenario events", () => {
   it("redacts encoded declared secrets from text evidence and fingerprints", () => {
