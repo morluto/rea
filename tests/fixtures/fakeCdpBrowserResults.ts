@@ -63,7 +63,7 @@ export const resultFor = (
     case "CacheStorage.requestEntries":
       return cacheEntriesResult(port);
     case "CacheStorage.requestCachedResponse":
-      return cachedResponseResult(options);
+      return cachedResponseResult();
     case "Page.enable":
     case "Page.disable":
     case "Page.setLifecycleEventsEnabled":
@@ -257,11 +257,9 @@ const cacheEntriesResult = (port: number) => ({
   returnCount: 1,
 });
 
-const cachedResponseResult = (options: FakeOptions) => ({
+const cachedResponseResult = () => ({
   response: {
-    body: Buffer.from(
-      options.cachedResponseBody ?? "cache-body-secret",
-    ).toString("base64"),
+    body: Buffer.from("cache-body-secret").toString("base64"),
   },
 });
 
