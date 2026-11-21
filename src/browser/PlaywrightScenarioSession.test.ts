@@ -1318,20 +1318,6 @@ it("retries the same cleanup lease for a browser that opens after cancellation",
   }
 });
 
-it("uses browser disconnect as terminal storage release after detach failure", async () => {
-  const { cleanup, storage } = fixture();
-  const detachFailure = new Error("CDP detach rejected");
-  storage.close.mockRejectedValueOnce(detachFailure);
-  const session = await PlaywrightScenarioSession.open(scenario, {}, {});
-
-  await expect(session.close()).resolves.toBe("terminated-owned-process");
-  expect(storage.close).toHaveBeenCalledTimes(1);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
-  expect(mocks.finishEvents).toHaveBeenCalledTimes(1);
-  await expect(session.close()).resolves.toBe("terminated-owned-process");
-  expect(storage.close).toHaveBeenCalledTimes(1);
-});
-
 it("leaves attached service-worker state alone when the policy allows it", async () => {
   const { cleanup, page } = fixture();
   const attached = connectedScenario("allow");
@@ -1510,75 +1496,87 @@ it("rejects attached block when caller-owned registrations already exist", async
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
-it("preserves both cleanup failures and retries retained owners", async () => {
-  const { cleanup, storage } = fixture();
-  const detachFailure = new Error("CDP detach rejected");
-  const transportFailure = new Error("Playwright transport close failed");
-  storage.close.mockRejectedValueOnce(detachFailure);
-  cleanup.close
-    .mockRejectedValueOnce(transportFailure)
-    .mockImplementationOnce(async (finishEvents?: () => Promise<void>) => {
-      await finishEvents?.();
-    });
-  const session = await PlaywrightScenarioSession.open(scenario, {}, {});
+it.each([false, true])(
+  "uses browser confirmation to retire storage after its cleanup fails (transport rejects: %s)",
+  async (rejectTransport) => {
+    const { cleanup, storage } = fixture();
+    const storageFailure = new Error("CDP detach rejected");
+    const transportFailure = new Error("Playwright transport close failed");
+    storage.close.mockRejectedValueOnce(storageFailure);
+    if (rejectTransport) cleanup.close.mockRejectedValueOnce(transportFailure);
+    const session = await PlaywrightScenarioSession.open(scenario, {}, {});
+    const firstClose = session.close();
+    if (rejectTransport) {
+      const rejected = await firstClose.catch((cause: unknown) => cause);
+      expect(rejected).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: ["browser_transport"],
+      });
+      if (
+        !(rejected instanceof Error && rejected.cause instanceof AggregateError)
+      )
+        throw new Error("Expected both physical cleanup errors");
+      expect(rejected.cause.errors).toHaveLength(2);
+      expect(rejected.cause.errors[0]).toBe(storageFailure);
+      expect(rejected.cause.errors[1]).toBe(transportFailure);
+      expect(cleanup.browserClosed).toBe(false);
+      await expect(session.close()).resolves.toBe("terminated-owned-process");
+      expect(rejected).toMatchObject({
+        cleanupIncomplete: false,
+        cleanupResources: [],
+      });
+    } else await expect(firstClose).resolves.toBe("terminated-owned-process");
 
-  let failure: unknown;
-  try {
-    await session.close();
-  } catch (cause: unknown) {
-    failure = cause;
-  }
-  expect(failure).toMatchObject({ cleanupIncomplete: true });
-  const physical = (failure as Error).cause;
-  expect(physical).toBeInstanceOf(AggregateError);
-  expect((physical as AggregateError).errors).toEqual([
-    detachFailure,
-    transportFailure,
-  ]);
-  expect(storage.close).toHaveBeenCalledTimes(1);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
+    await expect(session.close()).resolves.toBe("terminated-owned-process");
+    expect(cleanup.browserClosed).toBe(true);
+    expect(storage.close).toHaveBeenCalledTimes(rejectTransport ? 2 : 1);
+    expect(cleanup.close).toHaveBeenCalledTimes(rejectTransport ? 2 : 1);
+    expect(mocks.finishEvents).toHaveBeenCalledOnce();
+  },
+);
 
-  await expect(session.close()).resolves.toBe("terminated-owned-process");
-  expect(failure).toMatchObject({
-    cleanupIncomplete: false,
-    cleanupResources: [],
-  });
-  expect(storage.close).toHaveBeenCalledTimes(2);
-  expect(cleanup.close).toHaveBeenCalledTimes(2);
-});
-
-it("keeps the session's exact cleanup lease pending after response timeout until browser acknowledgement", async () => {
-  vi.useFakeTimers();
+it("expires the response at the cleanup deadline while retaining the same release", async () => {
   const { cleanup } = fixture();
   const session = await PlaywrightScenarioSession.open(scenario, {}, {});
-  let acknowledge: () => void = () => {};
-  const late = new Promise<void>((resolve) => {
-    acknowledge = resolve;
-  });
-  cleanup.release = vi.fn(async (finishEvents?: () => Promise<void>) => {
-    await late;
+  const browser = phaseGate();
+  const release = vi.fn(async (finishEvents?: () => Promise<void>) => {
+    await browser.hold();
     await cleanup.close(finishEvents);
   });
+  cleanup.release = release;
+  vi.useFakeTimers();
   try {
     const pending = session.close().catch((cause: unknown) => cause);
-    await vi.advanceTimersByTimeAsync(30_000);
-    const failure = await pending;
+    await browser.reached(pending, "physical browser release");
+    const outcome = () => Promise.race([pending, Promise.resolve("pending")]);
+    await vi.advanceTimersByTimeAsync(29_999);
+    await expect(outcome()).resolves.toBe("pending");
+
+    await vi.advanceTimersByTimeAsync(1);
+    const failure = await outcome();
     expect(failure).toMatchObject({
+      cause: { _tag: "AnalysisTimeoutError", timeoutMs: 30_000 },
       cleanupIncomplete: true,
       cleanupResources: ["browser_transport"],
     });
     expect(session.cleanupLease.released).toBe(false);
-    acknowledge();
-    await session.cleanupLease.release();
+    expect(cleanup.close).not.toHaveBeenCalled();
+    const joining = session.cleanupLease.release();
+    browser.release();
+    await joining;
     expect(failure).toMatchObject({
       cleanupIncomplete: false,
       cleanupResources: [],
     });
-    expect(cleanup.close).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledOnce();
+    expect(cleanup.close).toHaveBeenCalledOnce();
   } finally {
-    acknowledge();
-    await session.cleanupLease.release();
-    vi.useRealTimers();
+    browser.release();
+    try {
+      await session.cleanupLease.release();
+    } finally {
+      vi.useRealTimers();
+    }
   }
 });
 
