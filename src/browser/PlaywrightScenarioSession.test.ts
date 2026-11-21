@@ -128,7 +128,6 @@ import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PlaywrightScenarioSession } from "./PlaywrightScenarioSession.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
-import { waitFor } from "../../tests/support/testWait.js";
 
 const scenario = browserScenarioSchema.parse({
   browser: { mode: "launch", executable_path: process.execPath },
@@ -1350,91 +1349,87 @@ it("blocks new attached service-worker registration without removing existing re
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
-it("cancels a stalled policy preflight without allowing late setup", async () => {
-  const { cleanup, page } = fixture();
-  let release: () => void = () => undefined;
-  const { promise: started, resolve: entered } = deferred();
-  page.evaluate.mockImplementationOnce(async () => {
-    entered();
-    await new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    return false;
-  });
-  const cancellation = new AbortController();
-  const opening = PlaywrightScenarioSession.open(
-    connectedScenario("block"),
-    {},
-    { signal: cancellation.signal },
-  );
-  const outcome = expect(opening).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-  });
-  try {
-    await awaitAcknowledgement(started, opening, "policy preflight");
-    cancellation.abort();
-    await outcome;
-    expect(cleanup.close).toHaveBeenCalledTimes(1);
-    expect(cleanup.close.mock.calls[0]).toHaveLength(1);
-    release();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(mocks.policySend).not.toHaveBeenCalled();
-  } finally {
-    cancellation.abort();
-    release();
-    await opening.catch(() => undefined);
-    await outcome.catch(() => undefined);
-  }
-});
-
-it("waits for a pending registration installation before cancelled cleanup", async () => {
-  const { cleanup, page } = fixture();
-  const { promise: installed, resolve: releaseInstallation } = deferred();
-  const { promise: started, resolve: installationStarted } = deferred();
-  mocks.policySend.mockImplementation(async (method: string) => {
-    if (method === "Page.addScriptToEvaluateOnNewDocument") {
-      installationStarted();
-      await installed;
-      return { identifier: "owned-policy-script" };
+it.each(["preflight read", "script installation"])(
+  "honors cancellation during the policy %s",
+  async (phase) => {
+    const { cleanup, page, storage } = fixture();
+    const gate = phaseGate();
+    const mutation = phase === "script installation";
+    if (mutation) {
+      mocks.policySend.mockImplementation(async (method: string) => {
+        if (method === "Page.addScriptToEvaluateOnNewDocument")
+          await gate.hold();
+        return policyResponse(method);
+      });
+    } else {
+      page.evaluate.mockImplementationOnce(async () => {
+        await gate.hold();
+        return null;
+      });
     }
-    return policyResponse(method);
-  });
-  const cancellation = new AbortController();
-  const opening = PlaywrightScenarioSession.open(
-    connectedScenario("block"),
-    {},
-    { signal: cancellation.signal },
-  );
-  const outcome = expect(opening).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-  });
-  try {
-    await awaitAcknowledgement(started, opening, "policy installation");
-    cancellation.abort();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(cleanup.close).not.toHaveBeenCalled();
-    expect(page.evaluate).toHaveBeenCalledTimes(1);
-    releaseInstallation();
-    await outcome;
-    const restoration = mocks.policySend.mock.calls.find(
-      ([method]) => method === "Runtime.evaluate",
-    )?.[1];
-    expect(restoration).toMatchObject({
-      expression: expect.stringContaining("policy_owned"),
-    });
-    expect(mocks.policySend).toHaveBeenCalledWith(
-      "Page.stopLoading",
+    const cancellation = new AbortController();
+    const reason = new Error("cancelled during policy setup");
+    const opening = PlaywrightScenarioSession.open(
+      connectedScenario("block"),
       {},
-      "policy-session",
+      { signal: cancellation.signal },
     );
-    expect(cleanup.close).toHaveBeenCalledTimes(1);
-  } finally {
-    cancellation.abort();
-    releaseInstallation();
-    await opening.catch(() => undefined);
-    await outcome.catch(() => undefined);
-  }
-});
+    const stopped = opening.catch((cause: unknown) => cause);
+    const nextTurn = () =>
+      new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      await gate.reached(opening, phase);
+      cancellation.abort(reason);
+      if (mutation) {
+        await nextTurn();
+        expect(cleanup.close).not.toHaveBeenCalled();
+        expect(page.evaluate).toHaveBeenCalledOnce();
+      } else {
+        await expect(
+          Promise.race([stopped, nextTurn()]),
+        ).resolves.toMatchObject({
+          _tag: "AnalysisCancelledError",
+        });
+        expect(cleanup.close).toHaveBeenCalledOnce();
+      }
+      gate.release();
+      const failure = await stopped;
+      expect(failure).toMatchObject({ _tag: "AnalysisCancelledError" });
+      if (!(failure instanceof Error)) throw new Error("Expected cancellation");
+      expect(failure.cause).toBe(reason);
+      await nextTurn();
+
+      if (mutation) {
+        expect(mocks.policySend).toHaveBeenCalledWith(
+          "Page.removeScriptToEvaluateOnNewDocument",
+          { identifier: "owned-policy-script" },
+          "policy-session",
+        );
+        expect(mocks.policySend).toHaveBeenCalledWith(
+          "Runtime.evaluate",
+          expect.objectContaining({
+            expression: expect.stringContaining("policy_owned"),
+          }),
+          "policy-session",
+        );
+        expect(mocks.policySend).toHaveBeenCalledWith(
+          "Page.stopLoading",
+          {},
+          "policy-session",
+        );
+      } else expect(mocks.policySend).not.toHaveBeenCalled();
+      expect(cleanup.close).toHaveBeenCalledOnce();
+      expect(storage.initialize).not.toHaveBeenCalled();
+      expect(page.goto).not.toHaveBeenCalled();
+    } finally {
+      cancellation.abort();
+      gate.release();
+      const unexpectedSession = await opening.catch(() => undefined);
+      await unexpectedSession?.close();
+      await nextTurn();
+    }
+  },
+);
 
 it("rejects attached block when caller-owned registrations already exist", async () => {
   const { cleanup, page } = fixture();
@@ -1447,7 +1442,8 @@ it("rejects attached block when caller-owned registrations already exist", async
     _tag: "BrowserObservationError",
     reason: "service_worker_blocked",
   });
-  expect(page.addInitScript).not.toHaveBeenCalled();
+  expect(mocks.policySend).not.toHaveBeenCalled();
+  expect(page.goto).not.toHaveBeenCalled();
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
