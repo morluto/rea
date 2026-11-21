@@ -78,6 +78,7 @@ import {
   pythonPycSummarySchema,
 } from "./pythonPycView.js";
 import { nugetNupkgSummarySchema } from "./nugetNupkgView.js";
+import { ociImageLayoutSummarySchema } from "./ociImageLayoutView.js";
 import {
   nativeExportsViewRequestSchema,
   nativeExportsViewItemsSchema,
@@ -377,6 +378,7 @@ const viewResultBase = {
     "trace_web_source_location",
     "inspect_python_pyc",
     "inspect_nuget_nupkg",
+    "inspect_oci_image_layout",
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_byte_entropy",
@@ -595,6 +597,12 @@ export const nugetNupkgSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_nuget_nupkg"),
   summary: nugetNupkgSummarySchema,
+});
+
+export const ociImageLayoutSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_oci_image_layout"),
+  summary: ociImageLayoutSummarySchema,
 });
 
 export const pythonPycCodeObjectsViewResultSchema = z.strictObject({
@@ -1453,6 +1461,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
+    ociImageLayoutSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,

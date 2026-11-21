@@ -121,6 +121,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Offline API contract inventory](api-contracts.md)
 - [CycloneDX dependencies](guides/native/cyclonedx-view.md)
 - [Maven POM and Gradle module metadata](maven-gradle-metadata.md)
+- [OCI image layouts](guides/artifacts/oci-image-layout.md)
 - [Release exposure](release-exposure.md)
 - [Model file declarations](model-artifacts.md)
 - [Python packaged applications](python-packaged-applications.md)

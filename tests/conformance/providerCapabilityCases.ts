@@ -143,6 +143,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   peLoadConfig: { cases: ["tests/acceptance/peLoadConfigCli.test.ts"] },
   peResources: { cases: ["tests/acceptance/applications/peResources.test.ts"] },
   nugetNupkg: { cases: ["tests/acceptance/nugetNupkgCli.test.ts"] },
+  ociImageLayout: { cases: ["tests/acceptance/ociImageLayoutCli.test.ts"] },
   pythonPyc: { cases: ["tests/acceptance/pythonPycCli.test.ts"] },
   recordedCrash: { cases: ["tests/boundary/mcp/recordedCrashMcp.test.ts"] },
   releaseExposure: { cases: ["tests/acceptance/releaseExposureCli.test.ts"] },

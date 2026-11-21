@@ -14,6 +14,7 @@ import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
 import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "./nuget/nupkgToolContracts.js";
+import { OCI_IMAGE_LAYOUT_TOOL_CONTRACTS } from "./oci/ociImageLayoutToolContracts.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
 import { V8_CODE_CACHE_TOOL_CONTRACTS } from "./v8/v8CodeCacheToolContracts.js";
 import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "./java/mavenGradleMetadataToolContracts.js";
@@ -74,6 +75,7 @@ const CATALOG_CONTRACT_GROUPS = {
   RUST_TOOL_CONTRACTS,
   PYTHON_PYC_TOOL_CONTRACTS,
   NUGET_NUPKG_TOOL_CONTRACTS,
+  OCI_IMAGE_LAYOUT_TOOL_CONTRACTS,
   ERLANG_BEAM_TOOL_CONTRACTS,
   V8_CODE_CACHE_TOOL_CONTRACTS,
   MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,

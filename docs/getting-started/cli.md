@@ -672,6 +672,19 @@ dependency groups with version ranges, and a ZIP contents inventory with
 path-derived folder roles. Missing or malformed `.nuspec` members still return
 the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
 
+Inspect an OCI image-layout directory without unpacking a tar, decompressing
+layers, or contacting a registry:
+
+```bash
+rea inspect-oci-image-layout /absolute/path/to/busybox.oci --json
+```
+
+The workflow reports layout version, index entries, image config facts, layers,
+and streamed digest verification of present referenced blobs. Missing blobs,
+digest mismatches, and similar defects are findings. Env values are kept
+unless `--no-include-env-values` is selected. Directory form only. See
+[OCI image layouts](../guides/artifacts/oci-image-layout.md).
+
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
 `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.
