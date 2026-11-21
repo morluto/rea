@@ -1558,49 +1558,6 @@ describe("GhidraClient established requests", () => {
       }),
     ).resolves.toMatchObject({ ok: false, error: { kind: "process" } });
   });
-
-  it("cancels queued work and stops active provider work on cancellation", async () => {
-    const launcher = new FixtureLauncher("hang_tools");
-    const client = clientFor(launcher);
-    await expect(client.start()).resolves.toMatchObject({ ok: true });
-    const activeController = new AbortController();
-    const active = client.callTool(
-      "procedure_pseudo_code",
-      { document: null, procedure: "fixture_main" },
-      { signal: activeController.signal },
-    );
-    await waitFor(() =>
-      expect(launcher.requests).toContain("procedure_pseudo_code"),
-    );
-    const queuedController = new AbortController();
-    const queued = client.callTool(
-      "procedure_info",
-      { document: null, procedure: "fixture_main" },
-      { signal: queuedController.signal },
-    );
-    queuedController.abort();
-
-    await expect(queued).resolves.toMatchObject({
-      ok: false,
-      error: { kind: "cancelled" },
-    });
-    const waiting = client.callTool("procedure_info", {
-      document: null,
-      procedure: "fixture_main",
-    });
-    expect(launcher.requests).not.toContain("procedure_info");
-    const process_ = launcher.processes[0];
-    activeController.abort();
-    await expect(active).resolves.toMatchObject({
-      ok: false,
-      error: { kind: "cancelled" },
-    });
-    expect(await waitForExit(process_)).toBe(true);
-    await expect(waiting).resolves.toMatchObject({
-      ok: false,
-      error: { kind: "process" },
-    });
-  });
 });
 
 describe("GhidraClient runtime removal failures", () => {
@@ -2377,7 +2334,7 @@ it("bounds retries when loopback preauthentication keeps failing", async () => {
 });
 
 it.each([null, "caller stopped", new Error("caller stopped")])(
-  "preserves exact active and queued request cancellation reasons %j",
+  "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
   async (reason) => {
     const launcher = new FixtureLauncher("hang_tools");
     const client = clientFor(launcher);
@@ -2392,20 +2349,39 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
       expect(launcher.requests).toContain("procedure_pseudo_code"),
     );
     const queuedController = new AbortController();
-    const queued = client.callTool(
+    const queued = client.callToolIfReady(
       "procedure_info",
-      {},
+      { document: null, procedure: "fixture_main" },
       { signal: queuedController.signal },
     );
     queuedController.abort(reason);
-    const queuedResult = await queued;
-    activeController.abort(reason);
-    const activeResult = await active;
-    for (const result of [queuedResult, activeResult]) {
-      if (result.ok) throw new Error("Expected request cancellation");
-      expect(result.error.kind).toBe("cancelled");
-      expect(result.error.cancellation?.reason).toBe(reason);
+    const preAborted = client.callToolIfReady(
+      "procedure_info",
+      { document: null, procedure: "fixture_main" },
+      { signal: queuedController.signal },
+    );
+    const waiting = client.callToolIfReady("list_procedures", {});
+    try {
+      for (const result of await Promise.all([queued, preAborted])) {
+        if (result?.ok !== false)
+          throw new Error("Expected waiting caller cancellation");
+        expect(result.error.kind).toBe("cancelled");
+        expect(result.error.cancellation?.reason).toBe(reason);
+      }
+      expect(launcher.requests).not.toContain("procedure_info");
+    } finally {
+      activeController.abort(reason);
+      await Promise.all([active, queued, preAborted, waiting]);
     }
+    const result = await active;
+    if (result.ok) throw new Error("Expected active cancellation");
+    expect(result.error.kind).toBe("cancelled");
+    expect(result.error.cancellation?.reason).toBe(reason);
+    await expect(waiting).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "process" },
+    });
+    expect(launcher.requests).not.toContain("list_procedures");
     expect(await waitForExit(launcher.processes[0])).toBe(true);
     await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
       code: "ENOENT",
