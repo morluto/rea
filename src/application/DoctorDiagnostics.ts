@@ -321,9 +321,13 @@ const optionalHopperDemoCheck = async (
   host: DoctorHost,
   hopperPath: string | undefined,
 ): Promise<DoctorCheck | undefined> =>
-  host.platform !== "linux" || hopperPath === undefined
+  hopperPath === undefined
     ? undefined
-    : host.linuxDemoRuntimeCheck();
+    : host.platform === "linux"
+      ? host.linuxDemoRuntimeCheck()
+      : host.platform === "darwin"
+        ? host.macHopperPythonCheck?.(hopperPath)
+        : undefined;
 
 const optionalIlspyCheck = async (
   host: DoctorHost,

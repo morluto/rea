@@ -1229,6 +1229,84 @@ describe("doctor installed Hopper discovery", () => {
   });
 });
 
+describe("doctor macOS Hopper Python readiness", () => {
+  const hopper = "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
+  const missingPython = {
+    name: "hopper-python",
+    ok: false,
+    classification: "config_drift" as const,
+    detail: "PythonPath names a missing file: /missing/Python",
+  };
+
+  it("makes Hopper unavailable when its Python check fails on macOS", async () => {
+    const launchers: string[] = [];
+    const result = await runDoctor(
+      undefined,
+      host({
+        macHopperPythonCheck: (launcher) => {
+          launchers.push(launcher);
+          return Promise.resolve(missingPython);
+        },
+      }),
+      { providers: ["hopper"] },
+    );
+
+    expect(launchers).toEqual([hopper]);
+    expect(result.healthy).toBe(false);
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining(missingPython),
+    );
+  });
+
+  it("keeps Hopper ready when its Python check passes on macOS", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        macHopperPythonCheck: () =>
+          Promise.resolve({
+            name: "hopper-python",
+            ok: true,
+            classification: "healthy",
+          }),
+      }),
+      { providers: ["hopper"] },
+    );
+
+    expect(result.healthy).toBe(true);
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({ name: "hopper-python", ok: true }),
+    );
+  });
+
+  it.each<{ readonly case: string; readonly overrides: Partial<DoctorHost> }>([
+    { case: "on Linux", overrides: { platform: "linux" } },
+    {
+      case: "without a Hopper launcher",
+      overrides: {
+        validTarget: () => Promise.resolve(false),
+        executable: () => Promise.resolve(false),
+      },
+    },
+  ])("does not run the macOS Python check $case", async ({ overrides }) => {
+    let calls = 0;
+    const result = await runDoctor(
+      undefined,
+      host({
+        macHopperPythonCheck: () => {
+          calls++;
+          return Promise.resolve(missingPython);
+        },
+        ...overrides,
+      }),
+    );
+
+    expect(calls).toBe(0);
+    expect(result.checks.some(({ name }) => name === "hopper-python")).toBe(
+      false,
+    );
+  });
+});
+
 describe("doctor Hopper discovery matches runtime selection", () => {
   // Model launchers with runtime's POSIX joins; filesystem work stays native.
   const launchers = (home: string) => ({
