@@ -2612,6 +2612,11 @@ const observableMutationPaths = (
         const selected = pendingExpressions.pop();
         if (selected === undefined) break;
         const { expression, observer } = selected;
+        // An awaited value may be an object even when no local allocation is
+        // visible (for example, the Response returned by fetch). Keep its
+        // member paths and escapes observable without assuming its identity.
+        if (t.isAwaitExpression(expression))
+          (observer.origins ??= new Set()).add("opaque");
         if (
           t.isCallExpression(expression) ||
           t.isOptionalCallExpression(expression)

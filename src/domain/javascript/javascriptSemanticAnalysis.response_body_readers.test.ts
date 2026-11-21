@@ -41,6 +41,21 @@ it.each([
   expect(consumersFor(source)).toEqual([]);
 });
 
+it.each(["text", "arrayBuffer"] as const)(
+  "keeps a replaced %s response reader uncertain",
+  (method) => {
+    const result = analyzeJavaScriptSemantics(`async function f(replacement) {
+      const res = await fetch("https://api.test/x");
+      res.${method} = replacement;
+      return res.${method}();
+    }`).requestOperations.filter(({ kind }) => kind === "response-consumer");
+    expect(result).toMatchObject([
+      { method, endpoint: null, resolution: "partial" },
+    ]);
+    expect(result[0]?.linkedRequestIds).toHaveLength(1);
+  },
+);
+
 it.each([
   ["json", "json"],
   ["text", "text"],
@@ -65,6 +80,162 @@ it("keeps a settled fetch reader through a wrapper expression", () => {
       `async function f(){ const res = await fetch("https://api.test/x"); return (res).json(); }`,
     ),
   ).toHaveLength(1);
+});
+
+it.each([
+  ["direct method replacement", "res.json = () => ({ fake: true });"],
+  ["conditional replacement", "if (flag) res.json = () => ({ fake: true });"],
+  ["computed method replacement", 'res["json"] = () => ({ fake: true });'],
+  ["unknown computed replacement", "res[key] = replacement;"],
+  ["alias replacement", "const alias = res; alias.json = replacement;"],
+  ["object assignment", "Object.assign(res, { json: replacement });"],
+  [
+    "property definition",
+    'Object.defineProperty(res, "json", { value: replacement });',
+  ],
+  ["method deletion", "delete res.json;"],
+  ["receiver escape", "decorate(res);"],
+  ["receiver prototype replacement", "res.__proto__.json = replacement;"],
+  [
+    "global response prototype replacement",
+    "Response.prototype.json = replacement;",
+  ],
+  [
+    "globalThis response prototype replacement",
+    "globalThis.Response.prototype.json = replacement;",
+  ],
+  [
+    "defined response prototype replacement",
+    'Object.defineProperty(Response.prototype, "json", { value: replacement });',
+  ],
+  ["indirect global eval", '(0, eval)("Response.prototype.json = () => 1");'],
+] as const)("keeps a response consumer uncertain after %s", (_name, effect) => {
+  const result =
+    analyzeJavaScriptSemantics(`async function f(flag, key, replacement) {
+    const res = await fetch("https://api.test/x");
+    ${effect}
+    return res.json();
+  }`).requestOperations.filter(({ kind }) => kind === "response-consumer");
+  expect(result).toMatchObject([
+    { method: "json", endpoint: null, resolution: "partial" },
+  ]);
+  expect(result[0]?.linkedRequestIds).toHaveLength(1);
+});
+
+it.each([
+  ["an unrelated property", "res.text = replacement;", "return res.json();"],
+  ["a callable property", "res.json.label = 1;", "return res.json();"],
+  [
+    "a later write",
+    "",
+    "const value = res.json(); res.json = replacement; return value;",
+  ],
+  [
+    "an unrelated prototype method",
+    "Response.prototype.text = replacement;",
+    "return res.json();",
+  ],
+] as const)(
+  "keeps a response consumer complete with %s",
+  (_name, before, after) => {
+    expect(
+      consumersFor(`async function f(replacement) {
+    const res = await fetch("https://api.test/x");
+    ${before}
+    ${after}
+  }`),
+    ).toEqual([
+      {
+        method: "json",
+        endpoint: "https://api.test/x",
+        resolution: "complete",
+      },
+    ]);
+  },
+);
+
+it("keeps a response consumer before a later global eval", () => {
+  expect(
+    consumersFor(`const res = await fetch("https://api.test/x");
+    res.json();
+    (0, eval)("Response.prototype.json = () => 1");`),
+  ).toEqual([
+    { method: "json", endpoint: "https://api.test/x", resolution: "complete" },
+  ]);
+});
+
+it("does not attribute an old receiver's method write to a later fetch", () => {
+  expect(
+    consumersFor(`async function f(res) {
+    res.json = () => 0;
+    res = await fetch("https://api.test/new");
+    return res.json();
+  }`),
+  ).toEqual([
+    {
+      method: "json",
+      endpoint: "https://api.test/new",
+      resolution: "complete",
+    },
+  ]);
+});
+
+it("does not attribute a captured old receiver's later write to a new fetch", () => {
+  expect(
+    consumersFor(`async function f(res) {
+    const old = res;
+    res = await fetch("https://api.test/new");
+    old.json = () => 0;
+    return res.json();
+  }`),
+  ).toEqual([
+    {
+      method: "json",
+      endpoint: "https://api.test/new",
+      resolution: "complete",
+    },
+  ]);
+});
+
+it.each([
+  [
+    "new receiver write",
+    'res = await fetch("https://api.test/new"); res.json = () => 0;',
+  ],
+  [
+    "old receiver prototype write",
+    'res.__proto__.json = () => 0; res = await fetch("https://api.test/new");',
+  ],
+] as const)("retains uncertainty after %s", (_name, effect) => {
+  expect(
+    consumersFor(`async function f(res, flag) {
+    ${effect}
+    return res.json();
+  }`),
+  ).toEqual([{ method: "json", endpoint: null, resolution: "partial" }]);
+});
+
+it("does not retain an endpoint when the fetch assignment is conditional", () => {
+  const [consumer] = consumersFor(`async function f(res, flag) {
+    if (flag) res = await fetch("https://api.test/new");
+    return res.json();
+  }`);
+  expect(consumer?.endpoint).toBeNull();
+});
+
+it("retains uncertainty across repeated response readers in a function", () => {
+  const consumers = consumersFor(`async function f() {
+    const res = await fetch("https://api.test/new");
+    await res.text();
+    await res.json();
+  }`);
+  // A later reader can reach mutable stream hooks and a shared prototype in
+  // another activation; the call is not proof of a side-effect-free method.
+  expect(consumers[0]).toEqual({
+    method: "text",
+    endpoint: null,
+    resolution: "partial",
+  });
 });
 
 it("keeps the fetch candidate when the binding also holds another request", () => {

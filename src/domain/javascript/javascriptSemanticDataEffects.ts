@@ -2,6 +2,9 @@ import * as t from "@babel/types";
 import {
   bindingAssignmentMayPrecede,
   bindingInitializersMayPrecede,
+  ambientPathMayObserveAt,
+  bindingMethodMayHaveChanged,
+  opaqueCodeMayChangeGlobalRead,
 } from "./javascriptSemanticEffectLog.js";
 
 import type {
@@ -26,7 +29,11 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticAwaitedInitializer,
+  semanticBindingAtRead,
+  semanticMemberEffectMayTargetInitializer,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectIdentity,
   dataEffectArgumentBindingId as argumentBindingId,
@@ -328,9 +335,7 @@ const soleWriteReachesRead = (
   if (initializers.length !== 1 || initializer === undefined) return false;
   // The result itself must be this request. Containing a request in a branch
   // or child allocation does not prove the entire initializer is its response.
-  let source = unwrapJavaScriptExpression(initializer.node).node;
-  while (t.isAwaitExpression(source))
-    source = unwrapJavaScriptExpression(source.argument).node;
+  const source = semanticAwaitedInitializer(initializer.node).value;
   return (
     source === request &&
     !bindingAssignmentMayPrecede(context.state, snapshot.binding, read) &&
@@ -424,6 +429,36 @@ const collectResponseConsumers = (
       context,
       uniqueRequest?.node,
     );
+    const methodMayHaveChanged =
+      binding !== undefined &&
+      (bindingMethodMayHaveChanged(binding, method, member, context.state, {
+        fresh: soleWrite,
+        inherited: true,
+        definingPrototypeDepth: undefined,
+        isolatedNativeCloses: false,
+        targets: (effect) =>
+          uniqueRequest === undefined ||
+          semanticMemberEffectMayTargetInitializer(
+            binding,
+            effect,
+            context.state,
+            (initializer) =>
+              semanticAwaitedInitializer(initializer).value ===
+              uniqueRequest.node,
+          ),
+      }) ||
+        ambientPathMayObserveAt(
+          context.state,
+          member,
+          ["global", "Response", "prototype", method],
+          "contents",
+        ) ||
+        opaqueCodeMayChangeGlobalRead(
+          uniqueRequest?.node ?? member,
+          context.state,
+          "Response",
+          member,
+        ));
     output.push({
       requestId: `response:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "response-consumer",
@@ -441,10 +476,15 @@ const collectResponseConsumers = (
       linkedRequestIds: linked
         .map(({ operation }) => operation.requestId)
         .sort(compareUnicodeCodePoints),
-      endpoint: soleWrite ? (uniqueRequest?.operation.endpoint ?? null) : null,
+      endpoint:
+        soleWrite && !methodMayHaveChanged
+          ? (uniqueRequest?.operation.endpoint ?? null)
+          : null,
       fields: [],
       resolution:
-        uniqueRequest === undefined || otherKinds ? "partial" : "complete",
+        uniqueRequest === undefined || otherKinds || methodMayHaveChanged
+          ? "partial"
+          : "complete",
     });
   });
   return output;

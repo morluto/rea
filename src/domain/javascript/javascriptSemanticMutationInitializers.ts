@@ -36,6 +36,7 @@ import {
   semanticPrototypeOwners,
   type SemanticPrototypeOwner,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticEffectTiming,
 } from "./javascriptSemanticState.js";
@@ -1816,6 +1817,39 @@ export const semanticBindingAtRead = (
       ),
     },
   };
+};
+
+/** Preserve whether a direct initializer settles before its value is read. */
+export const semanticAwaitedInitializer = (node: t.Node) => {
+  let value = unwrapJavaScriptExpression(node).node;
+  let awaited = false;
+  while (t.isAwaitExpression(value)) {
+    awaited = true;
+    value = unwrapJavaScriptExpression(value.argument).node;
+  }
+  return { value, awaited };
+};
+
+/** Only discard an instance effect when its captured receiver excludes the target. */
+export const semanticMemberEffectMayTargetInitializer = (
+  binding: JavaScriptSemanticBindingState,
+  effect: JavaScriptSemanticMemberEffect,
+  state: JavaScriptSemanticAnalysisState,
+  matches: (node: t.Node) => boolean,
+): boolean => {
+  const capture = effect.receiverAt ?? effect.node;
+  if (capture === undefined) return true;
+  const selected = semanticBindingAtRead(binding, capture, state);
+  if (selected.status !== "ordered") return true;
+  return [
+    ...selected.binding.initializers,
+    ...selected.binding.referenceInitializers,
+  ].some(
+    ({ node, projection }) =>
+      projection.length > 0 ||
+      !binding.initializers.some((source) => source.node === node) ||
+      matches(node),
+  );
 };
 
 const selectInitializers = (
