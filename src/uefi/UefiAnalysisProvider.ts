@@ -1253,9 +1253,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         ...(effectiveLimitations.length > 0
           ? ["", "## Limitations", ...effectiveLimitations.map((l) => `- ${l}`)]
           : []),
-        `- **SMM** (System Management Mode): ${phaseCounts.smm}`,
-        `- **APP** (UEFI Applications): ${phaseCounts.app}`,
-        `- **MISC**: ${phaseCounts.misc}`,
         "",
         "## Modules Index",
         "| Phase | Name | GUID | Size (Bytes) | Disassembly Status | C Scaffold | Disassembly |",
