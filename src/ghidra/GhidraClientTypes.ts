@@ -61,8 +61,10 @@ export interface GhidraClientOptions {
   readonly targetSha256: string;
   readonly existingProject?: boolean;
   readonly checkpoint?: GhidraCheckpointSelection;
-  /** Selected universal Mach-O slice the private snapshot is thinned to. */
+  /** Selected universal Mach-O slice that Ghidra imports. */
   readonly universalSlice?: UniversalMachOSlice;
+  /** Import the whole container; Ghidra's loader then selects its one slice. */
+  readonly universalContainerImport?: boolean;
   /** Installation host shared by runtime allocation and snapshot admission. */
   readonly platform?: NodeJS.Platform;
   readonly transport?: GhidraTransportKind;

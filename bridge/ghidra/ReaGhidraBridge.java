@@ -265,7 +265,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             serve(descriptor);
             return;
         }
-        admittedTargetSha256 = descriptor.targetSha256;
+        // For an imported container, the FileBytes that hold the target are its slice.
+        admittedTargetSha256 = descriptor.targetSourceSha256;
         targetFileOffsetBase = descriptor.targetFileOffsetBase;
         // GhidraScript wraps run() in a transaction. End it before serving so
         // each edit owns a real outer transaction and can roll back immediately.
@@ -5664,6 +5665,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("existing_project");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("target_file_offset_base"))
             keys.add("target_file_offset_base");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("target_source_sha256"))
+            keys.add("target_source_sha256");
         JsonObject object = requireObject(parsed, keys);
         int decompileTimeout = 0;
         if (object.has("decompile_timeout_seconds")) {
@@ -5693,7 +5696,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
             decompileTimeout,
             object.has("existing_project") && requireBoolean(object, "existing_project"),
-            fileOffsetBase
+            fileOffsetBase,
+            requireString(object, object.has("target_source_sha256") ? "target_source_sha256" : "target_sha256")
         );
     }
 
@@ -5959,7 +5963,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray analysisExtensions,
         int decompileTimeoutSeconds,
         boolean existingProject,
-        long targetFileOffsetBase
+        long targetFileOffsetBase,
+        String targetSourceSha256
     ) {}
     private static ValueFlowLimits defaultValueFlowLimits() {
         return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);

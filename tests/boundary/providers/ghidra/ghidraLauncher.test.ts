@@ -1408,7 +1408,7 @@ describe("Ghidra universal Mach-O slice descriptor", () => {
           targetSha256: "c".repeat(64),
           ...(targetFileOffsetBase === undefined
             ? {}
-            : { targetFileOffsetBase }),
+            : { targetFileOffsetBase, targetSourceSha256: "d".repeat(64) }),
           providerVersion: "12.2",
           profileDigest: "a".repeat(64),
         },
@@ -1423,6 +1423,9 @@ describe("Ghidra universal Mach-O slice descriptor", () => {
         (descriptor as { target_file_offset_base?: unknown })
           .target_file_offset_base,
       ).toBe(expected);
+      expect(
+        (descriptor as { target_source_sha256?: unknown }).target_source_sha256,
+      ).toBe(expected === undefined ? undefined : "d".repeat(64));
     },
   );
 });

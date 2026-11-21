@@ -120,6 +120,7 @@ describe("Ghidra universal Mach-O import thinning", () => {
       expect(parseExecutableHeader(bytes, host).ok).toBe(true);
       expect(session.targetSha256).toBe(sha256(slice));
       expect(session.targetSha256).not.toBe(target.sha256);
+      expect(session.targetSourceSha256).toBeUndefined();
       // The bridge maps its slice-local offsets to universal-file offsets.
       expect(session.targetFileOffsetBase).toBe(target.universalSlice.offset);
       expect(session.targetFileOffsetBase).toBeGreaterThan(0);
@@ -131,11 +132,31 @@ describe("Ghidra universal Mach-O import thinning", () => {
 
   it("imports a one-architecture container whole under its admitted digest", async () => {
     const bytes = fat([0x0100000c]);
+    const { target, slice } = await universalTarget(bytes, "arm64");
+    const { session, bytes: imported } = await launchedImport(target);
+    expect(imported.equals(bytes)).toBe(true);
+    expect(session.targetSha256).toBe(target.sha256);
+    // Ghidra's loader selects the slice, so offsets still need its base and digest.
+    expect(session.targetFileOffsetBase).toBe(target.universalSlice.offset);
+    expect(session.targetFileOffsetBase).toBeGreaterThan(0);
+    expect(session.targetSourceSha256).toBe(sha256(slice));
+  });
+
+  it("keeps the main import for two slices of one architecture family", async () => {
+    const bytes = largeUniversal([
+      { cpu: 0x0100000c, offset: 4096, size: 8480 },
+      { cpu: 0x0100000c, offset: 16384, size: 8480 },
+    ]);
+    // The second slice is arm64e; Ghidra's loader, not admission, picks one.
+    bytes.writeUInt32BE(2, 8 + 20 + 4);
+    bytes.writeUInt32BE(2, 16384 + 8);
     const { target } = await universalTarget(bytes, "arm64");
+    expect(target.availableArchitectures).toEqual(["arm64"]);
     const { session, bytes: imported } = await launchedImport(target);
     expect(imported.equals(bytes)).toBe(true);
     expect(session.targetSha256).toBe(target.sha256);
     expect(session.targetFileOffsetBase).toBeUndefined();
+    expect(session.targetSourceSha256).toBeUndefined();
   });
 
   it.each([

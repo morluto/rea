@@ -30,15 +30,18 @@ import {
 /** Immutable target copy admitted to one ephemeral Ghidra import. */
 export interface GhidraTargetSnapshot {
   readonly path: string;
-  /** Digest of the imported bytes: the selected slice for a universal Mach-O. */
+  /** Digest of the imported bytes: the selected slice for a thinned universal Mach-O. */
   readonly sha256: string;
+  /** Digest of the selected slice when the snapshot keeps its container. */
+  readonly sourceSha256?: string;
   readonly admission?: JsonValue;
 }
 
 /**
  * Copy one target and require its bytes to match the parsed target identity.
  * A universal Mach-O is thinned to the admitted slice so Ghidra imports the
- * architecture admission selected; the whole-source digest anchors the copy.
+ * architecture admission selected, unless the caller keeps the container; the
+ * whole-source digest anchors the copy.
  */
 export const createGhidraTargetSnapshot = async (
   sourcePath: string,
@@ -49,6 +52,8 @@ export const createGhidraTargetSnapshot = async (
     readonly platform?: NodeJS.Platform;
     readonly resourceScope?: ArtifactResourceScope;
     readonly slice?: UniversalMachOSlice;
+    /** Copy the whole container and only digest the slice. */
+    readonly keepContainer?: boolean;
   } = {},
 ): Promise<GhidraTargetSnapshot> => {
   if (!/^[a-f0-9]{64}$/u.test(expectedSha256))
@@ -124,13 +129,16 @@ export const createGhidraTargetSnapshot = async (
                 position += chunk.length;
                 // A chunk outside the slice has end <= start; a negative
                 // subarray bound would count from the chunk's end instead.
-                if (end <= start) continue;
-                const bytes = chunk.subarray(start, end);
+                const bytes =
+                  end <= start ? undefined : chunk.subarray(start, end);
+                const output = options.keepContainer === true ? chunk : bytes;
                 // writeFile completes the entire supplied chunk at the current
                 // descriptor offset. Only this owner closes either descriptor.
-                await destination.writeFile(bytes);
-                sliceHash?.update(bytes);
-                written += bytes.length;
+                if (output !== undefined) await destination.writeFile(output);
+                if (bytes !== undefined) {
+                  sliceHash?.update(bytes);
+                  written += bytes.length;
+                }
                 assertArtifactReadActive(options.signal);
               }
               const coverage = input.readCoverage();
@@ -149,10 +157,14 @@ export const createGhidraTargetSnapshot = async (
                   `Ghidra target snapshot digest or source identity changed: expected ${expectedSha256}, observed ${observed}`,
                 );
               assertArtifactReadActive(options.signal);
-              return {
-                path: snapshotPath,
-                sha256: sliceHash?.digest("hex") ?? observed,
-              };
+              const sliceSha256 = sliceHash?.digest("hex");
+              return options.keepContainer === true && sliceSha256 !== undefined
+                ? {
+                    path: snapshotPath,
+                    sha256: observed,
+                    sourceSha256: sliceSha256,
+                  }
+                : { path: snapshotPath, sha256: sliceSha256 ?? observed };
             },
           );
         },
