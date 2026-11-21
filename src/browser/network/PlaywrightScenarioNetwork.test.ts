@@ -808,8 +808,12 @@ it("preserves read errors and does not turn unexposed or empty bytes into the sa
   collector.request(missing);
   collector.response(response);
   collector.finished(missing);
+  const emptyResponse = new ResponseFixture(empty, "");
+  emptyResponse.headersArray = async () => [
+    { name: "Content-Type", value: "application/json" },
+  ];
   collector.request(empty);
-  collector.response(new ResponseFixture(empty, ""));
+  collector.response(emptyResponse);
   collector.finished(empty);
   await collector.finish();
   expect(events).toContainEqual(
@@ -842,93 +846,51 @@ it("preserves read errors and does not turn unexposed or empty bytes into the sa
         state: "captured",
         content: "",
         bytes: 0,
+        media_type: "application/json",
+        media_type_source: "content-type-header",
       }),
     }),
   );
   expect(collector.limitations().length).toBeGreaterThan(0);
 });
 
-it("keeps a redacted declaration out of body media metadata", async () => {
-  const { collector, events } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: true,
-  });
-  const request = new RequestFixture("input");
-  const response = new ResponseFixture(request, "ordinary-bytes");
-  response.headersArray = async () => [
-    {
-      name: "Content-Type",
-      value: `text/plain; fixture=${encodeURIComponent("私密")}`,
-    },
-  ];
-  collector.request(request);
-  collector.response(response);
-  collector.finished(request);
-  await collector.finish();
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "network-content",
-      phase: "response",
-      headers: {
-        state: "captured",
-        items: [
-          {
-            name: "Content-Type",
-            value: "text/plain; fixture=[REDACTED:declared]",
-            redacted: true,
-          },
-        ],
-      },
-      body: expect.objectContaining({
-        state: "captured",
-        media_type: null,
-      }),
-    }),
-  );
-});
+const quotedJsonType = 'application/json; note="one,two"';
 
 it.each([
   {
-    declarations: [
-      "application/json; charset=utf-8",
-      "application/octet-stream",
-    ],
+    label: "conflicting declarations",
+    declarations: ["application/json", "application/octet-stream"],
     type: null,
   },
   {
-    declarations: [
-      "application/octet-stream",
-      "application/json; charset=utf-8",
-    ],
-    type: null,
-  },
-  {
+    label: "a coalesced declaration",
     declarations: ["application/json; charset=utf-8, application/octet-stream"],
     type: null,
   },
   {
-    declarations: ["application/json", "application/json"],
-    type: "application/json",
+    label: "agreeing declarations with a quoted comma",
+    declarations: [quotedJsonType, quotedJsonType],
+    type: quotedJsonType,
   },
+  { label: "unreadable headers", declarations: null, type: null },
   {
-    declarations: ['application/json; note="one,two"'],
-    type: 'application/json; note="one,two"',
+    label: "a redacted declaration",
+    declarations: ["application/json; fixture=%E7%A7%81%E5%AF%86"],
+    type: null,
+    retainedHeader: "application/json; fixture=[REDACTED:declared]",
   },
-  { declarations: null, type: null },
 ])(
-  "derives body type once from retained declarations $declarations",
-  async ({ declarations, type }) => {
+  "derives safe body media evidence from $label",
+  async ({ declarations, type, retainedHeader }) => {
     const { collector, events } = harness({
       request_body: false,
       response_body: true,
-      header_values: false,
+      header_values: retainedHeader !== undefined,
     });
     const request = new RequestFixture("input");
     const response = new ResponseFixture(request, '{"value":"\\u79c1\\u5bc6"}');
-    response.headers = () => ({
-      "content-type": declarations?.join(", ") ?? "application/json",
-    });
+    // The flattened metadata cannot establish the producer's ordered Content-Type.
+    response.headers = () => ({ "content-type": "application/octet-stream" });
     response.headersArray = async () => {
       response.headerReads += 1;
       if (declarations === null) throw new Error("Headers unavailable");
@@ -943,15 +905,22 @@ it.each([
     );
     expect(response.headerReads).toBe(1);
     expect(content).toMatchObject({
-      headers: { state: "not_requested" },
+      headers:
+        retainedHeader === undefined
+          ? { state: "not_requested" }
+          : {
+              state: "captured",
+              items: [
+                { name: "Content-Type", value: retainedHeader, redacted: true },
+              ],
+            },
       body: {
         state: "captured",
         media_type: type,
         media_type_source: "content-type-header",
       },
     });
-    if (content?.kind !== "network-content")
-      throw new Error("Missing response content");
+    if (content === undefined) throw new Error("Missing response content");
     expect(JSON.parse(bodyText(content))).toEqual({
       value: "[REDACTED:declared]",
     });
@@ -1043,23 +1012,40 @@ it.each([
   },
 );
 
-it("uses the caller's body-byte limit and returns typed size evidence", async () => {
-  const { collector, events } = harness(selection, undefined, "fixture", {
-    max_network_body_bytes: 4,
-  });
-  const request = new RequestFixture("12345");
-  collector.request(request);
-  await collector.finish();
-  expect(events.find(({ kind }) => kind === "network-content")).toMatchObject({
-    transaction_id: "request-1",
-    body: {
-      state: "unavailable",
-      reason: "body-size-limit",
-      limit_bytes: 4,
-      observed_bytes: 5,
-    },
-  });
-});
+it.each([
+  { label: "default", limit: 64 * 1024, limits: {} },
+  { label: "caller-selected", limit: 4, limits: { max_network_body_bytes: 4 } },
+])(
+  "reports the $label body-byte limit while retaining a body exactly at the limit",
+  async ({ limit, limits }) => {
+    const { collector, events } = harness(selection, undefined, "fixture", {
+      ...limits,
+      // Exercise the byte boundary independently of redaction allocation.
+      max_network_body_allocation_bytes: 16 * 1024 * 1024,
+    });
+    const admitted = "x".repeat(limit);
+    collector.request(new RequestFixture(admitted + "x"));
+    collector.request(new RequestFixture(admitted));
+    await collector.finish();
+    const content = events.filter((event) => event.kind === "network-content");
+    expect(content).toHaveLength(2);
+    expect(
+      content.find(({ transaction_id }) => transaction_id === "request-1"),
+    ).toMatchObject({
+      body: {
+        state: "unavailable",
+        reason: "body-size-limit",
+        limit_bytes: limit,
+        observed_bytes: limit + 1,
+      },
+    });
+    const accepted = content.find(
+      ({ transaction_id }) => transaction_id === "request-2",
+    );
+    if (accepted === undefined) throw new Error("Missing retained body");
+    expect(bodyText(accepted)).toBe(admitted);
+  },
+);
 
 it("keeps header names and selected body when unselected values are oversized", async () => {
   const { collector, events } = harness({
@@ -1090,22 +1076,6 @@ it("keeps header names and selected body when unselected values are oversized", 
   expect(request.bodyReads).toBe(1);
 });
 
-it("omits oversized body copies and retains ordinary content", async () => {
-  const { collector, events } = harness();
-  collector.request(new RequestFixture("x".repeat(64 * 1024 + 1)));
-  collector.request(new RequestFixture("ordinary"));
-  await collector.finish();
-  const content = events.filter((event) => event.kind === "network-content");
-  expect(content[0]?.body).toMatchObject({
-    state: "unavailable",
-    reason: "body-size-limit",
-    limit_bytes: 64 * 1024,
-    observed_bytes: 64 * 1024 + 1,
-    message: expect.stringContaining("budget"),
-  });
-  expect(bodyText(content[1]!)).toBe("ordinary");
-});
-
 it("reserves redaction expansion before creating replacement copies", async () => {
   const { collector, events, secrets } = harness(selection, undefined, "a");
   const redact = vi.spyOn(secrets, "redactBytes");
@@ -1115,7 +1085,7 @@ it("reserves redaction expansion before creating replacement copies", async () =
     events.find((event) => event.kind === "network-content")?.body,
   ).toMatchObject({
     state: "unavailable",
-    message: expect.stringContaining("redaction"),
+    reason: "body-allocation-limit",
   });
   // Ordinary header values can still pass through the byte redactor.
   expect(redact.mock.calls.every(([value]) => value.length < 64 * 1024)).toBe(
