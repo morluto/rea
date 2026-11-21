@@ -1,7 +1,6 @@
 import { newPlaywrightCdpSession } from "../../dist/browser/PlaywrightCdpSession.js";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { createVerifierCommands } from "./verify-commands.mjs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -23,8 +22,16 @@ export async function verifyBrowserWorkers(
   entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url)),
 ) {
   const site = await startWorkerSite();
-  let fixture, browser, client, transport, primaryError, foreignSite, artifacts;
+  let fixture,
+    browser,
+    client,
+    transport,
+    primaryError,
+    foreignSite,
+    artifacts,
+    commands;
   try {
+    commands = await createVerifierCommands();
     artifacts = await mkdtemp(join(tmpdir(), "rea-worker-evidence-"));
     fixture = await startRuntimeFixtureBrowser(executable, site.origin);
     const endpoint = `http://127.0.0.1:${fixture.port}`;
@@ -64,7 +71,7 @@ export async function verifyBrowserWorkers(
       observation_ms: 2000,
       include_script_sources: true,
     };
-    const cli = await promisify(execFile)(
+    const cli = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -92,7 +99,7 @@ export async function verifyBrowserWorkers(
         }))
         .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
     check(cliResult, site, target, false);
-    const explicitCli = await promisify(execFile)(
+    const explicitCli = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -134,7 +141,7 @@ export async function verifyBrowserWorkers(
       false,
     );
     await assert.rejects(
-      promisify(execFile)(
+      commands.exec(
         process.execPath,
         [
           entrypoint,
@@ -248,7 +255,7 @@ export async function verifyBrowserWorkers(
     );
     const savedCapture = join(artifacts, "worker-capture.json");
     await writeFile(savedCapture, JSON.stringify(explicit));
-    const exported = await promisify(execFile)(
+    const exported = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -442,6 +449,7 @@ export async function verifyBrowserWorkers(
   } finally {
     await closeVerifierResources(
       [
+        () => commands?.close(),
         () => client?.close(),
         () => transport?.close(),
         () => browser?.close(),

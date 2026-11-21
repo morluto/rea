@@ -98,7 +98,10 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       bytes.subarray(0, 8),
       Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     );
-    assert.deepEqual(bytes, expectedPng);
+    assert.ok(
+      bytes.equals(expectedPng),
+      "CLI screenshot pixels differ from the owned browser capture",
+    );
     assert.deepEqual(screenshot.viewport, {
       width: expectedPng.readUInt32BE(16),
       height: expectedPng.readUInt32BE(20),

@@ -21,7 +21,6 @@ import {
   evidenceSubjectInput,
   parseEvidence,
 } from "../../../src/domain/evidence.js";
-import { browserWorkerEvidenceScopeSchema } from "../../../src/domain/browserWorkerEvidenceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -29,6 +28,7 @@ import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { readScopedWorkerSource } from "../../../src/browser/CdpWorkerCapture.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
+import { browserWorkerEvidenceScopeSchema } from "../../../src/domain/browserWorkerEvidenceScope.js";
 import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import { createWebTextArtifact } from "../../../src/domain/webContentArtifact.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
@@ -71,6 +71,245 @@ it("checks selection for queued work and again before retaining a reply", async 
   await expect(readScopedWorkerSource(() => selected, read)).resolves.toEqual({
     selected: true,
     reply: { scriptSource: "fixture" },
+  });
+});
+
+it("requires retained version history for service worker control", async () => {
+  const { provider, input } = await fixture();
+  const result = await provider.inspectPage({
+    ...input,
+    include_script_sources: false,
+  });
+  if (!result.ok) throw result.error;
+  const worker = result.value.workers.find((item) => item.target_id === "own")!;
+  const observation = worker.observation!;
+  worker.type = "service_worker";
+  observation.ownership = "service_worker_client";
+  const version = {
+    event: "version" as const,
+    observed_at: new Date(0).toISOString(),
+    running_status: null,
+    version_status: null,
+    controls_page: true,
+  };
+  const validate = () =>
+    browserWorkerEvidenceScopeSchema.safeParse({
+      parameters: {
+        ...input,
+        allowed_origins: [result.value.target.origin],
+        include_script_sources: false,
+      },
+      normalized_result: { ...result.value, workers: [worker] },
+    });
+  for (const history of [
+    [],
+    [{ ...version, controls_page: false }],
+    [{ ...version, controls_page: null }],
+    [{ ...version, event: "attached" as const }],
+  ]) {
+    observation.lifecycle = history;
+    expect(validate().success).toBe(false);
+  }
+  for (const last of [true, false, null]) {
+    observation.lifecycle = [version, { ...version, controls_page: last }];
+    const result = validate();
+    if (!result.success) throw result.error;
+  }
+});
+
+it.each([false, true])(
+  "reports availability for a related inventory-only worker with a missing URL: %s",
+  async (missing) => {
+    const { provider, input } = await fixture({
+      commandResult: (command, origin) =>
+        command.method === "Target.getTargets"
+          ? {
+              targetInfos: [
+                {
+                  targetId: "inventory-only",
+                  type: "worker",
+                  openerId: "allowed-page",
+                  attached: false,
+                  url: missing ? "" : origin + "/inventory.js",
+                },
+              ],
+            }
+          : undefined,
+    });
+    const result = await provider.inspectPage(input);
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.workers.some(
+        ({ target_id }) => target_id === "inventory-only",
+      ),
+    ).toBe(!missing);
+    const coverage = result.value.completeness;
+    expect(
+      coverage.excluded.some(
+        ({ section, reason }) =>
+          section === "workers" && reason === "unattributed_origin",
+      ),
+    ).toBe(missing);
+    if (missing) expect(coverage.unavailable_sections).toContain("workers");
+  },
+);
+
+it("drains admitted source reads without admitting another script after the final inventory", async () => {
+  const { browser, provider, input } = await fixture({
+    hangOnCommand: ({ method, sessionId, params }) =>
+      method === "Debugger.getScriptSource" &&
+      sessionId === "worker-own" &&
+      params.scriptId === "1",
+  });
+  const controller = new AbortController();
+  onTestFinished(() => controller.abort());
+  const capture = provider.inspectPage(input, { signal: controller.signal });
+  await waitFor(() => {
+    expect(
+      browser.commands.filter(({ method }) => method === "Target.getTargets")
+        .length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(
+      browser.commands.some(
+        ({ method, sessionId }) =>
+          method === "Debugger.getScriptSource" && sessionId === "worker-own",
+      ),
+    ).toBe(true);
+  });
+  const pending = browser.commands.find(
+    ({ method, sessionId }) =>
+      method === "Debugger.getScriptSource" && sessionId === "worker-own",
+  )!;
+  browser.emitEvent({
+    method: "Debugger.scriptParsed",
+    sessionId: pending.sessionId,
+    params: {
+      scriptId: "later",
+      executionContextId: 1,
+      url: browser.allowedOrigin + "/later.js",
+      hash: "later",
+      scriptLanguage: "JavaScript",
+    },
+  });
+  browser.emitRawMessage(
+    JSON.stringify({
+      id: pending.id,
+      sessionId: pending.sessionId,
+      result: { scriptSource: source },
+    }),
+  );
+  const result = await capture;
+  if (!result.ok) throw result.error;
+  const scripts = result.value.workers.find(
+    ({ target_id }) => target_id === "own",
+  )!.observation!.scripts;
+  expect(scripts.map(({ script_id }) => script_id)).toEqual(["1"]);
+  expect(scripts[0]?.source.included).toBe(true);
+  expect(
+    browser.commands.some(
+      ({ method, params }) =>
+        method === "Debugger.getScriptSource" && params.scriptId === "later",
+    ),
+  ).toBe(false);
+});
+
+it("ends page WebSocket evidence before worker teardown", async () => {
+  const frame = (payloadData: string): CdpEvent => ({
+    method: "Network.webSocketFrameReceived",
+    sessionId: "session-1",
+    params: {
+      requestId: "fixture-socket",
+      response: { opcode: 1, payloadData },
+    },
+  });
+  let sentDuringCleanup = false;
+  const { provider, input } = await fixture({
+    eventsBeforeReply: ["ServiceWorker.enable", "Target.setAutoAttach"],
+    commandEvents(command, origin) {
+      if (command.sessionId !== "session-1") return undefined;
+      if (command.method === "ServiceWorker.enable")
+        return [
+          {
+            method: "Network.webSocketCreated",
+            sessionId: "session-1",
+            params: {
+              requestId: "fixture-socket",
+              url: origin.replace(/^http/u, "ws") + "/fixture-socket",
+            },
+          },
+          frame("a"),
+        ];
+      if (
+        command.method === "Target.setAutoAttach" &&
+        command.params.autoAttach === false
+      ) {
+        sentDuringCleanup = true;
+        return [frame("bb")];
+      }
+      return undefined;
+    },
+  });
+  const result = await provider.inspectPage({
+    ...input,
+    include_websocket_shapes: true,
+  });
+  if (!result.ok) throw result.error;
+  expect(sentDuringCleanup).toBe(true);
+  const socket = result.value.network.websocket_connections.find((item) =>
+    item.url.endsWith("/fixture-socket"),
+  );
+  expect(socket?.events.map((event) => event.payload_bytes)).toEqual([1]);
+});
+
+it("requires common content evidence to prove worker scripts unchanged", async () => {
+  const { provider, input } = await fixture();
+  const result = await provider.inspectPage(input);
+  if (!result.ok) throw result.error;
+  const before = result.value;
+  before.workers = before.workers.filter(
+    (worker) => worker.target_id === "own",
+  );
+  const observation = before.workers[0]!.observation!;
+  for (const coverage of [before.completeness, observation.completeness]) {
+    coverage.policy_filtered_sections = [];
+    coverage.attach_limited_sections = [];
+    coverage.truncated_sections = [];
+    coverage.unavailable_sections = [];
+    coverage.dropped_events.scripts = 0;
+  }
+  const original = observation.scripts[0]!;
+  original.source = { included: false, reason: "not approved" };
+  original.cdp_hash = null;
+  const after = structuredClone(before);
+  const peer = after.workers[0]!.observation!.scripts[0]!;
+  const compare = (left: typeof before, right: typeof before) =>
+    compareWebCaptures({
+      before: { inspection: left, webmcp: null },
+      after: { inspection: right, webmcp: null },
+    }).dimensions.scripts;
+  for (const [left, right] of [
+    [before, after],
+    [after, before],
+  ] as const)
+    expect(compare(left, right)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+  peer.cdp_hash = "peer";
+  expect(compare(before, after)).toMatchObject({
+    status: "unknown",
+    total_changes: 0,
+  });
+  peer.length = (original.length ?? 0) + 1;
+  expect(compare(before, after)).toMatchObject({
+    status: "changed",
+    total_changes: 1,
+  });
+  peer.length = original.length;
+  original.cdp_hash = peer.cdp_hash;
+  expect(compare(before, after)).toMatchObject({
+    status: "unchanged",
+    total_changes: 0,
   });
 });
 
@@ -889,7 +1128,7 @@ it("preserves worker coverage and warnings through CLI export even without worke
   expect(manifest).toMatchObject({
     worker_coverage: expect.arrayContaining(expected),
   });
-}, 30000);
+});
 
 it.each([false, true])(
   "retains worker JSON-shape selection with no requests: %s",
@@ -2024,7 +2263,9 @@ it.each([
 
 it("bounds worker source requests while retaining cancellation cleanup", async () => {
   const { provider, input, browser } = await fixture({
-    hangOnMethod: "Debugger.getScriptSource",
+    hangOnCommand: (command) =>
+      command.method === "Debugger.getScriptSource" &&
+      command.sessionId === "worker-own",
     commandEvents: (command, origin) =>
       command.method === "Debugger.enable" && command.sessionId === "worker-own"
         ? Array.from({ length: 64 }, (_, index) => ({
@@ -2044,14 +2285,19 @@ it("bounds worker source requests while retaining cancellation cleanup", async (
   try {
     await waitFor(() =>
       expect(
-        browser.commands.filter((c) => c.method === "Debugger.getScriptSource")
-          .length,
-      ).toBeGreaterThan(0),
+        browser.commands.some(
+          (command) =>
+            command.method === "Debugger.getScriptSource" &&
+            command.sessionId === "session-1",
+        ),
+      ).toBe(true),
     );
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(
-      browser.commands.filter((c) => c.method === "Debugger.getScriptSource"),
-    ).toHaveLength(1);
+    const workerReads = browser.commands.filter(
+      (command) =>
+        command.method === "Debugger.getScriptSource" &&
+        command.sessionId === "worker-own",
+    );
+    expect(workerReads.map(({ params }) => params.scriptId)).toEqual(["0"]);
   } finally {
     abort.abort();
     await pending;
@@ -3056,7 +3302,6 @@ it.each([
     expect(await readFile(capture, "utf8")).toBe(bytes);
     await client.ping();
   },
-  30000,
 );
 
 it("retains attach-limited worker node and containment coverage", async () => {

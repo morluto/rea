@@ -1664,7 +1664,7 @@ const workerScriptsDimension = (
     );
   const beforeScripts = workerScripts(before),
     afterScripts = workerScripts(after);
-  let declarationsComplete = true;
+  let valuesComplete = true;
   const fingerprints = (
     ownScripts: ReturnType<typeof workerScripts>,
     peerScripts: ReturnType<typeof workerScripts>,
@@ -1677,7 +1677,19 @@ const workerScriptsDimension = (
         (script.source_map_url === null && mayOmitMap) ||
         (peer?.source_map_url === null && other?.mayOmitMap)
       );
-      if (peer && !comparable) declarationsComplete = false;
+      const sourceComparable =
+        script.source.included && peer?.source.included === true;
+      const hashesComparable =
+        script.cdp_hash != null && peer?.cdp_hash != null;
+      if (
+        peer &&
+        (!comparable ||
+          (!sourceComparable &&
+            (!hashesComparable ||
+              script.source.included ||
+              peer.source.included)))
+      )
+        valuesComplete = false;
       result.set(
         identity,
         digestCanonicalValue({
@@ -1699,8 +1711,10 @@ const workerScriptsDimension = (
   return compareDimension(
     fingerprints(beforeScripts, afterScripts),
     fingerprints(afterScripts, beforeScripts),
-    workerComplete && declarationsComplete,
-    "Worker script inventory was incomplete in at least one observation.",
+    workerComplete && valuesComplete,
+    workerComplete
+      ? "Worker script content or source-map evidence was incomplete in at least one observation."
+      : "Worker script inventory was incomplete in at least one observation.",
     workerComplete,
   );
 };

@@ -86,7 +86,9 @@ export class CdpWorkerCapture {
       lifecycle: Observation["lifecycle"][number];
     }[]
   >();
-  readonly #pending = new Set<Promise<void>>();
+  readonly #pendingLifecycle = new Set<Promise<void>>();
+  readonly #pendingSources = new Set<Promise<void>>();
+  #admissionClosed = false;
   readonly #lifecycleWork: (() => Promise<void>)[] = [];
   #runningLifecycle = false;
   readonly #invalidTargets = new Set<string>();
@@ -181,12 +183,14 @@ export class CdpWorkerCapture {
         );
       this.#attach(worker, sessionId);
     }
-    await this.#settle();
+    await this.#settle(this.#pendingLifecycle);
   }
 
   async finish(frameIds: ReadonlySet<string>): Promise<Worker[]> {
     await this.#inventory();
-    await this.#settle();
+    this.#admissionClosed = true;
+    await this.#settle(this.#pendingLifecycle);
+    await this.#settle(this.#pendingSources);
     this.#stopped = true;
     for (const [id, versions] of this.#versionsByTarget)
       if (
@@ -213,9 +217,10 @@ export class CdpWorkerCapture {
         this.#controlled.has(id) ||
         inScope(denied.relationships)
       ) {
-        if (denied.attachedToPage && denied.reason !== "disallowed_origin")
-          this.pageEvents.completeness.unavailable("workers");
-        this.pageEvents.completeness.exclude("workers", denied.reason);
+        if (denied.reason === "disallowed_origin")
+          this.pageEvents.completeness.exclude("workers", denied.reason);
+        else
+          this.pageEvents.completeness.unavailable("workers", denied.reason, 1);
       }
     }
     const workers: Worker[] = [];
@@ -287,7 +292,7 @@ export class CdpWorkerCapture {
     this.#stopped = true;
     this.#removeListener?.();
     this.#abort.abort(OwnerCancellation.ownerClosed);
-    await Promise.all(this.#pending);
+    await Promise.all([...this.#pendingLifecycle, ...this.#pendingSources]);
     if (this.#removeListener === undefined) return;
     // The outer page-session owner closes the entire connection even if these
     // optional domain/detach commands fail or the caller has cancelled.
@@ -504,6 +509,14 @@ export class CdpWorkerCapture {
     if (event.domain !== "Target" && event.domain !== "ServiceWorker") {
       if (worker === undefined || !worker.enabled || worker.detached) return;
       if (!this.#canCollect(worker)) return;
+      // During the drain, existing script identities and ownership changes still
+      // protect queued reads, but newly observed work is outside the window.
+      if (
+        this.#admissionClosed &&
+        registered?.method === "Debugger.scriptParsed" &&
+        !worker.sources.has(registered.payload.facts.scriptId ?? "")
+      )
+        return;
     }
     if (!this.#eventBytes.tryCharge(event.wireBytes))
       throw new BrowserObservationError(
@@ -701,7 +714,7 @@ export class CdpWorkerCapture {
       this.#sourceReads.push({ worker, item });
       if (this.#readingSources) return;
       this.#readingSources = true;
-      this.#track(() => this.#readSources());
+      this.#track(this.#pendingSources, () => this.#readSources());
     }
   }
 
@@ -1025,13 +1038,13 @@ export class CdpWorkerCapture {
   }
 
   #queue(work: () => Promise<void>): void {
-    if (this.#stopped || this.signal.aborted) return;
+    if (this.#admissionClosed || this.#stopped || this.signal.aborted) return;
     this.#lifecycleWork.push(work);
     if (this.#runningLifecycle) return;
     this.#runningLifecycle = true;
     // Allocate one runner, not one command/timer/promise per attachment. Source
     // reads have their own serialized runner so neither lane blocks the other.
-    this.#track(async () => {
+    this.#track(this.#pendingLifecycle, async () => {
       try {
         for (
           let index = 0;
@@ -1045,16 +1058,16 @@ export class CdpWorkerCapture {
       }
     });
   }
-  #track(work: () => Promise<void>): void {
+  #track(tasks: Set<Promise<void>>, work: () => Promise<void>): void {
     const pending = work()
       .catch((cause) => {
         this.#fail(cause);
       })
-      .finally(() => this.#pending.delete(pending));
-    this.#pending.add(pending);
+      .finally(() => tasks.delete(pending));
+    tasks.add(pending);
   }
-  async #settle(): Promise<void> {
-    while (this.#pending.size > 0) await Promise.all(this.#pending);
+  async #settle(tasks: ReadonlySet<Promise<void>>): Promise<void> {
+    while (tasks.size > 0) await Promise.all(tasks);
     if (this.#failure !== undefined) throw this.#failure;
   }
   #fail(cause: unknown): void {

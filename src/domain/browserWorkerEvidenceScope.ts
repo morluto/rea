@@ -109,6 +109,19 @@ export const browserWorkerEvidenceScopeSchema = z
             "Service Worker client ownership requires a service_worker target",
         });
       if (
+        observation.ownership === "service_worker_client" &&
+        !observation.lifecycle.some(
+          (version) =>
+            version.event === "version" && version.controls_page === true,
+        )
+      )
+        context.addIssue({
+          code: "custom",
+          path: [...path, "observation", "lifecycle"],
+          message:
+            "Service Worker client ownership requires an observed page control relationship",
+        });
+      if (
         !parameters.include_script_sources &&
         observation.scripts.some(({ source }) => source.included)
       )

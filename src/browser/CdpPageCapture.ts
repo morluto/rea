@@ -138,9 +138,9 @@ export const capturePage = async (
     state.workers?.check();
     throw cause;
   } finally {
-    await state.workers?.close();
     removeListener();
     events.document?.close();
+    await state.workers?.close();
   }
 };
 

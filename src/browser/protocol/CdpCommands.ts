@@ -135,6 +135,8 @@ const CDP_COMMAND_REPLIES = {
   "Accessibility.getFullAXTree": z.object({ nodes: inventory }),
   "Browser.close": acknowledgement,
   "Browser.getVersion": browserVersionReply,
+  "Browser.getWindowForTarget": z.object({ windowId: z.int() }),
+  "Browser.setContentsSize": acknowledgement,
   "CacheStorage.requestCacheNames": z.object({ caches: inventory }),
   "CacheStorage.requestCachedResponse": z.object({
     response: z.object({ body: z.string() }),
