@@ -20,6 +20,7 @@ import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  semanticPrototypeOwners,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptBindingIndex,
@@ -31,6 +32,7 @@ import {
   semanticBindingHasPriorValueWrite,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticMemberChain,
   semanticWriteSiteTarget,
@@ -49,12 +51,17 @@ import {
 import {
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
+  ambientPathOrMemberMayHaveChanged,
+  bindingHasUnmodeledMemberValues,
+  opaqueCodeMayRebindBinding,
   semanticEffectMayPrecede,
+  semanticMemberWriteSources,
 } from "./javascriptSemanticEffectLog.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import {
   semanticCommonJsRequireOwnEnumerableAt,
+  semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import {
@@ -128,7 +135,7 @@ const commonJsDelegateChangedAt = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   writesModuleRequire(state).some((write) =>
-    semanticEffectMayPrecede(state, node, write.node),
+    semanticEffectMayPrecede(state, node, write),
   );
 
 const commonJsLoaderAt = (
@@ -982,13 +989,9 @@ const isWrapperRequireInitializerCall = (
 };
 
 type ModuleSourceMatch = "possible" | "no-match" | "incomplete";
-type ModuleRequireWrite = {
-  readonly node: t.Node;
-  readonly resolution: "possible" | "incomplete";
-};
 const moduleRequireWrites = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  readonly ModuleRequireWrite[]
+  readonly t.Node[]
 >();
 const moduleReturnedReferences = new WeakMap<
   JavaScriptSemanticAnalysisState,
@@ -1554,21 +1557,115 @@ export const semanticModuleRequireCallAt = (
   );
 };
 
+/**
+ * An exhausted selector walk can still exclude the host on a closed graph of
+ * local values. Follow every retained source and member-write RHS without
+ * expanding selector paths. Opaque inputs and an unfinished graph stay unknown.
+ */
+const hasClosedLocalReceiverSources = (
+  root: t.Node,
+  write: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    !state.memberMutationFactsComplete ||
+    semanticPrototypeOwners.some((owner) =>
+      ambientPathOrMemberMayHaveChanged(state, ["global", owner]),
+    )
+  )
+    return false;
+  const pending = [root];
+  const seen = new Set<t.Node>();
+  const bindings = new Set<string>();
+  while (pending.length > 0) {
+    const node = unwrapJavaScriptExpression(pending.pop()!).node;
+    if (seen.has(node)) continue;
+    if (seen.size >= state.precision.alias_selections) return false;
+    seen.add(node);
+    if (t.isIdentifier(node)) {
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (
+        binding === undefined ||
+        semanticResolutionBlocked(state, node, node.name) ||
+        commonJsWrapperBindingDeclaration(node, node.name, state) !==
+          undefined ||
+        binding.definitions.some(
+          ({ kind }) => kind === "parameter" || kind === "catch",
+        ) ||
+        binding.directOrigins.length !== 0 ||
+        binding.initializers.length === 0 ||
+        bindingHasUnmodeledMemberValues(binding, write, state) ||
+        opaqueCodeMayRebindBinding(binding, state, node)
+      )
+        return false;
+      if (bindings.has(binding.bindingId)) continue;
+      bindings.add(binding.bindingId);
+      for (const sources of [
+        binding.initializers,
+        binding.referenceInitializers,
+        semanticMemberWriteSources(binding),
+      ])
+        for (const source of sources) {
+          if (semanticReferenceIterationUnknown(source, state)) return false;
+          if (!semanticReferenceSourcesInactive(source, state))
+            pending.push(source.node);
+        }
+    } else if (
+      t.isMemberExpression(node) ||
+      t.isOptionalMemberExpression(node)
+    ) {
+      pending.push(node.object);
+    } else if (t.isObjectExpression(node)) {
+      for (const property of node.properties) {
+        if (
+          !t.isObjectProperty(property) ||
+          semanticStaticPropertyKey(property.key, property.computed) ===
+            "__proto__"
+        )
+          return false;
+        pending.push(property.value);
+      }
+    } else if (t.isArrayExpression(node)) {
+      for (const element of node.elements) {
+        if (t.isSpreadElement(element)) return false;
+        if (element !== null) pending.push(element);
+      }
+    } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+      pending.push(
+        ...(t.isConditionalExpression(node)
+          ? [node.consequent, node.alternate]
+          : [node.left, node.right]),
+      );
+    } else if (!readExactJavaScriptLiteral(node).found) {
+      return false;
+    }
+  }
+  return true;
+};
+
 const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
-): readonly ModuleRequireWrite[] => {
+): readonly t.Node[] => {
   const cached = moduleRequireWrites.get(state);
   if (cached !== undefined) return cached;
   // Interop invocation resolution may ask for require provenance while this
   // index is being built. Publish a temporary empty result to break that cycle.
   moduleRequireWrites.set(state, []);
-  const writes: ModuleRequireWrite[] = [];
+  const writes: t.Node[] = [];
   const interop = createSemanticModuleInterop(state);
-  const isModuleObject = (node: t.Node): ModuleSourceMatch =>
-    hasCommonJsModuleSource(node, state, false, "module");
   const record = (node: t.Node, receiver: t.Node): void => {
-    const resolution = isModuleObject(receiver);
-    if (resolution !== "no-match") writes.push({ node, resolution });
+    const resolution = hasCommonJsModuleSource(
+      receiver,
+      state,
+      false,
+      "module",
+    );
+    if (
+      resolution === "possible" ||
+      (resolution === "incomplete" &&
+        !hasClosedLocalReceiverSources(receiver, node, state))
+    )
+      writes.push(node);
   };
   traverseJavaScriptValueAst(state.program, state.erasedSyntaxNodes, {
     enter: (node) => {
