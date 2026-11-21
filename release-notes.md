@@ -377,6 +377,7 @@
 * **web:** consolidate CDP resource metadata proofs ([#13103](https://github.com/morluto/rea/issues/13103)) ([3ef94f1](https://github.com/morluto/rea/commit/3ef94f1f338349ad1aecb2ec3ea8f7d9217f9fc5))
 * **web:** consolidate CDP response body lifecycle proofs ([#13094](https://github.com/morluto/rea/issues/13094)) ([e76b521](https://github.com/morluto/rea/commit/e76b521461b64907795435eba9db5b79e0af2e3e))
 * **web:** consolidate CDP response status proofs ([#13095](https://github.com/morluto/rea/issues/13095)) ([68f13d0](https://github.com/morluto/rea/commit/68f13d06d22ba9b5a57788c3aba29c7bd6a3dd70))
+* **web:** consolidate Chromium startup contract checks ([#13157](https://github.com/morluto/rea/issues/13157)) ([6961a8c](https://github.com/morluto/rea/commit/6961a8c47cbf349a286295abf5fb78f383d45abe))
 * **web:** consolidate DOM base URL and origin checks ([#13108](https://github.com/morluto/rea/issues/13108)) ([15d5119](https://github.com/morluto/rea/commit/15d511951f9e759c5c8601267f71e7a54c0f0a5e))
 * **web:** consolidate DOM snapshot position and SVG proofs ([#13104](https://github.com/morluto/rea/issues/13104)) ([4ad0e3e](https://github.com/morluto/rea/commit/4ad0e3ea786dfc2fe1784ca8d2d3e8328637ad9c))
 * **web:** consolidate event admission budget checks ([#13137](https://github.com/morluto/rea/issues/13137)) ([ad20b4e](https://github.com/morluto/rea/commit/ad20b4e1fcda12736705cdb2a39410ef0b461ebd))
