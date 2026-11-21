@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { compareBrowserScenarios } from "./browserScenarioDiff.js";
 import { networkContentCoverageReason } from "./browserScenarioDiffEvidence.js";
-import { scenarioNetworkCoverageReason } from "./browserScenarioNetworkComparison.js";
+import {
+  SCENARIO_NETWORK_COVERAGE_GUIDANCE,
+  scenarioNetworkCoverageReason,
+} from "./browserScenarioNetworkComparison.js";
 import {
   compareBrowserScenariosInputSchema,
   browserScenarioDiffSchema,
@@ -564,73 +567,50 @@ describe("browser scenario network event order", () => {
     }
   });
 
-  it("keeps missing and cyclic redirect ancestry incomparable", () => {
-    for (const predecessor of ["missing", "middle-a", null]) {
-      const capture = redirectChainCapture();
-      const events = capture.events.items.map((event) =>
-        "transaction_id" in event && event.transaction_id === "root-a"
+  it("distinguishes cycles from unresolved or contradictory redirect predecessors", () => {
+    const capture = redirectChainCapture();
+    const { cycle, missingPredecessor } = SCENARIO_NETWORK_COVERAGE_GUIDANCE;
+
+    for (const [id, parent, state, phase, reason] of [
+      ["root-a", "missing", undefined, undefined, missingPredecessor],
+      ["root-a", null, "unknown", undefined, missingPredecessor],
+      ["root-a", "middle-a", undefined, undefined, cycle],
+      ["root-b", "root-a", undefined, "response", missingPredecessor],
+      ["middle-b", null, "root", "response", missingPredecessor],
+    ] as const) {
+      const items = capture.events.items.map((event) =>
+        "transaction_id" in event &&
+        event.transaction_id === id &&
+        (phase === undefined || event.kind === phase)
           ? {
               ...event,
-              redirected_from_transaction_id: predecessor,
-              redirected_from_transaction_state:
-                predecessor === null ? ("unknown" as const) : undefined,
+              redirected_from_transaction_id: parent,
+              redirected_from_transaction_state: state,
             }
           : event,
       );
-      const broken = browserScenarioCaptureSchema.parse({
-        ...capture,
-        events: { ...capture.events, items: events },
-      });
       const compared = compareBrowserScenarios(
         compareBrowserScenariosInputSchema.parse({
-          before_scenario: broken,
-          after_scenario: broken,
+          before_scenario: capture,
+          after_scenario: { ...capture, events: { ...capture.events, items } },
         }),
       );
       expect(compared.overall_status).toBe("unknown");
-      expect(
-        compared.steps.flatMap((step) => step.artifact_diffs),
-      ).toContainEqual(
-        expect.objectContaining({
-          artifact: "events",
-          status: "unknown",
-          reason: expect.stringContaining("Redirect"),
-        }),
+      const diff = compared.steps[0]?.artifact_diffs.find(
+        ({ artifact }) => artifact === "events",
       );
-    }
-  });
-
-  it("keeps contradictory phase ancestry unknown", () => {
-    const capture = concurrentCapture(["a", "b"], { a: 200, b: 404 });
-    const events = capture.events.items.map((event) =>
-      event.kind === "response" && event.transaction_id === "request-2"
-        ? {
-            ...event,
-            redirected_from_transaction_id: "request-1",
-            redirected_from_transaction_state: undefined,
-          }
-        : event,
-    );
-    const malformed = browserScenarioCaptureSchema.parse({
-      ...capture,
-      events: { ...capture.events, items: events },
-    });
-    const compared = compareBrowserScenarios(
-      compareBrowserScenariosInputSchema.parse({
-        before_scenario: malformed,
-        after_scenario: malformed,
-      }),
-    );
-    expect(compared.overall_status).toBe("unknown");
-    expect(
-      compared.steps.flatMap((step) => step.artifact_diffs),
-    ).toContainEqual(
-      expect.objectContaining({
-        artifact: "events",
+      if (diff === undefined)
+        throw new Error("Expected request-step comparison");
+      expect(diff).toMatchObject({
         status: "unknown",
-        reason: expect.stringContaining("Redirect predecessor"),
-      }),
-    );
+        before_state: "captured",
+        after_state: "captured",
+        before_sha256: expect.any(String),
+        after_sha256: expect.any(String),
+        reason,
+      });
+      expect(diff.before_sha256).not.toBe(diff.after_sha256);
+    }
   });
 });
 
