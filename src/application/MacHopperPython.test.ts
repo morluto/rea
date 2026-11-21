@@ -27,9 +27,12 @@ const commandFailure = (stderr: string, code: number) =>
 const fakeHost = ({
   pythonPath,
   files,
+  unreadable = [],
 }: {
   readonly pythonPath: string | Error;
   readonly files: readonly string[];
+  /** Paths whose probe fails for a reason other than absence. */
+  readonly unreadable?: readonly string[];
 }): MacHopperPythonHost & { readonly commands: string[][] } => {
   const commands: string[][] = [];
   const output = (stdout: string) =>
@@ -52,18 +55,33 @@ const fakeHost = ({
           : Promise.reject(pythonPath);
       return Promise.reject(new Error(`unexpected command ${command}`));
     },
-    isFile: (path) => Promise.resolve(files.includes(path)),
-    listDirectory: (path) =>
-      Promise.resolve([
+    fileState: (path) =>
+      Promise.resolve(
+        unreadable.includes(path)
+          ? { state: "unknown", reason: `EACCES: permission denied, '${path}'` }
+          : files.includes(path)
+            ? { state: "file" }
+            : { state: "missing" },
+      ),
+    listDirectory: (path) => {
+      if (unreadable.includes(path))
+        return Promise.resolve({
+          state: "unknown",
+          reason: `EACCES: permission denied, '${path}'`,
+        });
+      const entries = [
         ...new Set(
           files
             .filter((file) => file.startsWith(`${path}/`))
             .map((file) => file.slice(path.length + 1).split("/")[0] ?? ""),
         ),
-        ...(files.some((file) => file.startsWith(`${path}/`))
-          ? ["Current"]
-          : []),
-      ]),
+      ];
+      return Promise.resolve(
+        entries.length === 0
+          ? { state: "missing" }
+          : { state: "listed", entries: [...entries, "Current"] },
+      );
+    },
   };
 };
 
@@ -89,6 +107,7 @@ describe("macOS Hopper Python facts", () => {
         `${CLT}/Library/Frameworks/Python3.framework`,
       ],
       frameworks: [PYTHON_ORG, CLT_PYTHON],
+      unreadable: [],
     });
     expect(host.commands).toContainEqual([
       "/usr/bin/defaults",
@@ -98,17 +117,50 @@ describe("macOS Hopper Python facts", () => {
     ]);
   });
 
-  it("records a PythonPath that names a missing file", async () => {
-    const facts = await readMacHopperPythonFacts(
+  it("records whether PythonPath names a file, a missing path, or an unreadable path", async () => {
+    const missing = await readMacHopperPythonFacts(
       fakeHost({ pythonPath: "/missing/Python", files: [PYTHON_ORG] }),
       LAUNCHER,
     );
+    const unreadable = await readMacHopperPythonFacts(
+      fakeHost({
+        pythonPath: "/locked/Python",
+        files: [],
+        unreadable: ["/locked/Python"],
+      }),
+      LAUNCHER,
+    );
 
-    expect(facts.pythonPath).toEqual({
+    expect(missing.pythonPath).toEqual({
       state: "set",
       path: "/missing/Python",
-      exists: false,
+      file: { state: "missing" },
     });
+    expect(unreadable.pythonPath).toEqual({
+      state: "set",
+      path: "/locked/Python",
+      file: {
+        state: "unknown",
+        reason: "EACCES: permission denied, '/locked/Python'",
+      },
+    });
+  });
+
+  it("reports framework roots that could not be read instead of treating them as empty", async () => {
+    const versions = "/Library/Frameworks/Python.framework/Versions";
+    const facts = await readMacHopperPythonFacts(
+      fakeHost({
+        pythonPath: unsetPythonPath,
+        files: [],
+        unreadable: [versions],
+      }),
+      LAUNCHER,
+    );
+
+    expect(facts.frameworks).toEqual([]);
+    expect(facts.unreadable).toEqual([
+      { path: versions, reason: `EACCES: permission denied, '${versions}'` },
+    ]);
   });
 
   it("keeps PythonPath unknown when the launcher is outside an app bundle", async () => {
@@ -156,12 +208,19 @@ describe("macOS Hopper Python check", () => {
     pythonPath: { state: "unset" },
     searchedRoots: ["/Library/Frameworks/Python.framework"],
     frameworks: [],
+    unreadable: [],
     ...overrides,
   });
 
   it("names the configured interpreter when PythonPath exists", () => {
     const check = macHopperPythonCheck(
-      facts({ pythonPath: { state: "set", path: PYTHON_ORG, exists: true } }),
+      facts({
+        pythonPath: {
+          state: "set",
+          path: PYTHON_ORG,
+          file: { state: "file" },
+        },
+      }),
     );
 
     expect(check).toMatchObject({
@@ -175,7 +234,11 @@ describe("macOS Hopper Python check", () => {
   it("fails a PythonPath that names a missing file, even with frameworks present", () => {
     const check = macHopperPythonCheck(
       facts({
-        pythonPath: { state: "set", path: "/missing/Python", exists: false },
+        pythonPath: {
+          state: "set",
+          path: "/missing/Python",
+          file: { state: "missing" },
+        },
         frameworks: [PYTHON_ORG],
       }),
     );
@@ -186,6 +249,50 @@ describe("macOS Hopper Python check", () => {
       classification: "config_drift",
     });
     expect(check.remediation).toContain(`defaults delete ${BUNDLE} PythonPath`);
+  });
+
+  it("keeps an unreadable PythonPath unknown instead of reporting it missing", () => {
+    const check = macHopperPythonCheck(
+      facts({
+        pythonPath: {
+          state: "set",
+          path: "/locked/Python",
+          file: { state: "unknown", reason: "EACCES: permission denied" },
+        },
+        frameworks: [PYTHON_ORG],
+      }),
+    );
+
+    expect(check).toMatchObject({
+      name: "hopper-python",
+      ok: false,
+      classification: "unknown",
+      details: {
+        python_path: {
+          state: "set",
+          file: "unknown",
+          reason: "EACCES: permission denied",
+        },
+      },
+    });
+    expect(check.remediation).not.toContain("defaults delete");
+  });
+
+  it("does not let other frameworks settle readiness when PythonPath could not be read", () => {
+    const check = macHopperPythonCheck(
+      facts({
+        pythonPath: { state: "unknown", reason: "defaults failed" },
+        frameworks: [PYTHON_ORG],
+      }),
+    );
+
+    expect(check).toMatchObject({
+      name: "hopper-python",
+      ok: false,
+      classification: "unknown",
+      details: { hopper_interpreter: "unknown" },
+    });
+    expect(check.detail).toContain("defaults failed");
   });
 
   it("keeps the interpreter unknown when only framework candidates are observed", () => {
@@ -199,15 +306,23 @@ describe("macOS Hopper Python check", () => {
     });
   });
 
-  it("reports an unknown failure when no framework is found", () => {
-    const check = macHopperPythonCheck(facts({}));
+  it("reports an unknown failure, naming unchecked roots, when no framework is found", () => {
+    const versions = "/Library/Frameworks/Python.framework/Versions";
+    const check = macHopperPythonCheck(
+      facts({ unreadable: [{ path: versions, reason: "EACCES" }] }),
+    );
 
     expect(check).toMatchObject({
       name: "hopper-python",
       ok: false,
       classification: "unknown",
-      details: { hopper_interpreter: "unknown", frameworks: [] },
+      details: {
+        hopper_interpreter: "unknown",
+        frameworks: [],
+        unreadable: [{ path: versions, reason: "EACCES" }],
+      },
     });
+    expect(check.detail).toContain(`could not check ${versions}`);
     expect(check.remediation).toContain("Cannot execute Python script");
     expect(check.remediation).toContain(`defaults write ${BUNDLE} PythonPath`);
   });

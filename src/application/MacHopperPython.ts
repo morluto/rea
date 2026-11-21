@@ -37,11 +37,33 @@ const frameworkRoots = (developerDirectory: string | undefined) => [
       ]),
 ];
 
-/** Whether Hopper's `PythonPath` user default is set, and whether it exists. */
+/** A regular file was observed, confirmed absent, or could not be checked. */
+export type MacHopperFileState =
+  | { readonly state: "file" }
+  | { readonly state: "missing" }
+  | { readonly state: "unknown"; readonly reason: string };
+
+/** A directory was listed, confirmed absent, or could not be read. */
+export type MacHopperDirectoryListing =
+  | { readonly state: "listed"; readonly entries: readonly string[] }
+  | { readonly state: "missing" }
+  | { readonly state: "unknown"; readonly reason: string };
+
+/** Whether Hopper's `PythonPath` user default is set, and what it names. */
 export type MacHopperPythonPath =
   | { readonly state: "unset" }
-  | { readonly state: "set"; readonly path: string; readonly exists: boolean }
+  | {
+      readonly state: "set";
+      readonly path: string;
+      readonly file: MacHopperFileState;
+    }
   | { readonly state: "unknown"; readonly reason: string };
+
+/** A framework path that could not be checked, with the reason. */
+export interface MacHopperUnreadablePath {
+  readonly path: string;
+  readonly reason: string;
+}
 
 /** Observed facts that decide whether Hopper can run REA's Python bootstrap. */
 export interface MacHopperPythonFacts {
@@ -50,16 +72,16 @@ export interface MacHopperPythonFacts {
   readonly searchedRoots: readonly string[];
   /** Framework libraries present at the searched roots, in search-list order. */
   readonly frameworks: readonly string[];
+  /** Framework roots or libraries whose presence could not be checked. */
+  readonly unreadable: readonly MacHopperUnreadablePath[];
 }
 
 /** Read-only host access for {@link readMacHopperPythonFacts}. */
 export interface MacHopperPythonHost {
   readonly run: typeof execFileOutput;
   readonly env: NodeJS.ProcessEnv;
-  /** Whether the path names an existing regular file. */
-  readonly isFile: (path: string) => Promise<boolean>;
-  /** Directory entry names, or an empty list when the directory is absent. */
-  readonly listDirectory: (path: string) => Promise<readonly string[]>;
+  readonly fileState: (path: string) => Promise<MacHopperFileState>;
+  readonly listDirectory: (path: string) => Promise<MacHopperDirectoryListing>;
 }
 
 /**
@@ -109,12 +131,16 @@ const readBundleIdentifier = async (
 
 const readPythonPath = async (
   host: MacHopperPythonHost,
+  launcherPath: string,
   bundleIdentifier: string | undefined,
 ): Promise<MacHopperPythonPath> => {
   if (bundleIdentifier === undefined)
     return {
       state: "unknown",
-      reason: "The Hopper launcher is not inside an application bundle.",
+      reason:
+        appBundleOf(launcherPath) === undefined
+          ? "The Hopper launcher is not inside an application bundle, so its preferences domain is unknown."
+          : "The Hopper bundle identifier could not be read from its Info.plist.",
     };
   try {
     const path = (
@@ -125,7 +151,7 @@ const readPythonPath = async (
       )
     ).stdout.trim();
     if (path === "") return { state: "unset" };
-    return { state: "set", path, exists: await host.isFile(path) };
+    return { state: "set", path, file: await host.fileState(path) };
   } catch (cause: unknown) {
     const failure = execFileOutputFailure(cause);
     if (failure === undefined) throw cause;
@@ -153,6 +179,36 @@ const readDeveloperDirectory = async (
   }
 };
 
+/** Framework libraries under one root, and the paths that could not be checked. */
+const readFrameworkRoot = async (
+  host: MacHopperPythonHost,
+  { root, library }: { readonly root: string; readonly library: string },
+): Promise<{
+  readonly frameworks: readonly string[];
+  readonly unreadable: readonly MacHopperUnreadablePath[];
+}> => {
+  const versionsDirectory = posix.join(root, "Versions");
+  const listing = await host.listDirectory(versionsDirectory);
+  if (listing.state === "missing") return { frameworks: [], unreadable: [] };
+  if (listing.state === "unknown")
+    return {
+      frameworks: [],
+      unreadable: [{ path: versionsDirectory, reason: listing.reason }],
+    };
+  const libraries = listing.entries
+    .filter((version) => version !== "Current")
+    .sort()
+    .map((version) => posix.join(versionsDirectory, version, library));
+  const states = await Promise.all(libraries.map(host.fileState));
+  return {
+    frameworks: libraries.filter((_, index) => states[index]?.state === "file"),
+    unreadable: libraries.flatMap((path, index) => {
+      const state = states[index];
+      return state?.state === "unknown" ? [{ path, reason: state.reason }] : [];
+    }),
+  };
+};
+
 /** Observe Hopper's Python configuration without launching Hopper. */
 export const readMacHopperPythonFacts = async (
   host: MacHopperPythonHost,
@@ -163,85 +219,106 @@ export const readMacHopperPythonFacts = async (
     readDeveloperDirectory(host),
   ]);
   const roots = frameworkRoots(developerDirectory);
-  const [pythonPath, frameworks] = await Promise.all([
-    readPythonPath(host, bundleIdentifier),
-    Promise.all(
-      roots.map(async ({ root, library }) => {
-        const versionsDirectory = posix.join(root, "Versions");
-        const versions = (await host.listDirectory(versionsDirectory))
-          .filter((version) => version !== "Current")
-          .sort();
-        const libraries = versions.map((version) =>
-          posix.join(versionsDirectory, version, library),
-        );
-        const present = await Promise.all(libraries.map(host.isFile));
-        return libraries.filter((_, index) => present[index]);
-      }),
-    ),
+  const [pythonPath, rootResults] = await Promise.all([
+    readPythonPath(host, launcherPath, bundleIdentifier),
+    Promise.all(roots.map((root) => readFrameworkRoot(host, root))),
   ]);
   return {
     bundleIdentifier,
     pythonPath,
     searchedRoots: roots.map(({ root }) => root),
-    frameworks: frameworks.flat(),
+    frameworks: rootResults.flatMap(({ frameworks }) => frameworks),
+    unreadable: rootResults.flatMap(({ unreadable }) => unreadable),
   };
 };
 
+const bundleLabel = (bundleIdentifier: string | undefined) =>
+  bundleIdentifier ?? "<Hopper bundle identifier>";
+
 const setPythonPathRemediation = (bundleIdentifier: string | undefined) =>
-  `Quit Hopper, then point its PythonPath default at an installed framework library, for example: defaults write ${bundleIdentifier ?? "<Hopper bundle identifier>"} PythonPath /Library/Frameworks/Python.framework/Versions/<version>/Python (python.org installer) or the Homebrew python@3.12 Frameworks/Python.framework/Versions/3.12/Python. Then rerun rea doctor --provider hopper.`;
+  `Quit Hopper, then point its PythonPath default at an installed framework library, for example: defaults write ${bundleLabel(bundleIdentifier)} PythonPath /Library/Frameworks/Python.framework/Versions/<version>/Python (python.org installer) or the Homebrew python@3.12 Frameworks/Python.framework/Versions/3.12/Python. Then rerun rea doctor --provider hopper.`;
+
+const pythonPathDetails = (pythonPath: MacHopperPythonPath) =>
+  pythonPath.state === "set"
+    ? {
+        state: "set",
+        path: pythonPath.path,
+        file: pythonPath.file.state,
+        ...(pythonPath.file.state === "unknown"
+          ? { reason: pythonPath.file.reason }
+          : {}),
+      }
+    : pythonPath.state === "unknown"
+      ? { state: "unknown", reason: pythonPath.reason }
+      : { state: "unset" };
 
 /** Decide the `hopper-python` doctor check from observed facts. */
 export const macHopperPythonCheck = (
   facts: MacHopperPythonFacts,
 ): DoctorCheck => {
-  const { pythonPath, frameworks, bundleIdentifier } = facts;
+  const { pythonPath, frameworks, unreadable, bundleIdentifier } = facts;
   const details = {
     scope: "hopper_python_default_and_framework_roots",
     hopper_interpreter:
-      pythonPath.state === "set" && pythonPath.exists
+      pythonPath.state === "set" && pythonPath.file.state === "file"
         ? pythonPath.path
         : "unknown",
     bundle_identifier: bundleIdentifier ?? null,
-    python_path:
-      pythonPath.state === "set"
-        ? { state: "set", path: pythonPath.path, exists: pythonPath.exists }
-        : pythonPath.state === "unknown"
-          ? { state: "unknown", reason: pythonPath.reason }
-          : { state: "unset" },
+    python_path: pythonPathDetails(pythonPath),
     searched_roots: [...facts.searchedRoots],
     frameworks: [...frameworks],
+    unreadable: unreadable.map(({ path, reason }) => ({ path, reason })),
   };
+  const check = (
+    result: Omit<DoctorCheck, "name" | "details">,
+  ): DoctorCheck => ({ name: "hopper-python", ...result, details });
+
+  // An unread PythonPath could hide a broken override, so frameworks found
+  // elsewhere cannot settle readiness.
+  if (pythonPath.state === "unknown")
+    return check({
+      ok: false,
+      classification: "unknown",
+      detail: `Hopper's PythonPath default could not be read: ${pythonPath.reason}`,
+      remediation: `Resolve the reported reason, or select Hopper's application launcher with HOPPER_LAUNCHER_PATH, then rerun rea doctor --provider hopper. ${setPythonPathRemediation(bundleIdentifier)}`,
+    });
   if (pythonPath.state === "set")
-    return pythonPath.exists
-      ? {
-          name: "hopper-python",
+    switch (pythonPath.file.state) {
+      case "file":
+        return check({
           ok: true,
           classification: "healthy",
           detail: `PythonPath=${pythonPath.path}`,
-          details,
-        }
-      : {
-          name: "hopper-python",
+        });
+      case "missing":
+        return check({
           ok: false,
           classification: "config_drift",
-          detail: `PythonPath names a missing file: ${pythonPath.path}`,
-          details,
-          remediation: `Hopper cannot load this Python, so REA's bridge bootstrap will not run ("Cannot execute Python script"). ${setPythonPathRemediation(bundleIdentifier)} To let Hopper choose a framework instead, run: defaults delete ${bundleIdentifier ?? "<Hopper bundle identifier>"} PythonPath.`,
-        };
+          detail: `PythonPath does not name an existing file: ${pythonPath.path}`,
+          remediation: `Hopper loads no Python from this setting and does not fall back, so REA's bridge bootstrap will not run ("Cannot execute Python script"). ${setPythonPathRemediation(bundleIdentifier)} To let Hopper choose a framework instead, run: defaults delete ${bundleLabel(bundleIdentifier)} PythonPath.`,
+        });
+      case "unknown":
+        return check({
+          ok: false,
+          classification: "unknown",
+          detail: `PythonPath ${pythonPath.path} could not be checked: ${pythonPath.file.reason}`,
+          remediation: `Check that this account can read ${pythonPath.path}, then rerun rea doctor --provider hopper.`,
+        });
+    }
   if (frameworks.length > 0)
-    return {
-      name: "hopper-python",
+    return check({
       ok: true,
       classification: "healthy",
-      detail: `PythonPath ${pythonPath.state}; framework candidates: ${frameworks.join(", ")}`,
-      details,
-    };
-  return {
-    name: "hopper-python",
+      detail: `PythonPath unset; framework candidates: ${frameworks.join(", ")}`,
+    });
+  const unchecked =
+    unreadable.length === 0
+      ? ""
+      : `; could not check ${unreadable.map(({ path }) => path).join(", ")}`;
+  return check({
     ok: false,
     classification: "unknown",
-    detail: `PythonPath ${pythonPath.state}; no Python framework found under ${facts.searchedRoots.join(", ")}`,
-    details,
+    detail: `PythonPath unset; no Python framework found under ${facts.searchedRoots.join(", ")}${unchecked}`,
     remediation: `Hopper embeds no Python and may then fail to run REA's bridge bootstrap ("Cannot execute Python script" or "Python is Unavailable"). Hopper's own search beyond these roots is not observed. ${setPythonPathRemediation(bundleIdentifier)}`,
-  };
+  });
 };

@@ -1079,10 +1079,15 @@ framework, Hopper logs `Cannot execute Python script` or shows `Python is
 Unavailable`, and REA reports a startup timeout. `rea doctor` reports a
 `hopper-python` check on macOS:
 
-- it fails with `config_drift` when `PythonPath` names a missing file;
+- it fails with `config_drift` when `PythonPath` names a missing file. On the
+  tested host, a freshly launched Hopper then loaded no Python and did not fall
+  back to another framework;
+- it fails with `unknown` when `PythonPath` or the file it names cannot be read,
+  because a framework found elsewhere cannot rule out a broken override;
 - it fails with `unknown` when no framework exists under
   `/Library/Frameworks/Python.framework`, `/usr/local/Frameworks/Python.framework`
-  or the active developer directory's `Library/Frameworks/Python3.framework`;
+  or the active developer directory's `Library/Frameworks/Python3.framework`.
+  Paths that could not be read are reported separately, not treated as absent;
 - otherwise it passes, and reports the framework candidates it found.
 
 Because Hopper's full search order is not observed, the interpreter Hopper will

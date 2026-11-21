@@ -887,22 +887,24 @@ export const systemDoctorHost = (
           {
             run: hostExecFileOutput,
             env: macHopperPythonCommandEnvironment(environment),
-            isFile: async (path) => {
+            fileState: async (path) => {
               try {
-                return (await stat(path)).isFile();
+                return (await stat(path)).isFile()
+                  ? { state: "file" }
+                  : { state: "missing" };
               } catch (cause: unknown) {
-                // An absent or unreadable candidate is not a usable framework.
-                void cause;
-                return false;
+                return absentPathCode(cause)
+                  ? { state: "missing" }
+                  : { state: "unknown", reason: errorMessage(cause) };
               }
             },
             listDirectory: async (path) => {
               try {
-                return await readdir(path);
+                return { state: "listed", entries: await readdir(path) };
               } catch (cause: unknown) {
-                // An absent framework root contributes no versions.
-                void cause;
-                return [];
+                return absentPathCode(cause)
+                  ? { state: "missing" }
+                  : { state: "unknown", reason: errorMessage(cause) };
               }
             },
           },
@@ -1076,6 +1078,12 @@ export const systemDoctorHost = (
             }),
           ),
       };
+};
+
+/** Only these errors confirm that a probed path does not exist. */
+const absentPathCode = (cause: unknown): boolean => {
+  const code = cause instanceof Error ? Reflect.get(cause, "code") : undefined;
+  return code === "ENOENT" || code === "ENOTDIR";
 };
 
 const readMacosVersion = async (
