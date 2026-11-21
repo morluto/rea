@@ -174,25 +174,26 @@ const parseBrowserCapture = (
     },
     path,
   );
+  const scriptsCompleteWithinScope =
+    scriptsComplete(inspection.completeness) &&
+    workerDiscoveryComplete(inspection.completeness) &&
+    inspection.workers.every(
+      (worker) =>
+        worker.observation !== undefined &&
+        ((worker.observation.ownership === "unknown" &&
+          !worker.observation.selected_explicitly) ||
+          (scriptsComplete(worker.observation.completeness) &&
+            workerDiscoveryComplete(worker.observation.completeness))),
+    );
   return {
     kind: "browser",
     evidence,
     inspection,
     captureSha256: digestCanonicalValue(inspection, "Runtime reconciliation"),
-    scriptsCompleteWithinScope:
-      scriptsComplete(inspection.completeness) &&
-      workerDiscoveryComplete(inspection.completeness) &&
-      inspection.workers.every(
-        (worker) =>
-          worker.observation !== undefined &&
-          ((worker.observation.ownership === "unknown" &&
-            !worker.observation.selected_explicitly) ||
-            (scriptsComplete(worker.observation.completeness) &&
-              workerDiscoveryComplete(worker.observation.completeness))),
-      ),
-    codeInventoryCompleteWithinScope: codeInventoryComplete(
-      inspection.completeness,
-    ),
+    scriptsCompleteWithinScope,
+    codeInventoryCompleteWithinScope:
+      scriptsCompleteWithinScope &&
+      codeInventoryComplete(inspection.completeness),
   };
 };
 

@@ -62,11 +62,15 @@ export const readScopedWorkerSource = async (
 
 type Worker = WebPageInspection["workers"][number];
 type Observation = NonNullable<Worker["observation"]>;
+const workerDomains = ["Runtime", "Debugger", "Network"] as const;
+type WorkerDomain = (typeof workerDomains)[number];
+
 interface WorkerState {
   item: Worker & { observation: Observation };
   sessionId: string | undefined;
   detached: boolean;
   enabled: boolean;
+  resumeDomain?: WorkerDomain;
   domainsDuringWindow: Set<string>;
   autoAttach: boolean;
   events: CdpCaptureEvents;
@@ -122,6 +126,7 @@ export class CdpWorkerCapture {
     private readonly allowedOrigins: ReadonlySet<string>,
     readonly limitations: string[],
     private readonly pageEvents: CdpCaptureEvents,
+    private readonly requireTransportClose: () => void,
   ) {
     this.signal =
       context.signal === undefined
@@ -300,8 +305,8 @@ export class CdpWorkerCapture {
     this.#abort.abort(OwnerCancellation.ownerClosed);
     await Promise.all([...this.#pendingLifecycle, ...this.#pendingSources]);
     if (this.#removeListener === undefined) return;
-    // The outer page-session owner closes the entire connection even if these
-    // optional domain/detach commands fail or the caller has cancelled.
+    // Optional domain shutdown is followed by session detachment. An unconfirmed
+    // child detach requires the outer owner to close, rather than reuse, its socket.
     const signal = AbortSignal.timeout(1000);
     const send = async <M extends CdpCommand>(
       method: M,
@@ -311,7 +316,19 @@ export class CdpWorkerCapture {
       try {
         await this.context.connection.send(method, params, sessionId, signal);
       } catch {
-        /* Socket close is the definitive release boundary. */
+        // Detaching the session below releases its enabled domains.
+      }
+    };
+    const detach = async (sessionId: string): Promise<void> => {
+      try {
+        await this.context.connection.send(
+          "Target.detachFromTarget",
+          { sessionId },
+          undefined,
+          signal,
+        );
+      } catch (cause: unknown) {
+        if (!isCdpSessionNotFoundRejection(cause)) this.requireTransportClose();
       }
     };
     if (this.context.sessionId !== undefined)
@@ -329,7 +346,7 @@ export class CdpWorkerCapture {
           { autoAttach: false, waitForDebuggerOnStart: false, flatten: true },
           sessionId,
         );
-      await send("Target.detachFromTarget", { sessionId });
+      await detach(sessionId);
     }
     for (const [sessionId, frame] of this.#frames) {
       if (frame.detached) continue;
@@ -339,7 +356,7 @@ export class CdpWorkerCapture {
           { autoAttach: false, waitForDebuggerOnStart: false, flatten: true },
           sessionId,
         );
-      await send("Target.detachFromTarget", { sessionId });
+      await detach(sessionId);
     }
   }
 
@@ -937,6 +954,8 @@ export class CdpWorkerCapture {
         "websocket_frames",
       ] as const)
         worker.events.completeness.unavailable(section);
+      if (this.context.input.include_script_sources)
+        worker.events.completeness.unavailable("script_sources");
       worker.item.observation.limitations.push(
         "Service-worker control was revoked during capture; later runtime events outside the selected page scope were excluded.",
       );
@@ -982,11 +1001,21 @@ export class CdpWorkerCapture {
   }
 
   async #enable(worker: WorkerState): Promise<void> {
-    if (worker.enabled || !this.#canCollect(worker)) return;
+    const resumeDomain = worker.resumeDomain;
+    if (
+      !this.#canCollect(worker) ||
+      (worker.enabled && (resumeDomain === undefined || this.#admissionClosed))
+    )
+      return;
+    // #queue serializes setup. Only a scope interruption leaves a stage to resume.
+    delete worker.resumeDomain;
     worker.enabled = true;
     let stage: CdpCommand = "Target.setAutoAttach";
     try {
-      if (worker.item.observation.ownership !== "unknown") {
+      if (
+        resumeDomain === undefined &&
+        worker.item.observation.ownership !== "unknown"
+      ) {
         const attached = await this.#command(
           stage,
           workerAutoAttachParameters,
@@ -997,8 +1026,11 @@ export class CdpWorkerCapture {
         if (!worker.autoAttach)
           worker.events.completeness.unavailable("workers");
       }
-      for (const domain of ["Runtime", "Debugger", "Network"] as const) {
+      const start =
+        resumeDomain === undefined ? 0 : workerDomains.indexOf(resumeDomain);
+      for (const domain of workerDomains.slice(start)) {
         if (!this.#canCollect(worker)) {
+          worker.resumeDomain = domain;
           worker.item.observation.limitations.push(
             workerSetupInterruptedLimitation,
           );

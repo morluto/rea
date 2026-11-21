@@ -92,6 +92,7 @@ export interface CapturedPage {
 /** Capture and normalize one attached page without evaluating page JavaScript. */
 export const capturePage = async (
   context: CaptureContext,
+  requireTransportClose: () => void,
 ): Promise<CapturedPage> => {
   const allowedOrigins = new Set(context.input.allowed_origins);
   const events = new CdpCaptureEvents(context.input, allowedOrigins);
@@ -103,7 +104,13 @@ export const capturePage = async (
   const state: CaptureState = {
     workers:
       context.operation === "inspect_web_page"
-        ? new CdpWorkerCapture(context, allowedOrigins, [], events)
+        ? new CdpWorkerCapture(
+            context,
+            allowedOrigins,
+            [],
+            events,
+            requireTransportClose,
+          )
         : undefined,
     context,
     events,

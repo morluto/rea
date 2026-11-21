@@ -3,6 +3,7 @@ import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { selectScriptCapture } from "../../../src/domain/webScriptCaptureAdapters.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import {
@@ -1631,78 +1632,113 @@ it.each([undefined, null, "", 42])(
   },
 );
 
-it("retains the coverage gap when service worker control returns after interrupted setup", async () => {
-  const version = (controls: boolean): CdpEvent => ({
-    method: "ServiceWorker.workerVersionUpdated",
-    sessionId: "session-1",
-    params: {
-      versions: [
-        {
-          targetId: "service",
-          controlledClients: controls ? ["allowed-page"] : [],
-          status: "activated",
-        },
-      ],
-    },
-  });
-  const { browser, input, provider } = await fixture({
-    eventsBeforeReply: [
-      "Runtime.enable",
-      "ServiceWorker.enable",
-      "Target.setAutoAttach",
-    ],
-    commandEvents(command, origin) {
-      if (command.method === "ServiceWorker.enable") return [version(true)];
-      if (
-        command.method === "Target.setAutoAttach" &&
-        command.params.autoAttach === true
-      ) {
-        if (command.sessionId !== "session-1") return [];
-        return [
+it.each(["Runtime.enable", "Network.enable"] as const)(
+  "resumes only unfinished setup after control is lost during %s",
+  async (revokeAt) => {
+    const version = (controls: boolean): CdpEvent => ({
+      method: "ServiceWorker.workerVersionUpdated",
+      sessionId: "session-1",
+      params: {
+        versions: [
           {
-            method: "Target.attachedToTarget",
-            sessionId: "session-1",
-            params: {
-              sessionId: "worker-service",
-              targetInfo: {
-                targetId: "service",
-                type: "service_worker",
-                url: origin + "/service.js",
-                attached: true,
+            targetId: "service",
+            controlledClients: controls ? ["allowed-page"] : [],
+            status: "activated",
+          },
+        ],
+      },
+    });
+    const { browser, input, provider } = await fixture({
+      eventsBeforeReply: [
+        revokeAt,
+        "ServiceWorker.enable",
+        "Target.setAutoAttach",
+      ],
+      commandEvents(command, origin) {
+        if (command.method === "ServiceWorker.enable") return [version(true)];
+        if (
+          command.method === "Target.setAutoAttach" &&
+          command.params.autoAttach === true
+        ) {
+          if (command.sessionId !== "session-1") return [];
+          return [
+            {
+              method: "Target.attachedToTarget",
+              sessionId: "session-1",
+              params: {
+                sessionId: "worker-service",
+                targetInfo: {
+                  targetId: "service",
+                  type: "service_worker",
+                  url: origin + "/service.js",
+                  attached: true,
+                },
               },
             },
-          },
-        ];
-      }
-      if (
-        command.method === "Runtime.enable" &&
-        command.sessionId === "worker-service"
-      )
-        return [version(false)];
-      return undefined;
-    },
-  });
-  const result = await provider.inspectPage(input, {
-    progress: {
-      report: async ({ completed }) => {
-        if (completed === 2) browser.emitEvent(version(true));
+          ];
+        }
+        if (
+          command.method === revokeAt &&
+          command.sessionId === "worker-service"
+        )
+          return [
+            version(false),
+            {
+              method: "Debugger.scriptParsed",
+              sessionId: "worker-service",
+              params: {
+                scriptId: "outside",
+                url: origin + "/outside.js",
+                executionContextId: 1,
+              },
+            },
+          ];
+        return undefined;
       },
-    },
-  });
-  if (!result.ok) throw result.error;
-  const observation = result.value.workers.find(
-    ({ target_id }) => target_id === "service",
-  )!.observation!;
-  expect(
-    observation.lifecycle
-      .filter(({ event }) => event === "version")
-      .map(({ controls_page }) => controls_page),
-  ).toEqual([true, false, true]);
-  expect(observation.completeness.unavailable_sections).toEqual(
-    expect.arrayContaining(["scripts", "script_sources", "network_requests"]),
-  );
-  expect(observation.limitations).toContain(workerSetupInterruptedLimitation);
-});
+    });
+    const result = await provider.inspectPage(input, {
+      progress: {
+        report: async ({ completed }) => {
+          if (completed === 2) browser.emitEvent(version(true));
+        },
+      },
+    });
+    if (!result.ok) throw result.error;
+    const observation = result.value.workers.find(
+      ({ target_id }) => target_id === "service",
+    )!.observation!;
+    expect(
+      observation.lifecycle
+        .filter(({ event }) => event === "version")
+        .map(({ controls_page }) => controls_page),
+    ).toEqual([true, false, true]);
+    expect(observation.completeness.unavailable_sections).toEqual(
+      expect.arrayContaining(["scripts", "script_sources", "network_requests"]),
+    );
+    if (revokeAt === "Runtime.enable")
+      expect(observation.limitations).toContain(
+        workerSetupInterruptedLimitation,
+      );
+    const commands = browser.commands.filter(
+      ({ sessionId }) => sessionId === "worker-service",
+    );
+    for (const method of [
+      "Runtime.enable",
+      "Debugger.enable",
+      "Network.enable",
+    ])
+      expect(
+        commands.filter((command) => command.method === method),
+      ).toHaveLength(1);
+    expect(
+      commands.some(
+        ({ method, params }) =>
+          method === "Debugger.getScriptSource" &&
+          params.scriptId === "outside",
+      ),
+    ).toBe(false);
+  },
+);
 
 it.each([false, true, null])(
   "retains service worker client evidence before attachment (controls page: %s)",
@@ -2847,6 +2883,111 @@ it.each([
       }),
     );
     expect(() => selectScriptCapture(evidence)).toThrow(/ownership/u);
+  },
+);
+
+it.each([
+  ["owned", "unavailable", "unknown"],
+  ["selected", "truncated", "unknown"],
+  ["owned", "complete", "not-observed-in-capture"],
+  ["unselected", "unavailable", "not-observed-in-capture"],
+] as const)(
+  "uses retained %s worker %s coverage for static absence",
+  async (scope, coverage, expected) => {
+    const { provider, input } = await fixture();
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    const inspection = captured.value;
+    const worker = inspection.workers.find(
+      ({ target_id }) => target_id === "own",
+    )!;
+    const observation = worker.observation!;
+    // Caller-supplied retained Evidence can report complete page/discovery
+    // coverage independently of a worker's script inventory.
+    const complete = {
+      ...inspection.completeness,
+      status: "complete_within_window" as const,
+      conditions: ["complete_within_window" as const],
+      policy_filtered_sections: [],
+      attach_limited_sections: [],
+      truncated_sections: [],
+      unavailable_sections: [],
+      excluded: [],
+    };
+    inspection.completeness = complete;
+    inspection.workers = [worker];
+    observation.ownership = scope === "owned" ? "page_related" : "unknown";
+    observation.page_target_id = scope === "owned" ? input.target_id : null;
+    observation.selected_explicitly = scope === "selected";
+    observation.scripts = [];
+    observation.completeness = {
+      ...complete,
+      ...(coverage === "unavailable"
+        ? {
+            status: "attach_limited",
+            conditions: ["attach_limited"],
+            unavailable_sections: ["scripts"],
+          }
+        : coverage === "truncated"
+          ? {
+              status: "truncated",
+              conditions: ["truncated"],
+              truncated_sections: ["scripts"],
+            }
+          : {}),
+    };
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      {
+        ...input,
+        worker_target_ids: scope === "selected" ? [worker.target_id] : [],
+      },
+      inspection,
+      provider.identity(),
+    );
+    const root = await applicationFixture();
+    const analysis = await analyzeFixture(root);
+    const staticAsset = javascriptApplicationAnalysisResultSchema
+      .parse(analysis.normalized_result)
+      .graph.nodes.find(
+        ({ kind, observations }) =>
+          kind === "javascript-asset" &&
+          observations.some(
+            ({ properties }) => properties.path === "worker.js",
+          ),
+      );
+    expect(staticAsset).toBeDefined();
+    const reconciled = reconcileJavaScriptRuntimeEvidence({
+      static_layers: [
+        {
+          role: "application",
+          analysis,
+          runtime_mappings: [
+            {
+              kind: "url-prefix",
+              prefix: inspection.target.origin + "/",
+              artifact_prefix: "",
+            },
+          ],
+        },
+      ],
+      runtime_observations: [evidence],
+    });
+    if (!reconciled.ok) throw reconciled.error;
+    const result = javascriptRuntimeReconciliationResultSchema.parse(
+      reconciled.value.evidence.normalized_result,
+    );
+    expect(
+      result.static_load_states.find(
+        ({ static_node_id }) => static_node_id === staticAsset!.node_id,
+      ),
+    ).toMatchObject({
+      status: expected,
+      reason:
+        expected === "unknown"
+          ? "static-or-runtime-coverage-incomplete"
+          : "not-observed-in-bounded-capture",
+    });
   },
 );
 
