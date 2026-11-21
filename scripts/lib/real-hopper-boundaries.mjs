@@ -452,7 +452,27 @@ export async function verifyHopperLifecycleAndCli(
       procedure: entry.value,
       detail: "complete",
     });
-    const firstDocument = await call("current_document");
+    // REA opens an owned copy of every target under a fixed image name, so
+    // native document names cannot tell targets apart. Identify the target
+    // through the session, and show disposal by a document count that never
+    // grows across target switches.
+    const requireSelectedTarget = async (path, documentCount, message) => {
+      assert.equal(
+        (await call("binary_session")).path,
+        path,
+        "binary_session did not select the opened target",
+      );
+      const document = await call("current_document");
+      const documents = await call("list_documents");
+      assert.ok(
+        documents.includes(document),
+        "list_documents omitted the current native document",
+      );
+      if (documentCount !== undefined)
+        assert.equal(documents.length, documentCount, message);
+      return { document, documentCount: documents.length };
+    };
+    const first = await requireSelectedTarget(primary);
     const linuxApplicationIsolation =
       process.platform === "linux"
         ? await verifyLinuxHopperLaunchIsolation({
@@ -464,10 +484,9 @@ export async function verifyHopperLifecycleAndCli(
           })
         : null;
     await call("open_binary", { path: secondary });
-    const secondDocument = await call("current_document");
-    assert.notEqual(firstDocument, secondDocument);
-    assert.ok(
-      !(await call("list_documents")).includes(firstDocument),
+    const { document: secondDocument } = await requireSelectedTarget(
+      secondary,
+      first.documentCount,
       "target switching retained the old native document",
     );
     const procedures = await call("list_procedures");
@@ -585,8 +604,9 @@ export async function verifyHopperLifecycleAndCli(
     assert.match(failure.message, /usable unsigned 64-bit range/u);
 
     await call("open_binary", { path: primary });
-    assert.ok(
-      !(await call("list_documents")).includes(secondDocument),
+    await requireSelectedTarget(
+      primary,
+      first.documentCount,
       "MCP or CLI cleanup retained the closed native document",
     );
     await call("close_binary");
