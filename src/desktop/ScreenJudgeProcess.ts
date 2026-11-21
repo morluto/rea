@@ -254,3 +254,7 @@ export class ScreenJudgeProcess {
       : { verified: false, reason: failures.join("; "), resources };
   }
 }
+
+/** Create the screen evaluator for a newly acquired build computer. */
+export const createScreenJudge = (environment: Readonly<NodeJS.ProcessEnv>) =>
+  new ScreenJudgeProcess(environment);
