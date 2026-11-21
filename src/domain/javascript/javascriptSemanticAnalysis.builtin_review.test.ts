@@ -2156,3 +2156,25 @@ it.each([
     ).toEqual(expected);
   },
 );
+
+it.each([
+  ["", "{get first(){delete this.owner},owner:0}", []],
+  ["const source={get first(){delete this.owner},owner:0};", "source", []],
+  ["", "{owner:0,get last(){delete this.owner}}", ["kept"]],
+  ["const source={owner:0,get last(){delete this.owner}};", "source", ["kept"]],
+  ["", "{owner:0,get 0(){delete this.owner}}", []],
+  ["", "{first:0,owner:0,get first(){delete this.owner}}", []],
+  [
+    "const source={owner:0};Object.defineProperty(source,'0',{enumerable:true,get(){delete this.owner}});",
+    "source",
+    [],
+  ],
+] as const)(
+  "retains getter effects in spread copy order: %s ...%s",
+  (setup, source, expected) => {
+    const code = `${setup} const box={get owner(){observe(module);return 0},...${source}};Object.assign=(t,v)=>{};Object.assign({},typeof box.owner);require('fs').readFileSync('kept');`;
+    expect(
+      analyzeCommonJs(code).configurationOperations.map(({ key }) => key),
+    ).toEqual(expected);
+  },
+);

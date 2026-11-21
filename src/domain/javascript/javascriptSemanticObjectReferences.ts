@@ -705,7 +705,10 @@ class ObjectReferenceWalk {
         ownEnumerable: true,
       });
     if (t.isObjectExpression(property.argument))
-      for (const name of objectExpressionDefinedKeys(property.argument)) {
+      for (const name of objectExpressionDefinedKeys(
+        property.argument,
+        "copy",
+      )) {
         this.#overwritten.add(name);
         this.#data.add(name);
       }
@@ -836,6 +839,7 @@ const objectPropertyReferences = (
 
 const objectExpressionDefinedKeys = (
   root: t.ObjectExpression,
+  operation: "define" | "copy" = "define",
   resolveSpread?: (source: t.Node) => t.ObjectExpression | undefined,
 ): ReadonlySet<string> => {
   const pending: t.ObjectExpression[] = [root];
@@ -845,8 +849,26 @@ const objectExpressionDefinedKeys = (
     const object = pending[cursor];
     if (object === undefined || seen.has(object)) continue;
     seen.add(object);
+    // CopyDataProperties snapshots keys, but checks each descriptor again after
+    // reading the preceding values. A getter can delete any remaining slot.
+    const getterKeys = new Set<string | null>();
+    if (operation === "copy" || object !== root) {
+      for (const property of object.properties) {
+        if (!t.isObjectMethod(property, { kind: "get" })) continue;
+        const name = semanticStaticPropertyKey(property.key, property.computed);
+        // Index keys precede string keys; an unknown key can also be an index.
+        if (name === null || semanticArrayIndex(name) !== null) {
+          getterKeys.add(null);
+          break;
+        }
+        getterKeys.add(name);
+      }
+    }
+    if (getterKeys.has(null)) continue;
     for (const property of object.properties) {
       if (t.isSpreadElement(property)) {
+        // An earlier spread can have inserted a getter's key at this position.
+        if (getterKeys.size > 0) break;
         const literal = t.isObjectExpression(property.argument)
           ? property.argument
           : resolveSpread?.(property.argument);
@@ -856,6 +878,9 @@ const objectExpressionDefinedKeys = (
       const name = semanticStaticPropertyKey(property.key, property.computed);
       if (name !== null && !isObjectPrototypeSetter(property, name))
         names.add(name);
+      // Redefinition preserves insertion order. The first position that could
+      // contain a getter is copied; subsequent slots can disappear.
+      if (getterKeys.size > 0 && (name === null || getterKeys.has(name))) break;
     }
   }
   return names;
@@ -974,7 +999,7 @@ const ownLiteralPropertyMatches = (
       const literal = spreadLiteral(property.argument);
       if (
         literal !== undefined &&
-        objectExpressionDefinedKeys(literal, spreadLiteral).has(key)
+        objectExpressionDefinedKeys(literal, "copy", spreadLiteral).has(key)
       )
         return true;
       continue;
@@ -1008,7 +1033,11 @@ export const createSemanticOwnPropertyReadQuery =
     at: t.Node,
     acceptsGetter?: (method: t.ObjectMethod) => boolean,
   ): boolean => {
-    const unchangedInitializers = (value: t.Identifier, at: t.Node) => {
+    const unchangedInitializers = (
+      value: t.Identifier,
+      at: t.Node,
+      copy?: t.Node,
+    ) => {
       const binding = resolveSemanticBindingState(state, value, value.name);
       if (
         binding === undefined ||
@@ -1018,8 +1047,10 @@ export const createSemanticOwnPropertyReadQuery =
           binding,
           (kind, { path, node: site }) =>
             site !== at &&
+            (copy === undefined || site !== copy) &&
             (kind === "member-write"
-              ? path.length === 0 ||
+              ? copy !== undefined ||
+                path.length === 0 ||
                 semanticPropertyPathKeyMatches(path[0]!, key)
               : path.length === 0)
               ? [at]
@@ -1038,11 +1069,19 @@ export const createSemanticOwnPropertyReadQuery =
     // A spread snapshots enumerable keys when it runs. Follow a stable literal
     // alias at that capture, before selecting any later getter on the copy.
     const spreadLiteral = (source: t.Node): t.ObjectExpression | undefined => {
-      let value = javaScriptExpressionValue(source);
+      const read = javaScriptExpressionValue(source);
+      let value = read;
+      // The spread's own getter effects are ordered by the copy walk. A prior
+      // write to any other key can install a getter that deletes this one.
+      const copy = state.parentsByNode.get(source);
       const seen = new Set<t.Node>();
       while (t.isIdentifier(value) && !seen.has(value)) {
         seen.add(value);
-        const initializers = unchangedInitializers(value, source);
+        const initializers = unchangedInitializers(
+          value,
+          read,
+          t.isSpreadElement(copy) ? copy : undefined,
+        );
         if (
           initializers?.length !== 1 ||
           initializers[0]!.projection.length !== 0
