@@ -8,7 +8,7 @@ import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
 import { createRizinCoverageHarness } from "./RizinDebugSessionCoverage.fixtures.js";
 
 it.skipIf(process.platform === "win32")(
-  "identifies the rejected TTY field and physical reason before spawning Rizin",
+  "identifies missing or unusable inferior terminals before spawning Rizin",
   async () => {
     const root = await createTestTempDirectory("rea-rizin-tty-rejection-");
     const regular = join(root, "regular");
@@ -23,14 +23,17 @@ it.skipIf(process.platform === "win32")(
       },
     );
     for (const [path, reason] of [
+      [undefined, "An explicit non-empty inferior_tty path is required"],
+      ["", "An explicit non-empty inferior_tty path is required"],
       [join(root, "missing"), "ENOENT"],
       [regular, "not a character TTY"],
       ["/dev/null", "not a character TTY"],
-    ]) {
-      const result = await manager.start({
+    ] as const) {
+      const input = {
         path: regular,
-        inferior_tty: path!,
-      });
+        ...(path === undefined ? {} : { inferior_tty: path }),
+      } as Parameters<RizinDebugSessionManager["start"]>[0];
+      const result = await manager.start(input);
       if (result.ok) throw new Error("Invalid terminal was admitted");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "invalid_request",
@@ -38,7 +41,8 @@ it.skipIf(process.platform === "win32")(
           issues: [
             {
               path: ["inferior_tty"],
-              message: expect.stringContaining(reason!),
+              reason: "invalid_value",
+              message: expect.stringContaining(reason),
             },
           ],
         },
