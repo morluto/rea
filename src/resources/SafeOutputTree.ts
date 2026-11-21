@@ -492,9 +492,30 @@ export class SafeOutputTree {
       residualPaths: [basename(this.#outputRoot)],
     };
     let removalFailure: unknown;
+    let admitFailure: unknown;
     try {
       await this.#admitPendingFiles();
+    } catch (cause: unknown) {
+      admitFailure = cause;
+    }
+    let closeFailure: unknown;
+    try {
       await this.closeHandles();
+    } catch (cause: unknown) {
+      closeFailure = cause;
+    }
+    if (admitFailure !== undefined) {
+      // Identities are incomplete. Close the descriptors and keep the tree.
+      throw ArtifactReaderFailure.withCleanup(
+        admitFailure,
+        ArtifactReaderFailure.cleanupObservation(
+          closeFailure ?? admitFailure,
+          this.#outputRoot,
+        ),
+      );
+    }
+    try {
+      if (closeFailure !== undefined) throw closeFailure;
       await this.#assertOwnedDirectories();
       await removeOwnedTree({
         outputRoot: this.#outputRoot,
