@@ -187,8 +187,7 @@ export interface SessionTargetIdentity {
 }
 
 /**
- * What an observation or cache entry is about. Tagged by `kind`; see
- * docs/adr/evidence/target-identity.md for the kinds later slices add.
+ * What an observation or cache entry is about. Tagged by `kind`.
  */
 export type TargetIdentity =
   | FileTargetIdentity

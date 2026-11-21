@@ -154,6 +154,59 @@ it("keeps missing resource references explicit without turning page exhaustion i
 const header =
   JSON.stringify({ type: "context-options", version: 10, origin: "library" }) +
   "\n";
+it("keeps failed-request status sentinels unknown without losing recorded response facts", async () => {
+  const statuses = [-1, 0, 99, 200.5, 1000, 100, 200, 600, 999];
+  const fixture = await playwrightTraceFixture({
+    trace: header,
+    network:
+      statuses
+        .map((status) =>
+          JSON.stringify({
+            type: "resource-snapshot",
+            snapshot: {
+              request: { method: "GET", url: "http://127.0.0.1/failed" },
+              response: { status, _failureText: "net::ERR_EMPTY_RESPONSE" },
+            },
+          }),
+        )
+        .join("\n") + "\n",
+  });
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+    );
+    if (!result.ok) throw result.error;
+    const report = playwrightTraceSchema.parse(result.value);
+    expect(report.events.map((event) => event.status)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      100,
+      200,
+      600,
+      999,
+    ]);
+    expect(report.events[0]).toMatchObject({
+      source: { line: 1, record_pointer: "/snapshot" },
+      reported: {
+        response: { status: -1, _failureText: "net::ERR_EMPTY_RESPONSE" },
+      },
+      numeric_literals: [{ pointer: "/response/status", literal: "-1" }],
+    });
+    expect(report.source_coverage.interpretation).toBe("partial");
+    expect(
+      report.diagnostics
+        .filter((row) => row.code === "partial-event")
+        .map((row) => row.line),
+    ).toEqual([1, 2, 3, 4, 5]);
+  } finally {
+    await resources.close();
+  }
+});
+
 const before =
   JSON.stringify({
     type: "before",

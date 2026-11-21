@@ -2678,28 +2678,16 @@ it.each(["search_procedures", "search_strings"] as const)(
       ],
     };
     await expect(client.callTool(operation, query)).resolves.toEqual(expected);
-    await expect(client.callToolIfReady(operation, query)).resolves.toEqual(
-      expected,
-    );
-    for (const pattern of ["ſOURCE", "Σ"]) {
-      await expect(
-        client.callTool(operation, { ...query, pattern }),
-      ).resolves.toEqual(expected);
+    for (const pattern of ["ſOURCE", "Σ"])
       await expect(
         client.callToolIfReady(operation, { ...query, pattern }),
       ).resolves.toEqual(expected);
-    }
-    const regex = await client.callTool(operation, { ...query, mode: "regex" });
-    expect(regex.ok && Array.isArray(regex.value) && regex.value.length).toBe(
-      4,
-    );
-    const sensitive = await client.callTool(operation, {
-      ...query,
-      case_sensitive: true,
-    });
-    expect(
-      sensitive.ok && Array.isArray(sensitive.value) && sensitive.value.length,
-    ).toBe(4);
+    await expect(
+      client.callTool(operation, { ...query, mode: "regex" }),
+    ).resolves.toEqual(expected);
+    await expect(
+      client.callToolIfReady(operation, { ...query, case_sensitive: true }),
+    ).resolves.toEqual(expected);
   },
 );
 

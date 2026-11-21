@@ -5,16 +5,21 @@ import {
   serveCli as serve,
 } from "./cliServeHarness.js";
 
+const MISSING_APKTOOL =
+  process.platform === "win32"
+    ? "C:\\nonexistent\\apktool"
+    : "/nonexistent/apktool";
+
 it.each([
   [
     ["inspect-apktool-client", "--json"],
-    "/nonexistent/apktool",
-    "The selected apktool launcher was not found: /nonexistent/apktool. Set REA_APKTOOL_COMMAND",
+    MISSING_APKTOOL,
+    `The selected apktool launcher was not found: ${MISSING_APKTOOL}. Set REA_APKTOOL_COMMAND`,
   ],
   [
     ["decode-android-resources", "/targets/app.apk", "--json"],
-    "/nonexistent/apktool",
-    "The selected apktool launcher was not found: /nonexistent/apktool. Set REA_APKTOOL_COMMAND",
+    MISSING_APKTOOL,
+    `The selected apktool launcher was not found: ${MISSING_APKTOOL}. Set REA_APKTOOL_COMMAND`,
   ],
   [
     ["decode-android-resources", "/targets/app.apk", "--json"],
@@ -53,7 +58,7 @@ it("reports each invocation's effective exit status and restores the host status
   const originalExitCode = process.exitCode;
   process.exitCode = 23;
   try {
-    const environment = { REA_APKTOOL_COMMAND: "/nonexistent/apktool" };
+    const environment = { REA_APKTOOL_COMMAND: MISSING_APKTOOL };
     const failed = await serve(
       ["inspect-apktool-client", "--json"],
       environment,

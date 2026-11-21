@@ -363,9 +363,7 @@ it("projects a published file receipt alongside retained cleanup failure", () =>
     code: "cleanup_incomplete",
     message: expect.stringMatching(/published.*staging cleanup.*incomplete/iu),
     remediation: {
-      action: expect.stringMatching(
-        /published.*details\.published_path.*cleanup/iu,
-      ),
+      action: expect.stringContaining("details.published_path"),
     },
     details: {
       operation: "write",

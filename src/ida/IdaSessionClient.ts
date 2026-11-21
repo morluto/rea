@@ -26,14 +26,28 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
+import { IdaToolRejection, type IdaMcpConnection } from "./IdaMcpConnection.js";
+import {
+  hexRaysCloseSchema,
+  hexRaysListSchema,
+  hexRaysOpenSchema,
+  hexRaysTools,
+  runHexRaysQuery,
+  type HexRaysBackend,
+  type HexRaysCloseReceipt,
+  type HexRaysStatus,
+} from "./IdaHexRaysProtocol.js";
 import { idaCompatibilityProfile } from "./IdaConfiguration.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
-import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { nativeTools } from "./IdaNativeProtocol.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
 import { isX86OnlyTarget } from "./IdaCallGraph.js";
-import { IdaOperationRunner } from "./IdaOperationRunner.js";
 import {
+  IdaOperationRunner,
+  type IdaRawObservation,
+} from "./IdaOperationRunner.js";
+import {
+  IDA_DATABASE_TARGET_LIMITATION,
   IDA_LIMITATIONS,
   idaOperationUnavailableReason,
   type IdaOperation,
@@ -106,7 +120,17 @@ interface UpstreamSession {
   readonly input_path: string | null;
   /** Last inventoried activity; null before upstream reports it. */
   readonly is_active: boolean | null;
+  readonly hexrays_status?: HexRaysStatus;
+  readonly hexrays_backend?: HexRaysBackend;
 }
+
+/** Inventory bindings and protocol-specific evidence used to decide cleanup. */
+type InventoriedSession = UpstreamSession & {
+  readonly owned: boolean;
+  readonly input_path: string;
+  readonly referencesWorkspace: boolean;
+  readonly released: boolean;
+};
 
 /** A failed cleanup retains its private workspace and reports the remaining resource. */
 class IdaCleanupError extends ProviderAdapterError {
@@ -114,6 +138,7 @@ class IdaCleanupError extends ProviderAdapterError {
     path: string,
     cause: unknown,
     sessions?: readonly UpstreamSession[],
+    hexRaysClose?: HexRaysCloseReceipt,
   ) {
     super("ida", "close", {
       cause,
@@ -133,22 +158,37 @@ class IdaCleanupError extends ProviderAdapterError {
             ? (cause.diagnostics?.reason ?? cause.message)
             : errorMessage(cause),
         workspace: path,
+        ...(hexRaysClose === undefined
+          ? {}
+          : { hexrays_close: jsonValueSchema.parse(hexRaysClose) }),
         ...(sessions === undefined
           ? {}
           : {
               upstream_sessions: {
                 state: "unverified",
                 sessions: sessions.map(
-                  ({ session_id, backend, owned, input_path, is_active }) => ({
+                  ({
                     session_id,
                     backend,
                     owned,
                     input_path,
                     is_active,
+                    hexrays_status,
+                    hexrays_backend,
+                  }) => ({
+                    session_id,
+                    backend,
+                    owned,
+                    input_path,
+                    is_active,
+                    ...(hexrays_status === undefined ? {} : { hexrays_status }),
+                    ...(hexrays_backend === undefined
+                      ? {}
+                      : { hexrays_backend }),
                   }),
                 ),
                 reason:
-                  "Release of upstream sessions matching the requested session ID or private input was not confirmed; input_path preserves the last observed binding and is null when no inventory has reported it. is_active preserves registry activity and is null when unknown; it does not establish process liveness. A worker outlives its supervisor and may keep running until it finishes and reaches its idle timeout; exiting REA does not stop it. A gui session belongs to an IDA instance REA does not control. An empty session_id means upstream reported none; owned is null when no inventory has reported ownership; an empty list means the requested worker's close was confirmed but no inventory has identified any remaining session.",
+                  "Release of upstream sessions matching the requested session ID or private workspace was not confirmed; input_path preserves the last observed path and is null when no inventory has reported it. is_active preserves registry activity and is null when unknown; it does not establish process liveness. A worker outlives its supervisor and may keep running until it finishes and reaches its idle timeout; exiting REA does not stop it. A gui session belongs to an IDA instance REA does not control. An empty session_id means upstream reported none; owned is null when no inventory has reported ownership; an empty list means the requested worker's close was confirmed but no inventory has identified any remaining session.",
               },
             }),
       },
@@ -168,7 +208,7 @@ class IdaCleanupError extends ProviderAdapterError {
  * not control, and the observed teardown shape covers workers only, so a gui
  * row keeps blocking release whatever its flags say.
  */
-const isReleasedWorkerRow = (entry: {
+const isReleasedSupervisorWorker = (entry: {
   readonly session_id: string;
   readonly owned: boolean;
   readonly is_active: boolean;
@@ -267,17 +307,23 @@ export class IdaSessionClient implements AnalysisClient {
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   #workspace: IdaWorkspace | undefined;
   #database: string | undefined;
+  /** The upstream session id this client requested or was assigned; unknown before then. */
+  #expectedSession: string | undefined;
+  #hexRaysOpenedBackend: HexRaysBackend | undefined;
+  #hexRaysCloseReceipt: HexRaysCloseReceipt | undefined;
   #databaseCloseCompleted = false;
   #openAttempted = false;
-  #openCompleted = false;
+  // Only a protocol-defined no-worker reply establishes a rejected open.
+  #openOutcome: "unverified" | "reply_received" | "no_worker" = "unverified";
   #ready = false;
   #blockingSessions: readonly UpstreamSession[] | undefined;
-  #openRejected = false;
   #callGraphAdvertised = false;
   #surveyAdvertised = false;
   #initialIdentity: string | undefined;
   #metadata: JsonValue = null;
   #lifecycle: JsonValue[] = [];
+  /** Hex-Rays health reads of the current operation, kept whole beside the parsed metadata. */
+  #healthObservations: IdaRawObservation[] = [];
 
   constructor(
     private readonly config: IdaConfiguration,
@@ -389,6 +435,7 @@ export class IdaSessionClient implements AnalysisClient {
           },
         ]),
       );
+    this.#healthObservations = [];
     const failureContext: IdaOperationFailureContext = {
       runner: undefined,
       metadataBefore: undefined,
@@ -422,13 +469,8 @@ export class IdaSessionClient implements AnalysisClient {
         throw cancelledBy(operation, options?.signal);
       return ok(
         createAnalysisExecution(result, IDA_PROVIDER_IDENTITY, {
-          rawResult: {
-            upstream: this.connection.serverInfo(),
-            metadata_before: before,
-            metadata_after: after,
-            observations: jsonValueSchema.parse(runner.raw),
-          },
-          limitations: [...IDA_LIMITATIONS, ...runner.limitations],
+          rawResult: this.#operationRawResult(runner, before, after),
+          limitations: [...this.#limitations(), ...runner.limitations],
           ...(runner.relationshipCoverage === undefined
             ? {}
             : { relationshipCoverage: runner.relationshipCoverage }),
@@ -450,11 +492,27 @@ export class IdaSessionClient implements AnalysisClient {
   }
 
   #runner(options: ExecutionOptions | undefined): IdaOperationRunner {
+    const protocol = idaCompatibilityProfile(this.config).protocol;
+    const database = this.#database;
     return new IdaOperationRunner(
       this.connection,
-      idaCompatibilityProfile(this.config).protocol,
-      this.#database,
+      // Hex-Rays answers database-supervisor reads through its query bridge.
+      protocol === "hexrays" ? "modern" : protocol,
+      database,
       {
+        ...(protocol === "hexrays" && database !== undefined
+          ? {
+              invoke: (tool, args) =>
+                runHexRaysQuery(
+                  this.connection,
+                  database,
+                  tool,
+                  args,
+                  this.config.timeoutMs,
+                  options?.signal,
+                ),
+            }
+          : {}),
         regexMatchingDeadline: this.regexSettings?.regexMatchingDeadline,
         regexWorkerHeapRequest: this.regexSettings?.regexWorkerHeapRequest,
         signal: options?.signal,
@@ -465,6 +523,12 @@ export class IdaSessionClient implements AnalysisClient {
         admittedDocument: this.target.path,
       },
     );
+  }
+
+  #limitations(): readonly string[] {
+    return this.target.kind === "database"
+      ? [...IDA_LIMITATIONS, IDA_DATABASE_TARGET_LIMITATION]
+      : IDA_LIMITATIONS;
   }
 
   #health(metadata: JsonValue) {
@@ -480,7 +544,7 @@ export class IdaSessionClient implements AnalysisClient {
         },
         IDA_PROVIDER_IDENTITY,
         {
-          limitations: IDA_LIMITATIONS,
+          limitations: this.#limitations(),
           ...(this.profile === undefined
             ? {}
             : { analysisProfile: this.profile }),
@@ -554,8 +618,11 @@ export class IdaSessionClient implements AnalysisClient {
       runner.raw.length > 0 &&
       metadataBefore !== undefined
     ) {
-      const observations = jsonValueSchema.parse(runner.raw);
-      const upstream = this.connection.serverInfo();
+      const rawResult = this.#operationRawResult(
+        runner,
+        metadataBefore,
+        metadataAfter,
+      );
       const binding =
         context.postOperationIdentityCheck !== "verified"
           ? {
@@ -574,7 +641,7 @@ export class IdaSessionClient implements AnalysisClient {
           result: {
             status: "partial",
             failed_operation: operation,
-            observations,
+            observations: rawResult.observations,
             metadata_before: metadataBefore,
             target_binding: binding,
             ...(metadataAfter === undefined
@@ -582,18 +649,13 @@ export class IdaSessionClient implements AnalysisClient {
               : { metadata_after: metadataAfter }),
           },
           rawResult: {
-            upstream,
-            observations,
-            metadata_before: metadataBefore,
-            ...(metadataAfter === undefined
-              ? {}
-              : { metadata_after: metadataAfter }),
+            ...rawResult,
             post_operation_identity_check: context.postOperationIdentityCheck,
           },
           confidence: "observed",
           authority: "external-service",
           limitations: [
-            ...IDA_LIMITATIONS,
+            ...this.#limitations(),
             ...runner.limitations,
             "The requested IDA operation failed after these completed upstream replies; the partial Evidence does not establish a complete result.",
             "Replies are bound to the selected target only by the pre-operation identity check unless post_operation_identity_check is verified.",
@@ -645,17 +707,32 @@ export class IdaSessionClient implements AnalysisClient {
   }
 
   async #initialize(): Promise<void> {
-    const tools = new Set(await this.connection.connect());
-    this.#callGraphAdvertised = tools.has("callgraph");
-    this.#surveyAdvertised = tools.has("survey_binary");
     const profile = idaCompatibilityProfile(this.config);
+    const tools = new Set(await this.connection.connect());
+    const protocol = profile.protocol;
+    // REA's query bridge implements both reads for the Hex-Rays profile.
+    this.#callGraphAdvertised =
+      protocol === "hexrays" || tools.has("callgraph");
+    this.#surveyAdvertised =
+      protocol === "hexrays" || tools.has("survey_binary");
     const expected = {
       native: nativeTools,
       modern: modernTools,
-    }[profile.protocol];
+      hexrays: hexRaysTools,
+    }[protocol];
     const missing = expected.filter((name) => !tools.has(name));
     if (missing.length > 0) {
-      const summary = `IDA MCP ${profile.diagnosticLabel} compatibility profile is missing tools: ${missing.join(", ")}. Attached mode requires the native IDA MCP tool catalog; headless mode requires the database supervisor profile. See docs/providers/ida-provider.md.`;
+      // A registration for another profile can still point at the official
+      // server; name the registration that fits instead of a reinstall.
+      const servesHexRays =
+        protocol !== "hexrays" && hexRaysTools.every((name) => tools.has(name));
+      const hexRaysHint = servesHexRays
+        ? ' This server serves the Hex-Rays IDA MCP catalog; register it with "mode": "headless" and "protocol": "hexrays".'
+        : "";
+      const summary =
+        protocol === "hexrays"
+          ? `IDA MCP Hex-Rays compatibility profile is missing tools: ${missing.join(", ")}. The Hex-Rays profile requires the official Hex-Rays IDA MCP tool catalog. See docs/providers/ida-provider.md.`
+          : `IDA MCP ${profile.diagnosticLabel} compatibility profile is missing tools: ${missing.join(", ")}. Attached mode requires the native IDA MCP tool catalog; headless mode requires the database supervisor profile.${hexRaysHint} See docs/providers/ida-provider.md.`;
       // The caller cannot act on a profile mismatch it never sees, so the
       // missing names travel as adapter diagnostics rather than a bare message.
       throw new ProviderAdapterError("ida", "initialize", {
@@ -665,8 +742,10 @@ export class IdaSessionClient implements AnalysisClient {
           mode: this.config.mode,
           expected_profile: profile.diagnosticIdentity,
           missing_tools: [...missing],
-          recovery:
-            "Install an IDA MCP build that serves the selected profile; see docs/providers/ida-provider.md.",
+          advertised_tools: [...tools].sort(),
+          recovery: servesHexRays
+            ? 'Set "mode": "headless" and "protocol": "hexrays" in the registration; see docs/providers/ida-provider.md.'
+            : "Install an IDA MCP build that serves the selected profile; see docs/providers/ida-provider.md.",
         },
       });
     }
@@ -676,64 +755,172 @@ export class IdaSessionClient implements AnalysisClient {
         this.config.workspaceRoot,
       );
       await this.#workspace.copyInput();
-      this.#openAttempted = true;
-      const raw = await this.connection.call("idb_open", {
-        input_path: this.#workspace.inputPath,
-        mode: "force_headless",
-        run_auto_analysis: true,
-        build_caches: true,
-        init_hexrays: true,
-        preferred_session_id: this.#workspace.sessionId,
-      });
-      this.#openCompleted = true;
-      // A completed but malformed/positive open may still own a live Worker.
-      // Only an explicit producer rejection keeps the old no-worker branch.
-      this.#openRejected = rejectedOpenDatabaseSchema.safeParse(raw).success;
-      this.#lifecycle.push(raw);
-      const opened = openDatabaseSchema.parse(raw);
-      if (
-        !sameIdaHostPath(opened.session.input_path, this.#workspace.inputPath)
-      )
-        throw new IdaIdentityRefusal(
-          "IDA opened a different input than the private admitted target copy.",
-          "Check the selected input and upstream worker binding. Retry only after retained private-worker cleanup is confirmed.",
-          "opened_input",
-        );
-      if (opened.session.session_id !== this.#workspace.sessionId)
-        throw new IdaIdentityRefusal(
-          "IDA returned an adopted or unexpected session instead of the requested private worker.",
-          "Use an IDA supervisor that honors the requested private worker session ID. Confirm retained cleanup before reopening the target.",
-          "worker_session",
-        );
-      const inventory = databaseListSchema.parse(
-        await this.connection.call("idb_list", {}),
-      );
-      this.#lifecycle.push(jsonValueSchema.parse(inventory));
       const workspace = this.#workspace;
+      this.#openAttempted = true;
+      const session =
+        protocol === "hexrays"
+          ? await this.#openHexRays(workspace)
+          : await this.#openSupervisor(workspace);
+      const inventory = await this.#inventory(workspace);
+      this.#lifecycle.push(inventory.raw);
       this.#recordBlockingSessions(
         inventory.sessions.filter(
-          (entry) =>
-            entry.session_id === workspace.sessionId ||
-            sameIdaHostPath(entry.input_path, workspace.inputPath),
+          (entry) => entry.session_id === session || entry.referencesWorkspace,
         ),
       );
       const entry = inventory.sessions.find(
-        ({ session_id }) => session_id === opened.session.session_id,
+        ({ session_id }) => session_id === session,
       );
       if (
         entry?.owned !== true ||
         entry.backend !== "worker" ||
+        (protocol === "hexrays" &&
+          entry.hexrays_backend !== this.#hexRaysOpenedBackend) ||
         entry.is_active !== true ||
-        !sameIdaHostPath(entry.input_path, this.#workspace.inputPath)
+        !sameIdaHostPath(entry.input_path, workspace.inputPath)
       )
         throw new IdaIdentityRefusal(
           "IDA did not return an active owned headless worker for the private input copy.",
-          "Configure the supervisor to return an active owned worker for the private input. Confirm retained cleanup before reopening the target.",
+          "Configure the server to report the same owned worker for the private input in its open and inventory replies. Confirm retained cleanup before reopening the target.",
           "owned_worker_binding",
         );
-      this.#database = opened.session.session_id;
+      this.#database = session;
     }
     this.#ready = true;
+  }
+
+  /** Request the private worker from a database supervisor; returns its session id. */
+  async #openSupervisor(workspace: IdaWorkspace): Promise<string> {
+    this.#expectedSession = workspace.sessionId;
+    const raw = await this.connection.call("idb_open", {
+      input_path: workspace.inputPath,
+      mode: "force_headless",
+      run_auto_analysis: true,
+      build_caches: true,
+      init_hexrays: true,
+      preferred_session_id: workspace.sessionId,
+    });
+    this.#openOutcome = rejectedOpenDatabaseSchema.safeParse(raw).success
+      ? "no_worker"
+      : "reply_received";
+    this.#lifecycle.push(raw);
+    const opened = openDatabaseSchema.parse(raw);
+    if (!sameIdaHostPath(opened.session.input_path, workspace.inputPath))
+      throw new IdaIdentityRefusal(
+        "IDA opened a different input than the private admitted target copy.",
+        "Check the selected input and upstream worker binding. Retry only after retained private-worker cleanup is confirmed.",
+        "opened_input",
+      );
+    if (opened.session.session_id !== workspace.sessionId)
+      throw new IdaIdentityRefusal(
+        "IDA returned an adopted or unexpected session instead of the requested private worker.",
+        "Use an IDA supervisor that honors the requested private worker session ID. Confirm retained cleanup before reopening the target.",
+        "worker_session",
+      );
+    return opened.session.session_id;
+  }
+
+  /**
+   * Lease a headless worker for the private input copy. Hex-Rays assigns the
+   * instance id, so the binding is the returned id plus its inventory row.
+   */
+  async #openHexRays(workspace: IdaWorkspace): Promise<string> {
+    // The MCP tool error only reports that the request failed. Nexus can
+    // return a startup error while a worker is still starting.
+    const raw = await this.connection.call("open_database", {
+      path: workspace.inputPath,
+      set_current: false,
+    });
+    this.#openOutcome = "reply_received";
+    this.#lifecycle.push(raw);
+    const opened = hexRaysOpenSchema.parse(raw);
+    this.#expectedSession = opened.instance_id;
+    this.#hexRaysOpenedBackend = opened.backend;
+    if (opened.backend === "gui")
+      throw new AnalysisProtocolError(
+        "IDA attached a GUI database instead of a private headless worker for the private input copy.",
+      );
+    return opened.instance_id;
+  }
+
+  /** Normalize upstream inventory and derive the path scope for release checks. */
+  async #inventory(workspace: IdaWorkspace): Promise<{
+    readonly raw: JsonValue;
+    readonly sessions: readonly InventoriedSession[];
+  }> {
+    if (idaCompatibilityProfile(this.config).protocol !== "hexrays") {
+      const raw = await this.connection.call("idb_list", {});
+      return {
+        raw,
+        sessions: databaseListSchema.parse(raw).sessions.map((entry) => ({
+          ...entry,
+          referencesWorkspace: sameIdaHostPath(
+            entry.input_path,
+            workspace.inputPath,
+          ),
+          released: isReleasedSupervisorWorker(entry),
+        })),
+      };
+    }
+    const raw = await this.connection.call("list_databases", {});
+    return {
+      raw,
+      sessions: hexRaysListSchema.parse(raw).instances.map((entry) => ({
+        session_id: entry.instance_id ?? "",
+        backend: entry.backend === "gui" ? "gui" : "worker",
+        owned: entry.instance_id !== null,
+        input_path: entry.path,
+        is_active:
+          entry.status === "unavailable"
+            ? null
+            : entry.status === "current" || entry.status === "attached",
+        hexrays_status: entry.status,
+        hexrays_backend: entry.backend,
+        // Nexus may list the private database path in place of the input.
+        referencesWorkspace: workspace.containsPath(entry.path),
+        // Every listed workspace path blocks release, including unleased rows.
+        released: false,
+      })),
+    };
+  }
+
+  async #readHexRaysHealth(
+    database: string,
+    signal?: AbortSignal,
+  ): Promise<JsonValue> {
+    const observation = await runHexRaysQuery(
+      this.connection,
+      database,
+      "server_health",
+      {},
+      this.config.timeoutMs,
+      signal,
+    );
+    this.#healthObservations.push(observation);
+    return observation.result;
+  }
+
+  #operationRawResult(
+    runner: IdaOperationRunner,
+    metadataBefore: JsonValue,
+    metadataAfter: JsonValue | undefined,
+  ) {
+    return {
+      upstream: this.connection.serverInfo(),
+      metadata_before: metadataBefore,
+      ...(metadataAfter === undefined ? {} : { metadata_after: metadataAfter }),
+      observations: jsonValueSchema.parse(runner.raw),
+      ...(this.#hexRaysOpenedBackend === undefined
+        ? {}
+        : { worker_backend: this.#hexRaysOpenedBackend }),
+      ...(this.#healthObservations.length === 0
+        ? {}
+        : {
+            health_observations: jsonValueSchema.parse(
+              this.#healthObservations,
+            ),
+          }),
+    };
   }
 
   async #nativeMetadata(signal?: AbortSignal): Promise<JsonValue> {
@@ -772,18 +959,34 @@ export class IdaSessionClient implements AnalysisClient {
           "Close the REA analysis session and reopen the selected target using the configured headless supervisor.",
           "database_binding",
         );
-      const raw = await readSettledHealth(this.connection, {
-        database: this.#database,
-        timeoutMs: this.config.timeoutMs,
-        signal: options?.signal,
-      });
+      // Hex-Rays execute_python waits for initial auto-analysis before running.
+      const raw =
+        idaCompatibilityProfile(this.config).protocol === "hexrays"
+          ? await this.#readHexRaysHealth(this.#database, options?.signal)
+          : await readSettledHealth(this.connection, {
+              database: this.#database,
+              timeoutMs: this.config.timeoutMs,
+              signal: options?.signal,
+            });
       const metadata = modernHealthSchema.parse(raw);
       this.#metadata = raw;
       onObserved?.(raw);
+      // A database records the input it was created from and is rewritten by
+      // its worker, so the private copy is bound by the opened database path;
+      // copyInput already verified the bytes it admitted.
       if (
-        !sameIdaHostPath(metadata.input_path, this.#workspace.inputPath) ||
-        (await idaFileDigest(this.#workspace.inputPath)) !==
-          this.#workspace.inputSha256
+        this.target.kind === "database"
+          ? metadata.idb_path === null ||
+            !sameIdaHostPath(metadata.idb_path, this.#workspace.inputPath)
+          : !sameIdaHostPath(metadata.input_path, this.#workspace.inputPath) ||
+            (this.#hexRaysOpenedBackend === "idat" &&
+              (metadata.idb_path === null ||
+                !this.#workspace.containsPath(metadata.idb_path))) ||
+            (metadata.input_sha256 != null &&
+              metadata.input_sha256.toLowerCase() !==
+                this.#workspace.inputSha256) ||
+            (await idaFileDigest(this.#workspace.inputPath)) !==
+              this.#workspace.inputSha256
       )
         throw new IdaIdentityRefusal(
           "IDA headless input identity changed after target admission.",
@@ -847,14 +1050,14 @@ export class IdaSessionClient implements AnalysisClient {
     if (
       !this.#openAttempted ||
       this.#workspace === undefined ||
-      this.#openRejected
+      this.#openOutcome === "no_worker"
     )
       return undefined;
     return this.#databaseCloseCompleted
       ? []
       : [
           {
-            session_id: this.#workspace.sessionId,
+            session_id: this.#expectedSession ?? "",
             backend: "worker",
             owned: null,
             input_path: null,
@@ -876,22 +1079,27 @@ export class IdaSessionClient implements AnalysisClient {
   #recordBlockingSessions(
     entries: readonly (UpstreamSession & { readonly owned: boolean })[],
   ): boolean {
-    this.#blockingSessions =
-      entries.length > 0
-        ? entries.map(
-            ({ session_id, backend, owned, input_path, is_active }) => ({
-              session_id,
-              backend,
-              owned,
-              input_path,
-              is_active,
-            }),
-          )
-        : undefined;
+    this.#blockingSessions = entries.length > 0 ? entries : undefined;
     return entries.length > 0;
   }
 
-  async #closeDatabase(database: string): Promise<void> {
+  /** Release the session; false when upstream rejected the release and only inventory can settle it. */
+  async #closeDatabase(database: string): Promise<boolean> {
+    if (idaCompatibilityProfile(this.config).protocol === "hexrays") {
+      try {
+        this.#hexRaysCloseReceipt = hexRaysCloseSchema.parse(
+          await this.connection.call("close_database", {
+            instance_id: database,
+          }),
+        );
+        return true;
+      } catch (cause: unknown) {
+        // A rejected release, such as an already reaped or busy lease, is
+        // settled by the inventory read that follows and retried otherwise.
+        if (!(cause instanceof IdaToolRejection)) throw cause;
+        return false;
+      }
+    }
     const response = await this.connection.call("idb_close", {
       database,
       save: false,
@@ -900,7 +1108,7 @@ export class IdaSessionClient implements AnalysisClient {
     if (!closed.success) {
       if (!absentDatabaseCloseSchema(database).safeParse(response).success)
         throw closed.error;
-      return;
+      return true;
     }
     if (
       closed.data.session_id !== database ||
@@ -911,6 +1119,7 @@ export class IdaSessionClient implements AnalysisClient {
       throw new AnalysisProtocolError(
         "IDA database close did not confirm the requested owned, unsaved session release.",
       );
+    return true;
   }
 
   async #closeOnce(): Promise<Result<null, AnalysisError>> {
@@ -918,17 +1127,23 @@ export class IdaSessionClient implements AnalysisClient {
     await this.#tail;
     if (this.#closed) return ok(null);
     try {
-      if (this.#workspace !== undefined && this.#openAttempted) {
+      const workspace = this.#workspace;
+      if (workspace !== undefined && this.#openAttempted) {
         if (this.#database === undefined) {
-          const inventory = databaseListSchema.parse(
-            await this.connection.call("idb_list", {}),
-          );
-          const workspace = this.#workspace;
+          const inventory = await this.#inventory(workspace);
+          const expected = this.#expectedSession;
+          // REA's own Hex-Rays stdio server leases only what REA opened, so a
+          // late lease on the private input is REA's even without a reply id.
+          const adoptByPath =
+            expected === undefined &&
+            idaCompatibilityProfile(this.config).protocol === "hexrays";
           this.#database = inventory.sessions.find(
             (entry) =>
               entry.owned &&
               entry.backend === "worker" &&
-              entry.session_id === workspace.sessionId &&
+              (this.#hexRaysOpenedBackend === undefined ||
+                entry.hexrays_backend === this.#hexRaysOpenedBackend) &&
+              (entry.session_id === expected || adoptByPath) &&
               sameIdaHostPath(entry.input_path, workspace.inputPath),
           )?.session_id;
           // Every same-input session and any entry under the requested ID,
@@ -937,8 +1152,7 @@ export class IdaSessionClient implements AnalysisClient {
           const blocked = this.#recordBlockingSessions(
             inventory.sessions.filter(
               (entry) =>
-                entry.session_id === workspace.sessionId ||
-                sameIdaHostPath(entry.input_path, workspace.inputPath),
+                entry.session_id === expected || entry.referencesWorkspace,
             ),
           );
           if (this.#database === undefined && blocked)
@@ -947,40 +1161,44 @@ export class IdaSessionClient implements AnalysisClient {
             );
           if (
             this.#database === undefined &&
-            this.#openCompleted &&
-            !this.#openRejected
+            this.#openOutcome === "reply_received"
           )
             throw new AnalysisProtocolError(
               "IDA open returned without a verified private worker binding. An empty session inventory does not prove that its Worker exited; the private workspace was retained.",
             );
         }
         if (this.#database !== undefined) {
-          if (!this.#databaseCloseCompleted) {
-            await this.#closeDatabase(this.#database);
+          if (
+            !this.#databaseCloseCompleted &&
+            (await this.#closeDatabase(this.#database))
+          ) {
             this.#databaseCloseCompleted = true;
             this.#forgetReleasedSession(this.#database);
           }
-          const inventory = databaseListSchema.parse(
-            await this.connection.call("idb_list", {}),
-          );
+          const inventory = await this.#inventory(workspace);
           const remaining = inventory.sessions.filter(
             (entry) =>
-              !isReleasedWorkerRow(entry) &&
+              !entry.released &&
               (entry.session_id === this.#database ||
-                sameIdaHostPath(
-                  entry.input_path,
-                  this.#workspace?.inputPath ?? "",
-                )),
+                entry.referencesWorkspace),
           );
           if (this.#recordBlockingSessions(remaining))
             throw new AnalysisProtocolError(
               "IDA worker remains registered after close.",
             );
+          // An unconfirmed close is settled once inventory shows the release.
+          this.#databaseCloseCompleted = true;
           this.#database = undefined;
         }
-        if (!this.#openCompleted)
+        if (this.#openOutcome === "unverified")
           throw new AnalysisProtocolError(
-            "IDA database open did not return a completed response. Worker inventory cannot prove that the request has stopped; the private workspace was retained.",
+            "IDA worker startup remains unverified. A worker may still be starting even when inventory is empty. The private workspace was retained.",
+            {
+              diagnostics: {
+                recovery:
+                  "Check the upstream IDA worker and confirm it has stopped before manually removing the retained workspace. See docs/providers/ida-provider.md.",
+              },
+            },
           );
         this.#openAttempted = false;
       }
@@ -995,6 +1213,7 @@ export class IdaSessionClient implements AnalysisClient {
         path,
         cause,
         this.#unreleasedSessions(),
+        this.#hexRaysCloseReceipt,
       );
       const client = this;
       // The failure reads this client's later successful close.

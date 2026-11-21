@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,6 +13,48 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 describe.skipIf(process.platform !== "darwin")(
   "native plist CLI selection",
   () => {
+    cliTest(
+      "inspects an outside plist only as its own target",
+      async ({ cli }) => {
+        const directory = await createTestTempDirectory("rea-plist-cli-scope-");
+        const app = join(directory, "Example.app");
+        const info = join(app, "Contents/Info.plist");
+        const outside = join(directory, "Outside.plist");
+        await mkdir(join(app, "Contents"), { recursive: true });
+        await writeFile(info, "<plist><dict/></plist>");
+        const bytes =
+          "<plist><dict><key>Marker</key><string>standalone</string></dict></plist>";
+        await writeFile(outside, bytes);
+        const scoped = await cli.run({
+          arguments: [
+            "inspect-plist",
+            app,
+            "--relative-path",
+            outside,
+            "--json",
+          ],
+        });
+        expect(scoped.exitCode).toBe(1);
+        expect(scoped.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [{ path: ["relativePath"], reason: "invalid_value" }],
+          },
+        });
+        const standalone = await cli.run({
+          arguments: ["inspect-plist", outside, "--json"],
+        });
+        expect(standalone.exitCode, standalone.stderr).toBe(0);
+        expect(standalone.json).toMatchObject({
+          normalized_result: {
+            source_path: outside,
+            source_sha256: createHash("sha256").update(bytes).digest("hex"),
+            value: { Marker: "standalone" },
+          },
+        });
+      },
+    );
+
     // Targets are app-relative: the bundle, its program file, or a plist file.
     cliTest.for([
       ["default", "", undefined, "default"],
@@ -189,6 +232,9 @@ describe.skipIf(process.platform !== "darwin")(
           normalized_result: {
             format,
             source_path: plist,
+            source_sha256: createHash("sha256")
+              .update(await readFile(plist))
+              .digest("hex"),
             value:
               dataRoot || emptyData
                 ? { $plist_type: "data", base64: emptyData ? "" : "3q2+7w==" }

@@ -1362,6 +1362,13 @@ resource readers remain read-only within the selected bundle.
 `inspect_plist` requires an open binary or bundle-resource session. An explicit
 `path` selects a plist in that context and does not create a session;
 `binary_session` reports `target_required` while neither session is open.
+`source_sha256` records the SHA-256 of the plist bytes read. While an
+executable is open, the Evidence subject remains that program.
+REA writes a private temporary copy for the native commands and leaves the
+selected plist untouched. The tool advertises the temporary filesystem write.
+An app-bundle or resource-only session accepts only plists that resolve inside
+its root. To inspect an outside plist, open the plist itself with `open_binary`
+or pass its path directly to the CLI.
 Use `open_bundle_resources` for a bundle whose executable cannot be resolved.
 When `path` is omitted and the open target is itself a plist, a plist that
 cannot be read or decoded is reported against that target
@@ -1776,11 +1783,8 @@ failing owner supports runtime recovery; `inspect_analysis_settings` is optional
 when those facts are supplied. Updates are atomic, apply to new work, survive
 target close/open, and vanish when REA exits. Explicit per-call arguments take
 precedence. Neither tool changes host deadlines or resolves retained cleanup.
-See [runtime settings and recovery](../design/limits-and-recovery.md#runtime-settings-through-mcp)
-for the full setting list, reset/revision semantics and ASAR retry example.
-For implementation ownership, accepted-operation snapshots, provider wiring,
-and extension guidance, see the
-[maintainer design](../design/limits-and-recovery.md#ownership-and-data-flow).
+See [runtime settings and recovery](limits-and-recovery.md#runtime-settings-through-mcp)
+for inspection, reset and revision semantics and an ASAR retry example.
 
 Ghidra and Hopper startup updates apply to the next startup attempt without
 restarting REA. Ghidra decompile timeout updates apply on the existing Program.
@@ -1870,10 +1874,11 @@ deadline still applies. Choose the total budget for the expected workload;
 neither server configuration nor progress can override a remote caller's
 deadline.
 
-The 240-second setting is a measured example, not a universal timeout: a
-controlled Linux x64/WSL2 fixture took about 64 seconds for its first overview
-with Ghidra 12.1.4 on a mounted NTFS installation, native JDK 21, two CPUs, and a
-512 MiB Java heap. Target size, storage, and analysis work can change that time.
+The 240-second setting is a measured example, not a universal timeout. Recorded
+on Ghidra 12.1.4 with native JDK 21 (no longer accepted); not yet re-run on
+12.2. A controlled Linux x64/WSL2 fixture took about 64 seconds for its first
+overview on a mounted NTFS installation, with two CPUs and a 512 MiB Java heap.
+Target size, storage, and analysis work can change that time.
 Configure the deadline in the caller's existing request settings; it is not a
 tool argument, setup grant, or server-side automatic extension. CLI analysis has
 no MCP client request deadline, but keeps the provider startup deadline and
@@ -1904,8 +1909,9 @@ connection cannot apply a changed launch environment. See the
 
 This close/reopen flow was exercised on one real Linux stdio connection after a
 controlled startup timeout, followed by a successful overview and function
-analysis. A separate Windows x64 stdio run with Ghidra 12.1.4, JDK 21 and Node
-22.19.0 exercised the same connection and caller-selected native PE: the default
+analysis. Recorded on Ghidra 12.1.4 with JDK 21 (no longer accepted); not yet
+re-run on 12.2. A separate Windows x64 stdio run with Node 22.19.0 exercised the
+same connection and caller-selected native PE: the default
 60-second client request timed out, close succeeded, and reopening before a
 240-second request completed the cold overview in about 163 seconds. The next
 overview took about 19 ms. The cold and warm overviews reported two procedures

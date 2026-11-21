@@ -116,84 +116,12 @@ it("rejects non-absolute deep-link values", () => {
   expect(result.success).toBe(false);
 });
 
-it("keeps long Electron arguments and deep-link URLs intact", () => {
-  const longArgument = "x".repeat(5_000);
-  const longUrl = `rea-fixture://open/${"item".repeat(2_000)}`;
-  const longStepId = "step".repeat(100);
-  const input = electronActiveObservationInputSchema.parse({
-    executable_path: "/opt/electron",
-    application_path: "/opt/app/main.js",
-    application_root: "/opt/app",
-    args: [longArgument],
-    actions: [
-      {
-        step_id: longStepId,
-        kind: "deep-link",
-        delivery: "open-url",
-        url: longUrl,
-      },
-    ],
-  });
-
-  expect(input.args).toEqual([longArgument]);
-  expect(input.actions[0]).toMatchObject({
-    step_id: longStepId,
-    url: longUrl,
-  });
-  expect(
-    electronActiveObservationResultSchema.parse({
-      ...createElectronActiveObservationFixtureResult("/opt/app"),
-      actions: [
-        {
-          step_id: longStepId,
-          kind: "deep-link",
-          window_index: null,
-          target: null,
-          status: "completed",
-          elapsed_ms: 0,
-          error: null,
-        },
-      ],
-    }).actions[0]?.step_id,
-  ).toBe(longStepId);
-});
-
-it("preserves local Playwright action diagnostics", async () => {
-  const selector = "#secret-selector";
-  const input = electronActiveObservationInputSchema.parse({
-    executable_path: "/opt/electron",
-    application_path: "/opt/app/main.js",
-    application_root: "/opt/app",
-    actions: [{ step_id: "click-step", kind: "click", selector }],
-  });
-  const page = {
-    locator: () => ({
-      click: async () => {
-        throw new Error(`locator ${selector} failed with token=raw-secret`);
-      },
-    }),
-  };
-  const application = {
-    windows: () => [page],
-    browserWindow: fixtureBrowserWindow,
-  };
-
-  const { actions: result } = await runElectronActions(
-    application as never,
-    input,
-    {},
-    new ArtifactResourceScope(),
-  );
-
-  expect(result[0]).toMatchObject({
-    status: "failed",
-    error: `locator ${selector} failed with token=raw-secret`,
-  });
-});
-
 it("keeps a completed action failure primary when cancellation arrives before its result is consumed", async () => {
   const controller = new AbortController();
-  const primary = new Error("selected locator failed");
+  const selector = "#selected";
+  const primary = new Error(
+    `locator ${selector} failed with token=raw-secret ${"detail ".repeat(300)}`,
+  );
   const page = {
     locator: () => ({
       click: () => {
@@ -210,13 +138,17 @@ it("keeps a completed action failure primary when cancellation arrives before it
     electronActiveObservationInputSchema.parse({
       executable_path: "/opt/electron",
       application_path: "/opt/app/main.js",
-      actions: [{ step_id: "failed", kind: "click", selector: "#selected" }],
+      actions: [{ step_id: "failed", kind: "click", selector }],
     }),
     { signal: controller.signal },
     new ArtifactResourceScope(),
   );
   expect(controller.signal.aborted).toBe(true);
-  expect(result.actions[0]).toMatchObject({
+  const capture = electronActiveObservationResultSchema.parse({
+    ...createElectronActiveObservationFixtureResult("/opt/app"),
+    actions: result.actions,
+  });
+  expect(capture.actions[0]).toMatchObject({
     status: "failed",
     error: primary.message,
   });
@@ -245,63 +177,23 @@ it.each(["raw action failure", ""])(
   },
 );
 
-it("retains complete action errors and Electron window text", async () => {
-  const longError = `locator failed ${"detail ".repeat(300)}`;
-  const input = electronActiveObservationInputSchema.parse({
-    executable_path: "/opt/electron",
-    application_path: "/opt/app/main.js",
-    application_root: "/opt/app",
-    actions: [{ step_id: "click-step", kind: "click", selector: "#run" }],
-  });
-  const page = {
-    locator: () => ({
-      click: async () => Promise.reject(new Error(longError)),
-    }),
-  };
-  const { actions } = await runElectronActions(
-    { windows: () => [page], browserWindow: fixtureBrowserWindow } as never,
-    input,
-    {},
-    new ArtifactResourceScope(),
-  );
-  const result = createElectronActiveObservationFixtureResult("/opt/app");
-  const longUrl = `file://${"/segment".repeat(10_000)}`;
-  const longTitle = "title".repeat(4_000);
-
-  expect(actions[0]?.error).toBe(longError);
-  expect(
-    electronActiveObservationResultSchema.parse({
-      ...result,
-      windows: [{ ...result.windows[0], url: longUrl, title: longTitle }],
-      actions: [
-        {
-          step_id: "click-step",
-          kind: "click",
-          window_index: 0,
-          target: "window:0",
-          status: "failed",
-          elapsed_ms: 1,
-          error: longError,
-        },
-      ],
-    }).windows[0],
-  ).toMatchObject({ url: longUrl, title: longTitle });
-});
-
 it("accepts complete Electron input and observation strings", () => {
   const longText = "evidence-".repeat(3_000);
   const longPath = `/opt/${"directory/".repeat(2_000)}app`;
+  const longLink = `custom://${longText}`;
+  const longWindowUrl = `file://${longPath}`;
   const input = electronActiveObservationInputSchema.parse({
     executable_path: longPath,
     application_path: `${longPath}/main.js`,
     application_root: longPath,
+    args: [longText],
     actions: [
       { step_id: longText, kind: "click", selector: longText },
       {
         step_id: longText,
         kind: "deep-link",
         delivery: "open-url",
-        url: `custom://${longText}`,
+        url: longLink,
       },
     ],
   });
@@ -341,7 +233,7 @@ it("accepts complete Electron input and observation strings", () => {
         ...fixture.windows[0],
         window_id: longText,
         web_contents_id: longText,
-        url: longText,
+        url: longWindowUrl,
         title: longText,
       },
     ],
@@ -362,12 +254,18 @@ it("accepts complete Electron input and observation strings", () => {
     limitations: [longText],
   });
 
+  expect(input.args).toEqual([longText]);
   expect(input.actions[0]?.step_id).toBe(longText);
+  expect(input.actions[1]).toMatchObject({ url: longLink });
   expect(input.actions[0]?.kind === "click" && input.actions[0].selector).toBe(
     longText,
   );
   expect(result.ipc.events[0]?.channel).toBe(longText);
-  expect(result.windows[0]?.title).toBe(longText);
+  expect(result.actions[0]?.step_id).toBe(longText);
+  expect(result.windows[0]).toMatchObject({
+    url: longWindowUrl,
+    title: longText,
+  });
   expect(result.limitations[0]).toBe(longText);
 });
 
@@ -621,31 +519,28 @@ const gatedStateApplication = () => {
   };
 };
 
-it("returns a final state read that settles in the grace period after cancellation during the read", async () => {
-  vi.useFakeTimers();
-  const controller = new AbortController();
-  const { application, release } = gatedStateApplication();
+it.each(["before", "during"] as const)(
+  "returns final state released in the grace period after cancellation %s the read",
+  async (phase) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const { application, release } = gatedStateApplication();
 
-  const state = readFinalApplicationState(application, controller.signal);
-  controller.abort();
-  await vi.advanceTimersByTimeAsync(1_000);
-  release();
+    if (phase === "before") controller.abort();
+    const state = readFinalApplicationState(
+      application,
+      controller.signal,
+    ).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    if (phase === "during") controller.abort();
+    await vi.advanceTimersByTimeAsync(1_000);
+    release();
 
-  await expect(state).resolves.toEqual(finalState);
-});
-
-it("returns a final state read that settles in the grace period when cancellation preceded it", async () => {
-  vi.useFakeTimers();
-  const controller = new AbortController();
-  controller.abort();
-  const { application, release } = gatedStateApplication();
-
-  const state = readFinalApplicationState(application, controller.signal);
-  await vi.advanceTimersByTimeAsync(1_000);
-  release();
-
-  await expect(state).resolves.toEqual(finalState);
-});
+    expect(await state).toEqual({ value: finalState });
+  },
+);
 
 it("observes an operation abandoned by an already-cancelled signal", async () => {
   const unhandled: unknown[] = [];
@@ -662,13 +557,14 @@ it("observes an operation abandoned by an already-cancelled signal", async () =>
       reject = rejectOperation;
     });
 
-    await expect(
-      runWithExecutionLimits(operation, controller.signal),
-    ).rejects.toMatchObject({
+    const interrupted = runWithExecutionLimits(operation, controller.signal);
+    await expect(interrupted).rejects.toMatchObject({
       _tag: "BrowserObservationError",
       reason: "cancelled",
-      cause: reason,
     });
+    const failure: unknown = await interrupted.catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).cause).toBe(reason);
     reject(new Error("application closed during cleanup"));
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));

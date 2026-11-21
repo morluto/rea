@@ -52,8 +52,9 @@ jobs:
           packages=(--yes --no-install-recommends ca-certificates git python3-venv gcc libc6-dev strace gdb)
           # Fail on stale or partial indexes. Bound network acquisition
           # separately so an interrupted download never interrupts dpkg.
-          timeout --kill-after=5s 90s \
-            apt-get -o Acquire::Retries=2 --error-on=any update -qq || {
+          # Package installation does not consume translated descriptions.
+          timeout --kill-after=5s 150s \
+            apt-get -o Acquire::Retries=2 -o Acquire::Languages=none --error-on=any update || {
               status=$?
               echo "::error::Recorded-crash APT index refresh failed (exit ${status})"
               exit "$status"

@@ -223,6 +223,7 @@ const providerClient = () => {
     sha256: "a".repeat(64),
     kind: "database",
     format: "analysis-database",
+    databaseEngine: "hopper",
   });
 };
 const nameRow = { address: "0x10", value: "main", provider_metadata: { n: 1 } };

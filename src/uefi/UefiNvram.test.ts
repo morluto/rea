@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { expect, it } from "vitest";
+import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { scanAmiNvramStores } from "./UefiNvram.js";
 
 const NVAR_MAGIC = Buffer.from("NVAR", "ascii");
@@ -109,14 +110,13 @@ it("reports partial coverage when a nested chain exceeds max_depth", () => {
 });
 
 it("returns partial NVAR coverage when a single store exhausts the record limit", () => {
+  const { scanRecords } = UEFI_FIRMWARE_LIMITS;
   const record = encodeEntry("A", Buffer.alloc(0), 0);
-  const image = Buffer.alloc(100_001 * record.length);
-  for (let offset = 0; offset < image.length; offset += record.length)
-    record.copy(image, offset);
+  const image = Buffer.alloc((scanRecords + 1) * record.length, record);
   const result = scanAmiNvramStores(image, 1, 1);
   expect(result.coverage).toBe("partial");
   expect(result.limitations[0]).toContain("Structural record limit");
-  expect(result.stores[0]?.variables.length).toBe(100_000);
+  expect(result.stores[0]?.variables.length).toBe(scanRecords);
 });
 
 it("preserves a named record's link to a data-only entry without inventing a GUID index", () => {
@@ -221,4 +221,74 @@ it("finds the first active child after an inactive prefix without leaving its co
   const limited = scanAmiNvramStores(data, 16, 0);
   expect(limited.coverage).toBe("partial");
   expect(limited.limitations.join(" ")).toContain("max_depth 0");
+});
+
+it.each([1, 2, 3])(
+  "reports a %i-byte signature prefix at an established record boundary",
+  (length) => {
+    const first = encodeEntry("First", Buffer.alloc(0), 0);
+    const image = Buffer.concat([first, NVAR_MAGIC.subarray(0, length)]);
+    const scan = scanAmiNvramStores(image, 16, 2);
+    expect(scan.stores[0]?.variables.map(({ name }) => name)).toEqual([
+      "First",
+    ]);
+    expect(scan.coverage).toBe("partial");
+    expect(scan.limitations.join(" ")).toContain(
+      "incomplete or invalid extent",
+    );
+  },
+);
+
+it("marks a complete nested signature with a truncated first record as uncertain", () => {
+  const child = encodeEntry("Child", Buffer.alloc(0), 0);
+  const image = encodeEntry("Outer", child.subarray(0, 7), 0);
+  const scan = scanAmiNvramStores(image, 16, 2);
+  expect(scan.stores[0]?.variables.map(({ name }) => name)).toEqual(["Outer"]);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.limitations.join(" ")).toContain("Possible nested NVAR record");
+});
+
+it("charges malformed discovery candidates against the structural record limit", () => {
+  const first = encodeEntry("First", Buffer.alloc(0), 0);
+  const malformed = Buffer.concat([NVAR_MAGIC, Buffer.alloc(6)]);
+  const malformedCandidates = Buffer.alloc(
+    UEFI_FIRMWARE_LIMITS.scanRecords * malformed.length,
+    malformed,
+  );
+  const image = Buffer.concat([
+    first,
+    Buffer.from([0xff]),
+    malformedCandidates,
+    encodeEntry("Later", Buffer.alloc(0), 0),
+  ]);
+  const scan = scanAmiNvramStores(image, 16, 2);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.limitations.at(-1)).toContain("Structural record limit");
+  expect(scan.stores.map(({ name }) => name)).toEqual(["First"]);
+});
+
+it("does not spend a second discovery slot on an already examined invalid successor", () => {
+  const record = encodeEntry("First", Buffer.alloc(0), 0);
+  const firstStore = Buffer.alloc(
+    (UEFI_FIRMWARE_LIMITS.scanRecords - 2) * record.length,
+    record,
+  );
+  const invalidSuccessor = Buffer.concat([NVAR_MAGIC, Buffer.alloc(6)]);
+  const firstEnd = firstStore.length;
+  const laterOffset = firstEnd + invalidSuccessor.length;
+  const later = encodeEntry("Later", Buffer.alloc(0), 0);
+  const result = scanAmiNvramStores(
+    Buffer.concat([firstStore, invalidSuccessor, later]),
+    2,
+    1,
+  );
+
+  expect(result.stores.map(({ offset, name }) => [offset, name])).toEqual([
+    [0, "First"],
+    [laterOffset, "Later"],
+  ]);
+  expect(result.coverage).toBe("partial");
+  expect(result.limitations).toEqual([
+    `NVAR record at 0x${firstEnd.toString(16)} has an incomplete or invalid extent.`,
+  ]);
 });

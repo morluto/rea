@@ -11,7 +11,8 @@ import {
 const SUMMARY_BUDGET = NATIVE_AOT_MAX_REPORT_BYTES;
 
 const linkedTableFixture = (shape: "deep" | "wide" | "interfaces") => {
-  const count = shape === "interfaces" ? 4 : 24;
+  // Deep and wide graphs cross the initial 128-row index allocation.
+  const count = shape === "interfaces" ? 4 : 130;
   const bytes = Buffer.alloc(0xa00 + count * 64);
   nativeAotPeFixture().copy(bytes);
   const data = 0x98 + 0xf0 + 40;

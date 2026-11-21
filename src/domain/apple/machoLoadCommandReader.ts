@@ -29,7 +29,7 @@ import type {
 } from "./dylibResolution.js";
 import { machoArchitectureName } from "./machoCpuIdentity.js";
 import {
-  MACHO_VERSION_MIN_PLATFORMS,
+  classifyMachoVersionMinCommand,
   legacyMachoPlatform,
 } from "./machoPlatform.js";
 import {
@@ -236,7 +236,7 @@ const readSliceMagic = async (
   offset: number,
 ): Promise<number | null> => {
   const bytes = await readAt(offset, 4);
-  return bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false);
+  return readMachoHeaderPrefixFacts(bytes).magic;
 };
 
 /** Decode every slice's dylib-loading load commands without reading code. */
@@ -765,14 +765,18 @@ const decodeCommand = (
     slice.platforms.push(platform);
     return;
   }
-  const legacyPlatform = MACHO_VERSION_MIN_PLATFORMS.get(command);
-  if (legacyPlatform !== undefined) {
-    if (body.byteLength < 16)
+  const versionMin = classifyMachoVersionMinCommand(command, body.byteLength);
+  if (versionMin !== null) {
+    if (versionMin.kind !== "exact")
       throw machoIssue(
         "malformed",
-        `load command ${index} is too short for a version-min command`,
+        versionMin.kind === "truncated"
+          ? `load command ${index} is too short for a version-min command`
+          : `load command ${index} is too long for a version-min command`,
       );
-    slice.platforms.push(legacyMachoPlatform(legacyPlatform, slice.cpu_type));
+    slice.platforms.push(
+      legacyMachoPlatform(versionMin.platform, slice.cpu_type),
+    );
     return;
   }
   if (command === LC.LAZY_LOAD_DYLIB_INFO)
@@ -794,14 +798,17 @@ const decodeLazyLoadDylibInfoCommand = (
   body: Uint8Array,
   index: number,
 ): LazyLoadDylibInfoCommand => {
-  if (body.byteLength < 16)
+  const data = readMachoLinkeditDataCommand(
+    LC.LAZY_LOAD_DYLIB_INFO,
+    body,
+    true,
+  );
+  if (data === null)
     throw machoIssue(
       "malformed",
       `load command ${index} is too short for LC_LAZY_LOAD_DYLIB_INFO`,
     );
-  const reader = machoWordReader(body, true);
-  const dataOffset = reader.u32(8);
-  const dataSize = reader.u32(12);
+  const { dataOffset, dataSize } = data;
   if (dataSize < LAZY_INFO_HEADER_BYTES)
     throw machoIssue(
       "malformed",

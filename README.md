@@ -227,7 +227,7 @@ Additional tools and host support depend on the target:
 | JEB projects            | Engine-backed project units, artifact digests and type/method pseudo-code                         | A caller-started JEB client serving MCP, selected with REA_JEB_MCP_URL; [JEB guide](docs/providers/jeb-analysis.md)                                                  |
 | Android resources       | Decoded manifest, string tables, locales and version facts                                        | Caller-supplied Apktool launcher; [resource guide](docs/guides/android/apktool-resource-analysis.md)                                                                 |
 | Flutter apps            | Dart snapshot hash, per-ABI library digests and engine build provenance                           | None (static APK parsing); [Flutter guide](docs/guides/android/flutter-analysis.md)                                                                                  |
-| Firmware                | Regions, extraction results and native-analysis handoffs                                          | Binwalk / Unblob on Linux; [firmware guide](docs/guides/firmware/firmware-analysis.md)                                                                               |
+| Firmware                | Regions, extraction results and native-analysis handoffs                                          | Bundled UEFI/NVAR; external Binwalk/Unblob on Linux; [firmware guide](docs/guides/firmware/firmware-analysis.md)                                                     |
 | Recorded packets        | Selected fields, repeated values, filters and decode-as rules                                     | Linux: TShark 4.x + prlimit; [capture guide](docs/guides/data/packet-captures.md)                                                                                    |
 | Packet summaries        | Endpoints, DNS, TLS SNI, protocol distribution and HTTP requests                                  | Caller-supplied tshark and capinfos (Linux-verified); [pcap guide](docs/guides/data/pcap-analysis.md)                                                                |
 | Recorded logic signals  | Decoder annotations, sample ranges and diagnostics                                                | Linux: sigrok-cli 0.7.2 + prlimit; [signal recordings](docs/guides/signals/signal-recordings.md)                                                                     |
@@ -462,7 +462,6 @@ For exact options, prerequisites and result contracts:
 - [CLI and Evidence](docs/getting-started/cli.md): commands, provider selection, snapshots, import/export and exit statuses.
 - [MCP contracts](docs/reference/mcp-contracts.md) and [agent prompts](docs/getting-started/mcp-prompts.md): tool results, sessions and guided investigations.
 - [Tool catalog](docs/reference/mcp-contracts.md#generated-catalog): generated inventory of tools, providers and CLI commands.
-- [Roadmap](docs/development/roadmap.md): planned work and capability trackers.
 
 Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
@@ -496,9 +495,8 @@ We'd love your help with REA! [Open an issue](https://github.com/morluto/rea/iss
 report a bug or suggest a feature, or [send a pull request](https://github.com/morluto/rea/pulls)
 to improve the code or docs.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks,
-[testing](docs/development/testing.md) for verification lanes, and the
-[architecture map](docs/architecture/architecture.mermaid) for selected layers and dependency paths.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks. See the
+[testing guide](docs/development/testing.md) for verification lanes.
 
 ## License
 

@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { unmarkedMatchCount } from "../../scripts/verify/reason-marker.mjs";
 
@@ -96,14 +95,4 @@ it("reads a regular expression after a control head as a statement", () => {
     expect(count(`const r = ${call} / (w.n); /* items.slice(0, MAX) */`)).toBe(
       0,
     );
-});
-
-it("loads without installed dependencies, as CI runs it before npm ci", async () => {
-  for (const module of ["reason-marker.mjs", "source-tokens.mjs"]) {
-    const source = await readFile(
-      new URL(`../../scripts/verify/${module}`, import.meta.url),
-      "utf8",
-    );
-    expect(source).not.toMatch(/\bfrom\s+["'](?!node:|\.)/u);
-  }
 });

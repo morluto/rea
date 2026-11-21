@@ -330,7 +330,17 @@ test.for(["handoff", "not-found"] as const)(
                 : "provider_unavailable",
             details:
               launchMode === "handoff"
-                ? { timeout_ms: startupTimeoutMs, launcher: { exit_code: 0 } }
+                ? {
+                    timeout_ms: startupTimeoutMs,
+                    launcher: {
+                      // The receipt proves launch. The deadline snapshot may
+                      // precede delivery of the successful child exit event.
+                      exit_code: expect.toSatisfy(
+                        (exitCode: unknown) =>
+                          exitCode === null || exitCode === 0,
+                      ),
+                    },
+                  }
                 : { stage: "launch", launcher: { exit_code: 3 } },
           },
         },

@@ -167,7 +167,7 @@ must also satisfy the new admission. For CLI or future MCP processes, set
 `REA_ASAR_MAX_HEADER_BYTES` in the launch environment. Changing that environment
 requires a new REA process. Invalid launch values are configuration errors,
 never a silent fallback. See the
-[settings design](../../design/limits-and-recovery.md#failure-and-retry) for recovery
+[analysis settings and recovery](../../reference/limits-and-recovery.md#failure-and-retry) for recovery
 metadata, precedence, and reset behavior.
 
 The archive index is read before any member can be selected, so
@@ -579,9 +579,6 @@ prefix is never presented as a complete stable fingerprint.
 
 ## Cached-data compilation boundaries
 
-The [feature specification](../../specs/javascript/v8-cached-data/spec.md) defines
-the static admission and uncertainty contract.
-
 A `node:vm` compilation reports whether `cachedData` is declared, absent or
 unknown. Explicitly supplied undefined bytes are treated as absent; shadowed
 identifiers remain declarations. Source syntax alone does not establish valid cache bytes, V8 acceptance
@@ -962,7 +959,7 @@ analyzer; the caller's `NODE_OPTIONS` still controls the CLI/MCP process heap.
 For defaults across new MCP operations, use `update_analysis_settings` with
 `javascript.max_heap_mb` or `javascript.analysis_timeout_ms`. Explicit per-call
 arguments take precedence, and accepted work keeps its original settings. See
-the [settings design](../../design/limits-and-recovery.md#precedence-and-lifetime).
+the [analysis settings and recovery](../../reference/limits-and-recovery.md#precedence-and-lifetime).
 V8 old-space limits do not impose a process RSS limit. When REA runs on Bun,
 the analyzer ignores the V8 heap flags; resource failures then report
 `worker_heap_limit_bytes` as null instead of a requested or V8-reported limit.

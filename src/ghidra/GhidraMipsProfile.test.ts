@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ok } from "../domain/result.js";
@@ -450,11 +450,15 @@ const session = async (
   const resolved = await ghidra.resolveAnalysisProfile(profileFor);
   if (!resolved.ok || resolved.value.profile === null)
     throw new Error("expected a MIPS profile");
-  return {
-    counts,
-    profile: resolved.value.profile,
-    client: ghidra.createClient(value, resolved.value.profile),
-  };
+  const client = ghidra.createClient(value, resolved.value.profile);
+  onTestFinished(async () => {
+    try {
+      await client.close();
+    } finally {
+      await ghidra.closeOwnedResources();
+    }
+  });
+  return { counts, profile: resolved.value.profile, client };
 };
 
 describe("legacy profile bindings", () => {
@@ -913,13 +917,23 @@ describe("MIPS32 shared-image profile", () => {
 });
 
 describe("soft-float MIPS storage", () => {
-  it("admits soft-float o32 and commits its storage policy only for it", async () => {
+  it("commits the soft-float o32 policy and reports its session outcome", async () => {
     const soft = target(softFloat);
     const ghidra = new GhidraProvider(config, silentLogger, {}, host);
     expect(ghidra.inspectTargetSupport(soft).status).toBe("supported");
-    const { profile } = await session(soft, report);
+    const { profile, client } = await session(soft, report);
     expect(profile.parameters.mips_soft_float_storage).toBe(
       "o32-soft-float-prototype-v1",
+    );
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("model hard-float o32 only"),
+        expect.stringContaining(
+          "5 functions and 1 function-pointer definitions use __rea_soft_float.",
+        ),
+      ]),
     );
     const hard = await session(target(), undefined);
     expect(hard.profile.parameters).not.toHaveProperty(
@@ -943,20 +957,6 @@ describe("soft-float MIPS storage", () => {
       status: "unsupported",
       reason: expect.stringContaining("general flags"),
     });
-  });
-
-  it("reports the prototype outcome as session limitations", async () => {
-    const { client } = await session(target(softFloat), report);
-    const health = await client.execute("health", {});
-    if (!health.ok) throw health.error;
-    expect(health.value.limitations).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("model hard-float o32 only"),
-        expect.stringContaining(
-          "5 functions and 1 function-pointer definitions use __rea_soft_float.",
-        ),
-      ]),
-    );
   });
 
   it("admits relocatable objects under their own lane with coordinate limitations", async () => {
