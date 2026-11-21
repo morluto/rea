@@ -100,7 +100,7 @@ reports partial coverage for incomplete successors.
 ### Decompile UEFI firmware modules into source tree
 
 To reconstruct a navigable source code tree from executable PE32 and TE modules
-across all initialization phases (SEC, PEI, DXE, SMM, APP):
+across all initialization phases (SEC, PEI, DXE, SMM, APP, MISC):
 
 ```sh
 rea decompile-uefi-firmware /path/to/flash.bin /path/to/new-decompiled-tree --json
@@ -121,14 +121,46 @@ Or from MCP:
 }
 ```
 
-The operation maps executable modules, writes their raw payloads, generates C
-entry point scaffolding with sanitized identifiers and EDK2-compatible headers,
-and disassembles instructions using system `llvm-objdump` or `objdump` when
-available. All files are staged and published through REA's `SafeOutputTree` into
-an absent output directory. Modules are organized by execution phase, indexed in
-`firmware_manifest.json`, and summarized with relative links in `README.md`.
-Directory mode is also supported: pass an existing directory path of pre-extracted
-PE/TE binaries to index and organize them into phases.
+#### Inputs and Discovery
+
+The tool accepts two input formats:
+
+1. **Full firmware images**: Local binary flash images (`.bin`, `.rom`, `.cap`, `.FIb`) up to 128 MiB.
+   Volumes, FFS files, and compressed sections are parsed and decoded in-memory.
+2. **Pre-extracted directories**: An existing directory tree containing pre-extracted `.efi`,
+   `.pe`, `.te`, or raw binaries. Directory mode scans recursively, performs bounded 64-byte magic
+   sniffing (checking for PE `MZ` and TE `VZ` headers), ignores files larger than 32 MiB, deterministically
+   sorts modules by path, and classifies them into phases (`SEC`, `PEI`, `DXE`, `SMM`, `APP`, `MISC`) based
+   on directory hierarchy and GUID metadata.
+
+#### Decompilation and Scaffolding
+
+- **Headless Ghidra C Decompilation**: When an authorized Ghidra installation is detected (`ghidraRun` on
+  `PATH` or via `GHIDRA_INSTALL_DIR`), REA runs headless Ghidra with the embedded `ReaDecompileToC.java`
+  script (`CppExporter`) to produce recovered C source code. C output is bounded at 4 MiB per module
+  and a 64 MiB aggregate staging budget.
+- **Phase-Correct Scaffolding Fallback**: When Ghidra is absent or decompilation exceeds budget, REA
+  generates typed C entry point scaffolding adhering to PI and UEFI specifications:
+  - `PEIM`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_PEI_FILE_HANDLE, const EFI_PEI_SERVICES **)`
+  - `PEI_CORE`: `void EFIAPI ModuleEntryPoint(const EFI_SEC_PEI_HAND_OFF *, const EFI_PEI_PPI_DESCRIPTOR *)`
+  - `SEC` / `security-core`: `void EFIAPI ModuleEntryPoint(void *PeiCoreEntryPoint)`
+  - `DXE_CORE`: `void EFIAPI ModuleEntryPoint(void *HobStart)`
+  - `DXE` driver, `SMM`, and `APP`: `EFI_STATUS EFIAPI ModuleEntryPoint(EFI_HANDLE, EFI_SYSTEM_TABLE *)`
+- **Disassembly**: When `include_disassembly` is enabled (default `true`), instructions are disassembled
+  using system `llvm-objdump` (or `objdump`) bounded at 2 MiB per module and 64 MiB total.
+
+#### Output Organization and Evidence
+
+All artifacts are staged in isolated scratch space and published through `SafeOutputTree` into
+the requested absent `output_directory`:
+
+- Per-phase subdirectories (`SEC/`, `PEI/`, `DXE/`, `SMM/`, `APP/`, `MISC/`).
+- Per-module folders named `{guid}_{cleanName}/` containing `{cleanName}.efi`, `{cleanName}.h`, `{cleanName}.c`,
+  and optional `{cleanName}.asm`.
+- `firmware_manifest.json` indexing all modules, relative paths, phase counts, and active limitations.
+- `README.md` markdown table summarizing module metadata with portable relative links.
+- Retained Evidence registers confidence as `"derived"`, reflecting decompiled control flow and reconstructed prototypes.
+- Contract metadata declares `mayDiscardData: true` and `mutatesSession: true`.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
 structural records. Artifact inventory applies the same ceiling to volume

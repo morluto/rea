@@ -29,7 +29,7 @@ export class UefiAnalysisService {
       options,
       uefiRequestSchema,
       this.provider,
-      "observed",
+      operation === "decompile_uefi_firmware" ? "derived" : "observed",
     );
   }
 }

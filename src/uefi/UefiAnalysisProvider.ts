@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { isAbortOf } from "../process/SignalAbort.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   ArtifactResourceScope,
   readStableArtifact,
@@ -99,19 +100,160 @@ interface DiscoveredUefiModule {
   readonly byteLength: number;
 }
 
-const resolveGhidraHeadless = (): string | null => {
-  const candidateDirs = [
-    process.env.GHIDRA_INSTALL_DIR,
-    "/opt/ghidra",
-    "/usr/share/ghidra",
-  ].filter((d): d is string => typeof d === "string" && d.length > 0);
+interface UefiEntryPointScaffolding {
+  readonly typedefs: readonly string[];
+  readonly prototype: string;
+  readonly functionDefinition: string;
+}
 
-  for (const dir of candidateDirs) {
-    const binary = join(dir, "support", "analyzeHeadless");
-    if (existsSync(binary)) {
-      return binary;
+const buildUefiEntryPointScaffolding = (
+  identifier: string,
+  rawName: string,
+  byteLength: number,
+  phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC",
+  typeName?: string,
+): UefiEntryPointScaffolding => {
+  const normType = typeName?.toLowerCase();
+  if (normType === "pei-core") {
+    return {
+      typedefs: [
+        "typedef void* EFI_SEC_PEI_HAND_OFF;",
+        "typedef void* EFI_PEI_PPI_DESCRIPTOR;",
+      ],
+      prototype: `void EFIAPI ${identifier}EntryPoint(const EFI_SEC_PEI_HAND_OFF *SecCoreData, const EFI_PEI_PPI_DESCRIPTOR *PpiList);`,
+      functionDefinition: [
+        `void EFIAPI ${identifier}EntryPoint(`,
+        "    const EFI_SEC_PEI_HAND_OFF *SecCoreData,",
+        "    const EFI_PEI_PPI_DESCRIPTOR *PpiList",
+        ") {",
+        `    // Reconstructed PEI Core EntryPoint scaffolding for ${rawName}`,
+        `    // Size: ${byteLength} bytes`,
+        "    (void)SecCoreData;",
+        "    (void)PpiList;",
+        "}",
+      ].join("\n"),
+    };
+  }
+
+  if (normType === "peim" || (normType === undefined && phase === "PEI")) {
+    return {
+      typedefs: [
+        "typedef int64_t EFI_STATUS;",
+        "typedef void* EFI_PEI_FILE_HANDLE;",
+        "typedef void* EFI_PEI_SERVICES;",
+        "#define EFI_SUCCESS 0",
+      ],
+      prototype: `EFI_STATUS EFIAPI ${identifier}EntryPoint(EFI_PEI_FILE_HANDLE FileHandle, const EFI_PEI_SERVICES **PeiServices);`,
+      functionDefinition: [
+        `EFI_STATUS EFIAPI ${identifier}EntryPoint(`,
+        "    EFI_PEI_FILE_HANDLE FileHandle,",
+        "    const EFI_PEI_SERVICES **PeiServices",
+        ") {",
+        `    // Reconstructed PEIM EntryPoint scaffolding for ${rawName}`,
+        `    // Size: ${byteLength} bytes`,
+        "    EFI_STATUS Status = EFI_SUCCESS;",
+        "    (void)FileHandle;",
+        "    (void)PeiServices;",
+        "    return Status;",
+        "}",
+      ].join("\n"),
+    };
+  }
+
+  if (
+    normType === "security-core" ||
+    (normType === undefined && phase === "SEC")
+  ) {
+    return {
+      typedefs: [],
+      prototype: `void EFIAPI ${identifier}EntryPoint(void *PeiCoreEntryPoint);`,
+      functionDefinition: [
+        `void EFIAPI ${identifier}EntryPoint(`,
+        "    void *PeiCoreEntryPoint",
+        ") {",
+        `    // Reconstructed SEC EntryPoint scaffolding for ${rawName}`,
+        `    // Size: ${byteLength} bytes`,
+        "    (void)PeiCoreEntryPoint;",
+        "}",
+      ].join("\n"),
+    };
+  }
+
+  if (normType === "dxe-core") {
+    return {
+      typedefs: [],
+      prototype: `void EFIAPI ${identifier}EntryPoint(void *HobStart);`,
+      functionDefinition: [
+        `void EFIAPI ${identifier}EntryPoint(`,
+        "    void *HobStart",
+        ") {",
+        `    // Reconstructed DXE Core EntryPoint scaffolding for ${rawName}`,
+        `    // Size: ${byteLength} bytes`,
+        "    (void)HobStart;",
+        "}",
+      ].join("\n"),
+    };
+  }
+
+  return {
+    typedefs: [
+      "typedef int64_t EFI_STATUS;",
+      "typedef void* EFI_HANDLE;",
+      "typedef void* EFI_SYSTEM_TABLE;",
+      "#define EFI_SUCCESS 0",
+    ],
+    prototype: `EFI_STATUS EFIAPI ${identifier}EntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);`,
+    functionDefinition: [
+      `EFI_STATUS EFIAPI ${identifier}EntryPoint(`,
+      "    EFI_HANDLE ImageHandle,",
+      "    EFI_SYSTEM_TABLE *SystemTable",
+      ") {",
+      `    // Reconstructed EntryPoint scaffolding for ${rawName}`,
+      `    // Size: ${byteLength} bytes`,
+      "    EFI_STATUS Status = EFI_SUCCESS;",
+      "    (void)ImageHandle;",
+      "    (void)SystemTable;",
+      "    return Status;",
+      "}",
+    ].join("\n"),
+  };
+};
+
+const resolveGhidraHeadless = (): string | null => {
+  const isWindows = HOST_PLATFORM.platform === "win32";
+  const headlessName = isWindows ? "analyzeHeadless.bat" : "analyzeHeadless";
+  const ghidraRunName = isWindows ? "ghidraRun.bat" : "ghidraRun";
+
+  const envDir = process.env.GHIDRA_INSTALL_DIR;
+  if (typeof envDir === "string" && envDir.length > 0) {
+    const candidate = join(envDir, "support", headlessName);
+    if (existsSync(candidate)) return candidate;
+  }
+
+  const pathEnv = process.env.PATH ?? "";
+  const pathDirs = pathEnv
+    .split(isWindows ? ";" : ":")
+    .filter((p) => p.length > 0);
+  for (const dir of pathDirs) {
+    const directHeadless = join(dir, headlessName);
+    if (existsSync(directHeadless)) return directHeadless;
+
+    const subHeadless = join(dir, "support", headlessName);
+    if (existsSync(subHeadless)) return subHeadless;
+
+    const ghidraRun = join(dir, ghidraRunName);
+    if (existsSync(ghidraRun)) {
+      const fromGhidraRun = join(dir, "support", headlessName);
+      if (existsSync(fromGhidraRun)) return fromGhidraRun;
     }
   }
+
+  const systemCandidates = ["/opt/ghidra", "/usr/share/ghidra"];
+  for (const root of systemCandidates) {
+    const candidate = join(root, "support", headlessName);
+    if (existsSync(candidate)) return candidate;
+  }
+
   return null;
 };
 
@@ -795,9 +937,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       prefix: "rea-uefi-decompile-",
     });
 
+    const ghidraBin = resolveGhidraHeadless();
+
     const MAX_DISASSEMBLY_MODULE_BYTES = 2 * 1024 * 1024;
     const MAX_DISASSEMBLY_TOTAL_BYTES = 64 * 1024 * 1024;
     let totalStagedAsmBytes = 0;
+
+    const MAX_DECOMPILE_MODULE_BYTES = 4 * 1024 * 1024;
+    const MAX_DECOMPILE_TOTAL_BYTES = 64 * 1024 * 1024;
+    let totalStagedCBytes = 0;
 
     try {
       const occurrences = new Map<string, number>();
@@ -857,6 +1005,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           bytes: modBytes,
         });
 
+        const scaffold = buildUefiEntryPointScaffolding(
+          cIdentifier,
+          mod.rawName,
+          modBytes.length,
+          mod.phase,
+          mod.typeName,
+        );
+
         const headerName = `${mod.cleanName}.h`;
         const headerRelPath = `${moduleRelDir}/${headerName}`;
         const headerGuard = `_UEFI_${cIdentifier.toUpperCase()}_H_`;
@@ -880,16 +1036,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           "#endif",
           "#endif",
           "",
-          "typedef int64_t EFI_STATUS;",
-          "typedef void* EFI_HANDLE;",
-          "typedef void* EFI_SYSTEM_TABLE;",
-          "",
-          "#define EFI_SUCCESS 0",
+          ...scaffold.typedefs,
           ...(mod.guid
             ? [`#define ${cIdentifier.toUpperCase()}_GUID "${mod.guid}"`]
             : []),
           "",
-          `EFI_STATUS EFIAPI ${cIdentifier}EntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);`,
+          scaffold.prototype,
           "",
           `#endif // ${headerGuard}`,
           "",
@@ -972,50 +1124,62 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         const cRelPath = `${moduleRelDir}/${cName}`;
         let cContent: string | null = null;
 
-        const ghidraBin = resolveGhidraHeadless();
         if (ghidraBin !== null) {
-          const ghidraOutC = join(
-            tempRoot.path,
-            `${cIdentifier}_${occurrence}_decompiled.c`,
-          );
-          try {
-            const bridgeDir = resolve(
-              fileURLToPath(import.meta.url),
-              "..",
-              "..",
-              "bridge",
-              "ghidra",
-            );
-            await execFileOutput(
-              ghidraBin,
-              [
-                tempRoot.path,
-                `UefiDecomp_${cIdentifier}_${occurrence}`,
-                "-import",
-                tempEfiPath,
-                "-scriptPath",
-                bridgeDir,
-                "-postScript",
-                "ReaDecompileToC.java",
-                ghidraOutC,
-                "-deleteProject",
-              ],
-              {
-                signal,
-                stopSignal: "SIGTERM",
-                timeout: 45_000,
-                maxBuffer: 10 * 1024 * 1024,
-              },
-            );
-            if (existsSync(ghidraOutC)) {
-              const cStat = await stat(ghidraOutC);
-              if (cStat.size <= 4 * 1024 * 1024) {
-                cContent = await readFile(ghidraOutC, "utf8");
-              }
+          if (totalStagedCBytes >= MAX_DECOMPILE_TOTAL_BYTES) {
+            if (
+              !effectiveLimitations.includes(
+                "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+              )
+            ) {
+              effectiveLimitations.push(
+                "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+              );
             }
-          } catch (ghidraErr: unknown) {
-            if (signal.aborted) signal.throwIfAborted();
-            if (isAbortOf(ghidraErr, signal)) throw ghidraErr;
+          } else {
+            const ghidraOutC = join(
+              tempRoot.path,
+              `${cIdentifier}_${occurrence}_decompiled.c`,
+            );
+            try {
+              const bridgeDir = resolve(
+                fileURLToPath(import.meta.url),
+                "..",
+                "..",
+                "bridge",
+                "ghidra",
+              );
+              await execFileOutput(
+                ghidraBin,
+                [
+                  tempRoot.path,
+                  `UefiDecomp_${cIdentifier}_${occurrence}`,
+                  "-import",
+                  tempEfiPath,
+                  "-scriptPath",
+                  bridgeDir,
+                  "-postScript",
+                  "ReaDecompileToC.java",
+                  ghidraOutC,
+                  "-deleteProject",
+                ],
+                {
+                  signal,
+                  stopSignal: "SIGTERM",
+                  timeout: 45_000,
+                  maxBuffer: 10 * 1024 * 1024,
+                },
+              );
+              if (existsSync(ghidraOutC)) {
+                const cStat = await stat(ghidraOutC);
+                if (cStat.size <= MAX_DECOMPILE_MODULE_BYTES) {
+                  cContent = await readFile(ghidraOutC, "utf8");
+                  totalStagedCBytes += Buffer.byteLength(cContent, "utf8");
+                }
+              }
+            } catch (ghidraErr: unknown) {
+              if (signal.aborted) signal.throwIfAborted();
+              if (isAbortOf(ghidraErr, signal)) throw ghidraErr;
+            }
           }
         }
 
@@ -1032,17 +1196,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             " */",
             `#include "${headerName}"`,
             "",
-            `EFI_STATUS EFIAPI ${cIdentifier}EntryPoint(`,
-            "    EFI_HANDLE ImageHandle,",
-            "    EFI_SYSTEM_TABLE *SystemTable",
-            ") {",
-            `    // Reconstructed EntryPoint scaffolding for ${mod.rawName}`,
-            `    // Size: ${modBytes.length} bytes`,
-            "    EFI_STATUS Status = EFI_SUCCESS;",
-            "    (void)ImageHandle;",
-            "    (void)SystemTable;",
-            "    return Status;",
-            "}",
+            scaffold.functionDefinition,
             "",
           ].join("\n");
         }
@@ -1069,6 +1223,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         total_modules_found: discoveredModules.length,
         total_modules_decompiled: stagedModules.length,
         phases: phaseCounts,
+        limitations: effectiveLimitations,
         modules: stagedModules.map((m) => ({
           ...m,
           c_file: m.relative_c_file,
@@ -1092,6 +1247,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         `- **SEC** (Security Core): ${phaseCounts.sec}`,
         `- **PEI** (Pre-EFI Initialization): ${phaseCounts.pei}`,
         `- **DXE** (Driver Execution Environment): ${phaseCounts.dxe}`,
+        `- **SMM** (System Management Mode): ${phaseCounts.smm}`,
+        `- **APP** (UEFI Applications): ${phaseCounts.app}`,
+        `- **MISC**: ${phaseCounts.misc}`,
+        ...(effectiveLimitations.length > 0
+          ? ["", "## Limitations", ...effectiveLimitations.map((l) => `- ${l}`)]
+          : []),
         `- **SMM** (System Management Mode): ${phaseCounts.smm}`,
         `- **APP** (UEFI Applications): ${phaseCounts.app}`,
         `- **MISC**: ${phaseCounts.misc}`,
@@ -1341,6 +1502,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     }
 
     const dirSha256 = hash.digest("hex");
+
+    discoveredModules.sort((a, b) =>
+      (a.sourcePath ?? "").localeCompare(b.sourcePath ?? ""),
+    );
 
     return this.#stageAndPublishModules(
       request,

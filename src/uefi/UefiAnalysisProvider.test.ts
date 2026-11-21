@@ -1798,3 +1798,22 @@ it("caps decompilation to max_modules while discovering all candidate modules", 
     await provider.close();
   }
 });
+
+it("records derived confidence for decompile_uefi_firmware in service Evidence", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled_service");
+  const provider = new UefiAnalysisProvider();
+  const service = new UefiAnalysisService(provider);
+  try {
+    const result = await service.execute("decompile_uefi_firmware", {
+      path: imagePath,
+      output_directory: outDir,
+      max_modules: 10,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.confidence).toBe("derived");
+  } finally {
+    await service.close();
+  }
+});

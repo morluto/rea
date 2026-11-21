@@ -91,6 +91,7 @@ export const UEFI_TOOL_CONTRACTS = [
         mutatesSession: true,
         launchesProcess: true,
         writesFilesystem: true,
+        mayDiscardData: true,
         idempotent: false,
       }),
     ),
