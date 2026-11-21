@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
@@ -14,6 +15,7 @@ import {
 } from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
   process.platform !== "win32",
@@ -28,7 +30,9 @@ assert(
   "Usage: verify-omp-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(tmpdir(), "rea-omp-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-omp-client-",
+});
 const account = join(lab, "account");
 const agent = join(lab, "selected agent");
 const workspace = join(lab, "workspace");
@@ -314,8 +318,8 @@ await withVerifierCleanup(async () => {
             parsed.plannedActions.every(
               (action) =>
                 action.target === configPath ||
-                action.target === skillDirectory ||
-                action.target.startsWith(skillDirectory + "/"),
+                (isAbsolute(action.target) &&
+                  isPathWithinRoot(skillDirectory, action.target)),
             ),
             "Refuse setup writes outside the owned config/skill",
           );

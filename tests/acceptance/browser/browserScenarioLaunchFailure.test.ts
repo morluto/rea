@@ -39,7 +39,6 @@ cliTest.skipIf(process.platform === "win32")(
           "--json",
         ],
         environment: { BROWSER_FIXTURE_SECRET: secret },
-        timeoutMs: 20_000,
       });
       expect(response.exitCode, response.stdout + response.stderr).toBe(1);
       expect(response.stdout).not.toContain(secret);

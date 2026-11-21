@@ -1,13 +1,13 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { compareKunaAddresses } from "./KunaAddress.js";
+import { compareKunaAddresses, normalizeKunaAddress } from "./KunaAddress.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { parseKunaJson } from "./KunaJson.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** The raw xref budget also bounds its materialized rows. */
 export const KUNA_XREF_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -224,6 +224,32 @@ const xrefRow = z.object({
   to_function: xrefFunction.nullable(),
   instruction: z.string(),
 });
+const xrefPointer = z.object({
+  kind: z.literal("pointer"),
+  from_address: address,
+  from_address_hex: address,
+  from_name: z.string().nullable(),
+  to_address: address,
+  to_address_hex: address,
+  to_name: z.string().nullable(),
+  width: z.int().positive(),
+  source: z.string().min(1),
+});
+const xrefWalkCoverage = z.object({
+  decoded: z.boolean(),
+  section: z.string().nullable(),
+  code_section: z.boolean().nullable(),
+  executable: z.boolean().nullable(),
+  unwalked: z.array(
+    z.object({
+      name: z.string().nullable(),
+      address,
+      address_hex: address,
+      section: z.string(),
+    }),
+  ),
+  notes: z.array(z.string()),
+});
 const xrefsDocument = z.object({
   binary: z.string(),
   direction: z.literal("to"),
@@ -235,14 +261,35 @@ const xrefsDocument = z.object({
     aliases: z.array(xrefFunction),
   }),
   xrefs: z.array(z.unknown()),
+  coverage: xrefWalkCoverage.optional(),
+  data_refs_coverage: z.string().optional(),
+  data_refs_count: count.optional(),
+  data_refs: z.array(xrefPointer).optional(),
 });
 
+interface KunaArm64DirectCall {
+  readonly from_address: string;
+  readonly caller_address: string;
+  readonly to_address: string;
+  readonly instruction: string;
+}
+
 export interface KunaIncomingReferences {
+  readonly arm64DirectCalls: readonly KunaArm64DirectCall[];
   readonly addresses: readonly string[];
   readonly sha256: string;
   readonly bytes: number;
   readonly rows: number;
   readonly excludedAliasRows: number;
+  readonly targetAliases: readonly {
+    readonly name: string;
+    readonly address: string;
+  }[];
+  readonly walkCoverage: z.infer<typeof xrefWalkCoverage> | null;
+  readonly pointerCoverage: string | null;
+  readonly pointers: Array<
+    Omit<z.infer<typeof xrefPointer>, "from_address_hex" | "to_address_hex">
+  > | null;
 }
 
 /** Code from incoming-reference admission, plus the address field when one failed. */
@@ -275,8 +322,35 @@ export const parseKunaIncomingReferences = (
         throw new KunaDocumentError("xref_alias_hex");
       aliases.add(alias.address);
     }
+    if (
+      (document.data_refs === undefined) !==
+      (document.data_refs_count === undefined)
+    )
+      throw new KunaDocumentError("xref_count");
+    if (
+      document.data_refs !== undefined &&
+      document.data_refs.length !== document.data_refs_count
+    )
+      throw new KunaDocumentError("xref_count");
+    for (const item of document.coverage?.unwalked ?? [])
+      if (item.address !== item.address_hex)
+        throw new KunaDocumentError("xref_endpoints");
+    for (const pointer of document.data_refs ?? []) {
+      if (
+        pointer.from_address !== pointer.from_address_hex ||
+        pointer.to_address !== pointer.to_address_hex
+      )
+        throw new KunaDocumentError("xref_endpoints");
+      if (!aliases.has(pointer.to_address))
+        throw new KunaDocumentError("xref_target");
+    }
     const addresses = new Set<string>();
     let excludedAliasRows = 0;
+    const arm64DirectCalls: KunaArm64DirectCall[] = [];
+    for (const pointer of document.data_refs ?? []) {
+      if (pointer.to_address === target) addresses.add(pointer.from_address);
+      else excludedAliasRows += 1;
+    }
     for (const raw of document.xrefs) {
       const row = xrefRow.parse(raw);
       if (
@@ -291,19 +365,52 @@ export const parseKunaIncomingReferences = (
           throw new KunaDocumentError("xref_function_hex");
       if (!aliases.has(row.to_address))
         throw new KunaDocumentError("xref_target");
-      if (row.to_address === target) addresses.add(row.from_address);
-      else excludedAliasRows += 1;
+      if (row.to_address !== target) {
+        excludedAliasRows += 1;
+        continue;
+      }
+      addresses.add(row.from_address);
+      // An exact incoming call row alone does not distinguish indirect forms.
+      // Accept only Kuna's arm64 BL with a literal matching the parsed target.
+      if (
+        row.kind !== "call" ||
+        row.from_function === null ||
+        row.instruction.length > "bl 0x0000000000000000".length
+      )
+        continue;
+      const operand = /^bl[ \t]+(0x[0-9a-f]{1,16})$/iu.exec(
+        row.instruction,
+      )?.[1];
+      if (normalizeKunaAddress(operand) === target)
+        arm64DirectCalls.push({
+          from_address: row.from_address,
+          caller_address: row.from_function.address,
+          to_address: target,
+          instruction: row.instruction,
+        });
     }
     return ok({
       addresses: [...addresses].sort(compareKunaAddresses),
-      rows: document.xrefs.length,
+      arm64DirectCalls,
+      rows: document.xrefs.length + (document.data_refs?.length ?? 0),
       excludedAliasRows,
+      targetAliases: document.target.aliases.map(({ name, address }) => ({
+        name,
+        address,
+      })),
+      walkCoverage: document.coverage ?? null,
+      pointerCoverage: document.data_refs_coverage ?? null,
+      pointers:
+        document.data_refs?.map(
+          ({ from_address_hex: _from, to_address_hex: _to, ...pointer }) =>
+            pointer,
+        ) ?? null,
       bytes: Buffer.byteLength(text),
-      sha256: createHash("sha256").update(text).digest("hex"),
+      sha256: sha256Hex(text),
     });
   } catch (cause: unknown) {
     if (cause instanceof KunaDocumentError) {
-      const field = cause.detail?.field;
+      const field = cause.facts?.field;
       return err(
         typeof field === "string"
           ? { code: cause.code, field }
@@ -311,7 +418,7 @@ export const parseKunaIncomingReferences = (
       );
     }
     return err({
-      code: cause instanceof Error ? cause.message : String(cause),
+      code: errorMessage(cause),
     });
   }
 };

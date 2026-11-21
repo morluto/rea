@@ -21,6 +21,8 @@ export const verifyKunaReferences = async ({
   address,
   expectedCaller,
   nativeIncoming,
+  verifyNamedTrace = false,
+  minimumTraceReferences = 1,
 }) => {
   const before = await Promise.all([
     entries(join(cacheRoot, "projects")),
@@ -80,7 +82,84 @@ export const verifyKunaReferences = async ({
       direction: "forward",
     });
     assert.equal(path.value.goal_status, "reached");
-    composed = { graph_ms: graph.ms, path_ms: path.ms };
+    let traceMs;
+    if (verifyNamedTrace) {
+      const trace = await call("trace_feature", { query: name });
+      traceMs = trace.ms;
+      assert.ok(
+        trace.value.matches.some(
+          (match) => match.type === "procedure" && match.address === address,
+        ),
+        `${name} was not retained in its feature trace`,
+      );
+      assert.ok(
+        incoming.value.length >= minimumTraceReferences,
+        `${name} fixture did not produce the expected incoming references`,
+      );
+      const references = trace.value.references.filter(
+        (row) => row.target_address === address,
+      );
+      assert.deepEqual(
+        references.map((row) => row.source_address).sort(),
+        [...incoming.value].sort(),
+        `${name} lost or duplicated an observed incoming reference`,
+      );
+      for (const reference of references) {
+        assert.equal(reference.containing_procedure.status, "unavailable");
+        assert.equal(reference.containing_procedure.provider_id, "kuna");
+        assert.ok(
+          trace.value.residual_unknowns.some((unknown) =>
+            unknown.includes(reference.source_address),
+          ),
+        );
+      }
+      assert.equal(trace.value.truncated, false);
+      const summary = await call("trace_feature", {
+        query: name,
+        detail: "summary",
+      });
+      assert.equal(
+        summary.value.parent_evidence_id,
+        trace.structured.evidence_id,
+      );
+      assert.equal(
+        summary.value.summary.references,
+        trace.value.references.length,
+      );
+      assert.equal(
+        summary.value.summary.unknowns,
+        trace.value.residual_unknowns.length,
+      );
+      for (const [collection, values] of [
+        ["matches", trace.value.matches],
+        ["references", trace.value.references],
+        ["unknowns", trace.value.residual_unknowns],
+      ]) {
+        const view = await call("inspect_analysis_view", {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: trace.structured.evidence_id,
+          },
+          view: {
+            kind: "native-feature-trace",
+            collection,
+            offset: 0,
+            limit: 1,
+          },
+        });
+        assert.equal(view.value.coverage.total, values.length);
+        assert.deepEqual(
+          view.value.items.rows.map(({ value }) => value),
+          values.slice(0, 1),
+        );
+        assert.equal(view.value.items.collection, collection);
+      }
+    }
+    composed = {
+      graph_ms: graph.ms,
+      path_ms: path.ms,
+      ...(traceMs === undefined ? {} : { feature_trace_ms: traceMs }),
+    };
   }
   assert.deepEqual(
     await Promise.all([

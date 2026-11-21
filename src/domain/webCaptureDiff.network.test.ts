@@ -156,13 +156,28 @@ describe("partial response metadata in repeated requests", () => {
   );
 });
 
+it("refuses a captured request without its redirect list", () => {
+  const capture = unselectedShapes(passiveNetworkCapture());
+  const { redirects: _redirects, ...request } = capture.network.requests[0]!;
+  const malformed = {
+    ...capture,
+    network: { ...capture.network, requests: [request] },
+  };
+  expect(
+    browserCaptureComparisonInputSchema.safeParse({
+      before: { inspection: malformed },
+      after: { inspection: capture },
+    }).success,
+  ).toBe(false);
+});
+
 describe("nullable redirect resource types", () => {
   it.each([true, false])(
     "retains uncertainty when a redirect type is omitted (reversed=%s)",
     (reversed) => {
       const before = redirectCapture("Document");
       const after = structuredClone(before);
-      after.network.requests[0]!.redirects![0]!.resource_type = null;
+      after.network.requests[0]!.redirects[0]!.resource_type = null;
       const [left, right] = reversed
         ? ([after, before] as const)
         : ([before, after] as const);
@@ -179,7 +194,7 @@ describe("nullable redirect resource types", () => {
     (resourceType) => {
       const before = redirectCapture("Document");
       const after = structuredClone(before);
-      after.network.requests[0]!.redirects![0]!.resource_type = resourceType;
+      after.network.requests[0]!.redirects[0]!.resource_type = resourceType;
       expect(compare(before, after)).toMatchObject({
         status: resourceType === "Document" ? "unchanged" : "changed",
         total_changes: resourceType === "Document" ? 0 : 1,

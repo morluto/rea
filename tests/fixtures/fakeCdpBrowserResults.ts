@@ -6,10 +6,11 @@ export const resultFor = (
   port: number,
   options: FakeOptions,
   frameTreeReads: number,
+  allocateSessionId: () => string = () => "session-1",
 ): Readonly<Record<string, unknown>> | undefined => {
   switch (command.method) {
     case "Target.attachToTarget":
-      return attachToTargetResult(options);
+      return attachToTargetResult(options, allocateSessionId);
     case "Page.getLayoutMetrics":
       return {
         cssVisualViewport: {
@@ -38,7 +39,7 @@ export const resultFor = (
     case "Debugger.getScriptSource":
       return scriptSourceResult();
     case "Network.getResponseBody":
-      return responseBodyResult(options);
+      return responseBodyResult();
     case "Page.captureScreenshot":
       return screenshotResult();
     case "Browser.getVersion":
@@ -62,8 +63,11 @@ export const resultFor = (
     case "CacheStorage.requestEntries":
       return cacheEntriesResult(port);
     case "CacheStorage.requestCachedResponse":
-      return cachedResponseResult(options);
+      return cachedResponseResult();
     case "Page.enable":
+    case "ServiceWorker.enable":
+    case "ServiceWorker.disable":
+    case "Target.setAutoAttach":
     case "Page.disable":
     case "Page.setLifecycleEventsEnabled":
     case "Performance.enable":
@@ -98,8 +102,11 @@ const browserVersionResult = () => ({
   jsVersion: "13.0",
 });
 
-const attachToTargetResult = (options: FakeOptions) => ({
-  sessionId: options.invalidAttachedSession ? "" : "session-1",
+const attachToTargetResult = (
+  options: FakeOptions,
+  allocateSessionId: () => string,
+) => ({
+  sessionId: options.invalidAttachedSession ? "" : allocateSessionId(),
 });
 
 const frameTreeResult = (
@@ -115,9 +122,7 @@ const frameTreeResult = (
         ? ":"
         : (options.electronFileUrl ?? options.attachedFrameUrl),
     options.extraCollections === true,
-    options.webMcpSameUrlRegistrations === undefined
-      ? options.webMcpFrameCount
-      : "same-url",
+    options.webMcpFrameCount,
   );
 
 const resourceTreeResult = (port: number, options: FakeOptions) =>
@@ -138,16 +143,13 @@ const scriptSourceResult = () => ({
   scriptSource: "export const observed = 'source-secret';",
 });
 
-const responseBodyResult = (options: FakeOptions) =>
-  options.invalidResponseBodyBase64 === true
-    ? { body: "%%%not-base64%%%", base64Encoded: true }
-    : {
-        body: JSON.stringify({
-          result: { ok: true, token: "response-body-secret" },
-          items: [{ id: 1 }, { id: 2 }],
-        }),
-        base64Encoded: false,
-      };
+const responseBodyResult = () => ({
+  body: JSON.stringify({
+    result: { ok: true, token: "response-body-secret" },
+    items: [{ id: 1 }, { id: 2 }],
+  }),
+  base64Encoded: false,
+});
 
 const screenshotResult = () => ({
   data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
@@ -258,11 +260,9 @@ const cacheEntriesResult = (port: number) => ({
   returnCount: 1,
 });
 
-const cachedResponseResult = (options: FakeOptions) => ({
+const cachedResponseResult = () => ({
   response: {
-    body: Buffer.from(
-      options.cachedResponseBody ?? "cache-body-secret",
-    ).toString("base64"),
+    body: Buffer.from("cache-body-secret").toString("base64"),
   },
 });
 
@@ -287,7 +287,7 @@ const frameTree = (
   port: number,
   overrideUrl?: string,
   extraCollections = false,
-  webMcpFrameCount: number | "same-url" = 0,
+  webMcpFrameCount = 0,
 ): Readonly<Record<string, unknown>> => ({
   frameTree: {
     frame: {
@@ -310,17 +310,14 @@ const frameTree = (
             },
           ]
         : []),
-      ...Array.from(
-        { length: webMcpFrameCount === "same-url" ? 2 : webMcpFrameCount },
-        (_value, index) => ({
-          frame: {
-            id: `webmcp-frame-${String(index)}`,
-            parentId: "frame-main",
-            loaderId: `loader-webmcp-${String(index)}`,
-            url: `http://127.0.0.1:${String(port)}/webmcp-frame/${webMcpFrameCount === "same-url" ? "shared" : String(index)}`,
-          },
-        }),
-      ),
+      ...Array.from({ length: webMcpFrameCount }, (_value, index) => ({
+        frame: {
+          id: `webmcp-frame-${String(index)}`,
+          parentId: "frame-main",
+          loaderId: `loader-webmcp-${String(index)}`,
+          url: `http://127.0.0.1:${String(port)}/webmcp-frame/${String(index)}`,
+        },
+      })),
       {
         frame: {
           id: "frame-private",

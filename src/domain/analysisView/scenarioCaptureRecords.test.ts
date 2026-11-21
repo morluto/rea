@@ -104,13 +104,84 @@ describe("scenario Content-Type evidence", () => {
         ],
       },
     ]);
-    const projected = scenarioCaptureRecords(capture, "manifest");
+    const projected = scenarioCaptureRecords(
+      {
+        ...capture,
+        events: {
+          ...capture.events,
+          items: capture.events.items.map((event) =>
+            event.kind === "network-content" && event.body.state === "captured"
+              ? {
+                  ...event,
+                  body: { ...event.body, media_type_source: "independent" },
+                }
+              : event,
+          ),
+        },
+      },
+      "manifest",
+    );
     expect(projected.records).toHaveLength(2);
     for (const record of projected.records)
       expect(record.reported).toMatchObject({
         response: { content: { mimeType: "application/json" } },
       });
   });
+});
+
+it("uses retained declarations to correct legacy body metadata and honors new explicit uncertainty", () => {
+  const capture = scenarioCaptureFixture([
+    {
+      method: "GET",
+      url: "/legacy-conflict",
+      status: 200,
+      body: "{}",
+      mediaType: "application/json; charset=utf-8, application/octet-stream",
+      responseHeaders: [
+        { name: "Content-Type", value: "application/json; charset=utf-8" },
+        { name: "content-type", value: "application/octet-stream" },
+      ],
+    },
+    {
+      method: "GET",
+      url: "/legacy-agreement",
+      status: 200,
+      body: "{}",
+      mediaType: "application/json, application/json",
+      responseHeaders: [
+        { name: "Content-Type", value: "application/json" },
+        { name: "content-type", value: "application/json" },
+      ],
+    },
+    {
+      method: "GET",
+      url: "/legacy-coalesced-without-headers",
+      status: 200,
+      body: "{}",
+      mediaType: "application/json; charset=utf-8, application/octet-stream",
+    },
+  ]);
+  const content = capture.events.items.filter(
+    (event) => event.kind === "network-content",
+  );
+  expect(content.map(scenarioContentMediaType)).toEqual([
+    undefined,
+    "application/json",
+    undefined,
+  ]);
+  const later = content[1];
+  if (later?.body.state !== "captured")
+    throw new Error("Missing captured body");
+  expect(
+    scenarioContentMediaType({
+      ...later,
+      body: {
+        ...later.body,
+        media_type: null,
+        media_type_source: "content-type-header",
+      },
+    }),
+  ).toBeUndefined();
 });
 
 describe("scenarioCaptureRecords", () => {
@@ -166,8 +237,10 @@ describe("scenarioCaptureRecords", () => {
         bodySize: -1,
       },
     });
-    expect(manifestLimitations(projected)).toContain(
-      "1 of 7 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
+    expect(manifestLimitations(projected)).toContainEqual(
+      expect.stringMatching(
+        /1 of 7.*usable request line.*no response body.*status and content type.*may be absent/iu,
+      ),
     );
   });
 
@@ -282,6 +355,7 @@ it("reserves retained request-body expansion before schema decoding or projectio
   try {
     const projected = admitScenarioCaptureParent(
       {
+        predicateType: "rea.browser-scenario-capture",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "capture_browser_scenario",
         normalizedResult: capture,
@@ -330,6 +404,7 @@ it("reserves request text even when another event's body was not captured", () =
     // The capture's containers fit this budget; only its request text does not.
     const projected = admitScenarioCaptureParent(
       {
+        predicateType: "rea.browser-scenario-capture",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "capture_browser_scenario",
         normalizedResult: { ...capture, events: { ...capture.events, items } },

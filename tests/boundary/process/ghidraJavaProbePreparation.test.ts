@@ -16,6 +16,8 @@ import {
 } from "../../../src/process/ProcessOwnershipObservation.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitForProcessOwnershipInspection } from "../../../src/process/ProcessInspectionCancellation.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 // Long enough for an ordinary owned launch, short enough to keep the cold case quick.
 const PROBE_TIMEOUT_MS = 2_000;
@@ -89,7 +91,7 @@ it.runIf(process.platform === "linux")(
     vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
       // A stalled `ps` check has no time limit of its own.
       async (signal) => {
-        await delay(60_000, undefined, { signal });
+        await waitForProcessOwnershipInspection(60_000, signal);
       },
     );
 
@@ -120,7 +122,7 @@ it.skipIf(process.platform === "win32")(
     vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
       async (signal) => {
         entered();
-        await delay(60_000, undefined, { signal });
+        await waitForProcessOwnershipInspection(60_000, signal);
       },
     );
 
@@ -129,7 +131,6 @@ it.skipIf(process.platform === "win32")(
     controller.abort();
     const result = await outcome;
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a cancelled Java probe");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     await expect(access(java.launched)).rejects.toThrow();
@@ -156,7 +157,6 @@ it.skipIf(process.platform === "win32")(
 
     const result = await probe(java.command);
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a failed Java probe");
     expect(result.error).toBeInstanceOf(ProviderAdapterError);
     expect(result.error).toMatchObject({
@@ -187,7 +187,7 @@ it.runIf(process.platform === "darwin")(
     let denied = true;
     const close = vi.fn(async () => {
       if (denied) throw cleanup;
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     });
     vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
       async () => {

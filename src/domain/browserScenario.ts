@@ -223,23 +223,20 @@ const validateRequestSteps = (
   });
 };
 
-const validateStorage = (scenario: ScenarioShape): readonly string[] => {
-  const references: string[] = [];
-  scenario.storage.cookies.forEach((cookie) => {
-    references.push(...secretReferencesInValue(cookie.value));
-    references.push(...destinationSecretReferences(cookie.destination));
-  });
+function* storageSecretReferences(scenario: ScenarioShape): Generator<string> {
+  for (const cookie of scenario.storage.cookies) {
+    yield* secretReferencesInValue(cookie.value);
+    yield* destinationSecretReferences(cookie.destination);
+  }
   for (const collection of ["local_storage", "session_storage"] as const)
-    scenario.storage[collection].forEach((storage) => {
+    for (const storage of scenario.storage[collection])
       for (const entry of storage.entries)
-        references.push(...secretReferencesInValue(entry.value));
-    });
-  return references;
-};
+        yield* secretReferencesInValue(entry.value);
+}
 
 const validateSecretReferences = (
   scenario: ScenarioShape,
-  references: readonly string[],
+  references: ReadonlySet<string>,
   context: z.RefinementCtx,
 ): void => {
   const declared = new Set(scenario.secrets.map(({ secret_id: id }) => id));
@@ -286,9 +283,12 @@ const validateBrowserScenario = (
 
   validateRequestSteps(scenario, context);
   validateSavedValues(scenario, context);
-  const references = scenario.actions.flatMap(actionSecretReferences);
-  references.push(...destinationSecretReferences(scenario.start_url));
-  references.push(...validateStorage(scenario));
+  // Reference identity is global; source uses remain in the parsed scenario.
+  const references = new Set(scenario.actions.flatMap(actionSecretReferences));
+  for (const reference of destinationSecretReferences(scenario.start_url))
+    references.add(reference);
+  for (const reference of storageSecretReferences(scenario))
+    references.add(reference);
   validateSecretReferences(scenario, references, context);
 };
 

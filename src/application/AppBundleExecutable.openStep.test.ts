@@ -1,30 +1,46 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { parseOpenStep } from "plist";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { resolveAppBundleExecutable } from "./AppBundleExecutable.js";
+import { decodeOpenStepPropertyList } from "../domain/propertyListOpenStep.js";
+import { resolveAppleBundleExecutable } from "./AppBundleExecutable.js";
 
-it.each([
-  ["no comment", ""],
-  ["block comment", "/* App metadata */\n"],
-  ["line comment", "// App metadata\n"],
-  ["mixed comments", " \t/* header */\n// executable selection\n"],
-])("resolves an OpenStep Info.plist with %s", async (_label, prefix) => {
+it("resolves the declared executable from a commented OpenStep Info.plist", async () => {
   const root = await createTestTempDirectory("rea-openstep-bundle-");
   const bundle = join(root, "Fixture.app");
   const programs = join(bundle, "Contents", "MacOS");
   const executable = join(programs, "Fixture");
   const infoPlist = join(bundle, "Contents", "Info.plist");
-  const source = `${prefix}{ CFBundleExecutable = Fixture; }`;
-  expect(parseOpenStep(source)).toEqual({ CFBundleExecutable: "Fixture" });
+  const source =
+    " \t/* header */\n// executable selection\n{ CFBundleExecutable = Fixture; }";
   await mkdir(programs, { recursive: true });
   await writeFile(infoPlist, source);
   await writeFile(executable, "fixture - never executed");
 
-  expect(await resolveAppBundleExecutable(bundle)).toEqual({
+  expect(await resolveAppleBundleExecutable(bundle)).toEqual({
+    ok: true,
+    value: { executable, infoPlist },
+  });
+});
+
+it("resolves an OpenStep Info.plist with quoted XML-looking text", async () => {
+  const root = await createTestTempDirectory("rea-openstep-doctype-");
+  const bundle = join(root, "Fixture.app");
+  const programs = join(bundle, "Contents", "MacOS");
+  const executable = join(programs, "Fixture");
+  const infoPlist = join(bundle, "Contents", "Info.plist");
+  const source = `{ CFBundleExecutable = Fixture; Note = "<!DOCTYPE plist [ <!ENTITY x 'ok'> ]>"; }`;
+  expect(decodeOpenStepPropertyList(source)).toEqual({
+    CFBundleExecutable: "Fixture",
+    Note: "<!DOCTYPE plist [ <!ENTITY x 'ok'> ]>",
+  });
+  await mkdir(programs, { recursive: true });
+  await writeFile(infoPlist, source);
+  await writeFile(executable, "fixture - never executed");
+
+  expect(await resolveAppleBundleExecutable(bundle)).toEqual({
     ok: true,
     value: { executable, infoPlist },
   });

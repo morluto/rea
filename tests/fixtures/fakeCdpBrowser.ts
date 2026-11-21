@@ -4,7 +4,10 @@ import {
   type ServerResponse,
 } from "node:http";
 
+import type { Duplex } from "node:stream";
+
 import { WebSocket, WebSocketServer } from "ws";
+import type { CdpEvent } from "../../src/browser/CdpConnection.js";
 
 import { emitEvents } from "./fakeCdpBrowserEvents.js";
 import { resultFor, versionTargetId } from "./fakeCdpBrowserResults.js";
@@ -27,7 +30,9 @@ export const startFakeCdpBrowser = async (
     cookie: string | undefined;
     referer: string | undefined;
   }[] = [];
-  const sockets = new Set<WebSocket>();
+  const sockets = new Map<WebSocket, SocketSessionState>();
+  // Upgrades a handshake gate holds; close() destroys them.
+  const heldUpgrades = new Set<Duplex>();
   let openedConnections = 0;
   let frameTreeReads = 0;
   let port = 0;
@@ -51,59 +56,73 @@ export const startFakeCdpBrowser = async (
         webSockets.emit("connection", webSocket, request),
       );
     };
-    if (options.handshakeDelayMs === undefined) {
-      accept();
+    if (options.handshakeGate !== undefined) {
+      // Flowing, so a client that abandons the handshake is observed.
+      socket.resume();
+      socket.once("end", () => socket.destroy());
+      heldUpgrades.add(socket);
+      socket.once("close", () => heldUpgrades.delete(socket));
+      void options.handshakeGate.hold(request.url ?? "").then(
+        () => {
+          heldUpgrades.delete(socket);
+          accept();
+        },
+        () => socket.destroy(),
+      );
       return;
     }
-    const timer = setTimeout(accept, options.handshakeDelayMs);
-    socket.once("close", () => clearTimeout(timer));
+    accept();
   });
   webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
     const directPage = request.url?.startsWith("/devtools/page/") === true;
+    const sessionState: SocketSessionState = {
+      nextSessionNumber: 1,
+      attachedSessions: new Set(),
+      autoAttachedSessions: new Set(),
+    };
     openedConnections += 1;
-    sockets.add(socket);
+    sockets.set(socket, sessionState);
     socket.on("close", () => sockets.delete(socket));
     socket.on("message", (raw) => {
       const command = parseCommand(raw.toString());
       commands.push(command);
-      const commandError = options.commandError?.(command);
-      if (commandError !== undefined) {
-        sendCommandReply(socket, command, { error: commandError });
-        if (options.closeAfterMethod === command.method)
-          setImmediate(() => socket.close());
-        return;
-      }
-      if (options.closeOnMethod === command.method) {
-        socket.close();
-        return;
-      }
       if (
-        options.hangOnMethod === command.method ||
-        options.hangOnCommand?.(command)
+        handleSimulatedWireFault(
+          socket,
+          command,
+          directPage,
+          options,
+          sessionState,
+          port,
+        )
       )
         return;
-      if (options.malformedMessageOnMethod === command.method) {
-        socket.send("{not-json");
-        return;
-      }
-      if (options.unsupportedMethods?.includes(command.method) === true) {
-        sendCommandReply(socket, command, {
-          error: { code: -32_601, message: "Method not found" },
-        });
-        return;
-      }
-      if (
-        directPage &&
-        (command.method === "Target.attachToTarget" ||
-          command.sessionId !== undefined)
-      ) {
-        sendCommandReply(socket, command, {
-          error: { code: -32_600, message: "Direct page socket expected" },
-        });
-        return;
-      }
       if (command.method === "Page.getFrameTree") frameTreeReads += 1;
-      replyToCommand(socket, command, port, options, frameTreeReads);
+      const delayMs = options.commandDelayMs?.(command);
+      if (delayMs !== undefined && delayMs > 0) {
+        const currentFrameReads = frameTreeReads;
+        const timer = setTimeout(() => {
+          if (socket.readyState === WebSocket.OPEN)
+            replyToCommand(
+              socket,
+              command,
+              port,
+              options,
+              currentFrameReads,
+              sessionState,
+            );
+        }, delayMs);
+        socket.once("close", () => clearTimeout(timer));
+        return;
+      }
+      replyToCommand(
+        socket,
+        command,
+        port,
+        options,
+        frameTreeReads,
+        sessionState,
+      );
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -120,14 +139,19 @@ export const startFakeCdpBrowser = async (
     activeConnectionCount: () => sockets.size,
     openedConnectionCount: () => openedConnections,
     emitRawMessage(message) {
-      for (const socket of sockets) socket.send(message);
+      for (const socket of sockets.keys()) socket.send(message);
     },
     emitEvent(event) {
-      for (const socket of sockets) socket.send(JSON.stringify(event));
+      for (const [socket, state] of sockets)
+        sendSessionEvent(socket, event, state);
+    },
+    closeActiveConnections() {
+      for (const socket of sockets.keys()) socket.close();
     },
     httpRequests,
     async close() {
-      for (const socket of sockets) socket.terminate();
+      for (const socket of heldUpgrades) socket.destroy();
+      for (const socket of sockets.keys()) socket.terminate();
       await new Promise<void>((resolve) => webSockets.close(() => resolve()));
       await new Promise<void>((resolve, reject) =>
         http.close((error) =>
@@ -160,11 +184,16 @@ const respondToHttpRequest = (
   const portNumber = port();
   if (serveSourceMap(request, response, options)) return;
   const finish = (body: string): void => {
-    if (options.discoveryDelayMs === undefined) {
+    if (options.discoveryGate === undefined) {
       response.end(body);
       return;
     }
-    setTimeout(() => response.end(body), options.discoveryDelayMs);
+    void options.discoveryGate.hold(request.url ?? "").then(
+      () => {
+        if (!response.destroyed) response.end(body);
+      },
+      () => response.destroy(),
+    );
   };
   if (request.url === "/json/version") {
     finish(
@@ -223,6 +252,73 @@ const sendCommandReply = (
   );
 };
 
+interface SocketSessionState {
+  nextSessionNumber: number;
+  readonly attachedSessions: Set<string>;
+  readonly autoAttachedSessions: Set<string>;
+}
+
+const sessionNotFoundError = {
+  code: -32_001,
+  message: "Session with given id not found",
+} as const;
+
+const handleSimulatedWireFault = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  directPage: boolean,
+  options: FakeOptions,
+  sessionState: SocketSessionState,
+  port: number,
+): boolean => {
+  const commandError = options.commandError?.(command);
+  if (commandError !== undefined) {
+    if (options.eventsBeforeReply?.includes(command.method) === true)
+      sendCommandEvents(socket, command, port, options, sessionState);
+    sendCommandReply(socket, command, { error: commandError });
+    if (options.closeAfterMethod === command.method)
+      setImmediate(() => socket.close());
+    return true;
+  }
+  if (options.closeOnMethod === command.method) {
+    socket.close();
+    return true;
+  }
+  if (
+    options.hangOnMethod === command.method ||
+    options.hangOnCommand?.(command)
+  )
+    return true;
+  if (options.malformedMessageOnMethod === command.method) {
+    socket.send("{not-json");
+    return true;
+  }
+  if (options.unsupportedMethods?.includes(command.method) === true) {
+    sendCommandReply(socket, command, {
+      error: { code: -32_601, message: "Method not found" },
+    });
+    return true;
+  }
+  if (
+    directPage &&
+    (command.method === "Target.attachToTarget" ||
+      command.sessionId !== undefined)
+  ) {
+    sendCommandReply(socket, command, {
+      error: { code: -32_600, message: "Direct page socket expected" },
+    });
+    return true;
+  }
+  if (
+    command.sessionId !== undefined &&
+    !sessionState.attachedSessions.has(command.sessionId)
+  ) {
+    sendCommandReply(socket, command, { error: sessionNotFoundError });
+    return true;
+  }
+  return false;
+};
+
 /** Emit a configured producer reply and its associated events. */
 const replyToCommand = (
   socket: WebSocket,
@@ -230,13 +326,49 @@ const replyToCommand = (
   port: number,
   options: FakeOptions,
   frameTreeReads: number,
+  sessionState: SocketSessionState,
 ): void => {
+  if (
+    command.sessionId !== undefined &&
+    !sessionState.attachedSessions.has(command.sessionId)
+  ) {
+    sendCommandReply(socket, command, { error: sessionNotFoundError });
+    return;
+  }
+  const customResult = options.commandResult?.(
+    command,
+    `http://127.0.0.1:${String(port)}`,
+    frameTreeReads,
+  );
+  if (
+    customResult === undefined &&
+    command.method === "Target.detachFromTarget"
+  ) {
+    const sessionId = command.params.sessionId;
+    if (
+      typeof sessionId !== "string" ||
+      !sessionState.attachedSessions.delete(sessionId)
+    ) {
+      sendCommandReply(socket, command, { error: sessionNotFoundError });
+      return;
+    }
+    sessionState.autoAttachedSessions.delete(sessionId);
+  }
   const result =
-    options.commandResult?.(
-      command,
-      `http://127.0.0.1:${String(port)}`,
-      frameTreeReads,
-    ) ?? resultFor(command, port, options, frameTreeReads);
+    customResult ??
+    resultFor(command, port, options, frameTreeReads, () => {
+      const sessionId = `session-${String(sessionState.nextSessionNumber)}`;
+      sessionState.nextSessionNumber += 1;
+      return sessionId;
+    });
+  if (
+    command.method === "Target.attachToTarget" &&
+    result !== undefined &&
+    typeof result.sessionId === "string" &&
+    result.sessionId.length > 0
+  ) {
+    sessionState.attachedSessions.add(result.sessionId);
+  }
   if (result === undefined) {
     sendCommandReply(socket, command, {
       error: {
@@ -256,15 +388,56 @@ const replyToCommand = (
   const eventsFirst =
     options.eventsBeforeReply?.includes(command.method) === true;
   if (!eventsFirst) reply();
+  sendCommandEvents(socket, command, port, options, sessionState);
+  if (eventsFirst) reply();
+  if (options.closeAfterMethod === command.method)
+    setImmediate(() => socket.close());
+};
+
+const sendCommandEvents = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+  state: SocketSessionState,
+): void => {
   const customEvents = options.commandEvents?.(
     command,
     `http://127.0.0.1:${String(port)}`,
   );
   if (customEvents === undefined) emitEvents(socket, command, port, options);
-  else for (const event of customEvents) socket.send(JSON.stringify(event));
-  if (eventsFirst) reply();
-  if (options.closeAfterMethod === command.method)
-    setImmediate(() => socket.close());
+  else for (const event of customEvents) sendSessionEvent(socket, event, state);
+};
+
+const sendSessionEvent = (
+  socket: WebSocket,
+  event: CdpEvent,
+  state: SocketSessionState,
+): void => {
+  const { method, params } = event;
+  if (
+    params !== null &&
+    typeof params === "object" &&
+    "sessionId" in params &&
+    typeof params.sessionId === "string" &&
+    params.sessionId.length > 0
+  ) {
+    // The command fixture owns explicit sessions and their scripted replies.
+    // Auto-attached children instead acquire and release their route through events.
+    if (
+      method === "Target.attachedToTarget" &&
+      !state.attachedSessions.has(params.sessionId)
+    ) {
+      state.autoAttachedSessions.add(params.sessionId);
+      state.attachedSessions.add(params.sessionId);
+    }
+    if (
+      method === "Target.detachedFromTarget" &&
+      state.autoAttachedSessions.delete(params.sessionId)
+    )
+      state.attachedSessions.delete(params.sessionId);
+  }
+  socket.send(JSON.stringify(event));
 };
 
 const serveSourceMap = (

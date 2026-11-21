@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it("keeps the actual CommonJS module export separate from an ESM synthetic default", () => {
   const require = createRequire(import.meta.url);

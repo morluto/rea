@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { jsonObjectSchema } from "../jsonValue.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -10,6 +11,13 @@ const range = z.strictObject({ offset: uint, bytes: uint });
 export const MAX_INSPECT_ELF_NOTE_FILE_BYTES = 536870912;
 /** Hard ceiling on decoded note entries across every declared table. */
 export const MAX_INSPECT_ELF_NOTE_ENTRIES = 256;
+/**
+ * Default note entry budget. Distribution glibc builds carry dozens of
+ * SystemTap `.note.stapsdt` probes. Ubuntu 26.04's libc.so.6 has 82 distinct
+ * notes, examined as 85 entries because its allocated notes appear in both the
+ * program and section tables; the default admits that with room to spare.
+ */
+export const DEFAULT_INSPECT_ELF_NOTE_ENTRIES = 128;
 
 export const ELF_NOTE_TYPE_NAMES = [
   "gnu_abi_tag",
@@ -17,6 +25,13 @@ export const ELF_NOTE_TYPE_NAMES = [
   "gnu_build_id",
   "gnu_gold_version",
   "gnu_property",
+  "core_prpsinfo",
+  "core_file",
+  "core_siginfo",
+  "core_auxv",
+  "android_ident",
+  "fdo_packaging_metadata",
+  "fdo_dlopen_metadata",
   "unknown",
 ] as const;
 export type ElfNoteTypeName = (typeof ELF_NOTE_TYPE_NAMES)[number];
@@ -47,7 +62,7 @@ export const elfObjectTypeName = (type: number): ElfObjectTypeName => {
 };
 
 /** Map GNU n_type when the owner is GNU; other owners stay unknown. */
-export const gnuNoteTypeName = (type: number): ElfNoteTypeName => {
+const gnuNoteTypeName = (type: number): ElfNoteTypeName => {
   switch (type) {
     case 1:
       return "gnu_abi_tag";
@@ -64,9 +79,52 @@ export const gnuNoteTypeName = (type: number): ElfNoteTypeName => {
   }
 };
 
+/** Map CORE n_type when the owner is CORE; other types stay unknown. */
+const coreNoteTypeName = (type: number): ElfNoteTypeName => {
+  switch (type) {
+    case 3:
+      return "core_prpsinfo";
+    case 6:
+      return "core_auxv";
+    case 0x46494c45:
+      return "core_file";
+    case 0x53494749:
+      return "core_siginfo";
+    default:
+      return "unknown";
+  }
+};
+
+/** UAPI package metadata for executable files (`.note.package`). */
+export const FDO_PACKAGING_METADATA = 0xcafe1a7e;
+/** UAPI ELF dlopen metadata (`.note.dlopen`). */
+export const FDO_DLOPEN_METADATA = 0x407c0c0a;
+
+/** Interpret n_type in its owner namespace and eligible ABI profile. */
+export const elfNoteTypeName = (
+  owner: string,
+  type: number,
+  linuxCore: boolean,
+): ElfNoteTypeName => {
+  switch (owner) {
+    case "GNU":
+      return gnuNoteTypeName(type);
+    case "CORE":
+      return linuxCore ? coreNoteTypeName(type) : "unknown";
+    case "Android":
+      return type === 1 ? "android_ident" : "unknown";
+    case "FDO":
+      if (type === FDO_PACKAGING_METADATA) return "fdo_packaging_metadata";
+      if (type === FDO_DLOPEN_METADATA) return "fdo_dlopen_metadata";
+      return "unknown";
+    default:
+      return "unknown";
+  }
+};
+
 /** Complete bounded inspection of ELF PT_NOTE and SHT_NOTE tables. */
 export const inspectElfNotesInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF image",
   ),
   max_file_bytes: z
@@ -81,7 +139,7 @@ export const inspectElfNotesInputSchema = z.strictObject({
     .int()
     .min(1)
     .max(MAX_INSPECT_ELF_NOTE_ENTRIES)
-    .default(32)
+    .default(DEFAULT_INSPECT_ELF_NOTE_ENTRIES)
     .describe(
       "Maximum note entries to examine across every table; exceeding the budget fails without partial success",
     ),
@@ -94,6 +152,67 @@ const gnuAbiTagSchema = z.strictObject({
   minor: uint,
   subminor: uint,
 });
+
+const coreFileMappingSchema = z.strictObject({
+  start_address: z.string().regex(/^0x[0-9a-f]+$/),
+  end_address: z.string().regex(/^0x[0-9a-f]+$/),
+  file_offset_pages: z.string().regex(/^0x[0-9a-f]+$/),
+  path: z.string(),
+  path_hex: z.string().regex(/^[0-9a-f]*$/),
+});
+
+const coreFileSchema = z.strictObject({
+  count: uint,
+  page_size: uint,
+  mappings: z.array(coreFileMappingSchema),
+});
+
+const corePrpsinfoSchema = z.strictObject({
+  state: uint,
+  pid: z.number().int(),
+  ppid: z.number().int(),
+  pgrp: z.number().int(),
+  sid: z.number().int(),
+  uid: uint,
+  gid: uint,
+  filename: z.string(),
+  psargs: z.string(),
+});
+
+const coreSiginfoSchema = z.strictObject({
+  signo: z.number().int(),
+  code: z.number().int(),
+  errno: z.number().int(),
+});
+
+const coreAuxvEntrySchema = z.strictObject({
+  type: uint,
+  type_name: z.string().nullable(),
+  value: z.string().regex(/^0x[0-9a-f]+$/),
+});
+
+export const coreNoteSchema = z.strictObject({
+  prpsinfo: corePrpsinfoSchema.nullable(),
+  file: coreFileSchema.nullable(),
+  siginfo: coreSiginfoSchema.nullable(),
+  auxv: z.array(coreAuxvEntrySchema).nullable(),
+});
+
+const androidIdentSchema = z.strictObject({
+  android_api: uint,
+  ndk_version: z.string().nullable(),
+  ndk_build_number: z.string().nullable(),
+});
+
+const fdoNoteSchema = z.union([
+  z.strictObject({
+    metadata: z.union([jsonObjectSchema, z.array(jsonObjectSchema)]),
+    issue: z.null(),
+  }),
+  z.strictObject({ metadata: z.null(), issue: z.string() }),
+]);
+
+export type FdoNote = z.infer<typeof fdoNoteSchema>;
 
 const noteEntrySchema = z.strictObject({
   index: uint,
@@ -125,6 +244,9 @@ const noteEntrySchema = z.strictObject({
       gold_version: z.string().nullable(),
     })
     .nullable(),
+  core: coreNoteSchema.nullable(),
+  android: androidIdentSchema.nullable(),
+  fdo: fdoNoteSchema.nullable(),
 });
 
 /** Observed ELF note tables; absence is an empty list, not proof notes never existed. */

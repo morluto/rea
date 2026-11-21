@@ -118,6 +118,38 @@ it.each(
   },
 );
 
+// A reply without a frame tree is a protocol failure, not 80 retries that end
+// in an origin refusal.
+it.each(
+  operations.flatMap((operation) =>
+    [{}, { frameTree: null }, { frameTree: [] }].map((reply) => ({
+      operation,
+      reply,
+    })),
+  ),
+)(
+  "rejects a malformed frame tree reply $reply once for $operation",
+  async ({ operation, reply }) => {
+    const browser = await startRuntimeBrowser({
+      commandResult: ({ method }) =>
+        method === "Page.getFrameTree" ? reply : undefined,
+    });
+    trackBrowser(browser);
+    const result = await run(browser, operation);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "protocol_error",
+        command: "Page.getFrameTree",
+        pointer: "/frameTree",
+      },
+    });
+    expect(
+      browser.commands.filter(({ method }) => method === "Page.getFrameTree"),
+    ).toHaveLength(1);
+  },
+);
+
 it("bounds unsupported malformed frame retries without authorizing execution", async () => {
   let reads = 0;
   const browser = await startRuntimeBrowser({

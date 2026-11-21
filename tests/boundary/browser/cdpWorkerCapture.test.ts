@@ -1,6 +1,8 @@
+import { waitFor } from "../../support/testWait.js";
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";
+import { selectScriptCapture } from "../../../src/domain/webScriptCaptureAdapters.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import {
@@ -11,16 +13,20 @@ import { execFile } from "node:child_process";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { createBrowserEvidence } from "../../../src/application/BrowserEvidence.js";
-import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
+import { createBrowserEvidence as createEvidenceReport } from "../../../src/application/BrowserEvidence.js";
+import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { projectRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+  parseEvidence,
+} from "../../../src/domain/evidence.js";
 import { browserWorkerEvidenceScopeSchema } from "../../../src/domain/browserWorkerEvidenceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { readScopedWorkerSource } from "../../../src/browser/CdpWorkerCapture.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { readScopedWorkerSource } from "../../../src/browser/CdpWorkerCapture.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
@@ -30,6 +36,24 @@ import {
   startFakeCdpBrowser,
   type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
+
+const parseRuntimeCaptures = (inputs: readonly unknown[]) =>
+  inputs.map((value, i) =>
+    parseRuntimeCapture(value, ["runtime_observations", i]),
+  );
+
+const createBrowserEvidence = (
+  operation: Parameters<typeof createEvidenceReport>[0],
+  input: Parameters<typeof createEvidenceReport>[1],
+  facts: Parameters<typeof createEvidenceReport>[2]["facts"],
+  provider: Parameters<typeof createEvidenceReport>[3],
+) =>
+  createEvidenceReport(
+    operation,
+    input,
+    { source: jsonValueSchema.parse(facts), facts },
+    provider,
+  );
 
 const source = 'postMessage("worker 🧪");';
 
@@ -109,7 +133,7 @@ it("keeps a worker command pending until the caller cancels under a longer deadl
     { ...input, command_timeout_ms: 60_000 },
     { signal: caller.signal },
   );
-  await vi.waitFor(() => expect(browser.commands.some(waiting)).toBe(true));
+  await waitFor(() => expect(browser.commands.some(waiting)).toBe(true));
   formerDeadline.abort();
   await new Promise<void>((resolve) => setImmediate(resolve));
   caller.abort();
@@ -716,7 +740,7 @@ it.each(["explicit", "auto"] as const)(
     expect(browser.commands.some(({ sessionId }) => sessionId === "")).toBe(
       false,
     );
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   },
 );
 
@@ -733,7 +757,13 @@ it.each([
         command.method === "Target.getTargets"
           ? {
               targetInfos: [
-                { targetId: "excluded", type: "worker", attached: false, url },
+                {
+                  targetId: "excluded",
+                  type: "worker",
+                  attached: false,
+                  openerId: "allowed-page",
+                  url,
+                },
               ],
             }
           : undefined,
@@ -1013,7 +1043,7 @@ it("rejects a script identity change while its source read is pending", async ()
   expect(
     await provider.inspectPage({ ...input, observation_ms: 30_000 }),
   ).toMatchObject({ ok: false, error: { reason: "target_changed" } });
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 async function fixture(extra: FakeOptions = {}) {
   const browser = await startFakeCdpBrowser({
@@ -1130,18 +1160,24 @@ async function fixture(extra: FakeOptions = {}) {
   });
   return { browser, input, provider: new CdpBrowserProvider() };
 }
-it("uses session ancestry rather than URL equality and retains unknown ownership", async () => {
-  const { provider, input } = await fixture();
+it("omits unattributed same-origin siblings while retaining the attached worker", async () => {
+  const { provider, input, browser } = await fixture();
   const result = await provider.inspectPage(input);
   if (!result.ok) throw result.error;
-  expect(result.value.workers.map((w) => w.target_id)).toEqual([
-    "other",
-    "own",
-    "shared",
-  ]);
+  expect(result.value.workers.map((w) => w.target_id)).toEqual(["own"]);
+  expect(JSON.stringify(result.value.workers)).not.toContain("/shared.js");
+  expect(result.value.completeness.excluded).toContainEqual({
+    section: "workers",
+    reason: "unattributed_target",
+    count: 3,
+  });
   expect(
-    result.value.workers.find((w) => w.target_id === "other")?.observation,
-  ).toMatchObject({ ownership: "unknown", scripts: [] });
+    browser.commands.some(
+      (c) =>
+        c.method === "Target.attachToTarget" &&
+        (c.params.targetId === "other" || c.params.targetId === "shared"),
+    ),
+  ).toBe(false);
   expect(
     result.value.workers.find((w) => w.target_id === "own")?.observation,
   ).toMatchObject({
@@ -1207,7 +1243,7 @@ it("cancellation releases an in-flight source read and attached sessions", async
   });
   const controller = new AbortController();
   const pending = provider.inspectPage(input, { signal: controller.signal });
-  await vi.waitFor(() =>
+  await waitFor(() =>
     expect(
       browser.commands.some(
         (c) =>
@@ -1218,7 +1254,7 @@ it("cancellation releases an in-flight source read and attached sessions", async
   );
   controller.abort();
   expect((await pending).ok).toBe(false);
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   expect(
     browser.commands.some(
       (c) =>
@@ -1375,12 +1411,21 @@ it.each([false, true, null])(
     });
     const result = await provider.inspectPage(input);
     if (!result.ok) throw result.error;
-    const observed = result.value.workers.find(
-      (w) => w.target_id === "service",
-    )!.observation!;
-    expect(observed.ownership).toBe(
-      controls ? "service_worker_client" : "unknown",
-    );
+    const service = result.value.workers.find((w) => w.target_id === "service");
+    if (!controls) {
+      expect(service).toBeUndefined();
+      expect(
+        browser.commands.some(
+          (c) =>
+            c.sessionId === "worker-service" &&
+            (c.method === "Debugger.enable" ||
+              c.method === "Debugger.getScriptSource"),
+        ),
+      ).toBe(false);
+      return;
+    }
+    const observed = service!.observation!;
+    expect(observed.ownership).toBe("service_worker_client");
     expect(observed.lifecycle[0]).toMatchObject({
       event: "version",
       controls_page: controls,
@@ -1515,7 +1560,7 @@ it.each([
   )!.observation!;
   expect(observed.completeness.unavailable_sections).toContain("workers");
   expect(observed.limitations.join(" ")).toContain(method);
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
 it.each([-32_001, -32_602])(
@@ -1532,7 +1577,7 @@ it.each([-32_001, -32_602])(
       ok: false,
       error: { reason: "protocol_error" },
     });
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   },
 );
 
@@ -1606,7 +1651,7 @@ it("reconciles retained worker sources against static artifacts", async () => {
   });
   if (!reconciled.ok) throw reconciled.error;
   const result = javascriptRuntimeReconciliationResultSchema.parse(
-    reconciled.value.normalized_result,
+    reconciled.value.evidence.normalized_result,
   );
   expect(result.reconciliations).toContainEqual(
     expect.objectContaining({
@@ -1837,6 +1882,8 @@ it.each([
   "scopes service worker clients to owned iframe targets (%s)",
   async (order) => {
     const { provider, input, browser } = await fixture({
+      commandResult: (c) =>
+        c.method === "Target.getTargets" ? { targetInfos: [] } : undefined,
       commandEvents: (command, origin) => {
         if (
           command.method !== "Target.setAutoAttach" ||
@@ -1950,12 +1997,17 @@ it.each([
       ).toEqual([true, false]);
       expect(observation?.scripts).toEqual([]);
     } else if (order === "foreign" || order.startsWith("detached")) {
-      if (order === "foreign") expect(enabled).toBe(false);
-      expect(observation?.scripts).toEqual([]);
-      if (order.startsWith("detached"))
+      if (order === "foreign") {
+        expect(enabled).toBe(false);
+        expect(
+          result.value.workers.some((w) => w.target_id === "service"),
+        ).toBe(false);
+      } else {
+        expect(observation?.scripts).toEqual([]);
         expect(observation?.completeness.unavailable_sections).toContain(
           "scripts",
         );
+      }
     } else {
       expect(enabled).toBe(true);
       expect(observation).toMatchObject({
@@ -1990,7 +2042,7 @@ it("bounds worker source requests while retaining cancellation cleanup", async (
   const abort = new AbortController();
   const pending = provider.inspectPage(input, { signal: abort.signal });
   try {
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(
         browser.commands.filter((c) => c.method === "Debugger.getScriptSource")
           .length,
@@ -2004,7 +2056,7 @@ it("bounds worker source requests while retaining cancellation cleanup", async (
     abort.abort();
     await pending;
   }
-  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
 it("authenticates explicit worker selections in retained Evidence", async () => {
@@ -2092,7 +2144,7 @@ it.each(["explicit", "worker", "iframe"] as const)(
           c.params.sessionId === "session-1",
       ),
     ).toHaveLength(1);
-    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   },
 );
 
@@ -2271,24 +2323,28 @@ it.each(["target_id", "allowed_origins", "include_script_sources"] as const)(
       captured.value,
       provider.identity(),
     );
-    const evidence = createEvidence(undefined, original.provider, {
-      predicateType: original.predicate_type,
-      operation: original.operation,
-      parameters: {
-        ...original.parameters,
-        [field]:
-          field === "target_id"
-            ? "another-page"
-            : field === "allowed_origins"
-              ? []
-              : false,
+    const evidence = createEvidence(
+      evidenceSubjectInput(original.subject),
+      original.provider,
+      {
+        predicateType: original.predicate_type,
+        operation: original.operation,
+        parameters: {
+          ...original.parameters,
+          [field]:
+            field === "target_id"
+              ? "another-page"
+              : field === "allowed_origins"
+                ? []
+                : false,
+        },
+        result: original.normalized_result,
+        confidence: original.confidence,
+        authority: original.authority,
+        environment: original.environment,
+        limitations: original.limitations,
       },
-      result: original.normalized_result,
-      confidence: original.confidence,
-      authority: original.authority,
-      environment: original.environment,
-      limitations: original.limitations,
-    });
+    );
     const checked = browserWorkerEvidenceScopeSchema.safeParse(evidence);
     expect(checked.success).toBe(false);
     if (checked.success) throw new Error("Expected contradictory selection");
@@ -2425,6 +2481,8 @@ it.each([
   "keeps script absence unknown after failed %s discovery",
   async (failed) => {
     const { provider, input } = await fixture({
+      commandResult: (c) =>
+        c.method === "Target.getTargets" ? { targetInfos: [] } : undefined,
       commandEvents: (command) =>
         (failed === "clients" || failed === "unresolved-version") &&
         command.method === "ServiceWorker.enable"
@@ -2495,7 +2553,7 @@ it.each([
     });
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     expect(
       result.static_load_states.some(
@@ -2564,7 +2622,7 @@ it.each(
     });
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     expect(
       result.static_load_states.some(
@@ -2597,7 +2655,13 @@ it("keeps unselected unknown-owner workers out of runtime matching", async () =>
       .map((e) => e.runtimeKey),
   ).toEqual(["own"]);
   expect(captured.value.workers.some((w) => w.target_id === "other")).toBe(
-    true,
+    false,
+  );
+  expect(captured.value.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "workers",
+      reason: "unattributed_target",
+    }),
   );
 });
 
@@ -2796,21 +2860,30 @@ it.each(["before", "after", "detached", "foreign"] as const)(
     });
     const captured = await provider.inspectPage(input);
     if (!captured.ok) throw captured.error;
-    const observation = captured.value.workers.find(
+    const service = captured.value.workers.find(
       (w) => w.target_id === "service",
-    )!.observation!;
-    expect(observation.ownership).toBe(
-      order === "foreign" ? "unknown" : "service_worker_client",
     );
+    if (order === "foreign") {
+      expect(service).toBeUndefined();
+      expect(
+        browser.commands.some(
+          (c) =>
+            c.method === "Debugger.enable" && c.sessionId === "worker-service",
+        ),
+      ).toBe(false);
+      return;
+    }
+    const observation = service!.observation!;
+    expect(observation.ownership).toBe("service_worker_client");
     expect(
       observation.lifecycle.find((x) => x.event === "version")?.controls_page,
-    ).toBe(order !== "foreign");
+    ).toBe(true);
     expect(
       browser.commands.some(
         (c) =>
           c.method === "Debugger.enable" && c.sessionId === "worker-service",
       ),
-    ).toBe(order !== "foreign" && order !== "detached");
+    ).toBe(order !== "detached");
     if (order === "detached") {
       // The client is detached before this queued service-worker enable starts.
       // Keep the historical ownership event, but issue no new domain commands
@@ -3016,6 +3089,8 @@ it.each(["controlled", "revoked", "foreign"] as const)(
 );
 async function verifyUnresolved(scope: "controlled" | "revoked" | "foreign") {
   const { provider, input } = await fixture({
+    commandResult: (c) =>
+      c.method === "Target.getTargets" ? { targetInfos: [] } : undefined,
     commandEvents: (command) =>
       command.method === "ServiceWorker.enable"
         ? [
@@ -3108,15 +3183,10 @@ it.each(["worker", "shared_worker"] as const)(
       });
       const captured = await provider.inspectPage(input);
       if (!captured.ok) throw captured.error;
-      const observation = captured.value.workers.find(
+      const defaultWorker = captured.value.workers.find(
         (w) => w.target_id === "mismatch",
-      )!.observation!;
-      expect(observation.ownership).toBe(
-        type === "worker" ? "page_related" : "unknown",
       );
-      expect(observation.lifecycle.some((e) => e.event === "version")).toBe(
-        false,
-      );
+      if (type === "shared_worker") expect(defaultWorker).toBeUndefined();
       expect(captured.value.completeness.unavailable_sections).toContain(
         "workers",
       );
@@ -3129,12 +3199,30 @@ it.each(["worker", "shared_worker"] as const)(
             c.method === "Debugger.enable" && c.sessionId === "worker-mismatch",
         ),
       ).toBe(type === "worker");
+      const selection =
+        type === "shared_worker"
+          ? { ...input, worker_target_ids: ["mismatch"] }
+          : input;
+      const selected =
+        type === "shared_worker"
+          ? await provider.inspectPage(selection)
+          : captured;
+      if (!selected.ok) throw selected.error;
+      const observation = selected.value.workers.find(
+        (w) => w.target_id === "mismatch",
+      )!.observation!;
+      expect(observation.ownership).toBe(
+        type === "worker" ? "page_related" : "unknown",
+      );
+      expect(observation.lifecycle.some((e) => e.event === "version")).toBe(
+        false,
+      );
       observation.ownership = "service_worker_client";
       observation.page_target_id = input.target_id;
       const evidence = createBrowserEvidence(
         "inspect_web_page",
-        input,
-        captured.value,
+        selection,
+        selected.value,
         provider.identity(),
       );
       expect(() => parseRuntimeCaptures([evidence])).toThrow(
@@ -3307,7 +3395,7 @@ it.each(["complete", "abort", "failure", "detach"] as const)(
           c.params.autoAttach === true,
       );
     try {
-      await vi.waitFor(() => expect(attaching()).toHaveLength(1));
+      await waitFor(() => expect(attaching()).toHaveLength(1));
       if (mode === "abort") controller.abort();
       else if (mode === "failure") {
         const first = attaching()[0]!;
@@ -3326,7 +3414,7 @@ it.each(["complete", "abort", "failure", "detach"] as const)(
             params: { sessionId: "burst-1", targetId: "burst-target-1" },
           });
         for (let i = 0; i < total - (mode === "detach" ? 1 : 0); i++) {
-          await vi.waitFor(() => expect(attaching()).toHaveLength(i + 1));
+          await waitFor(() => expect(attaching()).toHaveLength(i + 1));
           const command = attaching()[i]!;
           browser.emitRawMessage(
             JSON.stringify({
@@ -3355,7 +3443,7 @@ it.each(["complete", "abort", "failure", "detach"] as const)(
             (c) => c.sessionId === "burst-1" && c.method === "Runtime.enable",
           ),
         ).toBe(false);
-      await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     } finally {
       controller.abort();
       await pending;

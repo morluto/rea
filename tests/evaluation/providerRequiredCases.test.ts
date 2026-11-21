@@ -1,17 +1,16 @@
-import { execFileSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import {
+  processTest,
+  type TestProcesses,
+} from "../support/process/processFixture.js";
 
 const script = fileURLToPath(
   new URL("../../scripts/ci/require-provider-tests.mjs", import.meta.url),
@@ -32,142 +31,146 @@ const commonLimits = [
   "enforces both address-space limits before any producer allocation",
   "preserves lower inherited file/CPU limits in the real launch",
 ];
-const testFile = (path: string, names: string[]) => ({
-  name: resolve(path),
-  assertionResults: names.map((fullName) => ({ fullName, status: "passed" })),
-});
-const report = (lane: "packet" | "signal") => ({
-  success: true,
-  testResults:
-    lane === "packet"
-      ? [
-          testFile("tests/boundary/captures/resourceLimits.test.ts", [
-            ...commonLimits,
-            "reports a real kernel file-limit termination with its effective ceiling",
-          ]),
-          testFile(
-            "tests/boundary/captures/captureDescriptorCleanup.test.ts",
-            cleanupCases,
-          ),
-        ]
-      : [
-          testFile(
-            "tests/boundary/signals/resourceLimits.test.ts",
-            commonLimits,
-          ),
-          testFile(
-            "tests/boundary/signals/recordingDescriptorCleanup.test.ts",
-            cleanupCases,
-          ),
-        ],
-});
-const run = (lane: string, value: unknown) => {
-  mkdirSync(join(process.cwd(), ".cache"), { recursive: true });
-  const directory = mkdtempSync(
-    join(process.cwd(), ".cache", "rea-required-cases-"),
-  );
-  try {
-    const path = join(directory, "report.json");
-    writeFileSync(path, JSON.stringify(value));
-    return execFileSync(process.execPath, [script, lane, path], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+const requiredCases = {
+  packet: {
+    "tests/boundary/captures/resourceLimits.test.ts": [
+      ...commonLimits,
+      "reports a real kernel file-limit termination with its effective ceiling",
+    ],
+    "tests/boundary/captures/captureDescriptorCleanup.test.ts": cleanupCases,
+    "tests/acceptance/pcapVerifier.test.ts": [
+      "verifies complete and unresolved HTTP coverage with real Wireshark tools",
+    ],
+  },
+  signal: {
+    "tests/boundary/signals/resourceLimits.test.ts": commonLimits,
+    "tests/boundary/signals/recordingDescriptorCleanup.test.ts": cleanupCases,
+  },
 };
-const outsideReportFailure = (reportPath: string) => {
-  try {
-    execFileSync(process.execPath, [script, "packet", reportPath], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return undefined;
-  } catch (error) {
-    return error;
-  }
+const report = (root: string, lane: keyof typeof requiredCases) => ({
+  success: true,
+  testResults: Object.entries(requiredCases[lane]).map(([path, names]) => ({
+    name: resolve(root, path),
+    status: "passed",
+    assertionResults: names.map((fullName) => ({ fullName, status: "passed" })),
+  })),
+});
+
+const checkReport = async (processes: TestProcesses) => {
+  const cwd = await createTestTempDirectory("rea-required-cases-");
+  const run = (lane: string, path = "report.json") =>
+    processes.run(process.execPath, [script, lane, path], { cwd });
+  return {
+    cwd,
+    run,
+    check: async (lane: string, value: unknown) => {
+      await writeFile(join(cwd, "report.json"), JSON.stringify(value));
+      return run(lane);
+    },
+  };
+};
+const expectRefusal = (
+  result: { exitCode: number | null; stderr: string },
+  diagnostic: string | RegExp,
+) => {
+  expect(result.exitCode, result.stderr).toBe(1);
+  expect(result.stderr).toMatch(diagnostic);
 };
 
-it.each(["packet", "signal"] as const)(
+processTest.for(["packet", "signal"] as const)(
   "requires the %s resource and descriptor cases without banning unrelated skips",
-  (lane) => {
-    const result = report(lane);
-    result.testResults.push({
-      name: resolve("tests/unrelated.test.ts"),
+  async (lane, { processes }) => {
+    const { cwd, check } = await checkReport(processes);
+    const passing = report(cwd, lane);
+    const withUnrelatedSkip = structuredClone(passing);
+    withUnrelatedSkip.testResults.push({
+      name: resolve(cwd, "tests/unrelated.test.ts"),
+      status: "passed",
       assertionResults: [{ fullName: "host-specific", status: "pending" }],
     });
-    expect(run(lane, result)).toContain("cases passed");
-    for (const resultIndex of [0, 1]) {
-      const skipped = report(lane);
-      skipped.testResults[resultIndex]!.assertionResults[0]!.status = "pending";
-      expect(() => run(lane, skipped)).toThrow(
-        "Required provider test did not pass",
+    const result = await check(lane, withUnrelatedSkip);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("cases passed");
+
+    for (const [index, file] of passing.testResults.entries()) {
+      const removed = structuredClone(passing);
+      const missing = removed.testResults[index]!.assertionResults.shift()!;
+      const filePath = relative(cwd, file.name).replaceAll("\\", "/");
+      expectRefusal(
+        await check(lane, removed),
+        `Required provider test did not pass: ${filePath}: ${missing.fullName}`,
       );
-      const failed = report(lane);
-      failed.testResults[resultIndex]!.assertionResults[0]!.status = "failed";
-      expect(() => run(lane, failed)).toThrow(
-        "Required provider test did not pass",
+    }
+    const first = passing.testResults[0]!;
+    const withoutFile = structuredClone(passing);
+    withoutFile.testResults.shift();
+    const withDuplicateFile = structuredClone(passing);
+    withDuplicateFile.testResults.push(first);
+    for (const invalid of [withoutFile, withDuplicateFile])
+      expectRefusal(
+        await check(lane, invalid),
+        "Expected exactly one provider test result",
       );
-      const removed = report(lane);
-      removed.testResults[resultIndex]!.assertionResults.shift();
-      expect(() => run(lane, removed)).toThrow(
-        "Required provider test did not pass",
-      );
-      const duplicate = report(lane);
-      duplicate.testResults[resultIndex]!.assertionResults.push(
-        duplicate.testResults[resultIndex]!.assertionResults[0]!,
-      );
-      expect(() => run(lane, duplicate)).toThrow(
+
+    const failedFile = structuredClone(passing);
+    failedFile.testResults[0]!.status = "failed";
+    expectRefusal(
+      await check(lane, failedFile),
+      "Required provider test file did not pass",
+    );
+  },
+);
+
+processTest(
+  "rejects nonpassing and duplicate required assertions",
+  async ({ processes }) => {
+    const { cwd, check } = await checkReport(processes);
+    const packet = report(cwd, "packet");
+    for (const status of ["pending", "failed"]) {
+      packet.testResults[0]!.assertionResults[0]!.status = status;
+      expectRefusal(
+        await check("packet", packet),
         "Required provider test did not pass",
       );
     }
-    const missingFile = report(lane);
-    missingFile.testResults.pop();
-    expect(() => run(lane, missingFile)).toThrow(
-      "Expected exactly one provider test result",
+
+    const signal = report(cwd, "signal");
+    const assertions = signal.testResults[0]!.assertionResults;
+    assertions.push(assertions[0]!);
+    expectRefusal(
+      await check("signal", signal),
+      "Required provider test did not pass",
     );
-    expect(() => run(lane, { success: true, testResults: [] })).toThrow();
-    expect(() => run(lane, { success: false, testResults: [] })).toThrow();
   },
 );
 
-it.each([
-  ["parent", resolve(process.cwd(), "..", "rea-provider-report.json")],
-  ["sibling prefix", `${resolve(process.cwd())}-outside/report.json`],
-  ["absolute outside", resolve(tmpdir(), "rea-provider-report.json")],
-] as const)(
-  "rejects a %s report path outside the checkout",
-  (_label, reportPath) => {
-    const failure = z
-      .object({ status: z.literal(1), stderr: z.string() })
-      .parse(outsideReportFailure(reportPath));
-    const encoded = failure.stderr.match(
-      /\{"code":"report_path_outside_checkout"\}/u,
-    )?.[0];
-    expect(JSON.parse(encoded ?? "")).toEqual({
-      code: "report_path_outside_checkout",
-    });
+processTest(
+  "rejects a report path outside the checkout",
+  async ({ processes }) => {
+    const { cwd, run } = await checkReport(processes);
+    for (const path of ["../report.json", `${cwd}-outside/report.json`])
+      expectRefusal(
+        await run("packet", path),
+        '{"code":"report_path_outside_checkout"}',
+      );
   },
 );
 
-it("rejects unknown lanes and missing or malformed reports", () => {
-  expect(() => run("other", report("packet"))).toThrow(
-    "Expected provider test lane",
-  );
-  expect(() => run("packet", null)).toThrow(
-    "missing a successful test inventory",
-  );
-  expect(() =>
-    execFileSync(process.execPath, [script, "packet", "/missing/report.json"], {
-      stdio: "pipe",
-    }),
-  ).toThrow();
-});
+processTest(
+  "rejects unknown lanes and missing or invalid reports",
+  async ({ processes }) => {
+    const { cwd, check, run } = await checkReport(processes);
+    expectRefusal(await run("packet"), /ENOENT[^\n]*report\.json/u);
+    expectRefusal(await run("other"), "Expected provider test lane");
+    for (const invalid of [null, { ...report(cwd, "packet"), success: false }])
+      expectRefusal(
+        await check("packet", invalid),
+        "missing a successful test inventory",
+      );
+  },
+);
 
-it.each([
+it.for([
   [
     "real-packet-capture.yml",
     "tshark",
@@ -184,7 +187,7 @@ it.each([
   ],
 ] as const)(
   "keeps required case validation in %s",
-  (workflow, job, lane, limits, cleanup) => {
+  ([workflow, job, lane, limits, cleanup]) => {
     const file = new URL(
       `../../.github/workflows/${workflow}`,
       import.meta.url,
@@ -208,6 +211,8 @@ it.each([
     expect(step?.run).toContain('--outputFile.json="$report"');
     expect(step?.run).toContain(limits);
     expect(step?.run).toContain(cleanup);
+    if (lane === "packet")
+      expect(step?.run).toContain("tests/acceptance/pcapVerifier.test.ts");
     expect(step?.run).toContain(
       `node scripts/ci/require-provider-tests.mjs ${lane} "$report"`,
     );

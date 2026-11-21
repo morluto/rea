@@ -108,9 +108,6 @@ cliTest(
         opener_target_id: null,
         parent_frame_id: "frame-main",
       }),
-      expect.objectContaining({ target_id: "withheld-foreign" }),
-      expect.objectContaining({ target_id: "withheld-foreign-parent" }),
-      expect.objectContaining({ target_id: "withheld-unknown" }),
     ]);
     expect(inspection.completeness.unavailable_sections).toContain("workers");
     expect(
@@ -120,16 +117,12 @@ cliTest(
     ).toEqual([
       { section: "workers", reason: "disallowed_origin", count: 1 },
       { section: "workers", reason: "invalid_protocol_value", count: 1 },
-      { section: "workers", reason: "provider_unavailable", count: null },
-      { section: "workers", reason: "unattributed_origin", count: 1 },
+      { section: "workers", reason: "out_of_target_scope", count: 2 },
+      { section: "workers", reason: "unattributed_target", count: 2 },
     ]);
+    expect(JSON.stringify(evidence)).not.toContain("withheld-");
     for (const worker of inspection.workers)
-      expect(worker.observation).toMatchObject({
-        ownership: "unknown",
-        selected_explicitly: false,
-        scripts: [],
-        network_requests: [],
-      });
+      expect(worker.observation).toBeUndefined();
     expect(
       browser.commands.some(
         (command) =>
@@ -143,7 +136,6 @@ cliTest(
       ),
     ).toBe(true);
   },
-  20_000,
 );
 
 cliTest(
@@ -221,5 +213,4 @@ cliTest(
       ),
     ).toBe(true);
   },
-  20_000,
 );

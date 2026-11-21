@@ -10,6 +10,7 @@ const completed = nativeCallObservationResultSchema.shape;
 /** Native facts retained on failure, including completed facts before finalization. */
 export const nativeCallPartialObservationSchema = z.strictObject({
   kind: z.literal("native-call-observation"),
+  capture_limits: completed.capture_limits,
   target: completed.target.omit({ launch_identity: true }).extend({
     launch_identity: completed.target.shape.launch_identity.optional(),
   }),

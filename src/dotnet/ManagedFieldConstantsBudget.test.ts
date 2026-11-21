@@ -3,10 +3,10 @@ import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
 import {
   managedDecodeBudget,
   ManagedRepresentationFailure,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 
 it("uses the layout's existing representation capacity instead of an independent constant budget", () => {
   const bytes = buildManagedPeFixture({

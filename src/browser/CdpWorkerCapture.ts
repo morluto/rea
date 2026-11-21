@@ -1,12 +1,22 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { supportsJavaScriptSource } from "../domain/browserScriptLanguage.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
-import type { CdpEvent } from "./CdpConnection.js";
+import type { CdpTransportEvent } from "./CdpConnection.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import type { CdpCommand, CdpCommandParams } from "./protocol/CdpCommands.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
-import { CdpCommandRejection } from "./CdpCommandRejection.js";
-import { parseCdpWorkerTarget } from "./CdpWorkerTarget.js";
+import {
+  CdpCommandRejection,
+  isCdpSessionNotFoundRejection,
+} from "./CdpCommandRejection.js";
+import {
+  parseCdpWorkerTarget,
+  workerTargetOwnership,
+  type CdpWorkerRelationships,
+} from "./CdpWorkerTarget.js";
 import { exclusionReasonForUrl } from "./CdpCaptureEventHelpers.js";
+import { Budget } from "../domain/budget.js";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -14,9 +24,7 @@ import {
   admitRecords,
   allowedSanitizedUrl,
   cdpStringValue,
-  numberValue,
   recordValue,
-  requiredScriptSource,
   sourceExcluded,
   sourceResult,
 } from "./CdpCaptureValues.js";
@@ -33,19 +41,14 @@ const workerAutoAttachParameters = {
   ],
 };
 
-const isMissingWorkerSession = (cause: unknown): boolean =>
-  cause instanceof CdpCommandRejection &&
-  cause.code === -32_001 &&
-  cause.reportedMessage === "Session with given id not found.";
-
 const isUnavailableWorkerCommand = (cause: unknown): boolean =>
   (cause instanceof CdpCommandRejection && cause.code === -32_000) ||
-  isMissingWorkerSession(cause);
+  isCdpSessionNotFoundRejection(cause);
 
 /** A queued read needs current selection both to start and to retain its result. */
-export const readScopedWorkerSource = async <Reply>(
+export const readScopedWorkerSource = async (
   selected: () => boolean,
-  read: () => Promise<Reply>,
+  read: () => Promise<{ readonly scriptSource: string } | undefined>,
 ) => {
   if (!selected()) return { selected: false } as const;
   const reply = await read();
@@ -87,6 +90,14 @@ export class CdpWorkerCapture {
   readonly #lifecycleWork: (() => Promise<void>)[] = [];
   #runningLifecycle = false;
   readonly #invalidTargets = new Set<string>();
+  readonly #deniedTargets = new Map<
+    string,
+    {
+      relationships: CdpWorkerRelationships;
+      reason: ReturnType<typeof exclusionReasonForUrl>;
+      attachedToPage: boolean;
+    }
+  >();
   readonly #sourceReads: {
     worker: WorkerState;
     item: Observation["scripts"][number];
@@ -95,8 +106,8 @@ export class CdpWorkerCapture {
   #failure: unknown;
   #removeListener: (() => void) | undefined;
   #stopped = false;
-  #eventBytes = 0;
-  #sourceBytes = 0;
+  readonly #eventBytes = new Budget(WEB_RUNTIME_LIMITS.retainedEventBytes);
+  readonly #sourceBytes = new Budget(WEB_RUNTIME_LIMITS.sourceBytes);
   readonly #unavailableSourceSessions = new Set<string | undefined>();
   readonly #abort = new AbortController();
   readonly signal: AbortSignal;
@@ -173,7 +184,7 @@ export class CdpWorkerCapture {
     await this.#settle();
   }
 
-  async finish(): Promise<Worker[]> {
+  async finish(frameIds: ReadonlySet<string>): Promise<Worker[]> {
     await this.#inventory();
     await this.#settle();
     this.#stopped = true;
@@ -183,67 +194,107 @@ export class CdpWorkerCapture {
         versions.some(({ lifecycle }) => lifecycle.controls_page === true)
       )
         this.pageEvents.completeness.unavailable("workers");
-    return [...this.#workers.values()]
-      .map((worker) => {
-        worker.events.recordScriptMetadataBudgetExclusions();
-        worker.events.settleUnexaminedResponseBodies();
-        if (!this.context.input.include_script_sources)
-          worker.events.completeness.exclude(
-            "script_sources",
-            "not_approved",
-            worker.sources.size,
-          );
-        if (!worker.domains.has("Debugger"))
-          worker.events.completeness.unavailable("scripts");
-        if (!worker.domains.has("Network"))
-          for (const section of [
-            "network_requests",
-            "websocket_connections",
-            "websocket_frames",
-            "metadata",
-          ] as const)
-            worker.events.completeness.unavailable(section);
-        if (!worker.domains.has("Runtime"))
-          for (const section of ["metadata", "console_events"] as const)
-            worker.events.completeness.unavailable(section);
-        worker.item.observation.network_requests = [
-          ...worker.events.network.values(),
-        ];
-        worker.item.observation.scripts = [...worker.sources.values()];
-        worker.item.observation.console_events = worker.events.console;
-        worker.item.observation.metadata = {
-          responses: worker.events.responseMetadata,
-          agent_hints: worker.events.agentHints,
-          headers_allowlisted: true,
-        };
-        worker.item.observation.websocket_connections = [
-          ...worker.events.webSocketConnectionsById.values(),
-        ];
-        worker.item.observation.completeness =
-          worker.events.completeness.snapshot();
-        if (!worker.enabled)
-          worker.item.observation.limitations.push(
-            this.context.sessionId === undefined
-              ? "Worker runtime observation requires a browser-level CDP WebSocket; this endpoint exposes a direct page transport."
-              : "Worker source and runtime observation unavailable without proven page ownership or explicit target selection.",
-          );
-        return worker.item;
-      })
-      .sort((a, b) => compareUnicodeCodePoints(a.target_id, b.target_id));
+    const inScope = (relationships: CdpWorkerRelationships): boolean => {
+      const ownership = workerTargetOwnership(
+        relationships,
+        this.context.target.id,
+        frameIds,
+      );
+      if (ownership === "selected") return true;
+      this.pageEvents.completeness.exclude(
+        "workers",
+        ownership === "unknown" ? "unattributed_target" : "out_of_target_scope",
+      );
+      return false;
+    };
+    for (const [id, denied] of this.#deniedTargets) {
+      if (
+        denied.attachedToPage ||
+        this.#controlled.has(id) ||
+        inScope(denied.relationships)
+      ) {
+        if (denied.attachedToPage && denied.reason !== "disallowed_origin")
+          this.pageEvents.completeness.unavailable("workers");
+        this.pageEvents.completeness.exclude("workers", denied.reason);
+      }
+    }
+    const workers: Worker[] = [];
+    for (const worker of this.#workers.values()) {
+      const { observation, ...metadata } = worker.item;
+      if (
+        observation.ownership === "unknown" &&
+        !observation.selected_explicitly
+      ) {
+        if (
+          inScope({
+            openerTargetId: metadata.opener_target_id,
+            parentFrameId: metadata.parent_frame_id,
+          })
+        )
+          workers.push(metadata);
+        continue;
+      }
+      worker.events.recordScriptMetadataBudgetExclusions();
+      worker.events.settleUnexaminedResponseBodies();
+      if (!this.context.input.include_script_sources)
+        worker.events.completeness.exclude(
+          "script_sources",
+          "not_approved",
+          worker.sources.size,
+        );
+      if (!worker.domains.has("Debugger"))
+        worker.events.completeness.unavailable("scripts");
+      if (!worker.domains.has("Network"))
+        for (const section of [
+          "network_requests",
+          "websocket_connections",
+          "websocket_frames",
+          "metadata",
+        ] as const)
+          worker.events.completeness.unavailable(section);
+      if (!worker.domains.has("Runtime"))
+        for (const section of ["metadata", "console_events"] as const)
+          worker.events.completeness.unavailable(section);
+      worker.item.observation.network_requests = [
+        ...worker.events.network.values(),
+      ];
+      worker.item.observation.scripts = [...worker.sources.values()];
+      worker.item.observation.console_events = worker.events.console;
+      worker.item.observation.metadata = {
+        responses: worker.events.responseMetadata,
+        agent_hints: worker.events.agentHints,
+        headers_allowlisted: true,
+      };
+      worker.item.observation.websocket_connections = [
+        ...worker.events.webSocketConnectionsById.values(),
+      ];
+      worker.item.observation.completeness =
+        worker.events.completeness.snapshot();
+      if (!worker.enabled)
+        worker.item.observation.limitations.push(
+          this.context.sessionId === undefined
+            ? "Worker runtime observation requires a browser-level CDP WebSocket; this endpoint exposes a direct page transport."
+            : "Worker source and runtime observation unavailable without proven page ownership or explicit target selection.",
+        );
+      workers.push(worker.item);
+    }
+    return workers.sort((a, b) =>
+      compareUnicodeCodePoints(a.target_id, b.target_id),
+    );
   }
 
   async close(): Promise<void> {
     this.#stopped = true;
     this.#removeListener?.();
-    this.#abort.abort();
+    this.#abort.abort(OwnerCancellation.ownerClosed);
     await Promise.all(this.#pending);
     if (this.#removeListener === undefined) return;
     // The outer page-session owner closes the entire connection even if these
     // optional domain/detach commands fail or the caller has cancelled.
     const signal = AbortSignal.timeout(1000);
-    const send = async (
-      method: string,
-      params: Record<string, unknown>,
+    const send = async <M extends CdpCommand>(
+      method: M,
+      params: CdpCommandParams<M>,
       sessionId?: string,
     ): Promise<void> => {
       try {
@@ -282,17 +333,28 @@ export class CdpWorkerCapture {
   }
 
   async #inventory(): Promise<void> {
-    const result = await this.#command("Target.getTargets", {}, undefined);
-    if (result === undefined)
-      this.pageEvents.completeness.unavailable("workers");
-    const targets = admitRecords(recordValue(result)?.targetInfos);
-    if (result !== undefined && targets === undefined)
-      this.pageEvents.completeness.exclude(
-        "workers",
-        "invalid_protocol_value",
-        null,
-      );
-    for (const target of targets ?? []) this.#admit(target);
+    const result = await optionalCdpCommand(
+      {
+        connection: this.context.connection,
+        sessionId: undefined,
+        signal: this.signal,
+      },
+      "Target.getTargets",
+      {},
+      this.limitations,
+    );
+    if (!result.ok) {
+      if (result.error._tag === "CdpMalformedReply")
+        this.pageEvents.completeness.exclude(
+          "workers",
+          "invalid_protocol_value",
+          null,
+        );
+      else this.pageEvents.completeness.unavailable("workers");
+      return;
+    }
+    for (const target of result.value.targetInfos)
+      this.#admit(parseCdpWorkerTarget(target), target);
   }
 
   #invalidTarget(target: unknown): void {
@@ -321,10 +383,13 @@ export class CdpWorkerCapture {
     this.pageEvents.completeness.exclude("workers", reason, count);
   }
 
-  #admit(value: unknown): WorkerState | undefined {
-    const parsed = parseCdpWorkerTarget(value);
+  #admit(
+    parsed: ReturnType<typeof parseCdpWorkerTarget>,
+    identity: unknown,
+    attachedToPage = false,
+  ): WorkerState | undefined {
     if (!parsed.ok) {
-      this.#invalidTarget(value);
+      this.#invalidTarget(identity);
       return;
     }
     const target = parsed.value;
@@ -352,18 +417,29 @@ export class CdpWorkerCapture {
         "target_changed",
       );
     if (url === undefined) {
-      if (!this.#invalidTargets.has(id)) {
-        this.#invalidTargets.add(id);
-        this.#excludeUrl(target.url);
-      }
+      this.#deniedTargets.set(id, {
+        relationships: { openerTargetId: openerId, parentFrameId },
+        reason: exclusionReasonForUrl(target.url),
+        attachedToPage:
+          attachedToPage ||
+          this.#deniedTargets.get(id)?.attachedToPage === true,
+      });
       return;
     }
+    this.#deniedTargets.delete(id);
     if (existing !== undefined) {
       existing.item.attached = target.attached;
+      existing.item.opener_target_id = openerId;
+      existing.item.parent_frame_id = parentFrameId;
       return existing;
     }
     if (type !== "service_worker" && this.#versionsByTarget.has(id))
       this.#invalidServiceTarget(id);
+    const events = new CdpCaptureEvents(
+      this.context.input,
+      this.allowedOrigins,
+    );
+    events.recordSelectionExclusions();
     const worker: WorkerState = {
       item: {
         target_id: id,
@@ -392,10 +468,7 @@ export class CdpWorkerCapture {
           execution_contexts: [],
           scripts: [],
           network_requests: [],
-          completeness: new CdpCaptureEvents(
-            this.context.input,
-            this.allowedOrigins,
-          ).completeness.snapshot(),
+          completeness: events.completeness.snapshot(),
           limitations: [
             "Only events after attachment are observed. Loaded scripts do not prove execution. Worker registration does not prove cached response delivery.",
           ],
@@ -406,54 +479,45 @@ export class CdpWorkerCapture {
       enabled: false,
       domains: new Set(),
       autoAttach: false,
-      events: new CdpCaptureEvents(this.context.input, this.allowedOrigins),
+      events,
       sources: new Map(),
     };
     this.#workers.set(id, worker);
     return worker;
   }
 
-  #ingest(event: CdpEvent): void {
+  #ingest(event: CdpTransportEvent): void {
+    const registered = event.registered;
     if (this.#stopped) return;
     if (
       event.sessionId !== this.context.sessionId &&
       !this.#sessions.has(event.sessionId ?? "") &&
       !this.#frames.has(event.sessionId ?? "") &&
       !(
-        event.method === "Target.detachedFromTarget" &&
-        (this.#sessions.has(
-          cdpStringValue(recordValue(event.params)?.sessionId) ?? "",
-        ) ||
-          this.#frames.has(
-            cdpStringValue(recordValue(event.params)?.sessionId) ?? "",
-          ))
+        registered?.method === "Target.detachedFromTarget" &&
+        (this.#sessions.has(registered.payload.sessionId ?? "") ||
+          this.#frames.has(registered.payload.sessionId ?? ""))
       )
     )
       return;
     const worker = this.#sessions.get(event.sessionId ?? "");
-    if (
-      !event.method.startsWith("Target.") &&
-      !event.method.startsWith("ServiceWorker.")
-    ) {
-      if (worker === undefined || !worker.enabled || !this.#canCollect(worker))
-        return;
+    if (event.domain !== "Target" && event.domain !== "ServiceWorker") {
+      if (worker === undefined || !worker.enabled || worker.detached) return;
+      if (!this.#canCollect(worker)) return;
     }
-    this.#eventBytes += Buffer.byteLength(JSON.stringify(event));
-    if (this.#eventBytes > WEB_RUNTIME_LIMITS.retainedEventBytes)
+    if (!this.#eventBytes.tryCharge(event.wireBytes))
       throw new BrowserObservationError(
         this.context.operation,
         "payload_limit",
       );
-    const params = recordValue(event.params);
-    if (params === undefined) return;
     if (
-      event.method === "ServiceWorker.workerVersionUpdated" &&
+      registered?.method === "ServiceWorker.workerVersionUpdated" &&
       event.sessionId === this.context.sessionId
     ) {
-      this.#versions(params);
+      this.#versions(registered.payload);
       return;
     }
-    if (event.method === "Target.attachedToTarget") {
+    if (registered?.method === "Target.attachedToTarget") {
       if (this.context.sessionId === undefined) return;
       const parent =
         event.sessionId === this.context.sessionId
@@ -467,21 +531,16 @@ export class CdpWorkerCapture {
       )
         return;
       if (parent?.detached || frameParent?.detached) return;
-      const info = recordValue(params.targetInfo);
-      const sessionId = cdpStringValue(params.sessionId);
+      const info = registered.payload;
+      const sessionId = registered.payload.sessionId;
       if (sessionId === undefined || sessionId.length === 0)
         throw new BrowserObservationError(
           this.context.operation,
           "protocol_error",
         );
-      if (info === undefined) {
-        this.pageEvents.completeness.unavailable("workers");
-        this.#invalidTarget(params.targetInfo);
-        return;
-      }
-      if (info?.type === "iframe") {
+      if (info.targetType === "iframe") {
         if (parent !== undefined) return;
-        const targetId = cdpStringValue(info.targetId);
+        const targetId = info.targetId;
         if (targetId === undefined || targetId.length === 0)
           throw new BrowserObservationError(
             this.context.operation,
@@ -523,14 +582,13 @@ export class CdpWorkerCapture {
         });
         return;
       }
-      const worker = this.#admit(info);
-      if (worker === undefined) return;
-      if (
-        worker.item.type === "worker" &&
-        worker.item.observation.ownership !== "page_related" &&
+      const related =
+        info.targetType === "worker" &&
         (parent === undefined ||
-          parent.item.observation.ownership !== "unknown")
-      ) {
+          parent.item.observation.ownership !== "unknown");
+      const worker = this.#admit(info.worker, info.targetId, related);
+      if (worker === undefined) return;
+      if (related && worker.item.observation.ownership !== "page_related") {
         worker.item.observation.ownership = "page_related";
         worker.item.observation.page_target_id = this.context.target.id;
         this.#refreshServiceClients();
@@ -538,8 +596,8 @@ export class CdpWorkerCapture {
       this.#attach(worker, sessionId);
       return;
     }
-    if (event.method === "Target.detachedFromTarget") {
-      const sessionId = cdpStringValue(params.sessionId);
+    if (registered?.method === "Target.detachedFromTarget") {
+      const sessionId = registered.payload.sessionId;
       if (sessionId === undefined || sessionId.length === 0)
         throw new BrowserObservationError(
           this.context.operation,
@@ -567,9 +625,9 @@ export class CdpWorkerCapture {
     }
     if (worker === undefined || !worker.enabled || worker.detached) return;
     worker.events.ingest(event);
-    if (event.method === "Runtime.executionContextCreated") {
-      const context = recordValue(params.context);
-      const id = numberValue(context?.id);
+    if (registered?.method === "Runtime.executionContextCreated") {
+      const context = registered.payload.facts;
+      const id = context.id;
       if (id !== undefined && Number.isSafeInteger(id))
         worker.item.observation.execution_contexts.push({
           id,
@@ -579,14 +637,19 @@ export class CdpWorkerCapture {
             null,
         });
     }
-    if (event.method === "Debugger.scriptParsed") this.#script(worker, params);
+    if (registered?.method === "Debugger.scriptParsed")
+      this.#script(
+        worker,
+        registered.payload.facts.scriptId,
+        registered.payload.facts.contextId,
+      );
   }
 
   #script(
     worker: WorkerState,
-    params: Readonly<Record<string, unknown>>,
+    scriptId: string | undefined,
+    contextId: number | undefined,
   ): void {
-    const scriptId = cdpStringValue(params.scriptId);
     const script = worker.events.scripts.get(scriptId ?? "");
     if (script === undefined) {
       if (worker.sources.has(scriptId ?? ""))
@@ -596,7 +659,6 @@ export class CdpWorkerCapture {
         );
       return;
     }
-    const contextId = numberValue(params.executionContextId);
     const item: Observation["scripts"][number] = {
       script_id: script.scriptId,
       is_module: script.isModule,
@@ -692,12 +754,8 @@ export class CdpWorkerCapture {
             worker.events.completeness.unavailable("script_sources");
             continue;
           }
-          const text = requiredScriptSource(
-            result.reply,
-            this.context.operation,
-          );
-          this.#sourceBytes += Buffer.byteLength(text);
-          if (this.#sourceBytes > WEB_RUNTIME_LIMITS.sourceBytes)
+          const text = result.reply.scriptSource;
+          if (!this.#sourceBytes.tryCharge(Buffer.byteLength(text)))
             throw new BrowserObservationError(
               this.context.operation,
               "payload_limit",
@@ -705,7 +763,7 @@ export class CdpWorkerCapture {
           item.source = sourceResult(text);
         } catch (cause) {
           if (!this.signal.aborted && isUnavailableWorkerCommand(cause)) {
-            if (isMissingWorkerSession(cause))
+            if (isCdpSessionNotFoundRejection(cause))
               this.#unavailableSourceSessions.add(worker.sessionId);
             item.source = sourceExcluded(
               "Worker source became unavailable during capture",
@@ -720,8 +778,7 @@ export class CdpWorkerCapture {
     }
   }
 
-  #versions(params: Readonly<Record<string, unknown>>): void {
-    const versions = admitRecords(params.versions);
+  #versions(versions: ReturnType<typeof admitRecords>): void {
     if (versions === undefined) {
       this.pageEvents.completeness.unavailable("workers");
       this.pageEvents.completeness.exclude("workers", "invalid_protocol_value");
@@ -908,7 +965,7 @@ export class CdpWorkerCapture {
   async #enable(worker: WorkerState): Promise<void> {
     if (worker.enabled || !this.#canCollect(worker)) return;
     worker.enabled = true;
-    let stage = "Target.setAutoAttach";
+    let stage: CdpCommand = "Target.setAutoAttach";
     try {
       if (worker.item.observation.ownership !== "unknown") {
         const attached = await this.#command(
@@ -921,8 +978,8 @@ export class CdpWorkerCapture {
         if (!worker.autoAttach)
           worker.events.completeness.unavailable("workers");
       }
-      for (const domain of ["Runtime", "Debugger", "Network"]) {
-        if (worker.detached) return;
+      for (const domain of ["Runtime", "Debugger", "Network"] as const) {
+        if (!this.#canCollect(worker)) return;
         stage = `${domain}.enable`;
         const result = await this.#command(
           stage,
@@ -950,18 +1007,21 @@ export class CdpWorkerCapture {
     }
   }
 
-  async #command(
-    method: string,
-    params: Record<string, unknown>,
+  async #command<M extends CdpCommand>(
+    method: M,
+    params: CdpCommandParams<M>,
     sessionId: string | undefined,
     limitations = this.limitations,
-  ): Promise<unknown> {
-    return optionalCdpCommand(
+  ) {
+    const result = await optionalCdpCommand(
       { connection: this.context.connection, sessionId, signal: this.signal },
       method,
       params,
       limitations,
     );
+    if (result.ok) return result.value;
+    if (result.error._tag === "CdpMalformedReply") throw result.error.reply;
+    return undefined;
   }
 
   #queue(work: () => Promise<void>): void {
@@ -999,6 +1059,6 @@ export class CdpWorkerCapture {
   }
   #fail(cause: unknown): void {
     if (this.#failure === undefined) this.#failure = cause;
-    this.#abort.abort();
+    this.#abort.abort(cause ?? OwnerCancellation.noLongerNeeded);
   }
 }

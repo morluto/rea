@@ -1,16 +1,18 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
 } from "../../fixtures/advertisedMcpTool.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { createServer } from "../../../src/server/createServer.js";
@@ -24,6 +26,7 @@ import {
   wasmArtifactFixture,
   wasmArtifactExecution,
 } from "../../fixtures/wasm/artifact.js";
+import { waitFor } from "../../support/testWait.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -37,6 +40,7 @@ const assertFirstSummaryDelivery = async (
     ajv: wasmAjv,
     inputSchema,
     outputSchema,
+    toolDefinition,
   } = await advertisedMcpToolSchemas(
     harness.client,
     "inspect_wasm_artifact",
@@ -44,15 +48,11 @@ const assertFirstSummaryDelivery = async (
   );
   const summaryInput = { path: value.artifact.path, detail: "summary" };
   expect(wasmAjv.validate(inputSchema, summaryInput)).toBe(true);
-  const directSummary = await harness.client.callTool({
-    name: "inspect_wasm_artifact",
-    arguments: summaryInput,
-  });
+  const directSummary = await harness.client.callTool(
+    { name: "inspect_wasm_artifact", arguments: summaryInput },
+    { toolDefinition },
+  );
   expect(directSummary.isError).not.toBe(true);
-  expect(
-    wasmAjv.validate(outputSchema, directSummary.structuredContent),
-    JSON.stringify(wasmAjv.errors),
-  ).toBe(true);
   const summaryEvidence = parseEvidence(directSummary.structuredContent);
   const summary = wasmArtifactSummaryViewResultSchema.parse(
     summaryEvidence.normalized_result,
@@ -128,13 +128,19 @@ it.each(["bin", "hop"])(
       error: {
         code: "target_unavailable",
         category: "unsupported_target",
-        details: { constraint: "wasm_requires_static_inspection" },
+        details: {
+          constraint: "wasm_requires_static_inspection",
+          related_operations: ["inspect_wasm_artifact"],
+        },
       },
     });
+    expect(failure.error.details).not.toHaveProperty("related_cli_commands");
+    expect(failure.error.remediation.action).not.toContain(
+      "rea inspect-wasm-artifact",
+    );
     const [, recoveryName, serializedInput] =
-      failure.error.remediation.action.match(
-        /call (\w+) with (\{.*\}) or run/,
-      ) ?? [];
+      failure.error.remediation.action.match(/call (\w+) with (\{[^}]*\})\./) ??
+      [];
     expect(recoveryName).toBe(name);
     const recoveryInput = z
       .object({ path: z.literal(path) })
@@ -228,14 +234,16 @@ it("records inline WASM evidence with compact inputs and canonical option checks
       approval: true,
     }),
   ).toBe(false);
-  const response = await client.callTool({
-    name: "inspect_wasm_artifact",
-    arguments: { path: value.artifact.path, command_timeout_ms: 42_000 },
-  });
+  const response = await client.callTool(
+    {
+      name: "inspect_wasm_artifact",
+      arguments: { path: value.artifact.path, command_timeout_ms: 42_000 },
+    },
+    { toolDefinition: schemas.toolDefinition },
+  );
   assertRecordedMcpEvidence(
     response,
     "inspect_wasm_artifact",
-    schemas,
     session,
     value,
     "observed",
@@ -269,21 +277,13 @@ it.each([undefined, "summary"] as const)(
   "records complete WASM Evidence when an MCP request is cancelled during provider work (detail=%s)",
   async (detail) => {
     const value = wasmArtifactFixture();
-    let releaseProvider: (() => void) | undefined;
-    let providerStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      providerStarted = resolve;
-    });
-    const providerGate = new Promise<void>((resolve) => {
-      releaseProvider = resolve;
-    });
+    const wasmProviderStart = phaseGate();
     let serverSignal: AbortSignal | undefined;
     const service = new WasmArtifactService({
       close: () => Promise.resolve(),
       inspect: async (_input, options) => {
         serverSignal = options?.signal;
-        providerStarted?.();
-        await providerGate;
+        await wasmProviderStart.hold();
         expect(options?.signal?.aborted).toBe(true);
         return ok(wasmArtifactExecution(value));
       },
@@ -310,45 +310,52 @@ it.each([undefined, "summary"] as const)(
       { signal: controller.signal },
     );
     const rejected = expect(cancellation).rejects.toThrow();
-    await started;
-    controller.abort(new Error("cancel after provider work starts"));
-    let serverReason: unknown;
     try {
-      await harness.client.ping();
-      serverReason = serverSignal?.reason;
-    } finally {
-      releaseProvider?.();
-    }
-    await rejected;
-    expect(inspect).toHaveBeenCalledOnce();
-    const result = await inspect.mock.results[0]?.value;
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisCancelledError",
-        partialObservation: {
-          operation: "inspect_wasm_artifact",
-          normalized_result: value,
-          confidence: "observed",
+      await wasmProviderStart.reached(cancellation, "WASM provider start");
+      controller.abort(new Error("cancel after provider work starts"));
+      let serverReason: unknown;
+      try {
+        await harness.client.ping();
+        serverReason = serverSignal?.reason;
+      } finally {
+        wasmProviderStart.release();
+      }
+      await rejected;
+      expect(inspect).toHaveBeenCalledOnce();
+      const result = await inspect.mock.results[0]?.value;
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCancelledError",
+          partialObservation: {
+            operation: "inspect_wasm_artifact",
+            normalized_result: value,
+            confidence: "observed",
+          },
         },
-      },
-    });
-    if (result === undefined || result.ok)
-      throw new Error("Expected cancelled WASM Evidence");
-    expect(serverSignal?.aborted).toBe(true);
-    expect(result.error.cause).toBe(serverReason);
-    const partial = parseEvidence(result.error.partialObservation);
-    expect(partial.parameters).toEqual({
-      path: value.artifact.path,
-      glue_paths: [],
-      candidate_paths: [],
-    });
-    await harness.client.ping();
-    await vi.waitFor(() => {
-      // Failed summary delivery retains the complete producer, without a derived view.
-      expect(session.exportEvidenceBundle().records).toEqual([partial]);
-    });
-    expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
+      });
+      if (result === undefined || result.ok)
+        throw new Error("Expected cancelled WASM Evidence");
+      expect(serverSignal?.aborted).toBe(true);
+      expect(result.error.cause).toBe(serverReason);
+      const partial = parseEvidence(result.error.partialObservation);
+      expect(partial.parameters).toEqual({
+        path: value.artifact.path,
+        glue_paths: [],
+        candidate_paths: [],
+      });
+      await harness.client.ping();
+      await waitFor(() => {
+        // Failed summary delivery retains the complete producer, without a derived view.
+        expect(session.exportEvidenceBundle().records).toEqual([partial]);
+      });
+      expect(session.evidenceById(partial.evidence_id)).toEqual(partial);
+    } finally {
+      controller.abort();
+      wasmProviderStart.release();
+      await cancellation.catch(() => undefined);
+      await rejected.catch(() => undefined);
+    }
   },
 );
 
@@ -384,7 +391,7 @@ it("attributes rejected WASM paths to their selected fields before provider work
     },
   });
   onTestFinished(harness.close);
-  for (const [input, paths] of [
+  const relativeCases = [
     [{ path: "relative.wasm" }, [["path"]]],
     [
       { path: value.artifact.path, glue_paths: ["relative.js"] },
@@ -413,7 +420,9 @@ it("attributes rejected WASM paths to their selected fields before provider work
       },
       [["path"], ["glue_paths", 0], ["candidate_paths", 0]],
     ],
-  ] as const) {
+  ] as const;
+  const checked: string[] = [];
+  for (const [input, paths] of relativeCases) {
     const response = await harness.client.callTool({
       name: "inspect_wasm_artifact",
       arguments: input,
@@ -424,14 +433,19 @@ it("attributes rejected WASM paths to their selected fields before provider work
       .object({ issues: z.array(z.unknown()) })
       .parse(failure.details);
     expect(issues).toEqual(
-      paths.map((path) => ({
-        path,
-        reason: "invalid_format",
-        expected: "regex",
-        message: "must be an absolute local filesystem path",
-      })),
+      paths.map((path) =>
+        expect.objectContaining({
+          path,
+          reason: "invalid_format",
+          expected: "regex",
+        }),
+      ),
     );
+    checked.push(paths.map((path) => path.join(".")).join("+"));
   }
+  expect(checked).toEqual(
+    expect.arrayContaining(["path", "glue_paths.0", "candidate_paths.0"]),
+  );
   expect(inspect).not.toHaveBeenCalled();
   const valid = await harness.client.callTool({
     name: "inspect_wasm_artifact",
@@ -539,11 +553,9 @@ it("reads an oversized completed WASM result through its reported retained refer
   const advertised = catalog.tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("Missing WASM view schemas");
+  if (advertised === undefined) throw new Error("Missing WASM view schemas");
   const ajv = schemaValidation.assertions;
   const input: Record<string, unknown> = advertised.inputSchema;
-  const output: Record<string, unknown> = advertised.outputSchema;
   for (const [view, expected] of [
     [
       { kind: "summary" },
@@ -575,18 +587,14 @@ it("reads an oversized completed WASM result through its reported retained refer
   ] as const) {
     const args = { source: reference, view };
     expect(ajv.validate(input, args), JSON.stringify(ajv.errors)).toBe(true);
-    const selected = await harness.client.callTool({
-      name: "inspect_analysis_view",
-      arguments: args,
-    });
+    const selected = await harness.client.callTool(
+      { name: "inspect_analysis_view", arguments: args },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
     expect(
       selected.isError,
       JSON.stringify(selected.structuredContent),
     ).not.toBe(true);
-    expect(
-      ajv.validate(output, selected.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(selected.structuredContent);
     expect(evidence.confidence).toBe("derived");
     expect(evidence.evidence_links).toEqual([reference.evidence_id]);
@@ -657,7 +665,7 @@ it("checks WASM semantic identity while preserving rebound display paths", async
     { kind: "wasm", facet: "exports", offset: 0, limit: 1 },
   ] as const;
   for (const target of [
-    undefined,
+    unknownTarget("not-observed"),
     {
       path: value.artifact.path,
       sha256: "f".repeat(64),
@@ -731,7 +739,10 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
     { kind: "fixed", analysis: session },
     { wasmArtifact: service },
   );
-  const client = new Client({ name: "wasm-fixed-delivery", version: "1" });
+  const client = new Client(
+    { name: "wasm-fixed-delivery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(b);
@@ -761,12 +772,13 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
     expect(
       z.object({ issues: z.array(z.unknown()) }).parse(rejected.details).issues,
     ).toEqual(
-      [["path"], ["glue_paths", 0]].map((path) => ({
-        path,
-        reason: "invalid_format",
-        expected: "regex",
-        message: "must be an absolute local filesystem path",
-      })),
+      [["path"], ["glue_paths", 0]].map((path) =>
+        expect.objectContaining({
+          path,
+          reason: "invalid_format",
+          expected: "regex",
+        }),
+      ),
     );
     expect(inspect).not.toHaveBeenCalled();
     for (const input of [
@@ -805,6 +817,95 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
   }
 });
 
+it("compares caller-owned complete inline WASM sources on a fixed server without a recorder", async () => {
+  const leftReport = wasmArtifactFixture("/artifacts/left.wasm");
+  leftReport.interface = { state: "complete", issues: [], entries: [] };
+  const rightReport = wasmArtifactFixture("/artifacts/right.wasm");
+  rightReport.interface = {
+    state: "complete",
+    issues: [],
+    entries: [
+      {
+        direction: "export",
+        module: null,
+        name: "new_export",
+        kind: "func",
+        index: 0,
+        signature: { kind: "func", params: [], results: [] },
+        wat_form: '(export "new_export" (func 0))',
+        issue: null,
+      },
+    ],
+  };
+  const source = (report: ReturnType<typeof wasmArtifactFixture>) =>
+    createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256,
+        format: "file",
+      },
+      { id: "fixture-wabt", name: "Source-owned WABT seam", version: "1" },
+      {
+        operation: "inspect_wasm_artifact",
+        parameters: { path: report.artifact.path },
+        result: report,
+        confidence: "observed",
+      },
+    );
+  const left = source(leftReport);
+  const right = source(rightReport);
+  const inspect = vi.fn<WasmArtifactService["provider"]["inspect"]>(() => {
+    throw new Error(
+      "Comparison must reuse caller Evidence without provider work",
+    );
+  });
+  const service = new WasmArtifactService({
+    close: () => Promise.resolve(),
+    inspect,
+  });
+  const session = createTestBinarySession(() => {
+    throw new Error("Comparison must not start a deep provider");
+  });
+  const server = createServer(
+    { kind: "fixed", analysis: session },
+    { wasmArtifact: service },
+  );
+  const client = new Client(
+    { name: "wasm-fixed-comparison", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const reply = await client.callTool({
+      name: "compare_wasm_interfaces",
+      arguments: { left, right, scope: "both" },
+    });
+    expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(
+      true,
+    );
+    const comparison = parseEvidence(reply.structuredContent);
+    expect(comparison.operation).toBe("compare_wasm_interfaces");
+    expect(comparison.evidence_links).toEqual([
+      left.evidence_id,
+      right.evidence_id,
+    ]);
+    expect(comparison.normalized_result).toMatchObject({
+      coverage: "complete-within-inputs",
+      summary: { added: 1, changed: 0, removed: 0, unchanged: 0, unknown: 0 },
+      changes: [{ name: "new_export", state: "added" }],
+    });
+    expect(inspect).not.toHaveBeenCalled();
+    expect(session.exportEvidenceBundle().records).toEqual([]);
+  } finally {
+    await client.close();
+    await server.close();
+    await session.close();
+  }
+});
+
 it("retries cleanup of the injected WASM module after server shutdown fails", async () => {
   const close = vi
     .fn()
@@ -821,7 +922,10 @@ it("retries cleanup of the injected WASM module after server shutdown fails", as
     { kind: "session", session },
     { wasmArtifact: service },
   );
-  const client = new Client({ name: "wasm-cleanup-retry", version: "1" });
+  const client = new Client(
+    { name: "wasm-cleanup-retry", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(b);

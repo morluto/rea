@@ -1,5 +1,8 @@
+import { javaScriptSemanticPrecisionSchema } from "./javascriptSemanticPrecision.js";
 import { z } from "zod";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 import { javaScriptSemanticResourceLimitSchema } from "./javascriptSemanticValueTypes.js";
+import { javaScriptRefusedPhaseSchema } from "./javascriptSemanticWorkAllowance.js";
 
 /** Independent observations from one inert static pass; no runtime completeness claim. */
 export const javaScriptStaticCoverageSchema = z.strictObject({
@@ -25,13 +28,21 @@ export const javaScriptStaticCoverageSchema = z.strictObject({
         "dynamic-findings",
         "returned-reference-widening",
         "type-only-module-side-effect",
+        "conditional-loader",
+        "commonjs-wrapper-redeclaration",
       ]),
     ),
   }),
   examination: z.strictObject({
+    // domain-vocabulary: whether the static pass ran without hitting a semantic_precision budget, was limited by one, or was not run.
     status: z.enum(["complete", "limited", "not-examined"]),
     semantic_resource_limits: z.array(javaScriptSemanticResourceLimitSchema),
+    semantic_precision: javaScriptSemanticPrecisionSchema.optional(),
     electron_call_paths_limited: z.boolean(),
+    /** The `semantic_precision` budgets that limited this source. */
+    controls: z.array(analysisParameterLimitSchema).min(1).exactOptional(),
+    /** The analysis phase whose work allowance refused this source. */
+    refused_phase: javaScriptRefusedPhaseSchema.exactOptional(),
   }),
   applicability: z.strictObject({ electron: z.enum(["observed", "unknown"]) }),
   unexamined_reason: z.string().min(1).exactOptional(),
@@ -49,7 +60,10 @@ export const javaScriptStaticParseStatus = (
   coverage.syntax.status === "not-examined"
     ? "failed"
     : coverage.syntax.status === "recovered" ||
-        (coverage.semantics.unknown_findings ?? 0) > 0 ||
+        coverage.examination.status === "not-examined" ||
+        // An unknown finding count cannot establish that none were found.
+        coverage.semantics.unknown_findings !== 0 ||
+        coverage.semantics.uncertainty.includes("conditional-loader") ||
         coverage.examination.semantic_resource_limits.includes(
           "alias-selections",
         )

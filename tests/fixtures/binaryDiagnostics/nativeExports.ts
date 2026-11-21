@@ -1,5 +1,5 @@
 /** One PE export-address-table slot: code RVA, forwarder text, or unused. */
-export type PeFixtureFunction =
+type PeFixtureFunction =
   | { readonly rva: number }
   | { readonly forwarder: string }
   | null;
@@ -108,6 +108,16 @@ export const peExportImage = (options: {
   return bytes;
 };
 
+/** PE whose section stores every declared export-address-table slot. */
+export const peStoredExportTableImage = (declared: number): Buffer => {
+  const bytes = Buffer.alloc(SECTION_OFFSET + 0x40 + declared * 4);
+  peExportImage({ functions: [], declaredFunctions: declared }).copy(bytes);
+  const section = 152 + 240;
+  bytes.writeUInt32LE(bytes.length - SECTION_OFFSET, section + 8);
+  bytes.writeUInt32LE(bytes.length - SECTION_OFFSET, section + 16);
+  return bytes;
+};
+
 /** Compact PE whose name-table aliases all select one shared 4096-byte name. */
 export const peRepeatedExportNamesImage = (
   targetRva: number,
@@ -132,7 +142,7 @@ export const peRepeatedExportNamesImage = (
 };
 
 /** One `.dynsym` entry; `version` is its raw `.gnu.version` half-word. */
-export interface ElfFixtureSymbol {
+interface ElfFixtureSymbol {
   readonly name: string;
   readonly binding?: number;
   readonly type?: number;
@@ -145,7 +155,7 @@ export interface ElfFixtureSymbol {
   readonly nameOffset?: number;
 }
 
-export interface ElfFixtureVersionRequirement {
+interface ElfFixtureVersionRequirement {
   readonly index: number;
   readonly name: string;
 }

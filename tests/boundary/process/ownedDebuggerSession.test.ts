@@ -1,16 +1,22 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn as spawnPty } from "@lydell/node-pty";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  OwnedDebuggerCleanupError,
+  retainedDebuggerProcessIds,
+  retainedDebuggerRemediation,
+} from "../../../src/process/ownedDebuggerCleanupError.js";
 import {
   closeOwnedDebuggerSessions,
+  type OwnedDebuggerStopResult,
   stopOwnedDebuggerProcess,
   verifyOwnedInferiorsEnded,
 } from "../../../src/process/ownedDebuggerSession.js";
@@ -29,6 +35,15 @@ const createFakeSupervisor = () => ({
   limitAdditionalOutputBytes: vi.fn(),
   dispose: vi.fn(),
   unrefOutputStreams: vi.fn(),
+  ref: vi.fn(),
+  unref: vi.fn(),
+});
+
+/** A session reduced to what closing all sessions reads from it. */
+const closableSession = (id: string, pid?: number) => ({
+  id,
+  launched: { process: { pid } },
+  supervisor: { ref: vi.fn(), unref: vi.fn() },
 });
 
 const startStopProbe = (source: string, pipeInput = false) => {
@@ -268,6 +283,7 @@ it("retains process supervision after an incomplete stop and disposes after a re
   });
   expect(first).toEqual({
     status: "incomplete",
+    code: "process-did-not-exit",
     reason: "Owned GDB process did not exit after direct termination.",
   });
   expect(disposals).toBe(0);
@@ -312,8 +328,10 @@ it("refuses Windows job-backed debugger termination before signaling", async () 
     stopOwnedDebuggerProcess(session, "GDB", { platform: "win32" }),
   ).resolves.toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB process cannot be stopped safely on Windows because job termination can also terminate its inferior processes.",
+    code: "windows-stop-unsafe",
+    reason: expect.stringMatching(
+      /Windows.*job termination.*inferior processes/i,
+    ),
   });
   expect(signals).toEqual([]);
   expect(outputUnrefs).toBe(0);
@@ -345,8 +363,10 @@ it("retains an already-exited Windows session while its job has descendants", as
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB process leader exited, but its Windows Job Object still has active descendants or has not reported settlement.",
+    code: "output-unsettled",
+    reason: expect.stringMatching(
+      /leader exited.*Windows Job Object.*active descendants.*settlement/i,
+    ),
   });
   expect(disposals).toBe(0);
   expect(outputUnrefs).toBe(0);
@@ -378,8 +398,10 @@ it("retains an exited POSIX session while descendants still hold its output stre
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB process leader exited, but inherited output streams are still open or have not reported settlement.",
+    code: "output-unsettled",
+    reason: expect.stringMatching(
+      /leader exited.*output streams.*open.*settlement/i,
+    ),
   });
   expect(disposals).toBe(0);
   expect(outputUnrefs).toBe(0);
@@ -390,25 +412,25 @@ it.each([
     "POSIX Error",
     "linux",
     new Error("pipe state unknown"),
-    /inherited output stream settlement could not be verified: pipe state unknown/,
+    "Owned GDB inherited output stream settlement could not be verified: pipe state unknown",
   ],
   [
     "POSIX non-Error",
     "linux",
     "pipe state unknown",
-    /inherited output stream settlement could not be verified: pipe state unknown/,
+    "Owned GDB inherited output stream settlement could not be verified: pipe state unknown",
   ],
   [
     "Windows Error",
     "win32",
     new Error("job state unknown"),
-    /Windows Job Object settlement could not be verified: job state unknown/,
+    "Owned GDB Windows Job Object settlement could not be verified: job state unknown",
   ],
   [
     "Windows non-Error",
     "win32",
     "job state unknown",
-    /Windows Job Object settlement could not be verified: job state unknown/,
+    "Owned GDB Windows Job Object settlement could not be verified: job state unknown",
   ],
 ] as const)(
   "retains an exited debugger when output settlement throws (%s)",
@@ -433,8 +455,9 @@ it.each([
       { platform },
     );
 
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       status: "incomplete",
+      code: "output-unsettled",
       reason: expectedReason,
     });
     expect(disposals).toBe(0);
@@ -462,8 +485,10 @@ it("does not signal an active debugger when its provider cannot detach the infer
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB inferior detach cannot be verified because the provider has no detach capability.",
+    code: "detach-unsupported",
+    reason: expect.stringMatching(
+      /inferior detach.*cannot be verified.*no detach capability/i,
+    ),
   });
   expect(signals).toEqual([]);
 });
@@ -490,8 +515,10 @@ it("preserves a non-Error provider detach rejection and does not signal the debu
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB inferior detach could not be verified: detach state unknown",
+    code: "detach-failed",
+    reason: expect.stringMatching(
+      /inferior detach.*could not be verified.*detach state unknown/i,
+    ),
   });
   expect(signals).toEqual([]);
 });
@@ -520,6 +547,7 @@ it("does not signal a POSIX debugger when provider detach cannot be verified", a
 
   expect(result).toEqual({
     status: "incomplete",
+    code: "detach-failed",
     reason: "Owned GDB inferior detach could not be verified: MI detach failed",
   });
   expect(signals).toEqual([]);
@@ -533,7 +561,7 @@ it("retains an exited debugger after provider detach failed", async () => {
     get exited() {
       return exited;
     },
-    launched: { process: { kill: () => true } },
+    launched: { process: { pid: 101, kill: () => true } },
     detachInferior: async () => {
       throw new Error("MI detach failed");
     },
@@ -545,6 +573,8 @@ it("retains an exited debugger after provider detach failed", async () => {
         disposals += 1;
       },
       unrefOutputStreams: () => {},
+      ref: () => {},
+      unref: () => {},
     },
   };
   const sessions = new Map([[session.id, session]]);
@@ -553,6 +583,7 @@ it("retains an exited debugger after provider detach failed", async () => {
     await stopOwnedDebuggerProcess(session, "GDB", { platform: "linux" }),
   ).toEqual({
     status: "incomplete",
+    code: "detach-failed",
     reason: "Owned GDB inferior detach could not be verified: MI detach failed",
   });
 
@@ -580,7 +611,7 @@ it("recovers failed detach only after the identified inferior ends and output se
     get exited() {
       return exited;
     },
-    launched: { process: { kill: vi.fn(() => true) } },
+    launched: { process: { pid: 101, kill: vi.fn(() => true) } },
     detachInferior: async () => {
       throw new Error("detach failed");
     },
@@ -676,8 +707,10 @@ it("fails closed when detach lacks durable output sink confirmation", async () =
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB provider did not confirm no inferior or detachment with a durable output sink.",
+    code: "detach-unconfirmed",
+    reason: expect.stringMatching(
+      /did not confirm no inferior or detachment.*durable output sink/i,
+    ),
   });
   expect(signals).toEqual([]);
 });
@@ -726,8 +759,10 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
     await vi.advanceTimersByTimeAsync(1_000);
     expect(await attempt).toEqual({
       status: "incomplete",
-      reason:
-        "Owned GDB inferior detach was not verified within 1000 ms. This release has no runtime override.",
+      code: "detach-timeout",
+      reason: expect.stringMatching(
+        /inferior detach.*not verified.*1000 ms.*no runtime override/i,
+      ),
     });
     const retry = stopOwnedDebuggerProcess(session, "GDB", {
       platform: "linux",
@@ -735,8 +770,10 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
     await vi.advanceTimersByTimeAsync(1_000);
     expect(await retry).toEqual({
       status: "incomplete",
-      reason:
-        "Owned GDB inferior detach was not verified within 1000 ms. This release has no runtime override.",
+      code: "detach-timeout",
+      reason: expect.stringMatching(
+        /inferior detach.*not verified.*1000 ms.*no runtime override/i,
+      ),
     });
     expect(detachCalls).toBe(1);
     expect(signals).toEqual([]);
@@ -765,7 +802,7 @@ it("retains an exited session while a timed-out detach attempt is still pending"
     get exited() {
       return exited;
     },
-    launched: { process: { kill: () => true } },
+    launched: { process: { pid: 101, kill: () => true } },
     detachInferior: () => {
       detachCalls += 1;
       return new Promise<{ readonly status: "no-inferior" }>((resolve) => {
@@ -778,6 +815,8 @@ it("retains an exited session while a timed-out detach attempt is still pending"
       waitForOutputClose: async () => true,
       dispose: vi.fn(),
       unrefOutputStreams: vi.fn(),
+      ref: vi.fn(),
+      unref: vi.fn(),
     },
   };
   const sessions = new Map([[session.id, session]]);
@@ -912,38 +951,6 @@ it("uses the host platform when an exited debugger is stopped without options", 
   expect(outputCloseWaits).toBe(1);
   expect(outputUnrefs).toBe(process.platform === "win32" ? 0 : 1);
 });
-
-it.each([
-  ["linux", "inherited output stream"],
-  ["win32", "Windows Job Object"],
-] as const)(
-  "retains a non-Error output-settlement failure on %s",
-  async (platform, resource) => {
-    const result = await stopOwnedDebuggerProcess(
-      {
-        id: `output-settlement-${platform}`,
-        exited: true,
-        launched: { process: { kill: () => true } },
-        supervisor: {
-          waitForExit: async () => true,
-          waitForOutputClose: async () => {
-            throw "output status unavailable";
-          },
-          limitAdditionalOutputBytes: () => {},
-          dispose: () => {},
-          unrefOutputStreams: () => {},
-        },
-      },
-      "GDB",
-      { platform },
-    );
-
-    expect(result).toEqual({
-      status: "incomplete",
-      reason: `Owned GDB ${resource} settlement could not be verified: output status unavailable`,
-    });
-  },
-);
 
 it.skipIf(process.platform === "win32")(
   "keeps supervision until a late-writing descendant closes inherited output after leader exit",
@@ -1165,8 +1172,8 @@ it("disposes supervision when the debugger exits after SIGKILL", async () => {
 it.skipIf(process.platform === "win32")(
   "retains the debugger owner while an unknown descendant holds output pipes open",
   async () => {
-    const releaseDirectory = await mkdtemp(
-      join(tmpdir(), "rea-debugger-output-writer-"),
+    const releaseDirectory = await createTestTempDirectory(
+      "rea-debugger-output-writer-",
     );
     const releaseFile = join(releaseDirectory, "release-writer");
     const writerSource = `const{watch}=require("node:fs");const watcher=watch(${JSON.stringify(releaseDirectory)},(_event,name)=>{if(name==="release-writer"){watcher.close();process.exit(0)}});process.stdout.write("writer-ready\\n");`;
@@ -1240,7 +1247,6 @@ it.skipIf(process.platform === "win32")(
           probeExit,
           new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
         ]);
-      await rm(releaseDirectory, { recursive: true, force: true });
     }
   },
 );
@@ -1365,8 +1371,8 @@ it.skipIf(process.platform === "win32")(
 
 it("removes stopped sessions and retains incomplete sessions when closing all", async () => {
   const sessions = new Map([
-    ["stopped", { id: "stopped" }],
-    ["incomplete", { id: "incomplete" }],
+    ["stopped", closableSession("stopped")],
+    ["incomplete", closableSession("incomplete")],
   ]);
 
   await expect(
@@ -1374,19 +1380,28 @@ it("removes stopped sessions and retains incomplete sessions when closing all", 
       sessions,
       async (session) =>
         session.id === "incomplete"
-          ? { status: "incomplete", reason: "process remains alive" }
+          ? {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "process remains alive",
+            }
           : { status: "stopped" },
       "GDB",
     ),
   ).rejects.toMatchObject({
-    errors: [expect.objectContaining({ message: "process remains alive" })],
+    errors: [
+      expect.objectContaining({
+        code: "stop-failed",
+        message: "process remains alive",
+      }),
+    ],
   });
   expect([...sessions.keys()]).toEqual(["incomplete"]);
 });
 
 it("does not remove a replacement session installed under the same key while stopping", async () => {
-  const original = { id: "shared-key", generation: "old" };
-  const replacement = { id: "shared-key", generation: "new" };
+  const original = closableSession("shared-key");
+  const replacement = closableSession("shared-key");
   const sessions = new Map([["shared-key", original]]);
   let finishStop!: (result: { readonly status: "stopped" }) => void;
   const stopping = new Promise<{ readonly status: "stopped" }>((resolve) => {
@@ -1407,7 +1422,7 @@ it("does not remove a replacement session installed under the same key while sto
 });
 
 it("closes an empty owned-session collection", async () => {
-  const sessions = new Map<string, { id: string }>();
+  const sessions = new Map<string, ReturnType<typeof closableSession>>();
   await expect(
     closeOwnedDebuggerSessions(
       sessions,
@@ -1419,10 +1434,10 @@ it("closes an empty owned-session collection", async () => {
 
 it("settles every stop and retains rejected sessions while removing successful ones", async () => {
   const sessions = new Map([
-    ["stopped", { id: "stopped" }],
-    ["rejected", { id: "rejected" }],
-    ["string-rejected", { id: "string-rejected" }],
-    ["incomplete", { id: "incomplete" }],
+    ["stopped", closableSession("stopped")],
+    ["rejected", closableSession("rejected")],
+    ["string-rejected", closableSession("string-rejected")],
+    ["incomplete", closableSession("incomplete")],
   ]);
   const calls: string[] = [];
 
@@ -1434,7 +1449,11 @@ it("settles every stop and retains rejected sessions while removing successful o
         if (session.id === "rejected") throw new Error("signal failed");
         if (session.id === "string-rejected") throw "string rejection";
         if (session.id === "incomplete")
-          return { status: "incomplete", reason: "still alive" };
+          return {
+            status: "incomplete",
+            code: "stop-failed",
+            reason: "still alive",
+          };
         return { status: "stopped" };
       },
       "GDB",
@@ -1454,4 +1473,95 @@ it("settles every stop and retains rejected sessions while removing successful o
     "string-rejected",
     "incomplete",
   ]);
+});
+
+it("stops retained sessions holding the host and names them, leaving stopped peers alone", async () => {
+  const stopped = closableSession("stopped", 101);
+  const rejected = closableSession("rejected", 102);
+  const incomplete = closableSession("incomplete", 103);
+  const unidentified = closableSession("unidentified");
+  const sessions = new Map(
+    [stopped, rejected, incomplete, unidentified].map((session) => [
+      session.id,
+      session,
+    ]),
+  );
+
+  const failure: unknown = await closeOwnedDebuggerSessions(
+    sessions,
+    async (session) => {
+      if (session === stopped) return { status: "stopped" };
+      if (session === rejected) throw new Error("signal failed");
+      return {
+        status: "incomplete",
+        code: "stop-failed",
+        reason: "still alive",
+      };
+    },
+    "Rizin",
+  ).catch((cause: unknown) => cause);
+
+  expect(failure).toBeInstanceOf(OwnedDebuggerCleanupError);
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect((failure as OwnedDebuggerCleanupError).retainedProcessIds).toEqual([
+    102, 103,
+  ]);
+  expect(stopped.supervisor.unref).not.toHaveBeenCalled();
+  for (const retained of [rejected, incomplete, unidentified])
+    expect(retained.supervisor.unref).toHaveBeenCalledOnce();
+  expect([...sessions.keys()]).toEqual([
+    "rejected",
+    "incomplete",
+    "unidentified",
+  ]);
+});
+
+it("holds the host again while retrying a retained session and leaves it held on success", async () => {
+  const session = closableSession("retained", 101);
+  const sessions = new Map([[session.id, session]]);
+  const order: string[] = [];
+  session.supervisor.ref.mockImplementation(() => order.push("ref"));
+  session.supervisor.unref.mockImplementation(() => order.push("unref"));
+  let stopResult: OwnedDebuggerStopResult = {
+    status: "incomplete",
+    code: "stop-failed",
+    reason: "still alive",
+  };
+  const stop = async () => {
+    order.push("stop");
+    return stopResult;
+  };
+
+  await expect(
+    closeOwnedDebuggerSessions(sessions, stop, "GDB"),
+  ).rejects.toBeInstanceOf(OwnedDebuggerCleanupError);
+  expect(order).toEqual(["ref", "stop", "unref"]);
+
+  order.length = 0;
+  stopResult = { status: "stopped" };
+  await closeOwnedDebuggerSessions(sessions, stop, "GDB");
+  expect(order).toEqual(["ref", "stop"]);
+  expect(sessions.size).toBe(0);
+});
+
+it("finds retained debugger IDs through composed failures without looping on cycles", () => {
+  const first = new OwnedDebuggerCleanupError([], "first", [101, 102]);
+  const second = new OwnedDebuggerCleanupError([], "second", [102, 103]);
+  const cyclic = new Error("cyclic", { cause: second });
+  Object.assign(second, { cause: cyclic });
+  const composed = new AggregateError(
+    [first, new Error("wrapped", { cause: cyclic }), new Error("peer"), null],
+    "outer",
+  );
+
+  expect(retainedDebuggerProcessIds(composed)).toEqual([101, 102, 103]);
+  expect(retainedDebuggerProcessIds(new Error("peer"))).toEqual([]);
+  expect(retainedDebuggerProcessIds(undefined)).toEqual([]);
+});
+
+it("names every retained debugger in its remediation", () => {
+  const remediation = retainedDebuggerRemediation([4242, 4243]);
+  expect(remediation).toMatch(/no later REA command can retry this cleanup/iu);
+  expect(remediation).toMatch(/\b4242\b/u);
+  expect(remediation).toMatch(/\b4243\b/u);
 });

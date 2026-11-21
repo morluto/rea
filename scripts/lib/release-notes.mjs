@@ -1,5 +1,7 @@
+import { createRequire } from "node:module";
 import { valid } from "semver";
 import { z } from "zod";
+import { releaseBullets, releaseSection } from "./release-markdown.mjs";
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const actor = z.object({
@@ -176,47 +178,49 @@ export function contributionSummary(raw) {
   return `Full contribution record: [${inventory.commits.length} commits and ${inventory.pullRequests.length} merged PR${inventory.pullRequests.length === 1 ? "" : "s"}](https://github.com/${inventory.repository}/blob/rea-agents-${inventory.version}/docs/releases/${inventory.version}.contributions.json).\n`;
 }
 
-export function selectedReleaseNotes(text, version) {
-  const headings = [...text.matchAll(/^## \[([^\]]+)\].*$/gmu)];
-  if (headings[0]?.[1] !== version)
+function readReleaseSection(text, version) {
+  const section = releaseSection(text, version);
+  if (section === undefined)
     throw new Error(`Notes must start with release [${version}]`);
-  return text
-    .slice(headings[0].index, headings[1]?.index ?? text.length)
-    .trim();
+  return section;
 }
 
-// Notes have one Markdown list item per line; fenced examples are never credit sources.
-function proseBullets(text) {
-  let fence;
-  return text.split("\n").filter((line) => {
-    const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1];
-    if (marker) {
-      if (!fence) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length)
-        fence = undefined;
-      return false;
+function bulletCredits(parts, repository) {
+  const references = new Set();
+  const links = [];
+  let prose = "";
+  let localProse = "";
+  for (const { text, href } of parts) {
+    prose += text;
+    if (href) links.push(href);
+    const reference =
+      /^https:\/\/github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)$/u.exec(
+        href ?? "",
+      );
+    if (reference) {
+      // Use the destination's repository and number instead of its display label.
+      if (reference[1].toLowerCase() === repository.toLowerCase())
+        references.add(Number(reference[2]));
+      localProse += " ";
+    } else {
+      localProse += text;
     }
-    return !fence && /^[-*] /u.test(line);
-  });
-}
-
-function bulletPrs(bullet, repository) {
-  // Resolve explicit links first so cross-repository numbers cannot acquire local credit.
-  const local = [];
-  const withoutLinks = bullet.replace(
-    /\[([^\]]*)\]\(https:\/\/github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)\)/gu,
-    (_match, _label, repo, number) => {
-      if (repo.toLowerCase() === repository.toLowerCase())
-        local.push(Number(number));
-      return "";
-    },
+  }
+  for (const match of localProse.matchAll(/(?<![\w/])#(\d+)\b/gu))
+    references.add(Number(match[1]));
+  const start = prose.indexOf("Thanks ");
+  const thanked = new Set(
+    Array.from(
+      prose
+        .slice(start < 0 ? prose.length : start)
+        .matchAll(/@([A-Za-z0-9-]+(?:\[bot\])?)/gu),
+      (match) => match[1].toLowerCase(),
+    ),
   );
-  for (const match of withoutLinks.matchAll(/(?<![\w/])#(\d+)\b/gu))
-    local.push(Number(match[1]));
-  return new Set(local);
+  return { references, links, prose, thanked };
 }
 
-function requiredCredits(inventory, bullet, references) {
+function requiredCredits(inventory, { references, links, prose }) {
   const required = [];
   for (const pr of inventory.pullRequests.filter((item) =>
     references.has(item.number),
@@ -229,7 +233,7 @@ function requiredCredits(inventory, bullet, references) {
       (issue.repository.nameWithOwner.toLowerCase() ===
         inventory.repository.toLowerCase() &&
         references.has(issue.number)) ||
-      bullet.includes(`](${issue.url})`);
+      links.includes(issue.url);
     const handle = human(issue.author);
     if (mentioned && handle)
       required.push({
@@ -237,9 +241,11 @@ function requiredCredits(inventory, bullet, references) {
         context: `issue ${issue.repository.nameWithOwner}#${issue.number}`,
       });
   }
-  for (const match of bullet.matchAll(
-    /https:\/\/github\.com\/([^/]+\/[^/]+)\/commit\/([a-f0-9]{7,40})\b/gu,
-  )) {
+  for (const match of [prose, ...links]
+    .join(" ")
+    .matchAll(
+      /https:\/\/github\.com\/([^/]+\/[^/]+)\/commit\/([a-f0-9]{7,40})\b/gu,
+    )) {
     if (match[1].toLowerCase() !== inventory.repository.toLowerCase()) continue;
     const matches = inventory.commits.filter((item) =>
       item.sha.startsWith(match[2]),
@@ -256,7 +262,7 @@ function requiredCredits(inventory, bullet, references) {
   return required;
 }
 
-function verifyEditorialCredits(inventory, prose) {
+function verifyEditorialCredits(inventory, bullets) {
   const known = new Set(inventory.pullRequests.map((pr) => pr.number));
   const issues = new Set(
     inventory.pullRequests.flatMap((pr) =>
@@ -280,24 +286,13 @@ function verifyEditorialCredits(inventory, prose) {
   const errors = [];
   const requiredByContext = new Map();
   const thankedByContext = new Map();
-  for (const bullet of proseBullets(prose)) {
-    const references = bulletPrs(bullet, inventory.repository);
-    const start = bullet.indexOf("Thanks ");
-    const thanked = new Set(
-      [
-        ...bullet
-          .slice(start < 0 ? bullet.length : start)
-          .matchAll(/@([A-Za-z0-9-]+(?:\[bot\])?)/gu),
-      ].map((match) => match[1].toLowerCase()),
-    );
+  for (const parts of bullets) {
+    const bullet = bulletCredits(parts, inventory.repository);
+    const { references, thanked } = bullet;
     for (const number of references)
       if (!known.has(number) && !issues.has(number))
         errors.push(`Unknown release reference #${number}`);
-    for (const { handle, context } of requiredCredits(
-      inventory,
-      bullet,
-      references,
-    )) {
+    for (const { handle, context } of requiredCredits(inventory, bullet)) {
       const required = requiredByContext.get(context) ?? new Set();
       required.add(handle);
       requiredByContext.set(context, required);
@@ -316,9 +311,29 @@ function verifyEditorialCredits(inventory, prose) {
   return errors;
 }
 
+function editorialReleaseBlocks(notes, blocks, inventory) {
+  const record = contributionRecord(inventory).trim();
+  const summary = contributionSummary(inventory).trim();
+  const summaryOffset = notes.length - summary.length;
+  const expected = notes.endsWith(summary) ? summary : record;
+  const contributionStart =
+    expected === summary
+      ? blocks.find(({ offset }) => offset === summaryOffset)
+      : blocks.find(
+          ({ heading }) => heading === "### Complete contribution record",
+        );
+  const start = contributionStart?.offset;
+  if (start === undefined || notes.slice(start).trim() !== expected)
+    throw new Error(
+      "Contribution record differs from inventory; regenerate it with release-notes record",
+    );
+  return blocks.filter(({ offset }) => offset < start);
+}
+
 export function verifyReleaseNotes(raw, text, body) {
   const inventory = releaseInventorySchema.parse(raw);
-  const notes = selectedReleaseNotes(text, inventory.version);
+  const { source, blocks } = readReleaseSection(text, inventory.version);
+  const notes = source.trim();
   // Release Please's inline issue/PR body limit (pull-request-overflow-handler).
   if (notes.length > 65_536 || (body !== undefined && body.length > 65_536))
     throw new Error(
@@ -328,44 +343,41 @@ export function verifyReleaseNotes(raw, text, body) {
     throw new Error(
       "Release notes exceed GitHub's body budget; shorten prose without dropping credit",
     );
-  const record = contributionRecord(inventory).trim();
-  const summary = contributionSummary(inventory).trim();
-  const start = notes.endsWith(summary)
-    ? notes.length - summary.length
-    : notes.indexOf("### Complete contribution record");
-  if (
-    start < 0 ||
-    (notes.slice(start).trim() !== record &&
-      notes.slice(start).trim() !== summary)
-  )
-    throw new Error(
-      "Contribution record differs from inventory; regenerate it with release-notes record",
-    );
-  const prose = notes.slice(0, start);
-  const errors = verifyEditorialCredits(inventory, prose);
+  const editorial = editorialReleaseBlocks(notes, blocks, inventory);
+  const errors = verifyEditorialCredits(inventory, releaseBullets(editorial));
   for (const heading of ["Highlights", "Changes", "Fixes"])
-    if (!prose.includes(`### ${heading}\n`))
+    if (!editorial.some((block) => block.heading === `### ${heading}`))
       errors.push(`Missing ${heading} section`);
   if (body !== undefined) {
-    const bodyNotes = selectedReleaseNotes(body, inventory.version)
-      .replace(
-        /\n---\nThis PR was generated with \[Release Please\][\s\S]*$/u,
-        "",
-      )
-      .trim();
-    if (bodyNotes !== notes)
+    // Use the publisher's parser: finding a heading alone does not establish
+    // that Release Please will extract notes from its PR envelope.
+    const { PullRequestBody } = createRequire(import.meta.url)(
+      "release-please/build/src/util/pull-request-body.js",
+    );
+    const releases = PullRequestBody.parse(body)?.releaseData ?? [];
+    if (
+      releases.length !== 1 ||
+      releases[0].version?.toString() !== inventory.version
+    )
+      errors.push(
+        `Release Please cannot extract ${inventory.version} notes from the PR body; keep Author readiness and other metadata outside the notes delimiters`,
+      );
+    else if (releases[0].notes.trim() !== notes)
       errors.push("Release PR body differs from CHANGELOG.md");
   }
   if (errors.length) throw new Error(errors.join("\n"));
   return {
-    version: inventory.version,
-    pullRequests: inventory.pullRequests.length,
-    commits: inventory.commits.length,
-    unresolvedAuthors: inventory.commits.flatMap((item) =>
-      item.authors
-        .filter((identity) => identity.user === null)
-        .map((identity) => ({ sha: item.sha, ...identity })),
-    ),
+    notes,
+    report: {
+      version: inventory.version,
+      pullRequests: inventory.pullRequests.length,
+      commits: inventory.commits.length,
+      unresolvedAuthors: inventory.commits.flatMap((item) =>
+        item.authors
+          .filter((identity) => identity.user === null)
+          .map((identity) => ({ sha: item.sha, ...identity })),
+      ),
+    },
   };
 }
 
@@ -373,6 +385,8 @@ const VERSION_ONLY_PLUGIN_METADATA = new Set([
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
   ".codex-plugin/mcp.json",
+  ".cursor-plugin/plugin.json",
+  "mcp.json",
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
 ]);
@@ -395,9 +409,14 @@ function pluginMetadataWithoutVersions(path, text) {
   }
   if ("version" in manifest) manifest.version = "";
   const launch = manifest.mcpServers?.rea?.args;
-  // Only the scalar pinned version is release-owned; the launcher owns the
-  // fixed package name and the executable/path remain product behavior.
-  if (Array.isArray(launch) && typeof launch[1] === "string") launch[1] = "";
+  // Only the scalar pinned version is release-owned. Blank that version and
+  // keep a package name such as rea-agents@ so a renamed package still counts
+  // as a product change. The executable and path remain product behavior.
+  if (Array.isArray(launch) && typeof launch[1] === "string")
+    launch[1] = launch[1].replace(
+      /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/u,
+      "",
+    );
   return JSON.stringify(manifest);
 }
 
@@ -476,7 +495,8 @@ export async function verifyInventoryHistory(run, raw, source) {
       "package-lock.json",
       "server.json",
       "src/generatedPackageMetadata.ts",
-      "docs/installation.md",
+      "docs/installation.md", // Historical releases before documentation organization.
+      "docs/getting-started/installation.md",
       `docs/releases/${inventory.version}.contributions.json`,
     ]);
     const paths = (

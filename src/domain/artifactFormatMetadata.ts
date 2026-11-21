@@ -1,7 +1,19 @@
+import { completeOrUnknownCoverageSchema } from "./coverage.js";
+import {
+  ntfsFileReferenceSchema,
+  ntfsFileNameSchema,
+  ntfsAttributeSchema,
+  ntfsAttributeIssueSchema,
+  ntfsAttributeListResolutionSchema,
+} from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
+import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
+
+import { jsonRecordSchema } from "./jsonRecord.js";
+import { jsonValueSchema } from "./jsonValue.js";
 
 const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const uint32 = z.number().int().min(0).max(0xffff_ffff);
+export const uint32 = z.number().int().min(0).max(0xffff_ffff);
 
 /** Parsed source fields owned by the PCK adapter, independent of content hashes. */
 export const godotPckMetadataSchema = z.strictObject({
@@ -61,6 +73,24 @@ export const unityFsEntryMetadataSchema = z.strictObject({
   source_path: z.string(),
   declared_offset: offset,
   flags: uint32,
+});
+
+/** Parsed source fields owned by the wxapkg adapter, independent of member bytes. */
+export const wxapkgMetadataSchema = z.strictObject({
+  kind: z.literal("wxapkg"),
+  info: uint32.nullable(),
+  index_length: uint32.nullable(),
+  data_length: uint32.nullable(),
+  file_count: uint32.nullable(),
+  directory_status: z.enum(["available", "encrypted"]),
+});
+export type WxapkgMetadata = z.infer<typeof wxapkgMetadataSchema>;
+
+export const wxapkgEntryMetadataSchema = z.strictObject({
+  kind: z.literal("wxapkg-entry"),
+  index: uint32,
+  source_path: z.string(),
+  declared_offset: offset,
 });
 
 /** Source cookie fields and derived directory counts without Python execution. */
@@ -131,8 +161,8 @@ export const dotnetBundleEntryMetadataSchema = z.strictObject({
 });
 
 /**
- * Node.js single-executable blob facts. Lengths follow the Node 24 64-bit
- * little-endian `size_t` reader. The fuse sentinel is a separate carrier scan.
+ * Node.js single-executable blob facts. Lengths use 64-bit little-endian
+ * `size_t`. The fuse sentinel is a separate carrier scan.
  */
 export const nodeSeaMetadataSchema = z.strictObject({
   kind: z.literal("node-sea"),
@@ -145,6 +175,7 @@ export const nodeSeaMetadataSchema = z.strictObject({
   include_exec_argv: z.boolean(),
   exec_argv_extension: z.enum(["none", "env", "cli"]),
   exec_argv: z.array(z.string()),
+  main_code_format: z.enum(["commonjs", "module"]).exactOptional(),
   code_path: z.string(),
   carrier: z.enum(["mach-o", "elf", "pe"]),
   blob_offset: offset,
@@ -154,6 +185,9 @@ export const nodeSeaMetadataSchema = z.strictObject({
   fuse_contradiction: z.string().nullable(),
 });
 export type NodeSeaMetadata = z.infer<typeof nodeSeaMetadataSchema>;
+export type NodeSeaMainCodeFormat = NonNullable<
+  NodeSeaMetadata["main_code_format"]
+>;
 
 /** One injected script, snapshot, code cache, or asset. Bytes stay opaque. */
 export const nodeSeaEntryMetadataSchema = z.strictObject({
@@ -161,6 +195,78 @@ export const nodeSeaEntryMetadataSchema = z.strictObject({
   role: z.enum(["main-script", "snapshot", "code-cache", "asset"]),
   source_path: z.string(),
   index: uint32,
+});
+
+/**
+ * UF2 facts derived from every 512-byte block. Regions hold only valid
+ * main-flash payloads; block numbering is grouped by familyID and block count.
+ */
+export const uf2MetadataSchema = z.strictObject({
+  kind: z.literal("uf2"),
+  block_count: offset,
+  trailing_bytes: offset,
+  invalid_block_count: offset,
+  flash_block_count: offset,
+  not_main_flash_block_count: offset,
+  file_container_block_count: offset,
+  md5_block_count: offset,
+  extension_tag_block_count: offset,
+  family_count: offset,
+  /** The registry revision REA's region `family_name` values come from. */
+  family_name_registry: z.string(),
+  numbering_group_count: offset,
+  missing_block_count: offset,
+  ambiguous_numbering_group_count: offset,
+  repeated_block_count: offset,
+  out_of_order_block_count: offset,
+  block_number_out_of_range_count: offset,
+  region_count: offset,
+  data_bytes: offset,
+  duplicate_bytes: offset,
+});
+export type Uf2Metadata = z.infer<typeof uf2MetadataSchema>;
+
+/** One family's address-contiguous region; file blocks are zero-based positions. */
+export const uf2RegionMetadataSchema = z.strictObject({
+  kind: z.literal("uf2-region"),
+  family_id: uint32.nullable(),
+  /** REA's label for `family_id`, from `family_name_registry`; not file content. */
+  family_name: z.string().nullable(),
+  start_address: uint32,
+  end_address: uint32,
+  length: offset,
+  block_count: offset,
+  first_file_block: offset,
+  last_file_block: offset,
+});
+
+/** DfuSe prefix and DFU suffix facts; both CRCs use the suffix's stored form. */
+export const dfuSeMetadataSchema = z.strictObject({
+  kind: z.literal("dfuse"),
+  image_size: uint32,
+  target_count: uint32,
+  element_count: offset,
+  empty_element_count: offset,
+  overlapping_element_count: offset,
+  data_bytes: offset,
+  device_version: uint32,
+  product_id: uint32,
+  vendor_id: uint32,
+  suffix_crc: uint32,
+  computed_crc: uint32,
+});
+export type DfuSeMetadata = z.infer<typeof dfuSeMetadataSchema>;
+
+/** One DfuSe element with its target's alternate setting and name. */
+export const dfuSeElementMetadataSchema = z.strictObject({
+  kind: z.literal("dfuse-element"),
+  target_index: uint32,
+  alternate_setting: uint32,
+  target_name: z.string().nullable(),
+  element_index: uint32,
+  start_address: uint32,
+  end_address: uint32,
+  length: offset,
 });
 
 /**
@@ -204,6 +310,65 @@ export const hexRecordRegionMetadataSchema = z.strictObject({
   record_count: offset,
   first_line: offset,
   last_line: offset,
+});
+
+const ntfsRecordHeaderSchema = z.strictObject({
+  index: offset,
+  fileOffset: offset,
+  sequenceNumber: offset,
+  hardLinkCount: offset,
+  flags: z.strictObject({
+    raw: offset,
+    names: z.array(z.string()),
+    unknownMask: offset,
+  }),
+  inUse: z.boolean(),
+  directory: z.boolean(),
+  usedBytes: offset,
+  totalBytes: offset,
+  extentValid: z.boolean(),
+  baseRecordReference: ntfsFileReferenceSchema.nullable(),
+  declaredRecordNumber: offset.nullable(),
+  recordNumberMatchesSlot: z.boolean().nullable(),
+  logFileSequenceNumber: z.string().regex(/^(?:0|[1-9][0-9]*)$/u),
+  firstAttributeOffset: offset,
+  nextAttributeId: offset,
+  fileNames: z.array(ntfsFileNameSchema).exactOptional(),
+  attributes: z.array(ntfsAttributeSchema).exactOptional(),
+  // domain-vocabulary: whether the physical MFT record's attribute stream reached its 0xffffffff end marker without a malformed attribute.
+  attributeCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeIssue: ntfsAttributeIssueSchema.nullable().exactOptional(),
+  // domain-vocabulary: whether resident FILE_NAME attributes come from a complete local attribute stream with no $ATTRIBUTE_LIST.
+  fileNameCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeListResolution: ntfsAttributeListResolutionSchema.exactOptional(),
+  fixups: z.strictObject({
+    sequenceNumber: offset,
+    entries: offset,
+    verifiedSectors: offset,
+    coveredSectors: offset,
+    mismatchSector: offset.nullable(),
+    malformed: z.boolean(),
+  }),
+});
+
+/** NTFS $MFT record-header and resident file-name coverage facts. */
+export const ntfsMftMetadataSchema = z.strictObject({
+  kind: z.literal("ntfs-mft"),
+  record_bytes: offset,
+  record_count: offset,
+  in_use_record_count: offset,
+  directory_record_count: offset,
+  extension_record_count: offset,
+  fixup_mismatch_count: offset,
+  fixup_unverified_record_count: offset,
+  truncated_tail_bytes: offset,
+  record_headers: z.array(ntfsRecordHeaderSchema).max(MFT_INLINE_HEADER_LIMIT),
+  omitted_record_headers: offset,
+  record_header_start_index: offset.exactOptional(),
+  next_record_header_index: offset.nullable().exactOptional(),
+  file_name_count: offset.exactOptional(),
+  file_name_incomplete_record_count: offset.exactOptional(),
+  attribute_incomplete_record_count: offset.exactOptional(),
 });
 
 /**
@@ -279,34 +444,24 @@ export const fitImageMetadataSchema = z.strictObject({
   signature_algorithms: z.array(z.string()),
 });
 export type FitImageMetadata = z.infer<typeof fitImageMetadataSchema>;
-/** Payload interpretation and sharing declarations, independent of FIT placement. */
-export const fitImageDeclaration = (metadata: FitImageMetadata) => ({
-  type: metadata.type,
-  arch: metadata.arch,
-  os: metadata.os,
-  compression: metadata.compression,
-  load: metadata.load,
-  entry: metadata.entry,
-  image_data: metadata.image_data,
-  cipher_present: metadata.cipher_present,
-  cipher_algo: metadata.cipher_algo,
-});
 
-/** Runtime member identity, independent of blob layout and directory order. */
-export const nodeSeaEntryDeclaration = (
-  metadata: z.infer<typeof nodeSeaEntryMetadataSchema>,
-) => ({ role: metadata.role, source_path: metadata.source_path });
-
-const uint8 = z.number().int().min(0).max(0xff);
+export const uint8 = z.number().int().min(0).max(0xff);
 const uint16 = z.number().int().min(0).max(0xffff);
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/u);
 const byteRange = z.strictObject({ offset, length: offset });
+
+/** Derived from `chip_id` through the cited table. */
+const espChipFactsSchema = z.strictObject({
+  target: z.string(),
+  isa: z.enum(["xtensa", "riscv"]),
+  source: z.string(),
+});
 
 /**
  * `esp_app_desc_t` fields, as ESP-IDF names them; strings stop at NUL. A field
  * the file cuts off is null; `observed_length` says where the descriptor ends.
  */
-const espAppDescriptorSchema = z.strictObject({
+export const espAppDescriptorSchema = z.strictObject({
   kind: z.literal("app"),
   offset,
   /** Descriptor bytes the file holds, at most the 256 of `esp_app_desc_t`. */
@@ -333,7 +488,7 @@ const espAppDescriptorSchema = z.strictObject({
 });
 
 /** `esp_bootloader_desc_t` fields, as ESP-IDF names them. */
-const espBootloaderDescriptorSchema = z.strictObject({
+export const espBootloaderDescriptorSchema = z.strictObject({
   kind: z.literal("bootloader"),
   offset,
   secure_version: uint8,
@@ -366,13 +521,7 @@ export const espImageMetadataSchema = z.strictObject({
     hash_appended: z.boolean(),
   }),
   /** Derived from `chip_id` through the cited table; null for unknown IDs. */
-  chip: z
-    .strictObject({
-      target: z.string(),
-      isa: z.enum(["xtensa", "riscv"]),
-      source: z.string(),
-    })
-    .nullable(),
+  chip: espChipFactsSchema.nullable(),
   checksum: z.strictObject({
     offset: offset.nullable(),
     stored: uint8.nullable(),
@@ -398,6 +547,17 @@ export const espImageMetadataSchema = z.strictObject({
       espBootloaderDescriptorSchema,
     ])
     .nullable(),
+  /**
+   * Set when the file is a flash dump read from a later flash address: this
+   * image is not an app, its chip's ROM loads the bootloader from
+   * `flash_offset`, and a partition table sits at `table_file_offset`, where
+   * that origin puts the default `0x8000`. Reopen the file as
+   * `esp-flash-image` with that `flash_offset`. Null otherwise, and in the
+   * nested facts of a flash layout.
+   */
+  flash_dump: z
+    .strictObject({ flash_offset: uint32, table_file_offset: offset })
+    .nullable(),
 });
 export type EspImageMetadata = z.infer<typeof espImageMetadataSchema>;
 
@@ -414,14 +574,6 @@ export const espImageSegmentMetadataSchema = z.strictObject({
 export type EspImageSegmentMetadata = z.infer<
   typeof espImageSegmentMetadataSchema
 >;
-
-/**
- * What a segment header declares: where its bytes load and how many there
- * are. Header offsets are layout, and the classification is derived.
- */
-export const espImageSegmentDeclaration = (
-  metadata: EspImageSegmentMetadata,
-) => ({ load_addr: metadata.load_addr, data_len: metadata.data_len });
 
 /** One Secure Boot v2 block with its 0xE7 magic and a matching CRC32. */
 export const espImageSignatureBlockMetadataSchema = z.strictObject({
@@ -449,15 +601,169 @@ export type EspImageSignatureBlockMetadata = z.infer<
   typeof espImageSignatureBlockMetadataSchema
 >;
 
-/** Declaration identity that is stable across archive layout changes. */
-export const pyInstallerEntryDeclaration = (
-  metadata: PyInstallerEntryMetadata,
-) => ({
-  container: metadata.container,
-  container_name: metadata.container_name,
-  source_name: metadata.source_name,
-  type_code: metadata.type_code,
+/** One partition table entry as declared, with ESP-IDF's type names. */
+export const espFlashPartitionMetadataSchema = z.strictObject({
+  kind: z.literal("esp-flash-partition"),
+  /** Position among the table's partition entries. */
+  index: uint8,
+  /** The label up to its first NUL; null when it is not UTF-8. */
+  label: z.string().nullable(),
+  /** The label's bytes up to its first NUL in hex, when it is not UTF-8. */
+  label_hex: z
+    .string()
+    .regex(/^(?:[0-9a-f]{2}){1,16}$/u)
+    .nullable(),
+  type: uint8,
+  subtype: uint8,
+  /** `gen_esp32part.py` names; null for values it does not name. */
+  type_name: z.string().nullable(),
+  subtype_name: z.string().nullable(),
+  flash_address: uint32,
+  size: uint32,
+  encrypted: z.boolean(),
+  readonly: z.boolean(),
+  /** Flag bits other than `encrypted` and `readonly`, which ESP-IDF ignores. */
+  unknown_flags: uint32,
+  /**
+   * Observed in the bytes the dump holds, from the partition's start: the
+   * first byte that is not 0xFF and just past the last, null when every byte
+   * is erased, and how many bytes are not 0xFF. All null for a partition the
+   * dump holds none of.
+   */
+  written_offset: uint32.nullable(),
+  written_end: uint32.nullable(),
+  written_bytes: uint32.nullable(),
 });
+
+/** ESP image facts for a region of a dump; offsets are relative to the region. */
+export const espFlashImageFactsSchema = z.strictObject({
+  /** An ESP image, erased flash, or bytes that are not one, such as ciphertext. */
+  status: z.enum(["esp-image", "erased", "unrecognized"]),
+  image: espImageMetadataSchema.nullable(),
+  segments: z.array(espImageSegmentMetadataSchema),
+  signature_blocks: z.array(espImageSignatureBlockMetadataSchema),
+  coverage: completeOrUnknownCoverageSchema.nullable(),
+  limitations: z.array(z.string()),
+});
+
+const espOtaRecordSchema = z.strictObject({
+  index: z.union([z.literal(0), z.literal(1)]),
+  ota_seq: uint32,
+  seq_label: z.string().regex(/^[0-9a-f]{40}$/u),
+  ota_state: uint32,
+  state_name: z
+    .enum(["new", "pending-verify", "valid", "invalid", "aborted", "undefined"])
+    .nullable(),
+  crc: uint32,
+  /** CRC-32 of `ota_seq` seeded with 0xFFFFFFFF, as the bootloader checks it. */
+  crc_matches: z.boolean(),
+  valid: z.boolean(),
+});
+
+/**
+ * An ESP flash dump: where it sits in flash, its bootloader, partition table,
+ * partitions and OTA data. Entries are the table's partitions; app and
+ * bootloader regions carry their ESP image facts here.
+ */
+export const espFlashImageMetadataSchema = z.strictObject({
+  kind: z.literal("esp-flash-image"),
+  /** Flash address of the file's first byte: 0 unless the caller gave one. */
+  flash_offset: z.strictObject({
+    value: uint32,
+    source: z.enum(["default", "caller"]),
+  }),
+  /** From the bootloader's `chip_id`; null without a located bootloader. */
+  chip: espChipFactsSchema.nullable(),
+  /**
+   * The image at its chip's ROM offset, through the partition table; `path`
+   * is its entry.
+   */
+  bootloader: z
+    .strictObject({
+      path: z.string(),
+      flash_address: uint32,
+      region_size: offset,
+      facts: espFlashImageFactsSchema,
+    })
+    .nullable(),
+  partition_table: z.strictObject({
+    flash_address: uint32,
+    /** 0x8000, the caller's offset, or a scan for a verified MD5 (derived). */
+    method: z.enum(["default", "caller", "scan"]),
+    partition_count: uint8,
+    md5: z.strictObject({
+      status: z.enum(["valid", "invalid", "absent"]),
+      stored: z
+        .string()
+        .regex(/^[0-9a-f]{32}$/u)
+        .nullable(),
+      computed: z
+        .string()
+        .regex(/^[0-9a-f]{32}$/u)
+        .nullable(),
+      /**
+       * Partition entries after the MD5 record, outside its digest. New
+       * inventories emit 0 when the record is absent or every partition
+       * entry precedes it. Omission is Evidence saved before this field
+       * and leaves the count unknown.
+       */
+      entries_after_checksum: uint8.exactOptional(),
+    }),
+  }),
+  /**
+   * Declared partitions that begin before the dump's first byte, which have
+   * no entry. A partition past the dump's end is an entry with no bytes.
+   */
+  partitions_outside_dump: z.array(espFlashPartitionMetadataSchema),
+  /** ESP image facts for each app partition the dump holds, by its entry. */
+  apps: z.array(
+    z.strictObject({
+      path: z.string(),
+      partition_index: uint8,
+      facts: espFlashImageFactsSchema,
+    }),
+  ),
+  /** The otadata partition the bootloader uses: the last one declared. */
+  otadata: z
+    .strictObject({
+      partition_index: uint8,
+      /** The records the dump holds, at most one per sector. */
+      records: z.array(espOtaRecordSchema).max(2),
+    })
+    .nullable(),
+  /**
+   * The app the bootloader would select, derived for every table under the
+   * stated assumptions. `basis` names the branch: `otadata`,
+   * `factory-fallback` and `ota_0-fallback` from the otadata records,
+   * `no-otadata` for a table without otadata (the factory index), `none`
+   * for the bootloader's INVALID_INDEX, after which it resets, and
+   * `unknown` when the dump lacks a record the bootloader reads.
+   * `partition_index` is null when the table declares no partition for the
+   * selected slot or fallback.
+   */
+  boot_selection: z.strictObject({
+    basis: z.enum([
+      "otadata",
+      "factory-fallback",
+      "ota_0-fallback",
+      "no-otadata",
+      "none",
+      "unknown",
+    ]),
+    active_record: z.union([z.literal(0), z.literal(1)]).nullable(),
+    slot: uint8.nullable(),
+    partition_index: uint8.nullable(),
+    assumptions: z.array(z.string()),
+    /** Rollback, anti-rollback and load fallback decide it at boot. */
+    running_partition: z.literal("unknown"),
+  }),
+  /**
+   * Ranges outside every described region, each from a byte that is not
+   * erased flash to the end of its gap.
+   */
+  undescribed: z.array(byteRange),
+});
+export type EspFlashImageMetadata = z.infer<typeof espFlashImageMetadataSchema>;
 
 /**
  * U-Boot legacy uImage header facts. Declared addresses are facts from the
@@ -495,6 +801,110 @@ export const uImageEntryMetadataSchema = z.strictObject({
   index: uint32,
 });
 export type UImageEntryMetadata = z.infer<typeof uImageEntryMetadataSchema>;
+
+const androidOtaHash = z
+  .string()
+  .regex(/^[0-9a-f]*$/u)
+  .nullable();
+
+const androidOtaPartitionInfoSchema = z.strictObject({
+  size: offset.nullable(),
+  hash_hex: androidOtaHash,
+});
+
+const androidOtaOperationCountSchema = z.strictObject({
+  type: z.string(),
+  type_code: z.number().int().min(0),
+  count: uint32,
+});
+
+/**
+ * CrAU v2 DeltaArchiveManifest facts. Signatures are counted, not verified.
+ * Partition images are reconstructed only from REPLACE, ZERO and REPLACE_ZSTD.
+ */
+export const androidOtaPayloadMetadataSchema = z.strictObject({
+  kind: z.literal("android-ota-payload"),
+  magic: z.literal("CrAU"),
+  major_version: z.literal(2),
+  manifest_size: offset,
+  metadata_signature_size: uint32,
+  manifest_offset: offset,
+  blob_offset: offset,
+  block_size: offset,
+  minor_version: uint32,
+  payload_kind: z.enum(["full", "delta"]),
+  max_timestamp: z.number().int().nullable(),
+  partial_update: z.boolean().nullable(),
+  security_patch_level: z.string().nullable(),
+  signatures_offset: offset.nullable(),
+  signatures_size: offset.nullable(),
+  metadata_signature_blob_size: uint32,
+  metadata_signature_count: uint32.nullable(),
+  payload_signature_blob_size: offset.nullable(),
+  payload_signature_count: uint32.nullable(),
+  signatures_verified: z.literal(false),
+  snapshot_enabled: z.boolean().nullable(),
+  vabc_enabled: z.boolean().nullable(),
+  vabc_compression_param: z.string().nullable(),
+  blob_truncated: z.boolean(),
+  partitions: z.array(
+    z.strictObject({
+      index: uint32,
+      name: z.string(),
+      path: z.string(),
+      new_partition_info: androidOtaPartitionInfoSchema,
+      old_partition_info: androidOtaPartitionInfoSchema.nullable(),
+      version: z.string().nullable(),
+      run_postinstall: z.boolean().nullable(),
+      postinstall_path: z.string().nullable(),
+      filesystem_type: z.string().nullable(),
+      operation_counts: z.array(androidOtaOperationCountSchema),
+      total_data_length: offset,
+      merge_operation_count: uint32,
+      estimate_cow_size: offset.nullable(),
+      extractable: z.boolean(),
+    }),
+  ),
+  dynamic_partition_groups: z.array(
+    z.strictObject({
+      name: z.string(),
+      size: offset.nullable(),
+      partition_names: z.array(z.string()),
+    }),
+  ),
+  apex_info: z.array(
+    z.strictObject({
+      package_name: z.string().nullable(),
+      version: z.number().int().nullable(),
+      is_compressed: z.boolean().nullable(),
+      decompressed_size: z.number().int().nullable(),
+    }),
+  ),
+});
+export type AndroidOtaPayloadMetadata = z.infer<
+  typeof androidOtaPayloadMetadataSchema
+>;
+
+/** One partition the payload writes; reconstructed bytes are not a file range. */
+export const androidOtaPartitionMetadataSchema = z.strictObject({
+  kind: z.literal("android-ota-partition"),
+  index: uint32,
+  name: z.string(),
+  extractable: z.boolean(),
+  new_partition_info: androidOtaPartitionInfoSchema,
+  old_partition_info: androidOtaPartitionInfoSchema.nullable(),
+  version: z.string().nullable(),
+  run_postinstall: z.boolean().nullable(),
+  postinstall_path: z.string().nullable(),
+  filesystem_type: z.string().nullable(),
+  operation_counts: z.array(androidOtaOperationCountSchema),
+  total_data_length: offset,
+  merge_operation_count: uint32,
+  estimate_cow_size: offset.nullable(),
+});
+export type AndroidOtaPartitionMetadata = z.infer<
+  typeof androidOtaPartitionMetadataSchema
+>;
 
 const bunHex = z
   .string()
@@ -552,28 +962,472 @@ export type BunStandaloneEntryMetadata = z.infer<
   typeof bunStandaloneEntryMetadataSchema
 >;
 
+/**
+ * Android boot and vendor_boot header facts. Addresses, names, and the
+ * command line are declarations from the image. The digest, v4 signature,
+ * and AVB footer are recorded and not verified.
+ */
+export const androidBootImageMetadataSchema = z.strictObject({
+  kind: z.literal("android-boot-image"),
+  image_kind: z.enum(["boot", "vendor-boot"]),
+  magic: z.enum(["ANDROID!", "VNDRBOOT"]),
+  header_version: z.number().int().min(0).max(4),
+  page_size: z.number().int().min(2048).max(65536),
+  header_size: offset,
+  os_version_raw: uint32.nullable(),
+  os_version: z
+    .string()
+    .regex(/^\d{1,3}\.\d{1,3}\.\d{1,3}$/u)
+    .nullable(),
+  security_patch_level: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/u)
+    .nullable(),
+  name: z.string().nullable(),
+  name_bytes_hex: z
+    .string()
+    .regex(/^[0-9a-f]{32}$/u)
+    .nullable(),
+  cmdline: z.string().nullable(),
+  cmdline_bytes_hex: z
+    .string()
+    .regex(/^(?:[0-9a-f]{1024}|[0-9a-f]{3072}|[0-9a-f]{4096})$/u),
+  extra_cmdline: z.string().nullable(),
+  extra_cmdline_bytes_hex: z
+    .string()
+    .regex(/^[0-9a-f]{2048}$/u)
+    .nullable(),
+  command_line: z.string().nullable(),
+  header_digest_hex: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/u)
+    .nullable(),
+  kernel_addr: uint32.nullable(),
+  ramdisk_addr: uint32.nullable(),
+  second_addr: uint32.nullable(),
+  tags_addr: uint32.nullable(),
+  dtb_addr: offset.nullable(),
+  kernel_size: uint32.nullable(),
+  ramdisk_size: uint32.nullable(),
+  second_size: uint32.nullable(),
+  recovery_dtbo_size: uint32.nullable(),
+  recovery_dtbo_offset: offset.nullable(),
+  dtb_size: uint32.nullable(),
+  signature_size: uint32.nullable(),
+  vendor_ramdisk_size: uint32.nullable(),
+  vendor_ramdisk_table_entry_count: uint32.nullable(),
+  vendor_ramdisk_table_entry_size: uint32.nullable(),
+  bootconfig_size: uint32.nullable(),
+  avb_footer_present: z.boolean(),
+  avb_footer_size: z.literal(64).nullable(),
+  avb_version_major: uint32.nullable(),
+  avb_version_minor: uint32.nullable(),
+  avb_original_image_size: offset.nullable(),
+  avb_vbmeta_offset: offset.nullable(),
+  avb_vbmeta_size: offset.nullable(),
+  component_count: uint32,
+});
+export type AndroidBootImageMetadata = z.infer<
+  typeof androidBootImageMetadataSchema
+>;
+
+/** One stored boot-image component. Compression is a leading-magic observation. */
+export const androidBootImageEntryMetadataSchema = z.strictObject({
+  kind: z.literal("android-boot-image-entry"),
+  role: z.enum([
+    "kernel",
+    "ramdisk",
+    "second",
+    "recovery-dtbo",
+    "dtb",
+    "vendor-ramdisk",
+    "bootconfig",
+    "signature",
+  ]),
+  index: uint32,
+  compression: z.enum(["gzip", "lz4", "zstd"]).nullable(),
+  ramdisk_type: uint32.nullable(),
+  ramdisk_type_name: z.string().nullable(),
+  load_address: offset.nullable(),
+  name_bytes_hex: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/u)
+    .nullable(),
+  board_id_hex: z
+    .string()
+    .regex(/^[0-9a-f]{128}$/u)
+    .nullable(),
+});
+export type AndroidBootImageEntryMetadata = z.infer<
+  typeof androidBootImageEntryMetadataSchema
+>;
+
+const denoListingSchema = z.enum(["listed", "unsupported"]);
+
+const denoEnvVarSchema = z.strictObject({
+  name: z.string(),
+  value: z.string(),
+  value_byte_length: offset,
+});
+
+/**
+ * Container facts for one Deno compile section. The metadata JSON has no Deno
+ * version field. Environment-file values and CA bytes are retained as local evidence.
+ */
+export const denoStandaloneMetadataSchema = z.strictObject({
+  kind: z.literal("deno-standalone"),
+  carrier: z.enum(["mach-o", "elf", "pe"]),
+  embedding: z.enum([
+    "mach-o-section",
+    "mach-o-intel-trailer",
+    "elf-note",
+    "pe-resource",
+  ]),
+  section_offset: offset,
+  section_length: offset,
+  entrypoint_key: z.string(),
+  argv: z.array(z.string()).nullable(),
+  v8_flags: z.array(z.string()).nullable(),
+  permissions: jsonRecordSchema(jsonValueSchema).nullable(),
+  unstable_config: jsonRecordSchema(jsonValueSchema).nullable(),
+  app_name: z.string().nullable(),
+  self_extracting: z.string().nullable(),
+  npm_snapshot_byte_length: offset,
+  env_var_count: uint32.nullable(),
+  env_vars: z.array(denoEnvVarSchema).nullable(),
+  ca_data: z.array(z.number().int().min(0).max(255)).nullable(),
+  ca_data_byte_length: offset.nullable(),
+  specifier_count: uint32,
+  specifier_byte_length: offset,
+  specifier_listing: denoListingSchema,
+  redirect_count: uint32,
+  redirect_byte_length: offset,
+  redirect_listing: denoListingSchema,
+  remote_module_count: uint32,
+  remote_module_byte_length: offset,
+  remote_module_listing: denoListingSchema,
+  vfs_header_byte_length: offset,
+  vfs_file_data_byte_length: offset,
+  vfs_listing: denoListingSchema,
+  vfs_case_sensitivity: z.enum(["sensitive", "insensitive"]).nullable(),
+});
+export type DenoStandaloneMetadata = z.infer<
+  typeof denoStandaloneMetadataSchema
+>;
+
+/** One stored region of a Deno virtual file, symlink, or remote module. */
+export const denoStandaloneEntryMetadataSchema = z.strictObject({
+  kind: z.literal("deno-standalone-entry"),
+  role: z.enum([
+    "vfs-file",
+    "vfs-transpiled",
+    "vfs-cjs-export-analysis",
+    "vfs-source-map",
+    "vfs-symlink",
+    "remote-module",
+    "remote-transpiled",
+    "remote-source-map",
+    "remote-cjs-export-analysis",
+  ]),
+  index: uint32,
+  source_path: z.string().nullable(),
+  entry_point: z.boolean(),
+  executable: z.boolean(),
+  is_valid_utf8: z.boolean().nullable(),
+  symlink_dest_parts: z.array(z.string()).nullable(),
+  media_type: z.number().int().min(0).max(255).nullable(),
+  media_type_name: z.string().nullable(),
+});
+export type DenoStandaloneEntryMetadata = z.infer<
+  typeof denoStandaloneEntryMetadataSchema
+>;
+
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
   godotPckEntryMetadataSchema,
   unityFsMetadataSchema,
   unityFsEntryMetadataSchema,
+  wxapkgMetadataSchema,
+  wxapkgEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,
   bunStandaloneMetadataSchema,
   bunStandaloneEntryMetadataSchema,
+  denoStandaloneMetadataSchema,
+  denoStandaloneEntryMetadataSchema,
   nodeSeaMetadataSchema,
   nodeSeaEntryMetadataSchema,
   hexRecordsMetadataSchema,
   hexRecordRegionMetadataSchema,
   uImageMetadataSchema,
   uImageEntryMetadataSchema,
+  androidOtaPayloadMetadataSchema,
+  androidOtaPartitionMetadataSchema,
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
+  uf2MetadataSchema,
+  uf2RegionMetadataSchema,
+  ntfsMftMetadataSchema,
+  dfuSeMetadataSchema,
+  dfuSeElementMetadataSchema,
+  espFlashImageMetadataSchema,
+  espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
+  androidBootImageMetadataSchema,
+  androidBootImageEntryMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
 >;
+
+type FormatMetadataByKind = {
+  readonly [Metadata in ArtifactFormatMetadata as Metadata["kind"]]: Metadata;
+};
+type FormatMetadataKind = keyof FormatMetadataByKind;
+
+/**
+ * What each kind declares beyond its own bytes, which artifact comparison
+ * compares, or why comparison uses none of its facts. Every kind needs an
+ * entry, so a new kind does not compile without this decision; a new field
+ * of an existing kind still needs a review of its projection. For a node-less
+ * metadata record, the projection is all of its format metadata that
+ * comparison checks.
+ */
+const declarationsByKind: {
+  readonly [Kind in FormatMetadataKind]:
+    | {
+        readonly declaration: (
+          metadata: FormatMetadataByKind[Kind],
+        ) => FormatMetadataDeclaration["facts"];
+        /** Projected fields the producer could not interpret. */
+        readonly unreadable?: (
+          metadata: FormatMetadataByKind[Kind],
+        ) => FormatMetadataDeclaration["unreadable"];
+      }
+    | { readonly notCompared: string };
+} = {
+  "godot-pck": {
+    notCompared:
+      "Its fields come from the pack's own bytes, which content comparison covers.",
+  },
+  "godot-pck-entry": {
+    notCompared:
+      "index and declared_offset are layout; flags and md5_status repeat occurrence facts; source_path spells Godot's lookup path in a version-dependent way. docs/godot-pck.md gives the evidence.",
+  },
+  unityfs: {
+    notCompared:
+      "Its fields come from the bundle's own bytes, which content comparison covers.",
+  },
+  /** What the directory declares for a member: its source path and raw node flags. Index and offset are layout. */
+  "unityfs-entry": {
+    declaration: (metadata) => ({
+      source_path: metadata.source_path,
+      flags: metadata.flags,
+    }),
+  },
+  wxapkg: {
+    notCompared:
+      "Its fields come from the package's own bytes, which content comparison covers.",
+  },
+  "wxapkg-entry": {
+    notCompared:
+      "index is layout. source_path keeps the declared name, including a producer root prefix the occurrence path strips.",
+  },
+  pyinstaller: {
+    notCompared:
+      "Its fields come from the archive's own bytes, which content comparison covers.",
+  },
+  /** Declaration identity that is stable across archive layout changes. */
+  "pyinstaller-entry": {
+    declaration: (metadata) => ({
+      container: metadata.container,
+      container_name: metadata.container_name,
+      source_name: metadata.source_name,
+      type_code: metadata.type_code,
+    }),
+  },
+  "dotnet-bundle-entry": {
+    notCompared:
+      "Its fields come from the host's bundle manifest, whose bytes the host's content comparison covers.",
+  },
+  "bun-standalone": {
+    notCompared:
+      "Its fields come from the carrier's own bytes, which content comparison covers.",
+  },
+  "bun-standalone-entry": {
+    notCompared:
+      "Its fields come from the carrier's module graph, whose bytes the carrier's content comparison covers.",
+  },
+  "deno-standalone": {
+    notCompared:
+      "Its fields come from the carrier's own bytes, which content comparison covers.",
+  },
+  "deno-standalone-entry": {
+    notCompared:
+      "Its fields come from the carrier's Deno section, whose bytes the carrier's content comparison covers.",
+  },
+  "node-sea": {
+    notCompared:
+      "Its fields come from the carrier's own bytes, which content comparison covers.",
+  },
+  /** Runtime member identity, independent of blob layout and directory order. */
+  "node-sea-entry": {
+    declaration: (metadata) => ({
+      role: metadata.role,
+      source_path: metadata.source_path,
+    }),
+  },
+  "hex-records": {
+    notCompared:
+      "Its fields come from the file's own records, which content comparison covers.",
+  },
+  "hex-record-region": {
+    notCompared:
+      "start_address and end_address restate the region's path, and length follows from them; record and line counts are layout.",
+  },
+  uimage: {
+    notCompared:
+      "Its header facts come from the image's own bytes, which content comparison covers.",
+  },
+  "uimage-entry": {
+    notCompared:
+      "role and index restate the entry's path; its stored bytes are compared by content.",
+  },
+  "android-boot-image": {
+    notCompared:
+      "Its header facts come from the image's own bytes, which content comparison covers.",
+  },
+  "android-boot-image-entry": {
+    notCompared:
+      "role and index restate the entry's path, compression is observed from its bytes, and load addresses, names and board IDs come from the image header or vendor ramdisk table, which the image's content comparison covers.",
+  },
+  "android-ota-payload": {
+    notCompared:
+      "Its header and manifest facts come from the payload's own bytes, which content comparison covers. Signatures are counted, not verified.",
+  },
+  "android-ota-partition": {
+    notCompared:
+      "name and index restate the entry's path; reconstructed partition bytes are compared by content when they are extractable.",
+  },
+  "esp-image": {
+    notCompared:
+      "Its fields come from the image's own bytes, which content comparison covers.",
+  },
+  /**
+   * What a segment header declares: where its bytes load and how many there
+   * are. Header offsets are layout, and the classification is derived.
+   */
+  "esp-image-segment": {
+    declaration: (metadata) => ({
+      load_addr: metadata.load_addr,
+      data_len: metadata.data_len,
+    }),
+  },
+  "esp-image-signature-block": {
+    notCompared:
+      "Its fields come from the block's own bytes, which content comparison covers, and image_digest_matches follows the image's content.",
+  },
+  uf2: {
+    notCompared:
+      "Its counts come from the file's own blocks, which content comparison covers, and family_name_registry names REA's label registry.",
+  },
+  "uf2-region": {
+    notCompared:
+      "Its familyID and addresses are in its path, family_name is REA's label for the familyID, and its block counts and positions are layout; content comparison covers its bytes.",
+  },
+  "ntfs-mft": {
+    notCompared:
+      "Its fields come from the file's own FILE record headers and resident file-name attributes, which content comparison covers.",
+  },
+  dfuse: {
+    notCompared:
+      "Its fields come from the file's own prefix, target headers and suffix, which content comparison covers.",
+  },
+  /** The device memory an element targets, which its path and bytes do not show. */
+  "dfuse-element": {
+    declaration: (metadata) => ({
+      alternate_setting: metadata.alternate_setting,
+      target_name: metadata.target_name,
+    }),
+  },
+  "esp-flash-image": {
+    notCompared:
+      "Its fields come from the dump's bytes and from the caller's flash_offset and partition_table_offset, which are target identity; each partition's range, compared by content, reflects them.",
+  },
+  /**
+   * What a partition entry declares; its index is layout, and the written
+   * fields are observed from its bytes, which content comparison covers.
+   */
+  "esp-flash-partition": {
+    declaration: (metadata) => ({
+      label: metadata.label,
+      label_hex: metadata.label_hex,
+      type: metadata.type,
+      subtype: metadata.subtype,
+      flash_address: metadata.flash_address,
+      size: metadata.size,
+      encrypted: metadata.encrypted,
+      readonly: metadata.readonly,
+      unknown_flags: metadata.unknown_flags,
+    }),
+  },
+  fit: {
+    notCompared:
+      "Its fields come from the FIT's own bytes, which content comparison covers.",
+  },
+  /**
+   * Payload interpretation and sharing declarations, independent of FIT
+   * placement: the image's name, index and data position are layout.
+   */
+  "fit-image": {
+    declaration: (metadata) => ({
+      type: metadata.type,
+      arch: metadata.arch,
+      os: metadata.os,
+      compression: metadata.compression,
+      load: metadata.load,
+      entry: metadata.entry,
+      image_data: metadata.image_data,
+      cipher_present: metadata.cipher_present,
+      cipher_algo: metadata.cipher_algo,
+    }),
+    unreadable: (metadata) => metadata.unreadable_fields,
+  },
+};
+
+/** Kinds whose declarations artifact comparison compares, in table order. */
+export const COMPARED_FORMAT_METADATA_KINDS = Object.entries(
+  declarationsByKind,
+).flatMap(([kind, entry]) => ("declaration" in entry ? [kind] : []));
+
+/** A declaration that artifact comparison compares within its kind. */
+export interface FormatMetadataDeclaration {
+  readonly kind: FormatMetadataKind;
+  readonly facts: Readonly<Record<string, unknown>>;
+  /** Facts whose value is unknown, which compare as neither equal nor changed. */
+  readonly unreadable: readonly string[];
+}
+
+// Generic in the kind, so each projection receives its own metadata type.
+const declarationOf = <Kind extends FormatMetadataKind>(
+  kind: Kind,
+  metadata: FormatMetadataByKind[Kind],
+): FormatMetadataDeclaration | undefined => {
+  const entry = declarationsByKind[kind];
+  return "declaration" in entry
+    ? {
+        kind,
+        facts: entry.declaration(metadata),
+        unreadable: entry.unreadable?.(metadata) ?? [],
+      }
+    : undefined;
+};
+
+/** The compared declaration, or undefined when comparison uses none. */
+export const formatMetadataDeclaration = (
+  metadata: ArtifactFormatMetadata | undefined,
+): FormatMetadataDeclaration | undefined =>
+  metadata === undefined ? undefined : declarationOf(metadata.kind, metadata);

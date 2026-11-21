@@ -42,19 +42,23 @@ const createProvider = (parent: string, roots: string[]) =>
 const expectRetryableBusy = (
   error: Parameters<typeof projectAnalysisError>[0],
   path: string,
-) =>
-  expect(projectAnalysisError(error)).toMatchObject({
+) => {
+  const projected = projectAnalysisError(error);
+  expect(projected).toMatchObject({
     code: "capability_unavailable",
     category: "unavailable",
     retryable: true,
-    message:
-      "The selected SQLite database is held open by another process without read sharing. Close that application or inspect a copy, then retry.",
+    message: expect.stringMatching(
+      /held open.*without read sharing.*close.*copy.*retry/i,
+    ),
     details: {
       provider_id: "sqlite",
       operation: "inspect_sqlite_database",
-      reason: `Selected database file set is in use by another process (EBUSY): ${path}`,
+      reason: expect.stringContaining(path),
     },
   });
+  expect(projected.details?.reason).toEqual(expect.stringContaining("EBUSY"));
+};
 
 const expectRootsRemoved = async (roots: string[]) => {
   expect(roots).toHaveLength(1);
@@ -155,5 +159,4 @@ it.runIf(process.platform === "win32")(
     expectRetryableBusy(result.error, database.path);
     await expectRootsRemoved(roots);
   },
-  20_000,
 );

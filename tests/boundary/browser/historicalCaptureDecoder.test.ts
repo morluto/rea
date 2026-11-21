@@ -1,28 +1,26 @@
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import {
   access,
   chmod,
   mkdir,
-  mkdtemp,
   readFile,
-  rm,
+  stat,
   symlink,
   truncate,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { HistoricalCaptureDecoder } from "../../../src/browser/history/HistoricalCaptureDecoder.js";
 import { MitmproxyCaptureAdapter } from "../../../src/browser/history/MitmproxyCaptureAdapter.js";
 import {
   MITMPROXY_CAPTURE_PROVIDER_IDENTITY,
   HAR_CAPTURE_PROVIDER_IDENTITY,
-} from "../../../src/browser/history/CaptureRelease.js";
+} from "../../../src/browser/history/CaptureProviderIdentities.js";
 import {
   inspectWebNetworkCaptureInputSchema,
   WEB_NETWORK_CAPTURE_LIMITS,
@@ -32,12 +30,12 @@ import { decodeHarCapture } from "../../../src/browser/history/HarCapture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { waitFor } from "../../support/testWait.js";
 
 const linux = it.skipIf(process.platform !== "linux");
 
 linux("refuses a directory configured as the mitmdump executable", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-mitmdump-command-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-mitmdump-command-");
   const command = join(root, "mitmdump");
   await mkdir(command);
 
@@ -53,8 +51,7 @@ linux("refuses a directory configured as the mitmdump executable", async () => {
 });
 
 linux("allows a symlink to a regular mitmdump executable", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-mitmdump-command-symlink-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-mitmdump-command-symlink-");
   const command = join(root, "mitmdump");
   const target = join(root, "mitmdump-bin");
   await writeFile(target, "#!/bin/sh\n", { mode: 0o700 });
@@ -69,8 +66,7 @@ linux("allows a symlink to a regular mitmdump executable", async () => {
 });
 
 it("keeps the admitted decoder environment across adapter preparation and refreshes it for the next call", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-capture-environment-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-capture-environment-");
   const path = join(root, "capture.har");
   const observedPath = join(root, "observed.json");
   const text = JSON.stringify(historicalHar());
@@ -131,8 +127,7 @@ it("keeps the admitted decoder environment across adapter preparation and refres
 it.skipIf(process.platform === "win32")(
   "binds independently selected mitmproxy configuration before runtime preparation",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-mitmproxy-environment-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-mitmproxy-environment-");
     const capturePath = join(root, "capture.mitm");
     const observedPath = join(root, "observed.json");
     await writeFile(capturePath, "inert selected capture");
@@ -158,16 +153,11 @@ fs.writeFileSync(request.reply_path, ${JSON.stringify(JSON.stringify({ ok: true,
     const command = MitmproxyCaptureAdapter.prototype.command;
     vi.spyOn(MitmproxyCaptureAdapter.prototype, "command").mockImplementation(
       function (this: MitmproxyCaptureAdapter, request, runtime) {
-        const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-        Object.defineProperty(process, "platform", {
-          ...platform,
-          value: "linux",
-        });
-        try {
-          return command.call(this, request, runtime);
-        } finally {
-          Object.defineProperty(process, "platform", platform);
-        }
+        return command.call(
+          new MitmproxyCaptureAdapter(this.environment, "linux"),
+          request,
+          runtime,
+        );
       },
     );
     onTestFinished(() => {
@@ -243,15 +233,13 @@ const expectOwnedDecoderPrimary = (
 it.each(["cancelled", "process"] as const)(
   "retains an unresolved decoder and its root across concurrent inspection and shutdown (%s)",
   async (outcome) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-capture-owned-cleanup-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-capture-owned-cleanup-");
     const capturePath = join(root, "capture.har");
     const markerPath = join(root, "started.json");
     const finishPath = join(root, "finish");
     const text = JSON.stringify(historicalHar());
     await writeFile(capturePath, text);
-    const peerEntered = createDeferred<void>();
-    const peerContinue = createDeferred<void>();
+    const peerCommand = phaseGate();
     const controller = new AbortController();
     const reason = { request: "cancel owned inert decoder" };
     let targetPid: number | undefined;
@@ -294,8 +282,7 @@ it.each(["cancelled", "process"] as const)(
                   finishPath,
                 ],
               };
-            peerEntered.resolve(undefined);
-            await peerContinue.promise;
+            await peerCommand.hold();
             await writeFile(
               join(runtimePath, "reply.json"),
               JSON.stringify({ ok: true, value: decodeHarCapture(text, []) }),
@@ -324,7 +311,7 @@ it.each(["cancelled", "process"] as const)(
     onTestFinished(async () => {
       denied = false;
       denyRoot = false;
-      peerContinue.resolve(undefined);
+      peerCommand.release();
       await targetOwner?.stop();
       await decoder.close();
       vi.restoreAllMocks();
@@ -335,14 +322,11 @@ it.each(["cancelled", "process"] as const)(
       sensitive_values: ["capture-private-runtime"],
     });
     const target = decoder.inspect(input, { signal: controller.signal });
-    await vi.waitFor(
-      async () => {
-        targetPid = JSON.parse(await readFile(markerPath, "utf8"));
-      },
-      { timeout: 5000 },
-    );
+    await waitFor(async () => {
+      targetPid = JSON.parse(await readFile(markerPath, "utf8"));
+    });
     const peer = decoder.inspect(input);
-    await peerEntered.promise;
+    await peerCommand.reached(peer, "peer decoder command");
     if (outcome === "cancelled") controller.abort(reason);
     else await writeFile(finishPath, "finish workload");
     const failed = await target;
@@ -368,7 +352,7 @@ it.each(["cancelled", "process"] as const)(
       () => undefined,
       (cause) => cause,
     );
-    peerContinue.resolve(undefined);
+    peerCommand.release();
     expect((await peer).ok).toBe(true);
     expect(await closing).toBeInstanceOf(Error);
     expect(targetRootCloses).toBe(0);
@@ -391,12 +375,10 @@ it.each(["cancelled", "process"] as const)(
       outcome === "cancelled" ? "cancelled" : "execution_failure",
     );
   },
-  15000,
 );
 
 it("applies a non-default capture deadline and releases its runtime", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-capture-deadline-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-capture-deadline-");
   const path = join(root, "capture.har");
   await writeFile(path, JSON.stringify(historicalHar()));
   let runtimePath: string | undefined;
@@ -428,20 +410,18 @@ it("applies a non-default capture deadline and releases its runtime", async () =
       capture_timeout_ms: 250,
     }),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected capture timeout");
   expect(result.error._tag).toBe("AnalysisTimeoutError");
   expect(result.error.userMessage).toContain("250");
   expect(result.error.userMessage).toContain("capture_timeout_ms");
   if (runtimePath === undefined) throw new Error("runtime was not acquired");
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
-}, 8_000);
+});
 
 it.each([true, false])(
   "binds decoder replies to the complete selected provider identity (matching name: %s)",
   async (matching) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-capture-identity-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-capture-identity-");
     const path = join(root, "capture.har");
     const text = JSON.stringify(historicalHar());
     await writeFile(path, text);
@@ -476,8 +456,7 @@ it.each([true, false])(
 );
 
 it("classifies an oversized selected capture before creating an owned decoder", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-historical-limit-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-historical-limit-");
   const path = join(root, "input.har");
   await writeFile(path, "");
   await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
@@ -518,8 +497,7 @@ it("classifies an oversized selected capture before creating an owned decoder", 
 });
 
 it("retains a failed capture reader and retries it before a fresh load", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-capture-reader-close-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-capture-reader-close-");
   const path = join(root, "input.har");
   await writeFile(path, JSON.stringify(historicalHar()));
   const originalClose = OwnedFileHandle.prototype.close;
@@ -554,14 +532,12 @@ it("retains a failed capture reader and retries it before a fresh load", async (
   });
   try {
     const first = await decoder.inspect(input);
-    expect(first.ok).toBe(false);
     if (first.ok) throw new Error("Reader close failure must fail inspection");
     expect(first.error.cleanupIncomplete).toBe(true);
     expect(first.error.cleanupResources).toContain(path);
     expect(decoderCalls).toBe(0);
 
     const refused = await decoder.inspect(input);
-    expect(refused.ok).toBe(false);
     if (refused.ok) throw new Error("Fresh read must wait for owner cleanup");
     expect(refused.error.cleanupIncomplete).toBe(true);
     expect(refused.error.cleanupResources).toContain(path);
@@ -581,8 +557,7 @@ it("retains a failed capture reader and retries it before a fresh load", async (
 });
 
 it("does not misclassify decoder filesystem failures as missing selected input", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-historical-command-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-historical-command-");
   const path = join(root, "input.har");
   await writeFile(path, JSON.stringify(historicalHar()));
   const decoder = new HistoricalCaptureDecoder(
@@ -621,8 +596,7 @@ it("does not misclassify decoder filesystem failures as missing selected input",
 it.each(["missing-capture", "missing-reply", "failed-command"])(
   "redacts declared paths and diagnostics while preserving the %s failure",
   async (mode) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-historical-sensitive-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-historical-sensitive-");
     const path = join(root, "explicit-private-value.har");
     if (mode !== "missing-capture")
       await writeFile(path, JSON.stringify(historicalHar()));
@@ -670,8 +644,7 @@ it.each(["missing-capture", "missing-reply", "failed-command"])(
 );
 
 it("reports an absent owned reply as output failure and removes its private snapshot root", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-historical-decoder-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-historical-decoder-");
   const path = join(root, "input.har");
   await writeFile(path, JSON.stringify(historicalHar()));
   let privatePath: string | undefined;
@@ -706,8 +679,7 @@ it("reports an absent owned reply as output failure and removes its private snap
 });
 
 it("cancels after snapshot acquisition before launch and removes private input declarations", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-historical-cancel-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-historical-cancel-");
   const path = join(root, "input.har");
   await writeFile(path, JSON.stringify(historicalHar()));
   let privatePath: string | undefined;
@@ -745,8 +717,7 @@ it("cancels after snapshot acquisition before launch and removes private input d
 });
 
 it("preserves the exact cancellation reason observed during final runtime close", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-historical-final-cancel-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-historical-final-cancel-");
   const path = join(root, "input.har");
   const text = JSON.stringify(historicalHar());
   await writeFile(path, text);
@@ -800,8 +771,7 @@ it("preserves the exact cancellation reason observed during final runtime close"
 });
 
 it("retains completed capture facts and binds final root cleanup to its retry lease", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-historical-report-cleanup-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-historical-report-cleanup-");
   const path = join(root, "input.har");
   const text = JSON.stringify(historicalHar());
   await writeFile(path, text);
@@ -848,7 +818,6 @@ it("retains completed capture facts and binds final root cleanup to its retry le
       format: "har",
     }),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Root close failure must be reported");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(runtimePath).toBeDefined();
@@ -865,8 +834,7 @@ it("retains completed capture facts and binds final root cleanup to its retry le
 });
 
 it("keeps late cancellation primary when runtime close also fails, then clears on retry", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-historical-cancel-cleanup-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-historical-cancel-cleanup-");
   const path = join(root, "input.har");
   const text = JSON.stringify(historicalHar());
   await writeFile(path, text);
@@ -946,8 +914,7 @@ it.each([
 ])(
   "preserves $reason decoder failures through the public error boundary",
   async ({ reason, tag }) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-historical-reply-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-historical-reply-");
     const path = join(root, "input.har");
     await writeFile(path, JSON.stringify(historicalHar()));
     let privatePath: string | undefined;
@@ -1024,14 +991,20 @@ it.each([
           String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes),
         ),
         details: {
+          operation: "inspect_web_network_capture",
           diagnostics: {
             maximum_reply_bytes: WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+            budget: {
+              parameter: "max_reply_bytes",
+              effective_value: WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+              applies_at: "next_operation",
+              update_mode: "parameter",
+            },
           },
         },
       });
-      expect(projected.remediation.action).toContain("no runtime override");
       expect(projected.remediation.action).toContain(
-        "no completed capture Evidence",
+        "do not recreate a completed report from a refused decode",
       );
       expect(projected.remediation.action).not.toContain("rea doctor");
       expect(result.error.partialObservation).toMatchObject({
@@ -1060,8 +1033,7 @@ it.each([
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "reports a real filesystem permission denial separately from missing capture input",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-historical-denied-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-historical-denied-");
     const path = join(root, "unreadable.har");
     await writeFile(path, JSON.stringify(historicalHar()), { mode: 0o000 });
     const decoder = new HistoricalCaptureDecoder(
@@ -1103,8 +1075,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
 it.each(["format", "process"])(
   "preserves the structured %s failure when runtime cleanup fails",
   async (kind) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-historical-cleanup-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-historical-cleanup-");
     const path = join(root, "capture-private.har");
     await writeFile(path, JSON.stringify(historicalHar()));
     const decoder = new HistoricalCaptureDecoder(
@@ -1210,25 +1181,35 @@ it.each([
 ])(
   "retains validated reply completion through descriptor cancellation %j",
   async ({ closeFails, reply }) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-reply-finalization-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const root = await createTestTempDirectory("rea-reply-finalization-");
     const path = join(root, "input.har");
     const text = JSON.stringify(historicalHar());
     await writeFile(path, text);
     const controller = new AbortController();
     const reason = { caller: "reply descriptor close" };
     const originalClose = OwnedFileHandle.prototype.close;
-    let closes = 0;
+    let replyPath: string | undefined;
+    let replyCloses = 0;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
-        closes += 1;
-        if (closes === 2 && closeFails) {
+        let isReply = false;
+        if (replyPath !== undefined) {
+          try {
+            const named = await stat(replyPath);
+            const opened = await this.handle.stat();
+            isReply = named.dev === opened.dev && named.ino === opened.ino;
+          } catch (cause) {
+            if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+          }
+        }
+        if (isReply) replyCloses += 1;
+        if (isReply && replyCloses === 1 && closeFails) {
           controller.abort(reason);
           throw new Error("controlled reply close denial");
         }
         await originalClose.call(this);
-        if (closes === 2) controller.abort(reason);
+        if (isReply && replyCloses === 1) controller.abort(reason);
       });
     const decoder = new HistoricalCaptureDecoder(
       [
@@ -1236,6 +1217,7 @@ it.each([
           format: "har",
           identity: HAR_CAPTURE_PROVIDER_IDENTITY,
           command: async (_, runtimePath) => {
+            replyPath = join(runtimePath, "reply.json");
             const bytes =
               reply === "malformed UTF-8"
                 ? Buffer.concat([
@@ -1264,7 +1246,7 @@ it.each([
               arguments: [
                 "-e",
                 `require('node:fs').writeFileSync(process.argv[1],Buffer.from(${JSON.stringify(bytes.toString("base64"))},'base64'))`,
-                join(runtimePath, "reply.json"),
+                replyPath,
               ],
             };
           },
@@ -1325,7 +1307,7 @@ it.each([
         if (reply === "malformed schema")
           expect(primary.message).toContain("Reply violates its schema");
       } else expect(primary.cause).toBe(reason);
-      expect(closes).toBe(closeFails ? 3 : 2);
+      expect(replyCloses).toBe(closeFails ? 2 : 1);
     } finally {
       close.mockRestore();
       await decoder.close();

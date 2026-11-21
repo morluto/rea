@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { readImmutableEvidence } from "../../domain/evidenceValidation.js";
@@ -130,12 +130,11 @@ export const loadNativeMatchingBundleSources = async ({
     await admission.checkpoint(128);
     const entry = index.get(id);
     if (entry === undefined)
-      throw new EvidenceReferenceError(
-        id,
-        "missing",
-        "Complete Evidence closure in the supplied bundles or inline inputs",
-        null,
-      );
+      throw new EvidenceReferenceError(id, "missing", {
+        expected:
+          "Complete Evidence closure in the supplied bundles or inline inputs",
+        actual: null,
+      });
     if (entry.file >= 0) files.add(entry.file);
     for (const linked of entry.links) needed.add(linked);
   }

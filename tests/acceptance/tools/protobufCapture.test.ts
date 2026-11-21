@@ -1,8 +1,15 @@
 import { z } from "zod";
-import { readFile, unlink, writeFile, mkdir, truncate } from "node:fs/promises";
+import {
+  readFile,
+  unlink,
+  writeFile,
+  mkdir,
+  truncate,
+  symlink,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   protobufCaptureDescriptor,
@@ -10,13 +17,14 @@ import {
   protobufFrame,
   protobufCaptureBody,
 } from "../../fixtures/protobufCapture.js";
+import { expectCliMcpEvidenceParity } from "../../fixtures/cliMcpEvidenceParity.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   webNetworkCaptureSchema,
   inspectWebNetworkCaptureInputSchema,
 } from "../../../src/domain/webNetworkCapture.js";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
@@ -201,15 +209,24 @@ captureTest(
       repeated[index + 1] = 1;
     }
     await writeFile(capacityPath, protobufHar(protobufFrame(repeated)));
+    const replyBudget = 8 * 1024 * 1024;
     const capacity = await call("inspect_web_network_capture", {
       capture_path: capacityPath,
       format: "har",
+      max_reply_bytes: replyBudget,
       record_ordinals: [0],
       sensitive_values: ["unrelated fixture exclusion"],
     });
     const capacityError = parseMcpToolError(capacity).error;
-    expect(capacityError.code).toBe("resource_constraint");
-    expect(capacityError.retryable).toBe(false);
+    expect(capacityError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "capacity",
+        reported_limits: { maximum_encoded_capture_bytes: replyBudget },
+      },
+      remediation: { action: expect.stringContaining("max_reply_bytes") },
+    });
     const capacitySource = retainedCaptureDetailsSchema.parse(
       capacityError.details,
     ).partial_observation;
@@ -354,11 +371,18 @@ captureTest(
     await mkdir(directory);
     await writeFile(oversized, "");
     await truncate(oversized, 32 * 1024 * 1024 + 1);
-    for (const [path, reason] of [
+    const failures: Array<readonly [string, string]> = [
       [join(root, "missing.pb"), "invalid_value"],
       [directory, "invalid_format"],
       [oversized, "out_of_range"],
-    ] as const) {
+    ];
+    // A single component exceeds POSIX NAME_MAX. Windows path limits vary by host.
+    if (process.platform !== "win32") {
+      failures.push([join(root, "x".repeat(300)), "invalid_value"]);
+      await symlink("loop", join(root, "loop"));
+      failures.push([join(root, "loop", "descriptor.pb"), "invalid_value"]);
+    }
+    for (const [path, reason] of failures) {
       const response = await call("inspect_web_network_capture", {
         ...args,
         sensitive_values: ["unrelated fixture exclusion"],
@@ -376,6 +400,18 @@ captureTest(
           { path: ["protobuf", "schema", "descriptor_set_path"], reason },
         ],
       });
+      if (path.endsWith("x".repeat(300)))
+        expect(error.details?.issues).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining("ENAMETOOLONG"),
+          }),
+        ]);
+      if (path === join(root, "loop", "descriptor.pb"))
+        expect(error.details?.issues).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining("ELOOP"),
+          }),
+        ]);
       expect(
         retainedCaptureDetailsSchema.parse(error.details).partial_observation
           .kind,
@@ -622,9 +658,10 @@ captureTest.for(
         "--json",
       ],
     };
-    const response = await (name === "valid"
-      ? cli.run(options)
-      : runFileCli(cli, options));
+    const response = await cli.run({
+      ...options,
+      freshProcess: name === "valid",
+    });
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
     const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
@@ -652,7 +689,7 @@ captureTest.for(
       protobuf: { framing: "auto" },
     });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-    expect(reply.structuredContent).toEqual(response.json);
+    expectCliMcpEvidenceParity(response.json, reply.structuredContent, path);
     expect(await readFile(path, "utf8")).toBe(original);
   },
 );

@@ -1,6 +1,6 @@
 import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.mjs";
 
-import { access } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
@@ -414,7 +414,7 @@ export function matchesSymbol(value, expected) {
   return tail === expected || tail === `_${expected}`;
 }
 
-export function symbolTail(value) {
+function symbolTail(value) {
   if (typeof value !== "string") return undefined;
   return value.split("::").at(-1);
 }
@@ -437,10 +437,11 @@ export function summary(observed) {
 
 async function exists(path) {
   try {
-    await access(path);
+    await lstat(path);
     return true;
-  } catch {
-    return false;
+  } catch (cause) {
+    if (cause?.code === "ENOENT") return false;
+    throw cause;
   }
 }
 

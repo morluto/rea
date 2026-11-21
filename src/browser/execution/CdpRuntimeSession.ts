@@ -1,6 +1,9 @@
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisTimeoutError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisTimeoutError,
+  OwnerCancellation,
+} from "../../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -10,11 +13,19 @@ import {
   cdpCommandDeadlineRecovery,
   selectedCdpCommandTimeoutMs,
 } from "../../domain/browserDeadline.js";
+import { isCdpSessionNotFoundRejection } from "../CdpCommandRejection.js";
 import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
+import { classifyCdpFrameUrl } from "../CdpCaptureDocuments.js";
 import {
-  classifyCdpFrameUrl,
-  observeMainFrameUrl,
-} from "../CdpCaptureDocuments.js";
+  observedFrameUrl,
+  type CdpFrameTree,
+} from "../protocol/CdpFrameTree.js";
+import type {
+  CdpDomainWith,
+  CdpCommand,
+  CdpCommandParams,
+  CdpCommandResult,
+} from "../protocol/CdpCommands.js";
 import {
   WEB_RUNTIME_LIMITS,
   type webRuntimeTargetSchema,
@@ -31,7 +42,12 @@ import {
   openCdpTargetSession,
   type CdpTargetSession,
 } from "../CdpTargetSession.js";
-import { runtimeFrameTreeSchema } from "./CdpRuntimeProtocol.js";
+import { CdpTargetDocument } from "../CdpTargetDocument.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+
+/** A domain this session can both enable and, on cleanup, disable. */
+export type CdpRuntimeDomain = CdpDomainWith<"enable"> &
+  CdpDomainWith<"disable">;
 
 type Scope = {
   readonly cdp_endpoint: string;
@@ -42,7 +58,7 @@ type Scope = {
 
 /** Owned transport and instrumentation; the selected browser/page remain externally owned. */
 export class CdpRuntimeSession {
-  readonly enabledDomains: string[] = [];
+  readonly enabledDomains: CdpRuntimeDomain[] = [];
   preciseCoverageMayBeActive = false;
   #completion: AbortController | undefined;
   #completionTimer: NodeJS.Timeout | undefined;
@@ -55,6 +71,11 @@ export class CdpRuntimeSession {
     readonly options: ExecutionOptions,
     readonly owner: CdpTargetSessionOwner,
     readonly commandTimeoutMs: number,
+    /**
+     * The target session's page generation from selection onward, checked
+     * before any live evidence is joined.
+     */
+    readonly document: CdpTargetDocument,
   ) {}
 
   /** Acquire a validated target; failed setup releases its owned socket. */
@@ -108,6 +129,7 @@ export class CdpRuntimeSession {
           "Page.getFrameTree",
         ),
         allowedOrigins,
+        operation,
       );
       const url = runtimeFrameUrl(frame, operation);
       return new CdpRuntimeSession(
@@ -125,6 +147,7 @@ export class CdpRuntimeSession {
         options,
         owner,
         commandTimeoutMs,
+        CdpTargetDocument.watch(transport, frame.document),
       );
     } catch (cause: unknown) {
       try {
@@ -146,10 +169,10 @@ export class CdpRuntimeSession {
   }
 
   /** Bound each command separately from the caller-selected observation duration. */
-  async command(
-    method: string,
-    params: Readonly<Record<string, unknown>> = {},
-  ): Promise<unknown> {
+  async command<M extends CdpCommand>(
+    method: M,
+    params?: CdpCommandParams<M>,
+  ): Promise<CdpCommandResult<M>> {
     const signals = [this.options.signal, this.#completion?.signal].filter(
       (signal): signal is AbortSignal => signal !== undefined,
     );
@@ -189,39 +212,60 @@ export class CdpRuntimeSession {
     if (this.#completion !== undefined) return;
     this.#completion = new AbortController();
     this.#completionTimer = setTimeout(
-      () => this.#completion?.abort(),
+      () => this.#completion?.abort(OwnerCancellation.deadlineElapsed),
       this.commandTimeoutMs,
     );
   }
 
   /** Register cleanup before sending: cancellation can occur after producer acceptance. */
-  async enable(domain: string): Promise<void> {
+  async enable(domain: CdpRuntimeDomain): Promise<void> {
     this.enabledDomains.push(domain);
-    await this.command(`${domain}.enable`);
+    await this.command(`${domain}.enable` as const);
   }
 
-  /** Check document identity before joining any live node or final coverage evidence. */
+  /**
+   * Check document identity before joining any live node or final coverage
+   * evidence. A changed document is reported before scope; scope applies to
+   * the current document. Runtime evidence cannot carry limited coverage, so
+   * an unprovable document that moved or gained a loader stays a change.
+   */
   async assertDocument(): Promise<void> {
+    // Navigation events observed since selection are reported first, so a
+    // change between two reads is not hidden by a reply that looks unchanged.
+    this.#assertObservedDocument();
     const frame = runtimeMainFrame(
       await this.command("Page.getFrameTree"),
       this.allowedOrigins,
+      this.operation,
     );
-    if (
-      frame.id !== this.target.frame_id ||
-      (frame.loaderId ?? null) !== this.target.loader_id ||
-      (this.target.loader_id === null &&
-        ((frame.url !== undefined && frame.url !== this.target.initial_url) ||
-          frame.scope === "outside_policy" ||
-          frame.scope === "unsupported"))
-    )
-      throw new BrowserObservationError(this.operation, "target_changed", {
-        detail: `Selected target ${this.target.target_id} changed document during ${this.operation}.`,
-      });
+    this.document.observe(frame.document);
+    this.#assertObservedDocument();
     runtimeFrameUrl(
       frame,
       this.operation,
       `Selected target ${this.target.target_id} moved to an unselected origin during ${this.operation}.`,
     );
+    const selected = this.document.selected;
+    if (
+      this.document.compareSelected(frame.document) === "unknown" &&
+      (frame.document.url !== selected.url ||
+        frame.document.loaderId !== selected.loaderId)
+    )
+      throw this.#documentChanged();
+  }
+
+  #assertObservedDocument(): void {
+    if (this.document.changed) throw this.#documentChanged();
+    if (this.document.unidentified)
+      throw new BrowserObservationError(this.operation, "protocol_error", {
+        detail: `CDP reported a navigation of selected target ${this.target.target_id} without readable frame identity.`,
+      });
+  }
+
+  #documentChanged(): BrowserObservationError {
+    return new BrowserObservationError(this.operation, "target_changed", {
+      detail: `Selected target ${this.target.target_id} changed document during ${this.operation}.`,
+    });
   }
 
   /** Cleanup uses its own deadline after caller cancellation, then closes REA's transport. */
@@ -231,9 +275,10 @@ export class CdpRuntimeSession {
   ): Promise<ProviderCleanupError | undefined> {
     if (this.#completionTimer !== undefined)
       clearTimeout(this.#completionTimer);
+    this.document.close();
     const controller = new AbortController();
     const timer = setTimeout(
-      () => controller.abort(),
+      () => controller.abort(OwnerCancellation.deadlineElapsed),
       WEB_RUNTIME_LIMITS.cleanupTimeoutMs,
     );
     // Switch before the first restoration send. A short command_timeout_ms
@@ -242,11 +287,13 @@ export class CdpRuntimeSession {
       WEB_RUNTIME_LIMITS.cleanupTimeoutMs,
     );
     const failures: string[] = [];
+    let sessionGone = false;
     let transportFailure: AnalysisError | undefined;
     const send = async (
-      method: string,
+      method: CdpCommand,
       params: Readonly<Record<string, unknown>> = {},
     ): Promise<void> => {
+      if (sessionGone) return;
       try {
         await this.transport.connection.send(
           method,
@@ -255,8 +302,15 @@ export class CdpRuntimeSession {
           controller.signal,
         );
       } catch (cause: unknown) {
+        if (
+          this.transport.sessionId !== undefined &&
+          isCdpSessionNotFoundRejection(cause)
+        ) {
+          sessionGone = true;
+          return;
+        }
         failures.push(
-          `${method}: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : cause instanceof Error ? cause.message : String(cause)}`,
+          `${method}: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : errorMessage(cause)}`,
         );
       }
     };
@@ -267,7 +321,7 @@ export class CdpRuntimeSession {
         await send("Runtime.releaseObjectGroup", { objectGroup });
       for (const domain of [...this.enabledDomains].reverse())
         await send(`${domain}.disable`);
-      if (this.transport.sessionId !== undefined) {
+      if (!sessionGone && this.transport.sessionId !== undefined) {
         try {
           await this.transport.connection.send(
             "Target.detachFromTarget",
@@ -276,9 +330,10 @@ export class CdpRuntimeSession {
             controller.signal,
           );
         } catch (cause: unknown) {
-          failures.push(
-            `Target.detachFromTarget: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : cause instanceof Error ? cause.message : String(cause)}`,
-          );
+          if (!isCdpSessionNotFoundRejection(cause))
+            failures.push(
+              `Target.detachFromTarget: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : errorMessage(cause)}`,
+            );
         }
       }
     } finally {
@@ -294,8 +349,7 @@ export class CdpRuntimeSession {
                 "rea-cdp-browser",
                 [this.target.target_id],
                 {
-                  reason:
-                    cause instanceof Error ? cause.message : String(cause),
+                  reason: errorMessage(cause),
                 },
                 { operation: this.operation, cause },
               );
@@ -325,14 +379,25 @@ export class CdpRuntimeSession {
   }
 }
 
-/** Runtime validates document IDs; CDP owns URL and scope interpretation. */
+/** Runtime requires document IDs; the frame tree owner parsed them and the URL. */
 const runtimeMainFrame = (
-  result: unknown,
+  tree: CdpFrameTree,
   allowedOrigins: ReadonlySet<string>,
-) => ({
-  ...runtimeFrameTreeSchema.parse(result).frameTree.frame,
-  ...classifyCdpFrameUrl(observeMainFrameUrl(result), allowedOrigins),
-});
+  operation: BrowserObservationOperation,
+) => {
+  const { frameId, loaderId, loaderIssue } = tree.root.facts;
+  if (frameId === null || loaderIssue !== null)
+    throw new BrowserObservationError(operation, "protocol_error", {
+      detail:
+        "CDP Page.getFrameTree did not identify the selected main frame's document.",
+    });
+  return {
+    id: frameId,
+    loaderId,
+    document: { frameId, loaderId, url: observedFrameUrl(tree.root.url) },
+    ...classifyCdpFrameUrl(tree.root.url, allowedOrigins),
+  };
+};
 
 const runtimeFrameUrl = (
   frame: ReturnType<typeof runtimeMainFrame>,
@@ -359,7 +424,10 @@ export const runtimeDeadline = async <T>(
   method?: string,
 ): Promise<T> => {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(
+    () => controller.abort(OwnerCancellation.deadlineElapsed),
+    timeoutMs,
+  );
   try {
     return await run(
       signal === undefined

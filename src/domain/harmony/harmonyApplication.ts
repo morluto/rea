@@ -43,6 +43,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
     javascript: z.array(projectedComponentSchema),
     signing: z.array(projectedComponentSchema),
   }),
+  unclassified_components: z.array(projectedComponentSchema),
   unavailable_components: z.array(unavailableComponentSchema),
   app_pack_children: z.array(
     z.union([projectedComponentSchema, unavailableComponentSchema]),
@@ -69,6 +70,15 @@ export type HarmonyApplicationProjectionResult = z.infer<
   typeof harmonyApplicationProjectionResultSchema
 >;
 type Component = z.infer<typeof projectedComponentSchema>;
+
+const PKG_CONTEXT_NOT_READ =
+  "pkgContextInfo.json is inventoried but not read, so bridge_candidates are not narrowed by its isSO declarations; narrowing requires parsed file content that this projection does not receive.";
+
+/** Whether the package carries the build-output declaration this projection cannot read. */
+const pkgContextDeclared = (
+  files: readonly ProjectedInventoryEntry[],
+): boolean =>
+  files.some(({ path }) => /(?:^|\/)pkgContextInfo\.json$/iu.test(path));
 
 /** Project exact HarmonyOS package paths and hashes without decoding or executing target code. */
 export const projectHarmonyInventory = (
@@ -97,6 +107,10 @@ export const projectHarmonyInventory = (
   }
   const manifests = classifyManifests(fileEntries);
   const classified = classify(all, manifests.components);
+  const classifiedFiles = new Set([
+    ...Object.values(classified).flat(),
+    ...children,
+  ]);
   const bridgeProjection = bridgeCandidates(
     classified.bytecode,
     classified.native_libraries,
@@ -113,10 +127,11 @@ export const projectHarmonyInventory = (
         ]
       : []),
     "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",
-    "The packaging model is a path-presence heuristic: a Stage model is claimed only from module.json and a FA model only from config.json; both can coexist with unusual layouts.",
+    "The packaging model is a path-presence heuristic: root module.json indicates Stage and root config.json indicates FA. Both declarations can coexist in unusual layouts.",
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid Ark bytecode.",
     "The signing component lists META-INF certificate-entry suffixes only; signatures applied by the packaging tool live in the ZIP signing block rather than archive entries, so an empty signing list does not mean the package is unsigned.",
     "Bridge candidates are path-based hypotheses, not decoded N-API declarations or observed runtime calls.",
+    ...(pkgContextDeclared(fileEntries) ? [PKG_CONTEXT_NOT_READ] : []),
     ...(rootFormat === "app-pack"
       ? [
           "App Pack child packages are listed by inventory path only; their contents are not recursively inventoried by this projection.",
@@ -138,6 +153,9 @@ export const projectHarmonyInventory = (
       .sort(compareUnicodeCodePoints),
     packaging_model: manifests.packagingModel,
     components: classified,
+    unclassified_components: all.filter(
+      (component) => !classifiedFiles.has(component),
+    ),
     unavailable_components: unavailable,
     app_pack_children: children,
     runtime_families: runtimeFamilies(all, classified),
@@ -182,21 +200,24 @@ const harmonyRootFormat = (
 };
 
 /**
- * ZIP manifest names are case-sensitive. Classify each file path once for
- * both consumers; its model hint survives an unavailable content identity.
+ * Recognize exact ZIP root manifest names. The path hint survives an
+ * unavailable content identity.
  */
 const classifyManifests = (entries: readonly ProjectedInventoryEntry[]) => {
   const components: Component[] = [];
   let packagingModel: HarmonyApplicationProjectionResult["packaging_model"] =
     "unknown";
-  for (const { path, component } of entries) {
-    const name = /(?:^|\/)(module\.json|config\.json|pack\.info)$/u.exec(
-      path,
-    )?.[1];
-    if (name === undefined || isResourcePath(path)) continue;
+  for (const { path, sourcePath, component } of entries) {
+    if ((sourcePath ?? path) !== path) continue;
+    if (
+      path !== "module.json" &&
+      path !== "config.json" &&
+      path !== "pack.info"
+    )
+      continue;
     if (component !== undefined) components.push(component);
-    if (name === "module.json") packagingModel = "stage";
-    else if (name === "config.json" && packagingModel === "unknown")
+    if (path === "module.json") packagingModel = "stage";
+    else if (path === "config.json" && packagingModel === "unknown")
       packagingModel = "fa";
   }
   return { components, packagingModel };

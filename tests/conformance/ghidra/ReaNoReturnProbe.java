@@ -123,7 +123,8 @@ public class ReaNoReturnProbe extends GhidraScript {
             query.addProperty("direction", "outgoing");
             Method read = bridge.getClass().getDeclaredMethod("procedureReferences", JsonObject.class);
             read.setAccessible(true);
-            JsonObject output = (JsonObject) read.invoke(bridge, query);
+            // procedureReferences returns a function observation envelope.
+            JsonObject output = ((JsonObject) read.invoke(bridge, query)).getAsJsonObject("value");
             require("interior_reference_keeps_known_procedure", output.getAsJsonArray("references").asList().stream().anyMatch(
                 edge -> !edge.getAsJsonObject().get("target_procedure").isJsonNull() &&
                     edge.getAsJsonObject().getAsJsonObject("target_procedure").get("name").getAsString().equals(target.getName())));
@@ -185,13 +186,13 @@ public class ReaNoReturnProbe extends GhidraScript {
             query.addProperty("direction", "outgoing");
             Method edges = bridge.getClass().getDeclaredMethod("procedureReferences", JsonObject.class);
             edges.setAccessible(true);
-            JsonObject known = (JsonObject) edges.invoke(bridge, query);
+            JsonObject known = ((JsonObject) edges.invoke(bridge, query)).getAsJsonObject("value");
             require("non_call_known_reference_is_not_unresolved", known.getAsJsonArray("unresolved_calls").isEmpty());
             references.delete(added);
             Address unknown = currentProgram.getMemory().getMaxAddress().add(0x1000);
             added = references.addMemoryReference(source.getAddress(), unknown,
                 RefType.UNCONDITIONAL_CALL, SourceType.USER_DEFINED, -1);
-            JsonObject unresolved = (JsonObject) edges.invoke(bridge, query);
+            JsonObject unresolved = ((JsonObject) edges.invoke(bridge, query)).getAsJsonObject("value");
             require("non_call_unknown_reference_keeps_site", unresolved.getAsJsonArray("unresolved_calls").size() == 1);
         } finally {
             references.delete(added);
@@ -253,14 +254,18 @@ public class ReaNoReturnProbe extends GhidraScript {
             !adjacentCaller.getBody().contains(adjacentEntry));
 
         GhidraScript bridge = script("ReaGhidraBridge.java", new File(directory, "ReaGhidraBridge.java"));
-        Method warnings = bridge.getClass().getDeclaredMethod("noReturnCallLimitations", Iterable.class);
+        Method warnings = bridge.getClass().getDeclaredMethod(
+            "functionBoundaryLimitations", Function.class, Iterable.class);
         warnings.setAccessible(true);
-        Object reported = warnings.invoke(bridge, currentProgram.getListing().getInstructions(function("rea_unknown").getBody(), true));
+        Object reported = warnings.invoke(bridge, function("rea_unknown"),
+            currentProgram.getListing().getInstructions(function("rea_unknown").getBody(), true));
         require("unknown_boundary_named", reported instanceof List<?> values &&
             values.stream().anyMatch(value -> value.toString().contains("rea_unknown_stop") && value.toString().contains("fallthrough")));
-        Object healthy = warnings.invoke(bridge, currentProgram.getListing().getInstructions(function("rea_tls").getBody(), true));
+        Object healthy = warnings.invoke(bridge, function("rea_tls"),
+            currentProgram.getListing().getInstructions(function("rea_tls").getBody(), true));
         require("healthy_boundary_no_warning", healthy instanceof List<?> values && values.isEmpty());
-        Object guarded = warnings.invoke(bridge, currentProgram.getListing().getInstructions(adjacentCaller.getBody(), true));
+        Object guarded = warnings.invoke(bridge, adjacentCaller,
+            currentProgram.getListing().getInstructions(adjacentCaller.getBody(), true));
         require("unrepaired_boundary_named", guarded instanceof List<?> values &&
             values.stream().anyMatch(value -> value.toString().contains("malloc")));
         Method initialize = bridge.getClass().getDeclaredMethod("initializeDecompiler");

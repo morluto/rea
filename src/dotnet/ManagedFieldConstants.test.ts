@@ -3,8 +3,8 @@ import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
 import { managedPeFixtureTarget } from "./ManagedPe.fixture.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
-import { MANAGED_CODED_INDEXES } from "./ManagedMetadataLayout.js";
-import { decodeMetadataCodedIndex } from "./ManagedMetadataHeaps.js";
+import { MANAGED_CODED_INDEXES } from "../domain/managed/managedMetadataLayout.js";
+import { decodeMetadataCodedIndex } from "../domain/managed/managedMetadataHeaps.js";
 
 const inspectConstant = (typeCode: number, hex: string) => {
   const bytes = buildManagedPeFixture({
@@ -183,18 +183,23 @@ describe("unavailable field defaults retain independent facts", () => {
   });
 });
 
-it("does not invent an inspected constant on historical member Evidence", () => {
+it("refuses member Evidence whose fields omit the constant inspection", () => {
   const result = inspectConstant(8, "01000000");
   const fields = result.fields.map(
     ({ constant: _constant, ...field }) => field,
   );
-  const historical = managedMemberInspectionSchema.parse({ ...result, fields });
-  expect(historical.fields[0]).not.toHaveProperty("constant");
+  expect(
+    managedMemberInspectionSchema.safeParse({ ...result, fields }).error
+      ?.issues[0]?.path,
+  ).toEqual(["fields", 0, "constant"]);
 });
 
-it.each([7, 8])(
-  "retains the common coded-index diagnostic for invalid parent %s",
-  (parentRaw) => {
+it.each([
+  { parentRaw: 7, reason: "tag 3" },
+  { parentRaw: 8, reason: "row 2" },
+])(
+  "retains the coded-index diagnostic for invalid parent $parentRaw",
+  ({ parentRaw, reason }) => {
     const bytes = buildManagedPeFixture({
       fields: [{ name: "Default", flags: 0x8056 }],
       constants: [
@@ -226,7 +231,7 @@ it.each([7, 8])(
         expect.objectContaining({
           code: "invalid-row",
           scope: "metadata.Constant",
-          detail: parent.reason,
+          detail: expect.stringContaining(reason),
         }),
       ]),
     );

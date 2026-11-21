@@ -41,7 +41,7 @@ export function assertStableCaptureScripts(before, after, difference) {
   assert.match(difference.reason, /Worker script inventory was incomplete/u);
 }
 
-export function sourceMapSummary(sourceMaps) {
+function sourceMapSummary(sourceMaps) {
   return {
     status: sourceMaps.status,
     requested: sourceMaps.requested,

@@ -26,6 +26,7 @@ import {
   u32,
   type EspSignedContentDigests,
 } from "./espImageStructures.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 
 const SIGNATURE_SLOTS = 3;
 
@@ -89,8 +90,7 @@ export interface EspImageObservations {
 
 type ByteRange = EspImageMetadata["undescribed_trailing"][number];
 
-const hexByte = (value: number): string =>
-  `0x${value.toString(16).padStart(2, "0")}`;
+const hexByte = (value: number): string => `0x${byteToHex(value)}`;
 
 /**
  * How each ESP image fact REA could not establish is reported. Decoding,
@@ -214,6 +214,8 @@ export const deriveEspImage = (observed: EspImageObservations): EspImage => {
         trailing.blocks.length > 0 ? (observed.sectorOffset ?? null) : null,
       undescribed_trailing: trailing.undescribed,
       descriptor,
+      // The image's bytes alone cannot place it in a dump; the reader can.
+      flash_dump: null,
     },
     segments,
     signatureBlocks: trailing.blocks,

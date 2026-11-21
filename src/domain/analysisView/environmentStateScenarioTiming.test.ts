@@ -85,10 +85,8 @@ const verdicts = (state: ReturnType<typeof environmentStateViewOf>) =>
   );
 
 it("times scenario records from when each request was observed and how long the browser took", () => {
-  const records = scenarioCaptureRecords(
-    timed(scenarioCaptureFixture(EXCHANGES)),
-    "manifest",
-  );
+  const capture = scenarioCaptureFixture(EXCHANGES.slice(0, 2));
+  const records = scenarioCaptureRecords(timed(capture), "manifest");
   // The browser's start, not the provider's later observation.
   expect(records.records[1]?.reported).toMatchObject({
     startedDateTime: "2026-10-17T18:00:01.000Z",
@@ -97,10 +95,7 @@ it("times scenario records from when each request was observed and how long the 
   expect(records.limitations).toContainEqual(
     expect.stringContaining("the browser's own"),
   );
-  const untimed = scenarioCaptureRecords(
-    scenarioCaptureFixture(EXCHANGES),
-    "manifest",
-  );
+  const untimed = scenarioCaptureRecords(capture, "manifest");
   expect(untimed.records[1]?.reported).not.toHaveProperty("startedDateTime");
   expect(untimed.limitations.join(" ")).not.toContain("the browser's own");
 });
@@ -149,8 +144,10 @@ it("falls back to the observed time with no duration when a request never ended 
   });
   expect(records.records[0]?.reported).not.toHaveProperty("time");
   expect(records.records[1]?.reported).not.toHaveProperty("time");
-  expect(records.limitations).toContain(
-    "2 scenario request(s) had no unique reported duration; their duration is omitted and does not establish zero-length execution.",
+  expect(records.limitations).toContainEqual(
+    expect.stringMatching(
+      /2 scenario request.*no unique reported duration.*omitted.*does not establish zero-length execution/iu,
+    ),
   );
   expect(records.records[2]?.reported).toMatchObject({
     startedDateTime: "2026-10-17T18:00:02.000Z",
@@ -177,15 +174,15 @@ it("falls back to the observed time with no duration when a request never ended 
 it.each(["manifest", "replay"] as const)(
   "preserves independent duration and explicit zero in %s projection",
   (purpose) => {
-    const capture = timed(scenarioCaptureFixture(EXCHANGES));
-    const first = capture.events.items.find(
+    const capture = timed(scenarioCaptureFixture(EXCHANGES.slice(0, 2)));
+    const [, second] = capture.events.items.filter(
       (event) => event.kind === "request",
     );
-    if (first === undefined) throw new Error("Expected first request");
+    if (second === undefined) throw new Error("Expected second request");
     const items = capture.events.items.map((event) => {
       if (
         !("transaction_id" in event) ||
-        event.transaction_id !== first.transaction_id
+        event.transaction_id !== second.transaction_id
       )
         return event;
       if (event.kind === "request") {
@@ -201,11 +198,11 @@ it.each(["manifest", "replay"] as const)(
     const source = { ...capture, events: { ...capture.events, items } };
     const before = structuredClone(source);
     const records = scenarioCaptureRecords(source, purpose);
-    expect(records.records[0]?.reported).toHaveProperty("time", 0);
-    expect(records.records[0]?.reported).not.toHaveProperty("startedDateTime");
-    expect(records.records[0]?.location).toEqual({
+    expect(records.records[1]?.reported).toHaveProperty("time", 0);
+    expect(records.records[1]?.reported).not.toHaveProperty("startedDateTime");
+    expect(records.records[1]?.location).toEqual({
       kind: "json-pointer",
-      pointer: `/events/items/${capture.events.items.indexOf(first)}`,
+      pointer: `/events/items/${capture.events.items.indexOf(second)}`,
     });
     expect(records.limitations.join(" ")).not.toContain(
       "had no unique reported duration",

@@ -1,7 +1,7 @@
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import type { GpuKernel } from "../domain/gpu/gpuCodeObjects.js";
 import { GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
 interface Token {
@@ -82,9 +82,25 @@ const integer = (token: string | undefined): number | null => {
   const value = Number(token);
   return Number.isSafeInteger(value) ? value : null;
 };
+/** Read a single nonnegative PTX integer literal used as an array extent. */
+const arrayExtent = (token: string | undefined): number | null => {
+  if (token === undefined) return null;
+  const digits = token.endsWith("U") ? token.slice(0, -1) : token;
+  if (/^0[0-7]+$/u.test(digits)) {
+    const value = Number(`0o${digits.slice(1)}`);
+    return Number.isSafeInteger(value) ? value : null;
+  }
+  if (!/^0(?:[xX][0-9a-fA-F]+|[bB][01]+)$/u.test(digits))
+    return integer(digits);
+  const value = Number(digits);
+  return Number.isSafeInteger(value) ? value : null;
+};
 const alignmentValue = (token: string | undefined): number | null => {
   const value = integer(token);
-  return value !== null && value > 0 && Number.isInteger(Math.log2(value))
+  // A logarithm can round a neighboring large integer to a whole exponent.
+  return value !== null &&
+    value > 0 &&
+    2 ** Math.round(Math.log2(value)) === value
     ? value
     : null;
 };
@@ -230,18 +246,14 @@ const declaration = (
   const align = explicit ? alignment : size;
   if (dimensions.length === 1) {
     const dimension = dimensions[0]!,
-      count = dimension.length === 1 ? integer(dimension[0]) : null;
+      count = dimension.length === 1 ? arrayExtent(dimension[0]) : null;
     if (count === null || size === null || !Number.isSafeInteger(count * size))
       layoutKnown = false;
     else size *= count;
   }
-  if (
-    name === null ||
-    align === null ||
-    align <= 0 ||
-    !Number.isInteger(Math.log2(align)) ||
-    !layoutKnown
-  )
+  // Explicit alignment was checked at admission. Natural alignment comes
+  // from the supported power-of-two scalar and vector sizes.
+  if (align === null || !layoutKnown)
     return { name, type, size: null, align: null };
   return { name, type, size, align };
 };
@@ -304,14 +316,12 @@ export function* readPtxKernels(
       if (
         parameterBytes !== null &&
         value.size !== null &&
-        value.align !== null &&
-        value.align > 0 &&
-        Number.isSafeInteger(value.align)
+        value.align !== null
       ) {
-        offset = Math.ceil(parameterBytes / value.align) * value.align;
-        parameterBytes = Number.isSafeInteger(offset + value.size)
-          ? offset + value.size
-          : null;
+        const aligned = Math.ceil(parameterBytes / value.align) * value.align;
+        const end = aligned + value.size;
+        offset = Number.isSafeInteger(aligned) ? aligned : null;
+        parameterBytes = Number.isSafeInteger(end) ? end : null;
       } else parameterBytes = null;
       parameters.push({
         ordinal: parameters.length,
@@ -442,12 +452,7 @@ export function* readPtxKernels(
           declarationTokens.push(t.value);
         }
         const value = declaration(declarationTokens);
-        if (
-          shared === null ||
-          value.size === null ||
-          value.align === null ||
-          value.align === 0
-        )
+        if (shared === null || value.size === null || value.align === null)
           shared = null;
         else {
           const total =
@@ -527,7 +532,7 @@ export function* readPtxKernels(
   if (outerDepth !== 0) rejectGpu("Unbalanced PTX body");
 }
 
-export interface PtxTargetFacts {
+interface PtxTargetFacts {
   readonly recognized: boolean;
   readonly target: string | null;
   readonly limitation: string | null;

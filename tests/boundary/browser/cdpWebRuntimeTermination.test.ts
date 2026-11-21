@@ -1,9 +1,10 @@
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
 import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
+import { waitFor } from "../../support/testWait.js";
 
 describe("runtime flat-session lifecycle", () => {
   it("rejects session detachment between counter startup and local arming", async () => {
@@ -228,7 +229,7 @@ describe("runtime disconnect ownership", () => {
       }),
       { signal: AbortSignal.timeout(2_000) },
     );
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(
         browser.commands.some(
           ({ method }) => method === "Profiler.stopPreciseCoverage",
@@ -281,6 +282,39 @@ describe("runtime disconnect ownership", () => {
 });
 
 describe("runtime cleanup failure ordering", () => {
+  it.each([
+    ["Session with given id not found.", true],
+    ["Session could not be released", false],
+  ] as const)(
+    "handles the final detach reply %s",
+    async (message, alreadyGone) => {
+      const browser = await startRuntimeBrowser({
+        commandError: ({ method }) =>
+          method === "Target.detachFromTarget"
+            ? { code: -32_001, message }
+            : undefined,
+      });
+      onTestFinished(() => browser.close());
+      const result = await new CdpWebRuntimeProvider().observeExecution(
+        observeWebExecutionInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          target_id: "allowed-page",
+          observation_ms: 1,
+        }),
+        { signal: AbortSignal.timeout(2_000) },
+      );
+      expect(
+        browser.commands.some(
+          ({ method }) => method === "Target.detachFromTarget",
+        ),
+      ).toBe(true);
+      expect(result.ok).toBe(alreadyGone);
+      if (!result.ok)
+        expect(projectAnalysisError(result.error).code).toBe(
+          "cleanup_incomplete",
+        );
+    },
+  );
   it.each([
     ["Profiler.takePreciseCoverage", "Coverage sample failed"],
     ["Profiler.stopPreciseCoverage", "Coverage stop failed"],

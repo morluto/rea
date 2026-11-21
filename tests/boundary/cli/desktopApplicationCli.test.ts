@@ -2,6 +2,7 @@ import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { expectCliMcpEvidenceParity } from "../../fixtures/cliMcpEvidenceParity.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
@@ -28,6 +29,7 @@ cliTest(
       cwd: root,
     });
     expect(explicit.exitCode).toBe(0);
+    expect(parseEvidence(explicit.json).caller_input_path).toBe(".");
     expect(parseEvidence(explicit.json).normalized_result).toMatchObject({
       files: [{ path: "marker.txt" }],
     });
@@ -71,7 +73,7 @@ cliTest(
     try {
       const source = await service.inspect({ path: installation });
       if (!source.ok) throw source.error;
-      expect(evidence).toEqual(source.value);
+      expectCliMcpEvidenceParity(evidence, source.value, installation);
     } finally {
       await service.close();
     }
@@ -113,6 +115,7 @@ cliTest(
     expect(compact.json).toMatchObject({
       evidence_bundle: { path: bundlePath, bytes: expect.any(Number) },
       summary: {
+        caller_input_path: installation,
         normalized_result: {
           kind: "summary",
           parent_evidence_id: evidence.evidence_id,
@@ -134,6 +137,9 @@ cliTest(
       ],
     });
     expect(overwrite.exitCode).not.toBe(0);
+    expect(overwrite.json).toMatchObject({
+      details: { partial_observation: { caller_input_path: installation } },
+    });
   },
 );
 
@@ -193,3 +199,51 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+// Numeric coercion admits each spelling within the field's bounds:
+// "0x1" as 1 entry, "1e1" as 10 entries and "0x1000" as 4096 bytes.
+cliTest.for([
+  ["max_entries", "0x1"],
+  ["max_entries", "1e1"],
+  ["max_probe_bytes", "0x1000"],
+] as const)(
+  "rejects %s %s as a non-decimal desktop limit",
+  async ([field, value], { cli }) => {
+    const root = await createTestTempDirectory("rea-desktop-limit-");
+    const result = await cli.run({
+      arguments: [
+        "inspect-desktop-application",
+        root,
+        `--${field}=${value}`,
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: field })],
+    });
+  },
+);
+
+cliTest("keeps a decimal desktop entry limit", async ({ cli }) => {
+  const root = await createTestTempDirectory("rea-desktop-limit-");
+  await writeFile(join(root, "a.txt"), "a");
+  await writeFile(join(root, "b.txt"), "b");
+  const result = await cli.run({
+    arguments: [
+      "inspect-desktop-application",
+      root,
+      "--max_entries=01",
+      "--json",
+    ],
+  });
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(parseEvidence(result.json).normalized_result).toMatchObject({
+    coverage: {
+      status: "partial",
+      entries_examined: 1,
+      limits: { max_entries: 1 },
+    },
+  });
+});

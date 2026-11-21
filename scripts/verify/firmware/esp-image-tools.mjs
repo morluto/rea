@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createVerifierCommands } from "../../lib/verify-commands.mjs";
+import {
+  FIXTURE_TOOLS,
+  fixtureCommand,
+} from "../../../tests/conformance/ghidra/fixture-toolchain.mjs";
 
-// Optional verification tools only; the runtime reader starts no tool.
-const compiler = process.env.REA_RISCV_CLANG ?? "clang";
-const linker = process.env.REA_RISCV_LLD ?? "ld.lld";
+// Optional verification tools only; the runtime reader starts no tool. The
+// lanes check the RISC-V commands with requireLaneToolchain("esp") before
+// they create a workspace.
+const compiler = fixtureCommand(FIXTURE_TOOLS.riscvClang);
+const linker = fixtureCommand(FIXTURE_TOOLS.riscvLinker);
 const python = process.env.REA_ESPTOOL_PYTHON ?? "python3";
 // Optional: an Xtensa ESP32 build when Espressif's GCC is supplied.
 export const xtensa = process.env.REA_XTENSA_ESP32_GCC;
@@ -21,6 +27,13 @@ export const execute = (command, args, settings = options) =>
 export const exitOutput = (failure) => {
   if (typeof failure?.code !== "number" || failure.code === 0) throw failure;
   return `${failure.snapshot.stdout.text}${failure.snapshot.stderr.text}`;
+};
+
+/** Reject a command that had to succeed, with the output it exited with. */
+export const failedCommand = (label) => (failure) => {
+  throw new Error(`${label} failed: ${exitOutput(failure)}`, {
+    cause: failure,
+  });
 };
 export const source = (name) =>
   fileURLToPath(
@@ -41,13 +54,16 @@ export const tool = async (module, args) => {
   return `${stdout}${stderr}`;
 };
 
+/** The npm script whose tools are checked, named in each failure. */
+let lane = "verify:esp-images";
+
 /** Check one tool before any work; a failure names the variable to set. */
 const prerequisite = async (needed, variable, check) => {
   try {
     return await check();
   } catch (failure) {
     throw new Error(
-      `verify:esp-images needs ${needed}; set ${variable}. ${failure.message}`,
+      `${lane} needs ${needed}; set ${variable}. ${failure.message}`,
       { cause: failure },
     );
   }
@@ -62,19 +78,14 @@ export const spell = (v4, later) => {
   return v5 ? later : v4;
 };
 
-/** Check every tool before any work and report their versions. */
-export const checkTools = async () => {
-  const compilerVersion = await prerequisite(
-    `a Clang with the RISC-V target (tried ${compiler})`,
-    "REA_RISCV_CLANG",
-    async () => {
-      const targets = await execute(compiler, ["--print-targets"], options);
-      assert.match(targets.stdout, /^\s*riscv32\b/mu, "No riscv32 target.");
-      return firstLine(await execute(compiler, ["--version"], options));
-    },
-  );
-  await prerequisite(`ld.lld (tried ${linker})`, "REA_RISCV_LLD", () =>
-    execute(linker, ["--version"], options),
+/**
+ * Check esptool, espsecure and the optional Xtensa compiler, and report the
+ * versions; the lane has already checked the RISC-V toolchain.
+ */
+export const checkTools = async (script = "verify:esp-images") => {
+  lane = script;
+  const compilerVersion = firstLine(
+    await execute(compiler, ["--version"], options),
   );
   const versionText = await prerequisite(
     `a Python that runs esptool (tried ${python} -m esptool)`,
@@ -98,7 +109,7 @@ export const checkTools = async () => {
   );
   if (version[0] !== PINNED_ESPTOOL)
     console.warn(
-      `verify:esp-images: esptool ${version[0]} is not the pinned ${PINNED_ESPTOOL}, whose sources the reader's layout facts cite.`,
+      `${lane}: esptool ${version[0]} is not the pinned ${PINNED_ESPTOOL}, whose sources the reader's layout facts cite.`,
     );
   const xtensaVersion =
     xtensa === undefined
@@ -201,19 +212,20 @@ export const imageInfo = async (file, chip) => {
   };
 };
 
-/** REA's complete inline inventory for one file through the built CLI. */
-export const inspect = async (file) => {
-  const result = await execute(
+const inspectArtifact = (file, flags) =>
+  execute(
     process.execPath,
-    [entrypoint, "inspect-artifact", file, "--json"],
+    [entrypoint, "inspect-artifact", file, ...flags, "--json"],
     { ...options, env: { ...process.env, REA_LOG_LEVEL: "silent" } },
-  ).then(
-    ({ stdout }) => ({ ok: true, stdout }),
-    (failure) => ({ ok: false, stdout: exitOutput(failure) }),
   );
-  if (!result.ok) return { refused: result.stdout };
-  const inventory = JSON.parse(result.stdout).normalized_result.substeps[0]
-    .evidence.normalized_result;
+
+/** REA's complete inline inventory for one file through the built CLI. */
+export const inspect = async (file, flags = []) => {
+  const { stdout } = await inspectArtifact(file, flags).catch(
+    failedCommand(`inspect-artifact ${file}`),
+  );
+  const inventory =
+    JSON.parse(stdout).normalized_result.substeps[0].evidence.normalized_result;
   const rows = inventory.occurrences.filter((row) => row.logical_path !== ".");
   return {
     inventory,
@@ -228,6 +240,12 @@ export const inspect = async (file) => {
   };
 };
 
+/** REA's output for a file it must refuse; opening the file fails the lane. */
+export const refusal = (file, flags = []) =>
+  inspectArtifact(file, flags).then(() => {
+    throw new Error(`inspect-artifact opened ${file}, which it must refuse`);
+  }, exitOutput);
+
 const oracleDescriptorKind = (oracle) => {
   if (oracle.project !== undefined) return "app";
   if (oracle.bootloaderVersion !== undefined) return "bootloader";
@@ -235,10 +253,10 @@ const oracleDescriptorKind = (oracle) => {
 };
 
 /** Extract every entry through the built CLI into a new directory in `root`. */
-export const extract = async (file, root) => {
+export const extract = async (file, root, flags = []) => {
   const { stdout } = await execute(
     process.execPath,
-    [entrypoint, "extract-artifact", file, "--json"],
+    [entrypoint, "extract-artifact", file, ...flags, "--json"],
     {
       ...options,
       env: {

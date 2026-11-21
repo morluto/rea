@@ -4,6 +4,7 @@ import { utcDateTimeSchema } from "./offsetDateTime.js";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
   cdpDomSnapshotSchema,
+  cdpResourceColumnSchema,
   cdpScriptSourceSchema,
   cdpScriptMetadataSchema,
 } from "./cdpObservationSchemas.js";
@@ -59,14 +60,12 @@ const browserAxNodeSchema = z.object({
   name: z.string().nullable(),
   description: z.string().nullable(),
   ignored: z.boolean(),
-  states: z
-    .array(
-      z.object({
-        name: z.string(),
-        value: z.union([z.boolean(), z.number(), z.string()]),
-      }),
-    )
-    .default([]),
+  states: z.array(
+    z.object({
+      name: z.string(),
+      value: z.union([z.boolean(), z.number(), z.string()]),
+    }),
+  ),
 });
 const browserResourceReconciliationSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("exact"), resource_key: z.string() }),
@@ -81,7 +80,7 @@ const browserResourceReconciliationSchema = z.discriminatedUnion("status", [
 ]);
 const browserScriptSchema = z.object({
   script_key: z.string().regex(/^scr_[a-f0-9]{64}(?:_[0-9]+)?$/u),
-  frame_id: z.string().nullable().default(null),
+  frame_id: z.string().nullable(),
   url: z.string(),
   origin: z.string().nullable(),
   ...cdpScriptMetadataSchema.shape,
@@ -114,27 +113,25 @@ const browserNetworkRequestSchema = z.object({
   status: z.number().nullable(),
   mime_type: z.string().nullable(),
   encoded_data_length: z.number().min(0).nullable(),
-  redirects: z
-    .array(
-      z.object({
-        url: z.string(),
-        response_url: z.string(),
-        method: z.string(),
-        resource_type: z.string().nullable(),
-        status: z.number().nullable(),
-        mime_type: z.string().nullable(),
-        encoded_data_length: z.number().min(0).nullable(),
-        request_timestamp: z.number().nullable(),
-        redirect_event_timestamp: z.number().nullable(),
-        response_source: browserResponseSourceSchema,
-      }),
-    )
-    .optional(),
+  redirects: z.array(
+    z.object({
+      url: z.string(),
+      response_url: z.string(),
+      method: z.string(),
+      resource_type: z.string().nullable(),
+      status: z.number().nullable(),
+      mime_type: z.string().nullable(),
+      encoded_data_length: z.number().min(0).nullable(),
+      request_timestamp: z.number().nullable(),
+      response_source: browserResponseSourceSchema,
+      redirect_event_timestamp: z.number().nullable(),
+    }),
+  ),
   initiator: z.object({
     type: z.string(),
     url: z.string().nullable(),
     line: z.int().min(0).nullable(),
-    column: z.int().min(0).nullable(),
+    column: cdpResourceColumnSchema.nullable(),
   }),
   body_shapes: z.object({
     status: z.enum(["not_approved", "included", "partial", "unavailable"]),
@@ -158,7 +155,7 @@ const browserConsoleEventSchema = z.object({
     ),
   url: z.string().nullable(),
   line: z.int().min(0).nullable(),
-  column: z.int().min(0).nullable(),
+  column: cdpResourceColumnSchema.nullable(),
   text_capture: z.object({
     status: z.enum(["not_approved", "included", "unavailable"]),
     values: z.array(
@@ -200,10 +197,8 @@ const browserCspSourceSchema = z.object({
 const browserLinkMetadataSchema = z.object({
   href: z.string().nullable(),
   destination_scope: z.enum(["approved", "outside_policy", "unsupported"]),
-  context_url: z.string().nullable().optional(),
-  context_scope: z
-    .enum(["approved", "outside_policy", "unsupported"])
-    .optional(),
+  context_url: z.string().nullable(),
+  context_scope: z.enum(["approved", "outside_policy", "unsupported"]),
   rel: z.array(z.string()),
   as: z.string().nullable(),
   type: z.string().nullable(),
@@ -268,8 +263,8 @@ const browserWorkerSchema = z.object({
   url: z.string(),
   origin: z.string().nullable(),
   attached: z.boolean(),
-  opener_target_id: z.string().nullable().default(null),
-  parent_frame_id: z.string().nullable().default(null),
+  opener_target_id: z.string().nullable(),
+  parent_frame_id: z.string().nullable(),
   observation: z
     .object({
       ownership: z.enum(["page_related", "service_worker_client", "unknown"]),
@@ -327,6 +322,15 @@ const browserWorkerSchema = z.object({
 });
 
 /** Provider-neutral normalized result for one passive web-page observation. */
+const storageFingerprintShape = {
+  identity_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  value_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .nullable(),
+  complete: z.boolean(),
+};
+
 export const webPageInspectionSchema = z.object({
   browser: browserVersionSchema,
   target: browserTargetSchema,
@@ -373,34 +377,31 @@ export const webPageInspectionSchema = z.object({
     session_storage_keys: z.array(z.string()),
     indexed_db_names: z.array(z.string()),
     cache_names: z.array(z.string()),
-    content_fingerprints: z
-      .array(
+    content_fingerprints: z.array(
+      z.discriminatedUnion("scope", [
         z.object({
+          ...storageFingerprintShape,
           scope: z.enum([
             "cookie",
             "local_storage",
             "session_storage",
-            "indexed_db_schema",
             "indexed_db_record",
             "cache_entry",
           ]),
-          identity_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-          value_sha256: z
-            .string()
-            .regex(/^[a-f0-9]{64}$/u)
-            .nullable(),
+        }),
+        z.object({
+          ...storageFingerprintShape,
+          scope: z.literal("indexed_db_schema"),
           projection_version: z
             .literal(2)
-            .optional()
             .describe(
-              "IndexedDB schema projection including database version; absent on historical store-only fingerprints.",
+              "IndexedDB schema projection including database version.",
             ),
-          complete: z.boolean(),
         }),
-      )
-      .default([]),
-    fingerprint_algorithm: z.literal("sha256").default("sha256"),
-    fingerprints_complete: z.boolean().default(false),
+      ]),
+    ),
+    fingerprint_algorithm: z.literal("sha256"),
+    fingerprints_complete: z.boolean(),
     values_redacted: z.literal(true),
   }),
   limitations: z.array(z.string()),

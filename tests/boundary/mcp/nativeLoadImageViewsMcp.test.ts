@@ -1,24 +1,26 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   nativeDolLoadImageFixture,
   nativeRawLoadImageFixture,
 } from "../../fixtures/nativeLoadImage.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("preserves raw and DOL verification facts and selected DOL sections through the advertised SDK output", async () => {
   const { call } = await connectLocalToolsMcp();
-  for (const report of [
-    nativeRawLoadImageFixture(),
-    nativeDolLoadImageFixture(),
-  ]) {
+  for (const { report, format } of [
+    { report: nativeRawLoadImageFixture(), format: "raw-binary" },
+    { report: nativeDolLoadImageFixture(), format: "gamecube-dol" },
+  ] as const) {
+    expect(report.format).toBe(format);
     const parent = createEvidence(
       {
         path: "/selected/fixture",
@@ -55,11 +57,11 @@ it("preserves raw and DOL verification facts and selected DOL sections through t
         verification,
         counts: {
           checks: checks.length,
-          sections: report.format === "gamecube-dol" ? 2 : null,
+          sections: format === "gamecube-dol" ? 2 : null,
         },
       },
     });
-    if (report.format !== "gamecube-dol") continue;
+    if (format !== "gamecube-dol") continue;
     const page = await call("inspect_analysis_view", {
       source,
       view: {
@@ -98,7 +100,7 @@ it("preserves raw and DOL verification facts and selected DOL sections through t
       limitations: expect.arrayContaining(report.limitations),
     });
   }
-}, 30_000);
+});
 
 it("delivers load-image summaries from the complete retained public-tool observation", async () => {
   const report = nativeRawLoadImageFixture();
@@ -117,7 +119,10 @@ it("delivers load-image summaries from the complete retained public-tool observa
     close: async () => ok(null),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "load-image-summary", version: "1" });
+  const client = new Client(
+    { name: "load-image-summary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

@@ -16,6 +16,7 @@ import {
   createCacheProvider,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const assertCompleteToolAvailability = (structuredContent: unknown): void => {
   const status =
@@ -38,7 +39,10 @@ describe("per-request client capability reporting", () => {
     async (capabilities, form, url) => {
       const session = createTestBinarySession(createCacheProvider([]));
       const server = createServer({ kind: "session", session });
-      const client = new Client({ name: "capabilities-test", version: "1" });
+      const client = new Client(
+        { name: "capabilities-test", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
       try {
@@ -79,7 +83,7 @@ describe("initialize-scoped client metadata", () => {
     const server = createServer({ kind: "session", session });
     const client = new Client(
       { name: "initialize-test", version: "2" },
-      { capabilities },
+      { jsonSchemaValidator: createMcpSchemaValidation(), capabilities },
     );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

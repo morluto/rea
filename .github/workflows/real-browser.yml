@@ -53,3 +53,8 @@ jobs:
         env:
           REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome
           REA_BROWSER_NO_SANDBOX: "true"
+      # The preceding verifier builds the runtime used by this request journey.
+      - run: dbus-run-session -- node scripts/verify-browser-request.mjs
+        env:
+          REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome
+          REA_BROWSER_NO_SANDBOX: "true"

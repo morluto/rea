@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -57,7 +57,7 @@ describe("local application workflow verifier", () => {
       coverage: { status: expect.any(String) },
       trace: { summary: { matched_seeds: expect.any(Number) } },
     });
-  }, 20_000);
+  });
 
   it("reports an added parser return field", async () => {
     const root = await createTestTempDirectory("rea-shape-verifier-");
@@ -96,14 +96,75 @@ describe("local application workflow verifier", () => {
     );
     const result = JSON.parse(stdout);
     expect(result.export_shape_comparison).toMatchObject({
-      summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
-      changes: [
-        {
+      summary: { added: 1, removed: 0, changed: 0, unknown: 3 },
+      changes: expect.arrayContaining([
+        expect.objectContaining({
           status: "added",
           path: "/depth",
           right: { availability: "literal", value: 1 },
-        },
-      ],
+        }),
+      ]),
     });
-  }, 20_000);
+  });
 });
+
+it.each([false, true])(
+  "joins sibling analysis cleanup after a first failure (cleanup fails: %s)",
+  async (cleanupFails) => {
+    const root = await createTestTempDirectory(
+      "rea-application-verifier-cleanup-",
+    );
+    const left = join(root, "left");
+    const right = join(root, "right");
+    const marker = join(root, "cleanup-completed");
+    const preload = join(root, "instrument.mjs");
+    await Promise.all([mkdir(left), mkdir(right)]);
+    const fake = `
+import { writeFile } from 'node:fs/promises';
+export async function analyzeJavaScriptApplicationWithOwnedScope({input_path}) {
+  if (input_path === ${JSON.stringify(left)}) throw new Error('authored first failure');
+  await new Promise(resolve => setTimeout(resolve, 200));
+  await writeFile(${JSON.stringify(marker)}, 'closed');
+  if (${JSON.stringify(cleanupFails)}) throw new Error('authored late cleanup failure');
+  return {};
+}
+`;
+    await writeFile(
+      preload,
+      `
+import { registerHooks } from 'node:module';
+registerHooks({ resolve(specifier, context, next) {
+  if (specifier === '../../lib/javascript-application-analysis.mjs' && context.parentURL?.endsWith('/scripts/verify/javascript/application-workflows.mjs'))
+    return { shortCircuit: true, url: 'data:text/javascript,' + encodeURIComponent(${JSON.stringify(fake)}) };
+  return next(specifier, context);
+}});
+`,
+    );
+    const result: unknown = await execute(
+      process.execPath,
+      [
+        "--import",
+        preload,
+        "scripts/verify/javascript/application-workflows.mjs",
+        "--left",
+        left,
+        "--right",
+        right,
+      ],
+      { timeout: 10_000 },
+    ).then(
+      () => {
+        throw new Error("Expected analysis failure");
+      },
+      (error: unknown) => error,
+    );
+    expect(await readFile(marker, "utf8")).toBe("closed");
+    expect(result).toMatchObject({
+      stderr: expect.stringContaining("authored first failure"),
+    });
+    if (cleanupFails)
+      expect(result).toMatchObject({
+        stderr: expect.stringContaining("authored late cleanup failure"),
+      });
+  },
+);

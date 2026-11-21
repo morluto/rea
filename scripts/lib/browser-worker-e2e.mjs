@@ -1,3 +1,4 @@
+import { newPlaywrightCdpSession } from "../../dist/browser/PlaywrightCdpSession.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -34,15 +35,19 @@ export async function verifyBrowserWorkers(
       waitUntil: "load",
       timeout: 20000,
     });
-    await page.evaluate(() => window.ready);
+    await page.evaluate(() => globalThis.ready);
     const other = await context.newPage();
     await other.goto(site.origin + "/other");
-    await other.evaluate(() => window.ready);
+    await other.evaluate(() => globalThis.ready);
     foreignSite = await startWorkerSite();
     const foreign = await context.newPage();
     await foreign.goto(foreignSite.origin);
-    await foreign.evaluate(() => window.ready);
-    const cdp = await context.newCDPSession(page);
+    await foreign.evaluate(() => globalThis.ready);
+    const cdp = await newPlaywrightCdpSession(
+      context,
+      page,
+      "inspect_web_page",
+    );
     const target = (await cdp.send("Target.getTargetInfo")).targetInfo.targetId;
     const targets = (await cdp.send("Target.getTargets")).targetInfos;
     const shared = targets.find(
@@ -187,7 +192,7 @@ export async function verifyBrowserWorkers(
         worker_target_ids: [shared.targetId],
         include_console_text: true,
       },
-      () => page.evaluate(() => window.act()),
+      () => page.evaluate(() => globalThis.act()),
     );
     check(explicit, site, target, true);
     const workerMetadata = explicit.workers.flatMap(
@@ -231,7 +236,7 @@ export async function verifyBrowserWorkers(
       ),
     );
     const consoleRedacted = await capture(input, () =>
-      page.evaluate(() => window.act()),
+      page.evaluate(() => globalThis.act()),
     );
     assert.ok(workerConsole(consoleRedacted).length > 0);
     assert.ok(
@@ -314,7 +319,7 @@ export async function verifyBrowserWorkers(
       ),
     );
     const terminated = await capture(input, () =>
-      page.evaluate(() => window.worker.terminate()),
+      page.evaluate(() => globalThis.worker.terminate()),
     );
     assert.ok(
       terminated.workers.some((w) =>
@@ -323,8 +328,8 @@ export async function verifyBrowserWorkers(
     );
     const restarted = await capture(input, () =>
       page.evaluate(async () => {
-        window.worker = new Worker("/worker.js");
-        await new Promise((r) => (window.worker.onmessage = r));
+        globalThis.worker = new globalThis.Worker("/worker.js");
+        await new Promise((r) => (globalThis.worker.onmessage = r));
       }),
     );
     assert.ok(
@@ -363,17 +368,17 @@ export async function verifyBrowserWorkers(
     assert.equal(other.isClosed(), false);
     const iframeOrigin = site.origin.replace("127.0.0.1", "localhost");
     await page.evaluate(async (origin) => {
-      const frame = document.createElement("iframe");
+      const frame = globalThis.document.createElement("iframe");
       frame.src = origin + "/frame";
       const loaded = new Promise((resolve) => (frame.onload = resolve));
-      document.body.append(frame);
+      globalThis.document.body.append(frame);
       await loaded;
     }, iframeOrigin);
     const iframe = page
       .frames()
       .find((frame) => frame.url() === iframeOrigin + "/frame");
     assert.ok(iframe);
-    await iframe.evaluate(() => window.ready);
+    await iframe.evaluate(() => globalThis.ready);
     const iframeTargets = (await cdp.send("Target.getTargets")).targetInfos;
     assert.ok(
       iframeTargets.some(
@@ -458,13 +463,13 @@ function check(result, site, target, explicit) {
     (w) => w.observation.ownership === "page_related",
   );
   assert.equal(related.length, 2);
-  assert.ok(
-    workers.some(
-      (w) =>
-        w.type === "worker" &&
-        w.observation.ownership === "unknown" &&
-        w.observation.scripts.length === 0,
-    ),
+  assert.equal(
+    workers.filter((w) => w.type === "worker").length,
+    related.length,
+  );
+  assert.equal(
+    workers.filter((w) => w.url === site.origin + "/worker.js").length,
+    1,
   );
   assert.ok(
     workers.some(
@@ -474,8 +479,13 @@ function check(result, site, target, explicit) {
     ),
   );
   const shared = workers.find((w) => w.type === "shared_worker");
-  assert.equal(shared.observation.ownership, "unknown");
-  assert.equal(shared.observation.selected_explicitly, explicit);
+  if (explicit) {
+    assert.equal(shared?.observation?.ownership, "unknown");
+    assert.equal(shared.observation.selected_explicitly, true);
+    assert.equal(shared.observation.scripts.length, 1);
+  } else {
+    assert.equal(shared, undefined);
+  }
   for (const worker of workers) {
     assert.equal(worker.origin, site.origin);
     if (worker.observation.ownership !== "unknown")
@@ -490,7 +500,6 @@ function check(result, site, target, explicit) {
       );
     }
   }
-  assert.equal(shared.observation.scripts.length, explicit ? 1 : 0);
   assert.ok(
     related.every(
       (w) =>

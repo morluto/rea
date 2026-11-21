@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 
 import { createEvidence, type Evidence } from "./evidence.js";
@@ -16,7 +17,7 @@ const proof = (
   confidence: Evidence["confidence"],
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "proof-test", name: "Proof fixture", version: "1" },
     {
       operation: "verify",

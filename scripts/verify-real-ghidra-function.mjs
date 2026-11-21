@@ -415,7 +415,7 @@ async function verifyRequestCancellationAndTimeout(client, entry) {
 }
 
 async function verifyConcurrentRequests(client, entry, leaf) {
-  const concurrent = await Promise.all([
+  await Promise.all([
     functionCall(client, "procedure_info", {
       document: null,
       procedure: entry.address,
@@ -425,9 +425,7 @@ async function verifyConcurrentRequests(client, entry, leaf) {
       address: leaf.address,
     }),
   ]);
-  if (concurrent.length !== 2)
-    throw new Error("Ghidra serial request queue lost a concurrent result");
-  return "serialized-two-results";
+  return "two-concurrent-requests-completed";
 }
 
 /** Prove dense jump-table completeness on the optimized jump-table fixture. */
@@ -621,7 +619,100 @@ export async function verifyNativeTypeLayout(client, typeNames) {
     )
   )
     throw new Error("Nested union or enum layout drifted");
-  return { layout, payload, state };
+  const bitsSymbol = typeNames.find((item) =>
+    matchesSymbol(item.value, "rea_ghidra_inventory_bits"),
+  );
+  if (bitsSymbol === undefined)
+    throw new Error("Bit-field fixture symbol unavailable");
+  const bits = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    address: bitsSymbol.address,
+  });
+  const low = bits.fields.find((field) => field.name === "low");
+  if (
+    bits.kind !== "struct" ||
+    low?.bit_size !== 3 ||
+    low.bit_field?.declared_bit_size !== 3 ||
+    low.bit_field.component_type_lookup !== "not-found" ||
+    low.bit_field.base_type_lookup !== "equivalent"
+  )
+    throw new Error(`Bit-field identity unavailable: ${JSON.stringify(bits)}`);
+  const component = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    type: low.type_id,
+  });
+  const base = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    type: low.bit_field.base_type_id,
+  });
+  if (component.status !== "unavailable" || base.status !== "available")
+    throw new Error("Bit-field component or base lookup drifted");
+  return { layout, payload, state, bits, base };
+}
+
+/**
+ * Oracle for masked-byte-switch.S. The masked table has 256 readable bytes,
+ * the full `and #0xff` range. Ghidra 12.2 issue #10154 still leaves that
+ * branch unrecovered. The compare-bounded switch in the same object must
+ * recover, so a truncated table cannot explain the miss. A recovered masked
+ * switch fails the lane so the limitation can be removed with the fix.
+ */
+export async function verifyMaskedByteSwitch(client) {
+  const names = await inventoryCall(client, "list_names", {
+    document: null,
+    address: null,
+  });
+  const procedure = requireProcedure(names, "rea_masked_byte_switch");
+  const dossier = await functionCall(client, "analyze_function", {
+    procedure: procedure.address,
+  });
+  const pseudocode = await functionCall(client, "procedure_pseudo_code", {
+    document: null,
+    procedure: procedure.address,
+  });
+  const tables = dossier.native_api?.jump_tables ?? [];
+  if (tables.length !== 0)
+    throw new Error(
+      `Masked byte switch recovered a jump table: ${JSON.stringify(tables)}`,
+    );
+  if (
+    typeof pseudocode !== "string" ||
+    !pseudocode.includes("Could not recover jumptable") ||
+    !pseudocode.includes("Too many branches") ||
+    pseudocode.includes("case 0:")
+  )
+    throw new Error(
+      `Masked byte switch did not keep the unrecovered jump table: ${pseudocode}`,
+    );
+  const bounded = requireProcedure(names, "rea_bounded_byte_switch");
+  const boundedDossier = await functionCall(client, "analyze_function", {
+    procedure: bounded.address,
+  });
+  const boundedTable = boundedDossier.native_api?.jump_tables.find((item) =>
+    item.data_sources.some(
+      (source) => source.entry_size_bytes === 1 && source.entry_count === 4,
+    ),
+  );
+  if (boundedTable === undefined)
+    throw new Error(
+      `Compare-bounded byte switch did not recover: ${JSON.stringify(boundedDossier.native_api)}`,
+    );
+  for (let value = 0; value < 4; value += 1) {
+    const mapping = boundedTable.mappings.find(
+      (item) => item.case_value === value,
+    );
+    if (mapping === undefined || mapping.confidence !== "high")
+      throw new Error(
+        `Compare-bounded case ${value} was not verified: ${JSON.stringify(boundedTable)}`,
+      );
+  }
+  return {
+    address: procedure.address,
+    jump_tables: tables.length,
+    unrecovered: true,
+    bounded_address: bounded.address,
+    bounded_cases: boundedTable.mappings.length,
+  };
 }
 
 export async function verifyRelativeSwitch(client, procedures, entrySize) {

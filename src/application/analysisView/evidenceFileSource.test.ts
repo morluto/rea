@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -8,7 +9,7 @@ import {
   analysisViewNativeEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { JsonInputPhysicalReadFailure } from "../JsonInputFile.js";
 import { failFileReadAfterAbort } from "../../../tests/support/failFileReadAfterAbort.js";
@@ -19,6 +20,7 @@ import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
 import { ok } from "../../domain/result.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { readEvidenceFileSource } from "./evidenceFileSource.js";
+import type { Evidence } from "../../domain/evidence.js";
 
 describe("evidence-file source reads", () => {
   it("owns immutable authentication proofs for selected records and related bundle parents", async () => {
@@ -227,7 +229,7 @@ describe("evidence-file read failure provenance", () => {
       const pending = readEvidenceFileSource(path, {
         signal: controller.signal,
       });
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort(reason);
       reader.release();
       const result = await pending;
@@ -261,7 +263,7 @@ describe("evidence-file read failure provenance", () => {
       const pending = readEvidenceFileSource(path, {
         signal: controller.signal,
       });
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort(reason);
       reader.release();
       const result = await pending;
@@ -308,7 +310,7 @@ it("keeps bundle-selection errors useful when operation labels exceed the reply 
   const operation = '\u0000"'.repeat(50_000);
   const records = [1, 2].map((ordinal) =>
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation,
@@ -326,7 +328,68 @@ it("keeps bundle-selection errors useful when operation labels exceed the reply 
   if (read.ok) throw new Error("Expected a record-selection error");
   const encoded = JSON.stringify(read);
   expect(Buffer.byteLength(encoded, "utf8")).toBeLessThan(8192);
-  for (const record of records) expect(encoded).toContain(record.evidence_id);
-  expect(encoded).toContain("operation omitted");
+  for (const record of records)
+    expect(read.error.userMessage).toContain(
+      `${record.evidence_id} (operation omitted)`,
+    );
   expect(encoded).not.toContain(operation);
+});
+
+describe("malformed Evidence file diagnostics (#8453)", () => {
+  /**
+   * A malformed file can carry tens of thousands of field issues. Projecting all
+   * of them expanded the error past the MCP response budget, which replaced the
+   * typed file error and its path with a transport `resource_constraint`. The
+   * reader now bounds the projected issues and says how many were omitted.
+   */
+  const manyIssues = (count: number): Evidence => {
+    const source = structuredClone(analysisViewCaptureEvidence());
+    return {
+      ...source,
+      limitations: Array.from({ length: count }, (_value, index) => index),
+    } as unknown as Evidence;
+  };
+
+  it("keeps the typed file error and path with bounded diagnostics", async () => {
+    const root = await createTestTempDirectory("rea-evidence-many-issues-");
+    const path = join(root, "many.json");
+    await writeFile(path, JSON.stringify(manyIssues(125_000)));
+    const result = await readEvidenceFileSource(path);
+    if (result.ok) throw new Error("expected a rejected file");
+    expect(result.error).toMatchObject({
+      _tag: "EvidenceFileError",
+      reason: "wrong-kind",
+      path,
+    });
+    const issues = (result.error as { contentIssues?: readonly unknown[] })
+      .contentIssues;
+    expect(issues).toBeDefined();
+    // Bounded: far below the 125,000 source issues, and small enough for the
+    // default MCP response budget.
+    expect(issues?.length ?? 0).toBeLessThan(1_000);
+    expect(Buffer.byteLength(JSON.stringify(issues), "utf8")).toBeLessThan(
+      1 << 20,
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        path: [],
+        message: expect.stringContaining("validator issues were omitted"),
+      }),
+    );
+  });
+
+  it("projects every issue when they fit the budget", async () => {
+    const root = await createTestTempDirectory("rea-evidence-few-issues-");
+    const path = join(root, "few.json");
+    await writeFile(path, JSON.stringify(manyIssues(3)));
+    const result = await readEvidenceFileSource(path);
+    if (result.ok) throw new Error("expected a rejected file");
+    const issues = (
+      result.error as { contentIssues?: readonly { message?: string }[] }
+    ).contentIssues;
+    expect(issues).toHaveLength(3);
+    expect(issues?.some(({ message }) => message?.includes("omitted"))).toBe(
+      false,
+    );
+  });
 });

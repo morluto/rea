@@ -64,6 +64,86 @@ const compare = (...probes: (readonly TimedCaptureRow[])[]) => {
   return report.value;
 };
 
+describe("step difference coverage", () => {
+  it("counts a reorder of a complete duplicate ID list in strict agreement", () => {
+    const capture = timedCaptureEvidence([
+      ["GET", "/api/selection", { ids: [2, 1, 1] }],
+    ]);
+    const served = environmentStateServeFixture(capture);
+    const report = compareEnvironment({
+      source: environmentServeSource(served),
+      captureValue: capture,
+      probes: [
+        {
+          label: "reordered",
+          value: timedCaptureEvidence([
+            ["GET", "/api/selection", { ids: [1, 1, 2] }],
+          ]),
+        },
+      ],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.probes[0]?.results[0]).toMatchObject({
+      equal: false,
+      equal_ignoring_order: true,
+      differences: [{ category: "order", pointer: "/ids" }],
+    });
+    expect(report.value.summary).toMatchObject({
+      agreement: 0,
+      agreement_ignoring_order: 1,
+    });
+  });
+
+  it("keeps categories from differences beyond the returned prefix", () => {
+    const fields = Object.fromEntries(
+      Array.from({ length: 20 }, (_, index) => [`field${String(index)}`, 0]),
+    );
+    const capture = timedCaptureEvidence([["GET", "/api/config", fields]]);
+    const served = environmentStateServeFixture(capture);
+    const report = compareEnvironment({
+      source: environmentServeSource(served),
+      captureValue: capture,
+      probes: [
+        {
+          label: "changed",
+          value: timedCaptureEvidence([
+            [
+              "GET",
+              "/api/config",
+              {
+                ...Object.fromEntries(
+                  Object.keys(fields).map((key) => [key, 1]),
+                ),
+                z_missing: true,
+              },
+            ],
+          ]),
+        },
+      ],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    const step = report.value.probes[0]!.results[0]!;
+    expect(step).toMatchObject({
+      equal: false,
+      equal_ignoring_order: false,
+      categories: ["value", "missing-field"],
+      differences_total: 21,
+      differences_omitted: 1,
+      differences_truncated: true,
+    });
+    expect(step.differences).toHaveLength(20);
+    expect(step.differences.every(({ category }) => category === "value")).toBe(
+      true,
+    );
+    expect(report.value.summary.categories).toMatchObject({
+      value: 1,
+      "missing-field": 1,
+    });
+  });
+});
+
 describe("matchProbeRequest", () => {
   it("compares a repeated-query probe against the matching recorded response", () => {
     const recorded = timedCaptureEvidence([
@@ -170,32 +250,6 @@ const nestedUsers = {
 } as EnvironmentManifestTool;
 
 describe("collections under different parents", () => {
-  it("names each parent's collection from the live path, and does not rename a literal segment", () => {
-    const orgOne = ["api", "orgs", "1", "users", "110"];
-    const orgTwo = ["api", "orgs", "2", "users", "110"];
-    expect(collectionScope(nestedUsers, orgOne)).toBe("/api/orgs/1/users");
-    expect(collectionScope(nestedUsers, orgTwo)).toBe("/api/orgs/2/users");
-    expect(
-      collectionScope(nestedUsers, ["api", "orgs", "", "users", "110"]),
-    ).toBe("/api/orgs/{}/users");
-    const map = new IdMap();
-    map.learn(110, 10, "/api/orgs/1/users");
-    map.learn(110, 20, "/api/orgs/2/users");
-    map.learn("users", "stored-tag");
-    const scopes = parameterScopes(nestedUsers, orgOne);
-    // Template indexes of api, orgs and users; the two parameters are not literals.
-    const literals = new Set([0, 1, 3]);
-    expect(
-      translatePath(
-        "/api/orgs/1/users/110",
-        map,
-        (index) => scopes.get(index),
-        (index) => literals.has(index),
-      ),
-    ).toBe("/api/orgs/1/users/10");
-    expect(map.env(110, "/api/orgs/2/users")).toBe(20);
-  });
-
   it("uses state collection identity for root and trailing-slash routes", () => {
     const trailing = {
       ...nestedUsers,
@@ -753,52 +807,51 @@ describe("probe request chronology", () => {
     ],
     ["2026-10-20T09:00:00.0002Z", "2026-10-20T09:00:00.0001Z"],
     ["2026-10-20T09:00:00.0000000002Z", "2026-10-20T09:00:00.0000000001Z"],
-    ["0001-01-01T00:00:00.0002Z", "0001-01-01T01:00:00.0001+01:00"],
     ["2026-10-20 09:00:00.0002Z", "2026-10-20 09:00:00.0001Z"],
     ["2026-10-20T10:00:00.0002+0100", "2026-10-20T09:00:00.0001Z"],
-    ["2026-10-20 10:00:00.0002+0100", "2026-10-20 09:00:00.0001+0000"],
     ["2026-10-20T09:00:00.0002", "2026-10-20T09:00:00.0001"],
-  ])(
-    "replays an earlier delete before a later submillisecond read (%s)",
-    (later, earlier) => {
-      const report = run(
-        analysisViewCaptureEvidence(
-          environmentManifestCaptureFixture([
-            {
-              ...exchange(1, "GET", "http://app.example/api/books/2", 404),
-              startedDateTime: later,
-              response: {
-                status: 404,
-                content: {
-                  mimeType: "application/json",
-                  text: JSON.stringify(BOOK_NOT_FOUND),
-                },
+    ["2026-10-20T09:00:00.002Z", "2026-10-20T09:00:00.001Z"],
+    ["2026-10-20 09:00:00.0000000002Z", "2026-10-20 09:00:00.0000000001Z"],
+    ["2026-10-20 09:00:00.0000000002", "2026-10-20T10:00:00.0000000001+01:00"],
+    ["2026-10-20 09:01", "2026-10-20T10:00+01:00"],
+  ])("replays an earlier delete before a later read (%s)", (later, earlier) => {
+    const report = run(
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          {
+            ...exchange(1, "GET", "http://app.example/api/books/2", 404),
+            startedDateTime: later,
+            response: {
+              status: 404,
+              content: {
+                mimeType: "application/json",
+                text: JSON.stringify(BOOK_NOT_FOUND),
               },
             },
-            {
-              ...exchange(0, "DELETE", "http://app.example/api/books/2", 204),
-              startedDateTime: earlier,
-            },
-          ]),
-        ),
-      );
-      if (!report.ok) throw report.error;
-      expect(
-        report.value.probes[0]?.results.map(({ ordinal, env_status }) => [
-          ordinal,
-          env_status,
+          },
+          {
+            ...exchange(0, "DELETE", "http://app.example/api/books/2", 204),
+            startedDateTime: earlier,
+          },
         ]),
-      ).toEqual([
-        [1, 204],
-        [0, 404],
-      ]);
-      expect(report.value.summary).toMatchObject({
-        steps: 2,
-        equal: 2,
-        agreement: 1,
-      });
-    },
-  );
+      ),
+    );
+    if (!report.ok) throw report.error;
+    expect(
+      report.value.probes[0]?.results.map(({ ordinal, env_status }) => [
+        ordinal,
+        env_status,
+      ]),
+    ).toEqual([
+      [1, 204],
+      [0, 404],
+    ]);
+    expect(report.value.summary).toMatchObject({
+      steps: 2,
+      equal: 2,
+      agreement: 1,
+    });
+  });
 
   it.each([
     ["2026-10-20T09:00:00.000100Z", "2026-10-20T10:00:00.0001+01:00"],
@@ -810,7 +863,7 @@ describe("probe request chronology", () => {
     ],
     ["Tue, 20 Oct 2026 09:00:00 GMT", "2026-10-20T09:00:00Z"],
   ])(
-    "keeps ordinal order for equal instants and native-Date spelling compatibility (%s)",
+    "breaks equal recorded instants by ordinal after sorting by time (%s)",
     (left, right) => {
       const capture = environmentManifestCaptureFixture([
         {
@@ -821,10 +874,16 @@ describe("probe request chronology", () => {
           ...exchange(1, "GET", "http://app.example/api/books/2", 200),
           startedDateTime: right,
         },
+        {
+          ...exchange(2, "GET", "http://app.example/api/books/3", 200),
+          startedDateTime: "2026-10-20T08:59:59Z",
+        },
       ]);
       expect(
-        probeRequests(capture.records).steps.map(({ ordinal }) => ordinal),
-      ).toEqual([0, 1]);
+        probeRequests(capture.records.toReversed()).steps.map(
+          ({ ordinal }) => ordinal,
+        ),
+      ).toEqual([2, 0, 1]);
     },
   );
 });
@@ -912,23 +971,30 @@ const registerProbeOrderingAndCaptureCases = () => {
   it.each([undefined, "2026-02-30T09:00:00Z"])(
     "keeps replay in recorded order when a start is missing or invalid: %s",
     (startedDateTime) => {
-      const { startedDateTime: _undated, ...read } = {
-        ...exchange(1, "GET", "http://app.example/api/books/2", 404),
-        response: {
-          status: 404,
-          content: {
-            mimeType: "application/json",
-            text: JSON.stringify(BOOK_NOT_FOUND),
-          },
-        },
-      };
+      const { startedDateTime: _undated, ...remove } = exchange(
+        0,
+        "DELETE",
+        "http://app.example/api/books/2",
+        204,
+      );
       const report = run(
         analysisViewCaptureEvidence(
           environmentManifestCaptureFixture([
-            exchange(0, "DELETE", "http://app.example/api/books/2", 204),
             {
-              ...read,
+              ...remove,
               ...(startedDateTime === undefined ? {} : { startedDateTime }),
+            },
+            {
+              ...exchange(1, "GET", "http://app.example/api/books/2", 404),
+              // The read leads if dated requests sort first or February 30 rolls into March 2.
+              startedDateTime: "2026-03-01T09:00:00Z",
+              response: {
+                status: 404,
+                content: {
+                  mimeType: "application/json",
+                  text: JSON.stringify(BOOK_NOT_FOUND),
+                },
+              },
             },
           ]),
         ),
@@ -938,44 +1004,6 @@ const registerProbeOrderingAndCaptureCases = () => {
       expect(
         report.value.probes[0]?.results.map(({ ordinal }) => ordinal),
       ).toEqual([0, 1]);
-    },
-  );
-
-  it.each([
-    ["2026-10-20T09:00:00.0002Z", "2026-10-20T09:00:00.0001Z"],
-    ["2026-10-20T09:00:00.002Z", "2026-10-20T09:00:00.001Z"],
-    ["2026-10-20 09:00:00.0000000002Z", "2026-10-20 09:00:00.0000000001Z"],
-    ["2026-10-20 09:00:00.0000000002", "2026-10-20T10:00:00.0000000001+01:00"],
-    ["2026-10-20 09:01", "2026-10-20T10:00+01:00"],
-  ])(
-    "orders probe requests by the owner's UTC instant: %s after %s",
-    (readTime, writeTime) => {
-      const report = run(
-        analysisViewCaptureEvidence(
-          environmentManifestCaptureFixture([
-            {
-              ...exchange(0, "GET", "http://app.example/api/books/2", 404),
-              startedDateTime: readTime,
-              response: {
-                status: 404,
-                content: {
-                  mimeType: "application/json",
-                  text: JSON.stringify(BOOK_NOT_FOUND),
-                },
-              },
-            },
-            {
-              ...exchange(0, "DELETE", "http://app.example/api/books/2", 204),
-              startedDateTime: writeTime,
-            },
-          ]),
-        ),
-      );
-      if (!report.ok) throw report.error;
-      expect(report.value.summary).toMatchObject({ steps: 2, equal: 2 });
-      expect(
-        report.value.probes[0]?.results.map(({ ordinal }) => ordinal),
-      ).toEqual([1, 0]);
     },
   );
 

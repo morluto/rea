@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { chromium } from "playwright-core";
 
+import { newPlaywrightCdpSession } from "../../dist/browser/PlaywrightCdpSession.js";
 import { PlaywrightScenarioSession } from "../../dist/browser/PlaywrightScenarioSession.js";
 import { PlaywrightScenarioServiceWorkers } from "../../dist/browser/PlaywrightScenarioServiceWorkers.js";
 import { createBrowserScenarioProvider } from "../../dist/composition/browserScenario.js";
 import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
 import { runScenarioCli } from "./browser-scenario-verifier.mjs";
 import { verifyScenarioPolicySetup } from "./browser-scenario-service-worker-setup-e2e.mjs";
+import { createBrowserFixtureHttpServer } from "./browser-fixture-http.mjs";
 
 const diagnosticError = (error) =>
   error instanceof Error
@@ -26,38 +27,38 @@ const diagnosticError = (error) =>
       }
     : { kind: typeof error };
 
-const startSite = async () => {
+export const startSite = async () => {
   let otherOrigin;
-  const server = createServer((request, response) => {
-    const path = new URL(request.url, "http://localhost").pathname;
-    if (path === "/sw.js") {
-      response.setHeader("content-type", "application/javascript");
-      response.end(`self.addEventListener("install", () => self.skipWaiting());
+  const server = createBrowserFixtureHttpServer(
+    (_request, response, { pathname: path }) => {
+      if (path === "/sw.js") {
+        response.setHeader("content-type", "application/javascript");
+        response.end(`self.addEventListener("install", () => self.skipWaiting());
         self.addEventListener("activate", event => event.waitUntil(clients.claim()));
         self.addEventListener("fetch", event => {
           if (new URL(event.request.url).pathname === "/probe")
             event.respondWith(new Response("worker"));
         });`);
-    } else if (path === "/probe") {
-      response.end("network");
-    } else if (path === "/failed-navigation") {
-      response.destroy();
-    } else if (path === "/stalled-image.png") {
-      response.writeHead(200, { "content-type": "image/png" });
-      response.flushHeaders();
-    } else if (path === "/pending-image" || path === "/pending-child") {
-      response.setHeader("content-type", "text/html");
-      response.end(
-        '<!doctype html><img id="pending-image" src="/stalled-image.png">',
-      );
-    } else if (path === "/pending-frame") {
-      response.setHeader("content-type", "text/html");
-      response.end(
-        '<!doctype html><iframe id="pending-frame" src="/pending-child"></iframe>',
-      );
-    } else {
-      response.setHeader("content-type", "text/html");
-      response.end(`<!doctype html><p id="state">ready</p>
+      } else if (path === "/probe") {
+        response.end("network");
+      } else if (path === "/failed-navigation") {
+        response.destroy();
+      } else if (path === "/stalled-image.png") {
+        response.writeHead(200, { "content-type": "image/png" });
+        response.flushHeaders();
+      } else if (path === "/pending-image" || path === "/pending-child") {
+        response.setHeader("content-type", "text/html");
+        response.end(
+          '<!doctype html><img id="pending-image" src="/stalled-image.png">',
+        );
+      } else if (path === "/pending-frame") {
+        response.setHeader("content-type", "text/html");
+        response.end(
+          '<!doctype html><iframe id="pending-frame" src="/pending-child"></iframe>',
+        );
+      } else {
+        response.setHeader("content-type", "text/html");
+        response.end(`<!doctype html><p id="state">ready</p>
         <a id="navigate" href="${otherOrigin}/">Navigate</a>
         ${path === "/frame" ? `<iframe src="${otherOrigin}/"></iframe>` : ""}
         ${
@@ -72,8 +73,9 @@ const startSite = async () => {
         </script>`
             : ""
         }`);
-    }
-  });
+      }
+    },
+  );
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return {
@@ -105,7 +107,11 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
     let page;
     for (const context of observer.contexts()) {
       for (const candidate of context.pages()) {
-        const cdp = await context.newCDPSession(candidate);
+        const cdp = await newPlaywrightCdpSession(
+          context,
+          candidate,
+          "capture_browser_scenario",
+        );
         const { targetInfo } = await cdp.send("Target.getTargetInfo");
         await cdp.detach();
         if (targetInfo.targetId === targetId) page = candidate;
@@ -355,7 +361,11 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
       let policyPage;
       for (const context of policyBrowser.contexts()) {
         for (const candidate of context.pages()) {
-          const cdp = await context.newCDPSession(candidate);
+          const cdp = await newPlaywrightCdpSession(
+            context,
+            candidate,
+            "capture_browser_scenario",
+          );
           const { targetInfo } = await cdp.send("Target.getTargetInfo");
           await cdp.detach();
           if (targetInfo.targetId === targetId) policyPage = candidate;
@@ -594,7 +604,11 @@ const verifyRejectedPolicyInstallation = async (context, endpoint, origin) => {
     let policy;
     try {
       await page.goto(origin);
-      const cdp = await context.newCDPSession(page);
+      const cdp = await newPlaywrightCdpSession(
+        context,
+        page,
+        "capture_browser_scenario",
+      );
       const { targetInfo } = await cdp.send("Target.getTargetInfo");
       await cdp.detach();
       policy = new PlaywrightScenarioServiceWorkers(

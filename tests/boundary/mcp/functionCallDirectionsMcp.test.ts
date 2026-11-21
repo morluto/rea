@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, expect, it } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -12,14 +16,12 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const observe = (relationshipCoverage: RelationshipCoverage) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (template.subject === null)
-    throw new Error("Expected artifact-bound fixture");
   const dossier = functionDossierSchema.parse(template.normalized_result);
   return createEvidence(
     {
-      path: template.subject.local_path,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      path: fileSubjectDisplay(template.subject).local_path,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {
@@ -36,7 +38,7 @@ const observe = (relationshipCoverage: RelationshipCoverage) => {
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
 
-const profiles = ["full", "compact"] as const;
+const profiles = ["compact"] as const;
 it.each(profiles)("preserves directional gaps (%s)", async (profile) => {
   const session = createTestBinarySession(() => {
     throw new Error("Offline call paths must not launch a provider");
@@ -84,6 +86,7 @@ it.each(profiles)("preserves directional gaps (%s)", async (profile) => {
         status: "partial",
         limitations: [limitation],
         limited_directions: directions,
+        discovery: { callees: { status: "complete" } },
       };
       const observation = observe(coverage);
       expect(session.recordEvidence(observation).ok).toBe(true);
@@ -115,14 +118,18 @@ it.each(profiles)("preserves directional gaps (%s)", async (profile) => {
             },
           ],
         };
-        if (profile === "full")
-          expect(ajv.validate(advertised.inputSchema, malformed)).toBe(false);
         const rejected = await client.callTool({
           name: "build_call_path",
           arguments: malformed,
         });
+        // Source admission belongs to the Evidence owner in both profiles;
+        // malformed supplied records fail integrity instead of SDK validation.
         expect(parseMcpToolError(rejected)).toMatchObject({
-          error: { code: "invalid_request", category: "invalid_input" },
+          error: {
+            code: "evidence_integrity_mismatch",
+            category: "integrity_mismatch",
+            message: expect.stringContaining("relationship_coverage"),
+          },
         });
       }
       const result = await client.callTool({

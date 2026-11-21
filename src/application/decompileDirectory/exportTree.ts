@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmod,
@@ -13,9 +14,9 @@ import { basename, dirname, join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 
 import {
   DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY,
@@ -29,12 +30,12 @@ import {
   type DecompileJournalHeader,
 } from "../../contracts/decompileDirectory.js";
 import {
+  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  type AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { isPathWithinRoot } from "../../domain/localPath.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -43,10 +44,11 @@ import {
   type LeaseFailure,
   type OwnedLease,
 } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
 import { compareProcedureAddresses } from "./selection.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export interface ExportIdentity {
   readonly targetSha256: string | null;
@@ -105,6 +107,13 @@ export const classifyOutputPath = async (
       );
 };
 
+/** Retained records whose body ranges are unknown. */
+export interface UnknownBodies {
+  readonly count: number;
+  /** The reason every such record gives, or undefined when they differ. */
+  readonly sharedReason: string | undefined;
+}
+
 /** Owns one export directory and its append-only journal. */
 export class DecompileExport {
   private constructor(
@@ -146,6 +155,27 @@ export class DecompileExport {
    */
   lastWritten(address: string): DecompileDirectoryFunctionRecord | undefined {
     return this.written.get(address);
+  }
+
+  /**
+   * Retained non-external records whose body ranges are unknown, with their
+   * reason when every such record shares one. The index lists every retained
+   * record, so its summary must come from these records rather than from the
+   * functions the latest call attempted. External records have no file for a
+   * body caveat to qualify.
+   */
+  unknownBodies(): UnknownBodies {
+    let count = 0;
+    let sharedReason: string | undefined;
+    for (const record of this.records.values()) {
+      if (record.status === "external" || record.body.available) continue;
+      sharedReason =
+        count === 0 || sharedReason === record.body.reason
+          ? record.body.reason
+          : undefined;
+      count += 1;
+    }
+    return { count, sharedReason };
   }
 
   /**
@@ -205,6 +235,19 @@ export class DecompileExport {
   async writeIndex(input: {
     readonly layoutStatus: "address" | "debug_layout_unavailable";
     readonly limitations: readonly string[];
+    readonly latestRun: {
+      readonly resume: boolean;
+      readonly selected: number;
+      readonly excluded: number;
+      readonly selection: {
+        readonly name: string | null;
+        readonly namespace: string | null;
+        readonly address_start: string | null;
+        readonly address_end: string | null;
+        readonly limit: number | null;
+      };
+      readonly inventoryLimitations: readonly string[];
+    };
   }): Promise<Result<void, AnalysisError>> {
     // Appends update this owner only after journal sync; resume parses once.
     // Reuse those committed facts instead of re-reading and reinterpreting them.
@@ -215,6 +258,13 @@ export class DecompileExport {
       analysis_profile_digest: this.identity.analysisProfileDigest,
       layout: this.identity.layout,
       layout_status: input.layoutStatus,
+      latest_run: {
+        resume: input.latestRun.resume,
+        selected: input.latestRun.selected,
+        excluded: input.latestRun.excluded,
+        selection: input.latestRun.selection,
+        inventory_limitations: [...input.latestRun.inventoryLimitations],
+      },
       limitations: [...input.limitations],
       functions: [...this.records.values()].sort((left, right) =>
         compareProcedureAddresses(left.address, right.address),
@@ -307,11 +357,11 @@ export class DecompileExport {
       return closed.ok
         ? opened
         : err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               opened.error,
               closed.error,
               "decompile_all",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
     }
     return ok(
@@ -342,20 +392,10 @@ const openResumedJournal = async (
   if (!opened.ok) return opened;
   const functions = await prepareFunctionsDirectory(root, resources);
   if (!functions.ok) return functions;
-  const handle = await openJournal(root, "a");
-  if (!handle.ok) return handle;
-  resources.ownFile(
-    handle.value,
-    join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
-    true,
-  );
   // Drop a torn final line left by a crash so the next append starts a line.
   const repaired =
     opened.value.committedBytes === opened.value.journalBytes ||
-    (await handle.value.truncate(opened.value.committedBytes).then(
-      () => true,
-      () => false,
-    ));
+    (await truncateJournal(root, opened.value.committedBytes, resources));
   if (!repaired) {
     return err(
       decompileInputError(
@@ -364,7 +404,36 @@ const openResumedJournal = async (
       ),
     );
   }
+  const handle = await openJournal(root, "a");
+  if (!handle.ok) return handle;
+  resources.ownFile(
+    handle.value,
+    join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
+    true,
+  );
   return ok({ handle: handle.value, journal: opened.value });
+};
+
+/**
+ * Truncate through a write handle opened without O_APPEND. Windows opens an
+ * append handle with FILE_APPEND_DATA only, and SetEndOfFile refuses it.
+ */
+const truncateJournal = async (
+  root: string,
+  bytes: number,
+  resources: ExportResources,
+): Promise<boolean> => {
+  const path = join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME);
+  const handle = await open(path, constants.O_WRONLY | NO_FOLLOW).catch(
+    (cause: unknown) => cause,
+  );
+  if (!isFileHandle(handle)) return false;
+  const close = resources.ownFile(handle, path);
+  const truncated = await handle.truncate(bytes).then(
+    () => true,
+    () => false,
+  );
+  return (await close()) && truncated;
 };
 
 export type FileCommit =
@@ -387,7 +456,7 @@ const commitFunctionFile = async (
   if (!isDecompileFunctionRelativePath(relativePath)) return { status: "io" };
   const finalPath = join(root, relativePath);
   if (!isPathWithinRoot(root, finalPath)) return { status: "io" };
-  const digest = sha256(bytes);
+  const digest = sha256Hex(bytes);
   const linked = await resources.publish(bytes, finalPath, "link").then(
     () => true,
     (cause: unknown) => cause,
@@ -591,7 +660,7 @@ const JOURNAL_FLAGS = {
   a: constants.O_WRONLY | constants.O_APPEND | NO_FOLLOW,
 } as const;
 
-/** The journal is never opened through a symlink: repair truncates it. */
+/** The journal is never opened through a symlink: resume appends to it. */
 const openJournal = async (
   root: string,
   flag: "wx" | "a",
@@ -663,20 +732,18 @@ const readJournal = async (
   if (!parsed.ok) return parsed;
   const unknown = unknownIdentity(parsed.value.header, identity);
   if (unknown !== undefined) return err(unknown);
-  return sameIdentity(parsed.value.header, identity)
-    ? ok({
-        records: parsed.value.records,
-        written: parsed.value.written,
-        paths: parsed.value.paths,
-        committedBytes: parsed.value.committedBytes,
-        journalBytes: parsed.value.journalBytes,
-      })
-    : err(
-        decompileInputError(
-          "output_directory",
-          "The decompile journal does not match this target, provider, analysis profile, or layout.",
-        ),
-      );
+  const mismatches = identityMismatches(parsed.value.header, identity);
+  if (mismatches.length > 0)
+    return err(
+      journalIdentityMismatch(parsed.value.header, identity, mismatches),
+    );
+  return ok({
+    records: parsed.value.records,
+    written: parsed.value.written,
+    paths: parsed.value.paths,
+    committedBytes: parsed.value.committedBytes,
+    journalBytes: parsed.value.journalBytes,
+  });
 };
 
 const parseJournal = (
@@ -689,7 +756,13 @@ const parseJournal = (
   // an interrupted append and are not part of the journal. Offsets are bytes,
   // so damaged UTF-8 cannot move the truncation point.
   const committedBytes = bytes.lastIndexOf(0x0a) + 1;
-  const lines = bytes.subarray(0, committedBytes).toString("utf8").split("\n");
+  let committed: string;
+  try {
+    committed = decodeStrictUtf8(bytes.subarray(0, committedBytes), "preserve");
+  } catch {
+    return err(incompatibleJournal());
+  }
+  const lines = committed.split("\n");
   lines.pop();
   const header = decompileJournalHeaderSchema.safeParse(parseJson(lines[0]));
   if (!header.success) return err(incompatibleJournal());
@@ -747,22 +820,76 @@ const unknownIdentity = (
   return undefined;
 };
 
-const sameIdentity = (
+/** Identity components in the order presented to the caller. */
+const identityMismatches = (
   header: DecompileJournalHeader,
   identity: ExportIdentity,
-): boolean =>
-  header.target_sha256 === identity.targetSha256 &&
-  header.analysis_profile_digest === identity.analysisProfileDigest &&
-  header.layout === identity.layout &&
-  header.provider.id === identity.provider.id &&
-  header.provider.name === identity.provider.name &&
-  header.provider.version === identity.provider.version;
+): readonly string[] => [
+  ...(header.target_sha256 === identity.targetSha256 ? [] : ["target SHA-256"]),
+  ...(header.analysis_profile_digest === identity.analysisProfileDigest
+    ? []
+    : ["analysis profile digest"]),
+  ...(header.layout === identity.layout ? [] : ["layout"]),
+  ...(header.provider.id === identity.provider.id ? [] : ["provider id"]),
+  ...(header.provider.name === identity.provider.name ? [] : ["provider name"]),
+  ...(header.provider.version === identity.provider.version
+    ? []
+    : ["provider version"]),
+];
 
-const incompatibleJournal = (): AnalysisInputError =>
-  decompileInputError(
-    "output_directory",
-    "The decompile journal is not a compatible export.",
+/**
+ * Report the concrete resume identity that differs. The request is valid, so
+ * generic input-schema recovery would send the caller to the wrong boundary.
+ */
+const journalIdentityMismatch = (
+  header: DecompileJournalHeader,
+  identity: ExportIdentity,
+  mismatches: readonly string[],
+): AnalysisInputError => {
+  const message = `The decompile journal does not match the current ${mismatches.join(", ")}.`;
+  return new AnalysisInputError(
+    "decompile_all",
+    {
+      userMessage: message,
+      conformsToInputContract: true,
+      remediationAction:
+        "Resume with the target, provider, analysis profile, and layout that created this directory, or choose a new output directory. The journal and existing files were left unchanged.",
+    },
+    [
+      {
+        path: ["output_directory"],
+        reason: "invalid_value",
+        message,
+        expected: {
+          target_sha256: header.target_sha256,
+          analysis_profile_digest: header.analysis_profile_digest,
+          layout: header.layout,
+          provider: header.provider,
+        },
+        observed: {
+          target_sha256: identity.targetSha256,
+          analysis_profile_digest: identity.analysisProfileDigest,
+          layout: identity.layout,
+          provider: identity.provider,
+        },
+      },
+    ],
   );
+};
+
+const incompatibleJournal = (): AnalysisInputError => {
+  const message = "The decompile journal is not a compatible export.";
+  return new AnalysisInputError(
+    "decompile_all",
+    {
+      userMessage: message,
+      conformsToInputContract: true,
+      remediationAction:
+        "Inspect the journal and use the REA version that created it, or choose a new output directory. The journal may be damaged or from an unsupported version; existing files were left unchanged.",
+    },
+    [{ path: ["output_directory"], reason: "invalid_value", message }],
+  );
+};
 
 const parseJson = (line: string | undefined): unknown => {
   if (line === undefined) return undefined;
@@ -800,7 +927,7 @@ const allocateFunctionPath = (
   const directory = DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY;
   const plain = `${directory}/${base}.c`;
   if (!used.has(portablePathKey(plain))) return plain;
-  const suffix = createHash("sha256").update(address).digest("hex").slice(0, 8);
+  const suffix = sha256Hex(address).slice(0, 8);
   let candidate = `${directory}/${base}-${suffix}.c`;
   let discriminator = 0;
   // Terminates: `used` is finite.
@@ -1007,9 +1134,6 @@ export const exportOutputFailure = (
   bindArtifactFileCleanup(cause, error);
   return error;
 };
-
-export const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const isFileHandle = (value: unknown): value is FileHandle =>
   typeof value === "object" &&

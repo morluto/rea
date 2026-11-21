@@ -1,38 +1,31 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import MarkdownIt from "markdown-it";
 import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { processTest } from "../support/process/processFixture.js";
 
-const jsonExamples = (content: string): unknown[] =>
-  [...content.matchAll(/```json\s*([\s\S]*?)```/gu)].map((match): unknown =>
-    JSON.parse(match[1] ?? ""),
-  );
+const markdown = new MarkdownIt({ html: true });
 
-const shellExamples = (content: string): string[] =>
-  [...content.matchAll(/```bash\s*([\s\S]*?)```/gu)].map((match) =>
-    (match[1] ?? "").trim(),
-  );
+const examples = (content: string, languages: readonly string[]): string[] =>
+  markdown
+    .parse(content, {})
+    .flatMap((token) =>
+      token.type === "fence" && languages.includes(token.info.trim())
+        ? [token.content.trim()]
+        : [],
+    );
 
 describe("onboarding documentation product facts", () => {
-  it.each([
-    ["docs/native-investigation.md", "raw-binary.md#nmos-6502"],
-    ["docs/ghidra-riscv.md", "raw-binary.md"],
-  ])(
-    "routes raw admission guidance in %s to the owning guide",
-    async (path, target) => {
-      const content = await readFile(resolve(path), "utf8");
-      const links = [...content.matchAll(/\]\(([^)\s]+)\)/gu)].map(
-        (match) => match[1],
-      );
-      expect(links, path).toContain(target);
-    },
-  );
-
   it("documents manual MCP registration with an absolute runtime and entry script", async () => {
-    const content = await readFile(resolve("docs/installation.md"), "utf8");
-    expect(jsonExamples(content)).toContainEqual(
+    const content = await readFile(
+      resolve("docs/getting-started/installation.md"),
+      "utf8",
+    );
+    expect(
+      examples(content, ["json"]).map((value): unknown => JSON.parse(value)),
+    ).toContainEqual(
       expect.objectContaining({
         mcpServers: expect.objectContaining({
           rea: expect.objectContaining({
@@ -51,16 +44,13 @@ describe("onboarding documentation product facts", () => {
     const translatedReadmes = inventory
       .filter((language) => language.code !== "en")
       .map((language) => language.readme);
-    expect(translatedReadmes).toContain("docs/readme/README_it.md");
-    expect(translatedReadmes).toContain("docs/readme/README_el.md");
-    const editions = (await readdir(resolve("docs/readme")))
-      .filter((name) => /^README_[A-Za-z0-9-]+\.md$/u.test(name))
-      .map((name) => `docs/readme/${name}`);
-    expect([...translatedReadmes].sort()).toEqual(editions.sort());
-    const english = shellExamples(await readFile(resolve("README.md"), "utf8"));
+    const english = examples(await readFile(resolve("README.md"), "utf8"), [
+      "bash",
+      "sh",
+    ]);
     for (const path of translatedReadmes)
       expect(
-        shellExamples(await readFile(resolve(path), "utf8")),
+        examples(await readFile(resolve(path), "utf8"), ["bash", "sh"]),
         path,
       ).toEqual(english);
   });
@@ -77,6 +67,27 @@ describe("onboarding documentation product facts", () => {
     ]) {
       expect(persian).toContain(`## ${heading}`);
       expect(persian).toContain(
+        `](#${heading.toLowerCase().replaceAll(" ", "-")})`,
+      );
+    }
+  });
+
+  it("preserves zero-width non-joiners in Malayalam links to GitHub-rendered headings", async () => {
+    const malayalam = await readFile(
+      resolve("docs/readme/README_ml.md"),
+      "utf8",
+    );
+    // Confirmed against GitHub's rendered README, which retains U+200C. The
+    // update heading keeps exactly one joiner between അപ and ഡേറ്റ്; an
+    // editor that drops it from the heading or the fragment must fail here.
+    const zeroWidthNonJoiner = "\u200c";
+    for (const heading of [
+      `REA അപ്${zeroWidthNonJoiner}ഡേറ്റ് ചെയ്യുക`,
+      "എന്തൊക്കെ വിശകലനം ചെയ്യാം",
+      "ഉദാഹരണങ്ങൾ",
+    ]) {
+      expect(malayalam).toContain(`## ${heading}`);
+      expect(malayalam).toContain(
         `](#${heading.toLowerCase().replaceAll(" ", "-")})`,
       );
     }

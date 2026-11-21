@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { constants } from "node:buffer";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -45,7 +46,7 @@ export const parseUtf8Json = (
     );
   let text: string;
   try {
-    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    const decoder = strictUtf8Decoder("preserve");
     if (bytes.byteLength <= constants.MAX_STRING_LENGTH) {
       text = decoder.decode(bytes);
     } else {
@@ -92,5 +93,15 @@ export const parseUtf8Json = (
       cause: undefined,
       userMessage: JSON_BYTE_ORDER_MARK_MESSAGE,
     };
-  return safeParseJson(text);
+  const parsed = safeParseJson(text);
+  // Native syntax errors can quote source snippets containing transport
+  // credentials. Keep the original exception internal, never in public text.
+  return parsed.ok
+    ? parsed
+    : {
+        ok: false,
+        error:
+          "JSON input is not valid JSON. Check syntax in the selected file.",
+        cause: parsed.cause,
+      };
 };

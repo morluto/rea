@@ -2,7 +2,7 @@ import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { WabtArtifactProvider } from "../wasm/WabtArtifactProvider.js";
 import { INSPECT_WASM_ARTIFACT_CONTRACT } from "../contracts/wasm/wasmToolContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 /** Compose the caller-supplied offline toolchain without acquisition or import-time I/O. */
 export const createWasmArtifactService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
@@ -17,7 +17,7 @@ export const createWasmArtifactService = (
  */
 export const wasmArtifactModule = {
   contract: INSPECT_WASM_ARTIFACT_CONTRACT,
-  cliCommand: CLI_COMMANDS.inspectWasmArtifact,
+  cliCommand: cliCommandFor("inspect_wasm_artifact"),
   create(
     environment: Readonly<NodeJS.ProcessEnv>,
     injected?: WasmArtifactService,

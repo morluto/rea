@@ -1,6 +1,10 @@
 import { z } from "zod";
+import { maxCodePoints } from "../schemaConstraints.js";
 import { localPathStringSchema } from "../localPath.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 
 /** Full logical ZIP path budget, enforced by Flutter library inventory. */
 export const MAX_FLUTTER_LIBRARY_PATH_BYTES = 1024;
@@ -28,32 +32,92 @@ const ABI_SELECTOR_MAX_CHARACTERS =
  * budget as JSON Schema maxLength, including every trailing line terminator.
  */
 /** Shared refusal for an ABI label that is not a lib/ directory name. */
-export const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
-const abiSelectorSchema = z
-  .string()
-  .min(1, ABI_SELECTOR_MESSAGE)
-  .refine(
-    (label) => {
-      const characters = label[Symbol.iterator]();
-      for (let count = 0; count <= ABI_SELECTOR_MAX_CHARACTERS; count += 1)
-        if (characters.next().done) return true;
-      return false;
-    },
-    { message: ABI_SELECTOR_MESSAGE, abort: true },
-  )
-  .regex(/^[^\x2f]*$/u, ABI_SELECTOR_MESSAGE)
-  .meta({ maxLength: ABI_SELECTOR_MAX_CHARACTERS });
+const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
+const abiSelectorSchema = maxCodePoints(
+  z.string().min(1, ABI_SELECTOR_MESSAGE),
+  ABI_SELECTOR_MAX_CHARACTERS,
+  ABI_SELECTOR_MESSAGE,
+).regex(/^[^\x2f]*$/u, ABI_SELECTOR_MESSAGE);
+
+/** Bounded printable-run selection, independent of snapshot structural coverage. */
+const DART_POOL_DEFAULTS = {
+  uri_limit: 500,
+  token_limit: 2000,
+  run_bytes: 1024,
+  token_bytes: 128,
+} as const;
+export const dartPoolPolicySchema = z.strictObject({
+  uri_limit: z.int().positive().optional(),
+  token_limit: z.int().positive().optional(),
+  run_bytes: z.int().positive().optional(),
+  token_bytes: z.int().positive().optional(),
+  contains: z
+    .string()
+    .optional()
+    .describe(
+      "Literal case-sensitive substring applied before collection; URI/token counts describe matches, printable_run_count is unfiltered",
+    ),
+});
+type DartPoolPolicyInput = z.infer<typeof dartPoolPolicySchema>;
+export type DartPoolPolicy = {
+  readonly uri_limit: number;
+  readonly token_limit: number;
+  readonly run_bytes: number;
+  readonly token_bytes: number;
+  readonly contains?: string | undefined;
+};
+/** A string-pool budget a result can name as its per-call control. */
+export type DartPoolBudget = Exclude<keyof DartPoolPolicy, "contains">;
+
+/**
+ * The per-call control of one string-pool budget, named by its contract
+ * field; each adapter names the option that sets it.
+ */
+export const dartPoolBudgetLimit = (
+  budget: DartPoolBudget,
+  policy: DartPoolPolicy,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: `pool_policy.${budget}`,
+  effective_value: policy[budget],
+  unit: budget === "uri_limit" || budget === "token_limit" ? "count" : "bytes",
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: DART_POOL_DEFAULTS[budget],
+  applies_at: "next_call",
+});
+
+export const dartPoolPolicy = (
+  selected?: DartPoolPolicyInput,
+): DartPoolPolicy => ({
+  uri_limit: selected?.uri_limit ?? DART_POOL_DEFAULTS.uri_limit,
+  token_limit: selected?.token_limit ?? DART_POOL_DEFAULTS.token_limit,
+  run_bytes: selected?.run_bytes ?? DART_POOL_DEFAULTS.run_bytes,
+  token_bytes: selected?.token_bytes ?? DART_POOL_DEFAULTS.token_bytes,
+  ...(selected?.contains === undefined ? {} : { contains: selected.contains }),
+});
 
 /**
  * Caller intent for Flutter build identification. This family is pure
  * parsing: it reads an APK's `lib/<abi>/libapp.so` and `libflutter.so`
  * directly and runs no engine, tool, or device.
  */
+/**
+ * Flutter results report known coverage: each producer derives `partial` from
+ * the failures, caps and disagreements it recorded, so it never reports
+ * `unknown`.
+ */
+
 export const flutterInputSchemas = {
   identify_flutter_build: z.strictObject({
     path: localPathStringSchema.describe("Local APK file to inspect"),
   }),
   inspect_dart_aot: z.strictObject({
+    pool_policy: dartPoolPolicySchema
+      .optional()
+      .describe(
+        "Printable-run selection and budgets for this call: uri_limit=500 per URI category, token_limit=2000, run_bytes=1024, token_bytes=128; optional contains filters before bounded collection. Positive safe integers. Applies on the next call without restart. Does not raise APK, library, ELF or response limits. Omitted facts can be recovered with a narrower contains or larger relevant budget.",
+      ),
     path: localPathStringSchema.describe(
       "Local APK file carrying a Flutter AOT payload",
     ),
@@ -142,7 +206,7 @@ export const flutterResultSchemas = {
             .string()
             .nullable()
             .describe(
-              "Labeled 'Dart VM version' string, when a build carries one",
+              "Observed string matching the labeled 'Dart VM version' or unlabeled Dart Version::String() pattern; unlabeled matches are candidates rather than verified source identities",
             ),
           toolchain_lines: z.array(z.string().min(1)),
           /** Dart labels omitted by grammar or single-version projection bounds. */
@@ -152,7 +216,7 @@ export const flutterResultSchemas = {
         }),
       }),
     ),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_dart_aot: z.strictObject({
     target: z.strictObject({
@@ -162,11 +226,9 @@ export const flutterResultSchemas = {
     }),
     abi: z.string().min(1),
     libapp: z.strictObject({
-      coverage: z
-        .enum(["complete", "partial"])
-        .describe(
-          "Coverage of ELF symbols, independent data headers, AOT kind, extents and agreeing hashes",
-        ),
+      coverage: knownCoverageStatusSchema.describe(
+        "Coverage of ELF symbols, independent data headers, AOT kind, extents and agreeing hashes",
+      ),
       bytes: z.int().nonnegative(),
       sha256: digestSchema,
       snapshot_hash: z
@@ -177,6 +239,13 @@ export const flutterResultSchemas = {
       snapshot_hash_candidates: z.array(z.string().regex(/^[0-9a-f]{32}$/u)),
       /** Distinct exported data headers with a valid hash at the header's fixed offset. */
       snapshot_hash_sources: z.int().nonnegative(),
+      snapshot_profile: z
+        .enum(["legacy-split", "unified"])
+        .nullable()
+        .exactOptional()
+        .describe(
+          "Export profile supported by the observed headers. Null means unresolved. Older Evidence may omit it.",
+        ),
       /** Snapshot symbols read from the dynamic symbol table. */
       sections: z.array(
         z.strictObject({
@@ -191,11 +260,10 @@ export const flutterResultSchemas = {
       ),
     }),
     string_pool: z.strictObject({
-      coverage: z
-        .enum(["complete", "partial"])
-        .describe(
-          "Coverage of the bounded printable-run projection; independent of snapshot header validity",
-        ),
+      policy: dartPoolPolicySchema.describe("Effective selection and budgets"),
+      coverage: knownCoverageStatusSchema.describe(
+        "Coverage of the bounded printable-run projection; independent of snapshot header validity",
+      ),
       /** Distinct package: source URIs, sorted, bounded. */
       package_uris: z.array(z.string().min(1)),
       package_uri_count_at_least: z.int().nonnegative(),
@@ -206,7 +274,9 @@ export const flutterResultSchemas = {
       class_like_tokens: z.array(z.string().min(1)),
       class_like_token_count_at_least: z.int().nonnegative(),
       printable_run_count: z.int().nonnegative(),
+      /** The budgets that left the projection partial, as request parameters. */
+      limits: z.array(analysisParameterLimitSchema).min(1).exactOptional(),
     }),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
 } as const;

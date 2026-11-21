@@ -1,3 +1,4 @@
+import { newPlaywrightCdpSession } from "../../dist/browser/PlaywrightCdpSession.js";
 import {
   requireMcpOutput,
   requireMcpToolError,
@@ -14,7 +15,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webScreenshotSchema } from "../../dist/domain/webScreenshot.js";
-import { comparePngScreenshots } from "../../dist/browser/PngVisualDiff.js";
+import { comparePngScreenshots } from "../../dist/domain/pngVisualDiff.js";
 
 /** Verify a real, large PNG through production CLI and stdio MCP boundaries. */
 export async function verifyLargeScreenshotE2e(endpoint, origin) {
@@ -33,7 +34,9 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
   try {
     const page = await context.newPage();
     await page.goto(`${origin}/screenshot-noise`);
-    await page.waitForFunction(() => document.body.dataset.ready === "true");
+    await page.waitForFunction(
+      () => globalThis.document.body.dataset.ready === "true",
+    );
     const targets = await (await fetch(`${endpoint}/json/list`)).json();
     const target = targets.find((value) => value.url === page.url());
     assert.ok(
@@ -42,7 +45,11 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
     );
     // Emulation geometry can differ from the native compositor surface.
     // The direct browser result is the pixel oracle for the public adapters.
-    const session = await context.newCDPSession(page);
+    const session = await newPlaywrightCdpSession(
+      context,
+      page,
+      "capture_web_screenshot",
+    );
     let expectedPng;
     try {
       const { windowId } = await session.send("Browser.getWindowForTarget", {
@@ -54,7 +61,7 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
         height: 1536,
       });
       await page.waitForFunction(
-        () => innerWidth === 2048 && innerHeight === 1536,
+        () => globalThis.innerWidth === 2048 && globalThis.innerHeight === 1536,
       );
       const result = await session.send("Page.captureScreenshot", {
         format: "png",

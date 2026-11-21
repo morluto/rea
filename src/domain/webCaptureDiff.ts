@@ -173,12 +173,6 @@ const storageDimension = (
     before.storage,
     after.storage,
   );
-  const indexedDbVersionCovered = [before.storage, after.storage].every(
-    (storage) =>
-      storage.content_fingerprints
-        .filter(({ scope }) => scope === "indexed_db_schema")
-        .every(({ projection_version }) => projection_version === 2),
-  );
   return compareDimension(
     storageMap(
       before.storage,
@@ -194,10 +188,9 @@ const storageDimension = (
     ),
     keysComplete &&
       usageComplete &&
-      indexedDbVersionCovered &&
       before.storage.fingerprints_complete &&
       after.storage.fingerprints_complete,
-    "Storage fingerprints, inventories, usage, quota, or IndexedDB schema version coverage were unavailable or truncated in at least one observation.",
+    "Storage fingerprints, inventories, usage, or quota were unavailable or truncated in at least one observation.",
     keysComplete,
   );
 };
@@ -213,9 +206,10 @@ const compareWebCaptureDimensions = (
     resources: compareResources(
       before.resources,
       after.resources,
-      sectionsComplete(before, ["resources"]) &&
-        sectionsComplete(after, ["resources"]),
-      "Resource inventory or content-size evidence was incomplete in at least one observation.",
+      sectionsComplete(before, ["resources"]),
+      sectionsComplete(after, ["resources"]),
+      resourceInventoryReadable(before),
+      resourceInventoryReadable(after),
     ),
     network: networkDimension(before, after),
     metadata: compareAggregate(
@@ -232,12 +226,25 @@ const compareWebCaptureDimensions = (
   };
 };
 
+/** An invalid or unread collection is not a truncated sample of a real inventory. */
+const resourceInventoryReadable = (inspection: WebPageInspection): boolean =>
+  !inspection.completeness.unavailable_sections.includes("resources");
+
 const compareResources = (
   before: WebPageInspection["resources"],
   after: WebPageInspection["resources"],
-  complete: boolean,
-  reason: string,
+  beforeComplete: boolean,
+  afterComplete: boolean,
+  beforeReadable: boolean,
+  afterReadable: boolean,
 ): Dimension => {
+  const reason =
+    "Resource inventory or content-size evidence was incomplete in at least one observation.";
+  // Retained rows from an unavailable collection cannot prove addition,
+  // removal, or equality. Truncation still uses directional coverage.
+  if (!beforeReadable || !afterReadable)
+    return { status: "unknown", total_changes: 0, changes: [], reason };
+  const complete = beforeComplete && afterComplete;
   const left = resourceGroups(before);
   const right = resourceGroups(after);
   const changes: Change[] = [];
@@ -246,12 +253,14 @@ const compareResources = (
     const leftSizes = left.get(identity);
     const rightSizes = right.get(identity);
     if (leftSizes === undefined || rightSizes === undefined) {
-      if (!complete) unresolved = true;
-      else
+      const absenceProven =
+        leftSizes === undefined ? beforeComplete : afterComplete;
+      if (absenceProven)
         changes.push({
           identity,
           change: leftSizes === undefined ? "added" : "removed",
         });
+      else unresolved = true;
       continue;
     }
     // Stable inventories deduplicate identical observations. A null size also
@@ -261,7 +270,12 @@ const compareResources = (
       unresolved = true;
       continue;
     }
-    if (!sameResourceSizes(leftSizes, rightSizes))
+    // A partial set can omit any size variant. Only a complete peer can
+    // contradict a retained variant, including when the other side is partial.
+    if (
+      (beforeComplete && !resourceSizesContained(rightSizes, leftSizes)) ||
+      (afterComplete && !resourceSizesContained(leftSizes, rightSizes))
+    )
       changes.push({ identity, change: "modified" });
   }
   if (changes.length > 0)
@@ -292,11 +306,10 @@ const resourceGroups = (
   return groups;
 };
 
-const sameResourceSizes = (
-  left: ReadonlySet<number | null>,
-  right: ReadonlySet<number | null>,
-): boolean =>
-  left.size === right.size && [...left].every((size) => right.has(size));
+const resourceSizesContained = (
+  observed: ReadonlySet<number | null>,
+  complete: ReadonlySet<number | null>,
+): boolean => [...observed].every((size) => complete.has(size));
 
 type BodyShapeSources = {
   readonly request: boolean;
@@ -470,7 +483,7 @@ const sharedNetworkMetadata = (
         requiredNetworkResponseFields,
         networkResponseFields,
       );
-      for (const [index, redirect] of (request.redirects ?? []).entries()) {
+      for (const [index, redirect] of request.redirects.entries()) {
         const redirectIdentity = redirectNetworkIdentity(identity, index);
         owners.set(redirectIdentity, identity);
         retainKnownFields(
@@ -726,7 +739,7 @@ const networkSamples = (
     values.push(
       digestCanonicalValue({
         ...response,
-        redirects: (request.redirects ?? []).map(
+        redirects: request.redirects.map(
           (
             {
               request_timestamp: _requestTimestamp,
@@ -872,6 +885,7 @@ const webSocketPayloadMaps = (
       beforeGroup.connections.length !== afterGroup.connections.length
     )
       continue;
+    // optional-fact-default: equal connection counts; with none there are no events to pair.
     const eventCount = beforeGroup.connections[0]?.events.length ?? 0;
     const comparableBytes = new Set<number>();
     const comparableShapes = new Set<number>();
@@ -930,6 +944,7 @@ const webMcpDimension = (
 ): Dimension => {
   const groups = (discovery: WebMcpDiscovery | null) => {
     const result = new Map<string, Tool[]>();
+    // optional-fact-default: null discovery fails webMcpComplete, so its values are unknown.
     for (const tool of discovery?.tools.items ?? []) {
       const identity = `webmcp_${digestCanonicalValue({
         name: tool.name,
@@ -1158,8 +1173,7 @@ const domValueLengthsComparable = (
   after: WebPageInspection["dom"],
 ): boolean =>
   (before.nodes.length === 0 && after.nodes.length === 0) ||
-  (before.node_value_length_unit !== undefined &&
-    before.node_value_length_unit === after.node_value_length_unit);
+  before.node_value_length_unit === after.node_value_length_unit;
 
 /** Compare parsed node facts without serializing or copying the inventories. */
 const domNodesDiffer = (
@@ -1445,9 +1459,6 @@ const pageScriptsDimension = (
   const afterComplete =
     sectionsComplete(after, ["scripts"]) &&
     after.completeness.dropped_events.scripts === 0;
-  // A null declaration may represent an omitted URL. The capture ledger is
-  // section-wide, so it cannot identify which null script was affected.
-  // Unavailable map bodies alone do not erase an observed declaration.
   const beforeMayOmitDeclaration = declarationMayBeOmitted(before.completeness);
   const afterMayOmitDeclaration = declarationMayBeOmitted(after.completeness);
   const left = new Map<string, string>();
@@ -1614,20 +1625,20 @@ const workerScriptsDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
 ): Dimension => {
-  const selectedWorkers = (inspection: WebPageInspection) =>
-    inspection.workers.filter(
-      (worker) =>
-        worker.observation !== undefined &&
-        (worker.observation.ownership !== "unknown" ||
-          worker.observation.selected_explicitly),
+  const selectedObservations = (inspection: WebPageInspection) =>
+    inspection.workers.flatMap(({ target_id, observation }) =>
+      observation &&
+      (observation.ownership !== "unknown" || observation.selected_explicitly)
+        ? [{ targetId: target_id, observation }]
+        : [],
     );
   const workerComplete = [before, after].every(
     (inspection) =>
       sectionsComplete(inspection, ["workers"]) &&
-      selectedWorkers(inspection).every((worker) => {
-        const coverage = worker.observation?.completeness;
+      inspection.workers.every((worker) => worker.observation !== undefined) &&
+      selectedObservations(inspection).every(({ observation }) => {
+        const coverage = observation.completeness;
         return (
-          coverage !== undefined &&
           !incompleteSections(coverage).has("scripts") &&
           !incompleteSections(coverage).has("workers") &&
           coverage.dropped_events.scripts === 0
@@ -1638,16 +1649,14 @@ const workerScriptsDimension = (
     `worker:${compositeKey([targetId, scriptId])}`;
   const workerScripts = (inspection: WebPageInspection) =>
     new Map(
-      selectedWorkers(inspection).flatMap((worker) =>
-        (worker.observation?.scripts ?? []).map(
+      selectedObservations(inspection).flatMap(({ targetId, observation }) =>
+        observation.scripts.map(
           (script) =>
             [
-              workerScriptIdentity(worker.target_id, script.script_id),
+              workerScriptIdentity(targetId, script.script_id),
               {
                 script,
-                mayOmitMap: declarationMayBeOmitted(
-                  worker.observation!.completeness,
-                ),
+                mayOmitMap: declarationMayBeOmitted(observation.completeness),
               },
             ] as const,
         ),
@@ -1851,26 +1860,13 @@ const storageFingerprintIdentities = (
   const afterComplete = completeStorageFingerprints(after);
   const bothComplete =
     before.fingerprints_complete && after.fingerprints_complete;
-  const candidates = bothComplete
+  return bothComplete
     ? new Set([...beforeComplete.keys(), ...afterComplete.keys()])
     : new Set(
         [...beforeComplete.keys()].filter((identity) =>
           afterComplete.has(identity),
         ),
       );
-  return new Set(
-    [...candidates].filter((identity) => {
-      const beforeSchema = beforeComplete.get(identity);
-      const afterSchema = afterComplete.get(identity);
-      if ((beforeSchema ?? afterSchema)?.scope !== "indexed_db_schema")
-        return true;
-      return (
-        beforeSchema === undefined ||
-        afterSchema === undefined ||
-        beforeSchema.projection_version === afterSchema.projection_version
-      );
-    }),
-  );
 };
 
 const completeStorageFingerprints = (

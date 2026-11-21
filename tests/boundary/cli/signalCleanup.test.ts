@@ -1,4 +1,5 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { registerSignalCommands } from "../../../src/cli/signalCommands.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -23,7 +24,7 @@ it.each([
 ])(
   "rejects invalid selections before invoking the CLI service: $message",
   async ({ flags, message }) => {
-    const cli = Cli.create("signal-selection-test", { sync: false });
+    const cli = createCommandCli();
     let called = false;
     registerSignalCommands(
       cli,
@@ -65,7 +66,7 @@ it.each([false, true])(
   "awaits cleanup retry and preserves completed output when retry failure is %s",
   async (failAgain) => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Completed decoder fixture", version: "1" },
       {
         operation: "decode_signal_recording",
@@ -81,7 +82,7 @@ it.each([false, true])(
       { operation: "decode_signal_recording", partialObservation: evidence },
     );
     let closed = false;
-    const cli = Cli.create("signal-cleanup-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(
       cli,
       silentLogger,
@@ -101,8 +102,6 @@ it.each([false, true])(
               { reason: "retry failed" },
               { operation: "decode_signal_recording" },
             );
-          // Only the owner can confirm release of its retained resource.
-          original.resolveCleanup();
         },
       },
     );
@@ -126,23 +125,15 @@ it.each([false, true])(
     );
     const output: unknown = JSON.parse(stdout);
     expect(output).toMatchObject({
-      code: failAgain ? "cleanup_incomplete" : "execution_failure",
-      details: { partial_observation: evidence },
+      code: "cleanup_incomplete",
+      details: {
+        partial_observation: evidence,
+        resources: expect.arrayContaining(["original-workspace"]),
+      },
     });
     if (failAgain)
       expect(output).toMatchObject({
-        details: {
-          cleanup: "incomplete",
-          resources: expect.arrayContaining([
-            "original-workspace",
-            "retry-workspace",
-          ]),
-        },
+        details: { resources: expect.arrayContaining(["retry-workspace"]) },
       });
-    else {
-      expect(original.cleanupIncomplete).toBe(false);
-      expect(output).not.toHaveProperty("details.cleanup");
-      expect(output).not.toHaveProperty("details.resources");
-    }
   },
 );

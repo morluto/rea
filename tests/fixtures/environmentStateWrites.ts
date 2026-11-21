@@ -1,7 +1,5 @@
-import {
-  projectAnalysisView,
-  type AnalysisViewResult,
-} from "../../src/domain/analysisView/analysisView.js";
+import { projectAnalysisView } from "../../src/domain/analysisView/analysisView.js";
+import type { AnalysisViewResult } from "../../src/domain/analysisView/analysisViewResult.js";
 import type { TemplateRule } from "../../src/domain/analysisView/environmentManifestRules.js";
 import type { Evidence } from "../../src/domain/evidence.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
@@ -283,7 +281,7 @@ export const UNCHAPTERED_ROWS: readonly TimedCaptureRow[] = renamingRows(
 );
 
 /** A book whose sent handle the application stores as its code and embeds in its link. */
-export const handledBook = (entity: Book, handle: string): Book => ({
+const handledBook = (entity: Book, handle: string): Book => ({
   ...entity,
   code: handle,
   link: `https://books.example.test/b/${handle}`,
@@ -348,7 +346,7 @@ const shelved = (entry: Book, shelf: string): Book => ({ ...entry, shelf });
 const SHELVED_FIRST = shelved(FIRST_BOOK, "a");
 const SHELVED_SECOND = shelved(SECOND_BOOK, "b");
 /** The book the create at exchange 7 of QUERY_ROWS made, on shelf a. */
-export const SHELVED_THIRD = shelved(book(3, "Third Book", bookClock(7)), "a");
+const SHELVED_THIRD = shelved(book(3, "Third Book", bookClock(7)), "a");
 
 /**
  * One list tool recorded whole, filtered by shelf, searched, sorted and with a flag that changes nothing; item reads;
@@ -373,7 +371,7 @@ export const QUERY_ROWS: readonly TimedCaptureRow[] = [
 ];
 
 /** A clock spelled with a `+00:00` offset where the books application's item reads spell `Z`. */
-export const offsetClock = (clock: JsonValue | undefined): string =>
+const offsetClock = (clock: JsonValue | undefined): string =>
   String(clock).replace(/Z$/u, "+00:00");
 
 /** A book as a list that spells its clocks with an offset shows it. */
@@ -455,6 +453,7 @@ export const environmentStateViewOf = (
 ): EnvironmentStateView => {
   const result = projectAnalysisView(
     {
+      predicateType: capture.predicate_type,
       evidenceId: capture.evidence_id,
       operation: capture.operation,
       normalizedResult: capture.normalized_result,

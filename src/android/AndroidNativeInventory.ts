@@ -1,6 +1,8 @@
 import type { JadxToolPort } from "./JadxAnalysis.js";
-import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
-import { jadxNativeDeclarationsSchema } from "./JadxProtocol.js";
+import {
+  androidNativeDeclarationsSchema,
+  type AndroidNativeDeclarations,
+} from "../domain/android/androidNativeDeclarations.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 
 /** Validate the native-only batch at its producing boundary, preserving raw facts. */
@@ -9,7 +11,7 @@ export const readAndroidNativeInventory = async (
   snapshot: string,
 ): Promise<AndroidNativeDeclarations> => {
   const raw = await tools.json("rea_native_declarations", { path: snapshot });
-  const parsed = jadxNativeDeclarationsSchema.safeParse(raw);
+  const parsed = androidNativeDeclarationsSchema.safeParse(raw);
   if (!parsed.success)
     throw new AnalysisOutputError(
       "inspect_android_jni_bindings",

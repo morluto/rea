@@ -92,10 +92,20 @@ cliTest.skipIf(CAPTURE_SKIP_REASON)(
         executable: process.execPath,
         arguments: [
           "-e",
-          "setTimeout(() => process.stdout.write('ab'), 100); setTimeout(() => {}, 180)",
+          `
+            const keepAlive = setInterval(() => {}, 1000);
+            const resized = () => {
+              if (process.stdout.columns === 2) {
+                clearInterval(keepAlive);
+                process.stdout.write('ab');
+              }
+            };
+            process.stdout.on('resize', resized);
+            resized();
+          `,
         ],
         terminal: { columns: 3, rows: 2, scrollback: 0 },
-        events: [{ type: "resize", at_ms: 20, columns: 2, rows: 2 }],
+        events: [{ type: "resize", at_ms: 1_000, columns: 2, rows: 2 }],
         timeout_ms: 5_000,
       }),
     );
@@ -106,6 +116,7 @@ cliTest.skipIf(CAPTURE_SKIP_REASON)(
     const capture = parseProcessCapture(
       parseEvidence(result.json).normalized_result,
     );
+    expect(capture.exit).toMatchObject({ code: 0, reason: "exited" });
     expect(capture.rendered_frames.some((frame) => frame.columns === 2)).toBe(
       true,
     );

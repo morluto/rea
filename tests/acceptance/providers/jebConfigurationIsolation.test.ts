@@ -1,57 +1,51 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { resolve } from "node:path";
-import { symlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { expect } from "vitest";
+import { afterAll, expect } from "vitest";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { resolveExecutable } from "../../../src/process/capture/ProcessScenarioRuntimeValidation.js";
 import { workspaceCliTest as test } from "../../support/cli/workspaceCliFixture.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-const isolatedEnvironment = async (workspace: TestWorkspace) => {
-  let searchPath = "";
-  if (process.platform === "linux") {
-    // Retain only the real process owner's prerequisite, not ambient providers.
-    searchPath = await workspace.mkdir("bin");
-    await symlink(
-      await resolveExecutable("ps", process.cwd(), process.env.PATH ?? ""),
-      workspace.path("bin", "ps"),
-    );
-  }
-  return {
-    PATH: searchPath,
-    HOME: workspace.home,
-    USERPROFILE: workspace.home,
-    APPDATA: workspace.path("appdata"),
-    LOCALAPPDATA: workspace.path("localappdata"),
-    XDG_CONFIG_HOME: workspace.path("config"),
-    XDG_CACHE_HOME: workspace.path("cache"),
-    TEMP: workspace.root,
-    TMP: workspace.root,
-    ...(process.platform === "win32"
-      ? { SystemRoot: process.env.SystemRoot ?? "" }
-      : {}),
-    HOPPER_LAUNCHER_PATH: workspace.path("missing-hopper"),
-    REA_LOG_LEVEL: "silent",
-    REA_JEB_MCP_TIMEOUT_MS: "1.5",
-  };
-};
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
+const isolatedEnvironment = (workspace: TestWorkspace) => ({
+  // Discovery still needs the host's process-ownership prerequisites, such as ps.
+  PATH: process.env.PATH ?? "",
+  HOME: workspace.home,
+  USERPROFILE: workspace.home,
+  APPDATA: workspace.path("appdata"),
+  LOCALAPPDATA: workspace.path("localappdata"),
+  XDG_CONFIG_HOME: workspace.path("config"),
+  XDG_CACHE_HOME: workspace.path("cache"),
+  TEMP: workspace.root,
+  TMP: workspace.root,
+  ...(process.platform === "win32"
+    ? { SystemRoot: process.env.SystemRoot ?? "" }
+    : {}),
+  HOPPER_LAUNCHER_PATH: workspace.path("missing-hopper"),
+  REA_LOG_LEVEL: "silent",
+  REA_JEB_MCP_TIMEOUT_MS: "1.5",
+});
 
 test("retains the selected endpoint when a direct JEB connection fails", async ({
   cli,
   workspace,
 }) => {
-  const environment = await isolatedEnvironment(workspace);
   const server = createServer((_request, response) => {
     response.writeHead(404, { "content-type": "text/plain" });
     response.end("not found");
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
-  try {
+  await withVerifierCleanup(async () => {
     const address = server.address();
     if (address === null || typeof address === "string")
       throw new Error("Missing loopback listener address");
@@ -59,7 +53,7 @@ test("retains the selected endpoint when a direct JEB connection fails", async (
     const result = await cli.run({
       arguments: ["inspect-jeb-client", "--json"],
       environment: {
-        ...environment,
+        ...isolatedEnvironment(workspace),
         REA_JEB_MCP_TIMEOUT_MS: "3000",
         REA_JEB_MCP_URL: endpoint,
       },
@@ -77,17 +71,20 @@ test("retains the selected endpoint when a direct JEB connection fails", async (
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: workspace.root,
       env: {
-        ...environment,
+        ...isolatedEnvironment(workspace),
         REA_JEB_MCP_TIMEOUT_MS: "3000",
         REA_JEB_MCP_URL: endpoint,
       },
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "jeb-endpoint-acceptance",
-      version: "1",
-    });
-    try {
+    const client = new Client(
+      {
+        name: "jeb-endpoint-acceptance",
+        version: "1",
+      },
+      { jsonSchemaValidator: schemaValidation },
+    );
+    await withVerifierCleanup(async () => {
       await client.connect(transport);
       const definition = (await client.listTools()).tools.find(
         ({ name }) => name === "inspect_jeb_client",
@@ -96,30 +93,29 @@ test("retains the selected endpoint when a direct JEB connection fails", async (
       const refusal = parseMcpToolError(
         await client.callTool(
           { name: "inspect_jeb_client", arguments: {} },
-          { toolDefinition: definition },
+          { toolDefinition: withCanonicalOutputSchema(definition) },
         ),
       );
       expect(refusal.error).toMatchObject({
         code: "capability_unavailable",
         details: { diagnostics: { endpoint } },
       });
-    } finally {
-      await client.close();
-      await transport.close();
-    }
-  } finally {
-    server.closeAllConnections();
-    await new Promise<void>((resolveClose, rejectClose) =>
-      server.close((error) => (error ? rejectClose(error) : resolveClose())),
-    );
-  }
+    }, [() => client.close(), () => transport.close()]);
+  }, [
+    async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolveClose, rejectClose) =>
+        server.close((error) => (error ? rejectClose(error) : resolveClose())),
+      );
+    },
+  ]);
 });
 
 test("keeps compiled CLI discovery usable while JEB rejects its malformed timeout", async ({
   cli,
   workspace,
 }) => {
-  const environment = await isolatedEnvironment(workspace);
+  const environment = isolatedEnvironment(workspace);
   for (const command of ["capabilities", "providers"]) {
     const result = await cli.run({
       arguments: [command, "--json"],
@@ -152,15 +148,18 @@ test("starts production stdio MCP and retains peer requests around a JEB configu
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
     cwd: workspace.root,
-    env: await isolatedEnvironment(workspace),
+    env: isolatedEnvironment(workspace),
     stderr: "pipe",
   });
-  const client = new Client({ name: "jeb-isolation-acceptance", version: "1" });
+  const client = new Client(
+    { name: "jeb-isolation-acceptance", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
   });
-  try {
+  await withVerifierCleanup(async () => {
     await client.connect(transport);
     await client.ping();
     const definition = (await client.listTools()).tools.find(
@@ -171,7 +170,7 @@ test("starts production stdio MCP and retains peer requests around a JEB configu
     const refusal = parseMcpToolError(
       await client.callTool(
         { name: "inspect_jeb_client", arguments: {} },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       ),
     );
     expect(refusal.error).toMatchObject({
@@ -179,8 +178,5 @@ test("starts production stdio MCP and retains peer requests around a JEB configu
       details: { settings: [{ setting: "REA_JEB_MCP_TIMEOUT_MS" }] },
     });
     await client.ping();
-  } finally {
-    await client.close();
-    await transport.close();
-  }
+  }, [() => client.close(), () => transport.close()]);
 });

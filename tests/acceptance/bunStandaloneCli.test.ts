@@ -6,8 +6,13 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   bunModuleGraphPayload,
+  bunPrefixedPayload,
+  machoBunSection,
+  machoBunSections,
   elfAppendedBunPayload,
 } from "../../src/artifacts/bun/BunStandalone.fixture.js";
+import { DEFAULT_BUN_READER_LIMITS } from "../../src/domain/artifactReaderLimits.js";
+import { CPU_ARM64, universalMacho } from "../fixtures/universalMacho.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {
@@ -16,7 +21,82 @@ import {
 } from "../../src/domain/artifactGraph.js";
 
 cliTest(
-  "inventories and extracts Bun source without executing its carrier",
+  "distinguishes a truncated Bun graph from an intact graph over the selected limit",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bun-payload-extent-");
+    const source = join(root, "app");
+    const payload = bunModuleGraphPayload({ modules: [{ name: "main.js" }] });
+    const section = bunPrefixedPayload(payload);
+    const limits = JSON.stringify({
+      bun: { payload_bytes: payload.length - 1 },
+    });
+    const inspect = async () => {
+      await writeFile(source, machoBunSection(section));
+      const result = await cli.run({
+        arguments: [
+          "inspect-artifact",
+          source,
+          "--artifact-limits",
+          limits,
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(1);
+      return result.json;
+    };
+    expect(await inspect()).toMatchObject({
+      retryable: true,
+      details: {
+        reason: "limit",
+        reader_limit: {
+          parameter: "artifact_limits.bun.payload_bytes",
+          effective_value: payload.length - 1,
+          required_value: payload.length,
+        },
+      },
+    });
+    section.writeBigUInt64LE(BigInt(payload.length + 1));
+    expect(await inspect()).toMatchObject({
+      retryable: false,
+      details: {
+        reason: "format",
+        detail: expect.stringContaining("truncated"),
+      },
+    });
+  },
+);
+
+cliTest(
+  "reports large Bun section ambiguity through the compiled CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bun-many-sections-");
+    const source = join(root, "app");
+    const graph = bunPrefixedPayload(bunModuleGraphPayload({ modules: [{}] }));
+    const thin = machoBunSections(Array.from({ length: 200_000 }, () => graph));
+    expect(thin.readUInt32LE(20)).toBeLessThanOrEqual(
+      DEFAULT_BUN_READER_LIMITS.recognition_load_command_bytes,
+    );
+    const fat = universalMacho([
+      { bytes: thin, cpuType: CPU_ARM64, cpuSubtype: 0 },
+    ]);
+    await writeFile(source, fat.bytes);
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(1);
+    expect(inspected.json).toMatchObject({
+      code: "artifact_operation_failed",
+      category: "unavailable",
+      details: {
+        reason: "unavailable",
+        detail: expect.stringContaining("multiple embedded graphs"),
+      },
+    });
+  },
+);
+
+cliTest(
+  "inventories and extracts Bun source from its carrier",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bun-cli-");
     const source = join(root, "app");

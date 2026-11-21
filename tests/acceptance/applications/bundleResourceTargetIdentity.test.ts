@@ -1,11 +1,16 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
+import { interfaceBuilderAnalysisSchema } from "../../../src/domain/apple/interfaceBuilderGraph.js";
+import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
+import { inspectPlistSchema } from "../../../src/domain/native/nativeInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest.for([
@@ -45,7 +50,7 @@ cliTest.for([
     const before = await call(operation, parameters);
     expect(before.isError).not.toBe(true);
     const initial = parseEvidence(before.structuredContent);
-    expect(initial.subject?.digest.sha256).toBe(
+    expect(fileIdentity(initial.subject).sha256).toBe(
       createHash("sha256").update(original).digest("hex"),
     );
 
@@ -55,29 +60,60 @@ cliTest.for([
     const changedNib = nib.replaceAll("UIViewController", "ChangedController");
     expect(changedNib).not.toBe(nib);
     await writeFile(nibPath, changedNib);
+    const changedPlist =
+      "<plist><dict><key>CFBundleExecutable</key><string>Probe</string><key>Marker</key><string>ChangedController</string></dict></plist>";
     if (operation === "inspect_plist")
-      await writeFile(
-        join(contents, "Info.plist"),
-        "<plist><dict><key>CFBundleExecutable</key><string>Probe</string><key>Marker</key><string>ChangedController</string></dict></plist>",
-      );
+      await writeFile(join(contents, "Info.plist"), changedPlist);
     const stale = await call(operation, parameters);
-    expect(stale.isError).toBe(true);
-    expect(JSON.stringify(stale)).toContain("integrity_mismatch");
+    expect(parseMcpToolError(stale).error).toMatchObject({
+      code:
+        operation === "inspect_plist"
+          ? "artifact_changed"
+          : "artifact_operation_failed",
+      category: "integrity_mismatch",
+    });
 
     expect((await call("open_binary", { path: app })).isError).not.toBe(true);
     const after = await call(operation, parameters);
     expect(after.isError).not.toBe(true);
     const refreshed = parseEvidence(after.structuredContent);
-    expect(refreshed.subject?.digest.sha256).toBe(
+    expect(fileIdentity(refreshed.subject).sha256).toBe(
       createHash("sha256").update(changed).digest("hex"),
     );
-    if (operation !== "inspect_asset_catalog")
-      expect(JSON.stringify(refreshed.normalized_result)).toContain(
-        "ChangedController",
+    const nibHash = createHash("sha256").update(changedNib).digest("hex");
+    if (operation === "inspect_plist") {
+      const inspected = inspectPlistSchema.parse(refreshed.normalized_result);
+      expect(inspected.value).toMatchObject({ Marker: "ChangedController" });
+      expect(inspected.source_sha256).toBe(
+        createHash("sha256").update(changedPlist).digest("hex"),
       );
-    if (operation !== "inspect_asset_catalog" && operation !== "inspect_plist")
-      expect(JSON.stringify(refreshed.normalized_result)).toContain(
-        createHash("sha256").update(changedNib).digest("hex"),
+    }
+    if (operation === "decode_interface_builder") {
+      const report = interfaceBuilderAnalysisSchema.parse(
+        refreshed.normalized_result,
       );
+      expect(report.documents).toContainEqual(
+        expect.objectContaining({
+          relative_path: "Contents/Resources/Main.nib",
+          archive_sha256: nibHash,
+        }),
+      );
+      expect(report.graph.nodes).toContainEqual(
+        expect.objectContaining({
+          attributes: expect.objectContaining({
+            class_name: "ChangedController",
+          }),
+        }),
+      );
+    }
+    if (operation === "inspect_keyed_archive") {
+      const report = keyedArchiveResultSchema.parse(
+        refreshed.normalized_result,
+      );
+      expect(report.archive_sha256).toBe(nibHash);
+      expect(report.objects).toContainEqual(
+        expect.objectContaining({ class_name: "ChangedController" }),
+      );
+    }
   },
 );
