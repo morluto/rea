@@ -1,6 +1,7 @@
 import { ArtifactResourceScope } from "../resources/index.js";
 import { CursorLocalPlugin } from "./CursorLocalPlugin.js";
 import { ok } from "../domain/result.js";
+import { compositeKey } from "../domain/unicodeCodePointOrder.js";
 import { explicitSetupRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import { throwIfSetupCancelled } from "./SetupCancellation.js";
@@ -184,6 +185,23 @@ class PluginSetupHost {
       if ((await this.route(id)).mode !== "plugin") selected.push(id);
     return selected;
   };
+  /** Commands disclosed in the approved plan for this plugin route. */
+  private plannedPluginCommands(
+    id: string,
+    selected: Extract<ClientRoute, { readonly mode: "plugin" }>,
+  ): readonly (readonly string[])[] {
+    if (selected.manager instanceof CursorLocalPlugin)
+      return selected.manager.commands(false);
+    // Claude defers inventory until approval, so the plan discloses both paths.
+    if (id === "claude_code")
+      return [
+        ["plugin", "list", "--json"],
+        ...selected.manager.commands(false),
+        ...selected.manager.commands(true),
+      ];
+    return selected.manager.commands(selected.installed);
+  }
+
   private pluginAction = (id: string): SetupAction | undefined => {
     const selected = this.routes.get(id);
     if (selected?.mode !== "plugin") return undefined;
@@ -197,9 +215,9 @@ class PluginSetupHost {
           "Download the exact REA npm release into a private staging directory, verify its bundled runtime and skill, then publish a local Cursor plugin. Existing local plugins are preserved; no direct MCP registration or separate skill copy is created. Restart Cursor or reload its window. Local imports must be permitted by Enterprise policy; an existing marketplace plugin takes precedence. This is a local installation and does not sync through a Cursor account.",
         external: true,
         operation: "install",
-        commands: selected.manager
-          .commands(false)
-          .map((args) => [selected.manager.command, ...args].join(" ")),
+        commands: this.plannedPluginCommands(id, selected).map((args) =>
+          [selected.manager.command, ...args].join(" "),
+        ),
         networkOrigins: ["https://registry.npmjs.org"],
       };
     return {
@@ -210,14 +228,9 @@ class PluginSetupHost {
       detail: `Check, install or enable ${REA_PLUGIN_ID} using the client's plugin manager. The plugin bundles its MCP server and skill; no separate registration or skill copy is created. ${id === "codex" ? "Use the same Codex home in the CLI and desktop app, then start a new chat." : "Inventory is deferred until approval because Claude Code can migrate settings when listing plugins. Already enabled plugins are left installed. Reload plugins or restart Claude Code. Local CLI installs do not sync to Claude chat or Cowork."}`,
       external: true,
       operation: "install",
-      commands: (id === "claude_code"
-        ? [
-            ["plugin", "list", "--json"],
-            ...selected.manager.commands(false),
-            ...selected.manager.commands(true),
-          ]
-        : selected.manager.commands(selected.installed)
-      ).map((args) => [selected.manager.command, ...args].join(" ")),
+      commands: this.plannedPluginCommands(id, selected).map((args) =>
+        [selected.manager.command, ...args].join(" "),
+      ),
       networkOrigins: [
         "https://github.com/morluto/rea",
         "https://registry.npmjs.org",
@@ -329,20 +342,37 @@ class PluginSetupHost {
       return { status: "failed", reason: "plugin", detail: runtimeFailure };
     this.approvedPluginClients.add(client.name);
     const state = await selected.manager.inspect();
+    if (state.status === "invalid")
+      return { status: "failed", reason: "plugin", detail: state.remediation };
+    if (state.status === "unsupported")
+      return {
+        status: "failed",
+        reason: "plugin",
+        detail: `${state.remediation} Update the client, or explicitly choose direct setup with --skill=false.`,
+      };
+    if (state.installed && state.enabled) return { status: "configured" };
+    // Fail closed when post-approval inventory needs commands the plan did not show.
+    const planned = this.plannedPluginCommands(client.name, selected);
+    const needed =
+      selected.manager instanceof CursorLocalPlugin
+        ? selected.manager.commands(false)
+        : selected.manager.commands(state.installed);
+    const disclosed = new Set(planned.map((args) => compositeKey(args)));
+    if (!needed.every((args) => disclosed.has(compositeKey(args))))
+      return {
+        status: "failed",
+        reason: "plugin",
+        detail:
+          "Plugin state changed after the plan was approved and now needs different commands. Rerun setup to review a fresh plan; no marketplace or install commands were run.",
+      };
     const failure =
-      state.status === "invalid"
-        ? state.remediation
-        : state.status === "unsupported"
-          ? `${state.remediation} Update the client, or explicitly choose direct setup with --skill=false.`
-          : state.installed && state.enabled
-            ? undefined
-            : selected.manager instanceof CursorLocalPlugin
-              ? await selected.manager.install(
-                  state.installed,
-                  checkDirectRegistration,
-                  this.options.signal,
-                )
-              : await selected.manager.install(state.installed);
+      selected.manager instanceof CursorLocalPlugin
+        ? await selected.manager.install(
+            state.installed,
+            checkDirectRegistration,
+            this.options.signal,
+          )
+        : await selected.manager.install(state.installed);
     return failure === undefined
       ? { status: "configured" }
       : { status: "failed", reason: "plugin", detail: failure };

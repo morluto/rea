@@ -634,6 +634,24 @@ it("rechecks direct configuration after approval before installing a plugin", as
   expect(f.mutations()).toEqual([]);
 });
 
+it("requires a fresh plan when the plugin is removed while approval is open", async () => {
+  const f = fixture();
+  f.installed(true, false);
+  const result = await runSetup(
+    { ...f.setupOptions, approved: false, structured: false },
+    f.host(),
+    async () => {
+      f.installed(false, false);
+      return true;
+    },
+  );
+  expect(result.status).toBe("needs_human");
+  expect(result.remediation).toContain("fresh plan");
+  expect(result.remediation).toContain("no marketplace or install commands");
+  expect(f.mutations()).toEqual([]);
+  expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+});
+
 it("selects the plugin after an interactive user declines the optional Hopper installation", async () => {
   const f = fixture("codex", "darwin");
   const result = await runSetup(

@@ -1996,8 +1996,11 @@ Ghidra/JDK installation; neither is inferred from startup alone.
 client's marketplace plugin for a new, provider-independent integration. This
 also applies when choosing those clients in interactive setup. The plan shows
 the exact marketplace and install commands, and requires the usual approval
-before either command runs. Setup verifies that the client reports `rea@rea`
-installed and enabled, and skips the separate MCP registration and skill copy.
+before either command runs. After approval, setup rechecks plugin inventory; if
+that state now needs different marketplace or install commands than the approved
+plan showed, setup stops without running them and requires a fresh plan. Setup
+verifies that the client reports `rea@rea` installed and enabled, and skips the
+separate MCP registration and skill copy.
 Rerunning setup leaves an enabled plugin installed without repeating the install,
 including when setup discovers an existing Hopper installation automatically.
 Codex clients without plugin commands retain direct setup, which can use REA's
