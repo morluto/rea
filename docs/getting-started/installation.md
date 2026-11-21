@@ -1310,7 +1310,10 @@ bounds; the selected executable still undergoes the normal Java probe and
 admission checks. REA does not invoke Homebrew or install a JDK. Failed
 discovery probes remain available in installation diagnostics. Doctor distinguishes an absent Java
 command from a command that runs and fails, and retains bounded probe output
-and any parsed properties when the selected runtime cannot be admitted.
+and any parsed properties when the selected runtime cannot be admitted. On macOS
+and Linux, a failed Java check can suggest installed JDKs from standard system,
+user (macOS), or Homebrew locations. The suggestions use local version metadata.
+Set `JAVA_HOME` to a candidate and rerun doctor to verify that runtime.
 
 On Windows, configure the existing installation in PowerShell:
 

@@ -395,7 +395,7 @@ export const parseGhidraJavaOutput = (
       : null;
   const bits =
     parsedBits !== null && Number.isSafeInteger(parsedBits) ? parsedBits : null;
-  const major = version === null ? undefined : javaMajor(version);
+  const major = version === null ? undefined : ghidraJavaMajor(version);
   if (version === null || home === null || major === undefined)
     return err({
       _tag: "GhidraJavaProbeFailure",
@@ -437,7 +437,7 @@ const javaProperty = (output: string, name: string): string | null =>
 
 // Runtime.Version's numeric/pre-release/build grammar; Java 8 used 1.8.0_... .
 // https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/Runtime.Version.html
-const javaMajor = (version: string): number | undefined => {
+export const ghidraJavaMajor = (version: string): number | undefined => {
   const legacy =
     /^1\.([1-8])(?:\.[0-9]+)*(?:_[0-9]+)?(?:-[-a-zA-Z0-9.]+)?$/u.exec(version);
   if (legacy?.[1] !== undefined) return Number(legacy[1]);

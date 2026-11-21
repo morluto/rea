@@ -14,6 +14,10 @@ import {
 import { ok, type Result } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { readGhidraExecutableHeader } from "./GhidraExecutableHeader.js";
+import {
+  ghidraHomebrewJavaHome,
+  ghidraHomebrewPrefixes,
+} from "./GhidraInstalledJdk.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   absoluteCallerPath,
@@ -224,6 +228,7 @@ interface GhidraInstallationObservation {
     readonly failure: GhidraJavaProbeFailure;
   }[];
   readonly javaCommand: string;
+  readonly javaRequirement: GhidraJavaRequirement;
   readonly javaProbeFailure?: GhidraJavaProbeFailure;
   /** Observed java.vm.name; omitted when the probe cannot establish VM identity. */
   readonly javaVmName?: string;
@@ -330,6 +335,7 @@ interface GhidraInstallationCoordinates {
     AnalysisError
   >;
   readonly properties: GhidraApplicationProperties | undefined;
+  readonly javaRequirement: GhidraJavaRequirement;
   readonly javaDiscoveryFailures?: readonly {
     readonly command: string;
     readonly failure: GhidraJavaProbeFailure;
@@ -392,6 +398,7 @@ export const inspectGhidraInstallation = async (
       ? {}
       : { javaDiscoveryFailures: coordinates.javaDiscoveryFailures }),
     javaCommand: coordinates.javaCommand,
+    javaRequirement: coordinates.javaRequirement,
     ...(coordinates.javaProbeFailure === undefined
       ? {}
       : { javaProbeFailure: coordinates.javaProbeFailure }),
@@ -532,10 +539,7 @@ const installationCoordinates = async (
       : ghidraApplicationProperties(properties);
   const javaRequirement = ghidraJavaRequirement(parsedProperties);
   const homebrewJavaCandidates = () =>
-    (architecture === "arm64"
-      ? ["/opt/homebrew", "/usr/local"]
-      : ["/usr/local", "/opt/homebrew"]
-    )
+    ghidraHomebrewPrefixes(architecture)
       .flatMap((prefix) => {
         const opt = path.join(prefix, "opt");
         const versioned = (host.directoryEntries?.(opt) ?? [])
@@ -552,7 +556,7 @@ const installationCoordinates = async (
           .sort((left, right) => left.major - right.major)
           .map(({ name }) => name);
         return ["openjdk", ...versioned].map((formula) =>
-          path.join(opt, formula, "libexec/openjdk.jdk/Contents/Home/bin/java"),
+          path.join(ghidraHomebrewJavaHome(opt, formula), "bin", "java"),
         );
       })
       .filter((candidate) => host.executable(candidate));
@@ -665,6 +669,7 @@ const installationCoordinates = async (
     nativeDecompilerPath,
     nativeDecompilerHeader,
     properties: parsedProperties,
+    javaRequirement,
     ...(javaDiscoveryFailures.length === 0 ? {} : { javaDiscoveryFailures }),
     javaCommand,
     java: javaProbe?.ok === true ? javaProbe.value : undefined,
@@ -726,7 +731,7 @@ const installationChecks = ({
     coordinates.java,
     coordinates.javaCommand,
     javaHome,
-    coordinates.properties,
+    coordinates.javaRequirement,
     platform,
     coordinates.javaProbeFailure,
   ),
@@ -1047,11 +1052,10 @@ const javaCheck = (
   observation: GhidraJavaObservation | undefined,
   command: string,
   configuredHome: string | undefined,
-  properties: GhidraApplicationProperties | undefined,
+  requirement: GhidraJavaRequirement,
   platform: NodeJS.Platform,
   failure: GhidraJavaProbeFailure | undefined,
 ): GhidraInstallationCheck => {
-  const requirement = ghidraJavaRequirement(properties);
   const range = ghidraJavaRangeLabel(requirement);
   const supported =
     observation !== undefined &&
