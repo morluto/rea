@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import { scenarioSerializationAllowance } from "./BrowserScenarioSerialization.js";
 import { responsePointerValue } from "./BrowserScenarioResponseValues.js";
 import { performPlaywrightScenarioAction } from "./PlaywrightScenarioActions.js";
 import { phaseArrival } from "../../tests/support/lifecycleHarness.js";
@@ -1957,11 +1958,8 @@ describe("saved response limits and deadlines", () => {
 });
 
 it.each(["array", "embedded", "headers"])(
-  "refuses repeated large saved JSON values in %s before expansion or browser dispatch",
+  "refuses repeated large saved values in %s before expansion or browser dispatch",
   async (kind) => {
-    onTestFinished(() => {
-      vi.unstubAllGlobals();
-    });
     const parsed = scenario([
       requestStep({ save: [{ name: "large", json_pointer: "/value" }] }),
       requestStep({
@@ -1991,64 +1989,53 @@ it.each(["array", "embedded", "headers"])(
   },
 );
 
-it.each(["x".repeat(3_000_000), "私".repeat(100_000)])(
-  "refuses repeated query expansion before encoding or browser dispatch (case %#)",
-  async (value) => {
-    onTestFinished(() => {
-      vi.unstubAllGlobals();
-    });
-    const parsed = scenario([
-      requestStep({
-        query: Array.from({ length: 1000 }, (_, index) => ({
-          name: `repeated-${index}`,
-          value: { source: "literal", value },
-        })),
-      }),
-    ]);
-    const secrets = resolved(parsed);
-    const page = { ...fakePage({}), evaluate: vi.fn() } as unknown as Page;
-    const encode = vi
-      .spyOn(globalThis, "encodeURIComponent")
-      .mockImplementation(() => {
-        throw new Error("Query encoding ran before expansion admission");
-      });
-    onTestFinished(() => encode.mockRestore());
-    await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toThrow(
-      "serialization allowance",
+it.each([
+  ["request", "raw query", "x", 2],
+  ["request", "encoded query", "私", 0.25],
+  ["goto", "encoded query", "私", 0.25],
+] as const)(
+  "rejects an oversized %s %s before encoding or dispatch",
+  async (kind, _size, unit, allowanceFraction) => {
+    const repetitions = 1_000;
+    // One CJK code unit expands to nine ASCII bytes. The Unicode rows fit
+    // as raw text and exceed the current heap allowance only after encoding.
+    const value = unit.repeat(
+      Math.ceil(
+        (scenarioSerializationAllowance() * allowanceFraction) / repetitions,
+      ),
     );
+    const query = Array.from({ length: repetitions }, (_, index) => ({
+      name: `repeated-${index}`,
+      value: { source: "literal", value },
+    }));
+    const url = `${ORIGIN}/items?literal=a%20b#kept`;
+    const parsed = scenario([
+      kind === "request"
+        ? requestStep({ query })
+        : { ...gotoStep(url), destination: { url, query } },
+    ]);
+    const dispatch = vi.fn();
+    const page = {
+      ...fakePage({}),
+      evaluate: dispatch,
+      goto: dispatch,
+    } as unknown as Page;
+    const encode =
+      kind === "request"
+        ? vi.spyOn(globalThis, "encodeURIComponent")
+        : vi.spyOn(URLSearchParams.prototype, "append");
+    encode.mockImplementation(() => {
+      throw new Error("Query encoding ran before expansion admission");
+    });
+    onTestFinished(() => encode.mockRestore());
+
+    await expect(
+      perform(page, parsed.actions[0]!, resolved(parsed)),
+    ).rejects.toThrow("serialization allowance");
     expect(encode).not.toHaveBeenCalled();
-    expect(page.evaluate).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   },
 );
-
-it("refuses repeated goto query expansion before form encoding or browser navigation", async () => {
-  const value = "x".repeat(3_000_000);
-  const parsed = scenario([
-    {
-      ...gotoStep(`${ORIGIN}/items?literal=a%20b#kept`),
-      destination: {
-        url: `${ORIGIN}/items?literal=a%20b#kept`,
-        query: Array.from({ length: 1000 }, (_, index) => ({
-          name: `repeated-${index}`,
-          value: { source: "literal", value },
-        })),
-      },
-    },
-  ]);
-  const secrets = resolved(parsed);
-  const goto = vi.fn(async () => null);
-  const append = vi
-    .spyOn(URLSearchParams.prototype, "append")
-    .mockImplementation(() => {
-      throw new Error("Form encoding ran before expansion admission");
-    });
-  onTestFinished(() => append.mockRestore());
-  await expect(
-    perform({ goto } as unknown as Page, parsed.actions[0]!, secrets),
-  ).rejects.toThrow("serialization allowance");
-  expect(append).not.toHaveBeenCalled();
-  expect(goto).not.toHaveBeenCalled();
-});
 
 it("preserves goto form query normalization, Unicode, replacement characters and the fragment", async () => {
   const parsed = scenario([
