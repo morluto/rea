@@ -505,8 +505,13 @@ export const browserScenarioSecretSchema = z.strictObject({
   environment_variable: z
     .string()
     .min(1)
-    .refine(
-      (name) => !name.includes("=") && !name.includes("\0"),
+    // A `.refine` states a refusal a caller reads only after sending a request,
+    // and both characters break the child process's environment before any
+    // action runs, so the check is the pattern itself: an anchored complement
+    // class is one portable `pattern` keyword, which the compact presentation
+    // keeps at the leaf instead of reducing it to a plain string.
+    .regex(
+      /^[^=\x00]+$/u,
       "Environment variable names cannot contain '=' or NUL",
     ),
 });
