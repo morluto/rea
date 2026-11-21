@@ -1,4 +1,4 @@
-import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -6,7 +6,7 @@ import { createPackage } from "@electron/asar";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
@@ -22,16 +22,12 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const browsers: FakeCdpBrowser[] = [];
-const temporary: string[] = [];
 
-afterEach(async () => {
-  await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
-});
+afterEach(() =>
+  closeVerifierResources(
+    browsers.splice(0).map((browser) => () => browser.close()),
+  ),
+);
 
 it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
   "captures the current authorized frame inventory: %s",
@@ -494,7 +490,9 @@ describe("CdpElectronProvider target access", () => {
     });
     browsers.push(browser);
 
-    const result = await new CdpElectronProvider().inspectPage(
+    const provider = new CdpElectronProvider();
+    onTestFinished(() => provider.close());
+    const result = await provider.inspectPage(
       inspectElectronPageInputSchema.parse({
         cdp_endpoint: browser.endpoint,
         target_id: "electron-page",
@@ -513,10 +511,7 @@ describe("CdpElectronProvider target access", () => {
     expect(browser.commands.map(({ method }) => method)).toContain(
       "Target.detachFromTarget",
     );
-    const closeDeadline = Date.now() + 1_000;
-    while (browser.activeConnectionCount() !== 0 && Date.now() < closeDeadline)
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(browser.activeConnectionCount()).toBe(0);
+    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
   });
 
   // Resource count has no ceiling; only an exhausted resource budget
@@ -574,15 +569,6 @@ describe("CdpElectronProvider transport lifecycle", () => {
       target_id: "electron-page",
       observation_ms: 0,
     });
-  const connectionsClosed = (browser: FakeCdpBrowser): Promise<void> =>
-    new Promise((resolve) => {
-      const poll = (): void => {
-        if (browser.activeConnectionCount() === 0) resolve();
-        else setTimeout(poll, 5);
-      };
-      poll();
-    });
-
   it("cancels a held Electron CDP handshake and admits the next inspection", async () => {
     const root = await electronFixture();
     const handshake = phaseGate<string>();
@@ -619,11 +605,7 @@ describe("CdpElectronProvider transport lifecycle", () => {
     );
     if (!inspected.ok) throw inspected.error;
     await provider.close();
-    await awaitAcknowledgement(
-      connectionsClosed(browser),
-      new Promise(() => undefined),
-      "Electron transports closed",
-    );
+    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
   });
 
   it("retains a failed Electron transport close and retries it before the next inspection", async () => {
@@ -680,11 +662,7 @@ describe("CdpElectronProvider transport lifecycle", () => {
       expect(closes).toBeGreaterThan(failedCloses + 1);
       expect(first.error.cleanupIncomplete).toBe(false);
       await provider.close();
-      await awaitAcknowledgement(
-        connectionsClosed(browser),
-        new Promise(() => undefined),
-        "Electron transports closed",
-      );
+      await expect.poll(() => browser.activeConnectionCount()).toBe(0);
     } finally {
       denyClose = false;
       retriedClose.release();
@@ -836,7 +814,6 @@ describe("CdpElectronProvider target selection", () => {
 describe("CdpElectronProvider packaged pages", () => {
   it("lists and inspects packaged pages served from inside app.asar", async () => {
     const root = await createTestTempDirectory("rea-electron-asar-provider-");
-    temporary.push(root);
     const source = join(root, "source");
     await mkdir(source);
     await writeFile(
@@ -937,56 +914,54 @@ describe("CdpElectronProvider frame capture", () => {
   );
 });
 
-describe("CdpElectronProvider malformed source replies", () => {
-  it.each([{}, { scriptSource: null }, { scriptSource: 123 }])(
-    "rejects malformed Electron source replies instead of inventing source: %j",
-    async (reply) => {
-      const root = await electronFixture();
-      const browser = await startFakeCdpBrowser({
-        electronFileUrl: pathToFileURL(join(root, "index.html")).href,
-        commandResult: ({ method }) =>
-          method === "Debugger.getScriptSource" ? reply : undefined,
-      });
-      browsers.push(browser);
-      const result = await new CdpElectronProvider().inspectPage(
-        inspectElectronPageInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          target_id: "electron-page",
-          observation_ms: 0,
-          include_script_sources: true,
-        }),
-      );
+it("rejects malformed Electron source replies and detaches the selected page", async () => {
+  const root = await electronFixture();
+  const browser = await startFakeCdpBrowser({
+    electronFileUrl: pathToFileURL(join(root, "index.html")).href,
+    commandResult: ({ method }) =>
+      method === "Debugger.getScriptSource" ? { scriptSource: 123 } : undefined,
+  });
+  browsers.push(browser);
+  const provider = new CdpElectronProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.inspectPage(
+    inspectElectronPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "electron-page",
+      observation_ms: 0,
+      include_script_sources: true,
+    }),
+  );
 
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          operation: "inspect_electron_page",
-          reason: "protocol_error",
-          userMessage: expect.stringContaining(
-            "Debugger.getScriptSource returned a malformed result at /scriptSource",
-          ),
-        },
-      });
-      expect(browser.commands.map(({ method }) => method)).toContain(
-        "Target.detachFromTarget",
-      );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      operation: "inspect_electron_page",
+      reason: "protocol_error",
+      command: "Debugger.getScriptSource",
+      pointer: "/scriptSource",
     },
+  });
+  expect(browser.commands.map(({ method }) => method)).toContain(
+    "Target.detachFromTarget",
   );
 });
 
-const inspectInventoryReply = async (
-  method: string,
-  reply: (fileUrl: string) => Readonly<Record<string, unknown>>,
+const inspectInventoryReplies = async (
+  replies: Readonly<
+    Record<string, (fileUrl: string) => Readonly<Record<string, unknown>>>
+  >,
 ) => {
   const root = await electronFixture();
   const fileUrl = pathToFileURL(join(root, "index.html")).href;
   const browser = await startFakeCdpBrowser({
     electronFileUrl: fileUrl,
-    commandResult: (command) =>
-      command.method === method ? reply(fileUrl) : undefined,
+    commandResult: ({ method }) => replies[method]?.(fileUrl),
   });
   browsers.push(browser);
-  const result = await new CdpElectronProvider().inspectPage(
+  const provider = new CdpElectronProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.inspectPage(
     inspectElectronPageInputSchema.parse({
       cdp_endpoint: browser.endpoint,
       target_id: "electron-page",
@@ -999,12 +974,11 @@ const inspectInventoryReply = async (
 
 describe("CdpElectronProvider malformed inventory replies", () => {
   it("keeps documents unknown when the DOM string table is missing", async () => {
-    const inspected = await inspectInventoryReply(
-      "DOMSnapshot.captureSnapshot",
-      () => ({
+    const inspected = await inspectInventoryReplies({
+      "DOMSnapshot.captureSnapshot": () => ({
         documents: [{ documentURL: 0, nodes: { nodeType: [] } }],
       }),
-    );
+    });
 
     expect(inspected.dom).toEqual({
       total_nodes: 0,
@@ -1022,122 +996,122 @@ describe("CdpElectronProvider malformed inventory replies", () => {
     );
   });
 
-  it.each([
-    ["missing type", { type: undefined }],
-    ["non-string type", { type: 7 }],
-    ["empty type", { type: "" }],
-    ["missing target identity", { targetId: undefined }],
-    ["non-string target identity", { targetId: 7 }],
-    ["empty target identity", { targetId: "" }],
-    ["missing URL", { url: undefined }],
-    ["non-string URL", { url: 7 }],
-    ["missing attached state", { attached: undefined }],
-    ["non-boolean attached state", { attached: "false" }],
-    ["non-string opener relationship", { openerId: 7 }],
-    ["empty opener relationship", { openerId: "" }],
-    ["non-string frame relationship", { parentFrameId: 7 }],
-    ["empty frame relationship", { parentFrameId: "" }],
-  ] as const)(
-    "retains valid workers while reporting %s before target policy",
-    async (_kind, malformed) => {
-      const inspected = await inspectInventoryReply(
-        "Target.getTargets",
-        (fileUrl) => ({
-          targetInfos: [
-            {
-              targetId: "selected-worker",
-              type: "worker",
-              url: fileUrl,
-              attached: false,
-              openerId: "electron-page",
-            },
-            {
-              targetId: "malformed-worker",
-              type: "worker",
-              url: fileUrl,
-              attached: false,
-              openerId: "foreign-page",
-              ...malformed,
-            },
-            {
-              targetId: "foreign-worker",
-              type: "shared_worker",
-              url: fileUrl,
-              attached: true,
-              openerId: "foreign-page",
-            },
-            {
-              targetId: "unattributed-worker",
-              type: "service_worker",
-              url: fileUrl,
-              attached: false,
-            },
-            // Non-worker rows do not need worker identity or relationship fields.
-            { type: "page", targetId: 7, openerId: null },
-          ],
-        }),
-      );
-      expect(inspected.workers).toEqual([
-        expect.objectContaining({
-          target_id: "selected-worker",
-          type: "worker",
-          attached: false,
-          opener_target_id: "electron-page",
-          parent_frame_id: null,
-        }),
-      ]);
-      const workerExclusions = inspected.completeness.excluded.filter(
-        ({ section }) => section === "workers",
-      );
-      expect(workerExclusions).toHaveLength(3);
-      expect(workerExclusions).toEqual(
-        expect.arrayContaining([
-          { section: "workers", reason: "invalid_protocol_value", count: 1 },
-          { section: "workers", reason: "out_of_target_scope", count: 1 },
-          { section: "workers", reason: "unattributed_target", count: 1 },
-        ]),
-      );
-      expect(inspected.completeness.unavailable_sections).toContain("workers");
-      expect(inspected.completeness.policy_filtered_sections).toContain(
-        "workers",
-      );
-    },
-  );
-
-  it.each([
-    ["dom", "DOMSnapshot.captureSnapshot", () => ({ strings: [] })],
-    [
-      "dom",
-      "DOMSnapshot.captureSnapshot",
-      (fileUrl: string) => ({
-        strings: [fileUrl],
-        documents: [{ documentURL: 0, nodes: { nodeType: null } }],
+  it("retains valid workers and distinguishes malformed target facts from policy exclusions", async () => {
+    const malformed = [
+      { type: undefined },
+      { type: 7 },
+      { type: "" },
+      { targetId: undefined },
+      { targetId: 7 },
+      { targetId: "" },
+      { url: undefined },
+      { url: 7 },
+      { attached: undefined },
+      { attached: "false" },
+      { openerId: 7 },
+      { openerId: "" },
+      { parentFrameId: 7 },
+      { parentFrameId: "" },
+    ];
+    const inspected = await inspectInventoryReplies({
+      "Target.getTargets": (fileUrl) => ({
+        targetInfos: [
+          {
+            targetId: "selected-worker",
+            type: "worker",
+            url: fileUrl,
+            attached: false,
+            openerId: "electron-page",
+          },
+          ...malformed.map((fields, index) => ({
+            targetId: `malformed-worker-${index}`,
+            type: "worker",
+            url: fileUrl,
+            attached: false,
+            openerId: "foreign-page",
+            ...fields,
+          })),
+          {
+            targetId: "foreign-worker",
+            type: "shared_worker",
+            url: fileUrl,
+            attached: true,
+            openerId: "foreign-page",
+          },
+          {
+            targetId: "unattributed-worker",
+            type: "service_worker",
+            url: fileUrl,
+            attached: false,
+          },
+          // Non-worker rows do not need worker identity or relationship fields.
+          { type: "page", targetId: 7, openerId: null },
+        ],
       }),
-    ],
-    [
-      "resources",
-      "Page.getResourceTree",
-      (fileUrl: string) => ({
+    });
+    expect(inspected.workers).toEqual([
+      expect.objectContaining({
+        target_id: "selected-worker",
+        type: "worker",
+        attached: false,
+        opener_target_id: "electron-page",
+        parent_frame_id: null,
+      }),
+    ]);
+    const workerExclusions = inspected.completeness.excluded
+      .filter(({ section }) => section === "workers")
+      .map(({ reason, count }) => [reason, count]);
+    expect(workerExclusions).toHaveLength(3);
+    expect(workerExclusions).toEqual(
+      expect.arrayContaining([
+        ["invalid_protocol_value", malformed.length],
+        ["out_of_target_scope", 1],
+        ["unattributed_target", 1],
+      ]),
+    );
+    expect(inspected.completeness.unavailable_sections).toContain("workers");
+    expect(inspected.completeness.policy_filtered_sections).toContain(
+      "workers",
+    );
+  });
+
+  it("reports each malformed optional inventory without failing the observation", async () => {
+    const inspected = await inspectInventoryReplies({
+      "DOMSnapshot.captureSnapshot": () => ({ strings: [] }),
+      "Page.getResourceTree": (fileUrl) => ({
         frameTree: {
           frame: { id: "main", loaderId: "loader-main", url: fileUrl },
           resources: null,
         },
       }),
-    ],
-    ["workers", "Target.getTargets", () => ({ targetInfos: null })],
-  ] as const)(
-    "keeps a malformed %s inventory incomplete (%s)",
-    async (section, method, reply) => {
-      const inspected = await inspectInventoryReply(method, reply);
-      expect(inspected.completeness.status).not.toBe("complete_within_window");
-      expect(inspected.completeness.excluded).toContainEqual(
-        expect.objectContaining({
-          section,
-          reason: "invalid_protocol_value",
-        }),
-      );
-    },
-  );
+      "Target.getTargets": () => ({ targetInfos: null }),
+    });
+    expect(inspected.completeness.status).not.toBe("complete_within_window");
+    for (const section of ["dom", "resources", "workers"]) {
+      expect(inspected.completeness.unavailable_sections).toContain(section);
+      expect(inspected.completeness.excluded).toContainEqual({
+        section,
+        reason: "invalid_protocol_value",
+        count: null,
+      });
+    }
+  });
+
+  it("counts malformed node columns as one unavailable DOM document", async () => {
+    const inspected = await inspectInventoryReplies({
+      "DOMSnapshot.captureSnapshot": (fileUrl) => ({
+        strings: [fileUrl],
+        documents: [{ documentURL: 0, nodes: { nodeType: null } }],
+      }),
+    });
+    expect(inspected.dom.total_nodes).toBe(0);
+    expect(inspected.completeness.unavailable_sections).toContain("dom");
+    expect(inspected.completeness.excluded).toContainEqual({
+      section: "dom",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+  });
 });
 
 describe("CdpElectronProvider script source capture", () => {
@@ -1249,7 +1223,6 @@ describe("CdpElectronProvider script source capture", () => {
 
 const electronFixture = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-electron-provider-");
-  temporary.push(root);
   await writeFile(join(root, "index.html"), "<script src='app.js'></script>");
   await writeFile(join(root, "app.js"), "export const app = true;");
   await writeFile(join(root, "child.html"), "<div>child</div>");

@@ -225,6 +225,7 @@
             <li><a href="#run">Run the environment</a></li>
             <li><a href="#tasks">Add tasks and rewards</a></li>
             <li><a href="#check">Check what works</a></li>
+            <li><a href="#desktop">Build a desktop app environment</a></li>
           </ul>
         </nav>
         <article class="article">
@@ -485,6 +486,26 @@
                 >environment reference</a
               >
               covers direct MCP serving, state controls, and limits.
+            </p>
+          </section>
+          <section class="article-section" id="desktop">
+            <h2>Build a desktop app environment</h2>
+            <p>
+              For a Linux desktop app, describe the task you want an agent to
+              practice. For example, ask it to build a Gnote environment where
+              the agent adds olive oil to a shopping list. The agent installs
+              the app on a local build computer, writes the task, exports the
+              environment, and checks it on a fresh computer using screenshots,
+              the mouse, and the keyboard.
+            </p>
+            <p>
+              The build host needs Linux on amd64 or arm64, Docker, and the
+              pinned AgentEnv version. Follow the
+              <a
+                href="https://github.com/morluto/rea/blob/main/docs/desktop-build-computer.md#set-up-a-build-host"
+                >desktop build setup guide</a
+              >
+              for installation and readiness checks.
             </p>
           </section>
         </article>

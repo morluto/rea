@@ -172,7 +172,7 @@ msgstr ""
 #: website/public/guides/browser/index.html:509 website/public/guides/index.html:303
 #: website/public/guides/javascript/index.html:513
 #: website/public/guides/native/index.html:514
-#: website/public/guides/rl-environments/index.html:500 website/public/index.html:1305
+#: website/public/guides/rl-environments/index.html:521 website/public/index.html:1305
 #: website/public/showcase/aegis/index.html:817
 #: website/public/showcase/ctf/index.html:779
 #: website/public/showcase/dx-ball/index.html:787 website/public/showcase/index.html:339
@@ -192,7 +192,7 @@ msgstr ""
 #: website/public/guides/browser/index.html:510 website/public/guides/index.html:304
 #: website/public/guides/javascript/index.html:514
 #: website/public/guides/native/index.html:515
-#: website/public/guides/rl-environments/index.html:501 website/public/index.html:1306
+#: website/public/guides/rl-environments/index.html:522 website/public/index.html:1306
 #: website/public/showcase/aegis/index.html:818
 #: website/public/showcase/ctf/index.html:780
 #: website/public/showcase/dx-ball/index.html:788 website/public/showcase/index.html:340
@@ -212,7 +212,7 @@ msgstr ""
 #: website/public/guides/browser/index.html:511 website/public/guides/index.html:305
 #: website/public/guides/javascript/index.html:515
 #: website/public/guides/native/index.html:516
-#: website/public/guides/rl-environments/index.html:502 website/public/index.html:1307
+#: website/public/guides/rl-environments/index.html:523 website/public/index.html:1307
 #: website/public/showcase/aegis/index.html:819
 #: website/public/showcase/ctf/index.html:781
 #: website/public/showcase/dx-ball/index.html:789 website/public/showcase/index.html:341
@@ -232,7 +232,7 @@ msgstr ""
 #: website/public/guides/browser/index.html:512 website/public/guides/index.html:306
 #: website/public/guides/javascript/index.html:516
 #: website/public/guides/native/index.html:517
-#: website/public/guides/rl-environments/index.html:503 website/public/index.html:1308
+#: website/public/guides/rl-environments/index.html:524 website/public/index.html:1308
 #: website/public/showcase/aegis/index.html:820
 #: website/public/showcase/ctf/index.html:782
 #: website/public/showcase/dx-ball/index.html:790 website/public/showcase/index.html:342
@@ -252,7 +252,7 @@ msgstr ""
 #: website/public/guides/browser/index.html:513 website/public/guides/index.html:307
 #: website/public/guides/javascript/index.html:517
 #: website/public/guides/native/index.html:518
-#: website/public/guides/rl-environments/index.html:504 website/public/index.html:1309
+#: website/public/guides/rl-environments/index.html:525 website/public/index.html:1309
 #: website/public/showcase/aegis/index.html:821
 #: website/public/showcase/ctf/index.html:783
 #: website/public/showcase/dx-ball/index.html:791 website/public/showcase/index.html:343
@@ -274,7 +274,7 @@ msgstr ""
 #: website/public/guides/browser/index.html:518 website/public/guides/index.html:312
 #: website/public/guides/javascript/index.html:522
 #: website/public/guides/native/index.html:523
-#: website/public/guides/rl-environments/index.html:509 website/public/index.html:1314
+#: website/public/guides/rl-environments/index.html:530 website/public/index.html:1314
 #: website/public/showcase/aegis/index.html:826
 #: website/public/showcase/ctf/index.html:788
 #: website/public/showcase/dx-ball/index.html:796 website/public/showcase/index.html:348
@@ -7588,12 +7588,20 @@ msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Check what works{ph1}"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:232
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr ""
+
+#: website/public/guides/rl-environments/index.html:233
 msgctxt "page:guides/rl-environments/index.html"
 msgid "What REA builds"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:233
+#: website/public/guides/rl-environments/index.html:234
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "An agent can practice finding an issue, creating a folder, or editing a record without"
@@ -7607,7 +7615,7 @@ msgstr ""
 #. {ph3}: </span >
 #. {ph4}: <span class="flow-note" >
 #. {ph5}: </span >
-#: website/public/guides/rl-environments/index.html:241
+#: website/public/guides/rl-environments/index.html:242
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7621,7 +7629,7 @@ msgstr ""
 #. {ph3}: </span >
 #. {ph4}: <span class="flow-note" >
 #. {ph5}: </span >
-#: website/public/guides/rl-environments/index.html:249
+#: website/public/guides/rl-environments/index.html:250
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7635,7 +7643,7 @@ msgstr ""
 #. {ph3}: </span >
 #. {ph4}: <span class="flow-note" >
 #. {ph5}: </span >
-#: website/public/guides/rl-environments/index.html:257
+#: website/public/guides/rl-environments/index.html:258
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7643,21 +7651,21 @@ msgid ""
 "task goals and reward checks for evaluation or RL training.{ph5}"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:267
+#: website/public/guides/rl-environments/index.html:268
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "The recording determines which operations the environment can support. Changes are "
 "supported when the recording confirms their effects."
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:275
+#: website/public/guides/rl-environments/index.html:276
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Before you start"
 msgstr ""
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a >
-#: website/public/guides/rl-environments/index.html:276
+#: website/public/guides/rl-environments/index.html:277
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7669,7 +7677,7 @@ msgstr ""
 #. {ph0}: <a href="https://github.com/scaleapi/agentenv-framework#install" >
 #. {ph1}: </a >
 #. {ph2}: <code>0.9.1334</code>
-#: website/public/guides/rl-environments/index.html:283
+#: website/public/guides/rl-environments/index.html:284
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7677,12 +7685,12 @@ msgid ""
 "Docker. REA's compatibility check uses AgentEnv version {ph2} with Python 3.12."
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:293
+#: website/public/guides/rl-environments/index.html:294
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Record and build with your agent"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:294
+#: website/public/guides/rl-environments/index.html:295
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Tell your agent which app and operations to cover. For an app with folders, adapt this"
@@ -7697,17 +7705,17 @@ msgstr ""
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/guides/rl-environments/index.html:300
-#: website/public/guides/rl-environments/index.html:417
+#: website/public/guides/rl-environments/index.html:301
+#: website/public/guides/rl-environments/index.html:418
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:304
-#: website/public/guides/rl-environments/index.html:349
-#: website/public/guides/rl-environments/index.html:384
-#: website/public/guides/rl-environments/index.html:421
+#: website/public/guides/rl-environments/index.html:305
+#: website/public/guides/rl-environments/index.html:350
+#: website/public/guides/rl-environments/index.html:385
+#: website/public/guides/rl-environments/index.html:422
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy"
 msgstr ""
@@ -7722,7 +7730,7 @@ msgstr ""
 #. {ph7}: </span >
 #. {ph8}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph9}: </span>
-#: website/public/guides/rl-environments/index.html:313
+#: website/public/guides/rl-environments/index.html:314
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7734,7 +7742,7 @@ msgid ""
 msgstr ""
 
 #. {ph0}: <code>APP_PASSWORD</code>
-#: website/public/guides/rl-environments/index.html:328
+#: website/public/guides/rl-environments/index.html:329
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7744,7 +7752,7 @@ msgstr ""
 
 #. {ph0}: <a href="#run">
 #. {ph1}: </a>
-#: website/public/guides/rl-environments/index.html:333
+#: website/public/guides/rl-environments/index.html:334
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7753,12 +7761,12 @@ msgid ""
 "environment{ph1}."
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:340
+#: website/public/guides/rl-environments/index.html:341
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Or use a saved recording"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:341
+#: website/public/guides/rl-environments/index.html:342
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "A HAR file records a browser's network requests and responses. Export one with API "
@@ -7766,14 +7774,14 @@ msgid ""
 "folder:"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:348
+#: website/public/guides/rl-environments/index.html:349
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build the environment"
 msgstr ""
 
 #. {ph0}: <code>capture-browser-scenario</code>
 #. {ph1}: <code>--dry-run</code>
-#: website/public/guides/rl-environments/index.html:360
+#: website/public/guides/rl-environments/index.html:361
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7783,7 +7791,7 @@ msgid ""
 "without writing files."
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:368
+#: website/public/guides/rl-environments/index.html:369
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "The report lists read operations, supported changes, and operations withheld because "
@@ -7791,31 +7799,31 @@ msgid ""
 "and a hint about what to record next."
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:376
+#: website/public/guides/rl-environments/index.html:377
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:377
+#: website/public/guides/rl-environments/index.html:378
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Whether your agent exported the folder or you built it from a recording, run it with "
 "AgentEnv:"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:383
+#: website/public/guides/rl-environments/index.html:384
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Run the environment test"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:395
+#: website/public/guides/rl-environments/index.html:396
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Use the path your agent reported if it differs. The first run builds the container "
 "image and needs access to its image and package sources."
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:400
+#: website/public/guides/rl-environments/index.html:401
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "The included smoke task is a basic test. It checks the tool count and, when a suitable"
@@ -7823,12 +7831,12 @@ msgid ""
 "environment starts and responds in that setup."
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:408
+#: website/public/guides/rl-environments/index.html:409
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Add tasks and reward checks"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:409
+#: website/public/guides/rl-environments/index.html:410
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Use the environment with your RL framework to define goals, score results, and run "
@@ -7842,7 +7850,7 @@ msgstr ""
 #. {ph3}: </span >
 #. {ph4}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph5}: </span>
-#: website/public/guides/rl-environments/index.html:430
+#: website/public/guides/rl-environments/index.html:431
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7853,7 +7861,7 @@ msgid ""
 "formats.{ph3}{ph4}{ph5}"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:442
+#: website/public/guides/rl-environments/index.html:443
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Example prompt for an environment that supports folder creation. A task that changes "
@@ -7863,7 +7871,7 @@ msgstr ""
 
 #. {ph0}: <a href="https://www.agentenvframework.com/docs" >
 #. {ph1}: </a >
-#: website/public/guides/rl-environments/index.html:447
+#: website/public/guides/rl-environments/index.html:448
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7872,12 +7880,12 @@ msgid ""
 "tasks, verifiers, and agent connections."
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:457
+#: website/public/guides/rl-environments/index.html:458
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Check what works"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:458
+#: website/public/guides/rl-environments/index.html:459
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "For changes to be supported, record the results as well as the action: read an item, "
@@ -7886,7 +7894,7 @@ msgid ""
 msgstr ""
 
 #. {ph0}: <code>environment-compare</code>
-#: website/public/guides/rl-environments/index.html:464
+#: website/public/guides/rl-environments/index.html:465
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7895,7 +7903,7 @@ msgid ""
 "against the app from the same starting data."
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:470
+#: website/public/guides/rl-environments/index.html:471
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
 "Before sharing the folder, review its retained response bodies and local paths. Custom"
@@ -7909,7 +7917,7 @@ msgstr ""
 #. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/agent-environments.md"
 #. >
 #. {ph3}: </a >
-#: website/public/guides/rl-environments/index.html:476
+#: website/public/guides/rl-environments/index.html:477
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid ""
@@ -7918,32 +7926,58 @@ msgid ""
 "state controls, and limits."
 msgstr ""
 
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr ""
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. For example,"
+" ask it to build a Gnote environment where the agent adds olive oil to a shopping "
+"list. The agent installs the app on a local build computer, writes the task, exports "
+"the environment, and checks it on a fresh computer using screenshots, the mouse, and "
+"the keyboard."
+msgstr ""
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-build-
+#. computer.md#set-up-a-build-host" >
+#. {ph1}: </a >
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned AgentEnv version."
+" Follow the {ph0}desktop build setup guide{ph1} for installation and readiness checks."
+msgstr ""
+
 #: website/public/guides/rl-environments/index.html:6
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments with REA"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:304
+#: website/public/guides/rl-environments/index.html:305
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment prompt"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:349
+#: website/public/guides/rl-environments/index.html:350
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment build command"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:384
+#: website/public/guides/rl-environments/index.html:385
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy environment run command"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:421
+#: website/public/guides/rl-environments/index.html:422
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Copy task prompt"
 msgstr ""
 
-#: website/public/guides/rl-environments/index.html:509
+#: website/public/guides/rl-environments/index.html:530
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Back to top"
 msgstr ""
