@@ -349,6 +349,8 @@ it("collects basic CI telemetry before optional dependency installation can fail
           steps: z.array(
             z.object({
               id: z.string().optional(),
+              uses: z.string().optional(),
+              with: z.record(z.string(), z.unknown()).optional(),
               run: z.string().optional(),
               if: z.string().optional(),
               "continue-on-error": z.boolean().optional(),
@@ -373,6 +375,15 @@ it("collects basic CI telemetry before optional dependency installation can fail
     );
     expect(collection).toBeGreaterThanOrEqual(0);
     expect(installation).toBeGreaterThan(collection);
+  }
+  for (const name of ["ci-job-timings-batch", "ci-health-diagnostics"]) {
+    const uploads = steps.filter(
+      (step) =>
+        step.uses?.startsWith("actions/upload-artifact@") &&
+        step.with?.name === name,
+    );
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]?.with?.overwrite, name).toBe(true);
   }
   expect(steps[installation]).toMatchObject({
     run: "npm ci",
