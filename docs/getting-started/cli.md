@@ -558,6 +558,22 @@ rea inspect-elf-dependencies /absolute/path/to/program --json
 The fields, coverage rules and delivery options are documented in
 [ELF dynamic dependencies](../elf-dependencies.md).
 
+Canonicalize an artifact that may be hardened against analysis, without
+executing it:
+
+```bash
+rea antidote /absolute/path/to/app.asar --json
+rea antidote /absolute/path/to/core.wasm --antidoteFormat wasm --json
+```
+
+The antidote pass recognizes WASM, Electron `.asar` or structured JSON
+(`--antidoteFormat` defaults to `auto`; it is distinct from the global `--format`
+output control), drops non-semantic padding and unreferenced decoys to an
+exemplar, a count and a digest, keeps behavior-relevant and link-relevant
+structure, and reports truncated or unverified state explicitly. It is lossless
+for behavior-relevant data and bounds its own work with `--max-file-bytes`,
+`--max-facts` and `--max-depth`.
+
 List ELF and Mach-O initializer and finalizer functions without executing the
 image:
 

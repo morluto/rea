@@ -54,6 +54,7 @@ export const UNIT_LAYERS = Object.freeze(
       "apktool",
       "artifacts",
       "browser",
+      "canonicalize",
       "captures",
       "cutter",
       "desktop",
@@ -262,6 +263,7 @@ export const ENTRY_FILES = Object.freeze(
         "modules/WebModuleArtifacts.ts",
         "providerIdentities.ts",
       ],
+      canonicalize: ["CanonicalizeProvider.ts"],
       captures: ["TsharkCaptureProvider.ts", "TsharkProviderIdentity.ts"],
       cutter: [
         "CutterBridgeClient.ts",
@@ -421,6 +423,16 @@ const isEntryFile = (unit, target) =>
  * still is. Keep the list short and say why.
  */
 export const PROVIDER_DEPENDENCIES = Object.freeze([
+  Object.freeze({
+    from: "canonicalize",
+    to: "artifacts",
+    files: Object.freeze(["AsarListing.ts"]),
+    // The antidote canonicalizer reads the ASAR inventory with the artifacts
+    // provider's listing reader (admission, path safety and per-entry
+    // limitations) instead of parsing the archive index a second time.
+    reason:
+      "the antidote canonicalizer reads the ASAR inventory with the artifacts provider's listing reader",
+  }),
   Object.freeze({
     from: "artifacts",
     to: "uefi",

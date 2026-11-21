@@ -31,6 +31,7 @@ import {
   ARTIFACT_GRAPH_PROVIDER,
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
+  CANONICALIZE_PROVIDER,
   DEVICETREE_PROVIDER,
   DWARF_UNITS_PROVIDER,
   ELF_DEBUG_LINK_PROVIDER,
@@ -277,6 +278,11 @@ export const CAPABILITY_DECLARATIONS = {
   },
   elfNotes: {
     providers: [providerBinding(ELF_NOTES_PROVIDER, ["inspect_elf_notes"])],
+  },
+  canonicalizeArtifact: {
+    providers: [
+      providerBinding(CANONICALIZE_PROVIDER, ["canonicalize_artifact"]),
+    ],
   },
   elfDebugLink: {
     providers: [

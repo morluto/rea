@@ -36,6 +36,22 @@ export interface JsonDuplicateMember {
   readonly offset: number;
 }
 
+/** A checked allowance that bounds the scan's retained state before allocation. */
+export interface JsonDuplicateScanLimits {
+  /** Maximum simultaneously open containers (nesting depth) the scan retains. */
+  readonly maxDepth: number;
+  /** Maximum member names retained across all currently open objects. */
+  readonly maxRetainedNames: number;
+}
+
+/** The bounded scan's outcome: a duplicate, a clean document, or an exhausted allowance. */
+export interface JsonDuplicateScanResult {
+  /** The first duplicate member found, or undefined when none was. */
+  readonly member?: JsonDuplicateMember;
+  /** True when a bounded scan stopped at its depth or retained-name allowance. */
+  readonly limitReached: boolean;
+}
+
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
 
@@ -157,20 +173,19 @@ class JsonNumberSourceCursor {
 }
 
 /**
- * Find the first object member name that repeats within its object.
- *
- * `JSON.parse` keeps only the last value for a repeated name, so callers that
- * must not lose a declaration check the source text with this. The text must
- * already be valid JSON; the scan is iterative, so nesting depth is bounded by
- * memory rather than the call stack.
+ * Walk valid JSON text once, reporting the first root object member in source
+ * order, the first repeated object member, and — when `observation` is given —
+ * a named number's decimal spelling. The walk is iterative, so nesting depth is
+ * bounded by memory rather than the call stack. When `limits` is given, the
+ * walk retains at most `maxDepth` open containers and `maxRetainedNames` live
+ * names and stops with `limitReached` once either would be exceeded — so
+ * representation growth is checked before allocation rather than scaling with
+ * the document.
  */
-export const findDuplicateJsonMember = (
-  text: string,
-): JsonDuplicateMember | undefined => observeJsonMembers(text).duplicate;
-
 const observeJsonMembers = (
   text: string,
   observation?: JsonNumberObservation,
+  limits?: JsonDuplicateScanLimits,
 ) => {
   const cursor =
     observation !== undefined && mayHaveDecimalMember.test(text)
@@ -181,6 +196,7 @@ const observeJsonMembers = (
   const open: (Set<string> | null)[] = [];
   let expectName = false;
   let firstObjectMember: string | undefined;
+  let retainedNames = 0;
   for (let index = 0; index < text.length; index++) {
     const code = text.charCodeAt(index);
     if (code === QUOTE) {
@@ -219,9 +235,16 @@ const observeJsonMembers = (
         : raw.slice(1, -1);
       if (open.length === 1) firstObjectMember ??= name;
       if (names.has(name))
-        return { firstObjectMember, duplicate: { name, offset: start } };
+        return {
+          firstObjectMember,
+          duplicate: { name, offset: start },
+          limitReached: false,
+        };
       names.add(name);
       cursor?.member(name, text, index + 1);
+      retainedNames++;
+      if (limits !== undefined && retainedNames > limits.maxRetainedNames)
+        return { firstObjectMember, duplicate: undefined, limitReached: true };
       continue;
     }
     switch (text[index]) {
@@ -229,17 +252,25 @@ const observeJsonMembers = (
         cursor?.enter(true);
         open.push(new Set());
         expectName = true;
+        if (limits !== undefined && open.length > limits.maxDepth)
+          return { firstObjectMember, duplicate: undefined, limitReached: true };
         break;
       case "[":
         cursor?.enter(false);
         open.push(null);
+        if (limits !== undefined && open.length > limits.maxDepth)
+          return { firstObjectMember, duplicate: undefined, limitReached: true };
         break;
       case "}":
-      case "]":
+      case "]": {
         cursor?.leave();
-        open.pop();
+        const closed = open.pop();
+        // Names in a closed object are no longer retained, so free them from the
+        // live count that the allowance bounds.
+        if (closed instanceof Set) retainedNames -= closed.size;
         expectName = false;
         break;
+      }
       case ",":
         expectName = open.at(-1) instanceof Set;
         break;
@@ -247,5 +278,33 @@ const observeJsonMembers = (
         break;
     }
   }
-  return { firstObjectMember, duplicate: undefined };
+  return { firstObjectMember, duplicate: undefined, limitReached: false };
+};
+
+/**
+ * Find the first object member name that repeats within its object.
+ *
+ * `JSON.parse` keeps only the last value for a repeated name, so callers that
+ * must not lose a declaration check the source text with this. The scan is
+ * unbounded; callers over untrusted, size-bounded input should prefer
+ * {@link findDuplicateJsonMemberBounded}.
+ */
+export const findDuplicateJsonMember = (
+  text: string,
+): JsonDuplicateMember | undefined => observeJsonMembers(text).duplicate;
+
+/**
+ * Find the first repeated member, bounding the scan's retained state to the
+ * supplied allowance and reporting when that allowance stops the scan.
+ */
+export const findDuplicateJsonMemberBounded = (
+  text: string,
+  limits: JsonDuplicateScanLimits,
+): JsonDuplicateScanResult => {
+  const members = observeJsonMembers(text, undefined, limits);
+  // `member` is an exact-optional property, so omit it rather than set it to
+  // undefined when no duplicate was found.
+  return members.duplicate === undefined
+    ? { limitReached: members.limitReached }
+    : { member: members.duplicate, limitReached: members.limitReached };
 };

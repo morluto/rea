@@ -47,6 +47,7 @@ export const CLI_COMMANDS = Object.freeze({
   exportDesktopApplication: "export-desktop-application",
   describeDesktopApplicationTask: "describe-desktop-application-task",
   validateBrowserScenario: "validate-browser-scenario",
+  antidote: "antidote",
 });
 
 /**

@@ -49,6 +49,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   byteEntropy: {
     cases: ["tests/acceptance/byteEntropyWindowsIdentity.test.ts"],
   },
+  canonicalizeArtifact: {
+    cases: ["tests/boundary/mcp/canonicalizeMcp.test.ts"],
+  },
   cutter: { cases: ["tests/boundary/cli/cutterStatusAttributionCli.test.ts"] },
   desktopApplication: {
     cases: ["tests/boundary/cli/desktopApplicationCli.test.ts"],

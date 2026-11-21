@@ -130,7 +130,7 @@ export type FinalAsarHeaderProbeObservation = Exclude<
  * observed archive size. This establishes byte extents only; JSON validity and
  * the ASAR header schema belong to the decoder at the interpretation boundary.
  */
-const parseAsarHeaderExtents = (
+export const parseAsarHeaderExtents = (
   prefix: Uint8Array,
   archiveBytes?: number,
 ): Result<Omit<AsarHeaderExtents, "archiveBytes">, ArtifactReaderFailure> => {
@@ -441,6 +441,16 @@ export const readAsarHeader = async (
   assertArtifactReadActive(signal);
   if (bytes.length !== extents.jsonBytes)
     throw new ArtifactReaderFailure("format", "Truncated ASAR JSON header");
+  return parseAsarHeaderJson(bytes);
+};
+
+/**
+ * Decode admitted ASAR header JSON bytes as strict UTF-8 and parse them,
+ * rejecting duplicate member names. A consumer that already holds the admitted
+ * header bytes interprets them through this one function, so none decodes or
+ * accepts them differently from {@link readAsarHeader}.
+ */
+export const parseAsarHeaderJson = (bytes: Uint8Array): unknown => {
   let json: string;
   try {
     json = strictUtf8Decoder("preserve").decode(bytes);

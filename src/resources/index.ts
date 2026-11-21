@@ -9,6 +9,8 @@ export {
   asarHeaderAdmissionFailure,
   asarHeaderAdmissionRecovery,
   createAsarHeaderSignatureProbe,
+  parseAsarHeaderExtents,
+  parseAsarHeaderJson,
   readAsarHeader,
   resolveAsarHeaderAdmission,
 } from "./AsarHeader.js";

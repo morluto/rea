@@ -417,6 +417,7 @@ const contractBuilt: ReadonlySet<string> = new Set(
 /** Contract-built commands whose name differs from their contract's. */
 const RENAMED_CONTRACT_COMMANDS = [
   "analyze",
+  "antidote",
   "decompile",
   "function",
   "inspect",

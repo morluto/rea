@@ -42,6 +42,7 @@ import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEn
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
 import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
+import type { CanonicalizeService } from "../application/canonicalize/CanonicalizeService.js";
 import type { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
 import type { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
 import type { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
@@ -499,6 +500,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfNotesService>,
+  canonicalizeArtifact: ((service) => ({
+    canonicalize_artifact: {
+      admission: "sdk",
+      run: (input, options) => service.canonicalize(input, options),
+    },
+  })) satisfies Bind<CanonicalizeService>,
   elfDebugLink: ((service) => ({
     inspect_elf_debug_link: {
       admission: "application",

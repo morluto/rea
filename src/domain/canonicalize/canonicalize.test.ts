@@ -1,0 +1,592 @@
+import { describe, expect, it } from "vitest";
+
+import { canonicalizeArtifactFacts } from "./engine.js";
+import {
+  CANONICALIZE_SAMPLE_UNITS,
+  type CanonicalizeFact,
+} from "./canonicalizeArtifact.js";
+import type { NormalizerBudget } from "./normalizer.js";
+import { MAX_JSON_STRUCTURE_BYTES } from "./normalizers/jsonStructure.js";
+
+const budget = (
+  overrides: Partial<NormalizerBudget> = {},
+): NormalizerBudget => ({
+  maxFacts: 128,
+  maxDepth: 32,
+  sampleUnits: CANONICALIZE_SAMPLE_UNITS,
+  ...overrides,
+});
+
+// --- WASM fixture helpers -------------------------------------------------
+
+const lebU32 = (value: number): Buffer => {
+  const out: number[] = [];
+  let remaining = value;
+  do {
+    let byte = remaining & 0x7f;
+    remaining >>>= 7;
+    if (remaining !== 0) byte |= 0x80;
+    out.push(byte);
+  } while (remaining !== 0);
+  return Buffer.from(out);
+};
+
+const wasmSection = (id: number, payload: Buffer): Buffer =>
+  Buffer.concat([Buffer.from([id]), lebU32(payload.length), payload]);
+
+const wasmCustomSection = (name: string, content: Buffer): Buffer => {
+  const nameBytes = Buffer.from(name, "utf8");
+  return wasmSection(
+    0,
+    Buffer.concat([lebU32(nameBytes.length), nameBytes, content]),
+  );
+};
+
+const wasmModule = (sections: readonly Buffer[]): Buffer =>
+  Buffer.concat([
+    Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]),
+    ...sections,
+  ]);
+
+const named = (facts: readonly CanonicalizeFact[], name: string) =>
+  facts.find((fact) => fact.name === name);
+
+// --- WASM -----------------------------------------------------------------
+
+describe("wasm-sections normalizer", () => {
+  const typePayload = Buffer.from([0x01, 0x60, 0x00, 0x00]);
+  const decoy = Buffer.alloc(4096, 0x41);
+  const bytes = wasmModule([
+    wasmSection(1, typePayload),
+    wasmCustomSection("name", Buffer.alloc(2048, 0x42)),
+    wasmCustomSection("bla.enclave.manifest", decoy),
+    wasmCustomSection("linking", Buffer.from([0x02, 0x00])),
+  ]);
+
+  it("recognizes WASM and classifies sections by behavior relevance", () => {
+    const facts = canonicalizeArtifactFacts(bytes, "auto", budget());
+    expect(facts.detected_format).toBe("wasm");
+    expect(facts.normalizer).toBe("wasm-sections");
+    expect(named(facts.core, "type")?.classification).toBe("behavior-relevant");
+    // Link-relevant custom sections are retained as behavior-relevant.
+    expect(named(facts.core, "linking")?.classification).toBe(
+      "behavior-relevant",
+    );
+    // Non-link custom sections (debug name, injected decoy) are collapsed.
+    expect(named(facts.collapsed, "name")?.classification).toBe(
+      "non-semantic-padding",
+    );
+    const injected = named(facts.collapsed, "bla.enclave.manifest");
+    expect(injected?.classification).toBe("non-semantic-padding");
+    // The region spans the whole custom-section payload (name plus content).
+    expect(injected?.bytes).toBeGreaterThanOrEqual(decoy.length);
+    expect(injected?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(facts.coverage).toMatchObject({
+      status: "complete",
+      truncated: false,
+    });
+  });
+
+  it("is lossless for behavior-relevant regions: core ranges reproduce the bytes", () => {
+    const facts = canonicalizeArtifactFacts(bytes, "auto", budget());
+    const type = named(facts.core, "type");
+    expect(type?.location).not.toBeNull();
+    const slice = bytes.subarray(
+      type!.location!.offset,
+      type!.location!.offset + type!.location!.bytes,
+    );
+    expect(Buffer.compare(slice, typePayload)).toBe(0);
+    expect(type!.bytes).toBe(typePayload.length);
+  });
+
+  it("collapses custom sections beyond the exemplar budget to counts and a group digest", () => {
+    const many = wasmModule([
+      wasmSection(1, typePayload),
+      ...Array.from({ length: 10 }, (_unused, index) =>
+        wasmCustomSection(`decoy.${String(index)}`, Buffer.alloc(16, 0x43)),
+      ),
+    ]);
+    const facts = canonicalizeArtifactFacts(
+      many,
+      "wasm",
+      budget({ maxFacts: 3 }),
+    );
+    const reduction = facts.reductions.find(
+      (entry) => entry.collection === "wasm-custom-section",
+    );
+    expect(reduction).toMatchObject({
+      examined: 10,
+      retained: 3,
+      collapsed: 7,
+    });
+    // Items beyond the budget keep a bounded group identity (finding 11).
+    expect(reduction?.group_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    // Omitting sections reports partial coverage, not false completeness.
+    expect(facts.coverage.status).toBe("partial");
+  });
+
+  it("caps link-relevant reloc sections and keeps a group digest", () => {
+    const relocs = Array.from({ length: 5 }, (_unused, index) =>
+      wasmCustomSection(`reloc.CODE${String(index)}`, Buffer.from([0x00])),
+    );
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([wasmSection(1, typePayload), ...relocs]),
+      "wasm",
+      budget({ maxFacts: 2 }),
+    );
+    const retainedLink = facts.core.filter(
+      (fact) =>
+        fact.collection === "wasm-custom-section" &&
+        fact.classification === "behavior-relevant",
+    );
+    expect(retainedLink).toHaveLength(2);
+    const reduction = facts.reductions.find(
+      (entry) => entry.collection === "wasm-link-section",
+    );
+    expect(reduction).toMatchObject({ examined: 5, retained: 2, collapsed: 3 });
+    expect(reduction?.group_sha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("caps repeated core sections at the budget with a group digest", () => {
+    // A crafted module repeats a core id beyond max_facts; the fact set must not
+    // grow with it, as the custom-section groups already cap.
+    const many = wasmModule(
+      Array.from({ length: 10 }, () => wasmSection(1, typePayload)),
+    );
+    const facts = canonicalizeArtifactFacts(
+      many,
+      "wasm",
+      budget({ maxFacts: 3 }),
+    );
+    expect(
+      facts.core.filter((fact) => fact.collection === "wasm-section"),
+    ).toHaveLength(3);
+    const reduction = facts.reductions.find(
+      (entry) => entry.collection === "wasm-section",
+    );
+    expect(reduction).toMatchObject({
+      examined: 10,
+      retained: 3,
+      collapsed: 7,
+    });
+    expect(reduction?.group_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(facts.coverage.status).toBe("partial");
+  });
+
+  it("bounds an inflated custom-section name in the retained fact", () => {
+    const longName = "a".repeat(300);
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([
+        wasmSection(1, typePayload),
+        wasmCustomSection(longName, Buffer.alloc(8, 0x42)),
+      ]),
+      "wasm",
+      budget(),
+    );
+    const custom = facts.collapsed.find(
+      (fact) => fact.collection === "wasm-custom-section",
+    );
+    expect(custom).toBeDefined();
+    expect((custom?.name ?? "").length).toBeLessThanOrEqual(128);
+    expect(custom?.detail).toMatch(/truncated/u);
+  });
+
+  it("does not miscount a retained link section as collapsed", () => {
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([
+        wasmSection(1, typePayload),
+        wasmCustomSection("linking", Buffer.from([0x02, 0x00])),
+      ]),
+      "wasm",
+      budget(),
+    );
+    expect(named(facts.core, "linking")?.classification).toBe(
+      "behavior-relevant",
+    );
+    // A retained section must not appear as a further "collapsed" reduction.
+    expect(facts.reductions).toHaveLength(0);
+    expect(facts.coverage.status).toBe("complete");
+  });
+
+  it("stays defensive on a truncated section header", () => {
+    const truncated = Buffer.concat([
+      wasmModule([wasmSection(1, typePayload)]),
+      Buffer.from([0x00, 0xff, 0xff, 0xff, 0xff, 0x0f]),
+    ]);
+    const facts = canonicalizeArtifactFacts(truncated, "wasm", budget());
+    expect(facts.coverage.truncated).toBe(true);
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.limitations.join(" ")).toMatch(/truncated|malformed/iu);
+  });
+});
+
+describe("wasm-sections defensive bounds", () => {
+  it("marks a custom section with an unreadable name unverified, not padding", () => {
+    // A custom section (id 0) whose name-length field declares 5 bytes but
+    // carries none: readCustomName fails, so it must be unverified, not padding.
+    const malformed = wasmModule([
+      wasmSection(1, Buffer.from([0x01, 0x60, 0x00, 0x00])),
+      wasmSection(0, Buffer.from([0x05])),
+    ]);
+    const facts = canonicalizeArtifactFacts(malformed, "wasm", budget());
+    const unverified = facts.collapsed.find(
+      (fact) => fact.classification === "unverified",
+    );
+    expect(unverified?.collection).toBe("wasm-custom-section");
+    expect(
+      facts.collapsed.some(
+        (fact) => fact.classification === "non-semantic-padding",
+      ),
+    ).toBe(false);
+    expect(facts.coverage.status).toBe("partial");
+  });
+
+  it("accounts for malformed sections beyond the budget with a group digest", () => {
+    // Two malformed sections with max_facts 1: the overflow keeps a group digest
+    // rather than losing its byte range and identity.
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([
+        wasmSection(1, Buffer.from([0x01, 0x60, 0x00, 0x00])),
+        wasmSection(0, Buffer.from([0x05])),
+        wasmSection(0, Buffer.from([0x06])),
+      ]),
+      "wasm",
+      budget({ maxFacts: 1 }),
+    );
+    const reduction = facts.reductions.find(
+      (entry) => entry.collection === "wasm-custom-section",
+    );
+    expect(reduction?.group_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(reduction?.collapsed).toBeGreaterThanOrEqual(1);
+    expect(facts.coverage.status).toBe("partial");
+  });
+
+  it("marks a custom section with a non-UTF-8 name unverified, not padding", () => {
+    // The name-length field reads fine (1 byte), but the name byte is 0xff,
+    // which is not valid UTF-8. A lossy decode would invent a U+FFFD name and
+    // report full coverage; the section must instead be unverified so the
+    // unreadable identity is disclosed, never a padding exemplar.
+    const invalidName = wasmModule([
+      wasmSection(1, Buffer.from([0x01, 0x60, 0x00, 0x00])),
+      wasmSection(0, Buffer.concat([lebU32(1), Buffer.from([0xff, 0x00])])),
+    ]);
+    const facts = canonicalizeArtifactFacts(invalidName, "wasm", budget());
+    const unverified = facts.collapsed.find(
+      (fact) => fact.classification === "unverified",
+    );
+    expect(unverified?.collection).toBe("wasm-custom-section");
+    expect(unverified?.name).toBeNull();
+    expect(unverified?.detail).toMatch(/not valid UTF-8/iu);
+    expect(
+      facts.collapsed.some(
+        (fact) => fact.classification === "non-semantic-padding",
+      ),
+    ).toBe(false);
+    expect(facts.limitations.join(" ")).toMatch(/not valid UTF-8/iu);
+    expect(facts.coverage.status).toBe("partial");
+  });
+
+  it("still decodes a valid multibyte UTF-8 custom-section name", () => {
+    // A valid non-ASCII name must survive strict decoding unchanged and remain a
+    // classified custom section, not be mistaken for invalid bytes.
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([
+        wasmSection(1, Buffer.from([0x01, 0x60, 0x00, 0x00])),
+        wasmCustomSection("naïve.café", Buffer.alloc(4, 0x42)),
+      ]),
+      "wasm",
+      budget(),
+    );
+    const named = facts.collapsed.find((fact) => fact.name === "naïve.café");
+    expect(named?.classification).toBe("non-semantic-padding");
+  });
+});
+
+// --- JSON -----------------------------------------------------------------
+
+describe("json-structure normalizer", () => {
+  it("retains behavior-relevant scalar content as bounded facts", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(
+        JSON.stringify({ main: "index.js", version: "1.0.0" }),
+        "utf8",
+      ),
+      "auto",
+      budget(),
+    );
+    expect(facts.detected_format).toBe("json");
+    expect(facts.core[0]).toMatchObject({ collection: "json-root" });
+    const main = facts.core.find((fact) => fact.name === "$/main");
+    expect(main?.classification).toBe("behavior-relevant");
+    expect(main?.sample).toBe("index.js");
+    expect(facts.coverage.status).toBe("complete");
+  });
+
+  it("auto-recognizes BOM-prefixed JSON the same as an explicit json request", () => {
+    // A UTF-8 BOM precedes the opening token; recognition must follow the
+    // decoder's strip-signature policy so auto does not need the explicit format.
+    const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+    const bytes = Buffer.concat([
+      bom,
+      Buffer.from(JSON.stringify({ main: "index.js" }), "utf8"),
+    ]);
+    const auto = canonicalizeArtifactFacts(bytes, "auto", budget());
+    const explicit = canonicalizeArtifactFacts(bytes, "json", budget());
+    expect(auto.detected_format).toBe("json");
+    expect(explicit.detected_format).toBe("json");
+    expect(auto.core.find((fact) => fact.name === "$/main")?.sample).toBe(
+      "index.js",
+    );
+  });
+
+  it("collapses nesting beyond max_depth and marks it truncated and unverified", () => {
+    let nested = "0";
+    for (let depth = 0; depth < 40; depth += 1) nested = `[${nested}]`;
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(nested, "utf8"),
+      "auto",
+      budget({ maxDepth: 8 }),
+    );
+    expect(facts.detected_format).toBe("json");
+    expect(facts.coverage.truncated).toBe(true);
+    expect(facts.coverage.status).toBe("partial");
+    expect(
+      facts.reductions.some((entry) => entry.collection === "json-depth"),
+    ).toBe(true);
+    // Depth-collapsed structure is unverified, never asserted as padding.
+    expect(
+      facts.collapsed.every((fact) => fact.classification === "unverified"),
+    ).toBe(true);
+  });
+
+  it("marks budget-skipped children unverified with partial coverage, never padding", () => {
+    const wide = JSON.stringify(
+      Object.fromEntries(
+        Array.from({ length: 500 }, (_unused, index) => [
+          `k${String(index)}`,
+          index,
+        ]),
+      ),
+    );
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(wide, "utf8"),
+      "json",
+      budget({ maxFacts: 16 }),
+    );
+    const reduction = facts.reductions.find(
+      (entry) => entry.collection === "json-children",
+    );
+    // Root fact plus 15 retained children leaves 485 of 500 unvisited.
+    expect(reduction?.collapsed).toBe(485);
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.coverage.truncated).toBe(true);
+    expect(facts.core[0]).toMatchObject({ collection: "json-root" });
+    expect(
+      facts.collapsed.every((fact) => fact.classification === "unverified"),
+    ).toBe(true);
+    expect(
+      [...facts.core, ...facts.collapsed].some(
+        (fact) => fact.classification === "non-semantic-padding",
+      ),
+    ).toBe(false);
+  });
+
+  it("bounds an inflated key in the fact name and keeps a digest reference", () => {
+    const hugeKey = "k".repeat(4000);
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(JSON.stringify({ [hugeKey]: 1 }), "utf8"),
+      "json",
+      budget(),
+    );
+    const leaf = facts.core.find((fact) => fact.collection === "json-value");
+    expect(leaf).toBeDefined();
+    // The 4000-unit key cannot be reproduced verbatim in the fact name.
+    expect((leaf?.name ?? "").length).toBeLessThanOrEqual(256);
+    // The exact key is preserved by reference, not confabulated away.
+    expect(leaf?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("keeps an exact value digest and omission note when a value is folded or truncated", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(
+        JSON.stringify({ main: "λ中.js", long: "a".repeat(200) }),
+        "utf8",
+      ),
+      "json",
+      budget(),
+    );
+    const unicode = facts.core.find((fact) => fact.name === "$/main");
+    // Non-ASCII text is folded in the sample, never rendered raw, but the exact
+    // value is recoverable by its own digest with an explicit note.
+    expect(unicode?.sample ?? "").not.toMatch(/[^\x20-\x7e]/u);
+    expect(unicode?.value_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(unicode?.detail).toMatch(/exact digest/iu);
+    const long = facts.core.find((fact) => fact.name === "$/long");
+    expect((long?.sample ?? "").length).toBeLessThanOrEqual(
+      CANONICALIZE_SAMPLE_UNITS,
+    );
+    expect(long?.value_sha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("escapes slashes in keys so distinct members get distinct names", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(JSON.stringify({ "a/b": 1, a: { b: 2 } }), "utf8"),
+      "json",
+      budget(),
+    );
+    const names = facts.core.map((fact) => fact.name);
+    // The key "a/b" becomes "$/a~1b"; the nested a.b becomes "$/a/b" — distinct.
+    expect(names).toContain("$/a~1b");
+    expect(names).toContain("$/a/b");
+  });
+
+  it("disambiguates shortened parent keys so children keep distinct names", () => {
+    const shared = "p".repeat(128);
+    const keyA = `${shared}${"A".repeat(100)}`;
+    const keyB = `${shared}${"B".repeat(100)}`;
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(
+        JSON.stringify({ [keyA]: { x: 1 }, [keyB]: { x: 2 } }),
+        "utf8",
+      ),
+      "json",
+      budget(),
+    );
+    const childNames = facts.core
+      .map((fact) => fact.name)
+      .filter((name): name is string => name !== null && name.endsWith("/x"));
+    expect(childNames).toHaveLength(2);
+    // Two keys that share their first 128 units must not collapse to one name.
+    expect(new Set(childNames).size).toBe(2);
+  });
+});
+
+describe("json-structure size budget", () => {
+  it("reports input beyond the structural-canonicalization size budget as partial without parsing", () => {
+    // One byte over the fixed budget. JSON.parse would allocate the whole value
+    // before the depth and node caps apply, so the pass must refuse to parse and
+    // report a bounded partial with the artifact's own digest instead.
+    const bytes = Buffer.alloc(MAX_JSON_STRUCTURE_BYTES + 1, 0x20);
+    const facts = canonicalizeArtifactFacts(bytes, "json", budget());
+    expect(facts.detected_format).toBe("json");
+    expect(facts.normalizer).toBe("json-structure");
+    expect(facts.core).toHaveLength(0);
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.coverage.truncated).toBe(true);
+    expect(facts.limitations.join(" ")).toMatch(
+      /structural-canonicalization budget/u,
+    );
+  });
+});
+
+describe("json-structure source fidelity", () => {
+  it("keeps separate key and value digests when both are shortened", () => {
+    const hugeKey = "k".repeat(4000);
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(JSON.stringify({ [hugeKey]: "λ中.js" }), "utf8"),
+      "json",
+      budget(),
+    );
+    const leaf = facts.core.find((fact) => fact.collection === "json-value");
+    // The exact key and the exact value each keep a distinct reference.
+    expect(leaf?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(leaf?.value_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(leaf?.sha256).not.toBe(leaf?.value_sha256);
+  });
+
+  it("rejects invalid UTF-8 rather than decoding it lossily", () => {
+    const bytes = Buffer.concat([
+      Buffer.from('{"a":"x', "utf8"),
+      Buffer.from([0xff]),
+      Buffer.from('"}', "utf8"),
+    ]);
+    const facts = canonicalizeArtifactFacts(bytes, "json", budget());
+    expect(facts.limitations.join(" ")).toMatch(/not valid UTF-8/iu);
+    expect(facts.coverage.status).toBe("partial");
+  });
+
+  it("records a duplicate member and reports partial coverage", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from('{"a":1,"a":2}', "utf8"),
+      "json",
+      budget(),
+    );
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.limitations.join(" ")).toMatch(/repeats/iu);
+  });
+
+  it("flags integer literals beyond safe precision", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from('{"id":9007199254740993}', "utf8"),
+      "json",
+      budget(),
+    );
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.limitations.join(" ")).toMatch(/safe-integer precision/iu);
+  });
+
+  it("does not flag a quoted numeric string as precision loss", () => {
+    // The digits sit inside a JSON string, which JSON.parse preserves exactly,
+    // so no value was rounded; a precision warning here would be a false alarm
+    // that tells the user intact identifier data changed.
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from('{"id":"9007199254740993","ok":true}', "utf8"),
+      "json",
+      budget(),
+    );
+    expect(facts.coverage.status).toBe("complete");
+    expect(facts.limitations.join(" ")).not.toMatch(/safe-integer precision/iu);
+  });
+
+  it("does not flag an intact decimal's fractional digits as an unsafe integer", () => {
+    // 0.5 is represented exactly; its long fractional digit run must not be
+    // rescanned as a separate integer literal and draw a false precision
+    // warning. A real exponential value must likewise stay unflagged.
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from('{"ratio":0.50000000000000000,"scaled":1.5e300}', "utf8"),
+      "json",
+      budget(),
+    );
+    expect(facts.coverage.status).toBe("complete");
+    expect(facts.limitations.join(" ")).not.toMatch(/safe-integer precision/iu);
+  });
+
+  it("bounds the duplicate scan on deeply nested input", () => {
+    let nested = "1";
+    for (let depth = 0; depth < 40; depth += 1) nested = `{"k":${nested}}`;
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from(nested, "utf8"),
+      "json",
+      budget({ maxDepth: 8 }),
+    );
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.limitations.join(" ")).toMatch(
+      /depth and retained-name allowance/iu,
+    );
+  });
+});
+
+// --- Fallback -------------------------------------------------------------
+
+describe("engine selection", () => {
+  it("retains identity and marks structure unverified for unknown formats", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+      "auto",
+      budget(),
+    );
+    expect(facts.detected_format).toBe("unknown");
+    expect(facts.normalizer).toBe("none");
+    expect(facts.limitations.join(" ")).toMatch(/unverified/u);
+  });
+
+  it("reports a mismatch when an explicit format does not recognize the bytes", () => {
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from("not wasm", "utf8"),
+      "wasm",
+      budget(),
+    );
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.limitations.join(" ")).toMatch(/not a WASM|unverified/iu);
+  });
+});
