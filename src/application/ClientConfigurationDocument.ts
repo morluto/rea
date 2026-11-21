@@ -242,6 +242,8 @@ const CLIENT_CONFIGURATION_READERS = {
   claude_code: { ...STRICT_JSON_READER, bom: "accept" },
   // Kimi, LM Studio and ZCode read their files with JSON.parse; an empty
   // file holds nothing to preserve.
+  // Muse Code reads `settings.json` with a required numeric `schema_version`.
+  muse: STRICT_JSON_READER,
   kimi: STRICT_JSON_READER,
   lm_studio: STRICT_JSON_READER,
   zcode: STRICT_JSON_READER,
@@ -437,7 +439,26 @@ export const parseClientConfiguration = (
   const serversKey =
     format === "fx"
       ? fxConfigurationServersKey(document)
-      : clientConfigurationServersKey(format);
+      : // A Muse document that already uses the legacy table keeps it: writing the
+        // canonical table beside it would leave both present, which is the state that
+        // disables MCP for the session.
+        format === "muse" &&
+          document.mcpServers === undefined &&
+          document.mcp_servers !== undefined
+        ? "mcp_servers"
+        : clientConfigurationServersKey(format);
+  // Muse Code disables MCP for the whole session when both the canonical
+  // `mcpServers` table and the legacy `mcp_servers` table are present, so a
+  // registration written into either one would be ignored without an error the
+  // user could see. Refuse instead of picking a table.
+  if (
+    format === "muse" &&
+    document.mcpServers !== undefined &&
+    document.mcp_servers !== undefined
+  )
+    throw new ClientConfigurationShapeError(
+      `Muse Code holds both "mcpServers" and the legacy "mcp_servers"; it disables MCP for the session when both exist, so REA will not choose one. Keep a single table (preferably "mcpServers") and run setup again.`,
+    );
   const value = document[serversKey];
   const servers =
     value === undefined ? {} : requireObject(value, `"${serversKey}"`);

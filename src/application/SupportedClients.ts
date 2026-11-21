@@ -127,6 +127,7 @@ export interface SetupClient {
     | "fx"
     | "goose"
     | "kilo"
+    | "muse"
     | "unsupported";
 }
 
@@ -1858,6 +1859,24 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     discoveryPaths: kiloDiscoveryPaths,
     layeredLocation: kiloLayeredLocation,
     format: "kilo",
+  }),
+  defineClient({
+    name: "muse",
+    registrationConnection: {
+      kind: "flat",
+      fields: ["type", "command"],
+      stdio: [{ kind: "required-enum", field: "type", values: ["stdio"] }],
+    },
+    displayName: "Muse Code",
+    mcpAdd: { aliases: ["muse-code"], projectPaths: [".mcp.json"] },
+    // Muse Code documents only the XDG location: `$XDG_CONFIG_HOME/muse/settings.json`,
+    // defaulting to `~/.config/muse/settings.json`. Its settings carry `schema_version`,
+    // which the writer preserves.
+    configPath: ({ home, env }: ClientPathContext) =>
+      join(xdgConfigHomeOrDefault({ home, env }), "muse", "settings.json"),
+    markerPath: ({ home, env }: ClientPathContext) =>
+      join(xdgConfigHomeOrDefault({ home, env }), "muse"),
+    format: "muse",
   }),
   defineClient({
     name: "grok_bot",
