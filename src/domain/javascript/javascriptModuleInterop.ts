@@ -169,15 +169,20 @@ export const createSemanticModuleInterop = (
               !t.isBigIntLiteral(value)
             ) {
               const { root, members } = electronMemberPath(value);
-              if (
-                !isUnshadowedGlobal(root, state, "Object") ||
-                !Object.values(INTRINSICS).some(
+              const objectHelper =
+                isUnshadowedGlobal(root, state, "Object") &&
+                Object.values(INTRINSICS).some(
                   (path) =>
                     path.length === members.length + 1 &&
                     path.slice(1).every((key, i) => key === members[i]),
-                )
-              )
-                break prefix;
+                );
+              const reflectMethod =
+                isUnshadowedGlobal(root, state, "Reflect") &&
+                members.length === 1 &&
+                ["apply", "construct", "defineProperty", "set"].some(
+                  (name) => name === members[0],
+                );
+              if (!objectHelper && !reflectMethod) break prefix;
             }
             inertPrefixEnd = declaration.end ?? -Infinity;
           }
@@ -388,11 +393,18 @@ export const createSemanticModuleInterop = (
 
   const intrinsicValueReferences = (
     node: t.Node,
-  ): readonly {
-    node: t.Node;
-    path: JavaScriptSemanticPropertyPath;
-    readAt?: t.Node;
-  }[] => {
+    descriptorValueUncertain: (
+      mutation: t.Node,
+      key: JavaScriptSemanticPropertyPath[number],
+      read: t.Node,
+    ) => boolean,
+  ):
+    | readonly {
+        node: t.Node;
+        path: JavaScriptSemanticPropertyPath;
+        readAt?: t.Node;
+      }[]
+    | undefined => {
     const capture = capturedIntrinsic(node);
     if (capture === undefined) return [];
     const result: {
@@ -440,6 +452,17 @@ export const createSemanticModuleInterop = (
             continue;
           const operation = invocation.path.join(".");
           const key = capture.path[value.path.length - 1]!;
+          if (
+            (operation === "intrinsic.Object.defineProperties" ||
+              operation === "intrinsic.Object.defineProperty" ||
+              operation === "intrinsic.Reflect.defineProperty") &&
+            descriptorValueUncertain(
+              value.node,
+              key,
+              capture.capturedAt ?? node,
+            )
+          )
+            return undefined;
           if (operation === "intrinsic.Object.assign") {
             for (const source of args.slice(1))
               result.push({

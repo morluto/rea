@@ -4,7 +4,7 @@ import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { createSemanticAmbientEffectQuery } from "./javascriptSemanticEffectQueries.js";
 import {
   semanticBuiltinDataProperty,
-  semanticBuiltinSlotChanged,
+  createSemanticBuiltinSlotQuery,
 } from "./javascriptSemanticDataEffectHelpers.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
@@ -2111,6 +2111,14 @@ export function* collectSemanticMemberMutationsSteps(
           : semanticRequireOrigin(target, state)?.origin,
     };
   };
+  const builtinSlotChanged = createSemanticBuiltinSlotQuery(
+    state,
+    () =>
+      recordedEffectCount +
+      escapedObjectBindings.size +
+      iterableReferences.length +
+      Number(state.arrayIterationUnknown),
+  );
   const reflectSets: (() => void)[] = [];
   /** Disposal runs when the declaration's lexical scope exits. */
   const markDisposal = (
@@ -2259,7 +2267,7 @@ export function* collectSemanticMemberMutationsSteps(
           origin !== undefined &&
           path[0] !== null &&
           semanticBuiltinNamespace(origin) &&
-          !semanticBuiltinSlotChanged(origin, path[0]!, node, state);
+          !builtinSlotChanged(origin, path[0]!, node);
         const dataProperty =
           builtinUnchanged &&
           origin !== undefined &&

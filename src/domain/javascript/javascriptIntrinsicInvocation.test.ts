@@ -1,4 +1,5 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { createSemanticBuiltinSlotQuery } from "./javascriptSemanticDataEffectHelpers.js";
 import * as t from "@babel/types";
 
 import { retainSemanticAmbientEffect } from "./javascriptSemanticAmbientWrites.js";
@@ -199,4 +200,84 @@ it("refreshes settled dispatch when its owner records an earlier replacement", (
     settled: true,
   });
   expect(interop.intrinsicInvocationFacts(read.expression)).toBe(changed);
+});
+
+it("preserves a Reflect method captured before a deferred change", () => {
+  const parsed = parseJavaScriptSource(
+    "const set=Reflect.set; function update(){Reflect.set=other} update(); set({}, 'label', 1);",
+  );
+  if (!parsed) throw new Error("Expected a program");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const interop = createSemanticModuleInterop(state);
+  const [, declaration, , read] = parsed.program.body;
+  if (
+    !t.isFunctionDeclaration(declaration) ||
+    !t.isExpressionStatement(read) ||
+    !t.isCallExpression(read.expression)
+  )
+    throw new Error("Expected a function and a call");
+  const write = declaration.body.body[0];
+  if (!t.isExpressionStatement(write))
+    throw new Error("Expected a deferred assignment");
+  interop.retainWrite(write.expression, ["intrinsic", "Reflect", "set"]);
+  expect(interop.intrinsicInvocation(read.expression)).toMatchObject({
+    kind: "known",
+    path: ["intrinsic", "Reflect", "set"],
+  });
+});
+
+it("propagates an uncertain inherited descriptor field at its read site", () => {
+  const parsed = parseJavaScriptSource(
+    "Object.defineProperty(Reflect, 'set', {enumerable: true}); const read = Reflect.set;",
+  );
+  if (!parsed) throw new Error("Expected a program");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const interop = createSemanticModuleInterop(state);
+  const [definition, declaration] = parsed.program.body;
+  if (
+    !t.isExpressionStatement(definition) ||
+    !t.isVariableDeclaration(declaration)
+  )
+    throw new Error("Expected a definition and read");
+  const read = declaration.declarations[0]?.init;
+  if (!read) throw new Error("Missing selected method");
+  expect(interop.intrinsicValueReferences(read, () => false)).toMatchObject([
+    { path: ["value"] },
+  ]);
+  expect(
+    interop.intrinsicValueReferences(
+      read,
+      (mutation, key) => mutation === definition.expression && key === "set",
+    ),
+  ).toBeUndefined();
+});
+
+it("reuses builtin receiver evidence within one mutation epoch and refreshes on the next", () => {
+  const parsed = parseJavaScriptSource("const input = 1;");
+  if (!parsed) throw new Error("Expected a program");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const effects = state.requiredModuleEffects;
+  const reads = vi.spyOn(effects, "get");
+  try {
+    let revision = 0;
+    const slotChanged = createSemanticBuiltinSlotQuery(state, () => revision);
+    const fs = { specifier: "fs", importedPath: [] };
+    const read = parsed.program;
+    expect(slotChanged(fs, "stat", read)).toBe(false);
+    const firstReads = reads.mock.calls.length;
+    expect(firstReads).toBeGreaterThan(0);
+    expect(slotChanged(fs, "stat", read)).toBe(false);
+    expect(reads.mock.calls).toHaveLength(firstReads);
+    effects.set("fs", [{ kind: "write", path: ["stat"], node: undefined }]);
+    revision++;
+    expect(slotChanged(fs, "stat", read)).toBe(true);
+  } finally {
+    reads.mockRestore();
+  }
 });

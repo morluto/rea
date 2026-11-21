@@ -876,22 +876,26 @@ const builtinEffectIndexes = new WeakMap<
   BuiltinEffectIndex
 >();
 
+const createBuiltinEffectIndex = (
+  state: JavaScriptSemanticAnalysisState,
+): BuiltinEffectIndex => ({
+  writesByModule: new Map(
+    [...state.requiredModuleEffects].map(([name, effects]) => [
+      name,
+      effects.filter(({ kind }) => kind === "write"),
+    ]),
+  ),
+  moduleEffects: new Map(),
+  receivers: new WeakMap(),
+  candidateReceivers: new WeakMap(),
+});
+
 const builtinEffectIndex = (
   state: JavaScriptSemanticAnalysisState,
 ): BuiltinEffectIndex => {
   let index = builtinEffectIndexes.get(state);
   if (index === undefined) {
-    index = {
-      writesByModule: new Map(
-        [...state.requiredModuleEffects].map(([name, effects]) => [
-          name,
-          effects.filter(({ kind }) => kind === "write"),
-        ]),
-      ),
-      moduleEffects: new Map(),
-      receivers: new WeakMap(),
-      candidateReceivers: new WeakMap(),
-    };
+    index = createBuiltinEffectIndex(state);
     builtinEffectIndexes.set(state, index);
   }
   return index;
@@ -901,17 +905,13 @@ const builtinModuleEffects = (
   specifier: string,
   state: JavaScriptSemanticAnalysisState,
   allowCandidate = false,
-  collecting = false,
+  index = builtinEffectIndex(state),
 ): readonly JavaScriptSemanticRequiredModuleEffect[] => {
-  const cache = collecting
-    ? undefined
-    : builtinEffectIndex(state).moduleEffects;
+  const cache = index.moduleEffects;
   const original = (node: t.Node | undefined) =>
-    collecting
-      ? computeOriginalBuiltinReceiver(node, state, allowCandidate, true)
-      : originalBuiltinReceiver(node, state, allowCandidate);
+    originalBuiltinReceiver(node, state, allowCandidate, index);
   const key = `${specifier}:${allowCandidate ? "candidate" : "proven"}`;
-  let effects = cache?.get(key);
+  let effects = cache.get(key);
   if (effects === undefined) {
     effects = (state.requiredModuleEffects.get(specifier) ?? []).filter(
       ({ kind, node }) => kind === "write" || !original(node),
@@ -931,7 +931,7 @@ const builtinModuleEffects = (
         }));
       effects = [...effects, ...sharedFsEscapes];
     }
-    cache?.set(key, effects);
+    cache.set(key, effects);
   }
   return effects;
 };
@@ -1023,13 +1023,18 @@ const originalBuiltinReceiver = (
   node: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
   allowCandidate = false,
+  index = builtinEffectIndex(state),
 ): boolean => {
   if (node === undefined) return false;
-  const index = builtinEffectIndex(state);
   const receivers = allowCandidate ? index.candidateReceivers : index.receivers;
   const previous = receivers.get(node);
   if (previous !== undefined) return previous;
-  const result = computeOriginalBuiltinReceiver(node, state, allowCandidate);
+  const result = computeOriginalBuiltinReceiver(
+    node,
+    state,
+    allowCandidate,
+    index,
+  );
   receivers.set(node, result);
   return result;
 };
@@ -1038,7 +1043,7 @@ const computeOriginalBuiltinReceiver = (
   node: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
   allowCandidate: boolean,
-  collecting = false,
+  index: BuiltinEffectIndex,
 ): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
@@ -1130,13 +1135,7 @@ const computeOriginalBuiltinReceiver = (
           : semanticRequireExportsIdentity(shared.specifier, shared.path);
       return (
         identity !== undefined &&
-        (collecting
-          ? (state.requiredModuleEffects.get(identity.specifier) ?? []).filter(
-              ({ kind }) => kind === "write",
-            )
-          : (builtinEffectIndex(state).writesByModule.get(identity.specifier) ??
-            [])
-        ).some(
+        (index.writesByModule.get(identity.specifier) ?? []).some(
           ({ path, node: write, loaderAuthority }) =>
             !(
               allowCandidate &&
@@ -1184,28 +1183,39 @@ export const semanticBuiltinDataProperty = (
   );
 };
 
-export const semanticBuiltinSlotChanged = (
-  source: JavaScriptModuleOrigin,
-  method: string,
-  capture: t.Node,
+/** Reuse slot and receiver proofs only while the mutation collector's facts stay fixed. */
+export const createSemanticBuiltinSlotQuery = (
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const origin = builtinNamespaceOrigin(source);
-  const identity = semanticRequireExportsIdentity(origin.specifier, [
-    ...origin.importedPath,
-    method,
-  ]);
-  return builtinModuleEffects(
-    identity.specifier,
-    state,
-    true,
-    !state.memberMutationFactsComplete,
-  ).some(
-    ({ path, node }) =>
-      node !== capture &&
-      affectsBuiltinPath(path, identity.path) &&
-      !semanticTopLevelEffectFollowsCapture(capture, node, state.parentsByNode),
-  );
+  revision: () => number,
+) => {
+  let observedRevision = -1;
+  let index: BuiltinEffectIndex | undefined;
+  return (
+    source: JavaScriptModuleOrigin,
+    method: string,
+    capture: t.Node,
+  ): boolean => {
+    const current = revision();
+    if (index === undefined || observedRevision !== current) {
+      index = createBuiltinEffectIndex(state);
+      observedRevision = current;
+    }
+    const origin = builtinNamespaceOrigin(source);
+    const identity = semanticRequireExportsIdentity(origin.specifier, [
+      ...origin.importedPath,
+      method,
+    ]);
+    return builtinModuleEffects(identity.specifier, state, true, index).some(
+      ({ path, node }) =>
+        node !== capture &&
+        affectsBuiltinPath(path, identity.path) &&
+        !semanticTopLevelEffectFollowsCapture(
+          capture,
+          node,
+          state.parentsByNode,
+        ),
+    );
+  };
 };
 
 const semanticExpressionModuleOrigin = (

@@ -2490,7 +2490,15 @@ const writesModuleRequire = (
       }
       if (!written && !changed && provenFree.get(value)?.covers(path)) continue;
       examined.push({ node: value, path, ...(callee ? { callee } : {}) });
-      for (const reference of interop.intrinsicValueReferences(value))
+      const intrinsicReferences = interop.intrinsicValueReferences(
+        value,
+        (mutation, key, read) =>
+          inheritedDescriptorFieldChanged("value", mutation, read) &&
+          (typeof key !== "string" ||
+            writtenValues(mutation, key, read) === undefined),
+      );
+      if (intrinsicReferences === undefined) return true;
+      for (const reference of intrinsicReferences)
         pending.push({
           node: reference.node,
           path: [...reference.path, ...path],
