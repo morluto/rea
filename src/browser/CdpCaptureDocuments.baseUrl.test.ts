@@ -1,17 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { captureDom } from "./CdpCaptureDocuments.js";
 import { capturedSvgNodeKind } from "./CdpCaptureDomNamespaces.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 
 const origin = "https://app.example.test";
 const documentUrl = `${origin}/screens/app`;
-const input = inspectWebPageInputSchema.parse({
-  cdp_endpoint: "http://127.0.0.1:9222",
-  allowed_origins: [origin],
-  target_id: "page-1",
-});
 
 it("splits link relations only on HTML ASCII whitespace", () => {
   const result = captureSnapshot(
@@ -325,12 +319,17 @@ const domSnapshot = (
   baseUrl: string | null = `${origin}/screens/assets/`,
   pageUrl = documentUrl,
 ) => {
-  const strings = [pageUrl, baseUrl ?? ""];
+  const base = baseUrl ?? "";
+  const strings = [pageUrl, base];
+  const stringIndices = new Map([[pageUrl, 0]]);
+  if (base !== pageUrl) stringIndices.set(base, 1);
   const intern = (value: string): number => {
-    const existing = strings.indexOf(value);
-    if (existing >= 0) return existing;
+    const existing = stringIndices.get(value);
+    if (existing !== undefined) return existing;
+    const index = strings.length;
     strings.push(value);
-    return strings.length - 1;
+    stringIndices.set(value, index);
+    return index;
   };
   const nodeType = [9];
   const nodeName = [intern("#document")];
@@ -377,7 +376,7 @@ const captureSnapshot = (value: ReturnType<typeof domSnapshot>) => {
   const kinds = new Map(
     value.documents.flatMap((document) => [...document.svgNodeKinds]),
   );
-  const capture = captureDom(value, new Set([origin]), input);
+  const capture = captureDom(value, new Set([origin]));
   let step = capture.next();
   while (!step.done) {
     step = capture.next(
@@ -451,33 +450,6 @@ describe("browser SVG identity", () => {
       `${origin}/orphan`,
     ]);
   });
-
-  it("records unresolved identity without inventing a destination or hiding attributes", () => {
-    const value = domSnapshot([
-      { name: "a", parent: 0, attributes: [["xlink:href", "/unknown"]] },
-    ]);
-    const completeness = new CdpCaptureCompleteness();
-    const capture = captureDom(value, new Set([origin]), input, completeness);
-    expect(capture.next()).toEqual({
-      done: false,
-      value: [{ backendNodeId: 2, nodeName: "a" }],
-    });
-    const step = capture.next([undefined]);
-    expect(step.done).toBe(true);
-    if (!step.done) throw new Error("Unexpected second query");
-    expect(step.value.unresolvedSvgNodes).toBe(1);
-    expect(step.value.urls).toEqual([]);
-    expect(step.value.nodes[1]?.attribute_names).toEqual(["xlink:href"]);
-    expect(completeness.snapshot().excluded).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          section: "metadata",
-          reason: "provider_unavailable",
-          count: 1,
-        }),
-      ]),
-    );
-  });
 });
 
 it("keeps batched SVG identities aligned around missing IDs and ordinary links", () => {
@@ -485,7 +457,9 @@ it("keeps batched SVG identities aligned around missing IDs and ordinary links",
     { name: "a", parent: 0, attributes: [["xlink:href", "/svg"]] },
     { name: "A", parent: 0, attributes: [["href", "/ordinary"]] },
     { name: "a", parent: 0, attributes: [["xlink:href", "/missing-id"]] },
+    { name: "a", parent: 0, attributes: [["xlink:href", "/unknown-reply"]] },
     { name: "a", parent: 0, attributes: [["xlink:href", "/non-svg"]] },
+    { name: "a", parent: 0, attributes: [["xlink:href", "/confirmed-later"]] },
   ]);
   const completeness = new CdpCaptureCompleteness();
   const capture = captureDom(
@@ -493,11 +467,10 @@ it("keeps batched SVG identities aligned around missing IDs and ordinary links",
       ...value,
       documents: value.documents.map((document) => ({
         ...document,
-        nodes: { ...document.nodes, backendNodeId: [1, 2, 3, null, 5] },
+        nodes: { ...document.nodes, backendNodeId: [1, 2, 3, null, 5, 6, 7] },
       })),
     },
     new Set([origin]),
-    input,
     completeness,
   );
   expect(capture.next()).toEqual({
@@ -505,21 +478,32 @@ it("keeps batched SVG identities aligned around missing IDs and ordinary links",
     value: [
       { backendNodeId: 2, nodeName: "a" },
       { backendNodeId: 5, nodeName: "a" },
+      { backendNodeId: 6, nodeName: "a" },
+      { backendNodeId: 7, nodeName: "a" },
     ],
   });
-  const step = capture.next([true, false]);
+  const step = capture.next([true, undefined, false, true]);
   if (!step.done) throw new Error("Unexpected second batch");
   expect(
     step.value.urls.map(({ node_index, url }) => [node_index, url]),
   ).toEqual([
     [1, `${origin}/svg`],
     [2, `${origin}/ordinary`],
+    [6, `${origin}/confirmed-later`],
   ]);
-  expect(step.value.unresolvedSvgNodes).toBe(1);
+  expect(
+    step.value.nodes
+      .filter(({ index }) => index === 3 || index === 4)
+      .map(({ index, attribute_names }) => [index, attribute_names]),
+  ).toEqual([
+    [3, ["xlink:href"]],
+    [4, ["xlink:href"]],
+  ]);
+  expect(step.value.unresolvedSvgNodes).toBe(2);
   expect(completeness.snapshot().excluded).toContainEqual({
     section: "metadata",
     reason: "provider_unavailable",
-    count: 1,
+    count: 2,
   });
 });
 
