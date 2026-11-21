@@ -726,6 +726,53 @@ describe("Pi project-scoped inherited environment validation", () => {
   });
 });
 
+it.each(["user", "project"] as const)(
+  "attributes a native Pi transport rejection to its %s selector",
+  async (scope) => {
+    const { home, client } = await piClient();
+    const project = await createTestTempDirectory("rea-pi-transport-source-");
+    vi.spyOn(process, "cwd").mockReturnValue(project);
+    await trustPiProject(home, project);
+    const projectPath = join(project, ".pi", "mcp.json");
+    await mkdir(dirname(projectPath), { recursive: true });
+    const launcher = { command: command[0], args: command.slice(1) };
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: { ...launcher, type: scope === "user" ? "http" : "stdio" },
+        },
+      }),
+    );
+    await writeFile(
+      projectPath,
+      JSON.stringify({
+        mcpServers: {
+          rea:
+            scope === "user"
+              ? { enabled: true }
+              : { ...launcher, type: "http" },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
+      environment: {},
+    });
+    const expectedPath = scope === "user" ? client.configPath : projectPath;
+    const status = statuses.find(({ client: name }) => name === "pi");
+    expect(status).toMatchObject({
+      state: "invalid",
+      config_path: expectedPath,
+      command_identity: "owned",
+      remediation: expect.stringContaining("native transport"),
+    });
+    expect(status?.scope).toBe(scope === "project" ? "project" : undefined);
+    if (scope === "project") expect(status?.remediation).toContain(projectPath);
+  },
+);
+
 it("attributes a Pi replacement with a missing launcher to the project file", async () => {
   const { home, client } = await piClient();
   const project = await createTestTempDirectory("rea-pi-replacement-source-");

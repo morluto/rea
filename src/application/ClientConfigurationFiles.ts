@@ -24,6 +24,7 @@ import { errorMessage } from "../kernel/errorMessage.js";
 import { lstat, realpath } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
+import { isAbsentClientConfigPath } from "./ClientConfigPath.js";
 
 export type ClientRegistrationScope = "user" | "project";
 
@@ -874,11 +875,6 @@ const physicalPathKey = async (
 ): Promise<string> =>
   filesystemPathKey(await realpath(path).catch(() => path), platform);
 
-const fileMissing = (error: unknown): boolean =>
-  error instanceof Error &&
-  "code" in error &&
-  (error.code === "ENOENT" || error.code === "ENOTDIR");
-
 /** Project discovery cannot reclassify the current user's physical settings file. */
 const presentProjectSources = async (
   client: SetupClient,
@@ -911,7 +907,7 @@ const presentProjectSources = async (
     try {
       await lstat(candidate);
     } catch (cause: unknown) {
-      if (fileMissing(cause)) continue;
+      if (isAbsentClientConfigPath(cause)) continue;
       return err({
         kind: "unreadable",
         path: candidate,

@@ -61,7 +61,9 @@ import {
   type ClientRegistration,
 } from "./ClientRegistration.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { isAbsentClientConfigPath } from "./ClientConfigPath.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
@@ -348,15 +350,6 @@ export const readClientRegistrationInspections = async (
         effectiveClient,
       );
       if (!parsedRegistration.ok) {
-        const contributingDoc = contributingRegistrationSource(
-          configuration.value,
-          parsedRegistration.error,
-        );
-        const errorPath = contributingDoc?.sourcePath ?? configPath;
-        const errorScope =
-          contributingDoc === undefined
-            ? selectedScope
-            : (contributingDoc.scope ?? "user");
         // Invalid readiness settings do not erase a usable launcher identity.
         const launcher = parseClientRegistrationLauncher(raw, {
           dialect: parsed.dialect,
@@ -368,18 +361,14 @@ export const readClientRegistrationInspections = async (
               currentCommandPath,
             ).identity
           : "unknown";
-        record({
-          client: client.name,
-          config_path: errorPath,
-          ...(errorScope === "project" ? { scope: "project" } : {}),
-          command: [],
-          command_identity: commandIdentity,
-          state: "invalid",
-          remediation:
-            errorScope === "project"
-              ? `${parsedRegistration.error.message}: ${parsedRegistration.error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}. REA setup writes only user-level configuration and does not modify project-scoped configuration at ${errorPath}. Update or remove the rea registration in ${errorPath}, then restart the client.`
-              : `${parsedRegistration.error.message}: ${parsedRegistration.error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
-        });
+        record(
+          invalidRegistrationStatus(
+            client,
+            configuration.value,
+            parsedRegistration.error,
+            commandIdentity,
+          ),
+        );
         continue;
       }
       const registration = parsedRegistration.value;
@@ -404,15 +393,14 @@ export const readClientRegistrationInspections = async (
         !nativeApplicability.ok &&
         nativeApplicability.error.kind === "invalid"
       ) {
-        record({
-          client: client.name,
-          config_path: configPath,
-          ...(selectedScope === undefined ? {} : { scope: selectedScope }),
-          command: [],
-          command_identity: commandFacts.identity,
-          state: "invalid",
-          remediation: nativeApplicability.error.cause.message,
-        });
+        record(
+          invalidRegistrationStatus(
+            client,
+            configuration.value,
+            nativeApplicability.error.cause,
+            commandFacts.identity,
+          ),
+        );
         continue;
       }
       const registrationEnvironment =
@@ -652,6 +640,34 @@ const inlineRegistrationRemediation = (client: SetupClient): string => {
 const unknownEntryPointRemediation = (): string =>
   "The existing registration was retained because its executable identity cannot be verified. Check the registered launcher path, symlink targets and access permissions. Run the installed REA CLI or a supported package runner, then rerun rea doctor; no registration was changed.";
 
+const invalidRegistrationStatus = (
+  client: SetupClient,
+  configuration: EffectiveClientRegistrationConfiguration,
+  error: ConfigurationError,
+  commandIdentity: ClientRegistrationCommandIdentity,
+): ClientRegistrationStatus => {
+  const source = contributingRegistrationSource(configuration, error);
+  const path = source?.sourcePath ?? configuration.configPath;
+  const scope = source === undefined ? configuration.scope : source.scope;
+  const constraints = error.settings
+    .map(({ setting, constraint }) => `${setting}: ${constraint}`)
+    .join("; ");
+  const detail =
+    constraints === "" ? error.message : `${error.message}: ${constraints}`;
+  return {
+    client: client.name,
+    config_path: path,
+    ...(scope === "project" ? { scope } : {}),
+    command: [],
+    command_identity: commandIdentity,
+    state: "invalid",
+    remediation:
+      scope === "project"
+        ? `${detail}. ${remediation(client, path, scope)}`
+        : detail,
+  };
+};
+
 const missingTransientLauncherRemediation = async (
   paths: readonly string[],
   identity: ClientRegistrationCommandIdentity,
@@ -883,7 +899,7 @@ const clientEvidencePresent = async (
       await (discoveryPaths.has(path) ? stat(path) : lstat(path));
       return ok(true);
     } catch (cause: unknown) {
-      if (!isMissing(cause))
+      if (!isAbsentClientConfigPath(cause))
         unavailable ??= {
           path,
           detail: `Client configuration evidence at ${path} could not be inspected: ${errorMessage(cause)}. Check file permissions and rerun rea doctor.`,
