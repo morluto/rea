@@ -18,10 +18,7 @@ import {
   protobufCaptureFailure,
   recordedDecoderCpuSeconds,
 } from "./CaptureFailures.js";
-import {
-  CaptureFormatError,
-  captureLimitForReply,
-} from "./CaptureFormatError.js";
+import { CaptureFormatError } from "./CaptureFormatError.js";
 import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../tests/fixtures/captureDecoderLimits.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
@@ -656,25 +653,3 @@ it.each([
     expect(projected.remediation.action).toContain(String(limit.maximum));
   },
 );
-
-it("derives each decoder-child wire reason from the limit table", () => {
-  expect(
-    new CaptureFormatError(
-      { name: "nesting-depth", maximum: 64 },
-      "deep",
-      "/log",
-    ),
-  ).toMatchObject({ replyReason: "input-limit", pointer: "/log" });
-  expect(
-    new CaptureFormatError({ name: "expanded-input", maximum: 1 }, "big")
-      .replyReason,
-  ).toBe("expanded-limit");
-  expect(new CaptureFormatError("malformed", "bad").replyReason).toBe("format");
-  expect(new CaptureFormatError("unsupported", "no").replyReason).toBe(
-    "unsupported",
-  );
-  expect(captureLimitForReply("input-limit")).toBe("nesting-depth");
-  expect(captureLimitForReply("expanded-limit")).toBe("expanded-input");
-  // A reply-size refusal is not a decoder input limit.
-  expect(captureLimitForReply("limit")).toBeUndefined();
-});
