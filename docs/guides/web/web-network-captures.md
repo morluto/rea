@@ -407,6 +407,20 @@ name decoding does not normalize the recorded paths used for grouping.
 The inventory describes observed names, without inferring required parameters,
 value types or a complete API schema. Sensitive-parent refusals still apply.
 
+Select `include_request_header_names: true` in the view to include the header,
+cookie and set-cookie names recorded for each group. The default and explicit
+`false` omit the `request_header_names` field. Selected groups carry
+`request_headers`, `cookie_names` and `set_cookie_names`, each an array of
+`{name, record_ordinals}` entries sorted by Unicode code point and listed once
+per record. `request_headers` holds the `request.headers` names verbatim, so
+`Accept` and `accept` stay distinct, while credential header names such as
+`Authorization` and `Cookie` appear as names only. `cookie_names` holds the
+`request.cookies` names and `set_cookie_names` the `response.cookies` names.
+No header, cookie or set-cookie value, prefix, digest or substring is copied,
+including from headers whose value was redacted at capture time. A name's
+presence does not establish authentication, session semantics, a required
+header or a complete header schema.
+
 | Rule       | Exact segment format                                 | Placeholder  |
 | ---------- | ---------------------------------------------------- | ------------ |
 | `numeric`  | ASCII digits only                                    | `{numeric}`  |
