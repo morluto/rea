@@ -1365,8 +1365,7 @@ it("reports a descriptor it cannot model instead of dropping it silently", async
   expect(report.indexes[0]?.entries).toHaveLength(1);
 });
 
-it("reports an unsupported layer digest without claiming the blob is missing", async () => {
-  const root = await createTestTempDirectory("rea-oci-sha1-layer-");
+const writeSha1LayerLayout = async (root: string, declaredSize: number) => {
   const written = await writeOciImageLayoutFixture(root);
   const hex = "a".repeat(40);
   await mkdir(join(root, "blobs", "sha1"), { recursive: true });
@@ -1380,10 +1379,11 @@ it("reports an unsupported layer digest without claiming the blob is missing", a
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
     layers: unknown[];
   };
+  const digest = `sha1:${hex}`;
   manifest.layers.push({
     mediaType: "application/vnd.oci.image.layer.v1.tar",
-    digest: `sha1:${hex}`,
-    size: 5,
+    digest,
+    size: declaredSize,
   });
   const manifestJson = `${JSON.stringify(manifest)}\n`;
   const manifestDigest = await putOciBlob(root, manifestJson);
@@ -1398,35 +1398,102 @@ it("reports an unsupported layer digest without claiming the blob is missing", a
   };
   await writeFile(indexPath, `${JSON.stringify(index)}\n`);
   await unlink(manifestPath);
+  return { hex, digest };
+};
+
+it("reports an unsupported layer digest without claiming the blob is missing", async () => {
+  const root = await createTestTempDirectory("rea-oci-sha1-layer-");
+  const { hex, digest } = await writeSha1LayerLayout(root, 5);
   const report = await inspectLayout(root);
   expect(report.findings).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         kind: "unsupported_digest_algorithm",
-        digest: `sha1:${hex}`,
+        digest,
       }),
     ]),
   );
   expect(
     report.findings.some(
       (finding) =>
-        finding.digest === `sha1:${hex}` &&
+        finding.digest === digest &&
         (finding.kind === "missing_blob" ||
           finding.kind === "unreferenced_blob"),
     ),
   ).toBe(false);
-  expect(
-    report.blobs.find((blob) => blob.digest === `sha1:${hex}`),
-  ).toMatchObject({
+  expect(report.blobs.find((blob) => blob.digest === digest)).toMatchObject({
     path: `blobs/sha1/${hex}`,
     kind: "file",
     present: true,
     hashed: false,
+    observed_size: 5,
   });
   expect(
-    report.images[0]?.layers.find((layer) => layer.digest === `sha1:${hex}`),
+    report.images[0]?.layers.find((layer) => layer.digest === digest),
   ).toMatchObject({ present: true });
   expect(report.coverage.status).toBe("partial");
+});
+
+it("checks declared sizes and records observed_size for unsupported-digest blobs", async () => {
+  const mismatchRoot = await createTestTempDirectory(
+    "rea-oci-sha1-size-mismatch-",
+  );
+  const { hex, digest } = await writeSha1LayerLayout(mismatchRoot, 6);
+  const mismatchReport = await inspectLayout(mismatchRoot);
+  expect(mismatchReport.findings).toEqual([
+    {
+      kind: "unsupported_digest_algorithm",
+      digest,
+      path: null,
+      message: `Digest ${digest} uses an unsupported algorithm.`,
+    },
+    {
+      kind: "size_mismatch",
+      digest,
+      path: `blobs/sha1/${hex}`,
+      message: `Blob ${digest} declared size 6 disagrees with file size 5.`,
+    },
+  ]);
+  expect(
+    mismatchReport.blobs.find((blob) => blob.digest === digest),
+  ).toMatchObject({
+    path: `blobs/sha1/${hex}`,
+    declared_size: 6,
+    observed_size: 5,
+    present: true,
+    hashed: false,
+    sha256: null,
+    sha512: null,
+    referenced: true,
+    kind: "file",
+  });
+  expect(mismatchReport.coverage.blobs_hashed).toBe(3);
+
+  const matchingRoot = await createTestTempDirectory(
+    "rea-oci-sha1-size-match-",
+  );
+  await writeSha1LayerLayout(matchingRoot, 5);
+  const matchingReport = await inspectLayout(matchingRoot);
+  expect(matchingReport.findings).toEqual([
+    {
+      kind: "unsupported_digest_algorithm",
+      digest,
+      path: null,
+      message: `Digest ${digest} uses an unsupported algorithm.`,
+    },
+  ]);
+  expect(
+    matchingReport.findings.some((finding) => finding.kind === "size_mismatch"),
+  ).toBe(false);
+  expect(
+    matchingReport.blobs.find((blob) => blob.digest === digest),
+  ).toMatchObject({
+    declared_size: 5,
+    observed_size: 5,
+    present: true,
+    hashed: false,
+    kind: "file",
+  });
 });
 
 it("refuses a missing oci-layout as malformed input", async () => {

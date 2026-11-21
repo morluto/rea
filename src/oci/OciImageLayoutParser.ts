@@ -1379,6 +1379,24 @@ const inventoryOciImageLayout = async (
     recordFinding(findings, kind, message, digest, path);
   };
 
+  const checkDeclaredSizes = (
+    digest: string,
+    path: string,
+    entry: DirectoryArtifactEntry,
+    declaredSizes: readonly number[],
+  ): void => {
+    if (entry.declaredSize === null) return;
+    for (const declared of declaredSizes)
+      if (declared !== entry.declaredSize)
+        recordFinding(
+          findings,
+          "size_mismatch",
+          `Blob ${digest} declared size ${String(declared)} disagrees with file size ${String(entry.declaredSize)}.`,
+          digest,
+          path,
+        );
+  };
+
   // Digest spellings that differ only in accepted hex casing resolve to one
   // file, so each file is hashed once and every spelling reuses the result,
   // including an oversize refusal, with its own row and checks.
@@ -1389,8 +1407,8 @@ const inventoryOciImageLayout = async (
   for (const [digest, reference] of referenced) {
     const parsed = parseOciDigest(digest);
     if (parsed === undefined) {
-      // The blob cannot be verified, but its presence is still observable
-      // at the path the layout gives every digest.
+      // The blob cannot be hashed, but its presence and file size are still
+      // observable at the path the layout gives every digest.
       recordFindingOnce(
         "unsupported_digest_algorithm",
         `Digest ${digest} uses an unsupported algorithm.`,
@@ -1399,6 +1417,8 @@ const inventoryOciImageLayout = async (
       const path = unverifiedBlobPath(digest);
       if (path !== undefined) referencedPaths.add(path);
       const entry = path === undefined ? undefined : byPath.get(path);
+      if (path !== undefined && entry?.kind === "file")
+        checkDeclaredSizes(digest, path, entry, reference.declaredSizes);
       blobs.push(
         blobRecord(
           digest,
@@ -1413,7 +1433,10 @@ const inventoryOciImageLayout = async (
               : entry.kind === "symlink"
                 ? "symlink"
                 : "other",
-          { present: entry?.kind === "file" },
+          {
+            present: entry?.kind === "file",
+            observed_size: entry?.kind === "file" ? entry.declaredSize : null,
+          },
         ),
       );
       continue;
@@ -1482,15 +1505,7 @@ const inventoryOciImageLayout = async (
       continue;
     }
     // Each reference's declaration is checked against the one file.
-    for (const declared of reference.declaredSizes)
-      if (entry.declaredSize !== null && declared !== entry.declaredSize)
-        recordFinding(
-          findings,
-          "size_mismatch",
-          `Blob ${digest} declared size ${String(declared)} disagrees with file size ${String(entry.declaredSize)}.`,
-          digest,
-          path,
-        );
+    checkDeclaredSizes(digest, path, entry, reference.declaredSizes);
     try {
       let hashed = hashedByPath.get(path);
       if (hashed === undefined) {
