@@ -105,6 +105,13 @@ REA preserves the original spelling in reported Evidence and removes brackets
 only from its validation copy, only for these declared producers and a valid
 IPv6 literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
 validation failures. Producer declarations do not authenticate origin.
+The same Chromium DevTools writer reports `serverIPAddress` as `""` when a
+request has no remote address, such as a refused connection, an aborted request
+or an internal redirect: it copies `NetworkRequest.remoteAddress()`, which
+starts empty. REA retains that empty value in reported Evidence, omits the
+optional field only from its validation copy for this declared producer, and
+adds a record limitation that the server address is unknown. Other producers'
+empty addresses remain validation failures.
 
 Native mitmproxy decoding requires a caller-supplied **mitmdump 12.2.3 on
 Linux**. Set its absolute executable path:

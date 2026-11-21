@@ -14,6 +14,7 @@ import {
 import {
   CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
   historicalCaptureFailure,
+  recordedDecoderCpuSeconds,
   captureMemoryFailure,
   protobufCaptureFailure,
   withCaptureReaderCleanup,
@@ -433,6 +434,11 @@ export class HistoricalCaptureDecoder {
       // Preparation transfers independent helper/descriptor owners. Keep that
       // typed stage separate from the decoder supervisor lease above: its
       // historical error already follows the post-launch completion owner.
+      const effectiveCpuSeconds = await recordedDecoderCpuSeconds(
+        runtime?.path,
+        cause,
+        runtimeResources,
+      );
       const error = retainProcessInspectionCleanup(
         processInspectionFailure(cause),
         historicalCaptureFailure(
@@ -442,6 +448,7 @@ export class HistoricalCaptureDecoder {
           options,
           reportedHeap,
           processLease,
+          effectiveCpuSeconds,
         ),
         runtimeResources,
         OPERATION,
