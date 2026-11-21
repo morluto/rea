@@ -8,6 +8,7 @@
 ### Features
 
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
+* **website:** recognize contributors in a shared commit-ranked directory ([ba31a11](https://github.com/morluto/rea/commit/ba31a111809e727891c238d1ca5ff9d62f751f0b))
 
 
 ### Bug Fixes
