@@ -168,7 +168,7 @@ jobs:
       - name: Restore static task cache
         if: needs.changes.outputs.code == 'true'
         id: static-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: rea-static-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
@@ -230,14 +230,14 @@ jobs:
       - run: npm ci
       - name: Restore deep static task cache
         id: static-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
           restore-keys: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - name: Restore Knip analysis cache
         id: knip-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: node_modules/.cache/knip
           # Each trusted commit publishes a new entry. Restore still matches the
@@ -523,7 +523,7 @@ jobs:
       - name: Restore advertised schema engines
         if: needs.changes.outputs.code == 'true'
         id: schema-engines
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/rea-schema-engines
           key: rea-schema-engines-v1-${{ runner.os }}-${{ runner.arch }}-py${{ steps.schema-python.outputs.version }}-${{ hashFiles('scripts/verify/advertised-schemas/requirements.txt') }}
@@ -715,7 +715,7 @@ jobs:
             >> "${GITHUB_OUTPUT}"
       - name: Restore Windows native build outputs
         id: windows-native-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             native/windows/build/
@@ -819,7 +819,7 @@ jobs:
           path: .turbo/cache/
       - name: Restore Windows Turbo build cache
         if: matrix.os == 'windows-latest'
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
@@ -978,7 +978,7 @@ jobs:
       - run: npm ci
       - name: Restore Windows Turbo build cache
         id: windows-build-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
