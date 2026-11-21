@@ -255,6 +255,8 @@ describe.skipIf(process.platform === "win32")(
       { before: "[Other]\nName=Other\n", extra: "", invalidLine: 1 },
       { header: "\u00a0[Desktop Entry]", invalidLine: 1 },
       { header: "[Desktop Entry]\u00a0", invalidLine: 1 },
+      { before: "", extra: "\u00a0Name=Injected\n", invalidLine: 3 },
+      { before: "", extra: "\u00a0\n", invalidLine: 3 },
       {
         before: "",
         extra: "",
