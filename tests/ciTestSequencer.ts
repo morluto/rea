@@ -181,7 +181,10 @@ export function allocateByDuration<T>(
     for (const candidate of shards.slice(1)) {
       const phases = place(candidate.phases, entry, duration);
       const wall = wallOf(phases);
-      if (wall < chosenWall) {
+      if (
+        wall < chosenWall ||
+        (wall === chosenWall && candidate.items.length < chosen.items.length)
+      ) {
         chosen = candidate;
         chosenPhases = phases;
         chosenWall = wall;
