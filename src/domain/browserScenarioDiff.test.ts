@@ -512,7 +512,7 @@ describe("browser scenario network event order", () => {
     expect(compare(redirectChainCapture(true)).overall_status).toBe("changed");
   });
 
-  it("keeps duplicate request identities incomparable without dropping occurrences", () => {
+  it("retains ambiguous request multiplicity in the step evidence", () => {
     const capture = concurrentCapture(["a", "b"], { a: 200, b: 404 });
     const request = capture.events.items.find(
       (event) => event.kind === "request",
@@ -529,10 +529,13 @@ describe("browser scenario network event order", () => {
         ],
       },
     });
-    for (const [before_scenario, after_scenario] of [
-      [ambiguous, ambiguous],
-      [ambiguous, capture],
-      [capture, ambiguous],
+    const reason = scenarioNetworkCoverageReason(ambiguous);
+    if (reason === undefined)
+      throw new Error("Expected ambiguous request coverage");
+    for (const [before_scenario, after_scenario, equalDigests] of [
+      [ambiguous, ambiguous, true],
+      [ambiguous, capture, false],
+      [capture, ambiguous, false],
     ] as const) {
       const input = compareBrowserScenariosInputSchema.parse({
         before_scenario,
@@ -540,15 +543,18 @@ describe("browser scenario network event order", () => {
       });
       const compared = compareBrowserScenarios(input);
       expect(compared.overall_status).toBe("unknown");
-      expect(
-        compared.steps.flatMap((step) => step.artifact_diffs),
-      ).toContainEqual(
-        expect.objectContaining({
-          artifact: "events",
-          status: "unknown",
-          reason: expect.stringContaining("Multiple requests share"),
-        }),
+      const diff = compared.steps[0]?.artifact_diffs.find(
+        ({ artifact }) => artifact === "events",
       );
+      if (diff === undefined) throw new Error("Expected request-step evidence");
+      expect(diff).toMatchObject({
+        status: "unknown",
+        before_sha256: expect.any(String),
+        after_sha256: expect.any(String),
+        reason,
+      });
+      // An additional copy changes the retained fingerprint even when identity is ambiguous.
+      expect(diff.before_sha256 === diff.after_sha256).toBe(equalDigests);
       expect(input.before_scenario.events.items).toEqual(
         before_scenario.events.items,
       );
@@ -652,70 +658,55 @@ describe("browser scenario network comparison stability", () => {
     expect(compared.overall_status).toBe("changed");
   });
 
-  it("compares concurrent network transactions without receipt order, receipt step or capture-local IDs", () => {
-    const compare = (
-      before: BrowserScenarioCapture,
-      after: BrowserScenarioCapture,
-    ) =>
+  it("compares concurrent transactions across receipt order, step, and capture-local IDs", () => {
+    const statuses = { a: 200, b: 404 };
+    const before = concurrentCapture(["a", "b"], statuses);
+    const compare = (after: BrowserScenarioCapture) =>
       compareBrowserScenarios(
         compareBrowserScenariosInputSchema.parse({
           before_scenario: before,
           after_scenario: after,
         }),
       ).overall_status;
-    const statuses = { a: 200, b: 404 };
 
     expect(
-      compare(
-        concurrentCapture(["a", "b"], statuses),
-        concurrentCapture(["b", "a"], statuses, 1, ["a", "b"]),
-      ),
+      compare(concurrentCapture(["b", "a"], statuses, 1, ["a", "b"])),
     ).toBe("unchanged");
     expect(
-      compare(
-        concurrentCapture(["a", "b"], statuses),
-        concurrentCapture(["b", "a"], { a: 404, b: 200 }),
-      ),
-    ).toBe("changed");
-    expect(
-      compare(
-        concurrentCapture(["a", "b"], statuses, 0, ["a", "b"]),
-        concurrentCapture(["a", "b"], statuses, 0, ["b", "a"]),
-      ),
+      compare(concurrentCapture(["a", "b"], statuses, 0, ["b", "a"])),
     ).toBe("unchanged");
-    // Redirect linkage is distinct from independent concurrent transactions.
+    expect(compare(concurrentCapture(["b", "a"], { a: 404, b: 200 }))).toBe(
+      "changed",
+    );
     expect(
-      compare(
-        concurrentCapture(["a", "b"], statuses),
-        concurrentCapture(["a", "b"], statuses, 0, ["a", "b"], true),
-      ),
+      compare(concurrentCapture(["a", "b"], statuses, 0, ["a", "b"], true)),
     ).toBe("changed");
   });
 });
 
 describe("browser scenario network request times", () => {
   /** A two-request capture whose `a` request finished and whose `b` request failed with `failure`. */
-  const ended = (failure = "net::ERR_ABORTED"): BrowserScenarioCapture => {
-    const capture = concurrentCapture(["a", "b"], { a: 200, b: 404 });
-    let sequence = Math.max(...capture.events.items.map((e) => e.sequence));
-    const terminal = capture.events.items.flatMap((event) =>
-      event.kind === "request"
-        ? [
-            event.url.url.endsWith("/a.js")
-              ? {
-                  ...event,
-                  sequence: ++sequence,
-                  kind: "request-finished" as const,
-                }
-              : {
-                  ...event,
-                  sequence: ++sequence,
-                  kind: "request-failed" as const,
-                  failure,
-                },
-          ]
-        : [],
+  const ended = (
+    capture: BrowserScenarioCapture,
+    receiptStep: number,
+    failure = "net::ERR_ABORTED",
+  ): BrowserScenarioCapture => {
+    let sequence = Math.max(
+      ...capture.events.items.map(({ sequence }) => sequence),
     );
+    const terminal = capture.events.items.flatMap((event) => {
+      if (event.kind !== "request") return [];
+      const receipt = {
+        ...event,
+        sequence: ++sequence,
+        step_index: receiptStep,
+      };
+      return [
+        event.url.url.endsWith("/a.js")
+          ? { ...receipt, kind: "request-finished" as const }
+          : { ...receipt, kind: "request-failed" as const, failure },
+      ];
+    });
     return browserScenarioCaptureSchema.parse({
       ...capture,
       events: {
@@ -726,36 +717,29 @@ describe("browser scenario network request times", () => {
     });
   };
 
-  /** The same capture with every request observed, started and timed `offset` ms later. */
   const timed = (
     capture: BrowserScenarioCapture,
     offset: number,
-  ): BrowserScenarioCapture =>
-    browserScenarioCaptureSchema.parse({
+  ): BrowserScenarioCapture => {
+    const start = Date.parse("2026-10-24T04:59:59.990Z") + offset;
+    const started_at = new Date(start).toISOString();
+    const observed_at = new Date(start + 10).toISOString();
+    return browserScenarioCaptureSchema.parse({
       ...capture,
       events: {
         ...capture.events,
-        items: capture.events.items.map((event) =>
-          event.kind === "request"
-            ? {
-                ...event,
-                observed_at: new Date(
-                  Date.parse("2026-10-24T05:00:00.000Z") + offset,
-                ).toISOString(),
-              }
-            : event.kind === "request-finished" ||
-                event.kind === "request-failed"
-              ? {
-                  ...event,
-                  started_at: new Date(
-                    Date.parse("2026-10-24T04:59:59.990Z") + offset,
-                  ).toISOString(),
-                  elapsed_ms: 3 + offset,
-                }
-              : event,
-        ),
+        items: capture.events.items.map((event) => {
+          if (event.kind === "request") return { ...event, observed_at };
+          if (
+            event.kind === "request-finished" ||
+            event.kind === "request-failed"
+          )
+            return { ...event, started_at, elapsed_ms: 3 + offset };
+          return event;
+        }),
       },
     });
+  };
 
   const compare = (
     before: BrowserScenarioCapture,
@@ -768,38 +752,41 @@ describe("browser scenario network request times", () => {
       }),
     );
 
-  it("ignores when requests were observed, started and how long they took", () => {
-    const early = timed(ended(), 0);
-    const late = timed(ended(), 7_000);
-    const terminal = early.events.items.filter(
-      (event) =>
-        event.kind === "request-finished" || event.kind === "request-failed",
-    );
-    expect(terminal.map(({ kind }) => kind).sort()).toEqual([
-      "request-failed",
-      "request-finished",
-    ]);
-    for (const event of terminal)
-      expect(event).toMatchObject({
-        started_at: expect.any(String),
-        elapsed_ms: expect.any(Number),
-      });
+  it("ignores volatile timing and attributes a changed late failure to the request step", () => {
+    const statuses = { a: 200, b: 404 };
+    const untimed = ended(concurrentCapture(["a", "b"], statuses), 0);
+    const reordered = concurrentCapture(["b", "a"], statuses, 1, ["a", "b"]);
+    const early = timed(untimed, 0);
+    const late = timed(ended(reordered, 1), 7_000);
+
     const compared = compare(early, late);
     expect(compared.overall_status).toBe("unchanged");
     expect(compared.normalization.built_in_rules).toContain(
       "ignore_network_request_timing",
     );
-    // A capture made before request times were recorded compares with a timed one.
-    expect(compare(ended(), late).overall_status).toBe("unchanged");
-  });
+    expect(compare(untimed, late).overall_status).toBe("unchanged");
 
-  it("still compares the rest of a timed completion event", () => {
-    expect(
-      compare(
-        timed(ended(), 0),
-        timed(ended("net::ERR_CONNECTION_RESET"), 7_000),
-      ).overall_status,
-    ).toBe("changed");
+    const changed = compare(
+      early,
+      timed(ended(reordered, 1, "net::ERR_CONNECTION_RESET"), 7_000),
+    );
+    expect(changed.overall_status).toBe("changed");
+    expect(changed.steps).toMatchObject([
+      {
+        step_id: "scenario_start",
+        status: "changed",
+        artifact_diffs: [
+          {
+            artifact: "events",
+            status: "changed",
+            before_state: "captured",
+            after_state: "captured",
+          },
+        ],
+      },
+      { step_id: "open-settings", status: "unchanged", artifact_diffs: [] },
+    ]);
+    expect(changed.artifact_diffs.total).toBe(1);
   });
 });
 
