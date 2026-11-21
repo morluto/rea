@@ -111,6 +111,16 @@ const selectedRegistrationEnvironment = async (
   };
 };
 
+const registrationEnvironmentOverlay = (
+  inherited: Readonly<NodeJS.ProcessEnv>,
+  registration: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): Readonly<NodeJS.ProcessEnv> =>
+  snapshotEnvironment(
+    mergeEnvironmentOverrides(inherited, registration, platform),
+    platform,
+  );
+
 /**
  * Fold a selected registration and the terminal it inherits into the canonical
  * names a provider check reads: the registration's recorded values win, names
@@ -130,10 +140,7 @@ export const selectedProviderSettings = (
 ): Readonly<Record<string, string | undefined>> => {
   if (selected === undefined) return terminal;
   const settings: Record<string, string | undefined> = {
-    ...snapshotEnvironment(
-      mergeEnvironmentOverrides(terminal, selected.environment, platform),
-      platform,
-    ),
+    ...registrationEnvironmentOverlay(terminal, selected.environment, platform),
   };
   for (const name of Object.keys(
     snapshotEnvironment(
@@ -374,14 +381,9 @@ export const createSystemDoctorHost = (
   >();
   const readProviderDefaults = (
     explicit: Readonly<NodeJS.ProcessEnv>,
-    canReuseStartup: boolean,
   ): ReturnType<typeof loadUserConfigurationDefaults> => {
     const path = userConfigFilePath(explicit, platform);
-    if (
-      canReuseStartup &&
-      savedDefaults !== undefined &&
-      path === startupConfig
-    )
+    if (savedDefaults !== undefined && path === startupConfig)
       return Promise.resolve(ok(startupProviderDefaults));
     let read = savedConfigReads.get(path);
     if (read === undefined) {
@@ -396,19 +398,14 @@ export const createSystemDoctorHost = (
   ) => {
     if (analysisProvider !== "ida" && analysisProvider !== "auto")
       return { kind: "none" } as const;
-    const path = registration.REA_IDA_MCP_CONFIG;
+    const explicit = registrationEnvironmentOverlay(
+      inheritedEnvironment,
+      registration,
+      platform,
+    );
+    const path = explicit.REA_IDA_MCP_CONFIG;
     return path === undefined
-      ? ({
-          kind: "saved",
-          environment: snapshotEnvironment(
-            mergeEnvironmentOverrides(
-              inheritedEnvironment,
-              registration,
-              platform,
-            ),
-            platform,
-          ),
-        } as const)
+      ? ({ kind: "saved", environment: explicit } as const)
       : ({ kind: "explicit", path } as const);
   };
   const registrationReads = new WeakMap<
@@ -458,11 +455,7 @@ export const createSystemDoctorHost = (
         let path: string | undefined;
         if (lookup.kind === "explicit") path = lookup.path;
         else {
-          const defaults = await readProviderDefaults(
-            lookup.environment,
-            savedDefaults?.has("REA_IDA_MCP_CONFIG") === true ||
-              environment.REA_IDA_MCP_CONFIG === undefined,
-          );
+          const defaults = await readProviderDefaults(lookup.environment);
           if (!defaults.ok) return defaults;
           path = defaults.value.REA_IDA_MCP_CONFIG;
         }
@@ -555,7 +548,7 @@ export const createSystemDoctorHost = (
           },
         };
 
-      const defaults = await readProviderDefaults(explicit, true);
+      const defaults = await readProviderDefaults(explicit);
       if (!defaults.ok)
         return {
           environment: explicit,

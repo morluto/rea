@@ -893,8 +893,8 @@ cliTest(
     const savedConfig = join(configHome, "rea", "rea.json");
     await mkdir(dirname(savedConfig), { recursive: true });
     await mkdir(codexHome, { recursive: true });
-    const saveIdaSetting = async (file: string, timeoutMs: number) => {
-      await writeFile(
+    const writeIdaRegistration = (file: string, timeoutMs: number) =>
+      writeFile(
         file,
         JSON.stringify({
           url: "http://127.0.0.1:12345/mcp",
@@ -902,13 +902,19 @@ cliTest(
           timeoutMs,
         }),
       );
+    const saveIdaSetting = async (file: string, timeoutMs: number) => {
+      await writeIdaRegistration(file, timeoutMs);
       await writeFile(
         savedConfig,
         JSON.stringify({ REA_IDA_MCP_CONFIG: file }),
       );
     };
     await saveIdaSetting(idaConfig, 900_000);
-    const run = (arguments_: string[], configRoot: string | undefined) =>
+    const run = (
+      arguments_: string[],
+      configRoot: string | undefined,
+      idaOverride?: string,
+    ) =>
       cli.run({
         arguments: [
           ...arguments_,
@@ -924,6 +930,7 @@ cliTest(
           CODEX_HOME: codexHome,
           XDG_CONFIG_HOME: configRoot,
           ...missingHopperAndGhidraEnvironment(home),
+          REA_IDA_MCP_CONFIG: idaOverride,
         },
         freshProcess: true,
       });
@@ -950,7 +957,8 @@ cliTest(
     expect(launcher.env).not.toHaveProperty("REA_IDA_MCP_CONFIG");
 
     // Doctor can derive the new budget from the registered locator alone.
-    await saveIdaSetting(join(home, "replacement-ida.json"), 1_200_000);
+    const replacement = join(home, "replacement-ida.json");
+    await saveIdaSetting(replacement, 1_200_000);
     const doctor = await run(["doctor"], undefined);
     expect(doctor.exitCode, doctor.stdout).toBe(0);
     expect(doctor.json).toMatchObject({
@@ -966,6 +974,31 @@ cliTest(
         ],
       },
     });
+
+    // An inherited override governs the budget, even if the shadowed
+    // registration is valid with a different budget or cannot be parsed.
+    const inherited = join(home, "inherited-ida.json");
+    await writeIdaRegistration(inherited, 1_800_000);
+    const inheritedStatus = {
+      identity: {
+        registrations: [
+          expect.objectContaining({
+            client: "codex",
+            state: "aligned",
+            advisory: expect.stringContaining(
+              "tool_timeout_sec = 1920 seconds",
+            ),
+          }),
+        ],
+      },
+    };
+    expect
+      .soft((await run(["doctor"], undefined, inherited)).json)
+      .toMatchObject(inheritedStatus);
+    await writeFile(replacement, "{");
+    expect
+      .soft((await run(["doctor"], undefined, inherited)).json)
+      .toMatchObject(inheritedStatus);
 
     // MCP rereads the file even when the client did not inherit setup's XDG.
     await writeFile(savedConfig, "{");
