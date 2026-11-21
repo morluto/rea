@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta
+      name="description"
+      content="A sample job discovery app with swipe-style role review and a local application tracker."
+    />
+    <title>Goodwork — Job discovery demo</title>
+    <!-- website:sharing:start -->
+    <!-- prettier-ignore -->
+    <link rel="canonical" href="https://rea.tools/examples/job-swiper/" />
+    <!-- website:languages:start -->
+
+    <!-- website:languages:end -->
+    <!-- prettier-ignore -->
+    <meta property="og:type" content="website" />
+    <!-- prettier-ignore -->
+    <meta property="og:site_name" content="REA" />
+    <!-- prettier-ignore -->
+    <meta property="og:title" content="Goodwork — Job discovery demo" />
+    <!-- prettier-ignore -->
+    <meta property="og:description" content="A sample job discovery app with swipe-style role review and a local application tracker." />
+    <!-- prettier-ignore -->
+    <meta property="og:url" content="https://rea.tools/examples/job-swiper/" />
+    <!-- prettier-ignore -->
+    <meta property="og:image" content="https://rea.tools/assets/social-card.png" />
+    <!-- prettier-ignore -->
+    <meta property="og:image:type" content="image/png" />
+    <!-- prettier-ignore -->
+    <meta property="og:image:width" content="1200" />
+    <!-- prettier-ignore -->
+    <meta property="og:image:height" content="630" />
+    <!-- prettier-ignore -->
+    <meta
+      property="og:image:alt"
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
+    />
+    <!-- prettier-ignore -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <!-- prettier-ignore -->
+    <meta name="twitter:title" content="Goodwork — Job discovery demo" />
+    <!-- prettier-ignore -->
+    <meta name="twitter:description" content="A sample job discovery app with swipe-style role review and a local application tracker." />
+    <!-- prettier-ignore -->
+    <meta name="twitter:image" content="https://rea.tools/assets/social-card.png" />
+    <!-- prettier-ignore -->
+    <meta
+      name="twitter:image:alt"
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
+    />
+    <!-- website:sharing:end -->
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../assets/styles.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+    <!-- website:theme:start -->
+    <meta name="theme-color" content="#ffffff" />
+    <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
+    <script src="../../assets/theme.js"></script>
+    <!-- website:theme:end -->
+  </head>
+  <body id="top">
+    <a class="skip-link" href="#main">Skip to job discovery</a>
+    <!-- website:header:start -->
+    <!-- prettier-ignore -->
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="../../" aria-label="REA home"
+          ><span class="brand-name">REA</span
+          ><span class="brand-caption" data-i18n-skip>Reverse Engineer Anything</span></a
+        >
+        <nav class="navigation" aria-label="Main navigation">
+          <a href="../../get-started/" class="nav-start">Get started</a>
+          <a href="../../showcase/">Showcases</a>
+          <a href="../../blog/">Blog</a>
+          <a href="../../guides/">Guides</a>
+        </nav>
+        <div class="header-social">
+
+          <button class="theme-toggle" type="button" data-theme-toggle hidden>
+            <svg class="theme-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />
+            </svg>
+            <svg class="theme-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
+            </svg>
+          </button>
+          <a
+            class="nav-github"
+            href="https://github.com/morluto/rea"
+            aria-label="REA on GitHub"
+            title="REA on GitHub"
+          >
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+              />
+            </svg>
+            <span class="nav-github-count" hidden aria-hidden="true"></span>
+          </a>
+          <a
+            class="nav-discord"
+            href="https://discord.gg/GkcryMnJDM"
+            aria-label="Join REA on Discord"
+            title="Join REA on Discord"
+          >
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                fill="currentColor"
+                d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286ZM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189Zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"
+              />
+            </svg>
+          </a>
+          <a
+            class="nav-x"
+            href="https://x.com/reatools"
+            aria-label="Follow REA on X"
+            title="Follow REA on X"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                fill="currentColor"
+                d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"
+              />
+            </svg>
+          </a>
+        </div>
+      </div>
+    </header>
+    <!-- website:header:end -->
+    <div class="job-app">
+      <header class="topbar">
+        <a class="wordmark" href="./" aria-label="Goodwork home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M7 16.5 13.2 23 25 9" />
+            </svg>
+          </span>
+          <span>goodwork</span>
+        </a>
+        <div class="topbar-note">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span>Made for your next chapter</span>
+        </div>
+        <div class="profile-button" aria-label="Profile: Alex Morgan">
+          <span class="profile-avatar">AM</span>
+          <span class="profile-name">Alex Morgan</span>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="sidebar" aria-label="Job application workspace">
+          <div class="sidebar-intro">
+            <span class="eyebrow">YOUR SPACE</span>
+            <p>A little closer to work that fits.</p>
+          </div>
+          <nav class="views" aria-label="Job lists">
+            <button class="view-button is-active" type="button" data-view="discover" aria-current="page">
+              <span class="view-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20"><path d="M3 5.5h14M3 10h14M3 14.5h9" /></svg>
+              </span>
+              <span>Discover</span>
+              <span class="view-count" id="discover-count">5</span>
+            </button>
+            <button class="view-button" type="button" data-view="saved">
+              <span class="view-icon heart-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20"><path d="M17 7.1c0 4.1-7 9-7 9s-7-4.9-7-9a3.7 3.7 0 0 1 7-1.6 3.7 3.7 0 0 1 7 1.6Z" /></svg>
+              </span>
+              <span>Saved</span>
+              <span class="view-count" id="saved-count">0</span>
+            </button>
+            <button class="view-button" type="button" data-view="applied">
+              <span class="view-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20"><path d="M5 3.5h10a1.5 1.5 0 0 1 1.5 1.5v11.5L10 13l-6.5 3.5V5A1.5 1.5 0 0 1 5 3.5Z" /><path d="m7.5 8.5 1.7 1.7 3.5-3.5" /></svg>
+              </span>
+              <span>Applied</span>
+              <span class="view-count" id="applied-count">0</span>
+            </button>
+          </nav>
+
+          <div class="sidebar-divider"></div>
+          <section class="profile-progress" aria-labelledby="profile-title">
+            <div class="progress-heading">
+              <span class="eyebrow" id="profile-title">PROFILE STRENGTH</span>
+              <span class="progress-number">82%</span>
+            </div>
+            <div class="progress-track" role="progressbar" aria-label="Profile strength" aria-valuenow="82" aria-valuemin="0" aria-valuemax="100">
+              <span></span>
+            </div>
+            <p>Your profile is looking good. Add a portfolio link to stand out.</p>
+            <button class="text-button" type="button" id="portfolio-tip">See profile tip <span aria-hidden="true">↗</span></button>
+          </section>
+
+          <div class="sidebar-bottom">
+            <div class="week-card">
+              <span class="week-icon" aria-hidden="true">✦</span>
+              <div>
+                <strong>Good things take time.</strong>
+                <span>One thoughtful yes at a time.</span>
+              </div>
+            </div>
+            <p class="demo-note">Sample roles · Your changes stay in this browser.</p>
+          </div>
+        </aside>
+
+        <main class="main-content" id="main">
+          <div class="content-heading">
+            <div>
+              <span class="eyebrow" id="section-eyebrow">CURATED FOR YOU</span>
+              <h1 id="page-title">Find your next <span>good thing.</span></h1>
+              <p class="heading-copy" id="page-copy">Thoughtful matches, one role at a time.</p>
+            </div>
+            <button class="filter-button" id="filter-button" type="button" aria-label="Show job preferences">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M6 10h8m-5 5h2" /><circle cx="7" cy="5" r="1.5" /><circle cx="12" cy="10" r="1.5" /></svg>
+              <span>Preferences</span>
+            </button>
+          </div>
+
+          <div class="discovery-layout">
+            <section class="deck-column" aria-label="Job matches">
+              <div class="deck-topline" id="deck-topline">
+                <span><span class="sparkle" aria-hidden="true">✳</span> A strong match for you</span>
+                <span class="match-position" id="match-position">01 <i>/</i> 05</span>
+              </div>
+
+              <div id="job-stage" class="job-stage" aria-live="polite"></div>
+
+              <div class="swipe-actions" id="swipe-actions">
+                <button class="action-button pass-button" id="pass-button" type="button" aria-label="Pass on this role">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+                </button>
+                <button class="undo-button" id="undo-button" type="button" disabled>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 6 4 9.5 7.5 13M4.5 9.5H12a4 4 0 1 1 0 8h-1" /></svg>
+                  Undo
+                </button>
+                <button class="action-button save-button" id="save-button" type="button" aria-label="Save this role">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 8.5c0 5-8 10-8 10s-8-5-8-10a4.2 4.2 0 0 1 8-1.8 4.2 4.2 0 0 1 8 1.8Z" /></svg>
+                </button>
+              </div>
+              <p class="keyboard-hint" id="keyboard-hint">Use <kbd>←</kbd> to pass or <kbd>→</kbd> to save</p>
+              <p class="status-message" id="status-message" role="status" aria-live="polite"></p>
+            </section>
+
+            <aside class="match-sidebar" aria-label="Your match preferences">
+              <div class="match-card">
+                <div class="match-card-heading">
+                  <div>
+                    <span class="eyebrow">YOUR MUST-HAVES</span>
+                    <h2>Work, your way.</h2>
+                  </div>
+                  <span class="edit-mark" aria-hidden="true">↗</span>
+                </div>
+                <div class="preference-row">
+                  <span class="preference-icon location-icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><path d="M16 8.3c0 4.5-6 9-6 9s-6-4.5-6-9a6 6 0 1 1 12 0Z" /><circle cx="10" cy="8" r="2" /></svg>
+                  </span>
+                  <div><span class="preference-label">LOCATION</span><strong>Remote friendly</strong></div>
+                </div>
+                <div class="preference-row">
+                  <span class="preference-icon salary-icon" aria-hidden="true">$</span>
+                  <div><span class="preference-label">SALARY</span><strong>$110k and up</strong></div>
+                </div>
+                <div class="preference-row">
+                  <span class="preference-icon role-icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20"><rect x="3.5" y="6" width="13" height="10" rx="1.5" /><path d="M7.5 6V4.5h5V6m-9 4.5h13M9 10.5v1h2v-1" /></svg>
+                  </span>
+                  <div><span class="preference-label">ROLE</span><strong>Product &amp; design</strong></div>
+                </div>
+                <button class="edit-preferences" id="edit-preferences" type="button">About your preferences <span aria-hidden="true">→</span></button>
+              </div>
+
+              <div class="weekly-card">
+                <div class="weekly-art" aria-hidden="true">
+                  <span class="orbit orbit-one"></span><span class="orbit orbit-two"></span>
+                  <span class="weekly-star">✦</span><span class="weekly-spark">✳</span>
+                </div>
+                <span class="eyebrow">A GENTLE REMINDER</span>
+                <h2>It's a two-way fit.</h2>
+                <p>Look for a team that sees what you bring—and helps you grow.</p>
+              </div>
+            </aside>
+          </div>
+        </main>
+      </div>
+    </div>
+    <dialog class="info-dialog" id="info-dialog" aria-labelledby="dialog-title">
+      <button class="dialog-close" id="dialog-close" type="button" aria-label="Close dialog">×</button>
+      <span class="dialog-sparkle" aria-hidden="true">✳</span>
+      <h2 id="dialog-title">A little profile tip</h2>
+      <p id="dialog-copy">A portfolio link gives hiring teams a quick way to see how you think and what you make. Add one to your profile when you're ready.</p>
+      <button class="dialog-done" id="dialog-done" type="button">Got it</button>
+    </dialog>
+    <!-- website:footer:start -->
+    <!-- prettier-ignore -->
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>REA · Reverse Engineer Anything</p>
+        <div class="footer-links">
+          <a href="../../faq/">FAQ</a
+          ><a href="../../contributors/">Contributors</a
+          ><a href="https://github.com/morluto/rea">Source</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
+          ><a href="https://discord.gg/GkcryMnJDM">Join the community</a
+          ><a href="https://x.com/reatools">Follow us on X</a>
+        </div>
+      </div>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top">
+      <span aria-hidden="true">↑</span> Top
+    </a>
+    <!-- website:footer:end -->
+  </body>
+</html>
