@@ -305,10 +305,8 @@ export class CdpRuntimeSession {
         if (
           this.transport.sessionId !== undefined &&
           isCdpSessionNotFoundRejection(cause)
-        ) {
+        )
           sessionGone = true;
-          return;
-        }
         failures.push(
           `${method}: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : errorMessage(cause)}`,
         );

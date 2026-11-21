@@ -283,16 +283,15 @@ describe("runtime disconnect ownership", () => {
 
 describe("runtime cleanup failure ordering", () => {
   it.each([
-    ["Session with given id not found.", true],
-    ["Session could not be released", false],
+    ["Target.detachFromTarget", "Session with given id not found.", true],
+    ["Profiler.disable", "Session with given id not found.", false],
+    ["Target.detachFromTarget", "Session could not be released", false],
   ] as const)(
-    "handles the final detach reply %s",
-    async (message, alreadyGone) => {
+    "reports cleanup accurately when %s returns %s",
+    async (cleanupMethod, message, confirmed) => {
       const browser = await startRuntimeBrowser({
         commandError: ({ method }) =>
-          method === "Target.detachFromTarget"
-            ? { code: -32_001, message }
-            : undefined,
+          method === cleanupMethod ? { code: -32_001, message } : undefined,
       });
       onTestFinished(() => browser.close());
       const result = await new CdpWebRuntimeProvider().observeExecution(
@@ -304,11 +303,9 @@ describe("runtime cleanup failure ordering", () => {
         { signal: AbortSignal.timeout(2_000) },
       );
       expect(
-        browser.commands.some(
-          ({ method }) => method === "Target.detachFromTarget",
-        ),
+        browser.commands.some(({ method }) => method === cleanupMethod),
       ).toBe(true);
-      expect(result.ok).toBe(alreadyGone);
+      expect(result.ok).toBe(confirmed);
       if (!result.ok)
         expect(projectAnalysisError(result.error).code).toBe(
           "cleanup_incomplete",

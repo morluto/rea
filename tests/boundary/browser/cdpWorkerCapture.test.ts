@@ -154,6 +154,66 @@ it.each([false, true])(
   },
 );
 
+it.each([false, true])(
+  "marks worker script coverage incomplete when setup finishes after the window (sources %s)",
+  async (includeSources) => {
+    let inventories = 0;
+    const { browser, provider, input } = await fixture({
+      eventsBeforeReply: ["Target.getTargets"],
+      commandEvents(command, origin) {
+        if (command.method === "Target.getTargets" && ++inventories === 2)
+          return [
+            {
+              method: "Target.attachedToTarget",
+              sessionId: "session-1",
+              params: {
+                sessionId: "worker-late",
+                targetInfo: {
+                  targetId: "late",
+                  type: "worker",
+                  url: origin + "/late.js",
+                  attached: true,
+                },
+                waitingForDebugger: false,
+              },
+            },
+          ];
+        if (
+          command.sessionId === "worker-late" &&
+          command.method === "Target.setAutoAttach"
+        )
+          return [];
+        return undefined;
+      },
+    });
+    const result = await provider.inspectPage({
+      ...input,
+      include_script_sources: includeSources,
+    });
+    if (!result.ok) throw result.error;
+    const late = result.value.workers.find(
+      ({ target_id }) => target_id === "late",
+    )!.observation!;
+    expect(
+      browser.commands.some(
+        ({ sessionId, method }) =>
+          sessionId === "worker-late" && method === "Debugger.enable",
+      ),
+    ).toBe(true);
+    expect(late.scripts).toEqual([]);
+    expect(late.completeness.unavailable_sections).toContain("scripts");
+    expect(
+      late.completeness.unavailable_sections.includes("script_sources"),
+    ).toBe(includeSources);
+    expect(
+      browser.commands.some(
+        ({ sessionId, method }) =>
+          sessionId === "worker-late" && method === "Debugger.getScriptSource",
+      ),
+    ).toBe(false);
+  },
+);
+
 it("drains admitted source reads without admitting another script after the final inventory", async () => {
   const { browser, provider, input } = await fixture({
     hangOnCommand: ({ method, sessionId, params }) =>

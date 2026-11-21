@@ -10,7 +10,7 @@ import { chromium } from "playwright-core";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { startRuntimeFixtureBrowser } from "./browser-runtime-fixture-lifecycle.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { startWorkerSite } from "../fixtures/browser-worker-site.mjs";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webPageInspectionSchema } from "../../dist/domain/browserObservationSchemas.js";
@@ -22,15 +22,8 @@ export async function verifyBrowserWorkers(
   entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url)),
 ) {
   const site = await startWorkerSite();
-  let fixture,
-    browser,
-    client,
-    transport,
-    primaryError,
-    foreignSite,
-    artifacts,
-    commands;
-  try {
+  let fixture, browser, client, transport, foreignSite, artifacts, commands;
+  return withVerifierCleanup(async () => {
     commands = await createVerifierCommands();
     artifacts = await mkdtemp(join(tmpdir(), "rea-worker-evidence-"));
     fixture = await startRuntimeFixtureBrowser(executable, site.origin);
@@ -443,27 +436,19 @@ export async function verifyBrowserWorkers(
       networkAndServiceWorkerResponse: true,
       cancellationRecovery: true,
     };
-  } catch (cause) {
-    primaryError = cause;
-    throw cause;
-  } finally {
-    await closeVerifierResources(
-      [
-        () => commands?.close(),
-        () => client?.close(),
-        () => transport?.close(),
-        () => browser?.close(),
-        () => fixture?.close(),
-        () => site.close(),
-        () => foreignSite?.close(),
-        () =>
-          artifacts === undefined
-            ? undefined
-            : rm(artifacts, { recursive: true, force: true }),
-      ],
-      primaryError,
-    );
-  }
+  }, [
+    () => commands?.close(),
+    () => client?.close(),
+    () => transport?.close(),
+    () => browser?.close(),
+    () => fixture?.close(),
+    () => site.close(),
+    () => foreignSite?.close(),
+    () =>
+      artifacts === undefined
+        ? undefined
+        : rm(artifacts, { recursive: true, force: true }),
+  ]);
 }
 function check(result, site, target, explicit) {
   const workers = result.workers;

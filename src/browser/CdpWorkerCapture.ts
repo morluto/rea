@@ -64,7 +64,7 @@ interface WorkerState {
   sessionId: string | undefined;
   detached: boolean;
   enabled: boolean;
-  domains: Set<string>;
+  domainsDuringWindow: Set<string>;
   autoAttach: boolean;
   events: CdpCaptureEvents;
   sources: Map<string, Observation["scripts"][number]>;
@@ -247,9 +247,12 @@ export class CdpWorkerCapture {
           "not_approved",
           worker.sources.size,
         );
-      if (!worker.domains.has("Debugger"))
+      if (!worker.domainsDuringWindow.has("Debugger")) {
         worker.events.completeness.unavailable("scripts");
-      if (!worker.domains.has("Network"))
+        if (this.context.input.include_script_sources)
+          worker.events.completeness.unavailable("script_sources");
+      }
+      if (!worker.domainsDuringWindow.has("Network"))
         for (const section of [
           "network_requests",
           "websocket_connections",
@@ -257,7 +260,7 @@ export class CdpWorkerCapture {
           "metadata",
         ] as const)
           worker.events.completeness.unavailable(section);
-      if (!worker.domains.has("Runtime"))
+      if (!worker.domainsDuringWindow.has("Runtime"))
         for (const section of ["metadata", "console_events"] as const)
           worker.events.completeness.unavailable(section);
       worker.item.observation.network_requests = [
@@ -482,7 +485,7 @@ export class CdpWorkerCapture {
       sessionId: undefined,
       detached: false,
       enabled: false,
-      domains: new Set(),
+      domainsDuringWindow: new Set(),
       autoAttach: false,
       events,
       sources: new Map(),
@@ -1000,7 +1003,9 @@ export class CdpWorkerCapture {
           worker.sessionId,
           worker.item.observation.limitations,
         );
-        if (result !== undefined) worker.domains.add(domain);
+        // A late acknowledgement cannot establish coverage inside the window.
+        if (result !== undefined && !this.#admissionClosed)
+          worker.domainsDuringWindow.add(domain);
         if (result === undefined && domain !== "Runtime")
           worker.events.completeness.unavailable(
             domain === "Debugger" ? "scripts" : "network_requests",
