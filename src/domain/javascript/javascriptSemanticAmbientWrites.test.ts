@@ -287,21 +287,38 @@ new Worker(new URL("./worker.js", import.meta.url));`).references.find(
   expect(worker?.specifier).toBe("./worker.js");
 });
 
-it("indexes unknown-key stores of fresh objects in linear stored-value work", () => {
-  // Count reads of the stored values' own syntax during ambient indexing only.
+const widenedStoreCycle = "var a=[],b=[],k=[];a[k[0]]=b;b[k[0]]=a;";
+
+it.each([
+  {
+    name: "unknown-key slot replacements",
+    setup: "var t={},k=[];",
+    store: (i: number) => `t[k[${String(i)}]]={v:${String(i)}};`,
+    finish: "",
+  },
+  {
+    name: "nested writes through a cycle with conflicting projection depths",
+    setup: widenedStoreCycle,
+    store: (i: number) => `a[k[0]][k[1]].p${String(i)}={v:${String(i)}};`,
+    finish: "consume(a);",
+  },
+])("indexes $name in linear stored-value work", ({ setup, store, finish }) => {
   const work = (count: number): number => {
-    const source = `var t={},k=[];${Array.from({ length: count }, (_, i) => `t[k[${String(i)}]]={v:${String(i)}};`).join("")}`;
+    const source =
+      setup +
+      Array.from({ length: count }, (_, i) => store(i)).join("") +
+      finish;
     const parsed = parseJavaScriptSource(source);
     if (parsed === null) throw new Error("Expected stored-object fixture");
     const index = completeSemanticSteps(
       indexJavaScriptBindingsWithReceiversSteps(parsed.program),
     );
-    let counting = false;
     let reads = 0;
     for (const statement of parsed.program.body) {
       if (
         !t.isExpressionStatement(statement) ||
-        !t.isAssignmentExpression(statement.expression)
+        !t.isAssignmentExpression(statement.expression) ||
+        !t.isObjectExpression(statement.expression.right)
       )
         continue;
       const value = statement.expression.right;
@@ -310,20 +327,81 @@ it("indexes unknown-key stores of fresh objects in linear stored-value work", ()
         enumerable: true,
         configurable: true,
         get: () => {
-          if (counting) reads += 1;
+          reads += 1;
           return type;
         },
       });
     }
-    counting = true;
     completeSemanticSteps(index.indexAmbientWritesSteps());
-    counting = false;
     expect(index.bindings.ambientWriteEffects).toEqual([]);
+    expect(index.bindings.ambientEscapeEffects).toEqual([]);
     return reads;
   };
-  // Each stored value is examined a bounded number of times. Re-reading every
-  // earlier value from every later store grows at least quadratically.
-  expect(work(64)).toBeLessThan(3 * work(32));
+  // Re-expanding the cycle's stored values separately for each store or
+  // effect query makes doubling the fixture quadruple stored-value work.
+  const small = work(32);
+  expect(small).toBeGreaterThan(0);
+  expect(work(64)).toBeLessThan(3 * small);
+});
+
+it("propagates widened values through reference stores discovered later", () => {
+  const source =
+    widenedStoreCycle +
+    [
+      "var reached={},tail={},unrelated={};",
+      "a[k[0]][k[1]].slot=window;",
+      "a[k[2]]=reached;",
+      "reached.child=tail;",
+      "tail.fetch=1;",
+      "unrelated.fetch=2;",
+      "consume(tail);",
+      "consume(unrelated);",
+    ].join("");
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected late-store fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const site = (node: t.Node | undefined) =>
+    source.slice(node?.start ?? 0, node?.end ?? 0);
+  expect(
+    state.ambientWriteEffects
+      .filter(
+        ({ path }) =>
+          path.length === 2 && path[0] === "global" && path[1] === "fetch",
+      )
+      .map(({ node }) => site(node)),
+  ).toEqual(["tail.fetch=1"]);
+  expect(
+    state.ambientEscapeEffects
+      .filter(({ node }) => site(node).startsWith("consume("))
+      .map(({ path, node }) => [path, site(node)]),
+  ).toEqual([[["global", null], "consume(tail)"]]);
+});
+
+it("keeps widened store values distinct from their upstream receiver", () => {
+  const source = [
+    "var a,k=[],leaf={};",
+    "while(flag){a=[a,import.meta];}",
+    "a[k[0]][k[1]].p=leaf;",
+    "leaf.x.url=5;",
+    "consume(leaf);",
+    "consume(a);",
+  ].join("");
+  const parsed = parseJavaScriptSource(source, "app.mjs");
+  if (parsed === null) throw new Error("Expected directed-region fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const site = (node: t.Node | undefined) =>
+    source.slice(node?.start ?? 0, node?.end ?? 0);
+  expect(state.ambientWriteEffects.map(({ node }) => site(node))).toEqual([
+    "a[k[0]][k[1]].p=leaf",
+    "a[k[0]][k[1]].p=leaf",
+  ]);
+  expect(
+    state.ambientEscapeEffects.map(({ path, node }) => [path, site(node)]),
+  ).toEqual([[["import-meta", null], "consume(a)"]]);
 });
 
 it("escapes a looping alias cycle in linear initializer work", () => {
@@ -624,3 +702,32 @@ it.each([
   "escapes values thrown uncaught at the top level: $source",
   expectAmbientEffectPaths,
 );
+
+it("yields between ambient effect sites after the reference-store fixpoint", () => {
+  const count = 16;
+  const source = Array.from(
+    { length: count },
+    (_, index) => `globalThis.p${index} = 0; consume(globalThis.q${index});`,
+  ).join("");
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected ambient checkpoint fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const steps = index.indexAmbientWritesSteps();
+  const effects = () =>
+    [
+      index.bindings.ambientWriteEffects.length,
+      index.bindings.ambientEscapeEffects.length,
+    ] as const;
+  let previous = effects();
+  for (;;) {
+    const step = steps.next();
+    const current = effects();
+    expect(current[0] - previous[0]).toBeLessThanOrEqual(1);
+    expect(current[1] - previous[1]).toBeLessThanOrEqual(1);
+    previous = current;
+    if (step.done) break;
+  }
+  expect(previous).toEqual([count, count]);
+});
