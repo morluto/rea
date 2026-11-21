@@ -73,6 +73,8 @@ export const decodeHarCapture = (
           redactions: [{ pointer: "", reason: "explicit-sensitive-value" }],
         }
       : projected;
+    const entryHasEmptyServerIPAddress =
+      captureObject(entry) && entry.serverIPAddress === "";
     return {
       ordinal,
       location: recordsExcluded
@@ -82,6 +84,11 @@ export const decodeHarCapture = (
       limitations: [
         "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
         ...(adaptedIpv6Entries.has(ordinal) ? ipv6Limitations : []),
+        ...(entryHasEmptyServerIPAddress
+          ? [
+              `This capture declares ${ipv6Adaptation?.producer ?? "unknown producer"} and reports an empty serverIPAddress; the server address is unknown.`,
+            ]
+          : []),
         ...(recordsExcluded
           ? [
               "This record's payload and sidecars are excluded because its structural ancestor property was explicitly marked sensitive.",

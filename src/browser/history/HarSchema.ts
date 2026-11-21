@@ -63,6 +63,7 @@ export const createHarValidator = (): ((
     throw new Error("Pinned AJV formats plugin is unavailable");
   plugin(ajv);
   ajv.addFormat(HAR_REQUEST_URL_FORMAT, harRequestUrlValidator(plugin));
+
   const propertiesSchema = z.record(z.string(), z.unknown());
   const correctedSchemas: Record<string, Record<string, unknown>> = {
     timings: timingsSchema,
@@ -145,6 +146,10 @@ const allowObservedProducerRepresentations = (
       isIP(address.slice(1, -1)) === 6
     ) {
       candidate.serverIPAddress = address.slice(1, -1);
+      adaptedEntries.push(ordinal);
+    }
+    if (address === "") {
+      candidate.serverIPAddress = "0.0.0.0";
       adaptedEntries.push(ordinal);
     }
     if (!mitmproxy) continue;
