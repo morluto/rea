@@ -51,25 +51,33 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32").each([
-  ["debugger.command_deadline_ms", "REA_DEBUGGER_COMMAND_DEADLINE_MS", 5000],
-  [
-    "debugger.max_command_output_bytes",
-    "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
-    4096,
-  ],
-] as const)(
-  "releases command capacity after an invalid %s is reset",
-  async (setting, environmentName, value) => {
+it.skipIf(process.platform === "win32")(
+  "recovers Rizin command capacity after either runtime cap exposes an invalid seed",
+  async () => {
     const harness = createRizinCoverageHarness();
     const environment = {
-      [environmentName]: "invalid",
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "invalid",
+      REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "invalid",
       REA_DEBUGGER_MAX_PENDING_COMMANDS: "1",
     };
+    const caps = [
+      {
+        setting: "debugger.command_deadline_ms",
+        seed: "REA_DEBUGGER_COMMAND_DEADLINE_MS",
+        value: 5000,
+      },
+      {
+        setting: "debugger.max_command_output_bytes",
+        seed: "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
+        value: 4096,
+      },
+    ];
     const settings = new AnalysisSettings(environment);
-    const set = () =>
-      settings.update({ changes: [{ setting, action: "set", value }] });
-    expect(set().ok).toBe(true);
+    const set = ({ setting, value }: (typeof caps)[number]) =>
+      expect(
+        settings.update({ changes: [{ setting, action: "set", value }] }).ok,
+      ).toBe(true);
+    for (const cap of caps) set(cap);
     try {
       const provider = await harness.makeProvider(`process.stdout.write("\\0");
 let input = "";
@@ -80,6 +88,7 @@ process.stdin.on("data", chunk => {
   const end = input.indexOf("\\n"); if (end < 0) break;
   const line = input.slice(0,end); input = input.slice(end+1);
   if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+  else if (line === "refused") process.stdout.write("unexpected command\\0");
   else if (line === "dr") process.stdout.write("ok\\0");
  }
 });`);
@@ -88,26 +97,24 @@ process.stdin.on("data", chunk => {
         {},
         environment,
       );
-      expect(
-        (await settings.run(() => manager.execute(sessionId, "dr"))).ok,
-      ).toBe(true);
-      expect(
-        settings.update({ changes: [{ setting, action: "reset" }] }).ok,
-      ).toBe(true);
-      await expect(
-        settings.run(() => manager.execute(sessionId, "dr")),
-      ).resolves.toMatchObject({
-        ok: false,
-        error: { _tag: "ConfigurationError" },
-      });
-      expect(set().ok).toBe(true);
-      const retried = await settings.run(() =>
-        manager.execute(sessionId, "dr"),
+      const execute = (command: string) =>
+        settings.run(() => manager.execute(sessionId, command));
+      for (const { setting, seed, value } of caps) {
+        expect(
+          settings.update({ changes: [{ setting, action: "reset" }] }).ok,
+        ).toBe(true);
+        expect(await execute("refused")).toMatchObject({
+          ok: false,
+          error: { _tag: "ConfigurationError", settings: [{ setting: seed }] },
+        });
+        set({ setting, seed, value });
+        const retried = await execute("dr");
+        if (!retried.ok) throw retried.error;
+        expect(retried.value.result.output).toBe("ok");
+      }
+      expect(manager.status(sessionId)?.recent_output).not.toContain(
+        "unexpected command",
       );
-      expect(retried).toMatchObject({
-        ok: true,
-        value: { result: { output: "ok" } },
-      });
     } finally {
       await harness.cleanup();
     }
