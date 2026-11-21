@@ -35,6 +35,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "esp-flash-image": "archive",
   fit: "archive",
   "ntfs-mft": "archive",
+  "systemd-journal": "archive",
   plist: "artifact",
   javascript: "artifact",
   uefi: "artifact",
