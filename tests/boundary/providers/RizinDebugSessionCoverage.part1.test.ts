@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -140,12 +140,20 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const controller = new AbortController();
     const reason = { stage: "TTY handle closed" };
+    const inferiorTty = await rizinTestInferiorTty();
+    const selected = await stat(inferiorTty);
+    let selectedCloseReached = false;
     const close = OwnedFileHandle.prototype.close;
     const validation = vi
       .spyOn(OwnedFileHandle.prototype, "close")
-      .mockImplementationOnce(async function (this: OwnedFileHandle) {
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        const identity =
+          this.handle.fd < 0 ? undefined : await this.handle.stat();
         await close.call(this);
-        controller.abort(reason);
+        if (identity?.dev === selected.dev && identity.ino === selected.ino) {
+          selectedCloseReached = true;
+          controller.abort(reason);
+        }
       });
     let spawned = false;
     const manager = createManager(
@@ -161,7 +169,7 @@ it.skipIf(process.platform === "win32")(
       const result = await manager.start(
         {
           path: "/tmp/cancel-before-spawn",
-          inferior_tty: await rizinTestInferiorTty(),
+          inferior_tty: inferiorTty,
         },
         controller.signal,
       );
@@ -169,7 +177,7 @@ it.skipIf(process.platform === "win32")(
         ok: false,
         error: { _tag: "AnalysisCancelledError", cause: reason },
       });
-      expect(validation).toHaveBeenCalledOnce();
+      expect(selectedCloseReached).toBe(true);
       expect(spawned).toBe(false);
     } finally {
       validation.mockRestore();
