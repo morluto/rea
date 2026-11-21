@@ -84,14 +84,7 @@ export interface FakeOptions {
   readonly extraCollections?: boolean;
   readonly indexedDbDateKeys?: boolean;
   readonly foreignSessionEvents?: boolean;
-  readonly redirectToDisallowedOrigin?: boolean;
-  readonly redirectFromDisallowedOrigin?: boolean;
-  readonly redirectWithinOrigin?: boolean;
   readonly malformedRedirectResponse?: boolean;
-  readonly omitRedirectResponse?: boolean;
-  readonly redirectResponseUrl?: string;
-  readonly redirectResponseEnvelope?: unknown;
-  readonly responseAfterMalformedUrl?: string;
   readonly unrelatedWorker?: boolean;
   readonly binaryWebSocketEvent?: boolean;
   /** Emit an allowed WebSocket creation without any frames in the capture window. */
