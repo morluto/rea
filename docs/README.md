@@ -124,6 +124,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Release exposure](release-exposure.md)
 - [Model file declarations](model-artifacts.md)
 - [Python packaged applications](python-packaged-applications.md)
+- [Debian package inspection](deb-package.md)
 - [CPython pyc inspection](python-pyc.md)
 - [Erlang BEAM files](erlang-beam.md)
 - [Godot PCK archives](godot-pck.md)

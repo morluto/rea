@@ -347,8 +347,14 @@ const stanza = (
 /** Keep the position of undecodable lines without inserting replacement text. */
 function* sourceLines(text: string | Buffer): Generator<string | undefined> {
   if (typeof text === "string") {
-    yield* text.split("\n");
-    return;
+    // Yield lines one at a time so a caller that stops early never holds
+    // every line of a large input.
+    for (let start = 0; ;) {
+      const end = text.indexOf("\n", start);
+      yield text.slice(start, end === -1 ? text.length : end);
+      if (end === -1) return;
+      start = end + 1;
+    }
   }
   for (let start = 0; start <= text.length;) {
     const end = text.indexOf(0x0a, start);
@@ -518,12 +524,26 @@ export const parseOneLineSources = (
   });
 
 // Match the ASCII whitespace recognized by APT's tag reader within a line.
-const trimDeb822Line = (value: string): string =>
-  value.replace(/^[ \t\v\f\r]+|[ \t\v\f\r]+$/gu, "");
+const isDeb822LineSpace = (code: number): boolean =>
+  code === 0x20 || (code >= 0x09 && code <= 0x0d && code !== 0x0a);
 
-/** Fields of each deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
+// Scan from each end so a long interior whitespace run stays linear.
+const trimDeb822Line = (value: string): string => {
+  let start = 0;
+  let end = value.length;
+  while (start < end && isDeb822LineSpace(value.charCodeAt(start))) start++;
+  while (end > start && isDeb822LineSpace(value.charCodeAt(end - 1))) end--;
+  return value.slice(start, end);
+};
+
+/**
+ * Fields of each deb822 paragraph by lowercase name; continuation lines keep
+ * their line breaks. `limit` stops reading once that many paragraphs are
+ * found, so a caller that needs only the first never builds the rest.
+ */
 export const deb822Paragraphs = (
   text: string | Buffer,
+  limit = Number.POSITIVE_INFINITY,
 ): ReadonlyMap<string, string>[] => {
   const found: Map<string, string>[] = [];
   let current = new Map<string, string>();
@@ -554,6 +574,7 @@ export const deb822Paragraphs = (
     const afterLeadingCr = line.replace(/^\r+/u, "");
     if (afterLeadingCr.length === 0) {
       finish();
+      if (found.length >= limit) return found;
     } else if (line.startsWith("#")) continue;
     else if (/^[ \t\v\f]/u.test(afterLeadingCr) && last !== undefined) {
       const content = trimDeb822Line(line);
@@ -573,7 +594,7 @@ export const deb822Paragraphs = (
     }
   }
   finish();
-  return found;
+  return found.length > limit ? found.slice(0, limit) : found;
 };
 
 // APT's numeric conversion skips leading ASCII whitespace, including a

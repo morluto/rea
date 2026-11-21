@@ -53,6 +53,7 @@ import type { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoa
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
+import type { DebPackageService } from "../application/deb/DebPackageService.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
@@ -631,6 +632,12 @@ const SERVICE_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PythonPycService>,
+  debPackage: ((service) => ({
+    inspect_deb_package: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DebPackageService>,
   erlangBeam: ((service) => ({
     inspect_erlang_beam: {
       admission: "application",

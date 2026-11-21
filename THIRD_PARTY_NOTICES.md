@@ -29,8 +29,10 @@ as used by EDK II's LZMAF86 handler.
 
 Two locked runtime releases, [`clean-git-ref@2.0.1`](https://github.com/TheSavior/clean-git-ref/tree/bf3c8afc8032bcdc6a53634c18b601dc6df478fb) (declared Apache-2.0) and
 [`minimisted@2.0.1`](https://github.com/kt3k/minimisted/tree/95fdfb8d6efb9546c1117854fe3a58105f6332ce) (declared MIT), omit a full license/copyright document in their
-published archives and inspected upstream release sources. Their runtime notice
-entries preserve the declared license and author metadata and include a clearly
+published archives and inspected upstream release sources. [`@napi-rs/lzma@1.5.3`](https://github.com/Brooooooklyn/lzma/tree/d0a45a40f08dec10ac75d84c364d9cfcfa887d06)
+and its same-release optional platform packages also omit a license/copyright
+document in the published archives and tagged source. Their runtime notice
+entries preserve the declared license metadata and include a clearly
 labeled standard license text. These are documented upstream notice gaps, not
 recovered copyright notices or a claim that attribution has been fully verified.
 

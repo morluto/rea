@@ -83,5 +83,10 @@
     "file": "licenses/microsoft-uf2-MIT.txt",
     "source": "https://raw.githubusercontent.com/microsoft/uf2/cf3bd7f9c274b949528f8cd6a19eef2502a687d2/LICENSE.txt",
     "sha256": "c581accf1e5449482b70ac5fcdfb171599317ccff559cf0794d771671486f800"
+  },
+  {
+    "file": "licenses/napi-rs-MIT.txt",
+    "source": "https://raw.githubusercontent.com/napi-rs/napi-rs/a9362f80ff9bc65f011e7a487c27ab5a104ea194/LICENSE",
+    "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
   }
 ]

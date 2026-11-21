@@ -50,6 +50,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
     cases: ["tests/acceptance/byteEntropyWindowsIdentity.test.ts"],
   },
   cutter: { cases: ["tests/boundary/cli/cutterStatusAttributionCli.test.ts"] },
+  debPackage: { cases: ["tests/acceptance/debPackageCli.test.ts"] },
   desktopApplication: {
     cases: ["tests/boundary/cli/desktopApplicationCli.test.ts"],
   },

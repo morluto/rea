@@ -7,7 +7,10 @@ import { DEFAULT_CATALOG_IDENTITY } from "../dist/contracts/catalog/catalogIdent
 import { parseTarListing } from "./lib/verify-package-listing.mjs";
 import { runSettledConcurrent } from "./lib/verify-package-core.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
-import { pluginPackageMetadata } from "./lib/plugin-package.mjs";
+import {
+  pluginPackageMetadata,
+  pluginPlatformPackages,
+} from "./lib/plugin-package.mjs";
 
 const { parseSkillManifestMetadata } = await importVerifierSource(
   new URL("../src/domain/skillManifest.ts", import.meta.url).href,
@@ -66,62 +69,51 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     ["--omit=dev", "--no-audit", "--no-fund"],
     { cwd: stagingDirectory },
   );
-  if (packageJson.dependencies?.["@lydell/node-pty"] !== undefined) {
-    // npm ci filters foreign-platform optional packages. Include the exact locked
-    // PTY archives as well, without re-resolving the installed dependency tree.
-    const ptyManifest = JSON.parse(
-      await readFile(
-        join(stagingDirectory, "node_modules/@lydell/node-pty/package.json"),
-        "utf8",
-      ),
-    );
-    const platformDirectory = join(workspace, "plugin-platform-packages");
-    await mkdir(platformDirectory);
-    for (const dependency of Object.keys(ptyManifest.optionalDependencies)) {
-      const destination = join(stagingDirectory, "node_modules", dependency);
-      if (
-        await access(destination).then(
-          () => true,
-          (cause) => {
-            if (cause.code !== "ENOENT") throw cause;
-            return false;
-          },
-        )
+  // npm ci filters foreign-platform optional packages. Include the exact locked
+  // native archives every supported host needs (PTY, XZ decoder, ...), without
+  // re-resolving the installed dependency tree.
+  const platformPackages = pluginPlatformPackages(shrinkwrap);
+  const platformDirectory = join(workspace, "plugin-platform-packages");
+  await mkdir(platformDirectory);
+  for (const locked of platformPackages) {
+    const destination = join(stagingDirectory, locked.path);
+    if (
+      await access(destination).then(
+        () => true,
+        (cause) => {
+          if (cause.code !== "ENOENT") throw cause;
+          return false;
+        },
       )
-        continue;
-      const locked = shrinkwrap.packages[`node_modules/${dependency}`];
-      if (locked?.version === undefined || locked.integrity === undefined)
-        throw new Error(
-          `Plugin platform dependency is not locked: ${dependency}`,
-        );
-      const [archive] = JSON.parse(
-        (
-          await commands.execNpm(
-            [
-              "pack",
-              "--ignore-scripts",
-              "--json",
-              "--pack-destination",
-              platformDirectory,
-              `${dependency}@${locked.version}`,
-            ],
-            { cwd: platformDirectory },
-          )
-        ).stdout,
+    )
+      continue;
+    const [archive] = JSON.parse(
+      (
+        await commands.execNpm(
+          [
+            "pack",
+            "--ignore-scripts",
+            "--json",
+            "--pack-destination",
+            platformDirectory,
+            `${locked.name}@${locked.version}`,
+          ],
+          { cwd: platformDirectory },
+        )
+      ).stdout,
+    );
+    if (archive.integrity !== locked.integrity)
+      throw new Error(
+        `Plugin platform archive differs from the lock: ${locked.name}`,
       );
-      if (archive.integrity !== locked.integrity)
-        throw new Error(
-          `Plugin platform archive differs from the lock: ${dependency}`,
-        );
-      await mkdir(destination, { recursive: true });
-      await commands.exec("tar", [
-        "-xzf",
-        join(platformDirectory, archive.filename),
-        "-C",
-        destination,
-        "--strip-components=1",
-      ]);
-    }
+    await mkdir(destination, { recursive: true });
+    await commands.exec("tar", [
+      "-xzf",
+      join(platformDirectory, archive.filename),
+      "-C",
+      destination,
+      "--strip-components=1",
+    ]);
   }
   const tarball = join(
     packDirectory,
@@ -142,7 +134,6 @@ export async function verifyPackagePack({ root, workspace, commands }) {
   const metadataCandidates = [
     "package/package.json",
     "package/npm-shrinkwrap.json",
-    "package/node_modules/@lydell/node-pty/package.json",
     "package/skills/reverse-engineer-anything/SKILL.md",
     "package/.claude-plugin/plugin.json",
     "package/.codex-plugin/plugin.json",
@@ -191,16 +182,9 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       throw new Error(
         `Plugin runtime dependency is not bundled: ${dependency}`,
       );
-  const pty = await readPackedJson(
-    "package/node_modules/@lydell/node-pty/package.json",
-  );
-  for (const dependency of Object.keys(pty.optionalDependencies))
-    if (
-      !packedFiles.includes(`package/node_modules/${dependency}/package.json`)
-    )
-      throw new Error(
-        `Plugin PTY platform dependency is missing: ${dependency}`,
-      );
+  for (const { name, path } of pluginPlatformPackages(packedLock))
+    if (!packedFileSet.has(`package/${path}/package.json`))
+      throw new Error(`Plugin platform dependency is missing: ${name}`);
   if (
     packedManifest.scripts?.postinstall !== undefined ||
     packedManifest.dependencies?.["node-pty"] !== undefined ||

@@ -638,6 +638,18 @@ The workflow reports the pinned CPython version for the magic, PEP 552 hash or
 mtime/size fields, nested function names, and bytecode SHA-256. Bytecode is
 not decompiled. See [CPython pyc inspection](../python-pyc.md).
 
+Inspect a local Debian `.deb` without installing it or running maintainer
+scripts:
+
+```bash
+rea inspect-deb-package /absolute/path/to/hello_2.03-1_all.deb --json
+```
+
+The workflow reports the ar members, control identity and parsed
+relationships, which maintainer scripts are present, and a bounded data.tar
+inventory. gzip, zstd, xz, and uncompressed members are decoded; bzip2 and
+lzma are unsupported. See [Debian package inspection](../deb-package.md).
+
 Inspect an Erlang BEAM file without executing bytecode:
 
 ```bash

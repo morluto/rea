@@ -77,6 +77,7 @@ import {
   pythonPycViewItemsSchema,
   pythonPycSummarySchema,
 } from "./pythonPycView.js";
+import { debPackageSummarySchema } from "./debPackageView.js";
 import { nugetNupkgSummarySchema } from "./nugetNupkgView.js";
 import {
   nativeExportsViewRequestSchema,
@@ -376,6 +377,7 @@ const viewResultBase = {
   parent_operation: z.enum([
     "trace_web_source_location",
     "inspect_python_pyc",
+    "inspect_deb_package",
     "inspect_nuget_nupkg",
     "inspect_erlang_beam",
     "inspect_devicetree",
@@ -589,6 +591,12 @@ export const pythonPycSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_python_pyc"),
   summary: pythonPycSummarySchema,
+});
+
+export const debPackageSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_deb_package"),
+  summary: debPackageSummarySchema,
 });
 
 export const nugetNupkgSummaryViewResultSchema = z.strictObject({
@@ -1409,6 +1417,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
+    debPackageSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     elfDependenciesSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,

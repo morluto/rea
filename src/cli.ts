@@ -31,6 +31,7 @@ import * as modelModule from "./cli/modelCommands.js";
 import * as gpuModule from "./cli/gpuCommands.js";
 import * as rustModule from "./cli/rustCommands.js";
 import * as pythonPycModule from "./cli/pythonPycCommands.js";
+import * as debPackageModule from "./cli/debPackageCommands.js";
 import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
@@ -90,6 +91,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   gpu: gpuModule,
   rust: rustModule,
   pythonPyc: pythonPycModule,
+  debPackage: debPackageModule,
   nugetNupkg: nugetNupkgModule,
   erlang: erlangModule,
   v8CodeCache: v8CodeCacheModule,

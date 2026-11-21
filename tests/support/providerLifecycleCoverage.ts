@@ -1239,6 +1239,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-deb-package": inProcess(
+    covered(
+      test(
+        "tests/acceptance/debPackageCli.test.ts",
+        "inspects a fixture .deb without installing it or running maintainer scripts",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/debPackage.test.ts"),
+  ),
   "rea-devicetree": inProcess(
     covered(
       test(

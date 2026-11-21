@@ -40,6 +40,7 @@ import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
 import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
+import { createDebPackageService } from "./debPackage.js";
 import { createNugetNupkgService } from "./nugetNupkg.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
@@ -104,6 +105,7 @@ import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
+import type { DebPackageService } from "../application/deb/DebPackageService.js";
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
@@ -145,6 +147,7 @@ export interface CapabilityServiceOptions {
   readonly il2cppMetadata?: Il2cppMetadataService;
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
+  readonly debPackage?: DebPackageService;
   readonly nugetNupkg?: NugetNupkgService;
   readonly erlangBeam?: BeamService;
   readonly v8CodeCache?: V8CodeCacheService;
@@ -413,6 +416,9 @@ const modules = {
   ),
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),
+  ),
+  debPackage: service(
+    ({ options }) => options.debPackage ?? createDebPackageService(),
   ),
   nugetNupkg: service(
     ({ options }) => options.nugetNupkg ?? createNugetNupkgService(),

@@ -479,6 +479,11 @@ export const documentationSections = [
         route: "/python-packaged-applications",
       },
       {
+        text: "Debian package inspection",
+        source: "deb-package.md",
+        route: "/deb-package",
+      },
+      {
         text: "CPython pyc inspection",
         source: "python-pyc.md",
         route: "/python-pyc",

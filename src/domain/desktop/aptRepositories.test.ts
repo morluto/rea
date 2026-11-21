@@ -1273,3 +1273,26 @@ it.each([1, 65_536])(
     expect(fields?.get("other")).toBe("value");
   },
 );
+
+it.each([
+  ["string", (text: string): string | Buffer => text],
+  ["buffer", (text: string): string | Buffer => Buffer.from(text)],
+])("stops at the paragraph limit for %s input", (_, input) => {
+  const text = `Package: first\n\nPackage: second\n\n${"a:b\n\n".repeat(1_000)}`;
+  const paragraphs = deb822Paragraphs(input(text), 1);
+  expect(paragraphs).toHaveLength(1);
+  expect(paragraphs[0]?.get("package")).toBe("first");
+  expect(deb822Paragraphs(input(text), 2)).toHaveLength(2);
+  expect(deb822Paragraphs(input("Package: only\n"), 1)).toHaveLength(1);
+  expect(deb822Paragraphs(input(text))).toHaveLength(1_002);
+});
+
+it("trims a field with a long interior whitespace run in linear time", () => {
+  const run = " \t".repeat(500_000);
+  const started = performance.now();
+  const [fields] = deb822Paragraphs(
+    `Description: \t1${run}x \r\n ${run}tail${run}\n`,
+  );
+  expect(performance.now() - started).toBeLessThan(2_000);
+  expect(fields?.get("description")).toBe(`1${run}x\ntail`);
+});
