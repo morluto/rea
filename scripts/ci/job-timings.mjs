@@ -46,19 +46,20 @@ export async function collectJobTimings({
 }) {
   const identity = validateIdentity({ repository, runId, runAttempt });
   const reportPath = join(outputDirectory, "report.json");
+  const rawPath = join(outputDirectory, "jobs.json");
   await rm(reportPath, { force: true });
+  await rm(rawPath, { force: true });
   const endpoint = `repos/${identity.repository}/actions/runs/${identity.runId}/attempts/${identity.runAttempt}/jobs?per_page=100`;
   const { stdout } = await execFileAsync(
     "gh",
     ["api", "--paginate", "--slurp", endpoint],
     { env, encoding: "utf8", maxBuffer: MAX_BUFFER, timeout: timeoutMs },
   );
-  const rawPath = join(outputDirectory, "jobs.json");
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(rawPath, stdout, "utf8");
   const pages = parsePages(stdout);
   const jobs = pages.flatMap(({ jobs: pageJobs }, index) =>
-    validateJobs(pageJobs, index),
+    validateJobs(pageJobs, index, identity),
   );
   if (
     pages.some(
@@ -125,7 +126,7 @@ function parsePages(stdout) {
   return pages;
 }
 
-function validateJobs(jobs, pageIndex) {
+function validateJobs(jobs, pageIndex, { runId, runAttempt }) {
   return jobs.map((job, jobIndex) => {
     if (
       typeof job !== "object" ||
@@ -137,6 +138,10 @@ function validateJobs(jobs, pageIndex) {
     )
       throw new Error(
         `GitHub jobs API page ${String(pageIndex + 1)} job ${String(jobIndex + 1)} is malformed`,
+      );
+    if (job.run_id !== runId || job.run_attempt !== runAttempt)
+      throw new Error(
+        `GitHub jobs API page ${String(pageIndex + 1)} job ${String(jobIndex + 1)} belongs to a different workflow run or attempt`,
       );
     return job;
   });
