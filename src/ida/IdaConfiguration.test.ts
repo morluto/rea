@@ -331,6 +331,14 @@ describe("IDA registration compatibility profiles", () => {
       'a headless registration omits protocol or sets "hexrays"',
     ],
     [
+      {
+        url: "http://127.0.0.1:13337/mcp",
+        mode: "headless",
+        protocol: "native",
+      },
+      'a headless registration omits protocol or sets "hexrays"',
+    ],
+    [
       { command: "uvx", args: ["ida-mcp", "stdio"], protocol: "hexrays" },
       "requires a headless stdio registration",
     ],
