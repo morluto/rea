@@ -114,7 +114,8 @@ export const ghidraMachoMainEntryHint = async (
     parsed.header.wide ? 64 : 32,
     fileSize,
   );
-  if (!admitted.ok) return undefined;
+  // A file-only segment (no VM size, no protection) owns no analysis address.
+  if (!admitted.ok || admitted.value.unmapped) return undefined;
   const mapped =
     admitted.value.fileAddress + (entryOffset - command.segment.fileOffset);
   const address = hex(mapped);

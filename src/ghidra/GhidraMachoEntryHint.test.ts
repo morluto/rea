@@ -116,6 +116,24 @@ const NO_HINT_IMAGES: readonly {
     ),
   },
   {
+    name: "a containing file-only segment with no VM range",
+    image: paddedTo(
+      machoImage({
+        commands: [
+          mappedSegment({
+            name: "__TEXT",
+            vmaddr: 0x100000000n,
+            fileoff: 0n,
+            filesize: 0x1000n,
+            vmsize: 0n,
+          }),
+          mainCommand(0x460n),
+        ],
+      }),
+      0x1000,
+    ),
+  },
+  {
     name: "two LC_MAIN commands",
     image: machoImage({
       commands: [TEXT_SEGMENT, mainCommand(0x460n), mainCommand(0x480n)],
