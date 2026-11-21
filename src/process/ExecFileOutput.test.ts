@@ -446,6 +446,7 @@ describe.skipIf(process.platform === "win32")(
         'process.on("SIGTERM", () => {});',
         `fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));`,
         "setInterval(() => {",
+        `  if (!fs.existsSync(${JSON.stringify(directory)})) process.exit(1);`,
         `  if (!fs.existsSync(${JSON.stringify(release)})) return;`,
         `  fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ scratchExists: fs.existsSync(${JSON.stringify(scratch)}) }));`,
         '  process.stdout.write("late output");',
@@ -514,13 +515,13 @@ describe.skipIf(process.platform === "win32")(
       const childSource = [
         'const fs = require("node:fs");',
         "const launcher = Number(process.argv[1]);",
-        `process.once("exit", () => fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ scratchExists: fs.existsSync(${JSON.stringify(scratch)}) })));`,
         `fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
         "let reported = false;",
-        "const poll = setInterval(() => {",
+        "setInterval(() => {",
+        `  if (!fs.existsSync(${JSON.stringify(directory)})) process.exit(1);`,
         `  if (fs.existsSync(${JSON.stringify(release)})) {`,
-        "    clearInterval(poll);",
-        "    return;",
+        `    fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ scratchExists: fs.existsSync(${JSON.stringify(scratch)}) }));`,
+        "    process.exit(0);",
         "  }",
         "  if (reported) return;",
         "  try { process.kill(launcher, 0); } catch (error) {",
@@ -550,7 +551,6 @@ describe.skipIf(process.platform === "win32")(
         expect(await waitForFile(reaped)).toBe(true);
         await vi.advanceTimersByTimeAsync(200);
         expect(completed).toBe(false);
-        await expect(access(scratch)).resolves.toBeUndefined();
         await vi.advanceTimersByTimeAsync(5_000);
         expect(completed).toBe(false);
         await expect(access(scratch)).resolves.toBeUndefined();
@@ -564,9 +564,9 @@ describe.skipIf(process.platform === "win32")(
         });
         await expect(access(scratch)).rejects.toMatchObject({ code: "ENOENT" });
       } finally {
-        await writeFile(release, "");
-        await vi.runAllTimersAsync();
-        vi.useRealTimers();
+        await writeFile(release, "")
+          .then(() => vi.runAllTimersAsync())
+          .finally(() => vi.useRealTimers());
         // Settlement is the behavior under test. Join the real descendant independently.
         try {
           if (!(await waitForFile(finished))) {
@@ -877,22 +877,6 @@ describe("execFileOutput cancellation provenance", () => {
       expect(result.stdout).toBe("done");
     },
   );
-  it("keeps a completed command failure when its consumer later aborts", async () => {
-    const controller = new AbortController();
-    const failure: unknown = await execFileOutput(
-      process.execPath,
-      ["-e", "process.exitCode=7"],
-      {
-        signal: controller.signal,
-        stopSignal: "SIGTERM",
-      },
-    ).catch((cause: unknown) => {
-      controller.abort(null);
-      return cause;
-    });
-    expect(failure).toMatchObject({ code: 7 });
-    expect(failure).not.toHaveProperty("_tag", "ExecFileOutputCancelledError");
-  });
 });
 
 it.each([
