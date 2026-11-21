@@ -19,6 +19,7 @@ import { browserWorkerEvidenceScopeSchema } from "../../../src/domain/browserWor
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { readScopedWorkerSource } from "../../../src/browser/CdpWorkerCapture.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
@@ -31,6 +32,92 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const source = 'postMessage("worker 🧪");';
+
+it("checks selection for queued work and again before retaining a reply", async () => {
+  let selected = true;
+  const read = vi.fn(async () => ({ scriptSource: "fixture" }));
+  const first = readScopedWorkerSource(() => selected, read);
+  selected = false;
+  await expect(readScopedWorkerSource(() => selected, read)).resolves.toEqual({
+    selected: false,
+  });
+  await expect(first).resolves.toEqual({ selected: false });
+  expect(read).toHaveBeenCalledTimes(1);
+  selected = true;
+  await expect(readScopedWorkerSource(() => selected, read)).resolves.toEqual({
+    selected: true,
+    reply: { scriptSource: "fixture" },
+  });
+});
+
+it("treats a filtered worker source-map declaration as unknown in either direction", async () => {
+  const { provider, input } = await fixture();
+  const result = await provider.inspectPage(input);
+  if (!result.ok) throw result.error;
+  const before = result.value;
+  const after = structuredClone(before);
+  const own = (capture: typeof before) =>
+    capture.workers.find((w) => w.target_id === "own")!.observation!;
+  own(before).scripts[0]!.source_map_url = null;
+  own(before).completeness.excluded.push({
+    section: "source_maps",
+    reason: "disallowed_origin",
+    count: 1,
+  });
+  own(after).scripts[0]!.source_map_url = "https://maps.example/same.js.map";
+  for (const [left, right] of [
+    [before, after],
+    [after, before],
+  ] as const) {
+    const compared = compareWebCaptures({
+      before: { inspection: left, webmcp: null },
+      after: { inspection: right, webmcp: null },
+    });
+    expect(compared.dimensions.scripts).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+  }
+  own(after).scripts[0]!.cdp_hash = "different";
+  expect(
+    compareWebCaptures({
+      before: { inspection: before, webmcp: null },
+      after: { inspection: after, webmcp: null },
+    }).dimensions.scripts,
+  ).toMatchObject({ status: "changed", total_changes: 1 });
+});
+
+it("keeps a worker command pending until the caller cancels under a longer deadline", async () => {
+  const waiting = (command: { method: string; sessionId?: string }) =>
+    command.method === "Runtime.enable" && command.sessionId === "worker-own";
+  const { provider, input, browser } = await fixture({
+    hangOnCommand: waiting,
+  });
+  const caller = new AbortController();
+  const formerDeadline = new AbortController();
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  const deadlines = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockImplementation((ms) =>
+      ms === 20_000 ? formerDeadline.signal : timeout(ms),
+    );
+  onTestFinished(() => {
+    deadlines.mockRestore();
+    caller.abort();
+  });
+  const capture = provider.inspectPage(
+    { ...input, command_timeout_ms: 60_000 },
+    { signal: caller.signal },
+  );
+  await vi.waitFor(() => expect(browser.commands.some(waiting)).toBe(true));
+  formerDeadline.abort();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  caller.abort();
+  expect(await capture).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+});
 
 it.each(["length", "cdp_hash", "is_module", "language"] as const)(
   "compares worker metadata only when mutually known: %s",

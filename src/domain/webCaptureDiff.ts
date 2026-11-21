@@ -1402,6 +1402,24 @@ const scriptMapFactsExceed = <Metadata>(
   );
 };
 
+// A null declaration may represent an omitted URL. The capture ledger is
+// section-wide, so it cannot identify which null script was affected.
+// Unavailable map bodies alone do not erase an observed declaration.
+const declarationMayBeOmitted = (coverage: WebPageInspection["completeness"]) =>
+  coverage.policy_filtered_sections.includes("source_maps") ||
+  coverage.truncated_sections.includes("source_maps") ||
+  coverage.excluded.some(
+    (item) =>
+      item.section === "source_maps" &&
+      item.count !== 0 &&
+      [
+        "disallowed_origin",
+        "unsupported_url",
+        "resource_budget_exhausted",
+        "invalid_protocol_value",
+      ].includes(item.reason),
+  );
+
 const pageScriptsDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
@@ -1430,22 +1448,8 @@ const pageScriptsDimension = (
   // A null declaration may represent an omitted URL. The capture ledger is
   // section-wide, so it cannot identify which null script was affected.
   // Unavailable map bodies alone do not erase an observed declaration.
-  const declarationMayBeOmitted = (inspection: WebPageInspection) =>
-    inspection.completeness.policy_filtered_sections.includes("source_maps") ||
-    inspection.completeness.truncated_sections.includes("source_maps") ||
-    inspection.completeness.excluded.some(
-      (item) =>
-        item.section === "source_maps" &&
-        item.count !== 0 &&
-        [
-          "disallowed_origin",
-          "unsupported_url",
-          "resource_budget_exhausted",
-          "invalid_protocol_value",
-        ].includes(item.reason),
-    );
-  const beforeMayOmitDeclaration = declarationMayBeOmitted(before);
-  const afterMayOmitDeclaration = declarationMayBeOmitted(after);
+  const beforeMayOmitDeclaration = declarationMayBeOmitted(before.completeness);
+  const afterMayOmitDeclaration = declarationMayBeOmitted(after.completeness);
   const left = new Map<string, string>();
   const right = new Map<string, string>();
   let valuesComplete = true;
@@ -1639,20 +1643,32 @@ const workerScriptsDimension = (
           (script) =>
             [
               workerScriptIdentity(worker.target_id, script.script_id),
-              script,
+              {
+                script,
+                mayOmitMap: declarationMayBeOmitted(
+                  worker.observation!.completeness,
+                ),
+              },
             ] as const,
         ),
       ),
     );
   const beforeScripts = workerScripts(before),
     afterScripts = workerScripts(after);
+  let declarationsComplete = true;
   const fingerprints = (
     ownScripts: ReturnType<typeof workerScripts>,
     peerScripts: ReturnType<typeof workerScripts>,
   ) => {
     const result = new Map<string, string>();
-    for (const [identity, script] of ownScripts) {
-      const peer = peerScripts.get(identity);
+    for (const [identity, { script, mayOmitMap }] of ownScripts) {
+      const other = peerScripts.get(identity);
+      const peer = other?.script;
+      const comparable = !(
+        (script.source_map_url === null && mayOmitMap) ||
+        (peer?.source_map_url === null && other?.mayOmitMap)
+      );
+      if (peer && !comparable) declarationsComplete = false;
       result.set(
         identity,
         digestCanonicalValue({
@@ -1662,7 +1678,7 @@ const workerScriptsDimension = (
               .filter((key) => script[key] != null && peer?.[key] != null)
               .map((key) => [key, script[key]]),
           ),
-          source_map_url: script.source_map_url,
+          ...(comparable ? { source_map_url: script.source_map_url } : {}),
           ...(script.source.included && peer?.source.included
             ? { source_sha256: script.source.artifact.sha256 }
             : {}),
@@ -1674,8 +1690,9 @@ const workerScriptsDimension = (
   return compareDimension(
     fingerprints(beforeScripts, afterScripts),
     fingerprints(afterScripts, beforeScripts),
-    workerComplete,
+    workerComplete && declarationsComplete,
     "Worker script inventory was incomplete in at least one observation.",
+    workerComplete,
   );
 };
 

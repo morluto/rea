@@ -42,6 +42,18 @@ const isUnavailableWorkerCommand = (cause: unknown): boolean =>
   (cause instanceof CdpCommandRejection && cause.code === -32_000) ||
   isMissingWorkerSession(cause);
 
+/** A queued read needs current selection both to start and to retain its result. */
+export const readScopedWorkerSource = async <Reply>(
+  selected: () => boolean,
+  read: () => Promise<Reply>,
+) => {
+  if (!selected()) return { selected: false } as const;
+  const reply = await read();
+  return selected()
+    ? ({ selected: true, reply } as const)
+    : ({ selected: false } as const);
+};
+
 type Worker = WebPageInspection["workers"][number];
 type Observation = NonNullable<Worker["observation"]>;
 interface WorkerState {
@@ -423,12 +435,7 @@ export class CdpWorkerCapture {
       !event.method.startsWith("Target.") &&
       !event.method.startsWith("ServiceWorker.")
     ) {
-      if (worker === undefined || !worker.enabled || worker.detached) return;
-      if (
-        worker.item.type === "service_worker" &&
-        !this.#controlled.has(worker.item.target_id) &&
-        !worker.item.observation.selected_explicitly
-      )
+      if (worker === undefined || !worker.enabled || !this.#canCollect(worker))
         return;
     }
     this.#eventBytes += Buffer.byteLength(JSON.stringify(event));
@@ -636,6 +643,16 @@ export class CdpWorkerCapture {
     }
   }
 
+  #canCollect(worker: WorkerState): boolean {
+    return (
+      !worker.detached &&
+      (worker.item.observation.selected_explicitly ||
+        (worker.item.type === "service_worker"
+          ? this.#controlled.has(worker.item.target_id)
+          : worker.item.observation.ownership !== "unknown"))
+    );
+  }
+
   async #readSources(): Promise<void> {
     try {
       for (
@@ -645,17 +662,26 @@ export class CdpWorkerCapture {
       ) {
         const { worker, item } = this.#sourceReads[index]!;
         try {
-          const source =
-            worker.detached ||
-            this.#unavailableSourceSessions.has(worker.sessionId)
-              ? undefined
-              : await this.#command(
-                  "Debugger.getScriptSource",
-                  { scriptId: item.script_id },
-                  worker.sessionId,
-                  worker.item.observation.limitations,
-                );
-          if (source === undefined) {
+          const result = await readScopedWorkerSource(
+            () => this.#canCollect(worker),
+            () =>
+              this.#unavailableSourceSessions.has(worker.sessionId)
+                ? Promise.resolve(undefined)
+                : this.#command(
+                    "Debugger.getScriptSource",
+                    { scriptId: item.script_id },
+                    worker.sessionId,
+                    worker.item.observation.limitations,
+                  ),
+          );
+          if (!result.selected) {
+            item.source = sourceExcluded(
+              "Worker source is outside the current collection scope",
+            );
+            worker.events.completeness.unavailable("script_sources");
+            continue;
+          }
+          if (result.reply === undefined) {
             // Undefined from the optional command means method-not-found.
             // Cache that capability per session, preserving per-script failures.
             if (!worker.detached)
@@ -666,7 +692,10 @@ export class CdpWorkerCapture {
             worker.events.completeness.unavailable("script_sources");
             continue;
           }
-          const text = requiredScriptSource(source, this.context.operation);
+          const text = requiredScriptSource(
+            result.reply,
+            this.context.operation,
+          );
           this.#sourceBytes += Buffer.byteLength(text);
           if (this.#sourceBytes > WEB_RUNTIME_LIMITS.sourceBytes)
             throw new BrowserObservationError(
@@ -877,15 +906,7 @@ export class CdpWorkerCapture {
   }
 
   async #enable(worker: WorkerState): Promise<void> {
-    if (
-      worker.enabled ||
-      worker.detached ||
-      (!worker.item.observation.selected_explicitly &&
-        (worker.item.type === "service_worker"
-          ? !this.#controlled.has(worker.item.target_id)
-          : worker.item.observation.ownership === "unknown"))
-    )
-      return;
+    if (worker.enabled || !this.#canCollect(worker)) return;
     worker.enabled = true;
     let stage = "Target.setAutoAttach";
     try {
@@ -935,25 +956,12 @@ export class CdpWorkerCapture {
     sessionId: string | undefined,
     limitations = this.limitations,
   ): Promise<unknown> {
-    const timeout = AbortSignal.timeout(WEB_RUNTIME_LIMITS.commandTimeoutMs);
-    try {
-      return await optionalCdpCommand(
-        {
-          connection: this.context.connection,
-          sessionId,
-          signal: AbortSignal.any([this.signal, timeout]),
-        },
-        method,
-        params,
-        limitations,
-      );
-    } catch (cause) {
-      if (timeout.aborted && !this.signal.aborted)
-        throw new BrowserObservationError(this.context.operation, "timeout", {
-          cause,
-        });
-      throw cause;
-    }
+    return optionalCdpCommand(
+      { connection: this.context.connection, sessionId, signal: this.signal },
+      method,
+      params,
+      limitations,
+    );
   }
 
   #queue(work: () => Promise<void>): void {
