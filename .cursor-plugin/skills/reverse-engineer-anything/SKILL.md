@@ -656,7 +656,9 @@ as complete while required questions remain open.
 - Native instrumentation, debugger and process capture; browser/Electron
   observation; static/runtime comparison:
   [references/runtime-observation.md](references/runtime-observation.md)
-- Evidence paging, comparisons, residual unknowns, and verification:
+- Captured browser script export, source-map locations, and module attribution:
+  [references/web-feature-attribution.md](references/web-feature-attribution.md)
+- Evidence paging, comparisons, residual unknowns, and investigation handoff:
   [references/evidence-workflows.md](references/evidence-workflows.md)
 - Agent environments (AgentEnv bundles) of a web application, recorded from
   a live instance or a HAR:
