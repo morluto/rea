@@ -89,103 +89,68 @@ it("declares that Rizin close can resume target code and mutate target state", (
   });
 });
 
-it.skipIf(process.platform !== "linux").each([
-  { name: "empty inferior list", response: "[]", closeSucceeds: true },
-  { name: "malformed JSON", response: "not-json", closeSucceeds: false },
-  { name: "non-array JSON", response: "{}", closeSucceeds: false },
+it.skipIf(process.platform === "win32").each([
+  { name: "empty inferior list", response: "[]" },
   {
     name: "valid non-ptrace descriptor",
     response: '[{"raised":true,"fd":3,"uri":"file:///tmp/target"}]',
-    closeSucceeds: true,
   },
+  { name: "malformed JSON", response: "not-json", reason: "malformed JSON" },
+  { name: "non-array JSON", response: "{}", reason: "not an array" },
   {
     name: "malformed descriptor row",
     response: "[null]",
-    closeSucceeds: false,
+    reason: "malformed descriptor row",
   },
   {
     name: "inactive ptrace row",
     response: '[{"raised":false,"fd":3,"uri":"ptrace://1"}]',
-    closeSucceeds: false,
+    reason: "ptrace descriptor is not active",
   },
   {
     name: "malformed ptrace URI",
     response: '[{"raised":true,"fd":3,"uri":"ptrace://bad"}]',
-    closeSucceeds: false,
-  },
-  {
-    name: "multiple ptrace rows",
-    response:
-      '[{"raised":true,"fd":3,"uri":"ptrace://1"},{"raised":true,"fd":4,"uri":"ptrace://2"}]',
-    closeSucceeds: false,
+    reason: "malformed ptrace URI",
   },
 ])(
   "validates Rizin `olj` close response: $name",
-  async ({ response, closeSucceeds }) => {
-    const tty = await rizinTestInferiorTty();
-    testDirectory = await createTestTempDirectory("rea-rizin-olj-");
-    const provider = join(testDirectory, "fake-rizin.cjs");
-    await writeFile(
-      provider,
-      `#!/usr/bin/env node
-process.stdout.write("\\0");
-let oljCalls = 0;
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  input += chunk;
-  for (;;) {
-    const end = input.indexOf("\\n");
-    if (end < 0) break;
-    const line = input.slice(0, end); input = input.slice(end + 1);
-    if (line === "olj") process.stdout.write((++oljCalls === 1 ? ${JSON.stringify(response)} : "[]") + "\\0");
-    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
-    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
-  }
-});
-`,
-    );
-    execFileSync(process.execPath, ["--check", provider]);
-    await chmod(provider, 0o700);
-    manager = new RizinDebugSessionManager({
-      ...process.env,
-      REA_RIZIN_COMMAND: provider,
+  async ({ response, reason }) => {
+    const sessionId = await startFakeInferiorSession({
+      launchTarget: false,
+      initialRows: response,
     });
-    const started = await manager.start({
-      path: "/tmp/fake-target",
-      inferior_tty: tty,
-    });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    const closed = await manager.close(started.value.session_id);
-    expect(closed.ok).toBe(closeSucceeds);
-    if (!closeSucceeds) {
-      expect(manager.status(started.value.session_id)?.state).toBe("closed");
-      await manager.closeAll();
-    }
+    if (reason === undefined)
+      expect(await manager!.close(sessionId)).toMatchObject({ ok: true });
+    else await expectCloseRejectedAndReleased(sessionId, reason);
   },
 );
 
-it.skipIf(process.platform !== "linux").each([
-  {
-    name: "same descriptor remains listed after detach",
-    afterDetach: (pid: number) =>
-      `[{"raised":true,"fd":3,"uri":"ptrace://${pid}"}]`,
+it.skipIf(process.platform !== "linux")(
+  "refuses to select among multiple ptrace descriptors with verified identity",
+  async () => {
+    const sessionId = await startFakeInferiorSession({
+      inferiorDescriptors: [3, 4],
+    });
+    await expectCloseRejectedAndReleased(
+      sessionId,
+      "multiple or ambiguous ptrace inferiors",
+    );
   },
-  {
-    name: "same inferior remains listed under a different FD",
-    afterDetach: (pid: number) =>
-      `[{"raised":true,"fd":4,"uri":"ptrace://${pid}"}]`,
-  },
-  {
-    name: "an unexpected ptrace inferior remains listed",
-    afterDetach: () => '[{"raised":true,"fd":4,"uri":"ptrace://999999999"}]',
-  },
-])(
-  "retains ownership when o- readback finds $name",
-  async ({ afterDetach }) => {
-    const sessionId = await startFakeInferiorSession({ afterDetach });
-    await expectCloseRejectedAndReleased(sessionId);
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains ownership when a different ptrace descriptor remains after detach",
+  async () => {
+    const sessionId = await startFakeInferiorSession({
+      afterDetach: '[{"raised":true,"fd":4,"uri":"ptrace://999999999"}]',
+    });
+    await expectCloseRejectedAndReleased(
+      sessionId,
+      "did not confirm that the selected inferior FD was detached",
+    );
+    expect(
+      await readFile(join(testDirectory!, "detach-readback"), "utf8"),
+    ).toBe("o- 3");
   },
 );
 
@@ -199,6 +164,9 @@ it.skipIf(process.platform !== "linux")(
     expect(closed.ok).toBe(true);
     if (!closed.ok) return;
     expect(manager!.status(sessionId)).toBeUndefined();
+    expect(
+      await readFile(join(testDirectory!, "detach-readback"), "utf8"),
+    ).toBe("o- 3");
     expect(inferiorPid).toBeDefined();
     expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
     const stat = await readFile(`/proc/${inferiorPid!}/stat`, "utf8");
@@ -212,7 +180,10 @@ it.skipIf(process.platform !== "linux")(
   "refuses detach when Rizin reports dbg.exitkills=true",
   async () => {
     const sessionId = await startFakeInferiorSession({ exitKills: "true" });
-    await expectCloseRejectedAndReleased(sessionId);
+    await expectCloseRejectedAndReleased(
+      sessionId,
+      "dbg.exitkills readback did not confirm false",
+    );
   },
 );
 
@@ -222,7 +193,10 @@ it.skipIf(process.platform !== "linux")(
     const sessionId = await startFakeInferiorSession({
       stderrPath: "/dev/null",
     });
-    await expectCloseRejectedAndReleased(sessionId);
+    await expectCloseRejectedAndReleased(
+      sessionId,
+      "Inferior descriptor 2 is not routed to the selected TTY",
+    );
   },
 );
 
@@ -234,7 +208,10 @@ it.skipIf(process.platform !== "linux")(
       initialRows: '[{"raised":true,"fd":3,"uri":"ptrace://999999999"}]',
       startupWatchdogMs: 2_000,
     });
-    await expectCloseRejectedAndReleased(sessionId);
+    await expectCloseRejectedAndReleased(
+      sessionId,
+      "ended before its identity could be established",
+    );
   },
 );
 
@@ -440,10 +417,10 @@ async function startFakeInferiorSession(
   options: {
     readonly launchTarget?: boolean;
     readonly initialRows?: string;
-    readonly afterDetach?: (pid: number) => string;
+    readonly inferiorDescriptors?: readonly number[];
+    readonly afterDetach?: string;
     readonly exitKills?: string;
     readonly stderrPath?: string;
-    readonly truncateOlj?: boolean;
     readonly truncateCleanupFrame?: boolean;
     readonly overflowPxCommand?: boolean;
     readonly withholdCleanupSynchronization?: boolean;
@@ -459,7 +436,6 @@ async function startFakeInferiorSession(
   const launchTarget = options.launchTarget ?? true;
   await writeFile(targetPath, "setInterval(() => {}, 1000);\n");
   const initialRows = options.initialRows ?? null;
-  const afterDetach = options.afterDetach ?? (() => "[]");
   const stderrPath = options.stderrPath ?? tty;
   await writeFile(
     provider,
@@ -468,14 +444,14 @@ const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 process.stdout.write("\\0");
 ${launchTarget ? `const ttyFlags = fs.constants.O_WRONLY | fs.constants.O_NOCTTY | fs.constants.O_NONBLOCK; const stdoutFd = fs.openSync(${JSON.stringify(tty)}, ttyFlags); const stderrFd = fs.openSync(${JSON.stringify(stderrPath)}, ttyFlags); const target = spawn(process.execPath, [${JSON.stringify(targetPath)}], { detached: true, stdio: ["ignore", stdoutFd, stderrFd] }); fs.closeSync(stdoutFd); fs.closeSync(stderrFd); target.unref(); const inferiorPid = target.pid; fs.writeFileSync(${JSON.stringify(pidPath)}, String(inferiorPid));` : "const inferiorPid = 999999999;"}
-const initialRows = ${JSON.stringify(initialRows)} ?? JSON.stringify([{ raised: true, fd: 3, uri: "ptrace://" + inferiorPid }]);
-const afterDetach = ${JSON.stringify(afterDetach(inferiorPid ?? 999999999))};
+const initialRows = ${JSON.stringify(initialRows)} ?? JSON.stringify(${JSON.stringify(options.inferiorDescriptors ?? [3])}.map((fd) => ({ raised: true, fd, uri: "ptrace://" + inferiorPid })));
+const afterDetach = ${JSON.stringify(options.afterDetach ?? "[]")};
 const exitKills = ${JSON.stringify(options.exitKills ?? "false")};
-const truncateOlj = ${JSON.stringify(options.truncateOlj ?? false)};
 const truncateCleanupFrame = ${JSON.stringify(options.truncateCleanupFrame ?? false)};
 const overflowPxCommand = ${JSON.stringify(options.overflowPxCommand ?? false)};
 const withholdCleanupSynchronization = ${JSON.stringify(options.withholdCleanupSynchronization ?? false)};
 let oljCalls = 0;
+let detachCommand;
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -486,9 +462,10 @@ process.stdin.on("data", (chunk) => {
     const line = input.slice(0, end); input = input.slice(end + 1);
     if (line === "olj") {
       oljCalls += 1;
-      if (truncateOlj && oljCalls === 1) process.stdout.write("x".repeat(16 * 1024 * 1024 + 1) + "\\0");
-      else process.stdout.write((oljCalls === 1 ? initialRows : oljCalls === 2 ? afterDetach : "[]") + "\\0");
+      if (oljCalls === 2 && detachCommand !== undefined) fs.writeFileSync(${JSON.stringify(join(testDirectory, "detach-readback"))}, detachCommand);
+      process.stdout.write((oljCalls === 1 ? initialRows : oljCalls === 2 ? afterDetach : "[]") + "\\0");
     }
+    else if (line.startsWith("o- ")) detachCommand = line;
     else if (overflowPxCommand && line === "px") process.stdout.write("x".repeat(2_048) + "\\0");
     else if (line === "e dbg.exitkills") process.stdout.write(exitKills + "\\0");
     else if (withholdCleanupSynchronization && line.startsWith("!echo __REA_CLEANUP_SYNC_")) {}
@@ -512,6 +489,7 @@ process.stdin.on("data", (chunk) => {
       REA_RIZIN_COMMAND: provider,
     },
     {
+      platform: "linux",
       spawnProcess: async (spawnOptions) => {
         const launched = await spawnOwnedProviderProcess(spawnOptions);
         providerPid = launched.process.pid;
@@ -555,8 +533,18 @@ process.stdin.on("data", (chunk) => {
 
 async function expectCloseRejectedAndReleased(
   sessionId: string,
+  reason: string,
 ): Promise<void> {
-  expect((await manager!.close(sessionId)).ok).toBe(false);
+  expect(await manager!.close(sessionId)).toMatchObject({
+    ok: false,
+    error: {
+      diagnostics: { debugger_cleanup: "detach-failed" },
+      cleanup: {
+        resources: [sessionId],
+        reason: expect.stringContaining(reason),
+      },
+    },
+  });
   expect(manager!.status(sessionId)?.state).toBe("closed");
   await manager!.closeAll();
   expect(manager!.status(sessionId)).toBeUndefined();
