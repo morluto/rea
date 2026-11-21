@@ -1041,6 +1041,32 @@ it("keeps contributed command identifiers literal next to their activation event
   ]);
 });
 
+t("keeps declared API proposal names literal", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      enabledApiProposals: [
+        "terminalDataWriteEvent ",
+        "terminalDataWriteEvent",
+        "a,b",
+        "",
+        "terminalDataWriteEvent",
+      ],
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.enabled_api_proposals).toEqual([
+    "terminalDataWriteEvent ",
+    "terminalDataWriteEvent",
+    "a,b",
+  ]);
+});
+
 it("resolves dot segments in entry points under extension/", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({

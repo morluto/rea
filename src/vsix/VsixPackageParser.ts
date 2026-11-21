@@ -265,9 +265,9 @@ const asStringArray = (value: unknown): string[] => {
 };
 
 /**
- * Activation events are matched by VS Code as exact strings, so keep each
- * declared value literal: no trimming and no comma splitting. Only empty
- * strings and exact duplicates are dropped.
+ * Activation events and API proposal names are matched by VS Code as exact
+ * strings, so keep each declared value literal: no trimming and no comma
+ * splitting. Only empty strings and exact duplicates are dropped.
  */
 const asLiteralStringArray = (value: unknown): string[] => {
   const items = typeof value === "string" ? [value] : value;
@@ -805,7 +805,7 @@ const parsePackageJsonDocument = (
           : undefined,
       ),
     },
-    enabledApiProposals: asStringArray(record.enabledApiProposals),
+    enabledApiProposals: asLiteralStringArray(record.enabledApiProposals),
   };
 };
 
