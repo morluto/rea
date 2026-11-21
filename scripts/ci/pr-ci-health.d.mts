@@ -24,6 +24,7 @@ export interface PrCiWorkflowRun {
   status?: string;
   conclusion?: string | null;
   created_at?: string;
+  run_started_at?: string | null;
   html_url?: string;
   pull_requests?: Array<{
     number?: number;
