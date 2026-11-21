@@ -4,6 +4,7 @@ import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { javascriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import { proveJavaScriptBootstrapIntegrity } from "./javascriptBootstrapIntegrity.js";
 import {
+  javaScriptExpressionValue,
   semanticMemberChain,
   semanticStaticPropertyKey,
   readExactJavaScriptLiteral,
@@ -174,7 +175,7 @@ const canonicalWebpackInteropBindings = (
   const excludesLoader = (node: t.Node): boolean =>
     interop.isFreshObject(node) || readExactJavaScriptLiteral(node).found;
   const loaderMayOwnReference = (root: t.Node): boolean => {
-    const first = unwrapJavaScriptExpression(root).node;
+    const first = javaScriptExpressionValue(root);
     if (!t.isIdentifier(first)) return !excludesLoader(first);
     // Only proven separate values are terminals. An unsupported expression
     // might return the loader, so preserve that uncertainty instead of dropping it.
@@ -199,7 +200,7 @@ const canonicalWebpackInteropBindings = (
         for (const source of initializers) {
           // A fresh container does not establish the selected property's value.
           if (source.projection.length !== 0) return true;
-          const next = unwrapJavaScriptExpression(source.node).node;
+          const next = javaScriptExpressionValue(source.node);
           if (t.isIdentifier(next)) pending.push(next);
           else if (!excludesLoader(next)) return true;
         }

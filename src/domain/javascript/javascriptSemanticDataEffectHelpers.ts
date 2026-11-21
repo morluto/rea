@@ -7,6 +7,7 @@ import {
   semanticRequireOriginCandidate,
   semanticRequireExportsIdentity,
   semanticGlobalProcessOrigin,
+  semanticGlobalProcessPathOrigin,
   semanticMutableBuiltinOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
 import type {
@@ -385,6 +386,7 @@ const semanticBoundMemberPath = (
 ):
   | {
       readonly binding: JavaScriptSemanticBindingState;
+      readonly identifier: t.Identifier;
       readonly path: string[];
     }
   | undefined => {
@@ -395,7 +397,9 @@ const semanticBoundMemberPath = (
     chain.root,
     chain.root.name,
   );
-  return binding === undefined ? undefined : { binding, path: chain.members };
+  return binding === undefined
+    ? undefined
+    : { binding, identifier: chain.root, path: chain.members };
 };
 
 type BuiltinBindingMemo = Map<t.Node, Map<string, readonly string[] | null>>;
@@ -406,7 +410,7 @@ const builtinBindingPath = (
   specifiers: readonly string[],
   capture: t.Node,
   allowCandidate: boolean,
-  selectedPath: readonly string[] = [],
+  selectedPath: readonly (string | null)[] = [],
   callableValue = false,
   visited: ReadonlySet<string> = new Set(),
   memo: BuiltinBindingMemo = new Map(),
@@ -414,6 +418,10 @@ const builtinBindingPath = (
   savedObjectCapture?: t.Node,
 ): readonly string[] | null => {
   if (binding === undefined) return null;
+  if (provenanceCapture === undefined) {
+    const read = semanticBoundMemberPath(capture, state);
+    if (read?.binding === binding) provenanceCapture = read.identifier;
+  }
   const key = JSON.stringify([
     binding.bindingId,
     selectedPath,
@@ -453,7 +461,7 @@ const computeBuiltinBindingPath = (
   specifiers: readonly string[],
   capture: t.Node,
   allowCandidate: boolean,
-  selectedPath: readonly string[] = [],
+  selectedPath: readonly (string | null)[] = [],
   callableValue = false,
   visited: ReadonlySet<string>,
   memo: BuiltinBindingMemo,
@@ -494,7 +502,9 @@ const computeBuiltinBindingPath = (
           ];
         // A function-value escape cannot replace its native [[Call]]. An
         // escaped containing object can still replace the selected method.
-        return (!callableValue || path.length < selectedPath.length) &&
+        return (!callableValue ||
+          path.length < selectedPath.length ||
+          path.includes(null)) &&
           !originalBuiltinReceiver(node, state, allowCandidate)
           ? [capture]
           : undefined;
@@ -547,14 +557,20 @@ const computeBuiltinBindingPath = (
       return null;
   }
   const ancestors = new Set([...visited, binding.bindingId]);
-  for (const initializer of binding.initializers) {
+  const initializers =
+    provenanceCapture === undefined
+      ? binding.initializers
+      : semanticBindingAtRead(binding, provenanceCapture, state).binding
+          .initializers;
+  for (const initializer of initializers) {
     const pending = [
       {
         node: initializer.node,
         path: [...initializer.projection.map(String), ...selectedPath],
         savedObjectCapture:
           selectedPath.length > 0 &&
-          (t.isMemberExpression(initializer.node) ||
+          (initializer.projection.length > 0 ||
+            t.isMemberExpression(initializer.node) ||
             t.isOptionalMemberExpression(initializer.node))
             ? initializer.node
             : savedObjectCapture,
@@ -586,10 +602,12 @@ const computeBuiltinBindingPath = (
         );
         if (sourcePath === null) return null;
         // Normalize ESM default namespaces at their owner before projecting an alias.
-        resolvedPath = [...sourcePath, ...current.path].slice(
+        const projected = current.path.slice(
           0,
-          sourcePath.length + current.path.length - selectedPath.length,
+          current.path.length - selectedPath.length,
         );
+        if (!projected.every((part) => part !== null)) return null;
+        resolvedPath = [...sourcePath, ...projected];
       } else if (
         t.isMemberExpression(node) ||
         t.isOptionalMemberExpression(node)
@@ -675,7 +693,7 @@ const builtinNamespaceOrigin = (
 const builtinProvenanceOrigin = (
   provenance: ReturnType<typeof evaluateSemanticProvenance>,
   allowCandidate: boolean,
-  selectedPath: readonly string[],
+  selectedPath: readonly (string | null)[],
 ): JavaScriptModuleOrigin | undefined => {
   if (provenance.status === "module") return provenance.origins[0];
   if (
@@ -705,43 +723,127 @@ const builtinProvenanceOrigin = (
 
 const affectsBuiltinPath = (
   path: JavaScriptSemanticPropertyPath,
-  selected: readonly string[],
+  selected: readonly (string | null)[],
 ): boolean =>
   path.length <= selected.length &&
-  path.every((key, index) =>
-    semanticPropertyPathKeyMatches(key, selected[index]!),
+  path.every(
+    (key, index) =>
+      selected[index] === null ||
+      semanticPropertyPathKeyMatches(key, selected[index]!),
   );
 
-// A Map, so a specifier named like an Object.prototype key finds nothing.
+const FS_RECEIVER_METHODS = [
+  "access",
+  "appendFile",
+  "chmod",
+  "chown",
+  "copyFile",
+  "cp",
+  "fchmod",
+  "fchown",
+  "fdatasync",
+  "fstat",
+  "fsync",
+  "ftruncate",
+  "futimes",
+  "glob",
+  "lchmod",
+  "lchown",
+  "link",
+  "lstat",
+  "lutimes",
+  "mkdir",
+  "mkdtemp",
+  "open",
+  "opendir",
+  "read",
+  "readdir",
+  "readFile",
+  "readlink",
+  "readv",
+  "realpath",
+  "rename",
+  "rm",
+  "rmdir",
+  "stat",
+  "statfs",
+  "symlink",
+  "truncate",
+  "unlink",
+  "utimes",
+  "write",
+  "writeFile",
+  "writev",
+  "close",
+];
+
 const BUILTIN_RECEIVER_METHODS: ReadonlyMap<
   string,
   ReadonlySet<string>
 > = new Map(
   Object.entries({
+    vm: new Set(["compileFunction"]),
     path: new Set(["resolve", "join", "dirname"]),
     "path/posix": new Set(["resolve", "join", "dirname"]),
     url: new Set(["fileURLToPath"]),
-    vm: new Set(["compileFunction"]),
     fs: new Set([
-      "readFile",
-      "readFileSync",
-      "writeFile",
-      "writeFileSync",
-      "close",
-      "closeSync",
+      ...FS_RECEIVER_METHODS.flatMap((method) => [method, `${method}Sync`]),
       "existsSync",
+      "exists",
+      "mkdtempDisposableSync",
+      "openAsBlob",
+      "watch",
+      "watchFile",
+      "unwatchFile",
       ...BUILTIN_RESOURCE_METHODS.fs,
     ]),
     "fs/promises": new Set([
+      "access",
+      "appendFile",
+      "chmod",
+      "chown",
+      "copyFile",
+      "cp",
+      "glob",
+      "lchmod",
+      "lchown",
+      "link",
+      "lstat",
+      "lutimes",
+      "mkdir",
+      "mkdtemp",
+      "mkdtempDisposable",
+      "opendir",
+      "readdir",
       "readFile",
+      "readlink",
+      "realpath",
+      "rename",
+      "rm",
+      "rmdir",
+      "stat",
+      "statfs",
+      "symlink",
+      "truncate",
+      "unlink",
+      "utimes",
       "writeFile",
+      "watch",
       ...BUILTIN_RESOURCE_METHODS["fs/promises"],
     ]),
     net: new Set(BUILTIN_RESOURCE_METHODS.net),
     tls: new Set(BUILTIN_RESOURCE_METHODS.tls),
     http: new Set(["request", "get"]),
     https: new Set(["request", "get"]),
-    child_process: new Set(["spawn", "exec", "execFile", "fork"]),
+    child_process: new Set([
+      "spawn",
+      "spawnSync",
+      "exec",
+      "execSync",
+      "execFile",
+      "execFileSync",
+      "fork",
+    ]),
     process: new Set(["cwd", "uptime", "hrtime", "nextTick"]),
     timers: new Set([
       "setTimeout",
@@ -774,22 +876,26 @@ const builtinEffectIndexes = new WeakMap<
   BuiltinEffectIndex
 >();
 
+const createBuiltinEffectIndex = (
+  state: JavaScriptSemanticAnalysisState,
+): BuiltinEffectIndex => ({
+  writesByModule: new Map(
+    [...state.requiredModuleEffects].map(([name, effects]) => [
+      name,
+      effects.filter(({ kind }) => kind === "write"),
+    ]),
+  ),
+  moduleEffects: new Map(),
+  receivers: new WeakMap(),
+  candidateReceivers: new WeakMap(),
+});
+
 const builtinEffectIndex = (
   state: JavaScriptSemanticAnalysisState,
 ): BuiltinEffectIndex => {
   let index = builtinEffectIndexes.get(state);
   if (index === undefined) {
-    index = {
-      writesByModule: new Map(
-        [...state.requiredModuleEffects].map(([name, effects]) => [
-          name,
-          effects.filter(({ kind }) => kind === "write"),
-        ]),
-      ),
-      moduleEffects: new Map(),
-      receivers: new WeakMap(),
-      candidateReceivers: new WeakMap(),
-    };
+    index = createBuiltinEffectIndex(state);
     builtinEffectIndexes.set(state, index);
   }
   return index;
@@ -799,15 +905,16 @@ const builtinModuleEffects = (
   specifier: string,
   state: JavaScriptSemanticAnalysisState,
   allowCandidate = false,
+  index = builtinEffectIndex(state),
 ): readonly JavaScriptSemanticRequiredModuleEffect[] => {
-  const cache = builtinEffectIndex(state).moduleEffects;
+  const cache = index.moduleEffects;
+  const original = (node: t.Node | undefined) =>
+    originalBuiltinReceiver(node, state, allowCandidate, index);
   const key = `${specifier}:${allowCandidate ? "candidate" : "proven"}`;
   let effects = cache.get(key);
   if (effects === undefined) {
     effects = (state.requiredModuleEffects.get(specifier) ?? []).filter(
-      ({ kind, node }) =>
-        kind === "write" ||
-        !originalBuiltinReceiver(node, state, allowCandidate),
+      ({ kind, node }) => kind === "write" || !original(node),
     );
     if (specifier === "fs/promises") {
       const sharedFsEscapes = (state.requiredModuleEffects.get("fs") ?? [])
@@ -815,7 +922,7 @@ const builtinModuleEffects = (
           ({ kind, path, node }) =>
             kind === "escape" &&
             (path.length === 0 || path[0] === "promises") &&
-            !originalBuiltinReceiver(node, state, allowCandidate),
+            !original(node),
         )
         .map((effect) => ({
           ...effect,
@@ -832,7 +939,7 @@ const builtinModuleEffects = (
 /** A named ESM process env/argv value snapshots the object, not later slot replacement. */
 const processSnapshotObjectRoot = (
   origin: JavaScriptModuleOrigin,
-  selected: readonly string[],
+  selected: readonly (string | null)[],
 ): "env" | "argv" | undefined => {
   if (
     origin.resolutionMode === "require" ||
@@ -850,7 +957,7 @@ const processSnapshotObjectRoot = (
 /** Check shared exports at the use or method-capture point, not at every later call. */
 export const requiredModuleChanged = (
   specifier: string,
-  selected: readonly string[],
+  selected: readonly (string | null)[],
   capture: t.Node,
   state: JavaScriptSemanticAnalysisState,
   callableValue = false,
@@ -860,33 +967,54 @@ export const requiredModuleChanged = (
   snapshotObjectRoot?: "env" | "argv",
 ): boolean => {
   const identity = semanticRequireExportsIdentity(specifier, selected);
-  return builtinModuleEffects(identity.specifier, state, allowCandidate).some(
-    ({ path, node, kind, loaderAuthority }) =>
-      !(ignoreCandidateEffects && loaderAuthority === "candidate") &&
-      !(
-        snapshotObjectRoot !== undefined &&
-        kind === "write" &&
-        path.length === 1 &&
-        path[0] === snapshotObjectRoot
-      ) &&
-      !(
-        savedObjectCapture !== undefined &&
-        path.length < identity.path.length &&
-        semanticTopLevelEffectFollowsCapture(
-          savedObjectCapture,
+  const changed = (
+    effects: readonly JavaScriptSemanticRequiredModuleEffect[],
+    selection: readonly (string | null)[],
+  ) =>
+    effects.some(
+      ({ path, node, kind, loaderAuthority }) =>
+        !(ignoreCandidateEffects && loaderAuthority === "candidate") &&
+        !(
+          snapshotObjectRoot !== undefined &&
+          kind === "write" &&
+          path.length === 1 &&
+          path[0] === snapshotObjectRoot
+        ) &&
+        !(
+          kind === "write" &&
+          savedObjectCapture !== undefined &&
+          path.length < selection.length &&
+          semanticTopLevelEffectFollowsCapture(
+            savedObjectCapture,
+            node,
+            state.parentsByNode,
+          )
+        ) &&
+        affectsBuiltinPath(path, selection) &&
+        !semanticTopLevelEffectFollowsCapture(
+          capture,
           node,
           state.parentsByNode,
-        )
-      ) &&
-      affectsBuiltinPath(path, identity.path) &&
-      !semanticTopLevelEffectFollowsCapture(
-        capture,
-        node,
-        state.parentsByNode,
-      ) &&
-      (kind === "write" ||
-        !callableValue ||
-        path.length < identity.path.length),
+        ) &&
+        (kind === "write" ||
+          !callableValue ||
+          path.length < selection.length ||
+          path.includes(null)),
+    );
+  return (
+    changed(
+      builtinModuleEffects(identity.specifier, state, allowCandidate),
+      identity.path,
+    ) ||
+    (specifier.replace(/^node:/u, "") === "fs" &&
+      selected[0] === "promises" &&
+      selected.length > 1 &&
+      changed(
+        builtinModuleEffects("fs", state, allowCandidate).filter(
+          ({ kind, path }) => kind === "write" && path.length <= 1,
+        ),
+        selected,
+      ))
   );
 };
 
@@ -895,13 +1023,18 @@ const originalBuiltinReceiver = (
   node: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
   allowCandidate = false,
+  index = builtinEffectIndex(state),
 ): boolean => {
   if (node === undefined) return false;
-  const index = builtinEffectIndex(state);
   const receivers = allowCandidate ? index.candidateReceivers : index.receivers;
   const previous = receivers.get(node);
   if (previous !== undefined) return previous;
-  const result = computeOriginalBuiltinReceiver(node, state, allowCandidate);
+  const result = computeOriginalBuiltinReceiver(
+    node,
+    state,
+    allowCandidate,
+    index,
+  );
   receivers.set(node, result);
   return result;
 };
@@ -910,6 +1043,7 @@ const computeOriginalBuiltinReceiver = (
   node: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
   allowCandidate: boolean,
+  index: BuiltinEffectIndex,
 ): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
@@ -920,9 +1054,13 @@ const computeOriginalBuiltinReceiver = (
   const receiver = boundReceiver?.binding;
   const receiverPath = boundReceiver?.path ?? [];
   const provenance =
-    receiver === undefined
+    boundReceiver === undefined
       ? undefined
-      : evaluateSemanticProvenance(receiver, state);
+      : evaluateSemanticProvenanceAtRead(
+          boundReceiver.binding,
+          boundReceiver.identifier,
+          state,
+        );
   const receiverMethod = semanticStaticPropertyKey(
     callee.property,
     callee.computed,
@@ -951,7 +1089,8 @@ const computeOriginalBuiltinReceiver = (
       ? semanticRequireOriginCandidate(callee.object, state)
       : semanticRequireOrigin(callee.object, state)
     )?.origin ??
-    semanticGlobalProcessOrigin(callee.object, state);
+    semanticGlobalProcessOrigin(callee.object, state) ??
+    semanticGlobalProcessPathOrigin(callee.object, state);
   if (sourceOrigin === undefined) return false;
   const origin = builtinNamespaceOrigin(sourceOrigin);
   const posixReceiver =
@@ -996,9 +1135,7 @@ const computeOriginalBuiltinReceiver = (
           : semanticRequireExportsIdentity(shared.specifier, shared.path);
       return (
         identity !== undefined &&
-        (
-          builtinEffectIndex(state).writesByModule.get(identity.specifier) ?? []
-        ).some(
+        (index.writesByModule.get(identity.specifier) ?? []).some(
           ({ path, node: write, loaderAuthority }) =>
             !(
               allowCandidate &&
@@ -1034,6 +1171,53 @@ const computeOriginalBuiltinReceiver = (
   });
 };
 
+export const semanticBuiltinDataProperty = (
+  source: JavaScriptModuleOrigin,
+  method: string,
+): boolean => {
+  const origin = builtinNamespaceOrigin(source);
+  return (
+    origin.importedPath.length === 0 &&
+    ((BUILTIN_RECEIVER_METHODS.get(origin.specifier)?.has(method) ?? false) ||
+      (origin.specifier === "process" && ["env", "argv"].includes(method)))
+  );
+};
+
+/** Reuse slot and receiver proofs only while the mutation collector's facts stay fixed. */
+export const createSemanticBuiltinSlotQuery = (
+  state: JavaScriptSemanticAnalysisState,
+  revision: () => number,
+) => {
+  let observedRevision = -1;
+  let index: BuiltinEffectIndex | undefined;
+  return (
+    source: JavaScriptModuleOrigin,
+    method: string,
+    capture: t.Node,
+  ): boolean => {
+    const current = revision();
+    if (index === undefined || observedRevision !== current) {
+      index = createBuiltinEffectIndex(state);
+      observedRevision = current;
+    }
+    const origin = builtinNamespaceOrigin(source);
+    const identity = semanticRequireExportsIdentity(origin.specifier, [
+      ...origin.importedPath,
+      method,
+    ]);
+    return builtinModuleEffects(identity.specifier, state, true, index).some(
+      ({ path, node }) =>
+        node !== capture &&
+        affectsBuiltinPath(path, identity.path) &&
+        !semanticTopLevelEffectFollowsCapture(
+          capture,
+          node,
+          state.parentsByNode,
+        ),
+    );
+  };
+};
+
 const semanticExpressionModuleOrigin = (
   expression: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -1049,7 +1233,7 @@ const semanticExpressionModuleOrigin = (
     const binding = resolveSemanticBindingState(state, node, node.name);
     if (binding === undefined || visited.has(binding.bindingId))
       return undefined;
-    const provenance = evaluateSemanticProvenance(binding, state);
+    const provenance = evaluateSemanticProvenanceAtRead(binding, node, state);
     return provenance.status === "module" ||
       (allowCandidate &&
         provenance.status === "ambiguous" &&
@@ -1082,7 +1266,7 @@ export const isSemanticProcessObject = (
 ): boolean => {
   if (!t.isIdentifier(node)) return false;
   const binding = resolveSemanticBindingState(state, node, node.name);
-  const selected = key === undefined || key === null ? [family] : [family, key];
+  const selected = key === undefined ? [family] : [family, key];
   if (binding === undefined)
     return (
       semanticGlobalProcessOrigin(node, state) !== undefined &&
@@ -1096,6 +1280,7 @@ export const isSemanticProcessObject = (
       node,
       false,
       selected,
+      key != null,
     )?.length === 0
   );
 };
@@ -1110,7 +1295,7 @@ export const semanticProcessObjectIdentity = (
   if (isSemanticProcessObject(node, state, family, key)) return {};
   if (!t.isIdentifier(node)) return null;
   const binding = resolveSemanticBindingState(state, node, node.name);
-  const selected = key === undefined || key === null ? [family] : [family, key];
+  const selected = key === undefined ? [family] : [family, key];
   if (binding === undefined)
     return semanticGlobalProcessOrigin(node, state) !== undefined &&
       !requiredModuleChanged(
@@ -1132,6 +1317,7 @@ export const semanticProcessObjectIdentity = (
     node,
     true,
     selected,
+    key != null,
   )?.length === 0
     ? { builtinAuthority: "candidate" }
     : null;

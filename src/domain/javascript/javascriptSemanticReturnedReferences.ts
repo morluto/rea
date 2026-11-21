@@ -79,6 +79,8 @@ export interface SemanticReturnedReferenceResult {
   readonly references: readonly SemanticReturnedReference[];
   /** Source-local callable targets resolved by the same binding/projection owner. */
   readonly callables: ReadonlySet<t.Function>;
+  /** Source calls whose result can be selected as the callable. */
+  readonly calleeCallResults?: ReadonlySet<t.CallExpression>;
   /** A visible invocation-method mutation prevents a source-local result proof. */
   readonly unresolvedInvocation?: boolean;
   /** Both states close the supported source-local may-target graph. Widened joins projections without dropping represented targets; it does not claim runtime completeness. */
@@ -156,6 +158,7 @@ export const createSemanticReturnedReferences = (
     const result: {
       references: readonly SemanticReturnedReference[];
       callables: ReadonlySet<t.Function>;
+      calleeCallResults?: Set<t.CallExpression>;
       precision: SemanticReturnedReferenceResult["precision"];
       unresolvedInvocation?: boolean;
     } = { references: [], callables: functions, precision: "exact" };
@@ -206,9 +209,10 @@ export const createSemanticReturnedReferences = (
               invocationContext.receiver?.start,
               invocationContext.receiver?.end,
               invocationContext.receiverUnknown,
+              // Parser recovery retains null argument slots; keep their index.
               invocationContext.arguments?.map((argument) => [
-                argument.start,
-                argument.end,
+                argument?.start,
+                argument?.end,
               ]),
             ];
       let readKey = JSON.stringify([
@@ -504,6 +508,9 @@ export const createSemanticReturnedReferences = (
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
         if (last !== undefined) pending.push({ ...current, node: last });
+      } else if (t.isCallExpression(node)) {
+        if (current.path === undefined || current.path.length === 0)
+          (result.calleeCallResults ??= new Set()).add(node);
       } else if (t.isFunction(node)) {
         if (current.path === undefined || current.path.length === 0)
           functions.add(node);

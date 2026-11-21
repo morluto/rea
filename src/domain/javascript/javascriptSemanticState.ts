@@ -321,6 +321,28 @@ export const currentSemanticScope = (
   return scope;
 };
 
+export const semanticCallableKind = (
+  node: t.Node,
+): "function" | "class" | "method" | undefined => {
+  if (
+    t.isClassMethod(node) ||
+    t.isClassPrivateMethod(node) ||
+    t.isObjectMethod(node)
+  )
+    return "method";
+  if (t.isFunction(node)) return "function";
+  if (t.isClass(node)) return "class";
+  return undefined;
+};
+
+/** Deterministic callable identity shared by collection and return recovery. */
+export const semanticCallableIdForNode = (node: t.Node): string | null => {
+  const kind = semanticCallableKind(node);
+  return kind === undefined
+    ? null
+    : `callable:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`;
+};
+
 /** Create a stable source-position identity for one lexical scope. */
 export const semanticScopeId = (
   kind: JavaScriptSemanticScope["kind"],

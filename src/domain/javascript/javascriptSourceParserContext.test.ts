@@ -484,6 +484,7 @@ const unboundRequireCall = (
   source: string,
   sourcePath: string,
   packageType?: "commonjs",
+  specifier = "fs",
 ) => {
   const { file } = parseRecoveredJavaScript(
     source,
@@ -501,7 +502,7 @@ const unboundRequireCall = (
       if (
         t.isCallExpression(node) &&
         t.isIdentifier(node.callee, { name: "require" }) &&
-        t.isStringLiteral(node.arguments[0], { value: "fs" })
+        t.isStringLiteral(node.arguments[0], { value: specifier })
       )
         required = node;
     },
@@ -545,5 +546,87 @@ it.each(unboundRequireCases)(
           },
     );
     expect(semanticRequireOrigin(required, state)).toBeUndefined();
+  },
+);
+
+it.each([
+  ["function outcome(){}", "outcome()", "commonjs-loader"],
+  [
+    "function outcome(flag){if(flag)return;}",
+    "outcome(true)",
+    "commonjs-loader",
+  ],
+  [
+    "function outcome(){function nested(){return unknown;}}",
+    "outcome()",
+    "commonjs-loader",
+  ],
+  ["function outcome(){}", "outcome(module)", "unknown"],
+  [
+    "function outcome(flag){if(flag)return external();}",
+    "outcome(true)",
+    "unknown",
+  ],
+])(
+  "checks argument evaluation independently of an empty return: %s, %s",
+  (declaration, prefix, loader) => {
+    const { required, state } = unboundRequireCall(
+      `${declaration}
+     Reflect.set({}, "require", 0, (${prefix}, {}));
+     require("node:path");`,
+      "ordinary.cjs",
+      "commonjs",
+      "node:path",
+    );
+    expect(semanticRequireLoaderAt(required, state, new Set())).toBe(loader);
+  },
+);
+
+it.each([
+  [
+    "const box={get owner(){observe(module);return 0;}};",
+    "typeof box.owner",
+    "unknown",
+  ],
+  ["function owner(){observe(module);return 0;}", "typeof owner()", "unknown"],
+  [
+    "const box={get owner(){listener.value=module;return 0;}};",
+    "typeof box.owner",
+    "unknown",
+  ],
+  [
+    "function owner(){listener.value=module;return 0;}",
+    "typeof owner()",
+    "unknown",
+  ],
+
+  ["", "typeof ({owner:module}).owner", "commonjs-loader"],
+  ["const box={owner:module};", "typeof box.owner", "commonjs-loader"],
+  ["const box={owner:module};", "void box.owner", "commonjs-loader"],
+  ["const box={owner:module};", "box.owner === null", "commonjs-loader"],
+  [
+    "const box={get owner(){return module;}};",
+    "typeof box.owner",
+    "commonjs-loader",
+  ],
+  ["function owner(){return module;}", "typeof owner()", "commonjs-loader"],
+  ["", "typeof ({owner:observe(module)}).owner", "unknown"],
+  [
+    "const box={get owner(){return observe(module);}};",
+    "typeof box.owner",
+    "unknown",
+  ],
+  ["function owner(){return observe(module);}", "typeof owner()", "unknown"],
+  ["const box={owner:module};", "typeof box[select(module)]", "unknown"],
+])(
+  "separates scalar evaluation from an intermediate value: %s %s",
+  (setup, prefix, expected) => {
+    const { required, state } = unboundRequireCall(
+      `${setup} Reflect.set({}, "require", 0, (${prefix}, {})); require("node:path");`,
+      "scalar.cjs",
+      "commonjs",
+      "node:path",
+    );
+    expect(semanticRequireLoaderAt(required, state, new Set())).toBe(expected);
   },
 );

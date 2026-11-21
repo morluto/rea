@@ -11,6 +11,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  SemanticPropertyPathEffectIndex,
   semanticArrayIndex,
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
@@ -33,6 +34,7 @@ import {
   semanticEscapeFollowsCapture,
   semanticDefiniteEffectPrecedesReference,
   semanticEffectTiming,
+  semanticTopLevelEffectIsOrderable,
   semanticBindingEffectFollowsRead,
   semanticReadPrecedesEffectWithinActivation,
   semanticTopLevelEffectFollowsCapture,
@@ -159,7 +161,7 @@ export const semanticOpaqueGlobalMayHaveChanged = (
  * through aliases even where the original name is shadowed or out of block scope.
  * Without a disjointness proof, consider their enclosing activation and closures.
  * Queries retain no binding-by-eval table. */
-function* semanticOpaqueBindingEffects(
+export function* semanticOpaqueBindingEffects(
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
   kind: "binding" | "reference" = "binding",
@@ -796,6 +798,11 @@ export const bindingEffectsConfinedToReceiverCalls = (
     ({ node, path }) =>
       path.length === 0 && node !== undefined && matchesCall(node),
   );
+
+/** Whether the binding's object escaped at any recorded site. */
+export const bindingHasRecordedEscapes = (
+  binding: JavaScriptSemanticBindingState,
+): boolean => binding.escapedPaths.length > 0;
 
 /**
  * Whether an escape of `binding`'s object is recorded at a site other than
@@ -1446,4 +1453,89 @@ const semanticPathsOverlap = (
     if (!leftMatchesRight && !rightMatchesLeft) return false;
   }
   return true;
+};
+
+export const createSemanticOpaqueReferenceEffectQuery = (
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  const byActivation = new Map<string, t.CallExpression | null | undefined>();
+  return (
+    binding: JavaScriptSemanticBindingState,
+    read: t.Node,
+  ): boolean | undefined => {
+    if (state.opaqueEffects.byScope.size === 0) return undefined;
+    const scope = activation(binding.scopeId, state);
+    if (!byActivation.has(scope)) {
+      let first: t.CallExpression | null | undefined;
+      for (const effect of semanticOpaqueBindingEffects(
+        binding,
+        state,
+        "reference",
+      )) {
+        if (!semanticTopLevelEffectIsOrderable(effect, state.parentsByNode)) {
+          first = null;
+          break;
+        } else if (first == null) first = effect;
+        else if (
+          semanticTopLevelEffectFollowsCapture(
+            first,
+            effect,
+            state.parentsByNode,
+          )
+        )
+          continue;
+        else if (
+          semanticTopLevelEffectFollowsCapture(
+            effect,
+            first,
+            state.parentsByNode,
+          )
+        )
+          first = effect;
+        else {
+          first = null;
+          break;
+        }
+      }
+      byActivation.set(scope, first);
+    }
+    const first = byActivation.get(scope);
+    if (first === undefined) return undefined;
+    if (first !== null)
+      return semanticEffectTiming(read, first, state) !== "after";
+    for (const effect of semanticOpaqueBindingEffects(
+      binding,
+      state,
+      "reference",
+    ))
+      if (semanticEffectTiming(read, effect, state) !== "after") return true;
+    return false;
+  };
+};
+
+/** Index overlapping member writes and escapes for settled binding facts. */
+export const createSemanticMemberEffectLookup = () => {
+  const indices = new WeakMap<
+    readonly MemberWrite[],
+    { size: number; index: SemanticPropertyPathEffectIndex<MemberWrite> }
+  >();
+  return (
+    binding: JavaScriptSemanticBindingState,
+    kind: "member-write" | "escape",
+    path: JavaScriptSemanticPropertyPath,
+    descendants = true,
+  ): Iterable<MemberWrite> => {
+    const effects =
+      kind === "member-write" ? binding.memberWrites : binding.escapedPaths;
+    let cached = indices.get(effects);
+    if (cached === undefined) {
+      cached = { size: 0, index: new SemanticPropertyPathEffectIndex() };
+      indices.set(effects, cached);
+    }
+    while (cached.size < effects.length) {
+      const effect = effects[cached.size++]!;
+      cached.index.retain(effect.path, effect);
+    }
+    return cached.index.matching(path, descendants);
+  };
 };

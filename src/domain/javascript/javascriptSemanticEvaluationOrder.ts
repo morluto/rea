@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import {
+  isPrimitiveJavaScriptExpression,
   javaScriptDefinitionExpression,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -8,6 +9,78 @@ import {
 } from "./javascriptAstValues.js";
 
 import { childNodes } from "./javascriptSemanticTraversal.js";
+
+/** Effectful inputs still evaluated when an expression returns a scalar. */
+export const javaScriptScalarEvaluationSources = (
+  expression: t.Node,
+  bodiesAt: (
+    node:
+      | t.MemberExpression
+      | t.OptionalMemberExpression
+      | t.CallExpression
+      | t.OptionalCallExpression,
+  ) => readonly t.Node[] | undefined,
+): readonly t.Node[] => {
+  const sources: t.Node[] = [];
+  const pending = [...childNodes(expression)];
+  const seen = new WeakSet<t.Node>();
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if (seen.has(node)) continue;
+    seen.add(node);
+    if (t.isObjectMethod(node)) {
+      if (node.computed) sources.push(node.key);
+      continue;
+    }
+    if (t.isFunction(node)) continue;
+    if (t.isObjectProperty(node) && node.computed) sources.push(node.key);
+    if (
+      t.isMemberExpression(node) ||
+      t.isOptionalMemberExpression(node) ||
+      t.isCallExpression(node) ||
+      t.isOptionalCallExpression(node)
+    ) {
+      const bodies = bodiesAt(node);
+      if (bodies !== undefined) {
+        // A selected value is discarded. Evaluate the authored inputs and
+        // any known local getter or call body, including recursive calls once.
+        pending.push(...childNodes(node), ...bodies);
+        continue;
+      }
+      sources.push(node);
+      if (
+        (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+        node.computed
+      )
+        sources.push(node.property);
+      continue;
+    }
+    if (t.isAssignmentExpression(node) && t.isMemberExpression(node.left)) {
+      sources.push(node.left.object, node.right);
+      if (node.left.computed) sources.push(node.left.property);
+    }
+    if (
+      t.isNewExpression(node) ||
+      t.isAwaitExpression(node) ||
+      t.isYieldExpression(node) ||
+      t.isClass(node) ||
+      t.isTaggedTemplateExpression(node) ||
+      t.isSpreadElement(node) ||
+      t.isUpdateExpression(node) ||
+      (t.isAssignmentExpression(node) &&
+        !["=", "||=", "&&=", "??="].includes(node.operator)) ||
+      ((t.isBinaryExpression(node) ||
+        t.isUnaryExpression(node) ||
+        t.isTemplateLiteral(node)) &&
+        !isPrimitiveJavaScriptExpression(node))
+    ) {
+      sources.push(node);
+      continue;
+    }
+    pending.push(...childNodes(node));
+  }
+  return sources;
+};
 
 const preserveGrouping = { stopAtParentheses: true } as const;
 

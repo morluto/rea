@@ -7,6 +7,8 @@ import type {
   JavaScriptSemanticScope,
 } from "./javascriptSemanticIr.js";
 import {
+  semanticCallableKind,
+  semanticCallableIdForNode,
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
@@ -61,7 +63,7 @@ interface CollectCallableInput {
 /** Retain callable identity without polluting lexical bindings. */
 export const collectSemanticCallable = (input: CollectCallableInput): void => {
   const { node, parent, containerScope, bodyScope, state } = input;
-  const kind = callableKind(node);
+  const kind = semanticCallableKind(node);
   if (kind === undefined) return;
   const callableId =
     semanticCallableIdForNode(node) ?? "callable:unknown:-1:-1";
@@ -286,20 +288,6 @@ export const immutableSemanticBindings = (
     .sort((left, right) =>
       compareUnicodeCodePoints(left.bindingId, right.bindingId),
     );
-
-const callableKind = (
-  node: t.Node,
-): "function" | "class" | "method" | undefined => {
-  if (
-    t.isClassMethod(node) ||
-    t.isClassPrivateMethod(node) ||
-    t.isObjectMethod(node)
-  )
-    return "method";
-  if (t.isFunction(node)) return "function";
-  if (t.isClass(node)) return "class";
-  return undefined;
-};
 
 const callableName = (node: t.Node, parent: t.Node | null): string | null => {
   if (
@@ -619,13 +607,7 @@ const addModuleLink = (
   }
 };
 
-/** Deterministic callable identity shared by collection and return recovery. */
-export const semanticCallableIdForNode = (node: t.Node): string | null => {
-  const kind = callableKind(node);
-  return kind === undefined
-    ? null
-    : `callable:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`;
-};
+export { semanticCallableIdForNode } from "./javascriptSemanticState.js";
 
 const declarationCallableId = (
   declaration: t.Declaration,

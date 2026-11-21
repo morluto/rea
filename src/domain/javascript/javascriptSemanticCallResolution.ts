@@ -7,13 +7,13 @@ import type {
   JavaScriptSemanticCallable,
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   unwrapJavaScriptExpression,
   runtimeFunctionParameters,
 } from "./javascriptAstValues.js";
 import {
+  semanticCallableIdForNode,
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
