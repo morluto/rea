@@ -1,7 +1,9 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { decode as decodeToon } from "@toon-format/toon";
 import { afterAll, beforeAll, describe, expect } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -27,8 +29,6 @@ afterAll(async () => {
   if (isolatedHomeRoot !== "") await removeTestWorkspace(isolatedHomeRoot);
 });
 
-const sharedIsolatedHome = (): NodeJS.ProcessEnv => isolatedHomeEnvironment;
-
 describe("compiled CLI JSON input failure status", () => {
   // Analysis view owns its input. Export shape comparison uses the shared
   // contract document command.
@@ -42,7 +42,7 @@ describe("compiled CLI JSON input failure status", () => {
         const input = "{";
         const result = await cli.run({
           arguments: [command, input, "--json"],
-          environment: sharedIsolatedHome(),
+          environment: isolatedHomeEnvironment,
         });
 
         expect(result.json).toMatchObject({
@@ -69,7 +69,7 @@ describe("compiled CLI JSON input failure status", () => {
         const result = await cli.run({
           arguments: ["compare-javascript-export-shapes", input, "--json"],
           environment: {
-            ...sharedIsolatedHome(),
+            ...isolatedHomeEnvironment,
             ...(kind === "file" ? { REA_LOG_LEVEL: "info" } : {}),
           },
         });
@@ -118,7 +118,7 @@ describe("compiled CLI JSON document omissions", () => {
           JSON.stringify({ view: { kind: "summary" } }),
           "--json",
         ],
-        environment: await sharedIsolatedHome(),
+        environment: isolatedHomeEnvironment,
       });
       expect(result.json).toMatchObject({
         code: "invalid_request",
@@ -175,7 +175,7 @@ describe("compiled CLI JSON document omissions", () => {
             }),
             "--json",
           ],
-          environment: sharedIsolatedHome(),
+          environment: isolatedHomeEnvironment,
         });
         expect(result.json).toMatchObject({
           code: "invalid_request",
@@ -207,7 +207,7 @@ describe("compiled CLI JSON document admission order", () => {
           join(root, "missing.bundle.json"),
           "--json",
         ],
-        environment: await sharedIsolatedHome(),
+        environment: isolatedHomeEnvironment,
       });
       expect(result.json).toMatchObject({
         code: "invalid_request",
@@ -240,7 +240,7 @@ describe("compiled CLI JSON document caller paths", () => {
           }),
           "--json",
         ],
-        environment: await sharedIsolatedHome(),
+        environment: isolatedHomeEnvironment,
       });
       expect(result.json).toMatchObject({
         code: "invalid_request",
@@ -266,7 +266,7 @@ describe("compiled CLI session-target JSON documents", () => {
           JSON.stringify({ breakpoints: "main" }),
           "--json",
         ],
-        environment: await sharedIsolatedHome(),
+        environment: isolatedHomeEnvironment,
       });
       expect(result.json).toMatchObject({
         error: "Analysis failed",
@@ -284,10 +284,10 @@ describe("compiled CLI session-target JSON documents", () => {
 });
 
 describe("compiled CLI JSON input diagnostic preservation", () => {
-  for (const [format, flags] of [
-    ["JSONL", ["--format", "jsonl"]],
-    ["YAML", ["--format", "yaml"]],
-    ["default", []],
+  for (const [format, flags, decode] of [
+    ["JSONL", ["--format", "jsonl"], JSON.parse],
+    ["YAML", ["--format", "yaml"], parseYaml],
+    ["default", [], decodeToon],
   ] as const)
     cliTest(
       `keeps the failure status with ${format} output`,
@@ -296,15 +296,20 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
         const input = join(root, "missing.json");
         const result = await cli.run({
           arguments: ["compare-javascript-export-shapes", input, ...flags],
-          environment: sharedIsolatedHome(),
+          environment: isolatedHomeEnvironment,
         });
-        for (const diagnostic of [
-          "invalid_request",
-          "invalid_input",
-          input,
-          "read-failed",
-        ])
-          expect(result.stdout).toContain(diagnostic);
+        const failure = { code: "invalid_request", category: "invalid_input" };
+        const details = { input_path: input, input_reason: "read-failed" };
+        expect(decode(result.stdout)).toMatchObject(
+          format === "JSONL"
+            ? {
+                $rea: "jsonl/v1",
+                type: "error",
+                ok: false,
+                result: { ...failure, details },
+              }
+            : { ...failure, ...details },
+        );
         expect(result.stderr).toBe("");
         expect(result.exitCode).toBe(1);
       },
@@ -315,7 +320,7 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
     async ({ cli }) => {
       const result = await cli.run({
         arguments: ["compare-javascript-export-shapes", "", "--json"],
-        environment: await sharedIsolatedHome(),
+        environment: isolatedHomeEnvironment,
       });
       expect(JSON.parse(result.stdout.trim())).toMatchObject({
         code: "invalid_request",
@@ -332,7 +337,7 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
       const input = `[${"x".repeat(3_000)}`;
       const result = await cli.run({
         arguments: ["compare-javascript-export-shapes", input, "--json"],
-        environment: await sharedIsolatedHome(),
+        environment: isolatedHomeEnvironment,
       });
 
       expect(result.json).toMatchObject({
@@ -356,7 +361,7 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
       const input = `[${"x".repeat(3_000)}.json`;
       const result = await cli.run({
         arguments: ["compare-javascript-export-shapes", input, "--json"],
-        environment: await sharedIsolatedHome(),
+        environment: isolatedHomeEnvironment,
       });
 
       expect(result.json).toMatchObject({
@@ -379,7 +384,7 @@ describe("compiled CLI JSON path ambiguity", () => {
       const result = await cli.run({
         arguments: ["capture-browser-scenario", input, "--json"],
         cwd: root,
-        environment: await sharedIsolatedHome(),
+        environment: isolatedHomeEnvironment,
       });
 
       expect(result.json).toMatchObject({
@@ -412,7 +417,7 @@ describe("compiled CLI JSON path ambiguity", () => {
         const result = await cli.run({
           arguments: ["capture-browser-scenario", input, "--json"],
           cwd: root,
-          environment: sharedIsolatedHome(),
+          environment: isolatedHomeEnvironment,
         });
 
         expect(result.json).toMatchObject({
