@@ -21,15 +21,18 @@ import {
 } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import { compositeKey } from "../unicodeCodePointOrder.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
 /** Inspect Electron IPC operations and validation candidates. */
 export const inspectElectronIpcNode = (
   node: t.Node,
   context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-    inspectIpcCall(node, context);
+    inspectIpcCall(node, context, bindings);
     inspectValidationCall(node, context);
   }
   if (t.isBinaryExpression(node)) inspectValidationComparison(node, context);
@@ -38,6 +41,7 @@ export const inspectElectronIpcNode = (
 const inspectIpcCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   const scoped = scopedIpcDescriptor(node, context);
   const descriptor =
@@ -45,21 +49,31 @@ const inspectIpcCall = (
     ipcDescriptor(electronCalleePath(node.callee, context));
   if (descriptor === undefined) return;
   const channelNode = argumentNode(node.arguments[0]);
-  const channelValue = electronStaticValue(context.source, channelNode);
-  const channel =
-    channelValue.status === "literal" && typeof channelValue.value === "string"
-      ? channelValue.value
-      : null;
+  const literal = electronStaticValue(context.source, channelNode);
+  const resolved =
+    literal.status === "dynamic" && channelNode !== undefined
+      ? evaluateSemanticExpression(channelNode, bindings)
+      : undefined;
+  const value =
+    literal.status === "literal"
+      ? literal.value
+      : resolved?.status === "literal"
+        ? resolved.value
+        : undefined;
+  const channel = typeof value === "string" ? value : null;
   const channelReference =
     channel === null
       ? {
           channel: null,
-          channel_expression:
-            channelValue.status === "dynamic"
-              ? channelValue.expression
-              : boundedExpression(context.source, channelNode),
+          channel_expression: boundedExpression(context.source, channelNode),
         }
-      : { channel, channel_expression: null };
+      : {
+          channel,
+          channel_expression: null,
+          ...(literal.status === "literal"
+            ? {}
+            : { channel_basis: "static-value" as const }),
+        };
   const handlerNode =
     descriptor.mode === "listen" || descriptor.mode === "handle"
       ? argumentNode(node.arguments[1])

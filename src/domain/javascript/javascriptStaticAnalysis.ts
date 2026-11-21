@@ -456,7 +456,7 @@ const inspectNode = (
   bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   const { source, accumulator } = findings;
-  inspectElectronStaticNode(node, findings);
+  inspectElectronStaticNode(node, findings, bindings);
   if (t.isCallExpression(node)) {
     inspectBundlerBootstrap(source, node, accumulator, bindings);
     inspectBundlerRegistration(source, node, accumulator, bindings);

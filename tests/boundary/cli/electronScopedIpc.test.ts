@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -251,5 +252,61 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ambiguous_renderer_transmissions: expected === "ambiguous" ? 1 : 0,
       });
     }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "resolves selected local IPC channel values while retaining opaque writes through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-ipc-local-values-");
+    const source = [
+      'const { ipcRenderer } = require("electron");',
+      'const channels = { listen: "autofill.listen", other: "original" };',
+      "const captured = channels.listen;",
+      'const stable = { listen: "autofill.stable" };',
+      "const subscribe = () => ipcRenderer.on(stable.listen, () => {});",
+      "channels.other = unknown;",
+      "ipcRenderer.on(channels.other, () => {});",
+      "channels.listen = unknown;",
+      "ipcRenderer.send(captured);",
+    ].join("\n");
+    await writeFixtureFiles(root, { "preload.cjs": source });
+    const application = await analyzeJavaScriptDirectory(surface, cli, root);
+    const observations = application.graph.nodes
+      .filter(({ kind }) => kind === "ipc-channel")
+      .flatMap(({ observations }) => observations);
+    expect(observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({ channel: "autofill.listen" }),
+          evidence: expect.objectContaining({
+            state: "inferred",
+            artifact: expect.objectContaining({
+              available: true,
+              sha256: createHash("sha256").update(source).digest("hex"),
+            }),
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({
+                source: "preload.cjs",
+                start: expect.objectContaining({ line: 9 }),
+              }),
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            channel: "autofill.stable",
+            operation: "on",
+          }),
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            channel: null,
+            channel_expression: "channels.other",
+          }),
+        }),
+      ]),
+    );
   },
 );
