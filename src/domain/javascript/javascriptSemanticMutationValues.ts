@@ -119,3 +119,51 @@ export const invalidateSemanticMutationPaths = (
     ? { ...base, properties }
     : { ...base, items: properties };
 };
+
+/** Store one proven literal container; missing intermediate receivers are not invented. */
+export const storeSemanticLiteralContainer = (
+  value: JavaScriptSemanticValue,
+  path: readonly string[],
+  assigned: Extract<JavaScriptSemanticValue, { status: "object" | "array" }>,
+): JavaScriptSemanticValue | undefined => {
+  const [name, ...rest] = path;
+  if (name === undefined) return assigned;
+  if (value.status !== "object" && value.status !== "array") return undefined;
+  if (name === "__proto__" || (value.status === "array" && name === "length"))
+    return undefined;
+  const slots = value.status === "object" ? value.properties : value.items;
+  const existing = slots.find((slot) => slot.name === name);
+  if (
+    existing === undefined &&
+    (value.status === "object" ? value.unknownProperties : value.unknownItems)
+  )
+    return undefined;
+  // An unresolved own descriptor may be a setter. A literal store cannot prove its value.
+  if (
+    existing !== undefined &&
+    (existing.presence !== "present" ||
+      existing.value.status === "unknown" ||
+      existing.value.status === "ambiguous" ||
+      existing.value.status === "cycle")
+  )
+    return undefined;
+  const child =
+    rest.length === 0
+      ? assigned
+      : existing === undefined
+        ? undefined
+        : storeSemanticLiteralContainer(existing.value, rest, assigned);
+  if (child === undefined) return undefined;
+  const property: JavaScriptSemanticProperty = {
+    name,
+    presence: "present",
+    value: child,
+  };
+  const properties =
+    existing === undefined
+      ? [...slots, property]
+      : slots.map((slot) => (slot === existing ? property : slot));
+  return value.status === "object"
+    ? { ...value, properties }
+    : { ...value, items: properties };
+};
