@@ -45,7 +45,7 @@ is needed. APKs and JARs are neither tracked nor included in npm packages.
 
 | Engine | Source | Release | Pinned commit | License |
 | --- | --- | --- | --- | --- |
-| Binwalk | <https://github.com/ReFirmLabs/binwalk> | v3.1.0 | `4fdab3d464d97b68e0af9088df3f9e2e1545b21c` | MIT, upstream `LICENSE` |
+| Binwalk (binwalk-ng) | <https://github.com/binwalk-ng/binwalk-ng> | v4.0.0 | `368c3815cb97976ae7ba6092f356933169f06dae` | MIT, upstream `LICENSE` |
 | Unblob | <https://github.com/onekey-sec/unblob> | 26.6.4 | `1fcc7a0a584a70a96c31f5a276c20944d199a089` | MIT, upstream `LICENSE` |
 
 Source remains unmodified in `third_party/binwalk` and `third_party/unblob`.
