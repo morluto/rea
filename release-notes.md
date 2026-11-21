@@ -16,6 +16,7 @@
 * **asar:** preserve typed inventory configuration errors ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
+* **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
 * **electron:** preserve waits and cancellation through renderer shutdown ([#12972](https://github.com/morluto/rea/issues/12972)) ([2533a8b](https://github.com/morluto/rea/commit/2533a8b32bf2d8e4c052f6ea5c7e616a93660a9f))
 * **electron:** resolve exact local IPC channel values ([#13005](https://github.com/morluto/rea/issues/13005)) ([e66a27c](https://github.com/morluto/rea/commit/e66a27c2f2bb294a0506e6d2d6cf9d2f0125b9e2))
 * **ghidra:** expose NativeAOT opt-out recovery ([#12923](https://github.com/morluto/rea/issues/12923)) ([753b7e9](https://github.com/morluto/rea/commit/753b7e908c5ab91508cbda7b954aaa8138822712))
