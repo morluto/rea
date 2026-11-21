@@ -118,7 +118,7 @@ unfamiliar prefix. The unavailable fork reported in
 
 ## Hot/cold catalogs
 
-For a client that supports MCP catalog refresh, set
+For a client that can call newly listed tools during an active task, set
 `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
 the connection. REA then advertises a small initial catalog and loads other
 named tools through `discover_tools`. Setup can record the explicit choice:
@@ -1036,6 +1036,14 @@ review the destination, then `rea setup --skill --yes` to install the workflow
 in `~/.agents/skills` (`$DSH_AGENTS_HOME/skills` when configured); Harness
 discovers that directory, and its native `skill` tool can load
 `reverse-engineer-anything`.
+
+Keep the default `full` catalog with Harness 0.2.0-rc.2. In a headless
+loopback-model probe, `discover_tools` activated the requested tool. Harness
+re-fetched `tools/list` and received the new definition, but its next model
+request still omitted that tool. Verify that an active task can call a newly
+listed tool before opting into hot/cold on another Harness version. To restore
+upfront advertisement, run `rea setup --client dsh --tool-catalog-profile full`
+and restart Harness.
 
 REA's optional [native client verification](../development/testing.md#end-to-end-integration-and-golden-evidence)
 checks headless chat, skill loading, all tool input schemas and actual analysis
