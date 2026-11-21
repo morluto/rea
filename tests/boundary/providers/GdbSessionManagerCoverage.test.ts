@@ -1296,37 +1296,6 @@ it("reports incomplete stop if GDB exits while close waits in the serialized que
     });
 });
 
-it("configures and verifies the caller-selected inferior TTY before reporting ready", async () => {
-  const tty = '/dev/pts/42 "🚀"';
-  const miTty = tty.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-  const commands: string[] = [];
-  const fake = createFakeSpawner((_child, token, command) => {
-    commands.push(command);
-    if (command.includes("inferior-tty-show"))
-      _child.stdout.write(`${token}^done,inferior_tty_terminal="${miTty}"\n`);
-    else if (command.includes("list-thread-groups"))
-      _child.stdout.write(`${token}^done,groups=[]\n`);
-    else _child.stdout.write(`${token}^done\n`);
-  });
-  const manager = managerWithFakeSpawner(fake.spawnProcess);
-
-  const started = await manager.start(undefined, { inferiorTty: tty });
-
-  expect(started.ok).toBe(true);
-  if (!started.ok) return;
-  const status = manager.status(started.value.session_id);
-  expect(status).toMatchObject({
-    inferior_tty: tty,
-    inferior_tty_verified: true,
-  });
-  expect(
-    commands.indexOf(`-inferior-tty-set ${JSON.stringify(tty)}`),
-  ).toBeGreaterThan(-1);
-  expect(commands.indexOf("-inferior-tty-show")).toBeGreaterThan(
-    commands.indexOf(`-inferior-tty-set ${JSON.stringify(tty)}`),
-  );
-});
-
 it("rejects a GDB leader exit without a verified sink and retains inherited output", async () => {
   const fake = createFakeSpawner();
   const manager = managerWithFakeSpawner(fake.spawnProcess);
@@ -1495,54 +1464,85 @@ it("shares a single stop attempt across concurrent closes after GDB exits", asyn
   expect(stopCalls).toBe(1);
 });
 
-it("rejects inferior TTY configuration when GDB reports a different terminal", async () => {
+it("verifies the exact caller-selected inferior TTY even under a smaller caller output cap", async () => {
+  const tty =
+    '/dev/pts/fixture-selected-terminal-beyond-the-caller-output-cap/42 "🚀"';
+  const ttyArgument = String.raw`"/dev/pts/fixture-selected-terminal-beyond-the-caller-output-cap/42 \"🚀\""`;
+  const setTty = `-inferior-tty-set ${ttyArgument}`;
+  const commands: string[] = [];
   const fake = createFakeSpawner((child, token, command) => {
+    if (command.startsWith("-inferior-tty-")) commands.push(command);
     child.stdout.write(
-      command.includes("inferior-tty-show")
-        ? `${token}^done,inferior_tty_terminal="/dev/pts/other"\n`
-        : command.includes("list-thread-groups")
+      command === "-inferior-tty-show"
+        ? `${token}^done,inferior_tty_terminal=${ttyArgument}\n`
+        : command === "-list-thread-groups"
           ? `${token}^done,groups=[]\n`
           : `${token}^done\n`,
     );
   });
-  const manager = managerWithFakeSpawner(fake.spawnProcess);
-
-  const started = await manager.start(undefined, {
-    inferiorTty: "/dev/pts/requested",
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    environment: { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "80" },
   });
 
-  expect(started.ok).toBe(false);
-  if (!started.ok)
-    expect(started.error._tag).toBe("AnalysisCapabilityUnavailableError");
-  expect(
-    fake.children.every((child) => child.killSignals.includes("SIGTERM")),
-  ).toBe(true);
+  const started = await expectGdbSessionStarted(manager, undefined, {
+    inferiorTty: tty,
+  });
+
+  expect(commands).toEqual([setTty, "-inferior-tty-show"]);
+  expect(manager.status(started.value.session_id)).toMatchObject({
+    inferior_tty: tty,
+    inferior_tty_verified: true,
+  });
 });
 
-it("rejects an inferior TTY when GDB does not confirm the setting command", async () => {
-  const commands: string[] = [];
-  const fake = createFakeSpawner((child, token, command) => {
-    commands.push(command);
-    child.stdout.write(
-      command.includes("inferior-tty-set")
-        ? `${token}^error,msg="unsupported"\n`
-        : `${token}^done\n`,
-    );
-  });
-  const manager = managerWithFakeSpawner(fake.spawnProcess);
+it.each([
+  ["rejected setting", '^error,msg="unsupported"', undefined],
+  ["different terminal", "^done", 'inferior_tty_terminal="/dev/pts/other"'],
+  ["trailing garbage", "^done", 'inferior_tty_terminal="/dev/pts/42"junk'],
+  [
+    "duplicate field",
+    "^done",
+    'inferior_tty_terminal="/dev/pts/42",inferior_tty_terminal="/dev/pts/42"',
+  ],
+])(
+  "rejects inferior TTY startup for %s and stops both attempts",
+  async (_label, setReply, showFields) => {
+    const setTty = '-inferior-tty-set "/dev/pts/42"';
+    const showTty = "-inferior-tty-show";
+    const commands: string[] = [];
+    const fake = createFakeSpawner((child, token, command) => {
+      if (command.startsWith("-inferior-tty-")) commands.push(command);
+      const reply =
+        command === setTty
+          ? setReply
+          : command === showTty
+            ? `^done,${showFields ?? 'inferior_tty_terminal="/dev/pts/42"'}`
+            : "^done";
+      child.stdout.write(`${token}${reply}\n`);
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess);
 
-  const started = await manager.start(undefined, {
-    inferiorTty: "/dev/pts/requested",
-  });
+    const started = await manager.start(undefined, {
+      inferiorTty: "/dev/pts/42",
+    });
 
-  expect(started).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCapabilityUnavailableError" },
-  });
-  expect(commands).toContain('-inferior-tty-set "/dev/pts/requested"');
-  expect(commands).not.toContain("-inferior-tty-show");
-  expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
-});
+    expect(started).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        providerId: "gdb",
+        operation: "start_gdb_session",
+        cleanupIncomplete: false,
+      },
+    });
+    const attempt = showFields === undefined ? [setTty] : [setTty, showTty];
+    expect(commands).toEqual([...attempt, ...attempt]);
+    expect(fake.children.map((child) => child.killSignals)).toEqual([
+      ["SIGTERM"],
+      ["SIGTERM"],
+    ]);
+  },
+);
 
 it("rejects a truncated inferior TTY readback before publishing the session", async () => {
   const tty = "/dev/pts/42";
@@ -1571,28 +1571,6 @@ it("rejects a truncated inferior TTY readback before publishing the session", as
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
 });
 
-it("keeps inferior TTY readback when the caller output cap is smaller than that reply", async () => {
-  const tty = `/dev/pts/${"x".repeat(200)}`;
-  const fake = createFakeSpawner((child, token, command) => {
-    child.stdout.write(
-      command.includes("inferior-tty-show")
-        ? `${token}^done,inferior_tty_terminal=${JSON.stringify(tty)}\n`
-        : `${token}^done\n`,
-    );
-  });
-  const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    environment: { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "80" },
-  });
-
-  const started = await manager.start(undefined, { inferiorTty: tty });
-
-  if (!started.ok) throw started.error;
-  expect(started.value.mi_version).toMatch(/^mi[23]$/u);
-  expect(started.value.session_id).toMatch(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
-  );
-});
-
 it("applies a lowered command output cap to a console command after the session starts", async () => {
   const fake = createFakeSpawner((child, token, command) => {
     child.stdout.write(
@@ -1618,29 +1596,6 @@ it("applies a lowered command output cap to a console command after the session 
   expect(result.value.result.output_limits).toEqual([
     { kind: "command_bytes", maximum: 40 },
   ]);
-});
-
-it.each([
-  ["trailing garbage", 'inferior_tty_terminal="/dev/pts/42"junk'],
-  [
-    "duplicate field",
-    'inferior_tty_terminal="/dev/pts/42",inferior_tty_terminal="/dev/pts/42"',
-  ],
-])("rejects MI inferior TTY readback with %s", async (_label, fields) => {
-  const fake = createFakeSpawner((child, token, command) => {
-    child.stdout.write(
-      command.includes("inferior-tty-show")
-        ? `${token}^done,${fields}\n`
-        : `${token}^done\n`,
-    );
-  });
-  const manager = managerWithFakeSpawner(fake.spawnProcess);
-  const started = await manager.start(undefined, {
-    inferiorTty: "/dev/pts/42",
-  });
-  expect(started.ok).toBe(false);
-  if (!started.ok)
-    expect(started.error._tag).toBe("AnalysisCapabilityUnavailableError");
 });
 
 const managerWithFakeSpawner = (
