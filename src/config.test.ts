@@ -319,6 +319,74 @@ describe("native configuration diagnostics", () => {
   });
 });
 
+describe("runtime provider path configuration", () => {
+  it("parses absolute BYO Ghidra and optional Java paths", () => {
+    expect(
+      parseConfig({
+        GHIDRA_INSTALL_DIR: "/opt/ghidra_12.1.4_PUBLIC",
+        JAVA_HOME: "/usr/lib/jvm/jdk-21",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        ghidraInstallDir: "/opt/ghidra_12.1.4_PUBLIC",
+        ghidraJavaHome: "/usr/lib/jvm/jdk-21",
+      },
+    });
+    expect(parseConfig({ GHIDRA_INSTALL_DIR: "relative/ghidra" }).ok).toBe(
+      false,
+    );
+    expect(parseConfig({ JAVA_HOME: "relative/jdk" }).ok).toBe(false);
+  });
+
+  it("parses the Ghidra bridge transport selection and names other values", () => {
+    const unset = parseConfig({ GHIDRA_INSTALL_DIR: "/opt/ghidra" });
+    if (!unset.ok) throw unset.error;
+    expect(unset.value.ghidraBridgeTransport).toBeUndefined();
+    for (const transport of [
+      "unix-socket",
+      "authenticated-loopback-tcp",
+    ] as const)
+      expect(
+        parseConfig({ REA_GHIDRA_BRIDGE_TRANSPORT: transport }),
+      ).toMatchObject({
+        ok: true,
+        value: { ghidraBridgeTransport: transport },
+      });
+    const rejected = parseConfig({ REA_GHIDRA_BRIDGE_TRANSPORT: "pipe" });
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) return;
+    expect(projectAnalysisError(rejected.error)).toMatchObject({
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          {
+            setting: "REA_GHIDRA_BRIDGE_TRANSPORT",
+            constraint: "must be unix-socket or authenticated-loopback-tcp",
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(projectAnalysisError(rejected.error))).not.toContain(
+      "pipe",
+    );
+  });
+
+  it("parses an optional absolute BYO ilspycmd path", () => {
+    expect(
+      parseConfig({ REA_ILSPY_CMD_PATH: "/home/user/.dotnet/tools/ilspycmd" }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        ilspyCmdPath: "/home/user/.dotnet/tools/ilspycmd",
+      },
+    });
+    expect(parseConfig({ REA_ILSPY_CMD_PATH: "relative/ilspycmd" }).ok).toBe(
+      false,
+    );
+  });
+});
+
 describe("runtime target configuration", () => {
   it("rejects invalid target kinds with actionable environment diagnostics", () => {
     const result = parseConfig({ HOPPER_TARGET_KIND: "archive" });

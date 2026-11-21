@@ -23,6 +23,10 @@ import {
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import {
+  transportAdmitsAnalysisExtensions,
+  type GhidraTransportKind,
+} from "../GhidraTransport.js";
 import { nativeAotAdapter } from "./nativeaot/NativeAotAdapter.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
@@ -107,6 +111,7 @@ export const resolveGhidraExtensions = async (
   target: BinaryTarget,
   platform: NodeJS.Platform,
   resources: ArtifactResourceScope,
+  transport: GhidraTransportKind,
   signal?: AbortSignal,
 ): Promise<Result<readonly GhidraExtension[], AnalysisError>> =>
   resources
@@ -119,6 +124,10 @@ export const resolveGhidraExtensions = async (
         const refusal = adapter.unsupportedReason(target, platform);
         if (refusal !== null)
           return err(extensionRefusalError(refusal, target));
+        // The selected transport cannot serve extensions: withhold the adapter
+        // and keep the read-only session instead of committing a profile the
+        // bridge would reject before it opens the listener.
+        if (!transportAdmitsAnalysisExtensions(transport)) continue;
         try {
           const path = await realpath(configured);
           const bytes = await readJar(path, resources, signal);
@@ -160,10 +169,13 @@ export const validateGhidraExtensionProfile = (
   config: AppConfig,
   target: BinaryTarget,
   platform: NodeJS.Platform,
+  transport: GhidraTransportKind,
 ): string | null => {
-  const enabled = adapters.filter(
-    (adapter) => adapter.configuredPath(config) !== undefined,
-  );
+  // A transport that withholds extensions commits none, so the expected
+  // inventory is empty there; any committed extension is then a mismatch.
+  const enabled = transportAdmitsAnalysisExtensions(transport)
+    ? adapters.filter((adapter) => adapter.configuredPath(config) !== undefined)
+    : [];
   if (
     enabled.length !== extensions.length ||
     new Set(extensions.map((extension) => extension.id)).size !==
