@@ -510,47 +510,34 @@ it("associates out-of-order same-URL responses by request identity", async () =>
   expect(new Set(content.map((event) => event.transaction_id)).size).toBe(2);
 });
 
-it("keeps metadata-only capture free of body and header-value reads", async () => {
+it("records completed and unfinished metadata without reading content", async () => {
   const { collector, events } = harness({
     request_body: false,
     response_body: false,
     header_values: false,
   });
-  const request = new RequestFixture("body");
-  const response = new ResponseFixture(request, "reply");
-  collector.request(request);
+  const completed = new RequestFixture("complete");
+  const response = new ResponseFixture(completed, "reply");
+  const unfinished = new RequestFixture("pending");
+  collector.request(completed);
   collector.response(response);
-  collector.finished(request);
+  collector.finished(completed);
+  collector.request(unfinished);
   await collector.finish();
-  expect(
-    request.bodyReads +
-      request.headerReads +
-      response.bodyReads +
-      response.headerReads,
-  ).toBe(0);
+
+  for (const source of [completed, response, unfinished]) {
+    expect(source.bodyReads).toBe(0);
+    expect(source.headerReads).toBe(0);
+  }
   expect(events.map(({ kind }) => kind)).toEqual([
     "request",
     "response",
     "request-finished",
-  ]);
-  expect(JSON.stringify(events)).not.toContain("private-transport");
-});
-
-it("reports unfinished metadata even when content was not selected", async () => {
-  const { collector, events } = harness({
-    request_body: false,
-    response_body: false,
-    header_values: false,
-  });
-  const request = new RequestFixture("body");
-  collector.request(request);
-  await collector.finish();
-  expect(events.map(({ kind }) => kind)).toEqual([
     "request",
     "request-unfinished",
   ]);
   expect(collector.limitations()).toHaveLength(1);
-  expect(request.bodyReads + request.headerReads).toBe(0);
+  expect(JSON.stringify(events)).not.toContain("private-transport");
 });
 
 it.each([
@@ -680,143 +667,70 @@ it("does not read unfinished streaming responses and reports the cutoff", async 
   expect(collector.limitations().length).toBeGreaterThan(0);
 });
 
-it("queues completed body reads behind the active-read limit", async () => {
-  const { collector, events } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: false,
-  });
-  const requests = Array.from(
-    { length: 20 },
-    (_, index) => new RequestFixture(`request-${String(index)}`),
-  );
-  const releases: Array<(bytes: Buffer) => void> = [];
-  let activeReads = 0;
-  let maximumActiveReads = 0;
-  for (const request of requests) {
-    const response = new ResponseFixture(request, "unused");
-    response.read = () =>
-      new Promise((resolve) => {
-        activeReads += 1;
-        maximumActiveReads = Math.max(maximumActiveReads, activeReads);
-        releases.push((bytes) => {
-          activeReads -= 1;
-          resolve(bytes);
+it.each(["completion", "cancellation"])(
+  "keeps completed response reads bounded through %s",
+  async (terminal) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const { collector, events } = harness(
+      { request_body: false, response_body: true, header_values: false },
+      controller.signal,
+    );
+    const markers = Array.from({ length: 20 }, (_, index) => `queued-${index}`);
+    const responses = markers.map((marker) => {
+      const request = new RequestFixture(marker);
+      const response = new ResponseFixture(request, "unused");
+      response.read = () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve(Buffer.from(marker)), 4_000);
         });
-      });
-    collector.request(request);
-    collector.response(response);
-    collector.finished(request);
-  }
-
-  let releasedReads = 0;
-  while (releasedReads < requests.length) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const batch = releases.splice(0);
-    expect(batch.length).toBeGreaterThan(0);
-    batch.forEach((release) => release(Buffer.from("captured")));
-    releasedReads += batch.length;
-  }
-  await collector.finish();
-
-  const content = events.filter(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  expect(maximumActiveReads).toBe(16);
-  expect(content).toHaveLength(20);
-  expect(
-    content.every(
-      (event) =>
-        event.kind === "network-content" && event.body.state === "captured",
-    ),
-  ).toBe(true);
-  expect(events.filter(({ kind }) => kind === "network-content")).toHaveLength(
-    20,
-  );
-});
-
-it("starts each queued body's timeout when its read begins", async () => {
-  vi.useFakeTimers();
-  const { collector, events } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: false,
-  });
-  const requests = Array.from(
-    { length: 20 },
-    (_, index) => new RequestFixture(`request-${String(index)}`),
-  );
-  for (const request of requests) {
-    const response = new ResponseFixture(request, "unused");
-    response.read = () =>
-      new Promise((resolve) => {
-        setTimeout(() => resolve(Buffer.from("captured")), 4_000);
-      });
-    collector.request(request);
-    collector.response(response);
-    collector.finished(request);
-  }
-
-  const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(4_000);
-  await vi.advanceTimersByTimeAsync(4_000);
-  await finishing;
-
-  const content = events.filter(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  expect(content).toHaveLength(20);
-  expect(
-    content.every(
-      (event) =>
-        event.kind === "network-content" && event.body.state === "captured",
-    ),
-  ).toBe(true);
-});
-
-it("settles queued reads as cancelled without starting their body APIs", async () => {
-  const controller = new AbortController();
-  const { collector, events } = harness(
-    {
-      request_body: false,
-      response_body: true,
-      header_values: false,
-    },
-    controller.signal,
-  );
-  const requests = Array.from(
-    { length: 20 },
-    (_, index) => new RequestFixture(`request-${String(index)}`),
-  );
-  const responses = requests.map((request) => {
-    const response = new ResponseFixture(request, "unused");
-    response.read = () => new Promise(() => undefined);
-    return response;
-  });
-  requests.forEach((request, index) => {
-    collector.request(request);
-    collector.response(responses[index]!);
-    collector.finished(request);
-  });
-
-  expect(responses.filter(({ bodyReads }) => bodyReads > 0)).toHaveLength(16);
-  controller.abort();
-  await collector.finish();
-
-  expect(responses.filter(({ bodyReads }) => bodyReads > 0)).toHaveLength(16);
-  const content = events.filter(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  expect(content).toHaveLength(20);
-  expect(
-    content.every(
-      (event) =>
-        event.kind === "network-content" &&
-        event.body.state === "unavailable" &&
-        event.body.reason === "cancelled",
-    ),
-  ).toBe(true);
-});
+      collector.request(request);
+      collector.response(response);
+      collector.finished(request);
+      return response;
+    });
+    const content = () =>
+      events.filter(
+        (event) =>
+          event.kind === "network-content" && event.phase === "response",
+      );
+    const firstBatch = [...Array<number>(16).fill(1), 0, 0, 0, 0];
+    const finishing = collector.finish();
+    try {
+      expect(responses.map(({ bodyReads }) => bodyReads)).toEqual(firstBatch);
+      if (terminal === "cancellation") {
+        controller.abort();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(responses.map(({ bodyReads }) => bodyReads)).toEqual(firstBatch);
+        expect(content()).toEqual(
+          Array.from({ length: responses.length }, () =>
+            expect.objectContaining({
+              body: expect.objectContaining({
+                state: "unavailable",
+                reason: "cancelled",
+              }),
+            }),
+          ),
+        );
+      } else {
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(content().map(bodyText).sort()).toEqual(
+          markers.slice(0, 16).sort(),
+        );
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(content().map(bodyText).sort()).toEqual([...markers].sort());
+        expect(responses.map(({ bodyReads }) => bodyReads)).toEqual(
+          Array<number>(responses.length).fill(1),
+        );
+      }
+      await finishing;
+    } finally {
+      controller.abort();
+      await vi.runAllTimersAsync();
+      await finishing;
+    }
+  },
+);
 
 it("bounds hung completed-body reads and rejects late mutation after finalization", async () => {
   vi.useFakeTimers();
@@ -851,29 +765,6 @@ it("bounds hung completed-body reads and rejects late mutation after finalizatio
   collector.request(new RequestFixture("after-cutoff"));
   await Promise.resolve();
   expect(JSON.stringify(events)).toBe(frozen);
-});
-
-it("cancellation settles pending reads and preserves the cancelled reason", async () => {
-  const controller = new AbortController();
-  const { collector, events } = harness(selection, controller.signal);
-  const request = new RequestFixture("cancel");
-  const response = new ResponseFixture(request, "unused");
-  response.read = () => new Promise(() => undefined);
-  collector.request(request);
-  collector.response(response);
-  collector.finished(request);
-  controller.abort();
-  await collector.finish();
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "network-content",
-      phase: "response",
-      body: expect.objectContaining({
-        state: "unavailable",
-        reason: "cancelled",
-      }),
-    }),
-  );
 });
 
 it.each([false, true])(
