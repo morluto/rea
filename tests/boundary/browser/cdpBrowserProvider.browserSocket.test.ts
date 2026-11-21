@@ -181,40 +181,52 @@ describe("CdpBrowserProvider: browser socket eviction and per-call scoping", () 
   });
 
   it("preserves per-operation command_timeout_ms and operation identity on a reused browser socket", async () => {
+    const sent = phaseArrival();
     const browser = await startFakeCdpBrowser({
-      hangOnMethod: "Page.enable",
+      commandDelayMs: ({ method }) => {
+        if (method !== "Page.enable") return undefined;
+        sent.arrive();
+        return 200;
+      },
     });
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
+    const controller = new AbortController();
+    const endpoint = { cdp_endpoint: browser.browserWebSocketUrl };
+    let inspecting: ReturnType<CdpBrowserProvider["inspectPage"]> | undefined;
     try {
       const listed = await provider.listTargets(
-        listBrowserTargetsInputSchema.parse({
-          cdp_endpoint: browser.browserWebSocketUrl,
-        }),
+        listBrowserTargetsInputSchema.parse(endpoint),
       );
       if (!listed.ok) throw listed.error;
       expect(browser.openedConnectionCount()).toBe(1);
 
-      const timedOut = await provider.inspectPage(
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      inspecting = provider.inspectPage(
         inspectWebPageInputSchema.parse({
-          cdp_endpoint: browser.browserWebSocketUrl,
+          ...endpoint,
           target_id: "allowed-page",
           observation_ms: 0,
           command_timeout_ms: 60,
         }),
+        { signal: controller.signal },
       );
-      expect(timedOut).toMatchObject({
+      await sent.reached(inspecting, "Page.enable on reused socket");
+      await vi.advanceTimersByTimeAsync(60);
+      expect(await inspecting).toMatchObject({
         ok: false,
         error: {
           _tag: "BrowserObservationError",
           operation: "inspect_web_page",
           reason: "timeout",
+          userMessage: expect.stringContaining("60 ms command_timeout_ms"),
         },
       });
-      if (timedOut.ok) throw new Error("Expected command timeout");
-      expect(timedOut.error.userMessage).toContain("60 ms command_timeout_ms");
       expect(browser.openedConnectionCount()).toBe(1);
     } finally {
+      controller.abort();
+      vi.useRealTimers();
+      await Promise.allSettled([inspecting]);
       await provider.close();
     }
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
@@ -434,49 +446,62 @@ describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
   });
 });
 
-/** Expect a discovery timeout that projects publicly as a provider timeout. */
-const expectDiscoveryTimeout = async (url: string): Promise<void> => {
-  let failure: unknown;
+const expectDiscoveryTimeout = async (
+  url: string,
+  reached: ReturnType<typeof phaseArrival>,
+): Promise<void> => {
+  const controller = new AbortController();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const opening = openCdpEndpoint(
+    browserObservationEndpointSchema.parse(url),
+    "list_browser_targets",
+    controller.signal,
+    50,
+  );
   try {
-    await openCdpEndpoint(
-      browserObservationEndpointSchema.parse(url),
-      "list_browser_targets",
-      undefined,
-      50,
-    );
-  } catch (cause: unknown) {
-    failure = cause;
+    await reached.reached(opening, "discovery producer request");
+    await vi.advanceTimersByTimeAsync(50);
+    const failure: unknown = await opening.catch((cause: unknown) => cause);
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected a typed discovery failure", { cause: failure });
+    expect(failure).toMatchObject({
+      _tag: "BrowserObservationError",
+      operation: "list_browser_targets",
+      reason: "timeout",
+    });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "provider_timeout",
+      category: "timeout",
+    });
+  } finally {
+    controller.abort();
+    vi.useRealTimers();
+    await Promise.allSettled([opening]);
   }
-  expect(failure).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "timeout",
-  });
-  if (!(failure instanceof AnalysisError))
-    throw new Error("Expected a typed discovery failure");
-  expect(projectAnalysisError(failure)).toMatchObject({
-    code: "provider_timeout",
-    category: "timeout",
-  });
 };
 
 describe("CdpBrowserProvider: browser socket discovery deadline", () => {
   it("times out a discovery reply that never arrives and closes the socket", async () => {
+    const sent = phaseArrival();
     const browser = await startFakeCdpBrowser({
-      hangOnMethod: "Target.getTargets",
+      commandDelayMs: ({ method }) => {
+        if (method !== "Target.getTargets") return undefined;
+        sent.arrive();
+        return 200;
+      },
     });
     trackBrowser(browser);
-    await expectDiscoveryTimeout(browser.browserWebSocketUrl);
+    await expectDiscoveryTimeout(browser.browserWebSocketUrl, sent);
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
   it("times out a WebSocket handshake that never completes", async () => {
     const sockets = new Set<Socket>();
-    // Read the upgrade request but never answer it; reading lets the
-    // client's close be observed here.
+    const sent = phaseArrival();
     const server = createServer((socket) => {
       sockets.add(socket);
       socket.on("close", () => sockets.delete(socket));
-      socket.resume();
+      socket.once("data", () => sent.arrive());
     });
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
@@ -484,15 +509,15 @@ describe("CdpBrowserProvider: browser socket discovery deadline", () => {
     const address = server.address();
     if (address === null || typeof address === "string")
       throw new Error("Expected a TCP listener address");
-    try {
-      await expectDiscoveryTimeout(
-        `ws://127.0.0.1:${String(address.port)}/devtools/browser/stalled`,
-      );
-      await waitFor(() => expect(sockets.size).toBe(0));
-    } finally {
+    onTestFinished(async () => {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
+    });
+    await expectDiscoveryTimeout(
+      `ws://127.0.0.1:${String(address.port)}/devtools/browser/stalled`,
+      sent,
+    );
+    await waitFor(() => expect(sockets.size).toBe(0));
   });
 });
 
