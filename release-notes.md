@@ -68,6 +68,7 @@
 * **javascript:** resolve literal spreads and const aliases in kill signals ([4bcd0d8](https://github.com/morluto/rea/commit/4bcd0d864a82c89a15c1152516bf0c46fd224731))
 * **javascript:** share widened reference-store propagation ([#12990](https://github.com/morluto/rea/issues/12990)) ([fba5e44](https://github.com/morluto/rea/commit/fba5e44bf5f393dcd6bd3269d88d7101f1586ff0))
 * **javascript:** track shared ESM HTTP agent mutations ([d500638](https://github.com/morluto/rea/commit/d500638d5d4b666cf0b255085ce4d75a29cbc35e))
+* **mcp:** name the HTTP option that requires --http ([2fbcec8](https://github.com/morluto/rea/commit/2fbcec84eb5054c7f014729021172173df1742c8))
 * **native:** label XML plists that file calls data as xml ([#12910](https://github.com/morluto/rea/issues/12910)) ([f03cce9](https://github.com/morluto/rea/commit/f03cce9c01d184ffade34dcb36fd05c0c0350a5e))
 * **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
 * **pe:** exclude section padding from RVA metadata reads ([#12755](https://github.com/morluto/rea/issues/12755)) ([c5b5d9f](https://github.com/morluto/rea/commit/c5b5d9f7ea3f0f32a3ebf0834314ae3888ab4132))
@@ -148,6 +149,7 @@
 * **skill:** move WASM interface comparison under Offline WASM ([c5c0063](https://github.com/morluto/rea/commit/c5c0063d4ca8d27b57bb29588cfffaea04c23fe0)), closes [#8334](https://github.com/morluto/rea/issues/8334)
 * **sqlite:** distinguish exhausted windows from unordered samples ([#13124](https://github.com/morluto/rea/issues/13124)) ([49b9245](https://github.com/morluto/rea/commit/49b92452627b4d6a7bbd455163532f170277093a))
 * streamline the README and expand the RL environment guide ([f3ce9a1](https://github.com/morluto/rea/commit/f3ce9a14c7b7ea482352bc6c8c66bdcd22ba7705))
+* **third-party:** warn against identically named jar source on npm ([402273d](https://github.com/morluto/rea/commit/402273dd571ec8cf72e1e9beac7470b1490cd7d2))
 * **v8:** describe the six-word code cache header ([56838a0](https://github.com/morluto/rea/commit/56838a036c2c43afee56b0336a35abbf959770f2))
 
 
