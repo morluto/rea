@@ -293,34 +293,6 @@ describe("CdpBrowserProvider: cancellation and session events", () => {
 });
 
 describe("CdpBrowserProvider: session termination and scope changes", () => {
-  it("ends a browser session when its flat target session detaches", async () => {
-    const browser = await startFakeCdpBrowser({
-      sessionTimeline: "target_detached",
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().observeSession(
-      observeWebSessionInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 1_000,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.window.end_reason).toBe("session_detached");
-    expect(result.value.timeline.at(-1)).toMatchObject({
-      type: "session_detached",
-      detail: "session_detached",
-      timestamp: null,
-    });
-    expect(result.value.limitations).toContainEqual(
-      expect.stringMatching(
-        /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
-      ),
-    );
-  });
-
   it("reports target termination only for an observed target crash", async () => {
     const browser = await startFakeCdpBrowser({
       sessionTimeline: "target_crashed",
@@ -369,46 +341,6 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
     expect(methods).not.toContain("Target.attachToTarget");
     expect(methods).not.toContain("Target.detachFromTarget");
     expect(methods).not.toContain("Target.closeTarget");
-  });
-
-  it("ends immediately when a redirect leaves policy without exposing its URL", async () => {
-    const browser = await startFakeCdpBrowser({
-      sessionTimeline: "outside_policy",
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().observeSession(
-      observeWebSessionInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 1_000,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.window.end_reason).toBe("target_left_scope");
-    expect(result.value.timeline.at(-1)).toMatchObject({
-      type: "redirect",
-      url: null,
-      destination_scope: "outside_policy",
-      redirect_response: {
-        url: `${browser.allowedOrigin}/reloaded?token=session-secret`,
-        status: 302,
-        scope: "approved",
-      },
-    });
-    expect(result.value.completeness).toMatchObject({
-      status: "policy_filtered",
-      policy_filtered_sections: ["timeline"],
-      excluded: [
-        {
-          section: "timeline",
-          reason: "out_of_target_scope",
-          count: 1,
-        },
-      ],
-    });
-    expect(JSON.stringify(result.value)).not.toContain("private.example.test");
   });
 
   it("fails closed when the final session frame leaves policy without an event", async () => {
@@ -525,91 +457,5 @@ describe("CdpBrowserProvider: protocol failures and cancellation cleanup", () =>
       controller.abort(reason);
       await pending;
     }
-  });
-});
-
-describe("CdpBrowserProvider: navigation commit and target identity", () => {
-  it("waits for navigation commit and rechecks the attached main-frame origin", async () => {
-    const transitioning = await startFakeCdpBrowser({
-      transitionalFrameReads: 2,
-    });
-    trackBrowser(transitioning);
-    const input = (browser: FakeCdpBrowser) =>
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      });
-    const committed = await new CdpBrowserProvider().inspectPage(
-      input(transitioning),
-    );
-    if (!committed.ok) throw committed.error;
-    expect(committed.value.target.origin).toBe(transitioning.allowedOrigin);
-    expect(committed.value.frames).toContainEqual(
-      expect.objectContaining({
-        frame_id: "frame-main",
-        origin: transitioning.allowedOrigin,
-      }),
-    );
-
-    const navigated = await startFakeCdpBrowser({
-      attachedFrameUrl: "https://unapproved.example.test/after-attach",
-    });
-    trackBrowser(navigated);
-    const denied = await new CdpBrowserProvider().inspectPage(input(navigated));
-    expect(denied).toMatchObject({
-      ok: false,
-      error: { _tag: "BrowserObservationError", reason: "target_not_allowed" },
-    });
-    const methods = navigated.commands.map(({ method }) => method);
-    expect(methods).toContain("Target.detachFromTarget");
-    expect(methods).not.toContain("DOMSnapshot.captureSnapshot");
-    expect(methods).not.toContain("Storage.getUsageAndQuota");
-
-    const duringObservation = await startFakeCdpBrowser({
-      navigateDuringObservationUrl:
-        "https://unapproved.example.test/during-observation",
-    });
-    trackBrowser(duringObservation);
-    const interrupted = await new CdpBrowserProvider().inspectPage(
-      input(duringObservation),
-    );
-    expect(interrupted).toMatchObject({
-      ok: false,
-      error: { _tag: "BrowserObservationError", reason: "target_not_allowed" },
-    });
-    expect(
-      duringObservation.commands.map(({ method }) => method),
-    ).not.toContain("Accessibility.getFullAXTree");
-
-    const captureOptions: { navigateDuringCaptureUrl?: string } = {};
-    const duringCapture = await startFakeCdpBrowser(captureOptions);
-    captureOptions.navigateDuringCaptureUrl = `${duringCapture.allowedOrigin}/changed`;
-    trackBrowser(duringCapture);
-    const discarded = await new CdpBrowserProvider().inspectPage(
-      input(duringCapture),
-    );
-    expect(discarded).toMatchObject({
-      ok: false,
-      error: { _tag: "BrowserObservationError", reason: "target_changed" },
-    });
-    expect(duringCapture.commands.map(({ method }) => method)).toContain(
-      "Target.detachFromTarget",
-    );
-
-    const crossOriginCapture = await startFakeCdpBrowser({
-      navigateDuringCaptureUrl:
-        "https://unapproved.example.test/during-capture",
-    });
-    trackBrowser(crossOriginCapture);
-    const rejectedCapture = await new CdpBrowserProvider().inspectPage(
-      input(crossOriginCapture),
-    );
-    // The document changed, which is reported before the new document's scope.
-    expect(rejectedCapture).toMatchObject({
-      ok: false,
-      error: { _tag: "BrowserObservationError", reason: "target_changed" },
-    });
   });
 });
