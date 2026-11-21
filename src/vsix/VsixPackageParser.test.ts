@@ -1005,6 +1005,43 @@ it("resolves dot segments in entry points under extension/", async () => {
   });
 });
 
+it("keeps an escaped entry point unresolved when a traversal member has its path", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "../outside.js",
+      browser: "../outside",
+    }),
+    extraMembers: {
+      "extension/../outside.js": "exports.x = 1;",
+      "extension/../OUTSIDE": "exports.y = 1;",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(
+    report.contents.find((entry) => entry.name === "extension/../outside.js"),
+  ).toMatchObject({ path: "extension/../outside.js", traverses: true });
+  expect(report.entry_points.main).toEqual({
+    path: "extension/../outside.js",
+    present: false,
+  });
+  expect(report.entry_points.browser).toEqual({
+    path: "extension/../outside",
+    present: false,
+  });
+  expect(report.limitations).not.toContain(
+    VSIX_LIMITATIONS.entryPointCaseOnlyMatch(
+      "extension/../outside",
+      "extension/../OUTSIDE",
+    ),
+  );
+});
+
 it("resolves an extension-less CommonJS main the way Node does", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({

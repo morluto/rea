@@ -317,26 +317,40 @@ const contributeCount = (value: unknown): number => {
 };
 
 /**
+ * A package.json entry point as declared. `resolved` holds the package
+ * member path it names; `escaped` holds a path that climbs out of
+ * `extension/`, kept in its unresolved form for display. An escaped entry
+ * point never resolves, even when a traversal member such as
+ * `extension/../outside.js` carries the same string.
+ */
+type PackageJsonEntry =
+  | { readonly kind: "resolved"; readonly path: string }
+  | { readonly kind: "escaped"; readonly path: string };
+
+/**
  * The package member a package.json entry point names. VS Code resolves it
  * relative to `extension/`, so `.` and `..` segments are resolved there; a
- * path that climbs out of `extension/` keeps its unresolved form, which no
- * member matches. A path that resolves to the package root is `extension`,
- * so the directory lookups that append `/package.json` or `/index.js` name
- * real members. The declared text is split only on `/`: Node on POSIX treats
- * `\` as a literal filename character and does not trim whitespace.
+ * path that climbs out of `extension/` is tagged `escaped`. A path that
+ * resolves to the package root is `extension`, so the directory lookups that
+ * append `/package.json` or `/index.js` name real members. The declared text
+ * is split only on `/`: Node on POSIX treats `\` as a literal filename
+ * character and does not trim whitespace.
  */
-const packageJsonEntryPath = (value: unknown): string | null => {
+const packageJsonEntryPath = (value: unknown): PackageJsonEntry | null => {
   if (typeof value !== "string" || value === "") return null;
   const relative = value.replace(/^\/+/u, "");
   const segments: string[] = [];
   for (const segment of relative.split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment !== "..") segments.push(segment);
-    else if (segments.pop() === undefined) return `extension/${relative}`;
+    else if (segments.pop() === undefined)
+      return { kind: "escaped", path: `extension/${relative}` };
   }
-  return segments.length === 0
-    ? "extension"
-    : `extension/${segments.join("/")}`;
+  return {
+    kind: "resolved",
+    path:
+      segments.length === 0 ? "extension" : `extension/${segments.join("/")}`,
+  };
 };
 
 /**
@@ -632,9 +646,9 @@ const parseVsixManifestDocument = (
 interface ParsedPackageJson {
   readonly identity: VsixPackage["package_identity"];
   readonly engine: string | null;
-  readonly main: string | null;
+  readonly main: PackageJsonEntry | null;
   readonly mainDirectoryOnly: boolean;
-  readonly browser: string | null;
+  readonly browser: PackageJsonEntry | null;
   readonly activationEvents: string[];
   readonly contributes: VsixPackage["contributes"];
   // null when the document could not be parsed, so its ids are unknown.
@@ -1154,9 +1168,15 @@ export const parseVsixPackage = async (
     const packageIdentity = packageParsed?.identity ?? null;
     const vsixEngine = vsixParsed?.engine ?? null;
     const packageEngine = packageParsed?.engine ?? null;
-    const mainPath = packageParsed?.main ?? null;
+    const mainDeclared = packageParsed?.main ?? null;
+    const browserDeclared = packageParsed?.browser ?? null;
+    // Only a resolved entry point is looked up among members; an escaped one
+    // is reported unresolved below without consulting the inventory.
+    const mainPath =
+      mainDeclared?.kind === "resolved" ? mainDeclared.path : null;
     const mainDirectoryOnly = packageParsed?.mainDirectoryOnly ?? false;
-    const browserPath = packageParsed?.browser ?? null;
+    const browserPath =
+      browserDeclared?.kind === "resolved" ? browserDeclared.path : null;
     const memberPaths = new Set(files.map((file) => file.path));
     // A `main` naming a directory resolves through that directory's own
     // package.json before its index files, as Node's loader does.
@@ -1267,24 +1287,34 @@ export const parseVsixPackage = async (
       packageParsed?.extensionPack ?? null,
     );
     const mainEntry =
-      mainPath === null
+      mainDeclared === null
         ? null
-        : resolveNodeEntryPoint(
-            mainPath,
-            memberPaths,
-            mainDirectoryMain,
-            mainDirectoryOnly,
-          );
+        : mainPath === null
+          ? { path: mainDeclared.path, present: false }
+          : resolveNodeEntryPoint(
+              mainPath,
+              memberPaths,
+              mainDirectoryMain,
+              mainDirectoryOnly,
+            );
     const browserEntry =
-      browserPath === null
+      browserDeclared === null
         ? null
-        : resolveEntryPoint(browserPath, BROWSER_ENTRY_CANDIDATES, memberPaths);
+        : browserPath === null
+          ? { path: browserDeclared.path, present: false }
+          : resolveEntryPoint(
+              browserPath,
+              BROWSER_ENTRY_CANDIDATES,
+              memberPaths,
+            );
     const foldedMemberPaths = new Map(
       files.map((file) => [file.path.toLowerCase(), file.path]),
     );
+    // Escaped entry points are skipped: no member lookup ran for them, so a
+    // case-only match against a traversal member would be noise.
     for (const [entry, nestedPath, suffixes] of [
       [
-        mainEntry,
+        mainPath === null ? null : mainEntry,
         mainDirectoryMain.kind === "main" ? mainDirectoryMain.path : undefined,
         // A malformed or unread directory package.json stops the lookup
         // before the index files, so their case cannot be why main is absent.
@@ -1295,7 +1325,11 @@ export const parseVsixPackage = async (
             : NODE_INDEX_CANDIDATES),
         ],
       ],
-      [browserEntry, undefined, BROWSER_ENTRY_CANDIDATES],
+      [
+        browserPath === null ? null : browserEntry,
+        undefined,
+        BROWSER_ENTRY_CANDIDATES,
+      ],
     ] as const) {
       if (entry === null || entry.present) continue;
       const backslashPath = entry.path.includes("\\")
