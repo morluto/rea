@@ -11,6 +11,7 @@ import {
   parseClientConfiguration,
   serializeClientConfiguration,
   clientServerPath,
+  effectiveClientServer,
   legacyClientServerPath,
   shadowedClientServers,
   withClientServers,
@@ -41,9 +42,13 @@ import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
 import {
   effectiveClientConfiguration,
+  readEffectiveClientRegistrationConfiguration,
   type ClientConfigurationSource,
 } from "./ClientConfigurationFiles.js";
-import { clientRegistrationOwnership } from "./ClientRegistration.js";
+import {
+  clientRegistrationOwnership,
+  parseClientRegistrationPolicy,
+} from "./ClientRegistration.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
@@ -72,6 +77,7 @@ import {
 import {
   appDataRedirection,
   clientOwnershipEvidencePaths,
+  clientProjectConfigurationPaths,
   clientSharedRegistrationPaths,
   manualRegistrationRemediation,
   registrationWriteBlocker,
@@ -507,6 +513,7 @@ export const systemUninstallHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
   systemPaths: ClientSystemPaths = {},
+  projectDirectory?: string,
 ): UninstallHost => {
   const home =
     selectedHome ?? homeDirectoryFromEnvironment(environment, platform);
@@ -516,6 +523,7 @@ export const systemUninstallHost = (
   const configurationOperations = new ArtifactResourceScope();
   const fileSystem = selectedFileSystem ?? systemFileSystem(resources);
   const preflightOwnedClients = new WeakSet<UninstallClient>();
+  const projectTargets = new WeakMap<UninstallClient, ProjectUninstallTarget>();
   // REA's registration that only layers REA does not edit define: uninstall
   // cannot remove it, so it is reported instead of being treated as absent.
   const retainedLowerOnly = new WeakMap<UninstallClient, UninstallItem>();
@@ -653,6 +661,17 @@ export const systemUninstallHost = (
         systemPaths,
       );
       redirection = appDataRedirection(supported);
+      if (projectDirectory !== undefined) {
+        const directory =
+          await requireProjectUninstallDirectory(projectDirectory);
+        return resolveProjectUninstallClients(
+          supported,
+          directory,
+          projectTargets,
+          resources,
+          platform,
+        );
+      }
       // Shared configuration alone cannot establish product applicability.
       // Definitive absence leaves the shared paths unverified while owned
       // rows in a readable configuration can still be removed independently;
@@ -714,6 +733,9 @@ export const systemUninstallHost = (
     },
     inspectClient: (client) =>
       configurationOperations.run(async () => {
+        const project = projectTargets.get(client);
+        if (project?.issue?.status === "failed") return project.issue;
+        if (project?.issue !== undefined) return undefined;
         const ownershipEstablished =
           client.sharedRegistration === true &&
           clientOwnershipEvidencePaths(client).length > 0 &&
@@ -744,6 +766,24 @@ export const systemUninstallHost = (
             { ...read.parsed, sourcePath: client.configPath },
           );
           if (unknown !== undefined) return unknown;
+        }
+        if (project !== undefined) {
+          if (
+            !removal.value.removeNative &&
+            removal.value.legacyPath === undefined
+          )
+            return undefined;
+          const writeBlocker = clientWriteBlocker(client);
+          if (writeBlocker !== undefined)
+            return item(client.name, "failed", writeBlocker);
+          return verifyProjectRemoval(
+            project,
+            client,
+            read.transactionPath,
+            registrationRemovalDocument(read.parsed, removal.value, platform),
+            resources,
+            platform,
+          );
         }
         // ZCode switches the entire server table to its shared fallback once
         // the last native server disappears. Inspect the table it would load,
@@ -894,6 +934,7 @@ export const systemUninstallHost = (
     removeClient: (client) =>
       configurationOperations.run(
         async () =>
+          projectTargets.get(client)?.issue ??
           retainedLowerOnly.get(client) ??
           removeClient(
             client,
@@ -902,9 +943,11 @@ export const systemUninstallHost = (
             platform,
             () => clientWriteBlocker(client),
             preflightOwnedClients.has(client),
+            projectTargets.get(client),
           ),
       ),
     inspectSkill: async () => {
+      if (projectDirectory !== undefined) return undefined;
       const selection = skillDestinationSelection(
         home,
         undefined,
@@ -933,14 +976,25 @@ export const systemUninstallHost = (
       return undefined;
     },
     removeSkill: () =>
-      removeManagedSkills(
-        home,
-        fileSystem,
-        environment,
-        platform,
-        skillWriteBlocker,
-      ),
-    purgeData: () => purgeSelectedData(home, environment, platform, fileSystem),
+      projectDirectory !== undefined
+        ? Promise.resolve(
+            item(
+              "skill",
+              "skipped",
+              "Project uninstall does not select skills.",
+            ),
+          )
+        : removeManagedSkills(
+            home,
+            fileSystem,
+            environment,
+            platform,
+            skillWriteBlocker,
+          ),
+    purgeData: () =>
+      projectDirectory === undefined
+        ? purgeSelectedData(home, environment, platform, fileSystem)
+        : Promise.resolve([]),
     close: async () => {
       try {
         await configurationOperations.close();
@@ -1189,6 +1243,212 @@ const SHADOWED_UNOWNED_MEMBER_DETAIL = `Configuration repeats the "${PRODUCT_IDE
 
 const UNOWNED_LEGACY_FALLBACK_DETAIL = `OpenCode falls back to the V1 "mcp.${PRODUCT_IDENTITY.mcpServerKey}" entry, which is not REA-owned; removing REA's native registration would activate it, so no change was made. Remove or replace that V1 entry manually, then rerun uninstall.`;
 
+/** Apply the same exact row edits to both the projected and published document. */
+const registrationRemovalDocument = (
+  parsed: ClientConfigurationDocument,
+  removal: RegistrationRemoval,
+  platform: NodeJS.Platform,
+): ClientConfigurationDocument => {
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  const servers = { ...parsed.servers };
+  const legacyServers = { ...parsed.legacyServers };
+  if (removal.removeNative) delete servers[name];
+  if (removal.legacyPath !== undefined) delete legacyServers[name];
+  return {
+    ...parsed,
+    servers,
+    legacyServers,
+    document: withClientServers(
+      parsed,
+      servers,
+      platform,
+      removal.legacyPath === undefined ? undefined : name,
+    ),
+  };
+};
+
+interface ProjectUninstallTarget {
+  readonly directory: string;
+  readonly userClient: SetupClient;
+  readonly issue?: UninstallItem;
+}
+
+const requireProjectUninstallDirectory = async (
+  path: string,
+): Promise<string> => {
+  try {
+    const directory = await realpath(path);
+    if ((await lstat(directory)).isDirectory()) return directory;
+  } catch (cause: unknown) {
+    throw new ConfigurationError(
+      `Could not resolve the selected project directory ${path}. Select an existing directory before running uninstall.`,
+      { cause },
+    );
+  }
+  throw new ConfigurationError(
+    `The selected project ${path} is not a directory.`,
+  );
+};
+
+const resolveProjectUninstallClients = async (
+  supported: readonly SetupClient[],
+  directory: string,
+  targets: WeakMap<UninstallClient, ProjectUninstallTarget>,
+  resources: ArtifactResourceScope,
+  platform: NodeJS.Platform,
+): Promise<readonly UninstallClient[]> => {
+  const selected: UninstallClient[] = [];
+  for (const userClient of supported) {
+    if (userClient.name !== "pi" && userClient.name !== "opencode") continue;
+    const localPaths = clientProjectConfigurationPaths(
+      userClient,
+      directory,
+      platform,
+    ).filter((path) => withinLexicalDirectory(path, directory, platform));
+    // An absent file grants no write target. Let the configuration owner report
+    // any unresolved candidate instead of treating a failed probe as absence.
+    const exists = await Promise.all(
+      localPaths.map(async (path) => {
+        try {
+          await lstat(path);
+          return true;
+        } catch (cause: unknown) {
+          return !isMissing(cause);
+        }
+      }),
+    );
+    if (!exists.includes(true)) continue;
+    const observed = await readEffectiveClientRegistrationConfiguration(
+      userClient,
+      resources,
+      platform,
+      { projectDirectory: directory },
+    );
+    let path: string;
+    let issue: UninstallItem | undefined;
+    if (!observed.ok) {
+      path = observed.error.path;
+      issue = item(userClient.name, "failed", observed.error.detail);
+    } else {
+      const configuration = observed.value;
+      if (configuration.projectInspection === "untrusted") {
+        path = appendCallerPath(directory, ".pi/mcp.json", platform);
+        issue = item(
+          userClient.name,
+          "failed",
+          "Pi has not admitted this project's configuration. Verify the Pi project trust decision before removing the registration.",
+        );
+      } else if (configuration.scope !== "project") {
+        const alias = configuration.projectUserAliases?.find((candidate) =>
+          withinLexicalDirectory(candidate, directory, platform),
+        );
+        if (alias === undefined) continue;
+        path = alias;
+        issue = item(
+          userClient.name,
+          "failed",
+          `The selected project configuration at ${alias} aliases user configuration. No change was made.`,
+        );
+      } else {
+        path = configuration.launcherConfigPath ?? configuration.configPath;
+        if (
+          configuration.launcherScope !== "project" ||
+          !withinLexicalDirectory(path, directory, platform)
+        ) {
+          path = configuration.configPath;
+          issue = item(
+            userClient.name,
+            "retained",
+            "The selected directory does not own the effective REA launcher. Review the registration's source before removing it.",
+          );
+        }
+      }
+    }
+    const client = { ...userClient, configPath: path };
+    selected.push(client);
+    targets.set(client, {
+      directory,
+      userClient,
+      ...(issue === undefined ? {} : { issue }),
+    });
+  }
+  return selected;
+};
+
+const verifyProjectRemoval = async (
+  project: ProjectUninstallTarget,
+  client: UninstallClient,
+  transactionPath: string,
+  candidate: ClientConfigurationDocument,
+  resources: ArtifactResourceScope,
+  platform: NodeJS.Platform,
+): Promise<UninstallItem | undefined> => {
+  const failed = (detail: string) => item(client.name, "failed", detail);
+  if (!withinLexicalDirectory(transactionPath, project.directory, platform))
+    return failed(
+      `The selected configuration resolves outside the project directory: ${transactionPath}. No change was made.`,
+    );
+  try {
+    const backupDirectory = await realpath(dirname(client.configPath));
+    if (!withinLexicalDirectory(backupDirectory, project.directory, platform))
+      return failed(
+        `The configuration backup would be outside the selected project directory: ${backupDirectory}. No change was made.`,
+      );
+  } catch {
+    return failed(
+      "Could not verify the configuration backup location. No change was made.",
+    );
+  }
+  for (const path of project.userClient.configPaths ?? [
+    project.userClient.configPath,
+  ]) {
+    try {
+      if ((await realpath(path)) === transactionPath)
+        return failed(
+          `The selected project configuration aliases the user configuration at ${path}. No change was made.`,
+        );
+    } catch (cause: unknown) {
+      if (!isMissing(cause))
+        return failed(
+          `Could not verify the user configuration at ${path}. No change was made.`,
+        );
+    }
+  }
+  const observed = await readEffectiveClientRegistrationConfiguration(
+    project.userClient,
+    resources,
+    platform,
+    {
+      projectDirectory: project.directory,
+      candidate: {
+        path: client.configPath,
+        document: candidate,
+      },
+    },
+  );
+  if (!observed.ok) return failed(observed.error.detail);
+  if (observed.value.projectInspection === "untrusted")
+    return failed(
+      "Pi project trust could not be established for removal. No change was made.",
+    );
+  const { document, configPath } = observed.value;
+  const remaining =
+    document === undefined
+      ? undefined
+      : effectiveClientServer(document, PRODUCT_IDENTITY.mcpServerKey);
+  if (remaining !== undefined) {
+    const parsed = parseClientRegistrationPolicy(remaining, project.userClient);
+    if (
+      !parsed.ok ||
+      (parsed.value.enabled !== false && parsed.value.disabled !== true)
+    )
+      return failed(
+        `Removing this registration would leave another or unresolved REA registration at ${configPath}. No change was made. Review that registration, then rerun uninstall.`,
+      );
+  }
+  return undefined;
+};
+
 /** Preserve the bytes uninstall is about to edit and return the backup holding them. */
 const backupClientConfiguration = async (
   client: SetupClient,
@@ -1237,6 +1497,7 @@ const removeClient = async (
   platform: NodeJS.Platform,
   writeBlocker?: () => string | undefined,
   preflightOwned = false,
+  project?: ProjectUninstallTarget,
 ): Promise<UninstallItem> => {
   const read = await readClientConfiguration(
     client,
@@ -1270,14 +1531,22 @@ const removeClient = async (
     );
   const blocker = writeBlocker?.();
   if (blocker !== undefined) return item(client.name, "failed", blocker);
-  const remaining = { ...parsed.servers };
-  if (removeNative) delete remaining[name];
-  const document = withClientServers(
+  const candidate = registrationRemovalDocument(
     parsed,
-    remaining,
+    removal.value,
     platform,
-    removeLegacy ? name : undefined,
   );
+  if (project !== undefined) {
+    const issue = await verifyProjectRemoval(
+      project,
+      client,
+      transactionPath,
+      candidate,
+      resources,
+      platform,
+    );
+    if (issue !== undefined) return issue;
+  }
   const editedPaths = [
     ...(removeNative ? [clientServerPath(parsed, name)] : []),
     ...(legacyPath === undefined ? [] : [legacyPath]),
@@ -1285,7 +1554,7 @@ const removeClient = async (
   let serialized: ReturnType<typeof serializeClientConfiguration>;
   try {
     serialized = serializeClientConfiguration(
-      document,
+      candidate.document,
       client.format,
       original,
       editedPaths,

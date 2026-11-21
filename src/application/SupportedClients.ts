@@ -19,6 +19,7 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
+  isQualifiedCallerPath,
 } from "../filesystem/callerPath.js";
 import {
   absoluteClientRoot,
@@ -60,6 +61,8 @@ export interface SetupClient {
   readonly configPaths?: readonly string[];
   /** Read-only configuration the client merges over every file layer. */
   readonly inlineConfiguration?: ClientInlineConfiguration;
+  /** The selected Pi profile's persisted project-trust inputs. */
+  readonly piSettings?: PiProjectSettings;
   /** Read-only Gemini scopes and trust inputs; never setup write targets. */
   readonly geminiSettings?: {
     readonly systemPath: string;
@@ -128,6 +131,11 @@ export interface SetupClient {
     | "goose"
     | "kilo"
     | "unsupported";
+}
+
+interface PiProjectSettings {
+  readonly trustPath: string;
+  readonly settingsPath: string;
 }
 
 interface ClientPathFailure extends ClientRootFailure {
@@ -234,6 +242,7 @@ interface ClientDefinitionBase {
   readonly geminiSettings?: (
     context: ClientPathContext,
   ) => NonNullable<SetupClient["geminiSettings"]>;
+  readonly piSettings?: (context: ClientPathContext) => PiProjectSettings;
   /** Junie's location inputs, from the context and its resolved home. */
   readonly junieSettings?: (
     context: ClientPathContext,
@@ -526,6 +535,47 @@ const piAgentDirectory = ({
   if (directory.startsWith("file://"))
     return fileURLToPath(directory, { windows: platform === "win32" });
   return directory;
+};
+
+const piProjectSettings = (context: ClientPathContext): PiProjectSettings => {
+  const paths = context.platform === "win32" ? win32 : posix;
+  const agentDirectory = piAgentDirectory(context);
+  return {
+    trustPath: paths.join(agentDirectory, "trust.json"),
+    settingsPath: paths.join(agentDirectory, "settings.json"),
+  };
+};
+
+/** Native cwd-relative candidates in load order. This provides no write authority. */
+export const clientProjectConfigurationPaths = (
+  client: Pick<SetupClient, "format">,
+  projectDirectory: string,
+  platform: NodeJS.Platform,
+): readonly string[] => {
+  if (!isQualifiedCallerPath(projectDirectory, platform)) return [];
+  const paths = platform === "win32" ? win32 : posix;
+  if (client.format === "pi")
+    return [paths.join(projectDirectory, ".pi", "mcp.json")];
+  if (client.format !== "opencode") return [];
+  const directories: string[] = [];
+  let current = projectDirectory;
+  for (;;) {
+    directories.push(current);
+    const parent = paths.dirname(current);
+    if (current === parent) break;
+    current = parent;
+  }
+  directories.reverse();
+  const names = ["opencode.json", "opencode.jsonc"];
+  // OpenCode loads all direct files before visiting any nested .opencode directory.
+  return [
+    ...directories.flatMap((directory) =>
+      names.map((name) => paths.join(directory, name)),
+    ),
+    ...directories.flatMap((directory) =>
+      names.map((name) => paths.join(directory, ".opencode", name)),
+    ),
+  ];
 };
 
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
@@ -1527,6 +1577,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
         "mcp.json",
       ),
     markerPath: piAgentDirectory,
+    piSettings: piProjectSettings,
     format: "pi",
   }),
   defineClient({
@@ -2020,6 +2071,9 @@ export const supportedClients = (
         ...(definition.geminiSettings === undefined
           ? {}
           : { geminiSettings: definition.geminiSettings(context) }),
+        ...(definition.piSettings === undefined
+          ? {}
+          : { piSettings: definition.piSettings(context) }),
         ...(definition.junieSettings === undefined
           ? {}
           : {

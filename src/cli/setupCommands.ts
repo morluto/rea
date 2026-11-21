@@ -14,6 +14,7 @@ import {
 import { isUninstallFailure } from "../application/UninstallFailure.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { localPathStringSchema } from "../domain/localPath.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   mcpToolFamiliesSchema,
   toolFamiliesConstraint,
@@ -187,6 +188,11 @@ const registerMaintenanceCommands = (
   registerCliCommand(cli, CLI_COMMANDS.uninstall, {
     description: "Remove REA-owned agent configuration and skill files",
     options: z.object({
+      project: localPathStringSchema
+        .optional()
+        .describe(
+          "Remove owned Pi and OpenCode registrations in this directory only",
+        ),
       purgeData: z
         .boolean()
         .default(false)
@@ -197,6 +203,10 @@ const registerMaintenanceCommands = (
         logger,
         "uninstall",
         async () => {
+          if (options.project !== undefined && options.purgeData)
+            throw new ConfigurationError(
+              "--project cannot be combined with --purge-data.",
+            );
           const { runUninstall, systemUninstallHost } =
             await import("../application/Uninstall.js");
           return runUninstall(
@@ -206,6 +216,8 @@ const registerMaintenanceCommands = (
               undefined,
               environment,
               HOST_PLATFORM.platform,
+              undefined,
+              options.project,
             ),
           );
         },
@@ -274,7 +286,10 @@ const runSetupCommand = async (
     ]);
   const result = await runSetup(
     { ...setupRunOptions(input, interactive, hasExplicitScope), signal },
-    systemSetupHost(createSystemDoctorHost(environment, signal), environment),
+    systemSetupHost(
+      createSystemDoctorHost(environment, signal, HOST_PLATFORM, "user"),
+      environment,
+    ),
     interactive
       ? (actions, context) =>
           confirmInteractiveSetup(actions, options.accessible, context, signal)

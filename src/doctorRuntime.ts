@@ -72,6 +72,7 @@ const selectedRegistrationEnvironment = async (
   resourceScope: RetainedResourceScope,
   signal: AbortSignal,
   platform: NodeJS.Platform,
+  projectDirectory: string | undefined,
 ): Promise<SelectedRegistrationEnvironment | undefined> => {
   const [selected] = clients;
   // Only an unambiguous selection can stand for the terminal's environment.
@@ -87,6 +88,7 @@ const selectedRegistrationEnvironment = async (
     client,
     resourceScope,
     platform,
+    projectDirectory,
   );
   if (registered === undefined) return undefined;
   if ("unknown" in registered)
@@ -143,12 +145,18 @@ const readSelectedRegistration = async (
   client: Parameters<typeof readEffectiveClientRegistrationConfiguration>[0],
   resourceScope: RetainedResourceScope,
   platform: NodeJS.Platform,
+  projectDirectory: string | undefined,
 ): Promise<SelectedRegistration | { readonly unknown: true } | undefined> => {
   // A failed close is a retained owner, not a read outcome: transfer it to the
   // caller's scope so `close()` retries it instead of losing it.
   const configuration = await resourceScope
     .run(() =>
-      readEffectiveClientRegistrationConfiguration(client, undefined, platform),
+      readEffectiveClientRegistrationConfiguration(
+        client,
+        undefined,
+        platform,
+        projectDirectory === undefined ? undefined : { projectDirectory },
+      ),
     )
     .catch((cause: unknown) => {
       if (cause instanceof RegularFileCleanupFailure) {
@@ -330,8 +338,11 @@ export const createSystemDoctorHost = (
   signal?: AbortSignal,
   /** The host diagnosed; tests select another host's client layout. */
   host: HostPlatform = HOST_PLATFORM,
+  registrationScope: "user" | "all" = "all",
 ): DoctorHost => {
   const { platform } = host;
+  const projectDirectory =
+    registrationScope === "all" ? process.cwd() : undefined;
   const registrationReads = new WeakMap<
     RetainedResourceScope,
     Map<string, ReturnType<typeof readIdaConfiguration>>
@@ -362,6 +373,7 @@ export const createSystemDoctorHost = (
     environment,
     platform,
     architecture: host.architecture,
+    registrationScope,
     ...(signal === undefined ? {} : { signal }),
     resolveProviderRequestBudget: Object.assign(
       async (
@@ -404,6 +416,7 @@ export const createSystemDoctorHost = (
             probeScope,
             inspectionSignal,
             platform,
+            projectDirectory,
           ),
       );
       const inspectionEnvironment = selectedProviderSettings(

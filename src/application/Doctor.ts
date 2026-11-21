@@ -614,6 +614,9 @@ const registrationCheck = (
   ok: false,
   classification: registration.state === "unknown" ? "unknown" : "config_drift",
   detail: registration.config_path,
+  ...(registration.scope === undefined
+    ? {}
+    : { details: { scope: registration.scope } }),
   remediation: registration.remediation,
 });
 
@@ -673,6 +676,7 @@ export interface RetainedProviderRequestBudgetResolver {
 export interface SystemDoctorHostOptions {
   readonly signal?: AbortSignal;
   readonly platform?: NodeJS.Platform;
+  readonly registrationScope?: "user" | "all";
   readonly architecture?: NodeJS.Architecture;
   readonly environment?: NodeJS.ProcessEnv;
   readonly execFileOutput?: typeof execFileOutput;
@@ -1000,6 +1004,9 @@ export const systemDoctorHost = (
           platform,
           environment,
           resources: child,
+          ...(options.registrationScope === undefined
+            ? {}
+            : { scope: options.registrationScope }),
           ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
           ...(ownedProviderSetting === undefined
             ? {}
