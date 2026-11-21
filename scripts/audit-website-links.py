@@ -89,9 +89,21 @@ def github_target(url):
         return GitHubTarget(f"{repo}/{'pulls' if kind == 'pull' else 'issues'}/{parts[3]}")
     if kind == "commit" and len(parts) == 4:
         return GitHubTarget(f"{repo}/commits/{quote(parts[3], safe='')}")
-    if kind == "releases" and len(parts) >= 5 and parts[3] in ("tag", "download"):
-        asset = parts[5] if parts[3] == "download" and len(parts) >= 6 else None
-        return GitHubTarget(f"{repo}/releases/tags/{quote(parts[4], safe='')}", release_asset=asset)
+    if kind == "releases":
+        if parts[3:] == ["latest"]:
+            return GitHubTarget(f"{repo}/releases/latest")
+        if len(parts) == 6 and parts[3:5] == ["latest", "download"]:
+            return GitHubTarget(f"{repo}/releases/latest", release_asset=parts[5])
+        if len(parts) >= 5 and parts[3] == "tag":
+            tag = "/".join(parts[4:])
+        elif len(parts) >= 6 and parts[3] == "download":
+            tag = "/".join(parts[4:-1])
+        else:
+            return None
+        return GitHubTarget(
+            f"{repo}/releases/tags/{quote(tag, safe='')}",
+            release_asset=parts[-1] if parts[3] == "download" else None,
+        )
     return None
 
 
