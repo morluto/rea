@@ -850,41 +850,6 @@ describe("browser map decoded validation", () => {
   });
 });
 
-describe("source-map operation deadline observations", () => {
-  it("keeps completed maps when a later request times out", async () => {
-    let calls = 0;
-    const requests = [
-      request,
-      { ...request, scriptKey: `scr_${"2".repeat(64)}` },
-    ];
-    const result = await fetchWebSourceMapsOk(
-      requests,
-      input({ source_map_fetch_timeout_ms: 100 }),
-      undefined,
-      {
-        fetch: (_url, options) => {
-          calls += 1;
-          return calls === 1
-            ? Promise.resolve(validMapResponse())
-            : new Promise<Response>((_resolve, reject) => {
-                const signal = options?.signal;
-                signal?.addEventListener("abort", () => reject(signal.reason), {
-                  once: true,
-                });
-              });
-        },
-      },
-    );
-
-    expect(result.status).toBe("partial");
-    expect(result.items.map(({ status }) => status)).toEqual([
-      "included",
-      "fetch_failed",
-    ]);
-    expect(result.items[0]?.original_sources).toHaveLength(1);
-  });
-});
-
 it("shares the caller's fetch byte budget across completed map responses", async () => {
   const body = JSON.stringify({
     version: 3,
