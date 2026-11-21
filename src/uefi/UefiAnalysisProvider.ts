@@ -19,7 +19,7 @@ import {
 } from "node:fs/promises";
 import { inflate } from "node:zlib";
 import { promisify } from "node:util";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
@@ -36,6 +36,9 @@ import {
   AnalysisCleanupLeaseGroup,
   SafeOutputTree,
   outputDirectoryAdmissionRefusal,
+  DirectoryArtifactReader,
+  DirectoryArtifactRootFailure,
+  DirectoryArtifactTraversalLimit,
 } from "../resources/index.js";
 import {
   inspectGhidraInstallation,
@@ -148,7 +151,7 @@ interface UefiEntryPointScaffolding {
   readonly functionDefinition: string;
 }
 
-export type UefiMachineWidth = "32" | "64";
+export type UefiMachineWidth = "32" | "64" | "unknown";
 
 export const sanitizeCComment = (text: string): string =>
   text
@@ -202,7 +205,10 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
           ? "64"
           : "32";
       }
-      if (candidateMachine === 0x5032 || candidateMachine === 0x0ebc) {
+      if (candidateMachine === 0x0ebc) {
+        return "unknown";
+      }
+      if (candidateMachine === 0x5032) {
         return "32";
       }
       if (candidateMachine === 0x5064 || candidateMachine === 0x5128) {
@@ -225,7 +231,16 @@ export const buildUefiEntryPointScaffolding = (
   machineWidth: UefiMachineWidth = "64",
 ): UefiEntryPointScaffolding => {
   const safeName = sanitizeCComment(rawName);
-  const statusType = machineWidth === "32" ? "uint32_t" : "uint64_t";
+  const statusType =
+    machineWidth === "32"
+      ? "uint32_t"
+      : machineWidth === "64"
+        ? "uint64_t"
+        : "UINTN";
+  const statusTypedefs =
+    machineWidth === "unknown"
+      ? ["typedef uintptr_t UINTN;", "typedef UINTN EFI_STATUS;"]
+      : [`typedef ${statusType} EFI_STATUS;`];
   const normType = typeName?.toLowerCase();
   if (normType === "pei-core") {
     return {
@@ -255,7 +270,7 @@ export const buildUefiEntryPointScaffolding = (
   if (normType === "peim" || (normType === undefined && phase === "PEI")) {
     return {
       typedefs: [
-        `typedef ${statusType} EFI_STATUS;`,
+        ...statusTypedefs,
         "typedef void* EFI_PEI_FILE_HANDLE;",
         "struct _EFI_PEI_SERVICES;",
         "typedef struct _EFI_PEI_SERVICES EFI_PEI_SERVICES;",
@@ -315,7 +330,7 @@ export const buildUefiEntryPointScaffolding = (
 
   return {
     typedefs: [
-      `typedef ${statusType} EFI_STATUS;`,
+      ...statusTypedefs,
       "typedef void* EFI_HANDLE;",
       "struct _EFI_SYSTEM_TABLE;",
       "typedef struct _EFI_SYSTEM_TABLE EFI_SYSTEM_TABLE;",
@@ -1147,7 +1162,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS = 20;
     let recordedDisassemblyFailures = 0;
     let totalStagedAsmBytes = 0;
-    let disassemblyEngineUsed: "llvm-objdump" | "objdump" | "none" = "none";
+    const usedDisassemblers = new Set<"llvm-objdump" | "objdump">();
 
     const MAX_DECOMPILE_MODULE_BYTES = 4 * 1024 * 1024;
     const MAX_DECOMPILE_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -1419,7 +1434,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   );
                   asmOutput = stdout;
                   asmGenerator = "llvm-objdump";
-                  disassemblyEngineUsed = "llvm-objdump";
+                  usedDisassemblers.add("llvm-objdump");
                 } catch (err: unknown) {
                   if (signal.aborted) signal.throwIfAborted();
                   if (isAbortOf(err, signal)) throw err;
@@ -1433,9 +1448,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     const objdumpTimeout = Math.floor(
                       Math.min(15_000, Math.max(500, remainingForObjdump)),
                     );
+                    const objdumpExecutable =
+                      process.env.REA_OBJDUMP_COMMAND ?? "objdump";
                     try {
                       const { stdout } = await execFileOutput(
-                        "objdump",
+                        objdumpExecutable,
                         ["-d", scratchBasename],
                         {
                           cwd: tempRoot.path,
@@ -1443,13 +1460,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                           stopSignal: "SIGTERM",
                           timeout: objdumpTimeout,
                           maxBuffer: maxAsmBuffer,
+                          env: { ...process.env, DEBUGINFOD_URLS: "" },
                         },
                       );
                       asmOutput = stdout;
                       asmGenerator = "objdump";
-                      if (disassemblyEngineUsed === "none") {
-                        disassemblyEngineUsed = "objdump";
-                      }
+                      usedDisassemblers.add("objdump");
                     } catch (err2: unknown) {
                       if (signal.aborted) signal.throwIfAborted();
                       if (isAbortOf(err2, signal)) throw err2;
@@ -1914,6 +1930,45 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             };
           });
 
+          let disassemblerProducer:
+            | "llvm-objdump"
+            | "objdump"
+            | "mixed"
+            | "none" = "none";
+          if (input.include_disassembly) {
+            if (
+              usedDisassemblers.has("llvm-objdump") &&
+              usedDisassemblers.has("objdump")
+            ) {
+              disassemblerProducer = "mixed";
+            } else if (usedDisassemblers.has("llvm-objdump")) {
+              disassemblerProducer = "llvm-objdump";
+            } else if (usedDisassemblers.has("objdump")) {
+              disassemblerProducer = "objdump";
+            }
+          }
+
+          const moduleRelativePaths = new Set<string>();
+          for (const m of stagedModules) {
+            moduleRelativePaths.add(m.relative_c_file);
+            moduleRelativePaths.add(m.relative_header_file);
+            if (m.relative_asm_file !== null) {
+              moduleRelativePaths.add(m.relative_asm_file);
+            }
+            if (m.relative_payload_file !== null) {
+              moduleRelativePaths.add(m.relative_payload_file);
+            }
+          }
+          const nonduplicateReceipts = receipts
+            .filter((r) => !moduleRelativePaths.has(r.relativePath))
+            .slice(0, 100)
+            .map((r) => ({
+              relative_path: r.relativePath,
+              path: r.path,
+              size: r.size,
+              sha256: r.sha256,
+            }));
+
           return uefiResultSchemas.decompile_uefi_firmware.parse({
             parser: {
               name: "rea-uefi",
@@ -1927,16 +1982,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             modules: finalModules,
             producers: {
               ghidra: ghidraEngineUsed ? (ghidraVersion ?? ghidraBin) : null,
-              disassembler: input.include_disassembly
-                ? disassemblyEngineUsed
-                : "none",
+              disassembler: disassemblerProducer,
             },
-            receipts: receipts.map((r) => ({
-              relative_path: r.relativePath,
-              path: r.path,
-              size: r.size,
-              sha256: r.sha256,
-            })),
+            receipts: nonduplicateReceipts,
             diagnostics: `Successfully published ${stagedModules.length} decompiled UEFI module(s) across phases into ${outputRoot}.`,
             limitations: effectiveLimitations,
           });
@@ -2178,79 +2226,68 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       name: string;
       parentPath: string;
       isFile: () => boolean;
+      relPath: string;
     }> = [];
-    const dirQueue: string[] = [input.path];
-    let totalEntriesVisited = 0;
 
-    while (dirQueue.length > 0) {
-      checkpoint();
-      signal.throwIfAborted();
-      const currentDir = dirQueue.shift()!;
-      let dirHandle;
-      try {
-        dirHandle = await opendir(currentDir);
-      } catch (dirErr) {
-        if (currentDir === input.path) {
+    const reader = new DirectoryArtifactReader(input.path, "omit");
+    let readerFailed: { cause: unknown } | undefined;
+    try {
+      for await (const entry of reader.entries(signal, {
+        maximumEntries: MAX_DIRECTORY_INVENTORY_ENTRIES,
+        onCoverage: (coverage) => {
+          for (const lim of coverage.limitations) {
+            if (limitations.length < 50) limitations.push(lim);
+          }
+        },
+        onOmission: (omission) => {
+          if (limitations.length < 50) {
+            limitations.push(`Omitted unreadable path: ${omission.path}`);
+          }
+        },
+      })) {
+        checkpoint();
+        signal.throwIfAborted();
+        if (entry.kind === "file") {
+          const relPath = entry.path;
+          const fullPath = join(input.path, relPath);
+          dirEntries.push({
+            name: basename(relPath),
+            parentPath: dirname(fullPath),
+            isFile: () => true,
+            relPath,
+          });
+        }
+      }
+    } catch (dirErr: unknown) {
+      if (dirErr instanceof DirectoryArtifactTraversalLimit) {
+        limitations.push(
+          `Directory discovery stopped after reaching ${MAX_DIRECTORY_INVENTORY_ENTRIES} entry budget.`,
+        );
+      } else {
+        readerFailed = { cause: dirErr };
+        if (dirErr instanceof DirectoryArtifactRootFailure) {
           throw new Error(
             `Selected directory root is not accessible: ${errorMessage(dirErr)}`,
           );
         }
-        if (limitations.length < 50) {
-          limitations.push(
-            `Directory subtree could not be read: ${errorMessage(dirErr)}`,
-          );
-        }
-        continue;
+        throw dirErr;
       }
-
-      const currentSubdirEntries: Array<{
-        name: string;
-        isDir: boolean;
-        isFile: boolean;
-      }> = [];
-
+    } finally {
       try {
-        for await (const entry of dirHandle) {
-          checkpoint();
-          signal.throwIfAborted();
-          totalEntriesVisited++;
-          if (totalEntriesVisited > MAX_DIRECTORY_INVENTORY_ENTRIES) {
-            limitations.push(
-              `Directory discovery stopped after reaching ${MAX_DIRECTORY_INVENTORY_ENTRIES} entry budget.`,
-            );
-            dirQueue.length = 0;
-            break;
-          }
-          currentSubdirEntries.push({
-            name: entry.name,
-            isDir: entry.isDirectory(),
-            isFile: entry.isFile(),
-          });
-        }
-      } catch (streamErr) {
-        if (limitations.length < 50) {
-          limitations.push(
-            `Directory streaming interrupted: ${errorMessage(streamErr)}`,
-          );
-        }
-      }
-
-      currentSubdirEntries.sort((a, b) =>
-        compareUnicodeCodePoints(a.name, b.name),
-      );
-
-      for (const item of currentSubdirEntries) {
-        if (item.isDir) {
-          dirQueue.push(join(currentDir, item.name));
-        } else if (item.isFile) {
-          dirEntries.push({
-            name: item.name,
-            parentPath: currentDir,
-            isFile: () => true,
-          });
+        await reader.close();
+      } catch (closeErr: unknown) {
+        this.#resources.retain({
+          kind: "reader",
+          resource: input.path,
+          reader,
+        });
+        if (readerFailed === undefined) {
+          throw closeErr;
         }
       }
     }
+
+    dirEntries.sort((a, b) => compareUnicodeCodePoints(a.relPath, b.relPath));
 
     const guidRegex =
       /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -2263,11 +2300,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       phase?: string | undefined;
       type?: string | undefined;
     };
+    const isWindows = HOST_PLATFORM.platform === "win32";
     const manifestModulesByExactRelPath = new Map<
       string,
       ManifestModuleEntry
     >();
     const manifestModulesByFoldedRelPath = new Map<
+      string,
+      ManifestModuleEntry
+    >();
+    const manifestModulesByFallbackRelPath = new Map<
       string,
       ManifestModuleEntry
     >();
@@ -2283,8 +2325,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             const m = parsed.modules[mIdx];
             if (!m || typeof m !== "object") continue;
             if (typeof m.payload_file !== "string") continue;
-            const exactNorm = m.payload_file.split(/[/\\]+/).join("/");
+            const exactNorm = isWindows
+              ? m.payload_file.split(/[/\\]+/).join("/")
+              : m.payload_file.split(/\/+/).join("/");
             const foldedNorm = exactNorm.toLowerCase();
+            const crossPlatformNorm = m.payload_file.split(/[/\\]+/).join("/");
+            const crossPlatformFolded = crossPlatformNorm.toLowerCase();
 
             let validGuid: string | null | undefined = undefined;
             if (m.guid !== undefined && m.guid !== null) {
@@ -2350,6 +2396,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             manifestModulesByExactRelPath.set(exactNorm, manifestEntry);
             if (!manifestModulesByFoldedRelPath.has(foldedNorm)) {
               manifestModulesByFoldedRelPath.set(foldedNorm, manifestEntry);
+            }
+            if (!isWindows) {
+              manifestModulesByFallbackRelPath.set(
+                crossPlatformNorm,
+                manifestEntry,
+              );
+              if (!manifestModulesByFallbackRelPath.has(crossPlatformFolded)) {
+                manifestModulesByFallbackRelPath.set(
+                  crossPlatformFolded,
+                  manifestEntry,
+                );
+              }
             }
           }
         }
@@ -2499,12 +2557,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         HOST_PLATFORM.platform === "win32"
           ? relPath.replaceAll("\\", "/")
           : relPath;
-      const exactLookupKey = relPath.split(/[/\\]+/).join("/");
+      const exactLookupKey = isWindows
+        ? relPath.split(/[/\\]+/).join("/")
+        : relPath.split(/\/+/).join("/");
       const foldedLookupKey = exactLookupKey.toLowerCase();
-      const segments = foldedLookupKey.split("/");
+      const crossPlatformLookupKey = isWindows
+        ? exactLookupKey
+        : relPath.split(/[/\\]+/).join("/");
+      const crossPlatformFoldedKey = crossPlatformLookupKey.toLowerCase();
+      const segments = exactLookupKey.toLowerCase().split("/");
       const fromManifest =
         manifestModulesByExactRelPath.get(exactLookupKey) ??
-        manifestModulesByFoldedRelPath.get(foldedLookupKey);
+        manifestModulesByFoldedRelPath.get(foldedLookupKey) ??
+        manifestModulesByFallbackRelPath.get(crossPlatformLookupKey) ??
+        manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey);
 
       let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
       const manifestPhase = fromManifest?.phase?.toUpperCase();
@@ -2527,10 +2593,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         phase = "DXE";
       }
 
-      if (
-        input.filter_phase !== "all" &&
-        phase.toLowerCase() !== input.filter_phase.toLowerCase()
-      ) {
+      const requested = input.filter_phase.toLowerCase();
+      const isCombinedPeimDriver =
+        fromManifest?.type?.toLowerCase() === "combined-peim-driver";
+      const isCombinedSmmDxe =
+        fromManifest?.type?.toLowerCase() === "combined-smm-dxe";
+      const matchesPhase =
+        requested === "all" ||
+        phase.toLowerCase() === requested ||
+        (requested === "dxe" && (isCombinedPeimDriver || isCombinedSmmDxe)) ||
+        (requested === "pei" && isCombinedPeimDriver) ||
+        (requested === "smm" && isCombinedSmmDxe);
+
+      if (!matchesPhase) {
         continue;
       }
 

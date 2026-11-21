@@ -593,7 +593,7 @@ export const uefiResultSchemas = {
     producers: z
       .strictObject({
         ghidra: z.string().nullable(),
-        disassembler: z.enum(["llvm-objdump", "objdump", "none"]),
+        disassembler: z.enum(["llvm-objdump", "objdump", "mixed", "none"]),
       })
       .optional(),
     receipts: z

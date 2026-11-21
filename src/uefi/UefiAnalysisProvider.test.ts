@@ -3196,7 +3196,7 @@ it("discovers RISC-V and EFI Byte Code binaries in directory input mode and dete
 
   expect(detectPeTeMachineWidth(peRiscv64)).toBe("64");
   expect(detectPeTeMachineWidth(peRiscv32)).toBe("32");
-  expect(detectPeTeMachineWidth(peEbc)).toBe("32");
+  expect(detectPeTeMachineWidth(peEbc)).toBe("unknown");
   expect(detectPeTeMachineWidth(teRiscv64)).toBe("64");
 
   const provider = new UefiAnalysisProvider();
@@ -4068,5 +4068,210 @@ it("escapes names containing backticks using CommonMark compliant multi-backtick
     expect(readmeContent).not.toMatch(/\\`/);
   } finally {
     await provider.close();
+  }
+});
+
+it("generates architecture-neutral scaffolding with uintptr_t UINTN for unknown machine width", () => {
+  const scaffolding = buildUefiEntryPointScaffolding(
+    "EbcDriver",
+    "EbcDriver.efi",
+    1024,
+    "DXE",
+    undefined,
+    "unknown",
+  );
+  expect(scaffolding.typedefs).toContain("typedef uintptr_t UINTN;");
+  expect(scaffolding.typedefs).toContain("typedef UINTN EFI_STATUS;");
+});
+
+it("honors REA_OBJDUMP_COMMAND and reports mixed disassembler when both LLVM and GNU objdump produce output", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-mixed-disasm-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "mod2.efi"),
+    createMinimalPeBuffer(0x8664, 1, 256),
+  );
+
+  const origExec = ExecFileOutputModule.execFileOutput;
+  let callCount = 0;
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      callCount++;
+      if (command === "llvm-objdump") {
+        if (callCount === 1) {
+          const stdout = "Disassembly of mod1 from llvm";
+          return {
+            stdout,
+            stderr: "",
+            stdoutBytes: Buffer.byteLength(stdout),
+            stderrBytes: 0,
+          };
+        }
+        throw new Error("Simulated llvm-objdump refusal");
+      }
+      if (command === "custom-objdump") {
+        const stdout = "Disassembly of mod2 from custom-objdump";
+        return {
+          stdout,
+          stderr: "",
+          stdoutBytes: Buffer.byteLength(stdout),
+          stderrBytes: 0,
+        };
+      }
+      return origExec(command, args, options);
+    });
+
+  const origEnv = process.env.REA_OBJDUMP_COMMAND;
+  process.env.REA_OBJDUMP_COMMAND = "custom-objdump";
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.producers?.disassembler).toBe("mixed");
+    expect(result.modules.length).toBe(2);
+    expect(result.modules[0]?.asm_generator).toBe("llvm-objdump");
+    expect(result.modules[1]?.asm_generator).toBe("objdump");
+  } finally {
+    if (origEnv !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origEnv;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+    execSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("honors combined types during directory round-trip under filter_phase: dxe", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-combined-types-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(join(inDir, "PEI"), { recursive: true });
+  await mkdirFs(join(inDir, "SMM"), { recursive: true });
+
+  await writeFile(
+    join(inDir, "PEI", "CombinedPeim.efi"),
+    createMinimalPeBuffer(),
+  );
+  await writeFile(
+    join(inDir, "SMM", "CombinedSmm.efi"),
+    createMinimalPeBuffer(),
+  );
+
+  const manifest = {
+    modules: [
+      {
+        payload_file: "PEI/CombinedPeim.efi",
+        name: "CombinedPeim",
+        phase: "PEI",
+        type: "combined-peim-driver",
+      },
+      {
+        payload_file: "SMM/CombinedSmm.efi",
+        name: "CombinedSmm",
+        phase: "SMM",
+        type: "combined-smm-dxe",
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          filter_phase: "dxe",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+    expect(result.modules.map((m) => m.name)).toEqual(
+      expect.arrayContaining(["CombinedPeim", "CombinedSmm"]),
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds inline receipts and excludes module-owned duplicate artifact paths", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-receipts-bound-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "TestDriver.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.receipts).toBeDefined();
+    const relReceipts = result.receipts!.map((r) => r.relative_path);
+    expect(relReceipts).toContain("firmware_manifest.json");
+    expect(relReceipts).toContain("README.md");
+    for (const m of result.modules) {
+      expect(relReceipts).not.toContain(m.relative_c_file);
+      expect(relReceipts).not.toContain(m.relative_header_file);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("retains directory reader ownership in provider scope when reader cleanup fails", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-cleanup-fail-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "driver.efi"), createMinimalPeBuffer());
+
+  const { DirectoryArtifactReader } =
+    await import("../resources/DirectoryArtifactReader.js");
+  const origClose = DirectoryArtifactReader.prototype.close;
+  let closeAttempts = 0;
+  const closeSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "close")
+    .mockImplementation(async function (
+      this: InstanceType<typeof DirectoryArtifactReader>,
+    ) {
+      closeAttempts++;
+      if (closeAttempts === 1) {
+        throw new Error("Simulated directory reader close failure");
+      }
+      return origClose.call(this);
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+    expect(executed.ok).toBe(false);
+    await expect(provider.close()).resolves.toBeUndefined();
+  } finally {
+    closeSpy.mockRestore();
   }
 });
