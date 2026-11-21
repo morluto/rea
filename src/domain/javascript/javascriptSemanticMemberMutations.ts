@@ -1,3 +1,5 @@
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
+import { semanticGlobalCodeSites } from "./javascriptSemanticEffectRecord.js";
 import { builtinResourceReleases } from "./javascriptBuiltinResourceMethods.js";
 import * as t from "@babel/types";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
@@ -51,6 +53,7 @@ import {
   semanticEffectMayPrecede,
   createSemanticOpaqueReferenceEffectQuery,
   bindingHasMemberWrites,
+  semanticAssignedMemberSlots,
   bindingProjectedContentsMayChangeAt,
   semanticAmbientArrayIterationUnknown,
   semanticArrayPrototypeIterationMayChange,
@@ -95,6 +98,8 @@ import { semanticCallableResultExpressions } from "./javascriptSemanticCallableR
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
   semanticMutationInitializers,
+  semanticEnclosingFunction,
+  semanticTopLevelEffectIsOrderable,
   semanticBindingAtRead,
   isUnshadowedGlobal,
   semanticCaptureOrderingIdentity,
@@ -695,10 +700,51 @@ export function* collectSemanticMemberMutationsSteps(
     state,
     interop.boundIntrinsic,
   );
-  const boundStorePaths = new WeakMap<
+  const boundStorePaths = new Map<
     JavaScriptSemanticBindingState,
     Map<string, PropertyPath>
   >();
+  let hasBind = false;
+  const assignedBindings = new Set<JavaScriptSemanticBindingState>();
+  const boundSources = (
+    node: t.Node,
+    path: PropertyPath,
+    capturedSelections?: readonly SemanticCapturedSelection[],
+  ) => {
+    const selection =
+      path.length || capturedSelections?.length
+        ? { path, readAt: node, capturedSelections }
+        : undefined;
+    return [
+      ...(returnedReferences(node, undefined, selection).calleeCallResults ??
+        []),
+    ].filter(
+      (candidate) => interop.boundIntrinsic(candidate)?.kind === "known",
+    );
+  };
+  const indexBoundStore = (
+    binding: JavaScriptSemanticBindingState,
+    path: PropertyPath,
+    sources: readonly SemanticIterationSource[],
+  ) => {
+    if (
+      !sources.some(
+        (source) => boundSources(source.node, source.projection).length,
+      )
+    )
+      return;
+    const paths =
+      boundStorePaths.get(binding) ?? new Map<string, PropertyPath>();
+    paths.set(JSON.stringify(path), path);
+    boundStorePaths.set(binding, paths);
+  };
+  const earlyEscapes: {
+    node: t.Node;
+    path: PropertyPath;
+    at: t.Node;
+    originAt: t.Node;
+  }[] = [];
+  let collectingEscapes = true;
   const ambientEffectAt = createSemanticAmbientEffectQuery(state);
   const opaqueReferenceEffect = createSemanticOpaqueReferenceEffectQuery(state);
   const recordedRequiredEffects = new Set<string>();
@@ -1324,7 +1370,11 @@ export function* collectSemanticMemberMutationsSteps(
         // also invalidate unrelated siblings that never reach this effect.
         // This map is local to the file scan. Escaping the binding id keeps a
         // field separator injective while avoiding a fresh JSON array encode.
-        const pathState = `${JSON.stringify(binding.bindingId)}\u0001${
+        // A previously visited container can expose new children once its
+        // stored bound callbacks have been indexed.
+        const boundSlotsIndexed =
+          effect === "escape" && !collectingEscapes && boundStorePaths.size > 0;
+        const pathState = `${boundSlotsIndexed}\u0001${JSON.stringify(binding.bindingId)}\u0001${
           effect
         }\u0001${
           // Short writes stop at owned literal slots, whereas longer writes
@@ -1533,17 +1583,21 @@ export function* collectSemanticMemberMutationsSteps(
                 false,
                 current.memberReadAt ?? current.node,
                 current.capturedSelections,
+                false,
+                true,
+                collectingEscapes ? undefined : observedAt,
               );
               for (const source of selected?.storedSources ?? [])
-                if (
-                  source.path.length === 0 &&
-                  interop.boundIntrinsic(source.node) !== undefined
-                )
+                for (const candidate of boundSources(
+                  source.node,
+                  source.path,
+                  source.capturedSelections,
+                ))
                   enqueue({
-                    node: source.node,
+                    node: candidate,
                     path: [],
-                    originAt: source.node,
-                    memberReadAt: source.node,
+                    originAt: candidate,
+                    memberReadAt: candidate,
                     bindings: nested,
                     definiteReceiver: false,
                   });
@@ -1555,15 +1609,9 @@ export function* collectSemanticMemberMutationsSteps(
               ...(receiverAt === undefined ? {} : { receiverAt }),
             });
           } else {
-            if (
-              assignedSources?.some(
-                (source) => interop.boundIntrinsic(source.node) !== undefined,
-              )
-            ) {
-              const paths =
-                boundStorePaths.get(binding) ?? new Map<string, PropertyPath>();
-              paths.set(JSON.stringify(path), path);
-              boundStorePaths.set(binding, paths);
+            if (assignedSources) {
+              if (collectingEscapes) assignedBindings.add(binding);
+              else if (hasBind) indexBoundStore(binding, path, assignedSources);
             }
             recordBindingEffect(binding.memberWrites, {
               receiverIdentity: definiteReceiver ? "definite" : "possible",
@@ -1824,6 +1872,8 @@ export function* collectSemanticMemberMutationsSteps(
     path: PropertyPath = [],
     originAt: t.Node = mutation,
   ): void => {
+    if (collectingEscapes)
+      earlyEscapes.push({ node, path, at: mutation, originAt });
     if (path.length === 0) {
       const pending = [node];
       const visited = new Set<string>();
@@ -2375,8 +2425,10 @@ export function* collectSemanticMemberMutationsSteps(
     if (
       !t.isNewExpression(node) &&
       interop.boundIntrinsic(node)?.kind === "known"
-    )
+    ) {
+      hasBind = true;
       return;
+    }
     const returned = returnedReferences(
       node.callee,
       t.isNewExpression(node) ? undefined : node,
@@ -2430,9 +2482,46 @@ export function* collectSemanticMemberMutationsSteps(
       else if (!mapLookup) markReceiver(node.callee, node);
     }
   };
+  // A private, synchronous function with a single direct module-level use
+  // selects module stores at that call. Any other use leaves activation open.
+  const localFunctions = new Map<string, t.FunctionDeclaration>();
+  const singleCall = new Map<t.FunctionDeclaration, t.CallExpression | null>();
+  if (javaScriptRuntimeContext(program) !== "unknown")
+    for (const statement of program.body)
+      if (
+        t.isFunctionDeclaration(statement) &&
+        statement.id &&
+        !statement.async &&
+        !statement.generator
+      )
+        localFunctions.set(statement.id.name, statement);
+  const observedAt = (site: t.Node, effect: t.Node | undefined): t.Node => {
+    const owner = semanticEnclosingFunction(site, parents);
+    if (
+      !t.isFunctionDeclaration(owner) ||
+      !effect ||
+      semanticEnclosingFunction(effect, parents) === owner ||
+      semanticGlobalCodeSites(state).length
+    )
+      return site;
+    return singleCall.get(owner) ?? site;
+  };
   const writeOnlyMembers = new WeakSet<t.Node>();
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
+      if (t.isIdentifier(node)) {
+        const fn = localFunctions.get(node.name);
+        if (fn && fn.id !== node) {
+          if (
+            !singleCall.has(fn) &&
+            t.isCallExpression(parent) &&
+            parent.callee === node &&
+            semanticTopLevelEffectIsOrderable(parent, parents)
+          )
+            singleCall.set(fn, parent);
+          else singleCall.set(fn, null);
+        }
+      }
       const executions = javaScriptExecutions(node, parent, {
         isObject: (operand) => {
           const value = evaluateSemanticExpression(operand, state, node);
@@ -2568,6 +2657,18 @@ export function* collectSemanticMemberMutationsSteps(
         }
     },
   });
+  // Register bound slots after all authored assignments, then revisit the
+  // inputs that could escape through them with their original capture clocks.
+  collectingEscapes = false;
+  if (hasBind)
+    for (const binding of assignedBindings)
+      for (const { path, sources } of semanticAssignedMemberSlots(binding))
+        indexBoundStore(binding, path, sources);
+  if (boundStorePaths.size)
+    for (const { node, path, at, originAt } of earlyEscapes)
+      markValue(node, path, new Set(), "escape", at, originAt);
+  earlyEscapes.length = 0;
+  assignedBindings.clear();
   // Function bodies can be visited before assignment of the callable they select.
   for (const { callee, at, invocation } of callableReads) {
     const returned = returnedReferences(callee, invocation);

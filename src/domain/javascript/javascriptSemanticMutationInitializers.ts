@@ -1057,7 +1057,7 @@ export const semanticMutationInitializers = (
 };
 
 /** Function ownership is independent of uncertain ordering within a loop. */
-const bindingEnclosingFunction = (
+export const semanticEnclosingFunction = (
   read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ): t.Function | undefined => {
@@ -2147,7 +2147,7 @@ export const semanticBindingAtRead = (
     binding.declarationKinds.has("const") &&
     !binding.mutable;
   const enclosingFunction = moduleConstBinding
-    ? bindingEnclosingFunction(read, parents)
+    ? semanticEnclosingFunction(read, parents)
     : undefined;
   let functionPosition: StatementPosition | null = null;
   if (enclosingFunction !== undefined) {

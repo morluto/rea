@@ -9,6 +9,7 @@ import { intrinsicPrototypeMemberMayHaveChanged } from "./javascriptSemanticIntr
 
 import {
   semanticStaticPropertyKey,
+  staticJavaScriptTruthiness,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -87,10 +88,13 @@ export interface SemanticReturnedReferenceResult {
   readonly precision: "exact" | "widened";
 }
 
+type SelectedSource = Pick<Candidate, "path" | "readAt" | "capturedSelections">;
+
 interface SemanticReturnedReferenceReader {
   (
     callee: t.Node,
     invocation?: t.CallExpression | t.OptionalCallExpression,
+    selected?: SelectedSource,
   ): SemanticReturnedReferenceResult;
   /** Whether the callee-only read depends on live ambient effects. */
   readonly observesAmbientEffects: (callee: t.Node) => boolean;
@@ -121,8 +125,9 @@ export const createSemanticReturnedReferences = (
   const resolve = (
     callee: t.Node,
     invocation?: t.CallExpression | t.OptionalCallExpression,
+    selected?: SelectedSource,
   ): SemanticReturnedReferenceResult => {
-    const existing = results.get(callee);
+    const existing = selected === undefined ? results.get(callee) : undefined;
     if (
       existing !== undefined &&
       existing.invocation === invocation &&
@@ -310,7 +315,13 @@ export const createSemanticReturnedReferences = (
           : { invocation: invocationContext }),
       });
     };
-    enqueue(callee, [], undefined, undefined, sourceInvocation);
+    enqueue(
+      callee,
+      selected?.path ?? [],
+      selected?.readAt,
+      selected?.capturedSelections,
+      sourceInvocation,
+    );
     while (work.length > 0) {
       const current = work.pop();
       if (current === undefined) break;
@@ -495,16 +506,19 @@ export const createSemanticReturnedReferences = (
         t.isConditionalExpression(node) ||
         t.isLogicalExpression(node)
       ) {
-        pending.push(
-          {
+        const condition = t.isConditionalExpression(node)
+          ? staticJavaScriptTruthiness(node.test)
+          : undefined;
+        if (condition !== false)
+          pending.push({
             ...current,
             node: t.isConditionalExpression(node) ? node.consequent : node.left,
-          },
-          {
+          });
+        if (condition !== true)
+          pending.push({
             ...current,
             node: t.isConditionalExpression(node) ? node.alternate : node.right,
-          },
-        );
+          });
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
         if (last !== undefined) pending.push({ ...current, node: last });
@@ -785,19 +799,20 @@ export const createSemanticReturnedReferences = (
       );
     });
     result.references = output;
-    results.set(callee, {
-      result,
-      invocation,
-      iterationUnknown: state.arrayIterationUnknown,
-      ambientGeneration: readsAmbientEffects
-        ? semanticAmbientEffectGeneration(state, "contents")
-        : undefined,
-      opaqueSites: semanticGlobalCodeSites(state).length,
-      dependencies: [...dependencies].map(([binding, generation]) => ({
-        binding,
-        generation,
-      })),
-    });
+    if (selected === undefined)
+      results.set(callee, {
+        result,
+        invocation,
+        iterationUnknown: state.arrayIterationUnknown,
+        ambientGeneration: readsAmbientEffects
+          ? semanticAmbientEffectGeneration(state, "contents")
+          : undefined,
+        opaqueSites: semanticGlobalCodeSites(state).length,
+        dependencies: [...dependencies].map(([binding, generation]) => ({
+          binding,
+          generation,
+        })),
+      });
     if (result.precision === "widened")
       state.returnedReferenceWidenings.add(callee);
     return result;

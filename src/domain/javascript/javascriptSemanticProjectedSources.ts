@@ -182,6 +182,7 @@ export function semanticProjectedSourceFactsAtRead(
   capturedSelections?: readonly SemanticCapturedSelection[],
   retainEligibility?: boolean,
   valueEscapesHideSources?: boolean,
+  observedAt?: (read: t.Node, effect: t.Node | undefined) => t.Node,
 ):
   | {
       readonly sources: readonly (Omit<ProjectedSource, "path"> & {
@@ -214,6 +215,7 @@ const projectedSourceFactsAtRead = (
   // Accessor lookup reads source syntax. A prior value escape does not hide
   // that syntax; unknown writes and invocations still fail closed.
   valueEscapesHideSources = true,
+  observedAt?: (read: t.Node, effect: t.Node | undefined) => t.Node,
 ):
   | {
       readonly sources: readonly ProjectedSource[];
@@ -241,6 +243,7 @@ const projectedSourceFactsAtRead = (
       path,
       {
         at: selectedAt,
+        ...(observedAt === undefined ? {} : { observedAt }),
         capturedAt:
           normalizedCaptures === undefined ? undefined : captureForDepth,
         captured,

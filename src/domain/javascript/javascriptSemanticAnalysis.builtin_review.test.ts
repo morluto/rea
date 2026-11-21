@@ -2178,3 +2178,69 @@ it.each([
     ).toEqual(expected);
   },
 );
+
+it.each([
+  [
+    "const fs=require('fs'),h={};function use(){[0].forEach(h.set)}h.set=Object.defineProperty.bind(null,fs,'readFileSync',{value:()=>{}});use();fs.readFileSync('after')",
+    [],
+  ],
+  [
+    "const fs=require('fs'),h={};h.set=true?Object.defineProperty.bind(null,fs,'readFileSync',{value:()=>{}}):()=>{};[0].forEach(h.set);fs.readFileSync('after')",
+    [],
+  ],
+  [
+    "const fs=require('fs'),h={};const {set}={set:Object.defineProperty.bind(null,fs,'readFileSync',{value:()=>{}})};h.set=set;[0].forEach(h.set);fs.readFileSync('after')",
+    [],
+  ],
+  [
+    "const fs=require('fs'),h={};h.set=Object.defineProperty.bind(null,fs,'readFileSync',{value:()=>{}});h.set=()=>{};[0].forEach(h.set);fs.readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,k)=>{t[k]=1};Object.assign({},'id' in module);require('fs').readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,k)=>{t[k]=1};Object.assign({},module instanceof Object);require('fs').readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,k)=>{t[k]=1};const key={[Symbol.toPrimitive](){observe(module);return 'id'}};Object.assign({},key in module);require('fs').readFileSync('after')",
+    [],
+  ],
+  [
+    "Object.assign=(t,k)=>{t[k]=1};const C={[Symbol.hasInstance](value){value.require=replacement;return true}};Object.assign({},module instanceof C);require('fs').readFileSync('after')",
+    [],
+  ],
+  [
+    "const fs=require('fs'),h={};function use(){[0].forEach(h.set)}h.set=Object.defineProperty.bind(null,fs,'readFileSync',{value:()=>{}});h.set=()=>{};use();fs.readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "const fs=require('fs'),h={};function use(){[0].forEach(h.set)}h.set=()=>{};use();h.set=Object.defineProperty.bind(null,fs,'readFileSync',{value:()=>{}});fs.readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,k)=>{t[k]=1};Object.defineProperty(Object,Symbol.hasInstance,{value(v){v.require=replacement;return true}});Object.assign({},module instanceof Object);require('fs').readFileSync('after')",
+    [],
+  ],
+  [
+    "Object.assign=(t,k)=>{t[k]=1};Object.setPrototypeOf(module,new Proxy({}, {has(){observe(module);return true}}));Object.assign({},'absent' in module);require('fs').readFileSync('after')",
+    [],
+  ],
+  [
+    "const fs=require('fs'),h={};function use(){h.set=()=>{};[0].forEach(h.set)}h.set=Object.defineProperty.bind(null,fs,'readFileSync',{value:()=>{}});use();fs.readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "const fs=require('fs'),h={};function use(){h.set=Object.defineProperty.bind(null,fs,'readFileSync',{value:()=>{}});[0].forEach(h.set)}h.set=()=>{};use();fs.readFileSync('after')",
+    [],
+  ],
+] as const)(
+  "follows callback stores and membership evaluation: %s",
+  (source, expected) => {
+    expect(
+      analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
+    ).toEqual(expected);
+  },
+);

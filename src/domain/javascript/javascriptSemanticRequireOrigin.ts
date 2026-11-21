@@ -110,6 +110,7 @@ import {
 } from "./javascriptSemanticRequireOriginSlot.js";
 import {
   isUnmodifiedGlobalReference,
+  isIntrinsicGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticGlobalReference.js";
 
@@ -1718,7 +1719,7 @@ const writesModuleRequire = (
     const value = javaScriptExpressionValue(node);
     if (
       interop.isFreshObject(value) ||
-      (isPrimitiveJavaScriptExpression(expression) &&
+      (scalarResult(expression) &&
         !exposesModule(
           javaScriptScalarEvaluationSources(expression, scalarEvaluationBodies),
           expression,
@@ -1813,6 +1814,32 @@ const writesModuleRequire = (
   // their assigned values instead of treating every write as the wrapper.
   // Accessors and unproven descriptor/source maps remain conservative.
   const ambientEffectAt = createSemanticAmbientEffectQuery(state);
+  const scalarResult = (node: t.Node): boolean => {
+    if (isPrimitiveJavaScriptExpression(node)) return true;
+    if (
+      !t.isBinaryExpression(node) ||
+      (node.operator !== "in" && node.operator !== "instanceof")
+    )
+      return false;
+    const wrapper = node.operator === "in" ? node.right : node.left;
+    // An ordinary wrapper lookup has no proxy trap. Preserve the usual
+    // operand walk whenever wrapper identity, its prototype, or a hook can vary.
+    if (
+      !t.isIdentifier(wrapper, { name: "module" }) ||
+      !isModuleObject(wrapper) ||
+      ambientBindingMayObserveWriteAt(state, wrapper, "module") ||
+      ambientEffectAt(["commonjs-module", "__proto__"], node)
+    )
+      return false;
+    return node.operator === "in"
+      ? isPrimitiveJavaScriptExpression(node.left)
+      : isIntrinsicGlobalReference(node.right, state, "Object") &&
+          !ambientEffectAt(["global", "Object", "Symbol.hasInstance"], node) &&
+          !ambientEffectAt(
+            ["global", "Function", "prototype", "Symbol.hasInstance"],
+            node,
+          );
+  };
   const awaitMayAssimilate = (operand: t.Node, at: t.Node): boolean => {
     if (
       isPrimitiveJavaScriptExpression(operand) ||
@@ -2828,7 +2855,7 @@ const writesModuleRequire = (
         // Keep effectful subexpressions separate from the scalar result:
         // typeof change(module) still evaluates the call, and a strict
         // comparison can contain a coercive arithmetic operand.
-        if (isPrimitiveJavaScriptExpression(value)) {
+        if (scalarResult(value)) {
           timeDependent = true;
           pending.push(
             ...javaScriptScalarEvaluationSources(
