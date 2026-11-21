@@ -513,6 +513,11 @@ export const documentationSections = [
         source: "wxapkg.md",
         route: "/wxapkg",
       },
+      {
+        text: "Windows Prefetch files",
+        source: "windows-prefetch.md",
+        route: "/windows-prefetch",
+      },
     ],
   },
   {

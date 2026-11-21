@@ -100,6 +100,10 @@ import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { recognizeArtifactFormat } from "../domain/artifactFormatRecognition.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 import {
+  hasMamSignature,
+  hasPrefetchSignature,
+} from "../domain/windows/prefetchFormat.js";
+import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../domain/firmware/espFlashLocation.js";
