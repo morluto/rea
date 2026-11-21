@@ -534,6 +534,38 @@ describe("debug companion admission diagnostics", () => {
   });
 });
 
+describe("debug companion database rejection", () => {
+  it.each([
+    { name: "saved.hop", bytes: Buffer.from("hopper-placeholder") },
+    { name: "saved.i64", bytes: Buffer.from("IDA2\x00\x00\x00\x00") },
+  ])(
+    "rejects dsym_path on an analysis database ($name) instead of discarding it",
+    async ({ name, bytes }) => {
+      const directory = await createTestTempDirectory("rea-dsym-database-");
+      const path = join(directory, name);
+      const dsymPath = join(directory, `${name}.dSYM`);
+      await writeFile(path, bytes);
+      const result = await parseBinaryTarget(path, { dsymPath });
+      if (result.ok) throw new Error(`dsym on ${name} was admitted`);
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          path,
+          constraint: "debug_companion_rejected",
+          diagnostics: {
+            dsym_path: dsymPath,
+            target_kind: "database",
+            target_format: "analysis-database",
+            rejection: "non_macho_target",
+          },
+        },
+      });
+    },
+  );
+});
+
 describe("debug companion fixture admission", () => {
   it.skipIf(!onDarwin)(
     "admits a matching dSYM with its UUID and member digest",
