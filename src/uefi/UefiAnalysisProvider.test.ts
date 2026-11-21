@@ -1645,10 +1645,19 @@ it("decompiles UEFI image modules into structured C scaffolding, headers and rel
     expect(mod?.relative_c_file).toContain("DXE/");
     expect(mod?.c_file).toBe(join(outDir, mod!.relative_c_file!));
 
+    expect(result.receipts).toBeDefined();
+    expect(result.receipts!.length).toBeGreaterThan(0);
     expect(existsSync(mod!.c_file!)).toBe(true);
     expect(existsSync(mod!.header_file!)).toBe(true);
+    expect(existsSync(mod!.payload_file!)).toBe(true);
     expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
     expect(existsSync(join(outDir, "README.md"))).toBe(true);
+
+    expect(mod!.c_sha256).toBe(sha256(await readFile(mod!.c_file!)));
+    expect(mod!.header_sha256).toBe(sha256(await readFile(mod!.header_file!)));
+    expect(mod!.payload_sha256).toBe(
+      sha256(await readFile(mod!.payload_file!)),
+    );
 
     const cContent = await readFile(mod!.c_file!, "utf8");
     expect(cContent).toContain("Reconstructed Entry Scaffolding");
@@ -1815,5 +1824,62 @@ it("records derived confidence for decompile_uefi_firmware in service Evidence",
     expect(result.value.confidence).toBe("derived");
   } finally {
     await service.close();
+  }
+});
+
+it("computes deterministic content-addressed directory sha256 regardless of discovery order", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-det-dir-");
+  const dirA = join(directory, "dirA");
+  const dirB = join(directory, "dirB");
+  const outA = join(directory, "outA");
+  const outB = join(directory, "outB");
+
+  const mzHeader1 = Buffer.alloc(128, 0);
+  mzHeader1[0] = 0x4d;
+  mzHeader1[1] = 0x5a;
+  mzHeader1.write("MODULE_ALPHA", 64, "utf8");
+
+  const mzHeader2 = Buffer.alloc(128, 0);
+  mzHeader2[0] = 0x4d;
+  mzHeader2[1] = 0x5a;
+  mzHeader2.write("MODULE_BETA", 64, "utf8");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(dirA, { recursive: true });
+  await mkdirFs(dirB, { recursive: true });
+
+  // In dirA: write file 1 then file 2
+  await writeFile(join(dirA, "alpha.efi"), mzHeader1);
+  await writeFile(join(dirA, "beta.efi"), mzHeader2);
+
+  // In dirB: write file 2 then file 1
+  await writeFile(join(dirB, "beta.efi"), mzHeader2);
+  await writeFile(join(dirB, "alpha.efi"), mzHeader1);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const resA = expectOk(await provider.execute(decompileRequest(dirA, outA)));
+    const resB = expectOk(await provider.execute(decompileRequest(dirB, outB)));
+    const outResultA = resA.value.result as UefiDecompileResult;
+    const outResultB = resB.value.result as UefiDecompileResult;
+
+    expect(outResultA.image_sha256).toBe(outResultB.image_sha256);
+    expect(outResultA.total_modules_decompiled).toBe(2);
+    expect(outResultB.total_modules_decompiled).toBe(2);
+
+    // Empty directory returns deterministic empty sha256
+    const emptyDir = join(directory, "empty");
+    const emptyOut = join(directory, "emptyOut");
+    await mkdirFs(emptyDir, { recursive: true });
+    const resEmpty = expectOk(
+      await provider.execute(decompileRequest(emptyDir, emptyOut)),
+    );
+    const emptyResult = resEmpty.value.result as UefiDecompileResult;
+    expect(emptyResult.image_sha256).toBe(
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    expect(emptyResult.total_modules_decompiled).toBe(0);
+  } finally {
+    await provider.close();
   }
 });

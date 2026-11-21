@@ -13,6 +13,10 @@ import { fileURLToPath } from "node:url";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { isAbortOf } from "../process/SignalAbort.js";
+import {
+  isWindowsBatchFile,
+  windowsBatchCommand,
+} from "../process/WindowsBatchCommand.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   ArtifactResourceScope,
@@ -68,6 +72,7 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 import {
   publishUefiFiles,
   type UefiPublicationEntry,
+  type UefiWriteReceipt,
 } from "./UefiPublication.js";
 
 import { lzmaReplySchema } from "./UefiLzmaProtocol.js";
@@ -947,6 +952,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const MAX_DECOMPILE_TOTAL_BYTES = 64 * 1024 * 1024;
     let totalStagedCBytes = 0;
 
+    const MAX_RAW_PAYLOAD_TOTAL_BYTES = 128 * 1024 * 1024;
+    let totalStagedRawBytes = 0;
+
     try {
       const occurrences = new Map<string, number>();
       const phaseCounts = {
@@ -967,6 +975,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         relative_c_file: string;
         relative_asm_file: string | null;
         relative_header_file: string;
+        relative_payload_file: string | null;
+        c_sha256: string;
+        asm_sha256: string | null;
+        header_sha256: string;
+        payload_sha256: string | null;
         code_bytes: number;
       }> = [];
       const publicationEntries: UefiPublicationEntry[] = [];
@@ -1000,10 +1013,28 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         const moduleRelDir = `${mod.phase}/${subDir}`;
 
         const efiRelPath = `${moduleRelDir}/${mod.cleanName}.efi`;
-        publicationEntries.push({
-          relativePath: efiRelPath,
-          bytes: modBytes,
-        });
+        let relativePayloadFile: string | null = null;
+        let payloadSha256: string | null = null;
+        if (
+          totalStagedRawBytes + modBytes.length <=
+          MAX_RAW_PAYLOAD_TOTAL_BYTES
+        ) {
+          publicationEntries.push({
+            relativePath: efiRelPath,
+            bytes: modBytes,
+          });
+          totalStagedRawBytes += modBytes.length;
+          relativePayloadFile = efiRelPath;
+          payloadSha256 = sha256Hex(modBytes);
+        } else if (
+          !effectiveLimitations.includes(
+            "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget.",
+          )
+        ) {
+          effectiveLimitations.push(
+            "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget.",
+          );
+        }
 
         const scaffold = buildUefiEntryPointScaffolding(
           cIdentifier,
@@ -1046,12 +1077,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           `#endif // ${headerGuard}`,
           "",
         ].join("\n");
+        const headerBytes = Buffer.from(headerContent, "utf8");
+        const headerSha256 = sha256Hex(headerBytes);
         publicationEntries.push({
           relativePath: headerRelPath,
-          bytes: Buffer.from(headerContent, "utf8"),
+          bytes: headerBytes,
         });
 
         let asmRelPath: string | null = null;
+        let asmSha256: string | null = null;
         let disassemblyStatus: "ok" | "failed" | "omitted" = "omitted";
         const tempEfiPath = join(
           tempRoot.path,
@@ -1072,6 +1106,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             }
           } else {
             let asmOutput: string | null = null;
+            let llvmErrorMsg: string | null = null;
+            let objdumpErrorMsg: string | null = null;
             try {
               const { stdout } = await execFileOutput(
                 "llvm-objdump",
@@ -1087,6 +1123,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             } catch (llvmError: unknown) {
               if (signal.aborted) signal.throwIfAborted();
               if (isAbortOf(llvmError, signal)) throw llvmError;
+              llvmErrorMsg = errorMessage(llvmError);
               try {
                 const { stdout } = await execFileOutput(
                   "objdump",
@@ -1102,20 +1139,26 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               } catch (objdumpError: unknown) {
                 if (signal.aborted) signal.throwIfAborted();
                 if (isAbortOf(objdumpError, signal)) throw objdumpError;
+                objdumpErrorMsg = errorMessage(objdumpError);
                 asmOutput = null;
               }
             }
             if (asmOutput !== null) {
               const asmName = `${mod.cleanName}.asm`;
               asmRelPath = `${moduleRelDir}/${asmName}`;
+              const asmBytes = Buffer.from(asmOutput, "utf8");
+              asmSha256 = sha256Hex(asmBytes);
               publicationEntries.push({
                 relativePath: asmRelPath,
-                bytes: Buffer.from(asmOutput, "utf8"),
+                bytes: asmBytes,
               });
-              totalStagedAsmBytes += Buffer.byteLength(asmOutput, "utf8");
+              totalStagedAsmBytes += asmBytes.length;
               disassemblyStatus = "ok";
             } else {
               disassemblyStatus = "failed";
+              effectiveLimitations.push(
+                `Disassembly for ${mod.rawName} failed: llvm-objdump (${llvmErrorMsg ?? "unknown"}), objdump (${objdumpErrorMsg ?? "unknown"})`,
+              );
             }
           }
         }
@@ -1148,27 +1191,38 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 "bridge",
                 "ghidra",
               );
-              await execFileOutput(
-                ghidraBin,
-                [
-                  tempRoot.path,
-                  `UefiDecomp_${cIdentifier}_${occurrence}`,
-                  "-import",
-                  tempEfiPath,
-                  "-scriptPath",
-                  bridgeDir,
-                  "-postScript",
-                  "ReaDecompileToC.java",
-                  ghidraOutC,
-                  "-deleteProject",
-                ],
-                {
-                  signal,
-                  stopSignal: "SIGTERM",
-                  timeout: 45_000,
-                  maxBuffer: 10 * 1024 * 1024,
-                },
-              );
+              const ghidraArgs = [
+                tempRoot.path,
+                `UefiDecomp_${cIdentifier}_${occurrence}`,
+                "-import",
+                tempEfiPath,
+                "-scriptPath",
+                bridgeDir,
+                "-postScript",
+                "ReaDecompileToC.java",
+                ghidraOutC,
+                "-deleteProject",
+              ];
+              let execCmd = ghidraBin;
+              let execArgs = ghidraArgs;
+              if (
+                HOST_PLATFORM.platform === "win32" &&
+                isWindowsBatchFile(ghidraBin)
+              ) {
+                const batch = windowsBatchCommand({
+                  environment: process.env,
+                  batchPath: ghidraBin,
+                  arguments: ghidraArgs,
+                });
+                execCmd = batch.command;
+                execArgs = [...batch.arguments];
+              }
+              await execFileOutput(execCmd, execArgs, {
+                signal,
+                stopSignal: "SIGTERM",
+                timeout: 45_000,
+                maxBuffer: 10 * 1024 * 1024,
+              });
               if (existsSync(ghidraOutC)) {
                 const cStat = await stat(ghidraOutC);
                 if (cStat.size <= MAX_DECOMPILE_MODULE_BYTES) {
@@ -1200,9 +1254,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             "",
           ].join("\n");
         }
+        const cBytes = Buffer.from(cContent, "utf8");
+        const cSha256 = sha256Hex(cBytes);
         publicationEntries.push({
           relativePath: cRelPath,
-          bytes: Buffer.from(cContent, "utf8"),
+          bytes: cBytes,
         });
 
         stagedModules.push({
@@ -1214,6 +1270,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           relative_c_file: cRelPath,
           relative_asm_file: asmRelPath,
           relative_header_file: headerRelPath,
+          relative_payload_file: relativePayloadFile,
+          c_sha256: cSha256,
+          asm_sha256: asmSha256,
+          header_sha256: headerSha256,
+          payload_sha256: payloadSha256,
           code_bytes: modBytes.length,
         });
       }
@@ -1229,6 +1290,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           c_file: m.relative_c_file,
           asm_file: m.relative_asm_file,
           header_file: m.relative_header_file,
+          payload_file: m.relative_payload_file,
         })),
       };
       publicationEntries.push({
@@ -1274,16 +1336,51 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         signal,
         checkpoint,
         resources: this.#resources,
-        buildResult: (outputRoot) => {
-          const finalModules = stagedModules.map((m) => ({
-            ...m,
-            c_file: join(outputRoot, m.relative_c_file),
-            asm_file:
+        buildResult: (outputRoot, _files, receipts) => {
+          const receiptsByRelPath = new Map<string, UefiWriteReceipt>(
+            receipts.map((r) => [r.relativePath, r]),
+          );
+          const finalModules = stagedModules.map((m) => {
+            const cReceipt = receiptsByRelPath.get(m.relative_c_file);
+            const asmReceipt =
               m.relative_asm_file !== null
-                ? join(outputRoot, m.relative_asm_file)
-                : null,
-            header_file: join(outputRoot, m.relative_header_file),
-          }));
+                ? receiptsByRelPath.get(m.relative_asm_file)
+                : undefined;
+            const headerReceipt = receiptsByRelPath.get(m.relative_header_file);
+            const payloadReceipt =
+              m.relative_payload_file !== null
+                ? receiptsByRelPath.get(m.relative_payload_file)
+                : undefined;
+
+            return {
+              ...m,
+              c_file:
+                cReceipt !== undefined
+                  ? cReceipt.path
+                  : join(outputRoot, m.relative_c_file),
+              c_sha256: cReceipt?.sha256 ?? m.c_sha256,
+              asm_file:
+                asmReceipt !== undefined
+                  ? asmReceipt.path
+                  : m.relative_asm_file !== null
+                    ? join(outputRoot, m.relative_asm_file)
+                    : null,
+              asm_sha256: asmReceipt?.sha256 ?? m.asm_sha256,
+              header_file:
+                headerReceipt !== undefined
+                  ? headerReceipt.path
+                  : join(outputRoot, m.relative_header_file),
+              header_sha256: headerReceipt?.sha256 ?? m.header_sha256,
+              payload_file:
+                payloadReceipt !== undefined
+                  ? payloadReceipt.path
+                  : m.relative_payload_file !== null
+                    ? join(outputRoot, m.relative_payload_file)
+                    : null,
+              payload_sha256: payloadReceipt?.sha256 ?? m.payload_sha256,
+            };
+          });
+
           return uefiResultSchemas.decompile_uefi_firmware.parse({
             parser: {
               name: "rea-uefi",
@@ -1295,6 +1392,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             total_modules_decompiled: stagedModules.length,
             phases: phaseCounts,
             modules: finalModules,
+            receipts: receipts.map((r) => ({
+              relative_path: r.relativePath,
+              path: r.path,
+              size: r.size,
+              sha256: r.sha256,
+            })),
             diagnostics: `Successfully published ${stagedModules.length} decompiled UEFI module(s) across phases into ${outputRoot}.`,
             limitations: effectiveLimitations,
           });
@@ -1327,6 +1430,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           resource: tempRoot.path,
           root: tempRoot,
         });
+      }
+      checkpoint();
+      if (signal.aborted) {
+        throw cancelledBy("decompile_uefi_firmware", signal);
       }
     }
   }
@@ -1374,10 +1481,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 phase = "DXE";
               else phase = "MISC";
 
-              if (
-                request.input.filter_phase === "all" ||
-                phase.toLowerCase() === request.input.filter_phase.toLowerCase()
-              ) {
+              const requested = request.input.filter_phase.toLowerCase();
+              const isCombinedPeimDriver =
+                file.type_name === "combined-peim-driver";
+              const isCombinedSmmDxe = file.type_name === "combined-smm-dxe";
+              const matchesPhase =
+                requested === "all" ||
+                phase.toLowerCase() === requested ||
+                (requested === "dxe" &&
+                  (isCombinedPeimDriver || isCombinedSmmDxe)) ||
+                (requested === "pei" && isCombinedPeimDriver) ||
+                (requested === "smm" && isCombinedSmmDxe);
+
+              if (matchesPhase) {
                 discoveredModules.push({
                   guid: file.guid,
                   rawName,
@@ -1414,10 +1530,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       withFileTypes: true,
       recursive: true,
     });
-    const discoveredModules: DiscoveredUefiModule[] = [];
     const guidRegex =
       /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
-    const hash = createHash("sha256");
+
+    interface CandidateModule {
+      readonly fullPath: string;
+      readonly normRelPath: string;
+      readonly name: string;
+      readonly size: number;
+      readonly phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
+      readonly guid: string | null;
+      readonly rawName: string;
+      readonly cleanName: string;
+    }
+    const candidates: CandidateModule[] = [];
 
     for (const entry of dirEntries) {
       checkpoint();
@@ -1465,7 +1591,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       if (!isPeOrTe) continue;
 
       const relPath = relative(input.path, fullPath);
-      const segments = relPath.toLowerCase().split(/[/\\]+/);
+      const normRelPath = relPath.split(/[/\\]+/).join("/");
+      const segments = normRelPath.toLowerCase().split("/");
       let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
       if (segments.some((s) => s === "sec")) phase = "SEC";
       else if (segments.some((s) => s === "pei" || s === "peim")) phase = "PEI";
@@ -1486,23 +1613,44 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const rawName = entry.name.replace(/\.(pe|efi|bin|te)$/i, "");
       const cleanName = rawName.replace(/[^a-zA-Z0-9_-]/g, "_");
 
-      hash.update(`${entry.name}:${fileStat.size}:${fileStat.mtimeMs}`);
-
-      discoveredModules.push({
+      candidates.push({
+        fullPath,
+        normRelPath,
+        name: entry.name,
+        size: fileStat.size,
+        phase,
         guid,
         rawName,
         cleanName,
-        phase,
-        sourcePath: fullPath,
-        byteLength: fileStat.size,
       });
     }
 
-    const dirSha256 = hash.digest("hex");
+    // Sort candidates deterministically by normalized relative path
+    candidates.sort((a, b) => a.normRelPath.localeCompare(b.normRelPath));
 
-    discoveredModules.sort((a, b) =>
-      (a.sourcePath ?? "").localeCompare(b.sourcePath ?? ""),
-    );
+    const dirHash = createHash("sha256");
+    const discoveredModules: DiscoveredUefiModule[] = [];
+
+    for (const candidate of candidates) {
+      checkpoint();
+      signal.throwIfAborted();
+      const content = await readFile(candidate.fullPath);
+      const fileSha256 = sha256Hex(content);
+      dirHash.update(`${candidate.normRelPath}:${fileSha256}:`);
+      discoveredModules.push({
+        guid: candidate.guid,
+        rawName: candidate.rawName,
+        cleanName: candidate.cleanName,
+        phase: candidate.phase,
+        sourcePath: candidate.fullPath,
+        byteLength: candidate.size,
+      });
+    }
+
+    const dirSha256 =
+      candidates.length === 0
+        ? sha256Hex(Buffer.alloc(0))
+        : dirHash.digest("hex");
 
     return this.#stageAndPublishModules(
       request,

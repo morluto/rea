@@ -20,6 +20,13 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 
 import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
 
+export interface UefiWriteReceipt {
+  readonly relativePath: string;
+  readonly path: string;
+  readonly size: number;
+  readonly sha256: string;
+}
+
 type UefiPublishedFile = UefiExtractResult["files"][number];
 
 /** One staged payload with provenance from the scanner that supplied it. */
@@ -50,11 +57,16 @@ export const publishUefiFiles = async <T = UefiExtractResult>(context: {
   readonly checkpoint: () => void;
   readonly resources: ArtifactResourceScope;
   /** Validate the result with actual write receipts before committing the tree. */
-  readonly buildResult: (outputRoot: string, files: UefiPublishedFile[]) => T;
+  readonly buildResult: (
+    outputRoot: string,
+    files: UefiPublishedFile[],
+    receipts: readonly UefiWriteReceipt[],
+  ) => T;
 }): Promise<UefiPublicationOutcome<T>> => {
   let tree: SafeOutputTree | undefined;
   let result: T | undefined;
   const files: UefiPublishedFile[] = [];
+  const receipts: UefiWriteReceipt[] = [];
   try {
     context.checkpoint();
     tree = await SafeOutputTree.create(context.outputDirectory);
@@ -67,6 +79,12 @@ export const publishUefiFiles = async <T = UefiExtractResult>(context: {
         { sha256, bytes: entry.bytes.length },
         context.signal,
       );
+      receipts.push({
+        relativePath: written.relativePath,
+        path: join(tree.outputRoot, written.relativePath),
+        size: written.bytesWritten,
+        sha256: written.sha256,
+      });
       if (entry.facts !== undefined) {
         files.push({
           ...entry.facts,
@@ -77,7 +95,7 @@ export const publishUefiFiles = async <T = UefiExtractResult>(context: {
         });
       }
     }
-    result = context.buildResult(tree.outputRoot, files);
+    result = context.buildResult(tree.outputRoot, files, receipts);
     context.checkpoint();
     await tree.commit(context.signal);
     return { result };

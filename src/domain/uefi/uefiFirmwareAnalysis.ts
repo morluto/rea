@@ -570,12 +570,28 @@ export const uefiResultSchemas = {
         c_file: z.string().nullable(),
         asm_file: z.string().nullable(),
         header_file: z.string().nullable(),
+        payload_file: z.string().nullable().optional(),
         relative_c_file: z.string().nullable(),
         relative_asm_file: z.string().nullable(),
         relative_header_file: z.string().nullable(),
+        relative_payload_file: z.string().nullable().optional(),
+        payload_sha256: digestSchema.nullable().optional(),
+        c_sha256: digestSchema.nullable().optional(),
+        asm_sha256: digestSchema.nullable().optional(),
+        header_sha256: digestSchema.nullable().optional(),
         code_bytes: bytes,
       }),
     ),
+    receipts: z
+      .array(
+        z.strictObject({
+          relative_path: z.string(),
+          path: z.string(),
+          size: bytes,
+          sha256: digestSchema,
+        }),
+      )
+      .optional(),
     diagnostics: z.string(),
     limitations: z.array(z.string()),
   }),
