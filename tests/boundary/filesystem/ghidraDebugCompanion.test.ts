@@ -15,6 +15,7 @@ import { expect, it } from "vitest";
 
 import { AnalysisArtifactChangedError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 
 import {
   admitDebugCompanion,
@@ -89,7 +90,7 @@ it("stages verified bytes under the snapshot name with private permissions and s
   }
 });
 
-it("rejects a changed digest and removes the partial staged bundle while preserving source bytes", async () => {
+it("rejects a changed digest and leaves partial staged entries to the private runtime owner while preserving source bytes", async () => {
   const fixture = await stagingFixture();
   await expect(
     stageGhidraDebugCompanion(
@@ -98,31 +99,31 @@ it("rejects a changed digest and removes the partial staged bundle while preserv
       fixture.snapshot,
     ),
   ).rejects.toThrow("dSYM member digest mismatch");
-  await expect(access(fixture.stagedBundle)).rejects.toMatchObject({
-    code: "ENOENT",
-  });
-  expect(await readdir(fixture.runtime)).toEqual([]);
+  await expect(access(fixture.stagedMember)).resolves.toBeUndefined();
   expect(
     (await readFile(fixture.companion.memberPath)).equals(fixture.bytes),
   ).toBe(true);
 });
 
-it("bounds a grown member by its admitted size and cleans the staged copy", async () => {
+it("bounds a grown member by its admitted size and leaves partial staged entries to the private runtime owner", async () => {
   const fixture = await stagingFixture();
+  const admittedSize = 10;
   await expect(
     stageGhidraDebugCompanion(
-      { ...fixture.companion, memberSizeBytes: fixture.bytes.length - 1 },
+      { ...fixture.companion, memberSizeBytes: admittedSize },
       fixture.runtime,
       fixture.snapshot,
     ),
   ).rejects.toThrow("grew beyond its admitted size");
-  expect(await readdir(fixture.runtime)).toEqual([]);
+  // readArtifactFileChunks takes an inclusive end bound, so a grown member
+  // stops after admittedSize + 1 bytes rather than copying to EOF.
+  expect((await stat(fixture.stagedMember)).size).toBe(admittedSize + 1);
   expect(
     (await readFile(fixture.companion.memberPath)).equals(fixture.bytes),
   ).toBe(true);
 });
 
-it("cleans partial staging after cancellation without changing the selected member", async () => {
+it("does not create a staged bundle on pre-aborted cancellation and leaves the selected member untouched", async () => {
   const fixture = await stagingFixture();
   const controller = new AbortController();
   controller.abort(new Error("cancel dSYM staging"));
@@ -242,15 +243,26 @@ it.each([
     await writeFile(path, bytes);
     const handle = await open(path, "r");
     try {
-      expect(
-        await readMachoFileUuidEntries(handle, bytes.length),
-      ).toMatchObject({
+      const failed = await readMachoFileUuidEntries(handle, bytes.length);
+      expect(failed).toMatchObject({
         ok: false,
         error: {
           kind: "invalid-image",
           reason: expect.stringContaining(reason),
+          diagnostics: {
+            parse_failure: {
+              format: "mach-o",
+              kind: "malformed",
+              offset,
+              field: "fat_arch",
+            },
+          },
         },
       });
+      if (!failed.ok) {
+        expect(failed.error.parseFailure).toBeInstanceOf(ParseFailureError);
+        expect(failed.error.cause).toBe(failed.error.parseFailure);
+      }
     } finally {
       await handle.close();
     }

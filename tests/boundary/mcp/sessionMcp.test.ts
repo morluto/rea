@@ -924,7 +924,7 @@ describe("MCP dsym_path companion lifecycle", () => {
       identity: { format: "mach-o" },
       debug_companion: expectedCompanion,
     });
-  }, 10_000);
+  });
 });
 
 const client = (path: string, closed: string[]): AnalysisClient => ({

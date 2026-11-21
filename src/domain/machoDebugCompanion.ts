@@ -3,17 +3,25 @@ import { z } from "zod";
 import {
   findOverlappingFatSlices,
   readFatContainerHeader,
+  readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
   validateFatSlice,
+  type FatSliceDeclaration,
 } from "./apple/machoContainer.js";
 import { machoCpuSubtypeBase } from "./apple/machoCpuIdentity.js";
 import {
   MachoLoadCommandCursor,
-  readMachoLoadCommandTableHeader,
+  machoCommandTableIssue,
+  readMachoLoadCommandDeclarations,
 } from "./apple/machoLoadCommands.js";
 import { LC } from "./apple/machoLoadCommandCodes.js";
 import { digestSchema } from "./digests.js";
 import { localPathStringSchema } from "./localPath.js";
+import {
+  malformedInput,
+  ParseFailureError,
+  truncatedInput,
+} from "./parseFailure.js";
 import { err, ok, type Result } from "./result.js";
 
 /** Canonical uppercase hex LC_UUID formatting emitted by Mach-O decoders. */
@@ -36,6 +44,42 @@ export type MachODebugCompanionCommitment = z.infer<
 >;
 
 const UUID_BYTES = 16;
+const MACHO_FORMAT = "mach-o";
+
+/** Format failure established while reading Mach-O container or LC_UUID structure. */
+export type MachOUuidParseError =
+  | ParseFailureError<"malformed">
+  | ParseFailureError<"truncated">;
+
+/** Shift a slice-relative parse offset into its enclosing container file. */
+export const rebaseMachoParseFailure = (
+  failure: MachOUuidParseError,
+  baseOffset: number,
+): MachOUuidParseError => {
+  if (baseOffset === 0 || failure.failure.offset === undefined) return failure;
+  const site = {
+    offset: baseOffset + failure.failure.offset,
+    ...(failure.failure.field === undefined
+      ? {}
+      : { field: failure.failure.field }),
+    cause: failure,
+  };
+  return failure.kind === "truncated"
+    ? truncatedInput(failure.failure.format, failure.failure.detail, site)
+    : malformedInput(failure.failure.format, failure.failure.detail, site);
+};
+
+/** Classify one FAT slice range defect as truncated (past EOF) or malformed. */
+export const fatSliceRangeParseFailure = (
+  slice: Pick<FatSliceDeclaration, "offset" | "size">,
+  fileSize: number,
+  reason: string,
+): MachOUuidParseError => {
+  const site = { offset: slice.offset, field: "fat_arch" };
+  return slice.offset > fileSize || slice.size > fileSize - slice.offset
+    ? truncatedInput(MACHO_FORMAT, reason, site)
+    : malformedInput(MACHO_FORMAT, reason, site);
+};
 
 /**
  * One LC_UUID with the CPU identity of the Mach-O image that declares it.
@@ -79,42 +123,130 @@ export interface MachOImageUuid {
  */
 export function* machoUuidReads(
   imageSize: number,
-): Generator<MachOUuidRead, Result<MachOImageUuid, string>, Buffer> {
-  if (imageSize < 4) return err("Mach-O header is truncated");
+): Generator<
+  MachOUuidRead,
+  Result<MachOImageUuid, MachOUuidParseError>,
+  Buffer
+> {
+  if (imageSize < 4)
+    return err(
+      truncatedInput(MACHO_FORMAT, "Mach-O header is truncated", {
+        offset: 0,
+        field: "magic",
+      }),
+    );
   const magicBytes = yield { offset: 0, length: 4 };
-  if (magicBytes.length < 4) return err("Mach-O header is truncated");
+  if (magicBytes.length < 4)
+    return err(
+      truncatedInput(MACHO_FORMAT, "Mach-O header is truncated", {
+        offset: 0,
+        field: "magic",
+      }),
+    );
   const prefix = readMachoHeaderPrefixFacts(magicBytes);
-  if (prefix.format === null) return err("not a Mach-O image");
+  if (prefix.format === null)
+    return err(
+      malformedInput(MACHO_FORMAT, "not a Mach-O image", {
+        offset: 0,
+        field: "magic",
+      }),
+    );
   const { headerSize } = prefix.format;
   if (imageSize < headerSize)
-    return err("Mach-O header is truncated before its load commands");
+    return err(
+      truncatedInput(
+        MACHO_FORMAT,
+        "Mach-O header is truncated before its load commands",
+        { offset: 0, field: "mach_header" },
+      ),
+    );
   const header = yield { offset: 0, length: headerSize };
-  const table = readMachoLoadCommandTableHeader(header, imageSize);
-  if (!table.ok) return table;
-  if (table.value === null) return err("not a Mach-O image");
+  const declarations = readMachoLoadCommandDeclarations(header, imageSize);
+  if (!declarations.ok)
+    return err(
+      truncatedInput(MACHO_FORMAT, declarations.error, {
+        offset: 0,
+        field: "mach_header",
+      }),
+    );
+  if (declarations.value === null)
+    return err(
+      malformedInput(MACHO_FORMAT, "not a Mach-O image", {
+        offset: 0,
+        field: "magic",
+      }),
+    );
+  const tableIssue = machoCommandTableIssue(declarations.value, imageSize);
+  if (tableIssue !== null)
+    return err(
+      tableIssue.kind === "extent"
+        ? truncatedInput(MACHO_FORMAT, tableIssue.message, {
+            offset: headerSize,
+            field: "sizeofcmds",
+          })
+        : malformedInput(MACHO_FORMAT, tableIssue.message, {
+            offset: 16,
+            field: "ncmds",
+          }),
+    );
   const {
     identity: { cpuType, cpuSubtype },
-  } = table.value;
-  const commands = new MachoLoadCommandCursor(table.value);
+  } = declarations.value;
+  const commands = new MachoLoadCommandCursor(declarations.value);
   let observed: string | null = null;
   while (commands.nextOffset !== null) {
     const commandOffset = headerSize + commands.nextOffset;
     const commandHeader = yield { offset: commandOffset, length: 8 };
+    if (commandHeader.length < 8)
+      return err(
+        truncatedInput(MACHO_FORMAT, "load command header is truncated", {
+          offset: commandOffset,
+          field: "load_command",
+        }),
+      );
     const frame = commands.read(commandHeader);
-    if (!frame.ok) return frame;
+    if (!frame.ok)
+      return err(
+        malformedInput(MACHO_FORMAT, frame.error, {
+          offset: commandOffset,
+          field: "load_command",
+        }),
+      );
     if (frame.value.command === LC.UUID) {
       if (frame.value.size < 8 + UUID_BYTES)
-        return err("LC_UUID load command is truncated");
+        return err(
+          malformedInput(MACHO_FORMAT, "LC_UUID load command is truncated", {
+            offset: commandOffset,
+            field: "LC_UUID",
+          }),
+        );
       if (observed !== null)
-        return err("Mach-O image declares more than one LC_UUID");
+        return err(
+          malformedInput(
+            MACHO_FORMAT,
+            "Mach-O image declares more than one LC_UUID",
+            { offset: commandOffset, field: "LC_UUID" },
+          ),
+        );
       const payload = yield { offset: commandOffset + 8, length: UUID_BYTES };
       if (payload.length < UUID_BYTES)
-        return err("LC_UUID load command is truncated");
+        return err(
+          truncatedInput(MACHO_FORMAT, "LC_UUID load command is truncated", {
+            offset: commandOffset + 8,
+            field: "LC_UUID",
+          }),
+        );
       observed = formatUuid(payload);
     }
   }
   const finished = commands.finish();
-  if (!finished.ok) return finished;
+  if (!finished.ok)
+    return err(
+      malformedInput(MACHO_FORMAT, finished.error, {
+        offset: headerSize,
+        field: "sizeofcmds",
+      }),
+    );
   return ok({ cpuType, cpuSubtype, uuid: observed });
 }
 
@@ -122,7 +254,7 @@ const readThinImage = (
   bytes: Buffer,
   offset: number,
   end: number,
-): Result<MachOImageUuid, string> => {
+): Result<MachOImageUuid, MachOUuidParseError> => {
   const decoder = machoUuidReads(end - offset);
   let step = decoder.next();
   while (!step.done) {
@@ -153,27 +285,47 @@ const thinEntry = (identity: MachOImageUuid): MachOUuidEntry => ({
  */
 export const readMachoUuidEntries = (
   bytes: Buffer,
-): Result<MachOUuidEntry[], string> => {
+): Result<MachOUuidEntry[], MachOUuidParseError> => {
   const container = readFatContainerHeader(bytes, bytes.length);
   if (container.state === "not-fat") {
     const image = readThinImage(bytes, 0, bytes.length);
     return image.ok ? ok([thinEntry(image.value)]) : image;
   }
   if (container.state === "needs-data")
-    return err("the universal Mach-O container table is truncated");
-  if (container.state === "malformed") return err(container.reason);
+    return err(
+      truncatedInput(
+        MACHO_FORMAT,
+        "the universal Mach-O container table is truncated",
+        { offset: 0, field: "fat_header" },
+      ),
+    );
+  if (container.state === "malformed") {
+    const site = { offset: 0, field: "fat_header" };
+    return err(
+      readFatHeaderPrefix(bytes).state === "incomplete"
+        ? truncatedInput(MACHO_FORMAT, container.reason, site)
+        : malformedInput(MACHO_FORMAT, container.reason, site),
+    );
+  }
   for (const declaration of container.slices) {
     const rangeIssue = validateFatSlice(
       declaration,
       bytes.length,
       container.tableEnd,
     );
-    if (rangeIssue !== null) return err(rangeIssue);
+    if (rangeIssue !== null)
+      return err(
+        fatSliceRangeParseFailure(declaration, bytes.length, rangeIssue),
+      );
   }
   const overlap = findOverlappingFatSlices(container.slices);
   if (overlap !== null)
     return err(
-      `FAT architectures ${overlap[0].index} and ${overlap[1].index} have overlapping slice ranges`,
+      malformedInput(
+        MACHO_FORMAT,
+        `FAT architectures ${overlap[0].index} and ${overlap[1].index} have overlapping slice ranges`,
+        { offset: overlap[1].offset, field: "fat_arch" },
+      ),
     );
   const entries: MachOUuidEntry[] = [];
   for (const declaration of container.slices) {
@@ -182,14 +334,21 @@ export const readMachoUuidEntries = (
       declaration.offset,
       declaration.offset + declaration.size,
     );
-    if (!image.ok) return image;
+    if (!image.ok)
+      return err(rebaseMachoParseFailure(image.error, declaration.offset));
     const identityIssue = validateFatSlice(
       declaration,
       bytes.length,
       container.tableEnd,
       image.value,
     );
-    if (identityIssue !== null) return err(identityIssue);
+    if (identityIssue !== null)
+      return err(
+        malformedInput(MACHO_FORMAT, identityIssue, {
+          offset: declaration.offset,
+          field: "fat_arch",
+        }),
+      );
     entries.push({
       cpuType: declaration.cpuType,
       cpuSubtypeBase: machoCpuSubtypeBase(declaration.cpuSubtype),

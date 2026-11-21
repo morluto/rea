@@ -10,6 +10,7 @@ import {
 import {
   findOverlappingFatSlices,
   readFatContainerHeader,
+  readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
   validateFatSlice,
   type FatSliceDeclaration,
@@ -30,19 +31,26 @@ import type {
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
+  fatSliceRangeParseFailure,
   machoUuidReads,
   matchMachOCompanionEntries,
+  rebaseMachoParseFailure,
   usableMachOUuid,
   type MachOImageUuid,
+  type MachOUuidParseError,
 } from "../domain/machoDebugCompanion.js";
+import { malformedInput, truncatedInput } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import {
   OwnedRegularFileOperationFailure,
+  RegularFileCancelled,
   RegularFileCleanupFailure,
   regularFileCancellation,
+  withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 import {
+  assertStableRegularFileIdentity,
   isSelectedRegularFileError,
   NonRegularFileReadError,
   RegularFileChangedError,
@@ -61,7 +69,6 @@ import {
 import {
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
-  withRegularFileCompletion,
 } from "../process/RegularFileRead.js";
 
 const DSYM_DWARF_DIRECTORY = "Contents/Resources/DWARF";
@@ -97,12 +104,14 @@ export type DebugCompanionAdmission = Result<
 /** Why a caller-selected debug companion was refused, in caller-facing words. */
 export interface DebugCompanionRejection {
   readonly reason: string;
+  readonly cause?: unknown;
   readonly remediationAction?: string;
   readonly diagnostics?: Readonly<Record<string, JsonValue>>;
 }
 
 interface MachOUuidReadFailure extends DebugCompanionRejection {
   readonly kind: "resource-limit" | "invalid-image";
+  readonly parseFailure?: MachOUuidParseError;
 }
 
 interface TraversalLedger {
@@ -137,6 +146,7 @@ export const debugCompanionRejectedError = (
   new BinaryTargetError(targetPath, rejection.reason, {
     constraint: "debug_companion_rejected",
     related: { parameters: ["dsym_path"] },
+    ...(rejection.cause === undefined ? {} : { cause: rejection.cause }),
     ...(rejection.remediationAction === undefined
       ? {}
       : { remediationAction: rejection.remediationAction }),
@@ -191,9 +201,25 @@ const aggregateDigestLimit = (): DebugCompanionRejection => ({
   },
 });
 
-const invalidImage = (reason: string): MachOUuidReadFailure => ({
+const MACHO_FORMAT = "mach-o";
+
+const invalidImage = (failure: MachOUuidParseError): MachOUuidReadFailure => ({
   kind: "invalid-image",
-  reason,
+  reason: failure.message,
+  cause: failure,
+  parseFailure: failure,
+  diagnostics: {
+    parse_failure: {
+      format: failure.failure.format,
+      kind: failure.kind,
+      ...(failure.failure.offset === undefined
+        ? {}
+        : { offset: failure.failure.offset }),
+      ...(failure.failure.field === undefined
+        ? {}
+        : { field: failure.failure.field }),
+    },
+  },
 });
 
 const isExpectedAdmissionPathFailure = (cause: unknown): boolean =>
@@ -304,7 +330,11 @@ const readThinUuidEntry = async (
           );
     step = decoder.next(slice);
   }
-  return step.value.ok ? step.value : err(invalidImage(step.value.error));
+  return step.value.ok
+    ? step.value
+    : err(
+        invalidImage(rebaseMachoParseFailure(step.value.error, range.offset)),
+      );
 };
 
 type ValidatedMachoContainer =
@@ -338,20 +368,41 @@ const readValidatedMachoContainer = async (
     return err(
       prefixLength < container.requiredBytes
         ? traversalLimit()
-        : invalidImage("the universal Mach-O container table is truncated"),
+        : invalidImage(
+            truncatedInput(
+              MACHO_FORMAT,
+              "the universal Mach-O container table is truncated",
+              { offset: 0, field: "fat_header" },
+            ),
+          ),
     );
-  if (container.state === "malformed")
-    return err(invalidImage(container.reason));
+  if (container.state === "malformed") {
+    const site = { offset: 0, field: "fat_header" };
+    return err(
+      invalidImage(
+        readFatHeaderPrefix(prefix.value).state === "incomplete"
+          ? truncatedInput(MACHO_FORMAT, container.reason, site)
+          : malformedInput(MACHO_FORMAT, container.reason, site),
+      ),
+    );
+  }
   for (const slice of container.slices) {
     throwIfCancelled(context.signal);
     const rangeIssue = validateFatSlice(slice, fileSize, container.tableEnd);
-    if (rangeIssue !== null) return err(invalidImage(rangeIssue));
+    if (rangeIssue !== null)
+      return err(
+        invalidImage(fatSliceRangeParseFailure(slice, fileSize, rangeIssue)),
+      );
   }
   const overlap = findOverlappingFatSlices(container.slices);
   if (overlap !== null)
     return err(
       invalidImage(
-        `FAT architectures ${overlap[0].index} and ${overlap[1].index} have overlapping slice ranges`,
+        malformedInput(
+          MACHO_FORMAT,
+          `FAT architectures ${overlap[0].index} and ${overlap[1].index} have overlapping slice ranges`,
+          { offset: overlap[1].offset, field: "fat_arch" },
+        ),
       ),
     );
   return ok({
@@ -416,7 +467,15 @@ export const readMachoFileUuidEntries = async (
       container.value.tableEnd,
       read.value,
     );
-    if (idIssue !== null) return err(invalidImage(idIssue));
+    if (idIssue !== null)
+      return err(
+        invalidImage(
+          malformedInput(MACHO_FORMAT, idIssue, {
+            offset: slice.offset,
+            field: "fat_arch",
+          }),
+        ),
+      );
     entries.push({
       cpuType: slice.cpuType,
       cpuSubtypeBase: machoCpuSubtypeBase(slice.cpuSubtype),
@@ -593,8 +652,8 @@ const enumerateDwarfMembers = async (
     else rejection = listed.error;
   } catch (cause: unknown) {
     failure =
-      state.signal?.aborted === true && cause === state.signal.reason
-        ? cancelledBy("resolve_binary_target", state.signal)
+      cause instanceof AnalysisCancelledError
+        ? cause
         : (companionIoFailure(
             dwarfDirectory,
             "reading the dSYM DWARF directory",
@@ -649,7 +708,14 @@ const validateProvidedTargetSlices = (
   targetSize: number,
 ): Result<readonly UniversalMachOSliceIdentity[], MachOUuidReadFailure> => {
   if (declarations.length === 0)
-    return err(invalidImage("FAT header declares no architectures"));
+    return err(
+      invalidImage(
+        malformedInput(MACHO_FORMAT, "FAT header declares no architectures", {
+          offset: 0,
+          field: "fat_header",
+        }),
+      ),
+    );
   for (const slice of declarations) {
     if (
       !Number.isSafeInteger(slice.offset) ||
@@ -658,17 +724,46 @@ const validateProvidedTargetSlices = (
       slice.size <= 0 ||
       slice.offset > targetSize ||
       slice.size > targetSize - slice.offset
-    )
+    ) {
+      const site = {
+        ...(Number.isSafeInteger(slice.offset) && slice.offset >= 0
+          ? { offset: slice.offset }
+          : {}),
+        field: "fat_arch",
+      };
+      const outOfBounds =
+        Number.isSafeInteger(slice.offset) &&
+        Number.isSafeInteger(slice.size) &&
+        slice.offset >= 0 &&
+        slice.size > 0 &&
+        (slice.offset > targetSize || slice.size > targetSize - slice.offset);
       return err(
         invalidImage(
-          "the universal Mach-O slice range extends beyond the file",
+          outOfBounds
+            ? truncatedInput(
+                MACHO_FORMAT,
+                "the universal Mach-O slice range extends beyond the file",
+                site,
+              )
+            : malformedInput(
+                MACHO_FORMAT,
+                "the universal Mach-O slice range extends beyond the file",
+                site,
+              ),
         ),
       );
+    }
   }
   const overlap = findOverlappingFatSlices(declarations);
   if (overlap !== null)
     return err(
-      invalidImage("universal Mach-O slices have overlapping byte ranges"),
+      invalidImage(
+        malformedInput(
+          MACHO_FORMAT,
+          "universal Mach-O slices have overlapping byte ranges",
+          { offset: overlap[1].offset, field: "fat_arch" },
+        ),
+      ),
     );
   return ok(declarations);
 };
@@ -701,7 +796,11 @@ const inspectTargetContainerForSlice = async (
     if (slice.size < 12)
       return err(
         invalidImage(
-          `FAT architecture ${slice.index} is shorter than its Mach-O header`,
+          truncatedInput(
+            MACHO_FORMAT,
+            `FAT architecture ${slice.index} is shorter than its Mach-O header`,
+            { offset: slice.offset, field: "mach_header" },
+          ),
         ),
       );
     let headerBytes: Buffer;
@@ -724,7 +823,11 @@ const inspectTargetContainerForSlice = async (
     if (facts.identity === null)
       return err(
         invalidImage(
-          `FAT architecture ${slice.index} does not start with a complete Mach-O header`,
+          (facts.format !== null ? truncatedInput : malformedInput)(
+            MACHO_FORMAT,
+            `FAT architecture ${slice.index} does not start with a complete Mach-O header`,
+            { offset: slice.offset, field: "mach_header" },
+          ),
         ),
       );
     const idIssue = validateFatSlice(
@@ -733,7 +836,15 @@ const inspectTargetContainerForSlice = async (
       container.value.tableEnd,
       facts.identity,
     );
-    if (idIssue !== null) return err(invalidImage(idIssue));
+    if (idIssue !== null)
+      return err(
+        invalidImage(
+          malformedInput(MACHO_FORMAT, idIssue, {
+            offset: slice.offset,
+            field: "fat_arch",
+          }),
+        ),
+      );
     validated.push({
       offset: slice.offset,
       size: slice.size,
@@ -783,7 +894,11 @@ const selectTargetSliceUuid = async (
         )
           return err(
             invalidImage(
-              "the selected Mach-O target slice does not match the thin image bounds",
+              malformedInput(
+                MACHO_FORMAT,
+                "the selected Mach-O target slice does not match the thin image bounds",
+                { offset: 0, field: "mach_header" },
+              ),
             ),
           );
         const thin = await readThinUuidEntry(
@@ -816,7 +931,11 @@ const selectTargetSliceUuid = async (
     if (selectedDeclaration === undefined)
       return err(
         invalidImage(
-          "the selected Mach-O target slice is absent from the universal container table",
+          malformedInput(
+            MACHO_FORMAT,
+            "the selected Mach-O target slice is absent from the universal container table",
+            { offset: 0, field: "fat_arch" },
+          ),
         ),
       );
     if (policy === undefined)
@@ -851,7 +970,11 @@ const selectTargetSliceUuid = async (
     )
       return err(
         invalidImage(
-          "the selected FAT slice CPU type/subtype disagrees with its Mach-O header",
+          malformedInput(
+            MACHO_FORMAT,
+            "the selected FAT slice CPU type/subtype disagrees with its Mach-O header",
+            { offset: selectedDeclaration.offset, field: "fat_arch" },
+          ),
         ),
       );
     return usableMachOUuid(selected.value.uuid)
@@ -899,14 +1022,6 @@ const normalizeMemberFailure = (
     failureCause instanceof OwnedRegularFileOperationFailure
       ? failureCause.operationCause
       : failureCause;
-  if (
-    state.signal?.aborted === true &&
-    (failureCause === state.signal.reason || rawCause === state.signal.reason)
-  )
-    return {
-      kind: "failed",
-      cause: cancelledBy("resolve_binary_target", state.signal),
-    };
   if (
     rawCause instanceof AnalysisCancelledError ||
     rawCause instanceof AnalysisArtifactChangedError ||
@@ -1008,30 +1123,47 @@ const readMemberWithBorrowedResources = async (
 ): Promise<Result<MachODebugCompanion | null, DebugCompanionRejection>> => {
   let memberAdmitted = false;
   try {
-    const completion = await withRegularFileCompletion(
+    const result = await withOwnedRegularFile<
+      Result<MachODebugCompanion | null, DebugCompanionRejection>
+    >(
       memberPath,
-      async (handle, initial) => {
-        memberAdmitted = true;
-        return await read(handle, initial);
-      },
       {
         symlinks: "follow",
         ...(state.signal === undefined ? {} : { signal: state.signal }),
       },
+      async ({ handle, initial }) => {
+        memberAdmitted = true;
+        try {
+          throwIfCancelled(state.signal);
+          const outcome = await read(handle, initial);
+          // Preserve an established member refusal before any post-read
+          // cancellation-sensitive stability check can supersede it.
+          if (!outcome.ok) return outcome;
+          throwIfCancelled(state.signal);
+          await assertStableRegularFileIdentity(handle, memberPath, initial, {
+            symlinks: "follow",
+            ...(state.signal === undefined ? {} : { signal: state.signal }),
+          });
+          throwIfCancelled(state.signal);
+          return outcome;
+        } catch (cause: unknown) {
+          throw new OwnedRegularFileOperationFailure(cause);
+        }
+      },
     );
-    if (!completion.value.ok) return completion.value;
-    if (completion.cancellation !== undefined)
-      throw cancelledBy(
-        "resolve_binary_target",
-        carriedReason(completion.cancellation.reason),
-      );
+    if (!result.ok) return result;
     throwIfCancelled(state.signal);
-    return completion.value;
+    return result;
   } catch (cause: unknown) {
-    if (
-      !(cause instanceof RegularFileCleanupFailure) ||
-      (state.signal?.aborted === true && cause === state.signal.reason)
-    ) {
+    if (cause instanceof RegularFileCancelled) {
+      const completed = cause.outcome.value as Result<
+        MachODebugCompanion | null,
+        DebugCompanionRejection
+      >;
+      if (!completed.ok) return completed;
+      throw cancelledBy("resolve_binary_target", carriedReason(cause.reason));
+    }
+    if (!(cause instanceof RegularFileCleanupFailure)) {
       const normalized = normalizeMemberFailure(
         cause,
         memberPath,

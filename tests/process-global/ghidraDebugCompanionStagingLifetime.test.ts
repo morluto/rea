@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
 import {
+  access,
   mkdir,
   readFile,
-  readdir,
+  stat,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
-import { join } from "node:path";
-import { beforeEach, expect, it, vi } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const fault = vi.hoisted(() => ({
   member: "",
   stagedMember: "",
+  matchStagedMember: false,
+  observedStagedMembers: [] as string[],
   refuseCloses: false,
   closeCount: 0,
   onClose: undefined as ((attempt: number) => void) | undefined,
@@ -23,10 +26,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...original,
     open: async (...args: Parameters<typeof original.open>) => {
       const handle = await original.open(...args);
+      const path = typeof args[0] === "string" ? args[0] : "";
+      const matchedStaged =
+        path === fault.stagedMember ||
+        (fault.matchStagedMember && path.includes(".dSYM") && args[1] === "wx");
+      if (matchedStaged) fault.observedStagedMembers.push(path);
       // Only the staging source and destination descriptors are faulted; the
       // fixture's own file I/O keeps real close semantics.
-      if (args[0] !== fault.member && args[0] !== fault.stagedMember)
-        return handle;
+      if (path !== fault.member && !matchedStaged) return handle;
       const close = handle.close.bind(handle);
       handle.close = async () => {
         fault.closeCount += 1;
@@ -42,7 +49,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
+import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import { stageGhidraDebugCompanion } from "../../src/ghidra/GhidraDebugCompanion.js";
+import { silentLogger } from "../../src/logger.js";
 import {
   ArtifactFileCleanupFailure,
   ArtifactResourceScope,
@@ -51,13 +60,23 @@ import {
 import { AnalysisArtifactChangedError } from "../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
+const clients: GhidraClient[] = [];
+
 beforeEach(() => {
   fault.member = "";
   fault.stagedMember = "";
+  fault.matchStagedMember = false;
+  fault.observedStagedMembers = [];
   fault.refuseCloses = false;
   fault.closeCount = 0;
   fault.onClose = undefined;
   fault.refused = [];
+});
+
+afterEach(async () => {
+  fault.refuseCloses = false;
+  for (const client of clients.splice(0)) await client.close();
+  for (const handle of fault.refused) if (handle.fd >= 0) await handle.close();
 });
 
 const stagingFixture = async () => {
@@ -78,9 +97,11 @@ const stagingFixture = async () => {
     "snapshot-name",
   );
   return {
+    root,
     bytes,
     runtime,
     snapshot,
+    stagedMember: fault.stagedMember,
     companion: {
       sourcePath: join(root, "caller.dSYM"),
       memberPath,
@@ -97,7 +118,7 @@ const settle = async (run: Promise<unknown>): Promise<unknown> =>
     (cause: unknown) => cause,
   );
 
-it("retains failed staging closes for cleanup retry after a completed copy", async () => {
+it("retains failed staging closes without unlinking the open staged file until release", async () => {
   const fixture = await stagingFixture();
   const resources = new ArtifactResourceScope();
   fault.refuseCloses = true;
@@ -114,18 +135,20 @@ it("retains failed staging closes for cleanup retry after a completed copy", asy
   // Both the source and destination descriptors attempted their own close.
   expect(fault.refused).toHaveLength(2);
   expect(resources.hasPending).toBe(true);
-  // The partial staged tree is removed only after both closes settled; the
-  // caller's member is untouched.
-  expect(await readdir(fixture.runtime)).toEqual([]);
+  // The destination descriptor stays linked on disk until its owner closes it;
+  // partial staged entries belong to the private runtime owner.
+  expect((await stat(fixture.stagedMember)).nlink).toBeGreaterThanOrEqual(1);
+  expect((await fault.refused[0]!.stat()).nlink).toBeGreaterThanOrEqual(1);
   expect(
     (await readFile(fixture.companion.memberPath)).equals(fixture.bytes),
   ).toBe(true);
   // Retained owners release once their closes succeed.
   await resources.close();
   expect(resources.hasPending).toBe(false);
+  expect(fault.refused.every((handle) => handle.fd === -1)).toBe(true);
 });
 
-it("keeps a digest mismatch primary when the later closes also fail", async () => {
+it("keeps a digest mismatch primary and leaves the open staged file linked when closes also fail", async () => {
   const fixture = await stagingFixture();
   const resources = new ArtifactResourceScope();
   fault.refuseCloses = true;
@@ -150,9 +173,11 @@ it("keeps a digest mismatch primary when the later closes also fail", async () =
     message: expect.stringContaining("dSYM member digest mismatch"),
   });
   expect(resources.hasPending).toBe(true);
-  expect(await readdir(fixture.runtime)).toEqual([]);
+  expect((await stat(fixture.stagedMember)).nlink).toBeGreaterThanOrEqual(1);
+  expect((await fault.refused[0]!.stat()).nlink).toBeGreaterThanOrEqual(1);
   await resources.close();
   expect(resources.hasPending).toBe(false);
+  expect(fault.refused.every((handle) => handle.fd === -1)).toBe(true);
 });
 
 it("preserves caller cancellation arriving during outer staging close after destination close failed", async () => {
@@ -180,7 +205,57 @@ it("preserves caller cancellation arriving during outer staging close after dest
     cancellation: { reason: abortReason },
   });
   expect(resources.hasPending).toBe(true);
-  expect(await readdir(fixture.runtime)).toEqual([]);
+  expect((await stat(fixture.stagedMember)).nlink).toBeGreaterThanOrEqual(1);
+  expect((await fault.refused[0]!.stat()).nlink).toBeGreaterThanOrEqual(1);
   await resources.close();
   expect(resources.hasPending).toBe(false);
+  expect(fault.refused.every((handle) => handle.fd === -1)).toBe(true);
 });
+
+it.skipIf(process.platform === "win32")(
+  "defers private runtime root removal in GhidraClient until failed dSYM staging handles release",
+  async () => {
+    const fixture = await stagingFixture();
+    const targetPath = join(fixture.root, "target");
+    const targetBytes = Buffer.from("target bytes for Ghidra snapshot");
+    await writeFile(targetPath, targetBytes);
+    const targetSha256 = createHash("sha256").update(targetBytes).digest("hex");
+    fault.matchStagedMember = true;
+    fault.refuseCloses = true;
+
+    const client = new GhidraClient({
+      launcher: {
+        launch: async () => {
+          throw new Error("Staging failure must prevent Ghidra launch");
+        },
+      },
+      targetPath,
+      targetSha256,
+      debugCompanion: fixture.companion,
+      providerVersion: "12.2",
+      profileDigest: "c".repeat(64),
+      logger: silentLogger,
+    });
+    clients.push(client);
+
+    const started = await client.start();
+    expect(started.ok).toBe(false);
+    expect(fault.observedStagedMembers).toHaveLength(1);
+    const stagedMember = fault.observedStagedMembers[0]!;
+    const runtimeRoot = dirname(
+      dirname(dirname(dirname(dirname(stagedMember)))),
+    );
+    const destinationHandle = fault.refused[0]!;
+    // While the destination descriptor has not released, neither the staged
+    // file nor the private runtime root may be unlinked out from under it.
+    expect(destinationHandle.fd).toBeGreaterThanOrEqual(0);
+    expect((await stat(stagedMember)).nlink).toBeGreaterThanOrEqual(1);
+    expect((await destinationHandle.stat()).nlink).toBeGreaterThanOrEqual(1);
+
+    fault.refuseCloses = false;
+    const closed = await client.close();
+    expect(closed).toMatchObject({ ok: true });
+    expect(fault.refused.every((handle) => handle.fd === -1)).toBe(true);
+    await expect(access(runtimeRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);

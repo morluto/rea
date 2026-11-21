@@ -70,7 +70,7 @@ export const openBinaryInputSchema = z
         code: "custom",
         path: ["dsym_path"],
         message:
-          "dsym_path applies only to detected Mach-O executable targets, not to explicit headerless formats",
+          "dsym_path applies only to detected Mach-O executable targets, not to explicit format selections",
       });
     }
     const flash = espFlashSelectionError({

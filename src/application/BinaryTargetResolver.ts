@@ -365,11 +365,11 @@ const readOpenedBinaryTarget = async (
   if (dsymPath !== undefined && formatHint !== undefined)
     return rejectDebugCompanion(
       path,
-      "dsym_path applies only to detected Mach-O executable targets, not to explicit headerless formats",
+      "dsym_path applies only to detected Mach-O executable targets, not to explicit format selections",
       {
         dsym_path: dsymPath,
         format_hint: formatHint,
-        rejection: "headerless_format_hint",
+        rejection: "explicit_format_hint",
       },
     );
   if (formatHint === "raw-binary") {
@@ -815,7 +815,7 @@ const companionDirectoryCleanupError = (
     failure.cause instanceof ArtifactReaderFailure
       ? failure.cause.cause
       : failure.cause;
-  const primary =
+  let primary =
     underlying instanceof BinaryTargetError ||
     underlying instanceof AnalysisCancelledError ||
     underlying instanceof AnalysisArtifactChangedError
@@ -826,6 +826,8 @@ const companionDirectoryCleanupError = (
     primary instanceof AnalysisArtifactChangedError
   )
     retainTargetCancellation(primary, signal);
+  else if (primary === undefined && signal?.aborted === true)
+    primary = cancelledBy("resolve_binary_target", signal);
   return composeTargetCleanupError({
     path: failure.cleanup?.resources[0] ?? candidate,
     reason: "The debug companion directory handle could not be closed",
@@ -896,6 +898,14 @@ const targetFileCleanupError = (
     primary = cancelledBy(
       "resolve_binary_target",
       carriedReason(cancellation.reason),
+      completedTarget === undefined
+        ? {}
+        : { diagnostics: { completed_target: completedTarget } },
+    );
+  else if (signal?.aborted === true)
+    primary = cancelledBy(
+      "resolve_binary_target",
+      signal,
       completedTarget === undefined
         ? {}
         : { diagnostics: { completed_target: completedTarget } },

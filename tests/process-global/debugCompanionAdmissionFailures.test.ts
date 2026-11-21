@@ -14,6 +14,7 @@ const fault = vi.hoisted(() => ({
   openPath: "",
   openFailure: undefined as Error | undefined,
   memberReadFailure: undefined as Error | undefined,
+  onMemberRead: undefined as (() => void) | undefined,
   memberCloseFailure: undefined as Error | undefined,
   onMemberClose: undefined as ((attempt: number) => void) | undefined,
   onOpenHandle: undefined as
@@ -23,6 +24,7 @@ const fault = vi.hoisted(() => ({
     | (<T extends object>(path: string, stats: T, bigint: boolean) => T)
     | undefined,
   dirReadFailure: undefined as Error | undefined,
+  onDirRead: undefined as (() => void) | undefined,
   dirCloseFailure: undefined as Error | undefined,
   onDirClose: undefined as ((attempt: number) => void) | undefined,
   onOpendir: undefined as (() => void) | undefined,
@@ -61,14 +63,25 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (
         args[0] === fault.openPath &&
         (fault.memberReadFailure !== undefined ||
+          fault.onMemberRead !== undefined ||
           fault.memberCloseFailure !== undefined ||
           fault.onMemberClose !== undefined)
       ) {
         const originalClose = handle.close.bind(handle);
+        const originalRead = handle.read.bind(handle);
         let closeAttempt = 0;
-        if (fault.memberReadFailure !== undefined) {
-          handle.read = (() =>
-            Promise.reject(fault.memberReadFailure)) as typeof handle.read;
+        if (
+          fault.memberReadFailure !== undefined ||
+          fault.onMemberRead !== undefined
+        ) {
+          handle.read = (async (
+            ...readArgs: Parameters<FileHandle["read"]>
+          ) => {
+            fault.onMemberRead?.();
+            if (fault.memberReadFailure !== undefined)
+              throw fault.memberReadFailure;
+            return await originalRead(...readArgs);
+          }) as typeof handle.read;
         }
         if (
           fault.memberCloseFailure !== undefined ||
@@ -90,15 +103,23 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const directory = await original.opendir(...args);
       if (
         fault.dirReadFailure !== undefined ||
+        fault.onDirRead !== undefined ||
         fault.dirCloseFailure !== undefined ||
         fault.onDirClose !== undefined
       ) {
         const originalClose = directory.close.bind(directory);
+        const originalRead = directory.read.bind(directory);
         let closed = false;
         let closeAttempt = 0;
-        if (fault.dirReadFailure !== undefined) {
-          directory.read = (() =>
-            Promise.reject(fault.dirReadFailure)) as typeof directory.read;
+        if (
+          fault.dirReadFailure !== undefined ||
+          fault.onDirRead !== undefined
+        ) {
+          directory.read = (async () => {
+            fault.onDirRead?.();
+            if (fault.dirReadFailure !== undefined) throw fault.dirReadFailure;
+            return await originalRead();
+          }) as typeof directory.read;
         }
         if (
           fault.dirCloseFailure !== undefined ||
@@ -151,11 +172,13 @@ beforeEach(() => {
   fault.openPath = "";
   fault.openFailure = undefined;
   fault.memberReadFailure = undefined;
+  fault.onMemberRead = undefined;
   fault.memberCloseFailure = undefined;
   fault.onMemberClose = undefined;
   fault.onOpenHandle = undefined;
   fault.transformStats = undefined;
   fault.dirReadFailure = undefined;
+  fault.onDirRead = undefined;
   fault.dirCloseFailure = undefined;
   fault.onDirClose = undefined;
   fault.onOpendir = undefined;
@@ -897,6 +920,140 @@ it.each(["member", "directory"] as const)(
     } finally {
       denyTargetClose = false;
       denyCompanionClose = false;
+      fault.dirCloseFailure = undefined;
+      if (companionKind === "member") await resources.close();
+    }
+  },
+);
+
+it("preserves a member refusal without running cancellation-sensitive post-read stability validation and retains final-close cancellation", async () => {
+  const fixture = await admissionFixture();
+  await writeFile(fixture.member, duplicateSliceMember());
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const abortReason = new Error("cancelled after refusal established");
+  let memberStatCalls = 0;
+  fault.transformStats = (statPath, stats) => {
+    if (statPath === fixture.member) {
+      memberStatCalls += 1;
+      // Call 1 is enumerateDwarfMembers' stat(memberPath). Any later named stat
+      // would be post-read stability validation; abort if it ever runs.
+      if (memberStatCalls > 1) controller.abort(abortReason);
+    }
+    return stats;
+  };
+  fault.openPath = fixture.member;
+  fault.onMemberClose = (attempt) => {
+    if (attempt === 1) controller.abort(abortReason);
+  };
+  const resolved = await parseBinaryTarget(fixture.target, {
+    dsymPath: fixture.dsymPath,
+    resources,
+    signal: controller.signal,
+  });
+  expect(resolved.ok).toBe(false);
+  if (resolved.ok) return;
+  expect(memberStatCalls).toBe(1);
+  expect(resolved.error).toBeInstanceOf(BinaryTargetError);
+  expect(resolved.error).toMatchObject({
+    constraint: "debug_companion_rejected",
+    diagnostics: { rejection: "ambiguous_member_slice" },
+  });
+  expect(resolved.error.secondaryFailures).toHaveLength(1);
+  expect(resolved.error.secondaryFailures[0]).toBeInstanceOf(
+    AnalysisCancelledError,
+  );
+  expect(resolved.error.secondaryFailures[0]?.cause).toBe(abortReason);
+  await resources.close();
+});
+
+it.each([
+  { surface: "member" as const, closeFails: false },
+  { surface: "member" as const, closeFails: true },
+  { surface: "directory" as const, closeFails: false },
+  { surface: "directory" as const, closeFails: true },
+])(
+  "keeps physical $surface EIO failure primary when caller aborts with the same error object (closeFails=$closeFails)",
+  async ({ surface, closeFails }) => {
+    const fixture = await admissionFixture();
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const physical = errno("EIO");
+    if (surface === "member") {
+      fault.openPath = fixture.member;
+      fault.memberReadFailure = physical;
+      fault.onMemberRead = () => controller.abort(physical);
+      if (closeFails) fault.memberCloseFailure = errno("EIO");
+    } else {
+      fault.dirReadFailure = physical;
+      fault.onDirRead = () => controller.abort(physical);
+      if (closeFails) fault.dirCloseFailure = errno("EIO");
+    }
+    try {
+      const resolved = await parseBinaryTarget(fixture.target, {
+        dsymPath: fixture.dsymPath,
+        resources,
+        signal: controller.signal,
+      });
+      expect(resolved.ok).toBe(false);
+      if (resolved.ok) return;
+      const primary = resolved.error.cleanupPrimary ?? resolved.error;
+      expect(primary).toBeInstanceOf(BinaryTargetError);
+      expect(primary.cause).toBe(physical);
+      expect(primary.message).toContain("EIO");
+      expect(primary.secondaryFailures).toHaveLength(1);
+      expect(primary.secondaryFailures[0]).toBeInstanceOf(
+        AnalysisCancelledError,
+      );
+      expect(primary.secondaryFailures[0]?.cause).toBe(physical);
+      expect(resolved.error.cleanupIncomplete).toBe(closeFails);
+    } finally {
+      fault.memberCloseFailure = undefined;
+      fault.dirCloseFailure = undefined;
+      if (surface === "member" || !closeFails) await resources.close();
+    }
+  },
+);
+
+it.each(["member", "directory"] as const)(
+  "preserves cancellation arriving during outer target close after a completed companion %s close failure",
+  async (companionKind) => {
+    const fixture = await admissionFixture();
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const abortReason = new Error(
+      `cancelled during outer target close after ${companionKind} close failure`,
+    );
+    if (companionKind === "member") {
+      fault.openPath = fixture.member;
+      fault.memberCloseFailure = errno("EIO");
+    } else {
+      fault.dirCloseFailure = errno("EIO");
+    }
+    fault.onOpenHandle = (openedPath, handle) => {
+      if (openedPath !== fixture.target) return;
+      const originalClose = handle.close.bind(handle);
+      handle.close = async () => {
+        controller.abort(abortReason);
+        await originalClose();
+      };
+    };
+    try {
+      const resolved = await parseBinaryTarget(fixture.target, {
+        dsymPath: fixture.dsymPath,
+        resources,
+        signal: controller.signal,
+      });
+      expect(resolved.ok).toBe(false);
+      if (resolved.ok) return;
+      expect(resolved.error).toBeInstanceOf(BinaryTargetError);
+      expect(resolved.error.cleanupIncomplete).toBe(true);
+      expect(resolved.error.cleanupPrimary).toBeInstanceOf(
+        AnalysisCancelledError,
+      );
+      expect(resolved.error.cleanupPrimary?.cause).toBe(abortReason);
+    } finally {
+      fault.memberCloseFailure = undefined;
       fault.dirCloseFailure = undefined;
       if (companionKind === "member") await resources.close();
     }

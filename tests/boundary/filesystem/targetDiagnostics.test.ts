@@ -397,33 +397,43 @@ describe("raw-binary load rejection diagnostics", () => {
 });
 
 describe("debug companion admission diagnostics", () => {
-  it("rejects dsym_path paired with an explicit headerless format", async () => {
-    const directory = await createTestTempDirectory("rea-dsym-pairing-");
-    const path = join(directory, "image.bin");
-    const dsymPath = join(directory, "image.dSYM");
-    await writeFile(path, Buffer.alloc(64));
-    const result = await parseBinaryTarget(path, {
-      formatHint: "raw-binary",
-      architecture: "arm64",
-      entryPoint: "0x100000000",
-      dsymPath,
-    });
-    if (result.ok) throw new Error("dsym with raw-binary was admitted");
-    const projected = projectAnalysisError(result.error);
-    expect(projected).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-      details: {
-        path,
-        constraint: "debug_companion_rejected",
-        diagnostics: {
-          dsym_path: dsymPath,
-          format_hint: "raw-binary",
-          rejection: "headerless_format_hint",
+  it.each([
+    {
+      formatHint: "raw-binary" as const,
+      extra: { architecture: "arm64" as const, entryPoint: "0x100000000" },
+    },
+    { formatHint: "dos-com" as const, extra: {} },
+    { formatHint: "gamecube-dol" as const, extra: {} },
+    { formatHint: "esp-flash-image" as const, extra: {} },
+  ])(
+    "rejects dsym_path paired with explicit formatHint=$formatHint",
+    async ({ formatHint, extra }) => {
+      const directory = await createTestTempDirectory("rea-dsym-pairing-");
+      const path = join(directory, "image.bin");
+      const dsymPath = join(directory, "image.dSYM");
+      await writeFile(path, Buffer.alloc(64));
+      const result = await parseBinaryTarget(path, {
+        formatHint,
+        ...extra,
+        dsymPath,
+      });
+      if (result.ok) throw new Error(`dsym with ${formatHint} was admitted`);
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          path,
+          constraint: "debug_companion_rejected",
+          diagnostics: {
+            dsym_path: dsymPath,
+            format_hint: formatHint,
+            rejection: "explicit_format_hint",
+          },
         },
-      },
-    });
-  });
+      });
+    },
+  );
 
   it("rejects dsym_path on an artifact target instead of discarding it", async () => {
     const directory = await createTestTempDirectory("rea-dsym-artifact-");

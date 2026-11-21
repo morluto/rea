@@ -29,7 +29,7 @@ const identity = {
 };
 const debugCompanionSchema = z
   .object(machODebugCompanionCommitmentShape)
-  .optional()
+  .exactOptional()
   .describe(
     "Caller-selected dSYM companion admitted for this Mach-O target; omitted when none was admitted.",
   );

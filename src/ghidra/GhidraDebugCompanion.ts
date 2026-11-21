@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, rm } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -33,9 +33,10 @@ import {
  *
  * Both descriptors live under the shared artifact file owners, exactly like
  * the target snapshot: the source is admitted as a non-blocking regular file,
- * each close runs before the staged tree is removed, a failed close retains
- * its owner in the resource scope for shutdown retry, and a primary copy or
- * digest failure is never replaced by a later close rejection.
+ * a failed close retains its owner in the resource scope for shutdown retry,
+ * partial staged entries remain owned by the private runtime root until every
+ * retained descriptor settles, and a primary copy or digest failure is never
+ * replaced by a later close rejection.
  */
 export const stageGhidraDebugCompanion = async (
   companion: MachODebugCompanion,
@@ -53,7 +54,6 @@ export const stageGhidraDebugCompanion = async (
   const resources = options.resourceScope ?? new ArtifactResourceScope();
   const { signal } = options;
   try {
-    await mkdir(stagedDirectory, { recursive: true });
     return await resources.run(() =>
       withArtifactRegularFile(
         companion.memberPath,
@@ -61,6 +61,8 @@ export const stageGhidraDebugCompanion = async (
         signal,
         async ({ handle: source }) => {
           const initial = await source.stat({ bigint: true });
+          assertArtifactReadActive(signal);
+          await mkdir(stagedDirectory, { recursive: true });
           assertArtifactReadActive(signal);
           return await withArtifactFileHandle(
             stagedMember,
@@ -84,8 +86,12 @@ export const stageGhidraDebugCompanion = async (
                 hash.update(chunk);
                 assertArtifactReadActive(signal);
               }
+              const coverage = input.readCoverage();
               const after = await source.stat({ bigint: true });
-              if (after.size > BigInt(companion.memberSizeBytes))
+              if (
+                after.size > BigInt(companion.memberSizeBytes) ||
+                coverage.bytes > BigInt(companion.memberSizeBytes)
+              )
                 throw new AnalysisArtifactChangedError(
                   "open_binary",
                   companion.memberPath,
@@ -93,6 +99,7 @@ export const stageGhidraDebugCompanion = async (
                 );
               const observed = hash.digest("hex");
               if (
+                coverage.kind !== "complete" ||
                 observed !== companion.memberSha256 ||
                 !sameRegularFileState(initial, after)
               )
@@ -117,11 +124,8 @@ export const stageGhidraDebugCompanion = async (
       ),
     );
   } catch (cause: unknown) {
-    // Both descriptors have settled, or transferred their failed-close owners
-    // to the resource scope, before the partial staged tree is removed.
-    await rm(stagedBundle, { recursive: true, force: true }).catch(
-      () => undefined,
-    );
+    // The private runtime owns partial staged entries. Its owner removes the
+    // tree after every retained descriptor settles; do not unlink a raw name.
     throw mapArtifactFileFailure(
       withCompletedStagingCancellation(cause, signal),
       classifyStagingFailure(companion),

@@ -56,7 +56,7 @@ describe("open_binary raw-binary input contract", () => {
       }).success,
     ).toBe(false);
   });
-  it("accepts absolute dsym_path without format and rejects relative or headerless pairings", () => {
+  it("accepts absolute dsym_path without format and rejects relative or explicit-format pairings", () => {
     expect(
       openBinaryInputSchema.safeParse({
         path: "/tmp/app",
@@ -69,25 +69,42 @@ describe("open_binary raw-binary input contract", () => {
         dsym_path: "rel/app.dSYM",
       }).success,
     ).toBe(false);
-    expect(
-      openBinaryInputSchema.safeParse({
+    for (const explicitInput of [
+      {
         path: "/tmp/ecu.bin",
         format: "raw-binary",
         architecture: "arm",
         entry_point: "0x8000000",
         dsym_path: "/tmp/app.dSYM",
-      }),
-    ).toMatchObject({
-      success: false,
-      error: {
-        issues: [
-          expect.objectContaining({
-            path: ["dsym_path"],
-            message: expect.stringContaining("detected Mach-O"),
-          }),
-        ],
       },
-    });
+      {
+        path: "/tmp/program.com",
+        format: "dos-com",
+        dsym_path: "/tmp/app.dSYM",
+      },
+      {
+        path: "/tmp/boot.dol",
+        format: "gamecube-dol",
+        dsym_path: "/tmp/app.dSYM",
+      },
+      {
+        path: "/tmp/flash.bin",
+        format: "esp-flash-image",
+        dsym_path: "/tmp/app.dSYM",
+      },
+    ]) {
+      expect(openBinaryInputSchema.safeParse(explicitInput)).toMatchObject({
+        success: false,
+        error: {
+          issues: [
+            expect.objectContaining({
+              path: ["dsym_path"],
+              message: expect.stringContaining("detected Mach-O"),
+            }),
+          ],
+        },
+      });
+    }
     expect(
       openBinaryInputSchema.safeParse({
         path: "/tmp/ecu.bin",

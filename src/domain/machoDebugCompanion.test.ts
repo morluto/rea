@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import { ParseFailureError } from "./parseFailure.js";
 import { ok, type Result } from "./result.js";
 import {
   debugCompanionMatches,
   matchMachOCompanionEntries,
   readMachoUuidEntries,
+  type MachOUuidParseError,
 } from "./machoDebugCompanion.js";
 
 /** The LC_UUID values an image declares, without their CPU identities. */
-const readMachoUuids = (bytes: Buffer): Result<string[], string> => {
+const readMachoUuids = (
+  bytes: Buffer,
+): Result<string[], MachOUuidParseError> => {
   const entries = readMachoUuidEntries(bytes);
   return entries.ok
     ? ok(
@@ -104,19 +108,28 @@ describe("Mach-O LC_UUID reading", () => {
     });
   });
   it.each([
-    ["short buffer", Buffer.alloc(4)],
-    [
-      "truncated load command",
-      (() => {
+    {
+      name: "short buffer",
+      bytes: Buffer.alloc(4),
+      kind: "malformed" as const,
+      field: "magic",
+      offset: 0,
+    },
+    {
+      name: "truncated load command",
+      bytes: (() => {
         const bytes = Buffer.alloc(28);
         bytes.writeUInt32LE(0xfeedfacf, 0);
         bytes.writeUInt32LE(1, 16); // one command that the header does not contain
         return bytes;
       })(),
-    ],
-    [
-      "out-of-bounds universal slice",
-      (() => {
+      kind: "truncated" as const,
+      field: "mach_header",
+      offset: 0,
+    },
+    {
+      name: "out-of-bounds universal slice",
+      bytes: (() => {
         const bytes = Buffer.alloc(28);
         bytes.writeUInt32BE(0xcafebabe, 0);
         bytes.writeUInt32BE(1, 4);
@@ -124,10 +137,25 @@ describe("Mach-O LC_UUID reading", () => {
         bytes.writeUInt32BE(0x100, 8 + 12);
         return bytes;
       })(),
-    ],
-  ])("rejects a %s", (_name, bytes) => {
-    expect(readMachoUuids(bytes).ok).toBe(false);
-  });
+      kind: "truncated" as const,
+      field: "fat_arch",
+      offset: 0x1000,
+    },
+  ])(
+    "rejects a $name with structured ParseFailureError facts",
+    ({ bytes, kind, field, offset }) => {
+      const result = readMachoUuids(bytes);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected parse failure");
+      expect(result.error).toBeInstanceOf(ParseFailureError);
+      expect(result.error.failure).toMatchObject({
+        kind,
+        format: "mach-o",
+        field,
+        offset,
+      });
+    },
+  );
 });
 
 describe("UUID entry attribution", () => {
@@ -281,19 +309,24 @@ describe("FAT container validation in readMachoUuidEntries", () => {
       name: "4-byte truncated FAT header",
       container: Buffer.from("cafebabe", "hex"),
       expectedReason: "FAT header is truncated",
+      expectedKind: "truncated" as const,
     },
     {
       name: "6-byte truncated FAT header",
       container: Buffer.from("cafebabe0001", "hex"),
       expectedReason: "FAT header is truncated",
+      expectedKind: "truncated" as const,
     },
   ])(
     "rejects a universal container with $name",
-    ({ container, expectedReason }) => {
-      expect(readMachoUuidEntries(container)).toMatchObject({
-        ok: false,
-        error: expect.stringContaining(expectedReason),
-      });
+    ({ container, expectedReason, expectedKind }) => {
+      const result = readMachoUuidEntries(container);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected FAT parse failure");
+      expect(result.error).toBeInstanceOf(ParseFailureError);
+      expect(result.error.kind).toBe(expectedKind ?? "malformed");
+      expect(result.error.failure.format).toBe("mach-o");
+      expect(result.error.message).toContain(expectedReason);
     },
   );
   it("reads a UUID declared beyond a 64 KiB load-command span", () => {
@@ -373,7 +406,33 @@ describe("LC_UUID admission invariants", () => {
       { kind: 0x1b, size: 8 + 16, payload: uuidPayload(uuid) },
       { kind: 0x1b, size: 8 + 16, payload: uuidPayload(uuid) },
     ]);
-    expect(readMachoUuids(bytes).ok).toBe(false);
+    const result = readMachoUuids(bytes);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected duplicate LC_UUID failure");
+    expect(result.error).toBeInstanceOf(ParseFailureError);
+    expect(result.error.failure).toMatchObject({
+      kind: "malformed",
+      format: "mach-o",
+      offset: 32 + 24,
+      field: "LC_UUID",
+    });
+  });
+  it("rebases thin parse failure offsets when descending into a universal slice", () => {
+    const duplicate = thinWithCommands([
+      { kind: 0x1b, size: 8 + 16, payload: uuidPayload(uuid) },
+      { kind: 0x1b, size: 8 + 16, payload: uuidPayload(uuid) },
+    ]);
+    const container = universalWithSlices([duplicate], 0x0100000c, 0);
+    const result = readMachoUuidEntries(container);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected rebased FAT slice failure");
+    expect(result.error).toBeInstanceOf(ParseFailureError);
+    expect(result.error.failure).toMatchObject({
+      kind: "malformed",
+      format: "mach-o",
+      offset: 28 + 32 + 24,
+      field: "LC_UUID",
+    });
   });
   it("ignores a UUID payload beyond the declared command span", () => {
     // ncmds=1, sizeofcmds=8: the trailing LC_UUID bytes are not a command.
@@ -391,7 +450,16 @@ describe("LC_UUID admission invariants", () => {
     bytes.writeUInt32LE(0xcffaedfe, 0);
     const result = readMachoUuids(bytes);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("truncated");
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(ParseFailureError);
+      expect(result.error.failure).toMatchObject({
+        kind: "truncated",
+        format: "mach-o",
+        offset: 0,
+        field: "mach_header",
+      });
+      expect(result.error.message).toContain("truncated");
+    }
   });
   it("rejects a one-byte slice instead of crashing on the magic read", () => {
     const container = Buffer.alloc(8 + 20 + 1);
@@ -400,7 +468,16 @@ describe("LC_UUID admission invariants", () => {
     container.writeInt32BE(0x01000007, 8);
     container.writeUInt32BE(28, 8 + 8);
     container.writeUInt32BE(1, 8 + 12);
-    expect(readMachoUuidEntries(container).ok).toBe(false);
+    const result = readMachoUuidEntries(container);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected truncated slice magic");
+    expect(result.error).toBeInstanceOf(ParseFailureError);
+    expect(result.error.failure).toMatchObject({
+      kind: "truncated",
+      format: "mach-o",
+      offset: 28,
+      field: "magic",
+    });
   });
   it("decodes a byte-swapped FAT64 container", () => {
     const slice = withUuidLoadCommand(
@@ -536,9 +613,16 @@ it.each([false, true])(
       bytes,
       header + opaque + 8,
     );
-    expect(readMachoUuids(bytes)).toMatchObject({
-      ok: false,
-      error: expect.stringContaining("invalid cmdsize"),
+    const result = readMachoUuids(bytes);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected invalid cmdsize failure");
+    expect(result.error).toBeInstanceOf(ParseFailureError);
+    expect(result.error.failure).toMatchObject({
+      kind: "malformed",
+      format: "mach-o",
+      offset: header,
+      field: "load_command",
     });
+    expect(result.error.message).toContain("invalid cmdsize");
   },
 );

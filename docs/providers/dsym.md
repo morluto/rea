@@ -34,11 +34,11 @@ explicitly. Omitting `dsym_path` keeps today's behavior: the executable is
 analyzed alone.
 
 `dsym_path` applies only to detected Mach-O executable targets
-(`mach-o` and `mach-o-universal`); pairing it with `format=raw-binary` or
-`format=dos-com` is rejected. Only fresh Ghidra imports stage the companion
-today: `REA_GHIDRA_PROJECT_PATH` opens a saved program with
-`-process -noanalysis` and rejects `dsym_path` instead of ignoring it; other
-providers leave `dsym_path` unused.
+(`mach-o` and `mach-o-universal`); pairing it with an explicit `format`
+(`raw-binary`, `dos-com`, `gamecube-dol`, or `esp-flash-image`) is rejected.
+Only fresh Ghidra imports stage the companion today: `REA_GHIDRA_PROJECT_PATH`
+opens a saved program with `-process -noanalysis` and rejects `dsym_path`
+instead of ignoring it; other providers leave `dsym_path` unused.
 
 ## How the companion reaches Ghidra
 
