@@ -55,6 +55,15 @@ cp package/native/windows/build/manifest.json native/windows/build/
 cp package/native/windows/build/rea-windows-x64.node native/windows/build/
 ```
 
+Or in PowerShell:
+
+```powershell
+npm pack rea-agents@<matching-version>
+tar -xzf rea-agents-<matching-version>.tgz
+New-Item -ItemType Directory -Force -Path native/windows/build
+Copy-Item package/native/windows/build/* native/windows/build/
+```
+
 This is a manual recovery step. REA does not fetch or install the artifact
 automatically. Alternatively, build it using the Linux/MinGW lane above.
 
