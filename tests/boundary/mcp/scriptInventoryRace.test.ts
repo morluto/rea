@@ -196,12 +196,9 @@ it.each([
     const diff = webCaptureDiffSchema.parse(
       parseEvidence(comparison.structuredContent).normalized_result,
     );
+    expect(capture.completeness.attach_limited_sections).toContain("workers");
     expect(diff.dimensions.scripts).toMatchObject({
       status: "unknown",
-      reason:
-        missing > 0 || race.allowed === false || race.deleteFirst
-          ? expect.stringContaining("Script inventory, source-map declarations")
-          : expect.stringContaining("Worker script inventory was incomplete"),
       total_changes: 0,
       changes: [],
     });

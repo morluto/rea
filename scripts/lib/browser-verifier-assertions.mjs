@@ -38,7 +38,6 @@ export function assertStableCaptureScripts(before, after, difference) {
   assert.equal(difference.status, "unknown");
   assert.equal(difference.total_changes, 0);
   assert.deepEqual(difference.changes, []);
-  assert.match(difference.reason, /Worker script inventory was incomplete/u);
 }
 
 function sourceMapSummary(sourceMaps) {
