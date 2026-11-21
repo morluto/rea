@@ -59,6 +59,18 @@ const HAR_PRODUCER_PROFILES: readonly HarProducerProfile[] = [
     label: "Chromium DevTools (WebInspector 537.36)",
     bracketedIpv6: true,
   },
+  {
+    name: "Firefox",
+    version: "135.0",
+    label: "Firefox DevTools (135.0)",
+    bracketedIpv6: true,
+  },
+  {
+    name: "Firefox",
+    version: "136.0",
+    label: "Firefox DevTools (136.0)",
+    bracketedIpv6: true,
+  },
   { name: "mitmproxy", version: "12.2.3", nullPostDataText: true },
 ];
 
