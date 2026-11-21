@@ -54,8 +54,8 @@ interface ResourceCandidate {
   readonly method: JavaScriptSemanticResourceOperation["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
-  /** The initial result is the opening Promise; later writes may replace it. */
-  readonly resultIsPromise: boolean;
+  /** A proven fs/promises.open returns a Promise that fulfills with a FileHandle. */
+  readonly provenFileHandleOpen: boolean;
 }
 
 /** Recover built-in filesystem/network acquisition and local release handles. */
@@ -403,15 +403,10 @@ const collectAcquisitions = (
         : { builtinAuthority: reference.builtinAuthority }),
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: outerDataEffectBinding(node, context),
-      resultIsPromise:
+      provenFileHandleOpen:
         reference.builtinAuthority === undefined &&
         reference.specifier === "fs/promises" &&
-        reference.method === "open" &&
-        !context.ancestors.some(
-          (parent) =>
-            t.isAwaitExpression(parent) &&
-            unwrapJavaScriptExpression(parent.argument).node === node,
-        ),
+        reference.method === "open",
     });
   });
   return output;
@@ -501,7 +496,7 @@ const collectReleases = (
     const linked = candidates.filter(
       (acquisition) =>
         releasesFor(acquisition)?.[method] !== undefined &&
-        (!acquisition.resultIsPromise ||
+        (!acquisition.provenFileHandleOpen ||
           opaqueReceiver ||
           mayReceiveFulfilledHandle(
             receiver.binding,

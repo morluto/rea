@@ -160,6 +160,30 @@ it.each([
   ).toEqual([{ method: "close", linked: 1, resolution: "complete" }]);
 });
 
+it.each([
+  ["an opening Promise", 'h = open("other.txt");', undefined],
+  ["another awaited FileHandle", 'h = await open("other.txt");', 1],
+] as const)(
+  "does not link a release to a FileHandle replaced by %s",
+  (_name, assignment, expectedAcquisition) => {
+    const result = operations(
+      'import { open } from "node:fs/promises"; let h = await open("input.txt"); ' +
+        assignment +
+        " h.close();",
+    );
+    const acquired = result.filter(({ kind }) => kind === "acquire");
+    const released = result.filter(({ kind }) => kind === "release");
+    expect(acquired).toHaveLength(2);
+    expect(
+      released.flatMap(({ linkedResourceIds }) => linkedResourceIds),
+    ).toEqual(
+      expectedAcquisition === undefined
+        ? []
+        : [acquired[expectedAcquisition]?.resourceId],
+    );
+  },
+);
+
 it("keeps the awaited candidate partial when a Promise can replace it", () => {
   const result = operations(`
     import { open } from "node:fs/promises";
