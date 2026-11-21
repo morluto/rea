@@ -68,18 +68,32 @@ it("rejects an empty PID before observing process exit", async () => {
   await expect(expectOwnedProcessExited(Number(""))).rejects.toThrow();
 });
 
-it("keeps persistent GDB sessions unavailable on Windows", async () => {
-  const gdb = await createGdbManagerForInjectedPlatform({
-    environment: { REA_GDB_COMMAND: "/missing/gdb" },
-    platform: "win32",
-  }).start();
+it.each([
+  ["win32", "Job Object"],
+  ["darwin", "available only on Linux"],
+] as const)(
+  "rejects persistent GDB on %s before launching a provider",
+  async (platform, reason) => {
+    let spawnCalls = 0;
+    const gdb = await createGdbManagerForInjectedPlatform({
+      platform,
+      spawnProcess: async () => {
+        spawnCalls += 1;
+        throw new Error("unexpected provider launch");
+      },
+    }).start();
 
-  expect(gdb.ok).toBe(false);
-  if (!gdb.ok) {
-    expect(gdb.error._tag).toBe("AnalysisCapabilityUnavailableError");
-    expect(gdb.error.message).toContain("Job Object");
-  }
-});
+    expect(gdb).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "start_gdb_session",
+        message: expect.stringContaining(reason),
+      },
+    });
+    expect(spawnCalls).toBe(0);
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "spawns GDB from the provider environment snapshot",
@@ -135,6 +149,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-gdb-startup-early-exit-"));
     const provider = join(directory, "fake-gdb-exits-during-config.mjs");
+    const diagnostic = String.raw`~"GDB startup diagnostic\n"`;
     await writeFile(
       provider,
       `#!${process.execPath}
@@ -146,8 +161,7 @@ process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (match && line.includes("auto-load off")) {
-      process.stdout.write("~\\"GDB startup diagnostic\\n\\"\\n");
-      process.exit(7);
+      process.stdout.write(${JSON.stringify(diagnostic + "\n")}, () => process.exit(7));
     }
   }
 });
@@ -156,7 +170,6 @@ process.stdin.on("data", (chunk) => {
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
       environment: { REA_GDB_COMMAND: provider },
-      startupTimeoutMs: 1_000,
     });
     managers.push(manager);
 
@@ -168,10 +181,7 @@ process.stdin.on("data", (chunk) => {
         _tag: "AnalysisCapabilityUnavailableError",
         operation: "start_gdb_session",
       });
-      expect(started.error).not.toMatchObject({ _tag: "AnalysisTimeoutError" });
-      expect(JSON.stringify(started.error)).toContain("GDB startup diagnostic");
       expect(started.error.message).toContain("exit code 7, signal null");
-      expect(JSON.stringify(started.error)).toContain("process_exit_observed");
       expect(started.error.partialObservation).toMatchObject({
         parameters: {
           command: "-gdb-set auto-load off",
@@ -179,6 +189,7 @@ process.stdin.on("data", (chunk) => {
         raw_result: {
           process_exit_code: 7,
           process_exit_observed: true,
+          records: expect.arrayContaining([diagnostic]),
           completion_status: "unknown",
         },
       });

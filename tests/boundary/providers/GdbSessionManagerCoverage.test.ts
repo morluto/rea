@@ -169,43 +169,21 @@ it.each([
   expect(gdbOneShotCommandMayInvalidateDetachProof(command)).toBe(expected);
 });
 
-it("rejects an invalid caller TTY and platforms without safe GDB ownership", async () => {
-  const invalid = await new GdbSessionManager().start(undefined, {
-    inferiorTty: "bad\0tty",
-  });
+it("rejects a caller TTY containing NUL before launching GDB", async () => {
+  const fake = createFakeSpawner();
+  const invalid = await managerWithFakeSpawner(fake.spawnProcess).start(
+    undefined,
+    { inferiorTty: "bad\0tty" },
+  );
   expect(invalid).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisInputError" },
-  });
-
-  let macSpawned = false;
-  const macos = new GdbSessionManager({
-    platform: "darwin",
-    spawnProcess: async () => {
-      macSpawned = true;
-      throw new Error("unsupported hosts must not spawn GDB");
+    error: {
+      _tag: "AnalysisInputError",
+      operation: "start_gdb_session",
+      issues: [{ path: ["inferior_tty"], reason: "invalid_value" }],
     },
   });
-  managers.push(macos);
-  const macUnavailable = await macos.start();
-  expect(macUnavailable).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCapabilityUnavailableError" },
-  });
-  if (!macUnavailable.ok)
-    expect(macUnavailable.error.message).toContain("available only on Linux");
-  expect(macSpawned).toBe(false);
-
-  const windows = new GdbSessionManager({
-    spawnProcess: fixtureOwner.spawnProcess,
-    platform: "win32",
-  });
-  managers.push(windows);
-  const unavailable = await windows.start();
-  expect(unavailable).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCapabilityUnavailableError" },
-  });
+  expect(fake.children).toHaveLength(0);
 });
 
 class FakeGdbProcess extends EventEmitter implements ProviderProcessHandle {
@@ -1991,18 +1969,26 @@ it("handles a provider with no MI stdout stream as a startup timeout", async () 
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
 });
 
-it("preserves a timeout while startup waits for the automatic-loading response", async () => {
-  const fake = createFakeSpawner((_child, _token, _command) => undefined);
+it("reports the configured deadline when GDB leaves the auto-load request unanswered", async () => {
+  const disableAutoLoad = "-gdb-set auto-load off";
+  const commands: string[] = [];
+  const fake = createFakeSpawner((child, token, command) => {
+    commands.push(command);
+    if (command !== disableAutoLoad)
+      child.stdout.write(`${token}^error,msg="unexpected startup request"\n`);
+  });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
   });
 
   const started = await manager.start();
 
-  if (started.ok) throw new Error("expected startup to time out");
-  expect(started.error._tag).toBe("AnalysisTimeoutError");
-  if (!(started.error instanceof AnalysisTimeoutError)) throw started.error;
-  expect(started.error.operation).toBe("start_gdb_session");
+  if (started.ok) throw new Error("expected the auto-load request to time out");
+  expect(started.error).toMatchObject({
+    _tag: "AnalysisTimeoutError",
+    operation: "start_gdb_session",
+    cleanupIncomplete: false,
+  });
   expect(projectAnalysisError(started.error)).toMatchObject({
     code: "provider_timeout",
     details: {
@@ -2024,22 +2010,11 @@ it("preserves a timeout while startup waits for the automatic-loading response",
       },
     },
   });
-  expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
-});
-
-it("maps an acknowledged startup-command timeout to the startup operation", async () => {
-  const fake = createFakeSpawner((_child, _token, _command) => undefined);
-  const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    environment: { REA_DEBUGGER_COMMAND_DEADLINE_MS: "20" },
-    stopProcess: async () => ({ status: "stopped" }),
-  });
-
-  const started = await manager.start();
-
-  expect(started).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisTimeoutError", operation: "start_gdb_session" },
-  });
+  expect(commands).toEqual([disableAutoLoad, disableAutoLoad]);
+  expect(fake.children.map((child) => child.signalCode)).toEqual([
+    "SIGTERM",
+    "SIGTERM",
+  ]);
 });
 
 it("retains startup timeout without partial evidence when cleanup is uncertain", async () => {
