@@ -31,11 +31,10 @@ export const originalCasesFor = (
 /** Report original cases that are absent or lack comparable Evidence authority. */
 export const originalCaseDiagnostics = (
   candidate: ReconstructionObligationCandidate,
-  binding: Binding | null,
+  originalCases: ReconstructionObligation["observed_cases"],
   evidenceById: ReadonlyMap<string, Evidence>,
 ): Diagnostic[] => {
   const diagnostics: Diagnostic[] = [];
-  const originalCases = originalCasesFor(candidate, binding);
   // Retain optional case rows, but never leave one of their Evidence links
   // unresolved merely because its kind is not required for closure.
   for (const { kind, evidence_id: evidenceId } of originalCases)

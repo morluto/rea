@@ -46,6 +46,18 @@ fingerprint and the same known architecture. Extents are never guessed from the
 next entry, and relocations are not normalized. A larger mapped read can serve
 several observed bodies; only needed ranges need to be captured.
 
+For a matched function, its `evidence_links` include the selected byte reads
+that covered its body. Request the `function-matches` view with
+`collection: "byte-sources"` to page the selected `read_bytes` source IDs,
+sides and limitations; intersect those IDs with the function's links. This
+distinguishes, for example, Ghidra initialized-memory bytes from file bytes.
+Identical overlapping reads retain the selected covering source, not every
+corroborating read. Pages preserve the original source limitations and may end
+early when the response budget is reached. If one source is too large for a
+page, the error identifies its Evidence and the next offset; inspect the
+original matching Evidence or export it if retained, then resume at that
+offset. Older matching Evidence may not record this source selection.
+
 This first slice reuses existing range observations. Stripped builds can require
 many lightweight range queries when those facts are not retained yet. Matching
 does not hide that acquisition cost or silently start those queries. Full
@@ -57,6 +69,15 @@ renaming, inlining, stripping, changed bytes or incomplete discovery can explain
 them. They do not prove source addition/removal. `source_coverage` explicitly keeps
 inventory completeness unknown and separately counts known byte fingerprints and
 resolved correspondence. Provider limitations remain accessible.
+
+`source_coverage.status` is scoped by `scope: "provider-observed-inputs"`.
+`complete-within-inputs` means every supplied inventory row was paired: no
+`only_left`, `only_right` or `unresolved` rows remain. It does not say the
+inventories cover either binary; `left_inventory_completeness` and
+`right_inventory_completeness` stay `unknown`, so a function missing from both
+inventories is outside this result. `partial` means at least one supplied row
+remains unpaired (`only_left`/`only_right`) or unresolved (repeated candidates
+that cannot be paired uniquely).
 
 Default `detail: "summary"` retains complete matching Evidence in MCP and returns
 counts, both identities and coverage. Query its `parent_evidence_id`:
@@ -83,7 +104,8 @@ counts, both identities and coverage. Query its `parent_evidence_id`:
 counts. Large member lists are omitted by default; select `left`/`right` columns
 explicitly or page individual `functions`. Batch `match_ids`/`function_ids`, exact function `names`, state
 and side filters intersect. Mandatory identities and provenance survive column
-selection. Page coverage covers selected retained facts. Function identity binds
+selection. Default function rows include member limitations; an explicit `fields`
+selection can omit them. Page coverage covers selected retained facts. Function identity binds
 inventory Evidence and the owning inventory’s `source_index`, preserving same-address alternatives.
 One validation, lazy member index and bounded recent filter are retained per
 immutable parent; no live target state is cached.

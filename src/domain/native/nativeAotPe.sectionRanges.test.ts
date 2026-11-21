@@ -63,7 +63,7 @@ it.each([
     );
     expect(result.summary).toMatchObject({
       status: "not_applicable",
-      reason: "PE virtual section overlaps headers or another section",
+      reason: { code: "virtual_section_overlap" },
       coverage: { basis: "unsupported-layout" },
     });
   },
@@ -138,7 +138,7 @@ it("rejects a PE header that reuses DOS header fields", () => {
   );
   expect(result.summary).toMatchObject({
     status: "not_applicable",
-    reason: "PE header overlaps the DOS header",
+    reason: { code: "pe_header_overlaps_dos" },
     coverage: { basis: "unsupported-layout" },
   });
 });
@@ -163,7 +163,7 @@ it.each([
     } else {
       expect(result.summary).toMatchObject({
         status: "not_applicable",
-        reason: "PE image exceeds the 64-bit address domain",
+        reason: { code: "address_domain" },
         coverage: { basis: "unsupported-layout" },
       });
     }

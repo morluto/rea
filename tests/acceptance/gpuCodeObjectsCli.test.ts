@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,22 +9,27 @@ import { gpuCodeObjectsSchema } from "../../src/domain/gpu/gpuCodeObjects.js";
 import {
   gpuCodeObjectsPageViewResultSchema,
   gpuCodeObjectsSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import {
   cudaFixture,
+  peGpuFixture,
   ccobFixture,
   ptxFixture,
   amdFixture,
+  amdDescriptorNoteFixture,
+  amdNoteFixture,
   cubinFixture,
   hipFixture,
   elfFixture,
   llvmBitcodeFixture,
 } from "../fixtures/gpu/codeObjects.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 cliTest(
   "reads CUDA/PTX and compressed HIP through the public CLI",
@@ -64,6 +70,145 @@ cliTest(
       expect(report.kernels[0]!.parameter_bytes).toBe(12);
       expect(report.coverage.payloads).toBe("complete");
     }
+  },
+);
+
+cliTest(
+  "reports the decoded payload identity of a CUDA 0x2000 LZ4 entry",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-cuda-lz4-"),
+      path = join(root, "application"),
+      ptx = Buffer.from(ptxFixture),
+      bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]);
+    await writeFile(path, bytes);
+    const response = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        path,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const evidence = parseEvidence(
+      toolContract("inspect_gpu_code_objects").outputSchema.parse(
+        response.json,
+      ),
+    );
+    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
+    expect(report.artifact.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(report.objects[0]).toMatchObject({
+      kind: "ptx",
+      compression: "lz4",
+      compression_id: "cuda-flags:0x2011",
+      decoded_size: ptx.length,
+      sha256: createHash("sha256").update(ptx).digest("hex"),
+      inspection: "complete",
+    });
+    expect(report.ptx_artifacts.map((row) => row.text)).toEqual([ptxFixture]);
+    expect(report.coverage.payloads).toBe("complete");
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_gpu_code_objects", {
+      path,
+      analysis: "kernels",
+      detail: "complete",
+    });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    expect(
+      gpuCodeObjectsSchema.parse(
+        parseEvidence(reply.structuredContent).normalized_result,
+      ).objects[0],
+    ).toMatchObject({
+      compression: "lz4",
+      sha256: createHash("sha256").update(ptx).digest("hex"),
+    });
+  },
+);
+
+cliTest(
+  "reports the AMD metadata nesting allowance while retaining a preceding kernel",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-amdgpu-metadata-depth-");
+    const path = join(root, "amdgpu");
+    // A one-entry map whose value is 32 nested single-element MessagePack arrays.
+    const metadata = Buffer.from([
+      0x81,
+      0xa1,
+      0x78,
+      ...Array<number>(32).fill(0x91),
+      0,
+    ]);
+    await writeFile(
+      path,
+      amdFixture(false, amdDescriptorNoteFixture(metadata)),
+    );
+    const response = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        path,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const report = gpuCodeObjectsSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    expect(report.objects[0]).toMatchObject({
+      inspection: "capacity",
+      limitations: expect.arrayContaining([
+        "AMDGPU metadata exceeds its 32-level nesting allowance",
+      ]),
+      amd_target_metadata: {
+        note_coverage: "partial",
+        notes: [expect.any(Object)],
+      },
+    });
+    expect(report.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  },
+);
+
+cliTest(
+  "reports an exhausted ELF symbol string scan as capacity instead of corruption",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-cubin-string-limit-");
+    const bytes = cubinFixture({ name: "k".repeat(65_536) });
+    const path = join(root, "long-symbol.cubin");
+    await writeFile(path, bytes);
+    const response = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        path,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const evidence = parseEvidence(
+      toolContract("inspect_gpu_code_objects").outputSchema.parse(
+        response.json,
+      ),
+    );
+    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
+    expect(report.objects[0]).toMatchObject({
+      kind: "cubin",
+      inspection: "capacity",
+    });
+    expect(report.artifact.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(report.coverage.payloads).toBe("partial");
   },
 );
 
@@ -842,6 +987,36 @@ cliTest(
   },
 );
 
+cliTest(
+  "publishes and enforces the lowercase --expected_sha256 digest",
+  async ({ cli }) => {
+    const schema = await cli.run({
+      arguments: ["inspect-gpu-code-objects", "--schema", "--json"],
+    });
+    expect(schema.exitCode, schema.stderr).toBe(0);
+    expect(schema.json).toMatchObject({
+      options: {
+        properties: { expected_sha256: { pattern: "^[a-f0-9]{64}$" } },
+      },
+    });
+    // PowerShell's Get-FileHash prints the digest in upper case.
+    const response = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        "/not-opened-for-invalid-selectors",
+        "--expected_sha256",
+        "AB".repeat(32),
+        "--json",
+      ],
+    });
+    expect(response.exitCode).toBe(1);
+    expect(response.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: "expected_sha256" })],
+    });
+  },
+);
+
 it("preserves incomplete decoder coverage through MCP target and object pages", async () => {
   const root = await createTestTempDirectory("rea-gpu-partial-"),
     { call } = await connectLocalToolsMcp();
@@ -984,6 +1159,36 @@ it("keeps unknown target discovery visible in the default MCP summary", async ()
   }
 });
 
+it("preserves omitted AMD metadata in selected MCP object pages", async () => {
+  const root = await createTestTempDirectory("rea-gpu-metadata-columns-"),
+    path = join(root, "amd");
+  await writeFile(path, amdFixture());
+  const { call } = await connectLocalToolsMcp();
+  const inspected = await call("inspect_gpu_code_objects", {
+    path,
+    analysis: "kernels",
+    view: { collection: "objects", fields: ["amd_target_metadata"] },
+  });
+  expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+  const full = gpuCodeObjectsPageViewResultSchema.parse(
+    parseEvidence(inspected.structuredContent).normalized_result,
+  );
+  expect(full.items[0]).toHaveProperty(
+    "amd_target_metadata.processor",
+    "gfx900",
+  );
+  const selected = await call("inspect_analysis_view", {
+    source: { kind: "retained-evidence", evidence_id: full.parent_evidence_id },
+    view: { kind: "gpu-code-objects", collection: "objects", fields: ["kind"] },
+  });
+  expect(selected.isError, JSON.stringify(selected)).not.toBe(true);
+  const page = gpuCodeObjectsPageViewResultSchema.parse(
+    parseEvidence(selected.structuredContent).normalized_result,
+  );
+  expect(page.items).toHaveLength(1);
+  expect(page.items[0]).not.toHaveProperty("amd_target_metadata");
+});
+
 it("retains selected kernel facts and complete PTX for historical MCP pages after source removal", async () => {
   const root = await createTestTempDirectory("rea-gpu-mcp-"),
     path = join(root, "application");
@@ -1106,11 +1311,15 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
   );
   forgedHeaderReport.objects[1]!.cuda_target_header!.location.container_id =
     forgedHeaderReport.objects[0]!.id;
-  const forgedHeader = createEvidence(undefined, parent.provider, {
-    operation: parent.operation,
-    parameters: parent.parameters,
-    result: forgedHeaderReport,
-  });
+  const forgedHeader = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: parent.operation,
+      parameters: parent.parameters,
+      result: forgedHeaderReport,
+    },
+  );
   expect(
     parseMcpToolError(
       await call("inspect_analysis_view", {
@@ -1120,11 +1329,15 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
     ).error,
   ).toMatchObject({ code: "invalid_request" });
   report.objects[1]!.id = report.objects[0]!.id;
-  const forged = createEvidence(undefined, parent.provider, {
-    operation: "inspect_gpu_code_objects",
-    parameters: parent.parameters,
-    result: report,
-  });
+  const forged = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: "inspect_gpu_code_objects",
+      parameters: parent.parameters,
+      result: report,
+    },
+  );
   const failure = parseMcpToolError(
     await call("inspect_analysis_view", {
       source: { kind: "inline", evidence: forged },
@@ -1148,4 +1361,195 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
     }),
   );
   expect(identityFailure.error).toMatchObject({ code: "invalid_request" });
+});
+
+cliTest(
+  "uses DOS relocation ownership before GPU section discovery through the CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-gpu-dos-relocations-cli-");
+    const path = join(root, "selected.exe");
+    const bytes = peGpuFixture();
+    bytes.writeUInt16LE(bytes.length % 512, 2);
+    bytes.writeUInt16LE(Math.ceil(bytes.length / 512), 4);
+    bytes.writeUInt16LE(2, 8);
+    await writeFile(path, bytes);
+    const args = [
+      "inspect-gpu-code-objects",
+      path,
+      "--analysis",
+      "inventory",
+      "--json",
+    ];
+    const valid = await cli.run({ arguments: args });
+    expect(valid.exitCode, valid.stderr).toBe(0);
+    bytes.writeUInt16LE(1, 6);
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt16LE(60, 24);
+    await writeFile(path, bytes);
+    const refused = await cli.run({ arguments: args });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "inspect_gpu_code_objects",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining(
+              "MZ header does not declare a PE image",
+            ),
+          }),
+        ],
+      },
+    });
+  },
+);
+
+cliTest(
+  "retains AMD target declarations and examined note coverage through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-amd-target-sources-");
+    const { call } = await connectLocalToolsMcp();
+    const first = "amdgcn-amd-amdhsa--gfx900";
+    const second = "amdgcn-amd-amdhsa--gfx1100";
+    const legacyNote = Buffer.alloc(20);
+    legacyNote.writeUInt32LE(4, 0);
+    legacyNote.writeUInt32LE(4, 4);
+    legacyNote.writeUInt32LE(10, 8);
+    legacyNote.write("AMD\0", 12);
+    const headerConflict = amdFixture();
+    headerConflict.writeUInt32LE(0x141, 48);
+    for (const [name, bytes, declarations, coverage, effective] of [
+      [
+        "note-conflict",
+        amdFixture(false, amdNoteFixture(false, second)),
+        [first, second],
+        "complete",
+        null,
+      ],
+      ["header-conflict", headerConflict, [first], "complete", null],
+      [
+        "duplicate",
+        amdFixture(false, amdNoteFixture()),
+        [first, first],
+        "complete",
+        first,
+      ],
+      ["legacy-tail", amdFixture(false, legacyNote), [first], "partial", first],
+      [
+        "invalid-target",
+        amdFixture(false, undefined, 123),
+        [null],
+        "partial",
+        null,
+      ],
+      [
+        "absent-target",
+        amdFixture(false, undefined, null),
+        [null],
+        "complete",
+        "gfx900",
+      ],
+      [
+        "truncated-tail",
+        amdFixture(false, Buffer.alloc(3)),
+        [first],
+        "partial",
+        first,
+      ],
+    ] as const) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      const response = await cli.run({
+        arguments: [
+          "inspect-gpu-code-objects",
+          path,
+          "--analysis",
+          "kernels",
+          "--detail",
+          "complete",
+          "--json",
+        ],
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      const reply = await call("inspect_gpu_code_objects", {
+        path,
+        analysis: "kernels",
+        detail: "complete",
+      });
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      for (const value of [response.json, reply.structuredContent]) {
+        const report = gpuCodeObjectsSchema.parse(
+          parseEvidence(value).normalized_result,
+        );
+        const row = report.objects[0]!;
+        expect(row).toMatchObject({
+          target: effective,
+          payload_target: effective,
+        });
+        const metadata = row.amd_target_metadata!;
+        expect(metadata).toMatchObject({
+          flags: name === "header-conflict" ? "0x00000141" : "0x0000012c",
+          processor: name === "header-conflict" ? "gfx1100" : "gfx900",
+          header_location: { container_id: row.id, offset: 0, size: 64 },
+          note_coverage: coverage,
+        });
+        expect(metadata.notes.map(({ target }) => target)).toEqual(
+          declarations,
+        );
+        expect(
+          new Set(metadata.notes.map(({ location }) => location.offset)).size,
+        ).toBe(declarations.length);
+        for (const note of metadata.notes) {
+          expect(note.location.container_id).toBe(row.id);
+          expect(note.location.section_name).toBe(".note");
+          const source = bytes.subarray(
+            note.location.offset,
+            note.location.offset + note.location.size,
+          );
+          if (note.target !== null)
+            expect(source.includes(Buffer.from(note.target))).toBe(true);
+          expect(note.target_state).toBe(
+            name === "invalid-target"
+              ? "invalid"
+              : name === "absent-target"
+                ? "absent"
+                : "declared",
+          );
+        }
+        expect(report.kernels).toHaveLength(declarations.length);
+        if (coverage === "partial")
+          expect(report.coverage.payloads).toBe("partial");
+      }
+    }
+  },
+);
+
+it("does not interpret non-AMD ELF flags as AMD processor declarations through MCP", async () => {
+  const root = await createTestTempDirectory("rea-amd-machine-");
+  const path = join(root, "wrong-machine");
+  const payload = amdFixture();
+  payload.writeUInt16LE(62, 18);
+  await writeFile(path, hipFixture(payload, "hip-amdgcn-amd-amdhsa--"));
+  const { call } = await connectLocalToolsMcp();
+  const reply = await call("inspect_gpu_code_objects", {
+    path,
+    analysis: "kernels",
+    detail: "complete",
+  });
+  expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+  const report = gpuCodeObjectsSchema.parse(
+    parseEvidence(reply.structuredContent).normalized_result,
+  );
+  expect(report.objects.find(({ kind }) => kind === "amdgpu")).toMatchObject({
+    target: null,
+    payload_target: null,
+    amd_target_metadata: null,
+    target_consistency: "unknown",
+    inspection: "malformed",
+  });
+  expect(report.kernels).toEqual([]);
+  expect(report.coverage.payloads).toBe("partial");
 });

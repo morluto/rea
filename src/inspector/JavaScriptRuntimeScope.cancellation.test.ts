@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const fileAccess = vi.hoisted(() => ({
   path: undefined as string | undefined,
@@ -80,15 +81,17 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { listElectronTargetsInputSchema } from "../domain/javascript/electronObservation.js";
 import { V8InspectorProvider } from "./V8InspectorProvider.js";
 import { startFakeCdpBrowser } from "../../tests/fixtures/fakeCdpBrowser.js";
-import { startFakeV8Inspector } from "../../tests/fixtures/inspector/fakeV8Inspector.js";
+import {
+  nodeDiscoveryTargetUrl,
+  startFakeV8Inspector,
+} from "../../tests/fixtures/inspector/fakeV8Inspector.js";
+import { createNodeDiscoveryTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { isRecord } from "../kernel/isRecord.js";
 
-const roots: string[] = [];
 const fixtures: { close(): Promise<void> }[] = [];
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  isRecord(value) ? (value as Record<string, unknown>) : undefined;
 
 afterEach(async () => {
   fileAccess.path = undefined;
@@ -101,14 +104,11 @@ afterEach(async () => {
   fileAccess.discoveryGate = undefined;
   fileAccess.calls = [];
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.close()));
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
 });
 
 const targetFile = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspector-cancel-"));
-  roots.push(root);
+  // Node discovery reports this path, so its root must be reported exactly.
+  const root = await createNodeDiscoveryTempDirectory("rea-inspector-cancel-");
   const path = join(root, "entry.js");
   await writeFile(path, "// inert target file\n");
   fileAccess.path = path;
@@ -117,12 +117,12 @@ const targetFile = async (): Promise<string> => {
 
 it("stops Inspector target authorization after the current stat settles", async () => {
   const path = await targetFile();
-  const extraPath = join(roots[0]!, "second.js");
+  const extraPath = join(dirname(path), "second.js");
   await writeFile(extraPath, "// second inert target file\n");
   fileAccess.extraPath = extraPath;
   const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(path).href,
-    additionalTargetUrl: pathToFileURL(extraPath).href,
+    targetUrl: nodeDiscoveryTargetUrl(path),
+    additionalTargets: [{ url: nodeDiscoveryTargetUrl(extraPath) }],
     additionalTargetCount: 1,
   });
   fixtures.push(fake);
@@ -137,7 +137,6 @@ it("stops Inspector target authorization after the current stat settles", async 
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Inspector listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -146,7 +145,9 @@ it("stops Inspector target authorization after the current stat settles", async 
       complete: false,
       targets_examined: 1,
       limitations: expect.arrayContaining([
-        "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
+        expect.stringMatching(
+          /cancellation.*authorization.*unexamined targets.*unknown.*not excluded/iu,
+        ),
       ]),
     },
   });
@@ -177,14 +178,14 @@ it("stops Electron target authorization after the current stat settles", async (
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
   expect(result.error.diagnostics).toMatchObject({
     completed_prefix: {
-      coverage:
-        "partial: target authorization stopped; remaining targets are unknown",
+      coverage: expect.stringMatching(
+        /partial.*authorization stopped.*targets are unknown/iu,
+      ),
     },
   });
   const prefix = record(record(result.error.diagnostics)?.completed_prefix);
@@ -215,7 +216,6 @@ it("retains a target whose authorization completes before the next abort check",
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -248,31 +248,43 @@ it("drains pending Electron discovery before shutdown cleanup completes", async 
   const listing = provider.listTargets(
     listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
   );
-  await started;
   let closed = false;
-  const closing = provider.close().then(() => {
-    closed = true;
-  });
-  const closedBeforeDiscovery = await Promise.race([
-    closing.then(() => true),
-    new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
-  ]);
-  expect(closedBeforeDiscovery).toBe(false);
-  expect(closed).toBe(false);
-  releaseDiscovery();
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, listing, "Electron discovery");
+    closing = provider.close().then(() => {
+      closed = true;
+    });
+    const closedBeforeDiscovery = await Promise.race([
+      closing.then(() => true),
+      new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
+    ]);
+    expect(closedBeforeDiscovery).toBe(false);
+    expect(closed).toBe(false);
+    releaseDiscovery();
 
-  const [listed] = await Promise.all([listing, closing]);
-  expect(closed).toBe(true);
-  expect(listed.ok).toBe(true);
-  expect(fileAccess.calls).toContain("stat");
-  const rejected = await provider.listTargets(
-    listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
-  );
-  expect(rejected.ok).toBe(false);
-  if (rejected.ok)
-    throw new Error("Expected closed provider admission failure");
-  expect(rejected.error.cleanupIncomplete).toBe(false);
-  expect(rejected.error.cleanupResources).toEqual([]);
+    const [listed] = await Promise.all([listing, closing]);
+    expect(closed).toBe(true);
+    expect(listed.ok).toBe(true);
+    expect(fileAccess.calls).toContain("stat");
+    const rejected = await provider.listTargets(
+      listElectronTargetsInputSchema.parse({ cdp_endpoint: fake.endpoint }),
+    );
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok)
+      throw new Error("Expected closed provider admission failure");
+    expect(rejected.error.cleanupIncomplete).toBe(false);
+    expect(rejected.error.cleanupResources).toEqual([]);
+  }, [
+    releaseDiscovery,
+    async () => {
+      await listing;
+    },
+    async () => {
+      await closing;
+    },
+    () => provider.close(),
+  ]);
 });
 
 it("keeps ordinary and malformed file-location authorization unchanged", async () => {

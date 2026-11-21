@@ -1,3 +1,4 @@
+import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -15,6 +16,7 @@ import {
   type HarmonyApplicationProjectionResult,
 } from "../../src/domain/harmony/harmonyApplication.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const expectProjectionParity = (
   graph: HarmonyApplicationProjectionResult,
@@ -45,10 +47,7 @@ const expectProjectionParity = (
   });
 };
 
-test("preserves Harmony archive formats through the public CLI/MCP lifecycle", async ({
-  cli,
-  workspace,
-}) => {
+const harmonyFixture = async () => {
   const writer = new ZipWriter(new Uint8ArrayWriter());
   await writer.add(
     "module.json",
@@ -58,12 +57,61 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
     "ets/modules.abc",
     new TextReader("opaque bytecode fixture"),
   );
+  await writer.add("ets/current", new TextReader("modules.abc"), {
+    unixMode: 0o120777,
+  });
+  await writer.add("pkgContextInfo.json", new TextReader("{}"));
+  await writer.add(".pages.info", new TextReader("page metadata fixture"));
   const javascriptPaths = ["cts", "jsx", "mts", "ts", "tsx"].map(
     (extension) => `assets/js/index.${extension}`,
   );
   for (const path of javascriptPaths)
     await writer.add(path, new TextReader("export const value = 1;"));
-  const bytes = await writer.close();
+  return { bytes: await writer.close(), javascriptPaths };
+};
+
+/** Assert the projected Harmony graph for one archive format over the MCP adapter. */
+const expectHarmonyProjection = (
+  graph: HarmonyApplicationProjectionResult,
+  format: string,
+  sha256: string,
+  javascriptPaths: readonly string[],
+): void => {
+  expect(graph).toMatchObject({
+    root_format: format,
+    root_sha256: sha256,
+    coverage: { status: "complete-within-inventory" },
+    unavailable_components: [],
+    unclassified_components: [
+      expect.objectContaining({
+        path: ".pages.info",
+        sha256: createHash("sha256")
+          .update("page metadata fixture")
+          .digest("hex"),
+      }),
+      expect.objectContaining({
+        path: "pkgContextInfo.json",
+        sha256: createHash("sha256").update("{}").digest("hex"),
+      }),
+    ],
+  });
+  expect(graph.components.manifests.map(({ path: member }) => member)).toEqual([
+    "module.json",
+  ]);
+  expect(graph.components.bytecode.map(({ path: member }) => member)).toEqual([
+    "ets/modules.abc",
+  ]);
+  expect(graph.components.javascript.map(({ path: member }) => member)).toEqual(
+    javascriptPaths,
+  );
+  expect(graph.runtime_families).toEqual(["ark", "javascript"]);
+};
+
+test("preserves Harmony archive formats through the public CLI/MCP lifecycle", async ({
+  cli,
+  workspace,
+}) => {
+  const { bytes, javascriptPaths } = await harmonyFixture();
   const environment = {
     PATH: process.env.PATH ?? "",
     HOME: workspace.root,
@@ -74,7 +122,10 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
     NODE_OPTIONS: "--max-old-space-size=512",
     REA_LOG_LEVEL: "silent",
   };
-  const client = new Client({ name: "rea-harmony-acceptance", version: "1" });
+  const client = new Client(
+    { name: "rea-harmony-acceptance", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -101,11 +152,19 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       const cliInventory = artifactInspectionResultSchema.parse(
         cliEvidence.normalized_result,
       );
+      expect(
+        cliInventory.substeps[0]?.evidence.normalized_result.occurrences,
+      ).toContainEqual(
+        expect.objectContaining({
+          logical_path: "ets/current",
+          entry_kind: "symlink",
+        }),
+      );
       expect(cliInventory.subject).toMatchObject({
         root_format: format,
         root_sha256: sha256,
       });
-      const opened = await client.callTool({
+      const opened = await artifactMcpCall(client, {
         name: "open_binary",
         arguments: { path },
       });
@@ -113,7 +172,7 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       expect(opened.structuredContent).toMatchObject({
         result: { kind: "archive", format, sha256 },
       });
-      const status = await client.callTool({
+      const status = await artifactMcpCall(client, {
         name: "binary_session",
         arguments: {},
       });
@@ -121,7 +180,7 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       expect(status.structuredContent).toMatchObject({
         result: { open: true, kind: "archive", format, sha256 },
       });
-      const inspected = await client.callTool({
+      const inspected = await artifactMcpCall(client, {
         name: "inspect_artifact",
         arguments: {},
       });
@@ -133,7 +192,7 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
         ),
       ).toEqual(cliInventory);
 
-      const projected = await client.callTool({
+      const projected = await artifactMcpCall(client, {
         name: "project_harmony_application_graph",
         arguments: { inventory_evidence: [inventoryEvidence] },
       });
@@ -141,21 +200,7 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
       const graph = harmonyApplicationProjectionResultSchema.parse(
         parseEvidence(projected.structuredContent).normalized_result,
       );
-      expect(graph).toMatchObject({
-        root_format: format,
-        root_sha256: sha256,
-        coverage: { status: "complete-within-inventory" },
-      });
-      expect(
-        graph.components.manifests.map(({ path: member }) => member),
-      ).toEqual(["module.json"]);
-      expect(
-        graph.components.bytecode.map(({ path: member }) => member),
-      ).toEqual(["ets/modules.abc"]);
-      expect(
-        graph.components.javascript.map(({ path: member }) => member),
-      ).toEqual(javascriptPaths);
-      expect(graph.runtime_families).toEqual(["ark", "javascript"]);
+      expectHarmonyProjection(graph, format, sha256, javascriptPaths);
       const projectionInput = workspace.path("projection-input.json");
       await writeFile(
         projectionInput,
@@ -175,12 +220,12 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
         mcp: inventoryEvidence.evidence_id,
         cli: cliEvidence.evidence_id,
       });
-      const closed = await client.callTool({
+      const closed = await artifactMcpCall(client, {
         name: "close_binary",
         arguments: {},
       });
       expect(closed.isError, JSON.stringify(closed)).not.toBe(true);
-      const empty = await client.callTool({
+      const empty = await artifactMcpCall(client, {
         name: "binary_session",
         arguments: {},
       });
@@ -193,4 +238,4 @@ test("preserves Harmony archive formats through the public CLI/MCP lifecycle", a
   } finally {
     await client.close();
   }
-}, 120_000);
+});

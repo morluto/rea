@@ -1,4 +1,8 @@
-import { isJvmClassFile } from "./jvmClassFile.js";
+import { BinaryReader } from "../binaryContainer.js";
+import {
+  isJvmClassFile,
+  JVM_CLASS_IDENTITY_LIMIT_REASON,
+} from "./jvmClassFile.js";
 
 /** loader.h: load commands are 8-byte aligned in 64-bit images, 4 in 32-bit. */
 export const machoLoadCommandAlignment = (wide: boolean): 4 | 8 =>
@@ -46,6 +50,12 @@ export interface FatSliceHeaderEvidence {
 export interface MachoHeaderPrefixFacts {
   /** Raw format evidence; null means fewer than four bytes were observed. */
   readonly magic: number | null;
+  /** Present for a recognized four-byte thin magic, before header admission. */
+  readonly format: {
+    readonly wide: boolean;
+    readonly littleEndian: boolean;
+    readonly headerSize: 28 | 32;
+  } | null;
   /** Present only for a recognized Mach-O magic and a complete 12-byte prefix. */
   readonly identity: {
     readonly cpuType: number;
@@ -53,22 +63,28 @@ export interface MachoHeaderPrefixFacts {
   } | null;
 }
 
+const machoReader = (bytes: Uint8Array, littleEndian: boolean): BinaryReader =>
+  new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    littleEndian,
+    "Mach-O",
+  );
+
 /** Parse only facts present in the observed prefix of a thin Mach-O header. */
 export const readMachoHeaderPrefixFacts = (
   bytes: Uint8Array,
 ): MachoHeaderPrefixFacts => {
-  if (bytes.byteLength < 4) return { magic: null, identity: null };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const magic = view.getUint32(0, false);
-  if (bytes.byteLength < 12 || !MACHO_HEADER_MAGICS.includes(magic))
-    return { magic, identity: null };
-  const littleEndian = magic === 0xcefaedfe || magic === 0xcffaedfe;
+  if (bytes.byteLength < 4)
+    return { magic: null, format: null, identity: null };
+  const magic = machoReader(bytes, false).u32(0);
+  const format = thinMachoFormat(magic);
+  if (format === null) return { magic, format: null, identity: null };
+  if (bytes.byteLength < 12) return { magic, format, identity: null };
+  const fields = machoReader(bytes, format.littleEndian);
   return {
     magic,
-    identity: {
-      cpuType: view.getUint32(4, littleEndian),
-      cpuSubtype: view.getUint32(8, littleEndian),
-    },
+    format,
+    identity: { cpuType: fields.u32(4), cpuSubtype: fields.u32(8) },
   };
 };
 
@@ -108,22 +124,94 @@ const MAX_FAT_ARCHITECTURES = 128;
 const KNOWN_MACHO_CPU_TYPES: readonly number[] = [
   7, 0x01000007, 12, 0x0100000c, 0x0200000c, 18, 0x01000012,
 ];
-const MACHO_HEADER_MAGICS: readonly number[] = [
-  0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe,
-];
+const thinMachoFormat = (magic: number): MachoHeaderPrefixFacts["format"] => {
+  if (![0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
+    return null;
+  const wide = magic === 0xfeedfacf || magic === 0xcffaedfe;
+  return {
+    wide,
+    littleEndian: magic === 0xcefaedfe || magic === 0xcffaedfe,
+    headerSize: wide ? 32 : 28,
+  };
+};
+
+/** Raw thin/FAT signature recognition; FAT magic alone does not resolve JVM ambiguity. */
+export const hasMachoMagic = (bytes: Uint8Array): boolean => {
+  if (readMachoHeaderPrefixFacts(bytes).format !== null) return true;
+  const fat = readFatHeaderPrefix(bytes);
+  return fat.state !== "unknown" && fat.state !== "not-fat";
+};
+
+interface FatHeaderFormat {
+  readonly magic: number;
+  readonly wide: boolean;
+  readonly littleEndian: boolean;
+}
+
+export type FatHeaderPrefix =
+  | { readonly state: "unknown"; readonly requiredBytes: 4 }
+  | { readonly state: "not-fat"; readonly magic: number }
+  | (FatHeaderFormat &
+      (
+        | { readonly state: "incomplete"; readonly requiredBytes: 8 }
+        | {
+            readonly state: "parsed";
+            readonly count: number;
+            readonly tableEnd: number;
+          }
+      ));
+
+/** Interpret a raw FAT magic without asserting container identity or header readiness. */
+const readFatMagicFormat = (magic: number): FatHeaderFormat | null => {
+  if (![FAT_MAGIC, FAT_MAGIC_64, FAT_CIGAM, FAT_CIGAM_64].includes(magic))
+    return null;
+  return {
+    magic,
+    wide: magic === FAT_MAGIC_64 || magic === FAT_CIGAM_64,
+    littleEndian: magic === FAT_CIGAM || magic === FAT_CIGAM_64,
+  };
+};
+
+/** Classify a Mach-O signature without admitting a thin header or FAT table. */
+export const machoContainerKindFromMagic = (
+  magic: number,
+): "thin" | "fat32" | "fat64" | null => {
+  if (thinMachoFormat(magic) !== null) return "thin";
+  const fat = readFatMagicFormat(magic);
+  return fat === null ? null : fat.wide ? "fat64" : "fat32";
+};
+
+/** Observe the fixed FAT header without table, count-limit or container-identity admission. */
+export const readFatHeaderPrefix = (bytes: Uint8Array): FatHeaderPrefix => {
+  if (bytes.byteLength < 4) return { state: "unknown", requiredBytes: 4 };
+  const magic = machoReader(bytes, false).u32(0);
+  const format = readFatMagicFormat(magic);
+  if (format === null) return { state: "not-fat", magic };
+  if (bytes.byteLength < 8)
+    return { state: "incomplete", ...format, requiredBytes: 8 };
+  const count = machoReader(bytes, format.littleEndian).u32(4);
+  return {
+    state: "parsed",
+    ...format,
+    count,
+    tableEnd: 8 + count * (format.wide ? 32 : 20),
+  };
+};
 
 /** Parse a bounded FAT header and table without treating the magic alone as proof. */
 export const readFatContainerHeader = (
   bytes: Uint8Array,
   fileSize: number,
 ): FatContainerHeader => {
-  if (!hasFatMagic(bytes)) return { state: "not-fat" };
+  const prefix = readFatHeaderPrefix(bytes);
+  if (prefix.state === "unknown" || prefix.state === "not-fat")
+    return { state: "not-fat" };
   if (!Number.isSafeInteger(fileSize) || fileSize < bytes.byteLength)
     return {
       state: "malformed",
       reason: "FAT file size is invalid or contradicts retained bytes",
     };
-  const table = readFatContainerTable(bytes);
+  const table = decodeFatContainerTable(bytes, prefix);
   if (table.state !== "parsed") {
     if (table.state === "needs-data" && table.requiredBytes > fileSize) {
       return table.requiredBytes === 8 && fileSize < 8
@@ -144,23 +232,24 @@ export const readFatContainerHeader = (
 };
 
 /** Decode bounded FAT declarations without assuming the final file size. */
-export const readFatContainerTable = (bytes: Uint8Array): FatContainerTable => {
-  if (!hasFatMagic(bytes)) return { state: "not-fat" };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const magic = view.getUint32(0, false);
-  if (bytes.byteLength < 8) {
-    return { state: "needs-data", requiredBytes: 8 };
-  }
-  const littleEndian = magic === FAT_CIGAM || magic === FAT_CIGAM_64;
-  const wide = magic === FAT_MAGIC_64 || magic === FAT_CIGAM_64;
-  const count = view.getUint32(4, littleEndian);
+export const readFatContainerTable = (bytes: Uint8Array): FatContainerTable =>
+  decodeFatContainerTable(bytes, readFatHeaderPrefix(bytes));
+
+const decodeFatContainerTable = (
+  bytes: Uint8Array,
+  prefix: FatHeaderPrefix,
+): FatContainerTable => {
+  if (prefix.state === "unknown" || prefix.state === "not-fat")
+    return { state: "not-fat" };
+  if (prefix.state === "incomplete")
+    return { state: "needs-data", requiredBytes: prefix.requiredBytes };
+  const { magic, littleEndian, wide, count, tableEnd } = prefix;
   if (count === 0)
     return {
       state: "malformed",
       reason: "FAT header declares no architectures",
     };
   if (count > MAX_FAT_ARCHITECTURES) return { state: "not-fat" };
-  const tableEnd = 8 + count * (wide ? 32 : 20);
   if (tableEnd > bytes.byteLength)
     return { state: "needs-data", requiredBytes: tableEnd };
   const declarations = readFatSliceDeclarations(bytes.subarray(8, tableEnd), {
@@ -179,14 +268,6 @@ export const readFatContainerTable = (bytes: Uint8Array): FatContainerTable => {
         slices: declarations.slices,
       }
     : { state: "malformed", reason: declarations.reason };
-};
-
-const hasFatMagic = (bytes: Uint8Array): boolean => {
-  if (bytes.byteLength < 4) return false;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return [FAT_MAGIC, FAT_MAGIC_64, FAT_CIGAM, FAT_CIGAM_64].includes(
-    view.getUint32(0, false),
-  );
 };
 
 /** Confirm FAT identity from observed slice headers, not CPU declarations. */
@@ -218,7 +299,7 @@ export const classifyFatContainerIdentity = (
     const magic = sliceHeaderAt(slice.offset);
     if (magic === undefined || magic === null)
       missingHeaders.push(slice.offset);
-    else if (MACHO_HEADER_MAGICS.includes(magic)) observedMachO = true;
+    else if (thinMachoFormat(magic) !== null) observedMachO = true;
     else observedNonMachO = true;
   }
   if (observedNonMachO) return { state: "not-mach-o" };
@@ -229,6 +310,58 @@ export const classifyFatContainerIdentity = (
       ? { state: "mach-o" }
       : { state: "malformed", ...invalidRange };
   return { state: "not-mach-o" };
+};
+
+/** Explicit slice observations take precedence over bytes retained in a root prefix. */
+export const classifyFatContainerEvidence = (
+  header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
+  prefix: Uint8Array,
+  sliceHeadersByOffset?: ReadonlyMap<number, MachoHeaderPrefixFacts>,
+): FatContainerIdentity =>
+  classifyFatContainerIdentity(header, (offset) => {
+    if (sliceHeadersByOffset?.has(offset))
+      return sliceHeadersByOffset.get(offset)?.magic;
+    const slice = header.slices.find(
+      (candidate) => candidate.offset === offset,
+    );
+    if (slice === undefined || offset >= prefix.byteLength) return undefined;
+    const available = Math.max(
+      0,
+      Math.min(slice.size, prefix.byteLength - offset, 12),
+    );
+    return readMachoHeaderPrefixFacts(
+      prefix.subarray(offset, offset + available),
+    ).magic;
+  });
+
+/**
+ * A malformed table is conclusive after a capped JVM scan only if one
+ * range-valid slice owns a complete, matching thin header. A sibling's range
+ * failure still belongs to that sibling.
+ */
+export const readFatJvmIdentityLimitIssue = async (
+  header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
+  identity: FatContainerIdentity,
+  readAt: (offset: number, length: number) => Promise<Uint8Array>,
+): Promise<string | null> => {
+  if (identity.state !== "malformed") return null;
+  for (const [index, slice] of header.slices.entries()) {
+    // A 28-byte header is the smallest complete thin header. Never read
+    // outside the slice, even when the enclosing file has more bytes.
+    if (header.rangeIssues[index] !== null || slice.size < 28) continue;
+    const requested = Math.min(32, slice.size);
+    const observed = await readAt(slice.offset, requested);
+    const { format, identity: embedded } = readMachoHeaderPrefixFacts(observed);
+    if (
+      format !== null &&
+      embedded !== null &&
+      format.headerSize <= requested &&
+      format.headerSize <= observed.byteLength &&
+      validateFatSliceIdentity(slice, embedded) === null
+    )
+      return null;
+  }
+  return JVM_CLASS_IDENTITY_LIMIT_REASON;
 };
 
 /** Decode FAT table entries once so artifact and native readers share identity facts. */
@@ -249,20 +382,16 @@ export const readFatSliceDeclarations = (
   const entrySize = wide ? 32 : 20;
   if (tableBytes.byteLength < count * entrySize)
     return { status: "malformed", reason: "FAT table is truncated" };
-  const view = new DataView(
-    tableBytes.buffer,
-    tableBytes.byteOffset,
-    tableBytes.byteLength,
-  );
+  const fields = machoReader(tableBytes, littleEndian);
   const slices: FatSliceDeclaration[] = [];
   for (let index = 0; index < count; index++) {
     const base = index * entrySize;
     const offset = wide
-      ? safeNumber(view.getBigUint64(base + 8, littleEndian))
-      : view.getUint32(base + 8, littleEndian);
+      ? safeNumber(fields.word(base + 8, 64))
+      : fields.u32(base + 8);
     const size = wide
-      ? safeNumber(view.getBigUint64(base + 16, littleEndian))
-      : view.getUint32(base + 12, littleEndian);
+      ? safeNumber(fields.word(base + 16, 64))
+      : fields.u32(base + 12);
     if (offset === null || size === null)
       return {
         status: "malformed",
@@ -272,10 +401,10 @@ export const readFatSliceDeclarations = (
       index,
       offset,
       size,
-      alignmentExponent: view.getUint32(base + (wide ? 24 : 16), littleEndian),
-      cpuType: view.getUint32(base, littleEndian),
-      cpuSubtype: view.getUint32(base + 4, littleEndian),
-      reserved: wide ? view.getUint32(base + 28, littleEndian) : null,
+      alignmentExponent: fields.u32(base + (wide ? 24 : 16)),
+      cpuType: fields.u32(base),
+      cpuSubtype: fields.u32(base + 4),
+      reserved: wide ? fields.u32(base + 28) : null,
     });
   }
   return { status: "parsed", slices };
@@ -298,6 +427,12 @@ export const findOverlappingFatSlices = (
   }
   return null;
 };
+
+/** The malformed-container reason for two FAT declarations whose byte ranges overlap. */
+export const fatSliceOverlapReason = (
+  overlap: readonly [FatSliceDeclaration, FatSliceDeclaration],
+): string =>
+  `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`;
 
 /** Validate byte-range and table/header identity facts shared by Mach-O readers. */
 export const validateFatSlice = (

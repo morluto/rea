@@ -89,6 +89,50 @@ const registerImplicitInvocationComparisonTests = (): void => {
 };
 
 describe("JavaScript export return-shape comparison", () => {
+  it("keeps independently unresolved values unknown even when their diagnostic projections match", async () => {
+    const [left, right] = await analyzeSources({
+      left: 'export default () => ({kind: "result", value: query(), options: {}, stable: 1});',
+      right:
+        'export default () => ({kind: "result", value: other(), options: {}, stable: 1});',
+    });
+    const execution = compareJavaScriptExportShapesEvidence({
+      left: left.evidence,
+      right: right.evidence,
+      left_module_path: "parser.mjs",
+      left_export_name: "default",
+      right_module_path: "parser.mjs",
+      right_export_name: "default",
+    });
+    if (!execution.ok) throw execution.error;
+    const result = execution.value.result;
+    expect(execution.value.sources[0]).toBe(left.evidence);
+    expect(execution.value.sources[1]).toBe(right.evidence);
+    expect(execution.value.evidence.normalized_result).toEqual(result);
+    expect(result.evidence_links).toEqual([
+      left.evidence.evidence_id,
+      right.evidence.evidence_id,
+    ]);
+    expect(result.changes).toEqual([
+      expect.objectContaining({
+        path: "/value",
+        status: "unknown",
+        presence: { left: "present", right: "present" },
+        left: expect.objectContaining({ availability: "unknown" }),
+        right: expect.objectContaining({ availability: "unknown" }),
+      }),
+    ]);
+    expect(result.summary).toEqual({
+      added: 0,
+      removed: 0,
+      changed: 0,
+      unknown: 1,
+    });
+    expect(result.coverage.status).toBe("partial");
+    expect(inventoryProperties(result, "left", 0)).toEqual(
+      expect.arrayContaining(["/kind", "/value", "/options", "/stable"]),
+    );
+  });
+
   it("propagates proven ancestor absence to nested additions and removals", async () => {
     const [left, right] = await analyzeSources({
       left: 'export default () => ({kind:"result"});',
@@ -132,8 +176,10 @@ describe("JavaScript export return-shape comparison", () => {
       ]),
     );
   });
+});
 
-  it("reports exactly the heading depth addition from source-owned parser fixtures", async () => {
+describe("JavaScript export source-owned parser comparison", () => {
+  it("reports the heading depth addition and unresolved text from source-owned parser fixtures", async () => {
     const root = await temporaryRoot();
     const leftRoot = join(root, "left");
     const rightRoot = join(root, "right");
@@ -176,9 +222,9 @@ describe("JavaScript export return-shape comparison", () => {
       added: 1,
       removed: 0,
       changed: 0,
-      unknown: 0,
+      unknown: 3,
     });
-    expect(first.changes).toEqual([
+    expect(first.changes.filter(({ status }) => status !== "unknown")).toEqual([
       expect.objectContaining({
         status: "added",
         path: "/depth",
@@ -188,9 +234,21 @@ describe("JavaScript export return-shape comparison", () => {
         right: { availability: "literal", value: 1 },
       }),
     ]);
-    expect(first.changes.some(({ path }) => path === "/text")).toBe(false);
+    expect(first.changes.filter(({ status }) => status === "unknown")).toEqual(
+      expect.arrayContaining(
+        ["heading", "paragraph", "strong"].map((value) =>
+          expect.objectContaining({
+            path: "/text",
+            discriminant: { path: "/type", value },
+            status: "unknown",
+            left: expect.objectContaining({ availability: "unknown" }),
+            right: expect.objectContaining({ availability: "unknown" }),
+          }),
+        ),
+      ),
+    );
     expect(first.coverage).toMatchObject({
-      status: "complete-within-inputs",
+      status: "partial",
       paired_variants: 3,
       unpaired_left_variants: 0,
       unpaired_right_variants: 0,
@@ -199,7 +257,9 @@ describe("JavaScript export return-shape comparison", () => {
       "This static comparison cannot establish runtime semantics; run behavioral probes directly against the relevant application versions when that evidence is required.",
     );
   });
+});
 
+describe("JavaScript export return-shape value uncertainty", () => {
   registerImplicitInvocationComparisonTests();
 
   it("keeps additions unknown when spread coverage is incomplete", async () => {
@@ -238,6 +298,103 @@ describe("JavaScript export return-shape comparison", () => {
     );
     expect(first.changes).toEqual(second.changes);
     expect(first.comparison_id).toBe(second.comparison_id);
+  });
+});
+
+describe("JavaScript export comparison source-graph coverage", () => {
+  it.each(["unknown", "unavailable"] as const)(
+    "reports unknown, not partial, when a source graph's coverage is %s",
+    async (status) => {
+      const [left, right] = await analyzeSources({
+        left: 'export default () => ({kind:"result"});',
+        right: 'export default () => ({kind:"result",total:1});',
+      });
+      expect(compare(left, right).coverage.status).toBe(
+        "complete-within-inputs",
+      );
+      const { graph_id: _graphId, ...input } = right.graph;
+      const graph = createJavaScriptApplicationGraph({
+        ...input,
+        coverage: { status, truncated: false, omitted_count: null, limits: [] },
+        limitations: ["Fixture graph coverage cannot be established."],
+      });
+      const result = javaScriptExportShapeComparisonResultSchema.parse(
+        compare(left, { ...right, graph }),
+      );
+      expect(result.coverage).toMatchObject({
+        status: "unknown",
+        right_graph_status: status,
+      });
+      expect(result.limitations).toContain(
+        "At least one source graph's coverage is unknown or unavailable, so the comparison's coverage is unknown.",
+      );
+    },
+  );
+});
+
+describe("JavaScript export comparison mixed source coverage", () => {
+  it("keeps unknown source-graph coverage beside a truncated return-shape projection, with its omission counts", async () => {
+    const [left, right] = await analyzeSources({
+      left: 'export default () => ({kind:"result"});',
+      right: 'export default () => ({kind:"result",total:1});',
+    });
+    // Left: a known projection limit (two omitted fields).
+    const truncatedLeft = createJavaScriptApplicationGraph({
+      schema: "JavaScriptApplicationGraph",
+      root_node_ids: left.graph.root_node_ids,
+      edges: left.graph.edges,
+      coverage: left.graph.coverage,
+      limitations: left.graph.limitations,
+      nodes: left.graph.nodes.map((node) =>
+        createJavaScriptApplicationNode({
+          kind: node.kind,
+          identity: node.identity,
+          observations: node.observations.map(
+            ({ label, properties, evidence }) => ({
+              label,
+              evidence,
+              properties:
+                properties.semantic_role !== "export-return-shapes"
+                  ? properties
+                  : {
+                      ...properties,
+                      return_shape_coverage: {
+                        ...projectedExportReturnShapesSchema.parse(properties)
+                          .return_shape_coverage,
+                        omitted_fields: 2,
+                        projection_complete: false,
+                      },
+                    },
+            }),
+          ),
+        }),
+      ),
+    });
+    expect(
+      compare({ ...left, graph: truncatedLeft }, right).coverage.status,
+    ).toBe("truncated");
+    // Right: a source graph that cannot tell its coverage.
+    const { graph_id: _graphId, ...input } = right.graph;
+    const unknownRight = createJavaScriptApplicationGraph({
+      ...input,
+      coverage: {
+        status: "unknown",
+        truncated: false,
+        omitted_count: null,
+        limits: [],
+      },
+      limitations: ["Fixture graph coverage cannot be established."],
+    });
+    expect(
+      compare(
+        { ...left, graph: truncatedLeft },
+        { ...right, graph: unknownRight },
+      ).coverage,
+    ).toMatchObject({
+      status: "unknown",
+      left_omitted_fields: 2,
+      right_graph_status: "unknown",
+    });
   });
 });
 
@@ -310,6 +467,10 @@ describe("JavaScript export return-shape pairing limits", () => {
         ),
         label,
       ).toBe(true);
+      expect(
+        result.property_inventories.map(({ side }) => side).sort(),
+        label,
+      ).toEqual(["left", "right"]);
       expect(
         result.property_inventories.every(
           ({ paired, discriminant }) => !paired && discriminant === null,
@@ -629,6 +790,10 @@ describe("JavaScript export matching uncertain projections", () => {
         'export default () => ({ kind: "record", tokens: [{ extra: 1 }] });',
     });
     const result = compare(...graphs);
+    expect(result.property_inventories.map(({ side }) => side).sort()).toEqual([
+      "left",
+      "right",
+    ]);
     expect(result.summary).toMatchObject({ added: 0, removed: 0, changed: 0 });
     expect(result.coverage.status).toBe("partial");
     for (const inventory of result.property_inventories)
@@ -636,7 +801,7 @@ describe("JavaScript export matching uncertain projections", () => {
   });
 
   it.each(["delete result.count;", "result.count = query();"])(
-    "omits matching uncertain projections after %s",
+    "retains matching uncertain projections after %s",
     async (mutation) => {
       const source = `export default function make() {
         const result = { kind: "result", count: 1 };
@@ -645,12 +810,23 @@ describe("JavaScript export matching uncertain projections", () => {
       }`;
       const graphs = await analyzeSources({ left: source, right: source });
       const result = compare(...graphs);
-      expect(result.changes).toEqual([]);
+      expect(
+        result.property_inventories.map(({ side }) => side).sort(),
+      ).toEqual(["left", "right"]);
+      expect(result.changes).toEqual([
+        expect.objectContaining({
+          path: "/count",
+          status: "unknown",
+          presence: { left: "unknown-coverage", right: "unknown-coverage" },
+          left: expect.objectContaining({ availability: "unknown" }),
+          right: expect.objectContaining({ availability: "unknown" }),
+        }),
+      ]);
       expect(result.summary).toEqual({
         added: 0,
         removed: 0,
         changed: 0,
-        unknown: 0,
+        unknown: 1,
       });
       expect(result.coverage.status).toBe("partial");
       expect(
@@ -1069,6 +1245,19 @@ describe("JavaScript export return-shape selection", () => {
         expect.objectContaining({ export_name: "third" }),
       ]),
     });
+    // The missing side recovered no return shapes, so its source omission
+    // counts are unknown, not zero; the selected side keeps its counts.
+    expect(missing.coverage).toMatchObject({
+      left_source_omitted_variants: null,
+      left_omitted_fields: null,
+      left_omitted_property_coverage: null,
+      right_source_omitted_variants: 0,
+      right_omitted_fields: 0,
+      right_omitted_property_coverage: 0,
+    });
+    expect(missing.limitations).toContain(
+      "The left export has no return-shape projection because the export selection is missing, so its source omission counts are null (unknown), not zero.",
+    );
 
     const parsers = await sourceOwnedParsers();
     const variants = compare(parsers[0], parsers[1]);
@@ -1184,6 +1373,25 @@ describe("JavaScript export return-shape projection", () => {
     expect(result.coverage.status).toBe("complete-within-inputs");
     expect(result.coverage.left_omitted_fields).toBe(0);
     expect(result.coverage.right_omitted_fields).toBe(0);
+    const paths = [
+      "/a_type",
+      ...Array.from({ length: 70 }, (_, i) => `/field${String(i)}`),
+    ].sort();
+    expect(result.property_inventories.map(({ side }) => side).sort()).toEqual([
+      "left",
+      "right",
+    ]);
+    for (const inventory of result.property_inventories) {
+      expect(inventory.paired).toBe(true);
+      expect([...inventory.properties].sort()).toEqual(paths);
+    }
+    expect(result.changes).toEqual([]);
+    expect(result.summary).toEqual({
+      added: 0,
+      removed: 0,
+      changed: 0,
+      unknown: 0,
+    });
   });
 });
 

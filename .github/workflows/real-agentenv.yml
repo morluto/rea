@@ -54,10 +54,11 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      # Public ECR caps anonymous pulls by data per source IP and hosted runners share IPs, so the
-      # framework's image builds can fail here for hours. mirror.gcr.io serves the same Docker
-      # official images under the same digests, so each base image the pinned framework builds from
-      # is pulled there and named as its Dockerfile names it, as the framework's own CI does.
+      # The pinned framework builds its gateway and service-db images only when pulling them from
+      # ghcr.io fails, from public ECR base images; public ECR caps anonymous pulls by data per source
+      # IP and hosted runners share IPs, so such a build can fail here for hours. mirror.gcr.io serves
+      # the same Docker official images under the same digests, so each base image those Dockerfiles
+      # name is pulled there and named as its Dockerfile names it, as the framework's own CI does.
       # Digest-pinned names are set in containerd, whose images Docker reads only on the containerd
       # image store; switching stores restarts dockerd, so it happens before anything uses Docker.
       - name: Use the containerd image store
@@ -72,16 +73,16 @@ jobs:
         run: |
           runner_root="${RUNNER_TEMP}/rea-agentenv-runner"
           python -m venv "${runner_root}"
-          "${runner_root}/bin/python" -m pip install --require-virtualenv --no-cache-dir 'agentenv-framework==0.9.1334'
+          "${runner_root}/bin/python" -m pip install --require-virtualenv --no-cache-dir 'agentenv-framework==0.9.1431'
           "${runner_root}/bin/agent-env" --version
           docker version --format '{{.Server.Version}}'
           echo "REA_AGENT_ENV_COMMAND=${runner_root}/bin/agent-env" >> "${GITHUB_ENV}"
           echo "REA_DOCKER_COMMAND=$(command -v docker)" >> "${GITHUB_ENV}"
-      - name: Pull the pinned framework's public ECR base images from mirror.gcr.io
+      - name: Pull the gateway and service-db public ECR base images from mirror.gcr.io
         shell: bash
         run: |
           package="$("${REA_AGENT_ENV_COMMAND%/agent-env}/python" -c 'import agent_env, pathlib; print(pathlib.Path(agent_env.__file__).parent)')"
-          grep -rhoE '^FROM +public\.ecr\.aws/docker/library/[^ ]+' --include='Dockerfile*' "${package}" | awk '{print $2}' | sort -u |
+          grep -rhoE '^FROM +public\.ecr\.aws/docker/library/[^ ]+' --include='Dockerfile*' "${package}/env/gateway" "${package}/env/envs/service_db" | awk '{print $2}' | sort -u |
             while read -r image; do
               name=${image#public.ecr.aws/docker/library/}
               source=mirror.gcr.io/library/$name

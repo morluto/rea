@@ -32,11 +32,137 @@ import { unsupportedInputLiteralSchemaError } from "../../fixtures/mcpClientSche
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { startListeningProcess } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
-
-const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
+import {
+  jsonObjectSchema,
+  type JsonValue,
+} from "../../../src/domain/jsonValue.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 /** The book the first served create of "Boundary Book" makes: one second past the served clock's start. */
 const BOUNDARY_BOOK = book(3, "Boundary Book", bookClock(13));
+
+processTest(
+  "preserves own JSON keys through capture, state reload and computed writes",
+  async ({ processes }) => {
+    const nested = JSON.parse(
+      '{"__proto__":{"recorded":true},"constructor":null,"values":[false,0,""]}',
+    ) as JsonValue;
+    const captured = (id: number, name: string, updated = bookClock(id)) => {
+      const { slug, ...fields } = book(id, name, bookClock(id), updated);
+      if (typeof slug !== "string") throw new Error("Fixture book has no slug");
+      return { ...fields, ["__proto__"]: slug, nested };
+    };
+    const first = captured(1, "First Book");
+    const second = captured(2, "Second Book");
+    const third = captured(3, "Third Book", bookClock(3));
+    const renamed = captured(1, "Renamed Book", bookClock(5));
+    const rows: readonly TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["POST", "/api/books", third, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", third],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", renamed],
+    ];
+    const fixture = environmentStateServeFixture(timedCaptureEvidence(rows));
+    expect(fixture.state.normalized_result).toMatchObject({
+      entities: expect.arrayContaining([
+        expect.objectContaining({ id: "1", fields: { ...first } }),
+      ]),
+    });
+    const root = await createTestTempDirectory("rea-own-keys-state-mcp-");
+    const files = await writeEnvironmentServeFiles(root, fixture);
+    const started = await startListeningProcess(processes, [
+      "environment-serve",
+      files.manifestPath,
+      "--evidence",
+      files.capturePath,
+      "--port",
+      "0",
+    ]);
+    type StateDocument = {
+      rea_state: {
+        entities: Array<{ id: string; fields: Record<string, JsonValue> }>;
+        [key: string]: unknown;
+      };
+    };
+    const rpc = async (method: string, params?: unknown) =>
+      (
+        await fetch(new URL("/agentenv", started.url.origin), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        })
+      ).json() as Promise<{
+        result?: { parts?: Array<{ data: StateDocument }> };
+        error?: { code: number };
+      }>;
+    const document = (await rpc("data/get")).result?.parts?.[0]?.data;
+    if (document === undefined)
+      throw new Error("Missing served state document");
+    const held = document.rea_state.entities.find(({ id }) => id === "1");
+    if (held === undefined) throw new Error("Missing initial book");
+    expect(Object.hasOwn(held.fields, "__proto__")).toBe(true);
+    expect(held.fields.nested).toEqual(nested);
+    expect(Object.hasOwn(held.fields, "constructor")).toBe(false);
+    await expect(
+      rpc("data/add", { parts: [{ kind: "data", data: document }] }),
+    ).resolves.toMatchObject({ result: {} });
+    const reloaded = (await rpc("data/get")).result?.parts?.[0]?.data;
+    expect(reloaded).toEqual(document);
+    const invalid = {
+      rea_state: {
+        ...document.rea_state,
+        ["__proto__"]: "unexpected structural field",
+      },
+    };
+    await expect(
+      rpc("data/add", { parts: [{ kind: "data", data: invalid }] }),
+    ).resolves.toMatchObject({ error: { code: -32602 } });
+    delete held.fields["__proto__"];
+    await expect(
+      rpc("data/add", { parts: [{ kind: "data", data: document }] }),
+    ).resolves.toMatchObject({ result: {} });
+    const client = new Client(
+      { name: "own-keys-writes", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    await client.connect(new StreamableHTTPClientTransport(started.url));
+    try {
+      for (const [tool, args, name, id] of [
+        [
+          "patch_books_by_id",
+          { id: "1", body: { name: "Updated Book" } },
+          "Updated Book",
+          "1",
+        ],
+        ["post_books", { body: { name: "Created Book" } }, "Created Book", "3"],
+      ] as const) {
+        const written = await client.callTool({ name: tool, arguments: args });
+        expect(written.isError).toBeFalsy();
+        const expected = {
+          name,
+          ["__proto__"]: name.toLowerCase().replaceAll(" ", "-"),
+          nested,
+        };
+        expect(written.structuredContent).toMatchObject({ body: expected });
+        const read = await client.callTool({
+          name: "get_books_by_id",
+          arguments: { id },
+        });
+        expect(read.structuredContent).toMatchObject({ body: expected });
+        const body = jsonObjectSchema.parse(
+          jsonObjectSchema.parse(read.structuredContent).body,
+        );
+        expect(Object.hasOwn(body, "__proto__")).toBe(true);
+        expect(Object.hasOwn(body, "constructor")).toBe(false);
+      }
+    } finally {
+      await client.close();
+    }
+  },
+);
 
 processTest(
   "keeps create response clocks separate from enriched item reads through the SDK",
@@ -55,7 +181,10 @@ processTest(
       "--port",
       "0",
     ]);
-    const client = new Client({ name: "write-views", version: "1" });
+    const client = new Client(
+      { name: "write-views", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
@@ -95,7 +224,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -141,10 +269,13 @@ processTest(
       "--port",
       "0",
     ]);
-    const client = new Client({
-      name: "write-schema-defaults",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "write-schema-defaults",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
@@ -157,8 +288,9 @@ processTest(
       }
       const update = tools.find((tool) => tool.name === "patch_books_by_id")!;
       const create = tools.find((tool) => tool.name === "post_books")!;
-      expect(update.inputSchema.required).not.toContain("notify");
-      expect(create.inputSchema.required).not.toContain("notify");
+      // The advertised dialect omits an empty `required` list.
+      expect(update.inputSchema.required ?? []).not.toContain("notify");
+      expect(create.inputSchema.required ?? []).not.toContain("notify");
       expect(update.inputSchema.properties?.["notify"]).not.toHaveProperty(
         "enum",
       );
@@ -232,7 +364,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 describe("rea environment-serve write tools", () => {
@@ -251,7 +382,10 @@ describe("rea environment-serve write tools", () => {
         "--port",
         "0",
       ]);
-      const client = new Client({ name: "environment-writes", version: "1" });
+      const client = new Client(
+        { name: "environment-writes", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       await client.connect(new StreamableHTTPClientTransport(started.url));
       try {
         const { tools } = await client.listTools();
@@ -303,7 +437,6 @@ describe("rea environment-serve write tools", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
@@ -340,7 +473,10 @@ describe("rea environment-serve write tools", () => {
         "--port",
         "0",
       ]);
-      const client = new Client({ name: "raw-utf16-writes", version: "1" });
+      const client = new Client(
+        { name: "raw-utf16-writes", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       await client.connect(new StreamableHTTPClientTransport(started.url));
       try {
         for (const id of [3, 4]) {
@@ -379,7 +515,6 @@ describe("rea environment-serve write tools", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });
 
@@ -406,10 +541,13 @@ processTest(
       "--port",
       "0",
     ]);
-    const client = new Client({
-      name: "bulk-response-verification",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "bulk-response-verification",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
@@ -472,7 +610,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest.for([
@@ -494,7 +631,6 @@ processTest.for([
   })),
 ])(
   "withholds $label from public tools",
-  { timeout: HTTP_BOUNDARY_TIMEOUT_MS },
   async ({ rows, read, write }, { processes }) => {
     const root = await createTestTempDirectory("rea-create-reference-mcp-");
     const files = await writeEnvironmentServeFiles(
@@ -509,10 +645,13 @@ processTest.for([
       "--port",
       "0",
     ]);
-    const client = new Client({
-      name: "contradictory-reference",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "contradictory-reference",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();

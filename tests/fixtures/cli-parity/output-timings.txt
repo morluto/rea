@@ -1,0 +1,11 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_result.window --timings
+exit: 0
+--- stdout
+normalized_result:
+  window:
+    offset: 0
+    length: 20
+<end>
+--- stderr
+{"rea_timings":{"version":1,"command_ms":<ms>}}
+<end>

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
@@ -10,10 +11,10 @@ import { ghidraProfileInstallationHost } from "../../../src/ghidra/GhidraInstall
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { nativeAotPeFixture } from "../../fixtures/nativeaotPe.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // Fault only the installed x86 language definition; its real descriptor stays
 // open while close is refused, and closes for real once the fault clears.
@@ -116,7 +117,10 @@ it("retries the retained catalog close on later MCP admission and reopens the sa
       logger: silentLogger,
     },
   );
-  const client = new Client({ name: "catalog-close-recovery", version: "1" });
+  const client = new Client(
+    { name: "catalog-close-recovery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const call = (name: "open_binary" | "close_binary") =>
@@ -185,11 +189,9 @@ it.each(["released", "still failing"] as const)(
     expect(first.error.cleanupIncomplete).toBe(true);
     expect(first.error.cleanupResources).toEqual([definition]);
 
-    const entered = createDeferred<undefined>();
-    const release = createDeferred<undefined>();
+    const catalogCleanup = phaseGate();
     fault.onClose = async () => {
-      entered.resolve(undefined);
-      await release.promise;
+      await catalogCleanup.hold();
     };
     const controller = new AbortController();
     const reason = { caller: "cancel during catalog cleanup retry" };
@@ -199,38 +201,45 @@ it.each(["released", "still failing"] as const)(
       .finally(() => {
         settled = true;
       });
-    await entered.promise;
-    controller.abort(reason);
-    await Promise.resolve();
-    // Cancellation never abandons the in-flight close of the retained owner.
-    expect(settled).toBe(false);
-    if (outcome === "released") fault.deny = false;
-    fault.onClose = undefined;
-    release.resolve(undefined);
-    const cancelled = await admission;
-    if (cancelled.ok) throw new Error("Expected cancelled admission");
-    expect(fault.closes).toBe(2);
-    expect(fault.opens).toBe(1);
+    try {
+      await catalogCleanup.reached(admission, "catalog cleanup");
+      controller.abort(reason);
+      await Promise.resolve();
+      // Cancellation never abandons the in-flight close of the retained owner.
+      expect(settled).toBe(false);
+      if (outcome === "released") fault.deny = false;
+      fault.onClose = undefined;
+      catalogCleanup.release();
+      const cancelled = await admission;
+      if (cancelled.ok) throw new Error("Expected cancelled admission");
+      expect(fault.closes).toBe(2);
+      expect(fault.opens).toBe(1);
 
-    if (outcome === "released") {
-      expect(cancelled.error).toMatchObject({
-        _tag: "AnalysisCancelledError",
-        cause: reason,
-        cleanupIncomplete: false,
-      });
+      if (outcome === "released") {
+        expect(cancelled.error).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          cause: reason,
+          cleanupIncomplete: false,
+        });
+        expect(cancelled.error.cause).toBe(reason);
+        expect(first.error.cleanupIncomplete).toBe(false);
+        expect(registry.hasPendingOwnedResources()).toBe(false);
+      } else {
+        expect(cancelled.error.cleanupIncomplete).toBe(true);
+        expect(cancelled.error.cleanupResources).toEqual([definition]);
+        expect(first.error.cleanupIncomplete).toBe(true);
+        expect(registry.hasPendingOwnedResources()).toBe(true);
+        fault.deny = false;
+      }
+      const recovered = await registry.select(target, "ghidra");
+      expect(recovered.ok).toBe(true);
       expect(first.error.cleanupIncomplete).toBe(false);
       expect(registry.hasPendingOwnedResources()).toBe(false);
-    } else {
-      expect(cancelled.error.cleanupIncomplete).toBe(true);
-      expect(cancelled.error.cleanupResources).toEqual([definition]);
-      expect(first.error.cleanupIncomplete).toBe(true);
-      expect(registry.hasPendingOwnedResources()).toBe(true);
-      fault.deny = false;
+    } finally {
+      fault.onClose = undefined;
+      catalogCleanup.release();
+      await admission.catch(() => undefined);
     }
-    const recovered = await registry.select(target, "ghidra");
-    expect(recovered.ok).toBe(true);
-    expect(first.error.cleanupIncomplete).toBe(false);
-    expect(registry.hasPendingOwnedResources()).toBe(false);
   },
 );
 
@@ -252,7 +261,7 @@ it("keeps the caller's reason and the catalog owner when cancellation lands duri
     cleanupIncomplete: true,
     cleanupResources: [definition],
   });
-  expect(JSON.stringify(resolved.error.cause)).toContain(reason.caller);
+  expect(resolved.error.cause).toBe(reason);
   expect(provider.hasPendingOwnedResources()).toBe(true);
   fault.deny = false;
   fault.onClose = undefined;

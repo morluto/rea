@@ -1,7 +1,7 @@
 import { Module } from "node:module";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it("checks inherited and own enumerable require against a real Node Module", () => {
   const host = new Module("copied-require-oracle.cjs");

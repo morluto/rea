@@ -1,35 +1,51 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { STARTUP_OWNER_CLOSED } from "../process/SharedStartupAttempt.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { constants } from "node:fs";
-import { access, stat } from "node:fs/promises";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { RetainedResourceScope } from "./AnalysisProvider.js";
+import { access, realpath, stat } from "node:fs/promises";
+import { posix, win32 } from "node:path";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
+import type {
+  DoctorCheck,
+  DoctorProviderInspection,
+} from "../ports/DoctorProviderInspection.js";
 import {
   inspectNativeAnalysisConfiguration,
   type NativeAnalysisConfigurationInspection,
 } from "../config/parseConfig.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { join } from "node:path";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
-import { parseBinaryTarget } from "./BinaryTargetResolver.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  execFileOutput,
+  ExecFileOutputCancelledError,
+  execFileOutputFailure,
+  execFileFailureCapturedOutput,
+} from "../process/ExecFileOutput.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   javaScriptRuntime,
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { installedCaskAppdir, probeHomebrew } from "./homebrew.js";
-import { readMacHopperRenamedLauncherCandidates } from "./MacHopperPaths.js";
+import { readMacHopperRenamedLauncherCandidates } from "../hopperPaths/MacHopperPaths.js";
 import {
   inspectLinuxHopperLauncher,
   linuxSharedLibrariesAvailable,
@@ -44,7 +60,8 @@ import {
   type InstalledSkillIdentity,
   type SkillPathIssue,
 } from "./SetupSkill.js";
-import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
+import type { CatalogIdentitySnapshot } from "../contracts/catalog/recordedCatalogDigests.js";
+import { loadDefaultCatalogIdentity } from "../contracts/catalog/defaultCatalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
   readClientRegistrationStatuses,
@@ -52,6 +69,7 @@ import {
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
+import { registrationSpelledSettings } from "./SetupRegistrationEnvironment.js";
 import {
   collectDoctorDiagnostics,
   doctorHealthy,
@@ -61,47 +79,15 @@ import {
   scopeDoctorChecks,
   type DoctorScopeReport,
 } from "./DoctorScope.js";
+import { selectedDesktopBuildChecks } from "./DesktopBuildDoctor.js";
+import type {
+  DesktopBuildFacts,
+  DesktopBuildFactsInput,
+  OwnedProviderSetting,
+} from "../ports/DesktopBuildHost.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { settleConcurrent } from "./settleConcurrent.js";
 
-/** One actionable environment diagnostic. */
-export interface DoctorCheck {
-  readonly name: string;
-  readonly ok: boolean;
-  readonly classification:
-    | "healthy"
-    | "missing_dependency"
-    | "runtime_failure"
-    | "unsupported_host"
-    | "unsupported_target"
-    | "missing_analysis_engine"
-    | "unknown"
-    | "config_drift";
-  readonly detail?: string;
-  readonly details?: Readonly<Record<string, JsonValue>>;
-  readonly remediation?: string;
-}
-
-/** One provider-owned check projected without importing its adapter types. */
-export interface DoctorProviderCheck {
-  readonly name: string;
-  readonly ok: boolean;
-  readonly code: string | null;
-  readonly detail: string;
-  readonly remediation: string | null;
-  readonly classification: Exclude<DoctorCheck["classification"], "healthy">;
-  readonly details?: Readonly<Record<string, JsonValue>>;
-}
-
-/** Read-only provider inspection supplied by an outer composition adapter. */
-export interface DoctorProviderInspection {
-  readonly id: string;
-  readonly configured: boolean;
-  readonly available: boolean;
-  readonly providerVersion: string | null;
-  /** Adapter-validated non-secret settings, independent of runtime readiness.
-   * Invalid installations publish no settings. */
-  readonly registrationEnvironment: Readonly<Record<string, string>>;
-  readonly checks: readonly DoctorProviderCheck[];
-}
 /** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
   readonly signal?: AbortSignal;
@@ -130,12 +116,13 @@ export interface DoctorHost {
   brewHopperPath(): Promise<string | undefined>;
   /** Renamed `Hopper*.app` launchers; consulted only where macOS bundles are probed. */
   manualHopperPaths(): Promise<readonly string[]>;
-  providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
+  providerInspections?(
+    clients: readonly string[],
+  ): Promise<readonly DoctorProviderInspection[]>;
   /** Resolve a parsed upstream request budget from the effective client environment. */
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
-  /** Validated provider settings preserved by setup, independent of readiness. */
-  providerRegistrationEnvironment?(): Readonly<Record<string, string>>;
-  installationPaths?(): Promise<readonly string[]>;
+  /** `rea` launchers in PATH order, each with the installation it resolves to. */
+  installationLaunchers?(): Promise<readonly DoctorInstallationLauncher[]>;
   /** Undefined checks installed skill roots; explicit selections stay scoped. */
   installedSkillIdentity?(
     clientIds: readonly string[] | undefined,
@@ -143,8 +130,17 @@ export interface DoctorHost {
   close?(): Promise<string | undefined>;
   clientRegistrations?(
     selectedClientIds?: readonly string[],
+    providerSettings?: Readonly<Record<string, string>>,
+    ownedProviderSetting?: OwnedProviderSetting,
+    observeProviderSetting?: (
+      client: string,
+      name: string,
+      value: string,
+    ) => void,
   ): Promise<readonly ClientRegistrationStatus[]>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
+  /** Desktop build host facts; read only when that scope is selected. */
+  desktopBuildFacts?(clientIds: readonly string[]): Promise<DesktopBuildFacts>;
 }
 
 /** Structured result returned by the read-only doctor workflow. */
@@ -181,7 +177,7 @@ interface DoctorIdentity {
   readonly expected_skill_version: string;
   readonly sdk: typeof SDK_IDENTITY;
   /** Package default advertisement; the active server reports its selected profile. */
-  readonly catalog: typeof DEFAULT_CATALOG_IDENTITY;
+  readonly catalog: CatalogIdentitySnapshot;
   readonly live_server: {
     readonly state: "unknown";
     readonly remediation: string;
@@ -235,11 +231,7 @@ export const runDoctorOwned = async (
               { operation: "doctor" },
             )
           : cleanup;
-      throw analysisErrorWithCleanupFailure(
-        cause,
-        cleanupError,
-        "doctor",
-      ).bindCleanupDependencies([cause, cleanupError]);
+      throw analysisErrorWithCleanupDependencies(cause, cleanupError, "doctor");
     }
     if (cleanup !== undefined)
       throw new AggregateError(
@@ -251,8 +243,7 @@ export const runDoctorOwned = async (
   }
   const cleanup = await closeDoctorHost(host);
   if (cleanup === undefined && report.healthy && host.signal?.aborted)
-    throw new AnalysisCancelledError("doctor", {
-      cause: host.signal.reason,
+    throw cancelledBy("doctor", host.signal, {
       diagnostics: { doctor_report: jsonValueSchema.parse(report) },
     });
   return cleanup === undefined
@@ -265,26 +256,34 @@ const inspectDoctor = async (
   host: DoctorHost,
   requestedScope?: DoctorScope,
 ): Promise<DoctorReport> => {
-  if (host.signal?.aborted)
-    throw new AnalysisCancelledError("doctor", { cause: host.signal.reason });
+  if (host.signal?.aborted) throw cancelledBy("doctor", host.signal);
   const scope = normalizeDoctorScope(requestedScope, target);
   const {
     checks: diagnosticChecks,
     hopperPath,
     providerInspections,
-  } = await collectDoctorDiagnostics(target, host);
-  const identity = await collectDoctorIdentity(host, scope);
+  } = await collectDoctorDiagnostics(target, host, scope.clients);
+  const hopperAvailable =
+    hopperPath !== undefined &&
+    diagnosticChecks
+      .filter(({ name }) => name.startsWith("hopper"))
+      .every(({ ok }) => ok);
+  const selections = providerSettingSelections(
+    providerInspections,
+    hopperAvailable && hopperPath === host.configuredHopperPath
+      ? hopperPath
+      : undefined,
+  );
+  const identity = await collectDoctorIdentity(host, scope, selections);
   const checks = [
     ...diagnosticChecks,
     ...identity.checks,
     ...registrationAdvisoryChecks(identity.value.registrations),
+    ...registrationEnvironmentChecks(identity.value.registrations, selections),
+    ...(await selectedDesktopBuildChecks(host, scope, identity.value.skill)),
   ];
   const providers = {
-    hopperAvailable:
-      hopperPath !== undefined &&
-      checks
-        .filter(({ name }) => name.startsWith("hopper"))
-        .every(({ ok }) => ok),
+    hopperAvailable,
     hopperConfigured: host.configuredHopperPath !== undefined,
     providerInspections,
   };
@@ -326,6 +325,87 @@ const registrationAdvisoryChecks = (
         ],
   );
 
+/** Settings an available provider's checks in this report relied on. */
+interface ProviderSettingSelection {
+  readonly provider: string;
+  readonly settings: Readonly<Record<string, string>>;
+}
+
+const providerSettingSelections = (
+  inspections: readonly DoctorProviderInspection[] | undefined,
+  configuredHopperPath: string | undefined,
+): readonly ProviderSettingSelection[] => [
+  ...(inspections ?? [])
+    .filter(({ available }) => available)
+    .map(({ id, registrationEnvironment }) => ({
+      provider: id,
+      settings: registrationEnvironment,
+    })),
+  // Startup probes the fixed and renamed locations on its own, so only an
+  // explicit path is something this terminal selected for the server.
+  ...(configuredHopperPath === undefined
+    ? []
+    : [
+        {
+          provider: "hopper",
+          settings: { HOPPER_LAUNCHER_PATH: configuredHopperPath },
+        },
+      ]),
+];
+
+/** Render what the registration comparison established without inferring its effective environment. */
+const registrationEnvironmentDetail = (
+  client: string,
+  {
+    unrecorded,
+    differing,
+    unresolved,
+  }: NonNullable<ClientRegistrationStatus["provider_settings"]>,
+): string =>
+  [
+    `Provider checks used this terminal's environment; what the server ${client} starts receives is unknown.`,
+    ...(unrecorded.length === 0
+      ? []
+      : [`Its registration does not record ${unrecorded.join(", ")}.`]),
+    ...(differing.length === 0
+      ? []
+      : [`It records other values for ${differing.join(", ")}.`]),
+    ...(unresolved.length === 0
+      ? []
+      : [`REA could not resolve its ${unresolved.join(", ")}.`]),
+  ].join(" ");
+
+/**
+ * Report what the registration's file leaves out without gating health:
+ * doctor cannot observe the environment the client actually passes on.
+ */
+const registrationEnvironmentChecks = (
+  registrations: readonly ClientRegistrationStatus[],
+  selections: readonly ProviderSettingSelection[],
+): readonly DoctorCheck[] =>
+  registrations.flatMap(({ client, provider_settings: settings }) => {
+    if (settings === undefined) return [];
+    const { unrecorded, differing, unresolved } = settings;
+    const names = [...unrecorded, ...differing, ...unresolved];
+    return [
+      {
+        name: `registration_environment:${client}`,
+        ok: true,
+        classification: "unknown" as const,
+        detail: registrationEnvironmentDetail(client, settings),
+        details: {
+          effective_environment: "unknown",
+          providers: selections
+            .filter(({ settings: selected }) =>
+              names.some((name) => selected[name] !== undefined),
+            )
+            .map(({ provider }) => provider),
+        },
+        remediation: `Preview rea setup --client ${client} --skill=false --dry-run from this terminal, apply it to record these settings and restart the client, or read binary_session result.tool_availability in the client.`,
+      },
+    ];
+  });
+
 const closeDoctorHost = async (
   host: DoctorHost,
 ): Promise<string | AnalysisError | undefined> => {
@@ -333,7 +413,7 @@ const closeDoctorHost = async (
     return await host.close?.();
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return cause;
-    return `Doctor host cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    return `Doctor host cleanup failed: ${errorMessage(cause)}`;
   }
 };
 
@@ -366,21 +446,48 @@ const doctorReportWithCleanup = (
 const collectDoctorIdentity = async (
   host: DoctorHost,
   scope: DoctorScopeReport,
+  selections: readonly ProviderSettingSelection[],
 ): Promise<{
   readonly checks: readonly DoctorCheck[];
   readonly value: DoctorIdentity;
 }> => {
-  const installationPaths = (await host.installationPaths?.()) ?? [];
-  const registrations = (await host.clientRegistrations?.(scope.clients)) ?? [];
   const skillClientIds =
     scope.skill_clients ??
     (scope.clients.length > 0 ? scope.clients : undefined);
-  const installedSkillIdentity =
-    await host.installedSkillIdentity?.(skillClientIds);
-  const skillAligned = skillIdentityAligned(installedSkillIdentity);
+  const [
+    resolvedLaunchers,
+    resolvedRegistrations,
+    installedSkillIdentity,
+    defaultCatalogIdentity,
+  ] = await settleConcurrent([
+    Promise.resolve(host.installationLaunchers?.()),
+    Promise.resolve(
+      host.clientRegistrations?.(
+        scope.clients,
+        Object.fromEntries(
+          selections.flatMap(({ settings }) => Object.entries(settings)),
+        ),
+      ),
+    ),
+    Promise.resolve(host.installedSkillIdentity?.(skillClientIds)),
+    loadDefaultCatalogIdentity(),
+  ]);
+  const launchers = resolvedLaunchers ?? [];
+  const registrations = resolvedRegistrations ?? [];
+  const skillAligned = skillIdentityAligned(
+    installedSkillIdentity,
+    defaultCatalogIdentity.counts.mcp_tools,
+  );
   return {
     checks: [
-      ...(skillAligned ? [] : [skillIdentityCheck(installedSkillIdentity)]),
+      ...(skillAligned
+        ? []
+        : [
+            skillIdentityCheck(
+              installedSkillIdentity,
+              defaultCatalogIdentity.counts.mcp_tools,
+            ),
+          ]),
       ...registrations
         .filter(
           (registration): registration is UnhealthyClientRegistrationStatus =>
@@ -393,22 +500,29 @@ const collectDoctorIdentity = async (
       expected_skill_version: PRODUCT_IDENTITY.skillVersion,
       sdk: SDK_IDENTITY,
       catalog: {
-        counts: DEFAULT_CATALOG_IDENTITY.counts,
-        digests: DEFAULT_CATALOG_IDENTITY.digests,
+        counts: defaultCatalogIdentity.counts,
+        digests: defaultCatalogIdentity.digests,
       },
       live_server: {
         state: "unknown",
+        // `binary_session` is advertised only when the saved scope includes
+        // `session`, so the remediation also names the scope requirement: doctor
+        // cannot see the saved selection here, and one sentence has to fit both
+        // a complete registration and a scope that omits the session family.
         remediation:
-          "Call binary_session in the active client to inspect the running server identity.",
+          "Call binary_session in the active client to inspect the running server identity; a registration whose saved scope omits the session family cannot report it, so include session through rea setup --tool-families and restart first.",
       },
       installations: {
-        paths: installationPaths,
-        state: installationState(installationPaths),
+        paths: launchers.map(({ path }) => path),
+        state: installationState(launchers),
       },
       skill: {
         installed_version: installedSkillIdentity?.version ?? null,
         installed_tool_count: installedSkillIdentity?.toolCount ?? null,
-        state: skillIdentityState(installedSkillIdentity),
+        state: skillIdentityState(
+          installedSkillIdentity,
+          defaultCatalogIdentity.counts.mcp_tools,
+        ),
         ...(installedSkillIdentity?.issues === undefined
           ? {}
           : { issues: installedSkillIdentity.issues }),
@@ -423,13 +537,15 @@ const collectDoctorIdentity = async (
 
 const skillIdentityAligned = (
   identity: InstalledSkillIdentity | undefined,
+  expectedToolCount: number,
 ): boolean =>
   identity?.version === PRODUCT_IDENTITY.skillVersion &&
-  identity.toolCount === DEFAULT_CATALOG_IDENTITY.counts.mcp_tools &&
+  identity.toolCount === expectedToolCount &&
   identity.canonical;
 
 const skillIdentityState = (
   identity: InstalledSkillIdentity | undefined,
+  expectedToolCount: number,
 ): DoctorSkillState => {
   if (
     identity?.issues?.some(
@@ -448,7 +564,7 @@ const skillIdentityState = (
     return "missing";
   return identity === undefined
     ? "missing"
-    : skillIdentityAligned(identity)
+    : skillIdentityAligned(identity, expectedToolCount)
       ? "aligned"
       : "stale";
 };
@@ -472,15 +588,18 @@ const skillIdentityRemediation = (
 
 const skillIdentityCheck = (
   identity: InstalledSkillIdentity | undefined,
+  expectedToolCount: number,
 ): DoctorCheck => {
   const issues = identity?.issues;
+  const state = skillIdentityState(identity, expectedToolCount);
   return {
     name: "skill:identity",
     ok: false,
-    classification: "config_drift",
+    // An unreadable or unresolved copy is unknown, not proven drift.
+    classification: state === "unknown" ? "unknown" : "config_drift",
     detail:
       issues !== undefined && issues.length > 0
-        ? `Selected skill identity is ${skillIdentityState(identity)}: ${issues.map(({ path }) => path).join(", ")}.`
+        ? `Selected skill identity is ${state}: ${issues.map(({ path }) => path).join(", ")}.`
         : identity === undefined
           ? "Installed REA skill identity is missing."
           : "Installed REA skill identity is stale.",
@@ -498,10 +617,57 @@ const registrationCheck = (
   remediation: registration.remediation,
 });
 
+/** A PATH launcher and the installation identity its host resolved it to. */
+export interface DoctorInstallationLauncher {
+  readonly path: string;
+  readonly installation: string;
+}
+
 const installationState = (
-  paths: readonly string[],
-): DoctorIdentity["installations"]["state"] =>
-  paths.length === 0 ? "unknown" : paths.length === 1 ? "single" : "multiple";
+  launchers: readonly DoctorInstallationLauncher[],
+): DoctorIdentity["installations"]["state"] => {
+  const installations = new Set(
+    launchers.map(({ installation }) => installation),
+  );
+  return installations.size === 0
+    ? "unknown"
+    : installations.size === 1
+      ? "single"
+      : "multiple";
+};
+
+/**
+ * One installation is one launcher directory after symlink resolution. npm
+ * writes `rea`, `rea.cmd` and `rea.ps1` side by side on Windows, where `where`
+ * lists each and directory spelling is case-insensitive; PATH can also reach
+ * one launcher through a symlinked directory. An unresolvable launcher keeps
+ * its listed path rather than joining another installation.
+ */
+const launcherInstallation = async (
+  path: string,
+  platform: NodeJS.Platform,
+): Promise<string> => {
+  const resolved = await realpath(path).catch(() => path);
+  return platform === "win32"
+    ? win32.dirname(resolved).toLowerCase()
+    : posix.dirname(resolved);
+};
+
+/**
+ * A provider request budget resolver with its retained resource scope and
+ * cancellation signal, as an outer adapter supplies it. The declared read
+ * set travels with it into the 2-parameter registration derivation.
+ */
+export interface RetainedProviderRequestBudgetResolver {
+  (
+    provider: Parameters<ProviderRequestBudgetResolver>[0],
+    environment: Parameters<ProviderRequestBudgetResolver>[1],
+    resources: RetainedResourceScope,
+    signal: AbortSignal,
+  ): ReturnType<ProviderRequestBudgetResolver>;
+  /** Environment settings this resolver may read; see the base contract. */
+  readonly budgetSettings?: ReadonlySet<string>;
+}
 
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
@@ -513,21 +679,39 @@ export interface SystemDoctorHostOptions {
   readonly providerInspections?: (
     resourceScope: RetainedResourceScope,
     signal: AbortSignal,
+    clients: readonly string[],
   ) => Promise<readonly DoctorProviderInspection[]>;
-  readonly providerRegistrationEnvironment?: () => Readonly<
-    Record<string, string>
-  >;
-  readonly resolveProviderRequestBudget?: (
-    provider: Parameters<ProviderRequestBudgetResolver>[0],
-    environment: Parameters<ProviderRequestBudgetResolver>[1],
-    resources: RetainedResourceScope,
-    signal: AbortSignal,
-  ) => ReturnType<ProviderRequestBudgetResolver>;
+  readonly resolveProviderRequestBudget?: RetainedProviderRequestBudgetResolver;
   readonly linuxDemoRuntimeCheck?: (
     resourceScope: RetainedResourceScope,
     signal: AbortSignal,
   ) => Promise<DoctorCheck>;
+  readonly desktopBuildFacts?: (
+    input: DesktopBuildFactsInput,
+  ) => Promise<DesktopBuildFacts>;
 }
+
+const runInChildResourceScope = <T>(
+  parent: ArtifactResourceScope,
+  label: string,
+  operation: (child: ArtifactResourceScope) => Promise<T>,
+): Promise<T> =>
+  parent.track(async () => {
+    const child = new ArtifactResourceScope();
+    try {
+      return await operation(child);
+    } finally {
+      if (child.hasPending) {
+        parent.retain({
+          kind: "lease",
+          resource: label,
+          lease: AnalysisCleanupLease.forCloseOwner(child, label),
+        });
+      } else {
+        await child.close();
+      }
+    }
+  });
 
 /** Create diagnostics backed by the current process and host commands. */
 export const systemDoctorHost = (
@@ -539,13 +723,53 @@ export const systemDoctorHost = (
     options.signal === undefined
       ? controller.signal
       : AbortSignal.any([options.signal, controller.signal]);
-  const platform = options.platform ?? process.platform;
-  const architecture = options.architecture ?? process.arch;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
+  const architecture = options.architecture ?? HOST_PLATFORM.architecture;
   const environment = options.environment ?? process.env;
   const nativeConfiguration = inspectNativeAnalysisConfiguration(
     snapshotEnvironment(environment, platform),
   );
-  const hostExecFileOutput = options.execFileOutput ?? execFileOutput;
+  const execute = options.execFileOutput ?? execFileOutput;
+  // These commands report short host facts, not analysis output. Reuse the
+  // ILSpy probe's ten-second allowance and bound each captured stream to 64 KiB.
+  // Baseline diagnostics must work without provider ownership prerequisites.
+  const hostExecFileOutput: typeof execFileOutput = (command, args, input) =>
+    resources.track(async () => {
+      try {
+        const output = await execute(command, args, {
+          ...input,
+          timeout: 10_000,
+          maxBuffer: 64 * 1024,
+          stopSignal: "SIGTERM",
+          signal: inspectionSignal,
+        });
+        if (inspectionSignal.aborted)
+          throw cancelledBy("doctor", inspectionSignal, {
+            capturedOutput: {
+              stdout: output.stdout,
+              stderr: output.stderr,
+              stdout_bytes: output.stdoutBytes,
+              stderr_bytes: output.stderrBytes,
+              exit_code: 0,
+              signal: null,
+              truncated: false,
+            },
+          });
+        return output;
+      } catch (cause: unknown) {
+        if (cause instanceof ExecFileOutputCancelledError) {
+          const output = execFileOutputFailure(cause);
+          throw cancelledBy(
+            "doctor",
+            carriedReason(cause.cause),
+            output === undefined
+              ? {}
+              : { capturedOutput: execFileFailureCapturedOutput(output) },
+          );
+        }
+        throw cause;
+      }
+    });
   const homeDirectory = homeDirectoryFromEnvironment(environment, platform);
   const commandEnvironment = { env: environment };
   const resourceScope: RetainedResourceScope = {
@@ -555,22 +779,33 @@ export const systemDoctorHost = (
         resource,
         lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
       }),
-    run: (operation) => resources.run(operation),
+    run: (operation) => resources.track(operation),
   };
   const resolveProviderRequestBudget =
     options.resolveProviderRequestBudget === undefined
       ? undefined
-      : (
-          provider: Parameters<ProviderRequestBudgetResolver>[0],
-          environment: Parameters<ProviderRequestBudgetResolver>[1],
-        ) =>
-          options.resolveProviderRequestBudget!(
-            provider,
-            environment,
-            resourceScope,
-            inspectionSignal,
-          );
-  return {
+      : Object.assign(
+          (
+            provider: Parameters<ProviderRequestBudgetResolver>[0],
+            environment: Parameters<ProviderRequestBudgetResolver>[1],
+          ) =>
+            options.resolveProviderRequestBudget!(
+              provider,
+              environment,
+              resourceScope,
+              inspectionSignal,
+            ),
+          // Carry the declared read set through the 2-parameter adaptation,
+          // so the budget gate stays fail-closed only for settings this
+          // resolver may actually read.
+          options.resolveProviderRequestBudget.budgetSettings === undefined
+            ? {}
+            : {
+                budgetSettings:
+                  options.resolveProviderRequestBudget.budgetSettings,
+              },
+        );
+  const host: DoctorHost = {
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     platform,
     architecture,
@@ -587,6 +822,7 @@ export const systemDoctorHost = (
       readMacosVersion(hostExecFileOutput, commandEnvironment),
     linuxDistribution: () => readLinuxDistribution(architecture),
     async validTarget(path) {
+      const { parseBinaryTarget } = await import("./BinaryTargetResolver.js");
       return (
         await parseBinaryTarget(path, {
           cwd: process.cwd(),
@@ -595,6 +831,7 @@ export const systemDoctorHost = (
       ).ok;
     },
     async inspectTarget(path) {
+      const { parseBinaryTarget } = await import("./BinaryTargetResolver.js");
       const result = await parseBinaryTarget(path, {
         cwd: process.cwd(),
         hostArchitecture: architecture,
@@ -652,6 +889,7 @@ export const systemDoctorHost = (
             )
           ).stdout.trim();
         } catch (cause: unknown) {
+          if (cause instanceof AnalysisCancelledError) throw cause;
           // best-effort cleanup: optional Homebrew probing; absence means uninstalled.
           void cause;
           return undefined;
@@ -663,7 +901,10 @@ export const systemDoctorHost = (
         );
         return appdir === undefined
           ? undefined
-          : join(appdir, "Hopper Disassembler.app/Contents/MacOS/hopper");
+          : appendCallerPath(
+              appdir,
+              "Hopper Disassembler.app/Contents/MacOS/hopper",
+            );
       });
     },
     manualHopperPaths: () =>
@@ -671,16 +912,14 @@ export const systemDoctorHost = (
     ...(options.providerInspections === undefined
       ? {}
       : {
-          providerInspections: () =>
-            resources.run(() =>
-              options.providerInspections!(resourceScope, inspectionSignal),
+          providerInspections: (clients) =>
+            resources.track(() =>
+              options.providerInspections!(
+                resourceScope,
+                inspectionSignal,
+                clients,
+              ),
             ),
-        }),
-    ...(options.providerRegistrationEnvironment === undefined
-      ? {}
-      : {
-          providerRegistrationEnvironment:
-            options.providerRegistrationEnvironment,
         }),
     ...(resolveProviderRequestBudget === undefined
       ? {}
@@ -689,43 +928,49 @@ export const systemDoctorHost = (
       try {
         await access(path, constants.X_OK);
         return firstIlspyVersionLine(
-          (
-            await hostExecFileOutput(path, ["--version"], {
-              timeout: 10_000,
-              ...commandEnvironment,
-            })
-          ).stdout,
+          (await hostExecFileOutput(path, ["--version"], commandEnvironment))
+            .stdout,
         );
       } catch (cause: unknown) {
+        if (cause instanceof AnalysisCancelledError) throw cause;
         // best-effort cleanup: optional version probing; failure means unavailable.
         void cause;
         return undefined;
       }
     },
-    async installationPaths() {
+    async installationLaunchers() {
       try {
         const command = platform === "win32" ? "where" : "which";
         const arguments_ = platform === "win32" ? ["rea"] : ["-a", "rea"];
-        return uniqueLines(
+        const paths = uniqueLines(
           (await hostExecFileOutput(command, arguments_, commandEnvironment))
             .stdout,
         );
+        return await Promise.all(
+          paths.map(async (path) => ({
+            path,
+            installation: await launcherInstallation(path, platform),
+          })),
+        );
       } catch (cause: unknown) {
+        if (cause instanceof AnalysisCancelledError) throw cause;
         // best-effort cleanup: optional path probing; failure means none found.
         void cause;
         return [];
       }
     },
     installedSkillIdentity: (clientIds) =>
-      readInstalledSkillIdentity(
-        homeDirectory,
-        clientIds,
-        environment,
-        platform,
-        resources,
+      runInChildResourceScope(resources, "skill-identity", (child) =>
+        readInstalledSkillIdentity(
+          homeDirectory,
+          clientIds,
+          environment,
+          platform,
+          child,
+        ),
       ),
     close: async () => {
-      controller.abort(STARTUP_OWNER_CLOSED);
+      controller.abort(OwnerCancellation.startupOwnerClosed);
       try {
         await resources.close();
         return undefined;
@@ -744,19 +989,58 @@ export const systemDoctorHost = (
         throw failure;
       }
     },
-    clientRegistrations: (selectedClientIds) =>
-      readClientRegistrationStatuses(homeDirectory, undefined, {
-        platform,
-        environment,
-        resources,
-        ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
-        ...(resolveProviderRequestBudget === undefined
-          ? {}
-          : {
-              resolveProviderRequestBudget,
-            }),
-      }),
+    clientRegistrations: (
+      selectedClientIds,
+      providerSettings,
+      ownedProviderSetting,
+      observeProviderSetting,
+    ) =>
+      runInChildResourceScope(resources, "client-registrations", (child) =>
+        readClientRegistrationStatuses(homeDirectory, undefined, {
+          platform,
+          environment,
+          resources: child,
+          ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
+          ...(ownedProviderSetting === undefined
+            ? {}
+            : { ownedProviderSetting }),
+          ...(observeProviderSetting === undefined
+            ? {}
+            : { observeProviderSetting }),
+          ...(providerSettings === undefined
+            ? {}
+            : {
+                providerSettings: registrationSpelledSettings(
+                  providerSettings,
+                  environment,
+                ),
+              }),
+          ...(resolveProviderRequestBudget === undefined
+            ? {}
+            : {
+                resolveProviderRequestBudget,
+              }),
+        }),
+      ),
   };
+  const readFacts = options.desktopBuildFacts;
+  return readFacts === undefined
+    ? host
+    : {
+        ...host,
+        desktopBuildFacts: (clientIds) =>
+          runInChildResourceScope(resources, "desktop-build-facts", (child) =>
+            readFacts({
+              environment,
+              platform,
+              signal: inspectionSignal,
+              resources: child,
+              run: hostExecFileOutput,
+              clientIds,
+              registrations: host.clientRegistrations!,
+            }),
+          ),
+      };
 };
 
 const readMacosVersion = async (
@@ -768,6 +1052,7 @@ const readMacosVersion = async (
       await run("/usr/bin/sw_vers", ["-productVersion"], options)
     ).stdout.trim();
   } catch (cause: unknown) {
+    if (cause instanceof AnalysisCancelledError) throw cause;
     // best-effort cleanup: optional OS version probing; failure means unknown.
     void cause;
     return undefined;
@@ -787,6 +1072,7 @@ const executableAvailable = async (
     const linked = await run("ldd", [path], options);
     return linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`);
   } catch (cause: unknown) {
+    if (cause instanceof AnalysisCancelledError) throw cause;
     // best-effort cleanup: optional executable probing; failure means unavailable.
     void cause;
     return false;

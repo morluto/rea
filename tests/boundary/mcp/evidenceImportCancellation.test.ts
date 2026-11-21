@@ -1,8 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { ServerContext, ToolCallback } from "@modelcontextprotocol/server";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
@@ -10,9 +12,11 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import * as evidenceBundleFiles from "../../../src/application/EvidenceBundleFiles.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("preserves the exact reason when import is cancelled after reading the bundle", async () => {
   const root = await createTestTempDirectory(
@@ -23,7 +27,7 @@ it("preserves the exact reason when import is cancelled after reading the bundle
     throw new Error("Evidence import must not start a binary provider");
   });
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "imported_observation",
@@ -51,29 +55,30 @@ it("preserves the exact reason when import is cancelled after reading the bundle
   const reason = { request: "cancel after authenticated bundle read" };
   const controller = new AbortController();
   const before = session.exportEvidenceBundle();
-  const snapshot = session.immutableEvidenceBundle.bind(session);
-  const snapshotRead = vi
-    .spyOn(session, "immutableEvidenceBundle")
-    .mockImplementationOnce(() => {
-      const bundle = snapshot();
+  const read = evidenceBundleFiles.readImmutableEvidenceBundle;
+  const authenticatedRead = vi
+    .spyOn(evidenceBundleFiles, "readImmutableEvidenceBundle")
+    .mockImplementationOnce(async (...args) => {
+      const loaded = await read(...args);
       controller.abort(reason);
-      return bundle;
+      return loaded;
     });
   const imported = vi.spyOn(session, "importEvidenceBundle");
-  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+  const delivery = vi.spyOn(
+    ToolResultDelivery.prototype,
+    "toPartialErrorToolResult",
+  );
 
   const response = await handler(contract.inputSchema.parse({ path }), {
     mcpReq: { signal: controller.signal },
   } as ServerContext);
-  const delivered = delivery.mock.calls.find(
-    ([, deliveredContract]) => deliveredContract.name === contract.name,
-  )?.[0];
-  if (delivered === undefined || delivered.ok)
+  const delivered = delivery.mock.calls[0]?.[0];
+  if (delivered === undefined)
     throw new Error("Expected import cancellation at delivery");
   expect(response.isError).toBe(true);
-  expect(delivered.error._tag).toBe("AnalysisCancelledError");
-  expect(delivered.error.cause).toBe(reason);
-  expect(snapshotRead).toHaveBeenCalledOnce();
+  expect(delivered._tag).toBe("AnalysisCancelledError");
+  expect(delivered.cause).toBe(reason);
+  expect(authenticatedRead).toHaveBeenCalledOnce();
   expect(imported).not.toHaveBeenCalled();
   expect(session.exportEvidenceBundle()).toEqual(before);
 });
@@ -85,14 +90,14 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
     throw new Error("Evidence import must not start a binary provider");
   });
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const existing = createEvidence(undefined, provider, {
+  const existing = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "existing_observation",
     parameters: {},
     result: { retained: true },
   });
   const recorded = session.recordEvidence(existing);
   if (!recorded.ok) throw recorded.error;
-  const imported = createEvidence(undefined, provider, {
+  const imported = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "imported_observation",
     parameters: {},
     result: { retained: "雪😀" },
@@ -101,10 +106,13 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
   // Valid whitespace crosses the streaming threshold without a large JSON tree.
   await writeFile(path, " ".repeat(9 * 1024 * 1024) + JSON.stringify(bundle));
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "evidence-import-cancellation",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "evidence-import-cancellation",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const controller = new AbortController();
   onTestFinished(async () => {
     controller.abort();
@@ -133,34 +141,36 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
   expect(unknown.isError, JSON.stringify(unknown)).not.toBe(true);
   const before = session.exportEvidenceBundle();
 
-  let resolveDispatched: (() => void) | undefined;
-  const dispatched = new Promise<void>((resolve) => {
-    resolveDispatched = resolve;
-  });
+  const dispatch = phaseArrival();
   const send = clientTransport.send.bind(clientTransport);
   vi.spyOn(clientTransport, "send").mockImplementation(
     async (message, ...args) => {
       await send(message, ...args);
       if ("method" in message && message.method === "tools/call")
-        resolveDispatched?.();
+        dispatch.arrive();
     },
   );
   let resolveCompleted: (() => void) | undefined;
   const completed = new Promise<void>((resolve) => {
     resolveCompleted = resolve;
   });
-  let settledResult: unknown;
-  const deliver = ToolResultDelivery.prototype.toCallToolResult;
-  vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult").mockImplementation(
-    function (this: ToolResultDelivery, result, contract) {
-      const reply = deliver.call(this, result, contract);
-      if (contract.name === "import_evidence_bundle") {
-        settledResult = result;
-        resolveCompleted?.();
-      }
-      return reply;
-    },
-  );
+  // Only the import fails while this spy is installed.
+  let settledFailure: unknown;
+  const deliver = ToolResultDelivery.prototype.toPartialErrorToolResult;
+  vi.spyOn(
+    ToolResultDelivery.prototype,
+    "toPartialErrorToolResult",
+  ).mockImplementation(function (
+    this: ToolResultDelivery,
+    error,
+    targetContent,
+    recordEvidence,
+  ) {
+    const reply = deliver.call(this, error, targetContent, recordEvidence);
+    settledFailure = error;
+    resolveCompleted?.();
+    return reply;
+  });
   const cancellation = client
     .callTool(
       { name: "import_evidence_bundle", arguments: { path } },
@@ -170,7 +180,7 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
       () => "completed",
       (error: unknown) => error,
     );
-  await dispatched;
+  await dispatch.reached(cancellation, "import_evidence_bundle dispatch");
   // The real SDK ping completes while the dispatched file reader awaits I/O.
   await client.ping();
   controller.abort(new Error("SDK import cancellation verification"));
@@ -180,10 +190,7 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
   // Observe handler settlement, not just the client's local rejection.
   await completed;
   expect(session.exportEvidenceBundle()).toEqual(before);
-  expect(settledResult).toMatchObject({
-    ok: false,
-    error: expect.any(AnalysisCancelledError),
-  });
+  expect(settledFailure).toBeInstanceOf(AnalysisCancelledError);
   await client.ping();
   const retry = await client.callTool({
     name: "import_evidence_bundle",
@@ -213,12 +220,12 @@ it("retains a failed import close in the server scope through SDK error projecti
     throw new Error("Evidence import must not start a binary provider");
   });
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const existing = createEvidence(undefined, provider, {
+  const existing = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "existing_observation",
     parameters: {},
     result: { retained: true },
   });
-  const imported = createEvidence(undefined, provider, {
+  const imported = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "imported_observation",
     parameters: {},
     result: { retained: "close failure" },
@@ -239,10 +246,13 @@ it("retains a failed import close in the server scope through SDK error projecti
     });
 
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "evidence-import-close-failure",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "evidence-import-close-failure",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     allowClose = true;
     close.mockRestore();
@@ -282,7 +292,7 @@ it("retries a transient import close failure before admitting the bundle", async
     throw new Error("Evidence import must not start a binary provider");
   });
   const imported = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "imported_observation",
@@ -292,17 +302,19 @@ it("retries a transient import close failure before admitting the bundle", async
   );
   await writeFile(path, JSON.stringify(createEvidenceBundle([imported])));
 
-  const originalClose = OwnedFileHandle.prototype.close;
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
     .mockImplementationOnce(async () => {
       throw new Error("one transient file close failure");
     });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "evidence-import-close-retry",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "evidence-import-close-retry",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     close.mockRestore();
     await client.close();

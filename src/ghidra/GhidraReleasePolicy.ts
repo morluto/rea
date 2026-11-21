@@ -1,7 +1,14 @@
 /** Ghidra build whose bridge behavior this REA release verifies. */
-export const SUPPORTED_GHIDRA_VERSION = "12.1.4";
+export const SUPPORTED_GHIDRA_VERSION = "12.2";
 /** Verified JDK major; admission uses the installation's declared bounds. */
-export const SUPPORTED_GHIDRA_JAVA_MAJOR = 21;
+export const SUPPORTED_GHIDRA_JAVA_MAJOR = 25;
+/**
+ * Oldest minor on the verified major that can compile the packaged bridge.
+ * Ghidra 12.2 replaced `PrototypeModel.getStorageLocations(Program, DataType[], boolean)`
+ * with a four-argument form. 12.1.x has only the three-argument method, so the
+ * bridge does not compile there.
+ */
+export const ADMITTED_GHIDRA_MINOR_FLOOR = 2;
 
 /** Numeric Ghidra release read from `application.version`. */
 interface GhidraReleaseVersion {
@@ -43,10 +50,85 @@ export const ghidraReleaseCompatibility = (
   if (raw === SUPPORTED_GHIDRA_VERSION)
     return { status: "verified", version, raw };
   const verified = verifiedGhidraRelease();
-  return version.major === verified.major && version.minor === verified.minor
+  // Admit this major from the compile floor upward. The observed version stays
+  // on the provider identity, and anything other than the verified build runs
+  // with the unverified-build limitation.
+  return version.major === verified.major &&
+    version.minor >= ADMITTED_GHIDRA_MINOR_FLOOR
     ? { status: "compatible", version, raw }
     : { status: "unsupported", version, raw };
 };
+
+/**
+ * Exact Ghidra 12.2 PUBLIC build. Closed upstream issue #9996, fixed by
+ * `c93917a622211349998f641de54cfdbe0e0e5bee` and scheduled for 12.2.1.
+ */
+export const GHIDRA_CLANG_O0_SWITCH_DEFECT = {
+  kind: "known-provider-defect",
+  id: "ghidra-9996",
+  provider_id: "ghidra",
+  release: "12.2",
+  fixed_in: "12.2.1",
+  fix_commit: "c93917a622211349998f641de54cfdbe0e0e5bee",
+  scope: {
+    compiler: "clang",
+    architecture: "x86-64",
+    optimization: "-O0",
+    construct: "switch",
+    case_base: "above-zero",
+  },
+  effect: "jump-table-flow-references-omitted",
+  upstream_issue:
+    "https://github.com/NationalSecurityAgency/ghidra/issues/9996",
+} as const;
+
+/**
+ * Open upstream issue #10154 has no fix commit and no milestone. REA
+ * reproduced the unrecovered jump table on exact 12.2. Every admitted build
+ * keeps the record until a release is known to clear it.
+ */
+export const GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT = {
+  kind: "known-provider-defect",
+  id: "ghidra-10154",
+  provider_id: "ghidra",
+  release: "12.2",
+  status: "open",
+  scope: {
+    architecture: "aarch64",
+    optimization: "-O",
+    construct: "switch",
+    bound: "and-0xff",
+    table: "byte-offset",
+    source: "swift-enum",
+  },
+  effect: "jump-table-unrecovered-function-truncated",
+  upstream_issue:
+    "https://github.com/NationalSecurityAgency/ghidra/issues/10154",
+} as const;
+
+export type GhidraKnownProviderDefect =
+  | typeof GHIDRA_CLANG_O0_SWITCH_DEFECT
+  | typeof GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT;
+
+const formatClosedSwitchDefect = (
+  defect: typeof GHIDRA_CLANG_O0_SWITCH_DEFECT,
+): string =>
+  `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} can omit jump-table flow references and emit incorrect decompiler output for ${defect.scope.compiler} ${defect.scope.optimization} ${defect.scope.architecture} switches whose case labels start above zero. Upstream issue ${defect.upstream_issue} is closed by ${defect.fix_commit}, milestone ${defect.fixed_in}, which is not yet released. This limitation is recorded for parsed ${defect.release} releases whose patch is below ${defect.fixed_in}, including a zero patch and a suffix, and clears on ${defect.fixed_in}. REA's verified switch lane compiles with -O2 and does not cover this shape.`;
+
+const formatOpenSwitchDefect = (
+  defect: typeof GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
+): string =>
+  `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} leaves an ${defect.scope.architecture} ${defect.scope.construct} unrecovered when it is a ${defect.scope.table} bounded by ${defect.scope.bound}. The function body stops at the indirect branch. Upstream issue ${defect.upstream_issue} is ${defect.status} and names a Swift ${defect.scope.optimization} ${defect.scope.source} switch; it has no fix commit and no milestone. REA reproduced the unrecovered jump table on the exact ${defect.release} build with an AArch64 ELF object of that instruction shape. A compare-bounded byte table still recovers. This record stays on every admitted build until a release is known to clear it.`;
+
+/** Session and decompile limitations for the observed Ghidra build. */
+export const ghidraKnownProviderDefectLimitations = (
+  providerVersion: string,
+): readonly string[] =>
+  ghidraKnownProviderDefects(providerVersion).map((defect) =>
+    defect.id === "ghidra-9996"
+      ? formatClosedSwitchDefect(defect)
+      : formatOpenSwitchDefect(defect),
+  );
 
 /**
  * Limitation recorded when a session runs a compatible build other than the
@@ -60,10 +142,10 @@ export const unverifiedGhidraBuildLimitation = (
   return `This session uses Ghidra ${providerVersion}. The bridge is verified against ${SUPPORTED_GHIDRA_VERSION}; other ${ghidraReleaseLine()} builds are accepted and the observed version is reported.`;
 };
 
-/** Release line accepted by this bridge, such as `12.1.x`. */
+/** Accepted release floor on this major, such as `12.x (>=12.2)`. */
 export const ghidraReleaseLine = (): string => {
   const verified = verifiedGhidraRelease();
-  return `${String(verified.major)}.${String(verified.minor)}.x`;
+  return `${String(verified.major)}.x (>=${String(verified.major)}.${String(ADMITTED_GHIDRA_MINOR_FLOOR)})`;
 };
 
 /** Detail for the installation version check, including the accepted line. */
@@ -95,9 +177,9 @@ export const ghidraReleaseAccepted = (
 
 const verifiedGhidraRelease = (): GhidraReleaseVersion => {
   const version = parseGhidraRelease(SUPPORTED_GHIDRA_VERSION);
-  if (version === undefined)
+  if (version === undefined || version.minor < ADMITTED_GHIDRA_MINOR_FLOOR)
     throw new TypeError(
-      `SUPPORTED_GHIDRA_VERSION ${SUPPORTED_GHIDRA_VERSION} is not a Ghidra release`,
+      `SUPPORTED_GHIDRA_VERSION ${SUPPORTED_GHIDRA_VERSION} is not an admitted Ghidra release`,
     );
   return version;
 };
@@ -125,6 +207,41 @@ export const ghidraConfigurationVersion = (raw: string): string | undefined => {
   const patch = version.patch === 0 ? "" : `.${String(version.patch)}`;
   const suffix = version.suffix === "-" ? "" : version.suffix;
   return `${String(version.major)}.${String(version.minor)}${patch}${suffix}`;
+};
+
+const parsedReleasePrecedes = (
+  version: GhidraReleaseVersion,
+  boundary: Pick<GhidraReleaseVersion, "major" | "minor" | "patch">,
+): boolean =>
+  version.major < boundary.major ||
+  (version.major === boundary.major && version.minor < boundary.minor) ||
+  (version.major === boundary.major &&
+    version.minor === boundary.minor &&
+    version.patch < boundary.patch);
+
+/**
+ * Defects for one observed application version. `ghidra-9996` follows the
+ * parsed major, minor, and patch, so `12.2`, `12.2.0`, and `12.2.0-DEV` all
+ * carry it and `12.2.1` does not. A suffix does not change the patch.
+ * `ghidra-10154` stays on every admitted build until a fix release is known.
+ */
+export const ghidraKnownProviderDefects = (
+  providerVersion: string,
+): readonly GhidraKnownProviderDefect[] => {
+  const version = parseGhidraRelease(providerVersion);
+  if (version === undefined) return [];
+  const fix = parseGhidraRelease(GHIDRA_CLANG_O0_SWITCH_DEFECT.fixed_in);
+  const defects: GhidraKnownProviderDefect[] = [];
+  if (
+    fix !== undefined &&
+    version.major === 12 &&
+    version.minor === 2 &&
+    parsedReleasePrecedes(version, fix)
+  )
+    defects.push(GHIDRA_CLANG_O0_SWITCH_DEFECT);
+  if (ghidraReleaseAccepted(providerVersion))
+    defects.push(GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT);
+  return defects;
 };
 
 const integerGroup = (value: string | undefined): number | undefined => {

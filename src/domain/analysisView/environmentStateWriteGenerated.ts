@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  ownMember,
   isObject,
   pointerTo,
   type JsonObject,
@@ -27,8 +28,8 @@ export const freshUuid = (
   evidence: GeneratedUpdateEvidence,
   field: string,
 ): boolean => {
-  const before = evidence.before[field];
-  const after = evidence.after[field];
+  const before = ownMember(evidence.before, field);
+  const after = ownMember(evidence.after, field);
   if (!isUuid(before) || !isUuid(after)) return false;
   const fresh = after.toLowerCase();
   // Scalar generation and nested renewal have separate owners. A shared output UUID
@@ -97,7 +98,11 @@ const pairUuids = (before: JsonValue, after: JsonValue): Paired | undefined => {
       if (keys.length !== Object.keys(now).length) return undefined;
       for (const key of keys) {
         if (!Object.hasOwn(now, key)) return undefined;
-        pending.push([was[key]!, now[key]!, childPointer(pointer, key)]);
+        pending.push([
+          ownMember(was, key)!,
+          now[key]!,
+          childPointer(pointer, key),
+        ]);
       }
     } else if (was !== now) return undefined;
   }
@@ -146,7 +151,7 @@ export const renewedRule = (
   others: readonly JsonObject[],
 ): FieldRule | undefined => {
   const renewal = renewedUuids(change.before, change.after);
-  const held = uuidsIn(others.map((other) => other[field] ?? null));
+  const held = uuidsIn(others.map((other) => ownMember(other, field) ?? null));
   return renewal !== undefined &&
     [...renewal.uuids.values()].every((uuid) => !held.has(uuid.toLowerCase()))
     ? { field, rule: "renewed", pointers: renewal.pointers }
@@ -178,7 +183,10 @@ export const unexplainedRenewals = (
   const fields = new Set<string>();
   for (const rule of rules) {
     if (rule.rule !== "renewed") continue;
-    const renewal = renewedUuids(before[rule.field]!, after[rule.field]!);
+    const renewal = renewedUuids(
+      ownMember(before, rule.field)!,
+      ownMember(after, rule.field)!,
+    );
     for (const [was, now] of renewal?.uuids ?? []) {
       if (
         held.has(now) ||

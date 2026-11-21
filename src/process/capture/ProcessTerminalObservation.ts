@@ -8,6 +8,7 @@ import type {
   TerminalCaptureRetention,
 } from "./ProcessCaptureLifecycle.js";
 import type { RenderedTerminalFrame } from "../../domain/process/processCapture.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 interface ProcessTerminalObservation {
   readonly retention: TerminalCaptureRetention;
@@ -18,7 +19,7 @@ const terminalFailure = (cause: unknown): AnalysisError =>
   cause instanceof AnalysisError
     ? cause
     : new ProcessCaptureError(
-        `Terminal observation failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Terminal observation failed: ${errorMessage(cause)}`,
         { cause },
       );
 
@@ -92,7 +93,9 @@ const observeTerminal = async (
     };
   }
   if (!retention.ok) {
-    if (!rendered.ok)
+    // A deferred private renderer can propagate this same owning failure.
+    // Keep it once rather than adding the primary as its own secondary.
+    if (!rendered.ok && rendered.error !== retention.error)
       retention.error.retainSecondaryFailure(rendered.error, {
         rendered_terminal_failure: projectAnalysisError(rendered.error),
       });

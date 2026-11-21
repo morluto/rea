@@ -6,6 +6,32 @@ import { HopperClient } from "./HopperClient.js";
 import { HopperProvider } from "./HopperProvider.js";
 
 import { projectHopperNameInventory } from "./HopperNameInventory.js";
+import {
+  hopperReplySchemas,
+  parseHopperReply as parseHopperReplyWith,
+  type HopperReplyMethod,
+} from "./HopperReplyContracts.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+
+/**
+ * Stand in for the client's own reply check: `HopperClient.callTool` validates
+ * each reply against its method contract before the provider reads it.
+ */
+const validatedReply =
+  (reply: JsonValue) =>
+  (
+    method: HopperReplyMethod,
+    _arguments?: unknown,
+    options?: { readonly operation?: string },
+  ) =>
+    Promise.resolve(
+      parseHopperReplyWith(
+        hopperReplySchemas,
+        method,
+        reply,
+        options?.operation ?? method,
+      ),
+    );
 
 describe("Hopper name inventory labels", () => {
   it("tags stripped class-object labels without rewriting source values", () => {
@@ -51,18 +77,12 @@ describe("Hopper name inventory labels", () => {
     });
   });
 
-  it("replaces provider-supplied label tags with the Hopper-owned classification", () => {
+  it("replaces a provider-supplied label tag with the Hopper-owned classification", () => {
     const value = [
-      {
-        address: "0x1",
-        value: "__objc_class_HuntRoot_class",
-        objc_class_label: "untrusted_other_label",
-        provider_metadata: { ordinal: 3 },
-      },
       {
         address: "0x2",
         value: "ordinary_name",
-        objc_class_label: "hopper_legacy_class_object",
+        objc_class_label: "hopper_legacy_class_object" as const,
         provider_metadata: { ordinal: 4 },
       },
     ];
@@ -71,25 +91,11 @@ describe("Hopper name inventory labels", () => {
       changed: true,
       result: [
         {
-          address: "0x1",
-          value: "__objc_class_HuntRoot_class",
-          objc_class_label: "hopper_legacy_class_object",
-          provider_metadata: { ordinal: 3 },
-        },
-        {
           address: "0x2",
           value: "ordinary_name",
           provider_metadata: { ordinal: 4 },
         },
       ],
-    });
-  });
-
-  it("leaves malformed provider inventories untouched for the consumer to reject", () => {
-    const value = [{ address: 1, value: "__objc_class_HuntRoot_class" }];
-    expect(projectHopperNameInventory(value)).toEqual({
-      result: value,
-      changed: false,
     });
   });
 
@@ -100,7 +106,6 @@ describe("Hopper name inventory labels", () => {
       {
         address: "0x1",
         value: "__objc_class_HuntRoot_class",
-        symbol: { primary: false, source: "imported" },
         provider_metadata: { section: "__DATA,__objc_classrefs" },
       },
       {
@@ -110,6 +115,7 @@ describe("Hopper name inventory labels", () => {
         objc_class_label: "hopper_legacy_class_object",
       },
     ];
+    const originalSource = structuredClone(source);
     const callTool = vi
       .spyOn(HopperClient.prototype, "callTool")
       .mockResolvedValue(ok(source));
@@ -124,16 +130,16 @@ describe("Hopper name inventory labels", () => {
       sha256: "a".repeat(64),
       kind: "database",
       format: "analysis-database",
+      databaseEngine: "hopper",
     });
 
-    const result = await client.execute("list_names", {});
-
-    expect(callTool).toHaveBeenCalledOnce();
-    expect(result.ok).toBe(true);
-    if (result.ok) {
+    try {
+      const result = await client.execute("list_names", {});
+      expect(callTool).toHaveBeenCalledOnce();
+      if (!result.ok) throw result.error;
       expect(result.value.result).toEqual([
         {
-          ...source[0],
+          ...originalSource[0],
           objc_class_label: "hopper_legacy_class_object",
         },
         {
@@ -142,9 +148,63 @@ describe("Hopper name inventory labels", () => {
           provider_metadata: { ordinal: 2 },
         },
       ]);
-      expect(result.value.rawResult).toEqual(source);
+      expect(result.value.rawResult).toEqual(originalSource);
+      expect(source).toEqual(originalSource);
+    } finally {
+      try {
+        await client.close();
+      } finally {
+        callTool.mockRestore();
+      }
     }
-    await client.close();
-    callTool.mockRestore();
   });
+});
+
+describe("Hopper list_names reply contract", () => {
+  it.each([
+    ["a non-inventory object", { unexpected: "shape" }],
+    ["rows missing their value", [{ address: "0x1" }]],
+    [
+      "a label outside the name contract",
+      [{ address: "0x1", value: "name", objc_class_label: "other" }],
+    ],
+  ])(
+    "rejects a list_names reply with %s instead of passing it through",
+    async (_label, reply) => {
+      const config = parseConfig({});
+      if (!config.ok) throw config.error;
+      const callTool = vi
+        .spyOn(HopperClient.prototype, "callTool")
+        .mockImplementation(validatedReply(reply) as never);
+      const client = new HopperProvider(
+        config.value,
+        silentLogger,
+        {},
+        "linux",
+      ).createClient({
+        path: "/tmp/fixture.hop",
+        sha256: "a".repeat(64),
+        kind: "database",
+        format: "analysis-database",
+        databaseEngine: "hopper",
+      });
+
+      try {
+        const result = await client.execute("list_names", {});
+        expect(
+          result.ok ? undefined : result.error,
+          "a reply outside the bridge contract never becomes Evidence",
+        ).toMatchObject({
+          _tag: "AnalysisOutputError",
+          message: expect.stringContaining("list_names contract"),
+        });
+      } finally {
+        try {
+          await client.close();
+        } finally {
+          callTool.mockRestore();
+        }
+      }
+    },
+  );
 });

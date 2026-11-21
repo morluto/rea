@@ -1,13 +1,18 @@
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { readRuntimeSetting } from "./runtimeAnalysisSettings.js";
+
+import {
+  DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+} from "../domain/analysisResourceLimits.js";
 
 export const BRIDGE_MAX_REQUEST_BYTES_SETTING = "REA_BRIDGE_MAX_REQUEST_BYTES";
-
-/** Request payload ceiling used when the setting is unset. Today's fixed constant. */
-export const DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 
 /**
  * Smallest ceiling that still admits the largest bounded bridge request.
@@ -22,10 +27,7 @@ export const DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
  * Comments, search text, and Cutter command text are unbounded; this ceiling
  * is what limits them. The floor stays below the 16 MiB default so a caller
  * can lower the ceiling.
- */
-export const MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464;
-
-/**
+ *
  * Largest configurable request, in encoded payload bytes.
  *
  * The ceiling is the final JSON payload, not the raw command. Callers measure
@@ -39,15 +41,11 @@ export const MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464;
  * then parses that string. A fitting response does not keep the paged wire
  * frame, a second concatenated copy, and an outer JSON string.
  */
-const NODE_MAX_STRING_LENGTH = 536_870_888;
-const FRAMING_LF_CODE_UNITS = 1;
-export const MAXIMUM_BRIDGE_MAX_REQUEST_BYTES =
-  NODE_MAX_STRING_LENGTH - FRAMING_LF_CODE_UNITS;
 
 /** Effective bridge request ceiling and where its value came from. */
 export interface BridgeMaxRequestBytes {
   readonly maximumBytes: number;
-  readonly source: "default" | "setting";
+  readonly source: "default" | "setting" | "runtime";
 }
 
 export const DEFAULT_BRIDGE_MAX_REQUEST: BridgeMaxRequestBytes = {
@@ -62,26 +60,14 @@ export const DEFAULT_BRIDGE_MAX_REQUEST: BridgeMaxRequestBytes = {
  */
 export type BridgePeer = "Hopper" | "Cutter" | "Ghidra";
 
-export const bridgeMaxRequestBytesConstraint = `${BRIDGE_MAX_REQUEST_BYTES_SETTING} must be a positive decimal integer from ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} to ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)} bytes; the default is ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)} bytes (16 MiB). A value below ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} bytes cannot carry the largest admitted symbol-name command, and a larger value is refused so the encoded payload plus its framing LF stays one string under Node's single-string ceiling.`;
-
-const decimalInteger = /^[1-9]\d*$/u;
-
-const withinRequestRange = (value: string): boolean => {
-  // The pattern check reports a non-decimal value. Refine only bounds integers.
-  if (!decimalInteger.test(value)) return true;
-  const parsed = BigInt(value);
-  return (
-    parsed >= BigInt(MINIMUM_BRIDGE_MAX_REQUEST_BYTES) &&
-    parsed <= BigInt(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)
-  );
-};
+const bridgeMaxRequestBytesConstraint = `${BRIDGE_MAX_REQUEST_BYTES_SETTING} must be a positive decimal integer from ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} to ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)} bytes; the default is ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)} bytes (16 MiB). A value below ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} bytes cannot carry the largest admitted symbol-name command, and a larger value is refused so the encoded payload plus its framing LF stays one string under Node's single-string ceiling.`;
 
 /** Optional decimal byte count for the Hopper and Cutter request payload ceiling. */
-export const bridgeMaxRequestBytesSchema = z
-  .string()
-  .regex(decimalInteger, { error: bridgeMaxRequestBytesConstraint })
-  .refine(withinRequestRange, { error: bridgeMaxRequestBytesConstraint })
-  .transform(Number);
+export const bridgeMaxRequestBytesSchema = positiveDecimalIntegerSchema(
+  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  bridgeMaxRequestBytesConstraint,
+);
 
 /** Resolve the effective ceiling from one environment value. */
 export const parseBridgeMaxRequestBytes = (
@@ -104,31 +90,35 @@ export const parseBridgeMaxRequestBytes = (
 };
 
 /**
- * Resolve the ceiling from a composition root's selected environment. An
- * invalid setting is refused, not ignored. Callers that already resolved it
- * at startup pass that value through instead of reading the environment again.
+ * Copy the effective request ceiling when a request is admitted, in the
+ * caller's async context, so a queued request is written under the ceiling it
+ * was admitted with. A malformed launch seed no override covers is refused.
  */
-export const resolveBridgeMaxRequestBytes = (
-  environment: Readonly<Record<string, string | undefined>>,
-): BridgeMaxRequestBytes => {
-  const parsed = parseBridgeMaxRequestBytes(
-    environment[BRIDGE_MAX_REQUEST_BYTES_SETTING],
-  );
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value;
-};
+export const admitBridgeRequestLimit = (
+  limit: BridgeMaxRequestBytes,
+): Result<BridgeMaxRequestBytes, ConfigurationError> =>
+  readRuntimeSetting(() => ({
+    maximumBytes: limit.maximumBytes,
+    source: limit.source,
+  }));
 
 /** How to read and change the effective bridge request ceiling. */
+export const bridgeRequestLimit = (limit: BridgeMaxRequestBytes) =>
+  analysisSettingLimit(
+    "bridge.max_request_bytes",
+    limit.maximumBytes,
+    limit.source,
+  );
+
 export const bridgeMaxRequestBytesRecovery = (
   limit: BridgeMaxRequestBytes,
   peer: BridgePeer = "Hopper",
 ): string =>
   [
-    `The effective ${BRIDGE_MAX_REQUEST_BYTES_SETTING} value is ${String(limit.maximumBytes)} bytes (source ${limit.source}; default ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)}, floor ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)}, maximum ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)}).`,
-    `Set ${BRIDGE_MAX_REQUEST_BYTES_SETTING} in the environment that starts REA to a decimal integer from ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} to ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)}, then restart REA.`,
+    `The effective bridge.max_request_bytes value is ${String(limit.maximumBytes)} bytes (source ${limit.source}; default ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)}, floor ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)}, maximum ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)}). It can be changed at runtime with update_analysis_settings. The launch seed is ${BRIDGE_MAX_REQUEST_BYTES_SETTING}.`,
     peer === "Ghidra"
-      ? `The Ghidra bridge enforces no request ceiling of its own, so only the REA client applies ${BRIDGE_MAX_REQUEST_BYTES_SETTING} to Ghidra requests.`
-      : "Restart Hopper or Cutter from that same environment so the bridge uses this ceiling.",
+      ? `The Ghidra bridge enforces no request ceiling of its own, so only the REA client applies bridge.max_request_bytes to Ghidra requests.`
+      : "The Hopper or Cutter bridge keeps the ceiling it started with until that bridge starts again.",
   ].join(" ");
 
 const limitFacts = (
@@ -154,7 +144,12 @@ export const bridgeRequestOversizeError = (
     "transport",
     `${refusal} ${recovery}`,
     { ...limitFacts(limit), payload_bytes: payloadBytes },
-    { remediationAction: recovery, retryable: false },
+    {
+      remediationAction: recovery,
+      retryable: false,
+      limit: bridgeRequestLimit(limit),
+      requestSent: false,
+    },
   );
 };
 
@@ -175,7 +170,12 @@ export const bridgeRequestLimitMismatchError = (
       bridge_max_request_bytes: bridgeBytes,
       client_max_request_bytes: limit.maximumBytes,
     },
-    { remediationAction: recovery, retryable: false },
+    {
+      remediationAction: recovery,
+      retryable: false,
+      limit: bridgeRequestLimit(limit),
+      requestSent: false,
+    },
   );
 };
 
@@ -189,6 +189,11 @@ export const bridgeResponseOversizeError = (
     "transport",
     `Cutter bridge response exceeded its framed transport limit of ${String(limit.maximumBytes)} bytes. ${recovery}`,
     limitFacts(limit),
-    { remediationAction: recovery, retryable: false },
+    {
+      remediationAction: recovery,
+      retryable: false,
+      limit: bridgeRequestLimit(limit),
+      requestSent: true,
+    },
   );
 };

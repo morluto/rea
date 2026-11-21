@@ -1,6 +1,12 @@
-import type { Element, Node } from "@xmldom/xmldom";
-import { parseXmlDocument } from "../domain/xmlDocument.js";
+import type { Node } from "@xmldom/xmldom";
+import { parseDecodedAndroidManifest } from "../domain/android/decodedAndroidManifest.js";
+import {
+  isUnqualifiedXmlElement,
+  parseXmlDocument,
+  type XmlParseFailure,
+} from "../domain/xmlDocument.js";
 import { ok, err, type Result } from "../domain/result.js";
+import { malformedInput } from "../domain/parseFailure.js";
 import {
   isMap,
   isScalar,
@@ -23,14 +29,19 @@ const metaInfoTag = {
 };
 
 /**
- * Read the producer's metadata dialect once. Apktool 3 emits an untagged,
- * line-oriented document with Java-escaped strings; older tagged documents
- * use YAML core semantics. Numeric values retain their source spelling.
+ * Read the producer's metadata dialect once. Apktool 2.9.0 and later (including
+ * 3) emit an untagged, line-oriented document with Java-escaped strings; older
+ * tagged documents use YAML core semantics. Numeric values retain their source
+ * spelling.
  */
 export const parseApktoolYml = (yml: string): ApktoolMetadata => {
   const source = yml.replace(/^\uFEFF/u, "");
   const header = source.split(/\r\n?|\n/u, 1)[0] ?? "";
-  if (/^version: 3\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/u.test(header))
+  if (
+    /^version: (?:2\.(?:9|[1-9]\d)|3\.\d+)\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/u.test(
+      header,
+    )
+  )
     return parseApktool3Metadata(source);
   const document = parseDocument(yml, {
     schema: "core",
@@ -65,9 +76,10 @@ const apktool3Fields = new Map<string, keyof ApktoolMetadata>([
 ]);
 
 /**
- * Apktool 3.0.3 YamlWriter writes strings without YAML quoting or comment
- * syntax. Read its direct mapping records before a YAML parser can discard
- * hashes, consume quotes, or reinterpret an empty string or literal `null`.
+ * Apktool 3.0.3 YamlWriter, like the 2.9.0 writer it descends from, writes
+ * strings without YAML quoting or comment syntax. Read its direct mapping
+ * records before a YAML parser can discard hashes, consume quotes, or
+ * reinterpret an empty string or literal `null`.
  */
 const parseApktool3Metadata = (source: string): ApktoolMetadata => {
   const values = new Map<keyof ApktoolMetadata, string>();
@@ -132,36 +144,19 @@ const apktool3String = (source: string): string => {
 
 /** Read the package attribute from the decoded Android manifest root. */
 export const parseManifestPackage = (manifest: string): string | null => {
-  const parsed = parseXmlDocument(manifest, {
-    doctype: "allow",
-    lineEndings: "preserve",
-  });
-  if (!parsed.ok)
-    throw new TypeError(
-      `AndroidManifest.xml is not well-formed XML: ${parsed.error.message}`,
-      { cause: parsed.error },
-    );
-  const root = parsed.value.documentElement;
-  if (root === null || root.nodeName !== "manifest")
+  const parsed = parseDecodedAndroidManifest(manifest, "allow");
+  if (parsed.ok) return parsed.value.packageName;
+  if (parsed.error.kind === "unexpected-root")
     throw new TypeError("AndroidManifest.xml root must be <manifest>");
-  return root.getAttribute("package") || null;
+  throw new TypeError(
+    `AndroidManifest.xml is not well-formed XML: ${parsed.error.message}`,
+    { cause: parsed.error },
+  );
 };
 
 export interface DecodedStringEntry {
   readonly name: string;
   readonly value: string;
-}
-
-/** A whole-document failure does not establish an omitted-entry count. */
-export class ApktoolStringsDocumentError extends Error {
-  readonly _tag = "ApktoolStringsDocumentError";
-  constructor(
-    readonly reason: "malformed" | "wrong_root",
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-  }
 }
 
 /**
@@ -177,24 +172,21 @@ export const parseDecodedStrings = (
     readonly entries: readonly DecodedStringEntry[];
     readonly unparsedCount: number;
   },
-  ApktoolStringsDocumentError
+  // A whole-document failure does not establish an omitted-entry count.
+  XmlParseFailure
 > => {
   const parsed = parseXmlDocument(stringsXml, {
     doctype: "allow",
     lineEndings: "preserve",
   });
-  if (!parsed.ok)
-    return err(
-      new ApktoolStringsDocumentError("malformed", parsed.error.message, {
-        cause: parsed.error,
-      }),
-    );
+  if (!parsed.ok) return err(parsed.error);
   const root = parsed.value.documentElement;
-  if (root === null || root.nodeName !== "resources")
+  if (!isUnqualifiedXmlElement(root) || root.localName !== "resources")
     return err(
-      new ApktoolStringsDocumentError(
-        "wrong_root",
+      malformedInput(
+        "android-string-resources",
         "String resource document root must be <resources>",
+        { field: "documentElement" },
       ),
     );
 
@@ -202,15 +194,14 @@ export const parseDecodedStrings = (
   let unparsedCount = 0;
   const offsets = sourceLineOffsets(stringsXml);
   for (const child of childNodes(root)) {
-    if (child.nodeType !== 1) continue;
-    const element = child as Element;
-    if (element.nodeName !== "string") continue;
-    const name = element.getAttribute("name");
+    if (!isUnqualifiedXmlElement(child) || child.localName !== "string")
+      continue;
+    const name = child.getAttributeNS(null, "name");
     if (name === null || name.length === 0) {
       unparsedCount += 1;
       continue;
     }
-    const content = childNodes(element);
+    const content = childNodes(child);
     if (content.some((node) => node.nodeType !== 3 && node.nodeType !== 8)) {
       unparsedCount += 1;
       continue;

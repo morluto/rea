@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 import type { BrowserContext, Page } from "playwright-core";
 
@@ -10,6 +8,7 @@ import {
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const historyValueSchema = z.strictObject({
   length: z.int().min(0),
@@ -36,14 +35,21 @@ const textArtifact = (text: string) => {
   return {
     state: "captured" as const,
     value: {
-      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha256: sha256Hex(bytes),
       bytes: bytes.byteLength,
       text,
     },
   };
 };
 
-const captureScreenshot = async (page: Page) => {
+const SCREENSHOT_PRIVACY_REASON =
+  "Screenshot withheld because this scenario may display explicitly sensitive values; safe pixel redaction is unavailable.";
+
+const captureScreenshot = async (
+  page: Page,
+  secrets: BrowserScenarioSecrets,
+) => {
+  if (secrets.withholdsScreenshots()) return missing(SCREENSHOT_PRIVACY_REASON);
   try {
     const bytes = await page.screenshot({
       type: "png",
@@ -51,7 +57,7 @@ const captureScreenshot = async (page: Page) => {
       animations: "disabled",
       caret: "hide",
     });
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     return {
       state: "captured" as const,
       value: {
@@ -196,7 +202,9 @@ export const capturePlaywrightStepArtifacts = async (input: {
     Value | ReturnType<typeof notRequested> | ReturnType<typeof missing>
   > => (!requested.has(kind) ? Promise.resolve(notRequested()) : capture());
   return browserStepArtifactsSchema.parse({
-    screenshot: await state("screenshot", () => captureScreenshot(page)),
+    screenshot: await state("screenshot", () =>
+      captureScreenshot(page, secrets),
+    ),
     dom: await state("dom", () => captureDom({ page, secrets })),
     accessibility: await state("accessibility", () =>
       captureAccessibility({ page, secrets }),

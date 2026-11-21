@@ -1,3 +1,4 @@
+import { isJavaScriptModuleUnit } from "./javascriptModuleUnits.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import {
@@ -42,7 +43,7 @@ const seedMatch = (
 ): ApplicationFeatureSeedMatch[] => {
   const mode = featureSeedMatchMode(seed);
   const caseSensitive = seed.case_sensitive;
-  const query = normalized(seed.value, caseSensitive);
+  const query = normalizeFeatureSeedText(seed.value, caseSensitive);
   if (!kindMatches(node, seed.kind)) return [];
   const requestedEntryPath =
     seed.kind === "api" && "entry_path" in seed ? seed.entry_path : undefined;
@@ -62,7 +63,7 @@ const seedMatch = (
   )
     return [];
   const match = candidateFields(node, seed.kind).find((candidate) => {
-    const value = normalized(candidate.value, caseSensitive);
+    const value = normalizeFeatureSeedText(candidate.value, caseSensitive);
     return mode === "exact" ? value === query : value.includes(query);
   });
   return match === undefined
@@ -96,10 +97,7 @@ const kindMatches = (
         node.observations.some((o) => o.properties.step_kind === "exposure"))
     );
   if (kind === "channel") return node.kind === "ipc-channel";
-  if (kind === "module")
-    return ["javascript-asset", "javascript-module", "source-module"].includes(
-      node.kind,
-    );
+  if (kind === "module") return isJavaScriptModuleUnit(node);
   return node.kind === "native-export";
 };
 
@@ -272,7 +270,11 @@ const propertyFields = (
   return output;
 };
 
-const normalized = (value: string, caseSensitive: boolean): string => {
+/** Normalize literal matching identically across application and semantic labels. */
+export const normalizeFeatureSeedText = (
+  value: string,
+  caseSensitive: boolean,
+): string => {
   const normalizedValue = value.normalize(caseSensitive ? "NFC" : "NFKC");
   return caseSensitive
     ? normalizedValue

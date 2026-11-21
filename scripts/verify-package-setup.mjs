@@ -12,7 +12,6 @@ import { dirname, isAbsolute, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
-import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import { pathExists } from "./lib/verify-package-core.mjs";
 import { parse as parseJsonc } from "jsonc-parser";
 import { skillReferenceIssues } from "./lib/docs-facts.mjs";
@@ -50,12 +49,21 @@ const isDirectRegistration = async (command, cli) =>
   (await realpath(command[0])) === (await realpath(process.execPath)) &&
   (await realpath(command[1])) === (await realpath(cli));
 
-const verifyMcpAdd = async ({ commands, cli, environment, npxLog }) => {
-  await commands.run(cli, ["mcp", "add"], environment);
-  const mcpRegistration = await readFile(npxLog, "utf8");
-  const expected = `add-mcp npx -y ${PRODUCT_IDENTITY.registrationPackageSpecifier} mcp --name rea`;
-  if (!mcpRegistration.includes(expected))
-    throw new Error("Incur mcp add did not register the pinned npx command");
+const verifyMcpAdd = async ({ commands, cli, environment, npxLog, home }) => {
+  await commands.run(cli, ["mcp", "add", "--agent", "amp"], environment);
+  const settings = JSON.parse(
+    await readFile(join(home, ".config", "amp", "settings.json"), "utf8"),
+  );
+  const registration = settings?.["amp.mcpServers"]?.rea;
+  if (!Array.isArray(registration?.args))
+    throw new Error("REA mcp add did not write the native Amp registration");
+  const command = [registration.command, ...registration.args];
+  if (!(await isDirectRegistration(command, cli)))
+    throw new Error(
+      "REA mcp add did not register the selected absolute runtime and REA script",
+    );
+  if (await pathExists(npxLog))
+    throw new Error("Native MCP registration invoked an external installer");
 };
 
 const verifySetupPlan = async ({
@@ -588,7 +596,7 @@ export async function verifyPackageSetup({
   hopperSetupSupported,
   root,
 }) {
-  await verifyMcpAdd({ commands, cli, environment, npxLog });
+  await verifyMcpAdd({ commands, cli, environment, npxLog, home });
   const skillPath = join(
     home,
     ".agents/skills/reverse-engineer-anything/SKILL.md",

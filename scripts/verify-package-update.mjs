@@ -29,19 +29,36 @@ export async function verifyPackageUpdate({
   const fixture = new AbortController();
   const server = createServer((request, response) => {
     void serveRegistry(request, response).catch((error) => {
-      fixtureFailure ??= { cause: error };
-      fixture.abort(fixtureFailure.cause);
+      // Let npm retry an upstream reset using its registry retry policy.
+      const connectionReset =
+        error instanceof TypeError &&
+        error.cause instanceof Error &&
+        "code" in error.cause &&
+        error.cause.code === "ECONNRESET";
+      if (!connectionReset) {
+        fixtureFailure ??= { cause: error };
+        fixture.abort(fixtureFailure.cause);
+      }
       if (response.headersSent) {
         response.destroy();
         return;
       }
-      response.writeHead(500);
-      response.end(String(error));
+      response.writeHead(connectionReset ? 502 : 500, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
+      });
+      response.end(
+        connectionReset ? "npm registry connection reset" : String(error),
+      );
     });
   });
   let registry;
   async function serveRegistry(request, response) {
-    const pathname = new URL(request.url, registry).pathname;
+    // A leading // belongs to an origin-form HTTP path, not a URL authority.
+    const requested = new URL(
+      request.url.startsWith("/") ? `${registry}${request.url}` : request.url,
+    );
+    const { pathname } = requested;
     if (pathname === "/rea-agents") {
       response.setHeader("Content-Type", "application/json");
       response.end(
@@ -65,7 +82,10 @@ export async function verifyPackageUpdate({
       response.setHeader("Content-Type", "application/json");
       response.end("{}");
     } else {
-      const upstream = await fetch(`https://registry.npmjs.org${request.url}`);
+      const upstreamUrl = new URL("https://registry.npmjs.org");
+      upstreamUrl.pathname = pathname;
+      upstreamUrl.search = requested.search;
+      const upstream = await fetch(upstreamUrl);
       const body = Buffer.from(await upstream.arrayBuffer());
       response.writeHead(upstream.status, {
         "Content-Type":

@@ -1,3 +1,5 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { writeFile } from "node:fs/promises";
@@ -22,10 +24,11 @@ import {
 } from "../../../src/domain/evidenceBundle.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const sourceEvidence = (label: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "observe",
@@ -62,11 +65,10 @@ describe("bundle comparison MCP semantic status", () => {
     const left = createEvidenceBundle([record]);
     const displayRecord = {
       ...record,
-      subject: {
-        ...record.subject!,
+      subject: displayedEvidenceSubject(record.subject, {
         name: "renamed.elf",
         local_path: join(root, "renamed.elf"),
-      },
+      }),
     };
     const displayOnly = { ...left, records: [displayRecord] };
     const changedRecord = createEvidence(
@@ -164,11 +166,16 @@ it("requires absolute bundle paths without changing server-cwd semantics", async
       expect(parseMcpToolError(result).error).toMatchObject({
         code: "invalid_request",
         category: "invalid_input",
-      });
-      expect(result.content[0]).toMatchObject({
-        text: expect.stringContaining(
-          `${rejectedField}: must be an absolute local filesystem path`,
-        ),
+        details: {
+          operation: "compare_bundles",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              path: [rejectedField],
+              reason: "invalid_format",
+              expected: "regex",
+            }),
+          ]),
+        },
       });
     }
     expect(
@@ -195,9 +202,15 @@ it("requires absolute bundle paths without changing server-cwd semantics", async
     expect(parseMcpToolError(relativeImport).error).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-    });
-    expect(relativeImport.content[0]).toMatchObject({
-      text: expect.stringContaining("absolute local filesystem path"),
+      details: {
+        operation: "import_evidence_bundle",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+          }),
+        ]),
+      },
     });
     const absolute = await compare(
       join(root, "left.json"),
@@ -214,7 +227,7 @@ it("requires absolute bundle paths without changing server-cwd semantics", async
 });
 
 describe("bundle comparison MCP integration", () => {
-  it("reads caller-selected bundle files and returns complete Evidence", async () => {
+  it("retains both sources from caller-selected bundles without explicit pairs", async () => {
     const root = await createTestTempDirectory("rea-bundle-mcp-");
     const leftPath = join(root, "left.json");
     const rightPath = join(root, "right.json");
@@ -237,19 +250,23 @@ describe("bundle comparison MCP integration", () => {
         arguments: {
           left_bundle_path: leftPath,
           right_bundle_path: rightPath,
-          record_pairs: [
-            {
-              left_evidence_id: leftRecord.evidence_id,
-              right_evidence_id: rightRecord.evidence_id,
-            },
-          ],
+          record_pairs: [],
         },
       });
       expect(result.isError).not.toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        normalized_result: { status: "changed" },
+      const evidence = toolContract("compare_bundles").outputSchema.parse(
+        result.structuredContent,
+      );
+      expect(evidence).toMatchObject({
+        normalized_result: { status: "unknown", summary: { unresolved: 2 } },
+        evidence_links: [leftRecord.evidence_id, rightRecord.evidence_id],
         evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
       });
+      const retained = connected.session.exportEvidenceBundle().records;
+      expect(retained).toHaveLength(3);
+      expect(retained).toEqual(
+        expect.arrayContaining([leftRecord, rightRecord, evidence]),
+      );
     } finally {
       await connected.close();
     }
@@ -308,10 +325,8 @@ describe("bundle comparison MCP integration", () => {
         error: {
           code: "invalid_request",
           category: "invalid_input",
-          details: { path: recordPath },
-          message: expect.stringContaining(
-            `this JSON is one Evidence record (${record.evidence_id})`,
-          ),
+          details: { path: recordPath, detected_kind: "evidence-record" },
+          message: expect.stringContaining(record.evidence_id),
         },
       });
     } finally {
@@ -439,7 +454,10 @@ const connect = async () => {
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "bundle-comparison-test", version: "1" });
+  const client = new Client(
+    { name: "bundle-comparison-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

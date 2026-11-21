@@ -1,3 +1,4 @@
+import { timerDurationMsSchema } from "./analysisResourceLimits.js";
 import { z } from "zod";
 
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
@@ -14,6 +15,7 @@ import {
 import {
   browserEndpointSchema,
   browserOriginSchema,
+  browserResponseStatusSchema,
 } from "./browserObservation.js";
 
 export const scenarioIdentifierSchema = z.string().regex(IDENTIFIER_PATTERN);
@@ -138,16 +140,110 @@ const browserScenarioPageValueSchemas = [
   }),
 ] as const;
 
+/** A path on the start origin: one leading slash, never `//` or `/\`. Written without look-around or reserved class syntax, so every JSON Schema regex dialect reads it. */
+const START_ORIGIN_PATH = /^\x2F(?:[^\x2F\x5C]|$)/u;
+
+/** `{saved:name}` as written, which sends a saved value in a request path or a JSON body string. */
+export const SAVED_PLACEHOLDER = /\{saved:([A-Za-z][A-Za-z0-9._-]*)\}/gu;
+
+/**
+ * `{saved:name}` in a goto destination's URL, which the scenario schema parsed, so it may spell the braces and the colon
+ * percent-encoded. Other text keeps an encoded spelling as written.
+ */
+export const SAVED_URL_PLACEHOLDER =
+  /(?:\{|%7[Bb])saved(?::|%3[Aa])([A-Za-z][A-Za-z0-9._-]*)(?:\}|%7[Dd])/gu;
+
+/** The saved value names a text's placeholders send, as `placeholder` spells them. */
+export const savedPlaceholderNames = (
+  text: string,
+  placeholder: RegExp = SAVED_PLACEHOLDER,
+): readonly string[] =>
+  [...text.matchAll(placeholder)].map(([, name]) => name!);
+
+/** A value an earlier step saved from a JSON response. */
+const savedValueSchema = z.strictObject({
+  source: z.literal("saved"),
+  name: scenarioIdentifierSchema,
+});
+
+/** A literal, declared secret or saved value a request step sends. */
+export const browserScenarioRequestValueSchema = z.discriminatedUnion(
+  "source",
+  [...browserScenarioValueSchema.options, savedValueSchema],
+);
+export type BrowserScenarioRequestValue = z.infer<
+  typeof browserScenarioRequestValueSchema
+>;
+
+/**
+ * A part of Basic credentials: a literal, declared secret or saved value, or a value read from the page, as a frontend
+ * builds such a header from a login token. The page values carry no descriptions here, since each part repeats them.
+ */
+const basicCredentialPartSchema = z.discriminatedUnion("source", [
+  ...browserScenarioRequestValueSchema.options,
+  z.strictObject({ source: z.literal("cookie"), name: z.string().min(1) }),
+  z.strictObject({
+    source: z.literal("local_storage"),
+    key: z.string().min(1),
+    json_pointer: z
+      .string()
+      .regex(/^(?:\/.*)?$/u)
+      .optional(),
+  }),
+]);
+export type BrowserScenarioCredentialPart = z.infer<
+  typeof basicCredentialPartSchema
+>;
+
+/** Basic auth uses the first colon as the username/password separator. */
+export const validBasicCredentialUsername = (username: string): boolean =>
+  !username.includes(":");
+
+/** A username and password sent as the base64 of `username:password`, as HTTP Basic auth spells them; redacted like a declared secret. */
+const basicCredentialsSchema = z.strictObject({
+  source: z.literal("basic_credentials"),
+  parts: z
+    .array(basicCredentialPartSchema)
+    .length(2)
+    .describe("Username, then password."),
+});
+
+/** A string or number a step keeps from a JSON response, by name, for later steps. */
+const saveEntrySchema = z.strictObject({
+  name: scenarioIdentifierSchema,
+  json_pointer: z.string().regex(/^(?:\/.*)?$/u),
+  secret: z.boolean().default(false),
+});
+export type BrowserScenarioSaveEntry = z.infer<typeof saveEntrySchema>;
+
+/** Values a UI step keeps from a newly observed matching response; matching does not prove causality. */
+const saveResponseSchema = z
+  .strictObject({
+    method: z.enum(BROWSER_SCENARIO_REQUEST_METHODS),
+    path: z
+      .string()
+      .regex(START_ORIGIN_PATH)
+      .describe("`{*}` matches one segment; the query is ignored."),
+    save: z.array(saveEntrySchema).min(1),
+  })
+  .describe(
+    "Save values from a newly observed matching 2xx JSON response; matching does not prove the UI caused it. Multiple observed matches fail.",
+  );
+export type BrowserScenarioSaveResponse = z.infer<typeof saveResponseSchema>;
+
 const requestHeaderSchema = z.strictObject({
   name: z
     .string()
-    .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u)
+    // Hex escapes retain HTTP token characters in Unicode-set client regexes.
+    .regex(/^[!#$%&'*+.^_`\x7C~0-9A-Za-z\x2D]+$/u)
     .refine(settableRequestHeader, {
       message: "A page's fetch cannot set this header",
     }),
   value: z.discriminatedUnion("source", [
     ...browserScenarioValueSchema.options,
     ...browserScenarioPageValueSchemas,
+    savedValueSchema,
+    basicCredentialsSchema,
   ]),
   prefix: z
     .string()
@@ -182,7 +278,7 @@ export const browserScenarioBrowserSchema = z.discriminatedUnion("mode", [
   z.strictObject({
     mode: z.literal("connect"),
     cdp_endpoint: browserEndpointSchema,
-    target_id: z.string().trim().min(1),
+    target_id: z.string().min(1),
   }),
 ]);
 
@@ -247,7 +343,12 @@ const locatorSchema = z.discriminatedUnion("kind", [
       "tab",
       "textbox",
     ]),
-    name: z.string().min(1),
+    name: z
+      .string()
+      .min(1)
+      .describe(
+        "The exact full accessible name of the element with this role.",
+      ),
   }),
   z.strictObject({
     kind: z.literal("css"),
@@ -255,15 +356,9 @@ const locatorSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-// Playwright forwards these intervals to Node timers.
-const MAX_BROWSER_SCENARIO_TIMEOUT_MS = 2_147_483_647;
-
 const stepBase = {
   step_id: scenarioIdentifierSchema,
-  timeout_ms: z
-    .int()
-    .min(1)
-    .max(MAX_BROWSER_SCENARIO_TIMEOUT_MS)
+  timeout_ms: timerDurationMsSchema
     .optional()
     .describe(
       "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation.",
@@ -283,6 +378,7 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
     locator: locatorSchema,
     button: z.enum(["left", "middle", "right"]).default("left"),
     click_count: z.int().positive().default(1),
+    save_response: saveResponseSchema.optional(),
   }),
   z.strictObject({
     ...stepBase,
@@ -295,6 +391,7 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
     action: z.literal("press"),
     locator: locatorSchema,
     key: z.string().min(1),
+    save_response: saveResponseSchema.optional(),
   }),
   z.strictObject({
     ...stepBase,
@@ -319,7 +416,7 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
     method: z.enum(BROWSER_SCENARIO_REQUEST_METHODS),
     path: z
       .string()
-      .regex(/^\/(?![/\\])/u)
+      .regex(START_ORIGIN_PATH)
       .describe(
         "Path, and optional literal query, on the start URL's origin, such as /api/folders; it must resolve to that origin.",
       ),
@@ -330,16 +427,21 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
       .describe(
         "JSON request body, sent with Content-Type application/json unless a header sets one; not allowed for GET or HEAD.",
       ),
+    save: z
+      .array(saveEntrySchema)
+      .default([])
+      .describe(
+        "Values to save from the JSON response. Later steps send one as `{saved:name}` in a request path, goto URL or JSON string, or as a header value.",
+      ),
     expected_status: z
       .array(
-        z
-          .int()
-          .min(100)
-          .max(599)
-          .refine((status) => status < 300 || status > 399, {
+        browserResponseStatusSchema.refine(
+          (status) => status < 300 || status > 399,
+          {
             message:
               "Request steps follow no redirects, so a 3xx status cannot complete one",
-          }),
+          },
+        ),
       )
       .min(1)
       .optional()
@@ -350,13 +452,9 @@ export const browserScenarioActionSchema = z.discriminatedUnion("action", [
   z.strictObject({
     step_id: scenarioIdentifierSchema,
     action: z.literal("wait_for_timeout"),
-    duration_ms: z
-      .int()
-      .min(1)
-      .max(MAX_BROWSER_SCENARIO_TIMEOUT_MS)
-      .describe(
-        "Wait this many milliseconds; the wait ends early on cancellation.",
-      ),
+    duration_ms: timerDurationMsSchema.describe(
+      "Wait this many milliseconds; the wait ends early on cancellation.",
+    ),
   }),
 ]);
 export type BrowserScenarioAction = z.infer<typeof browserScenarioActionSchema>;

@@ -1,7 +1,7 @@
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { expect, it } from "vitest";
 
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { pcapResultSchemas } from "../../domain/pcap/pcapAnalysis.js";
@@ -149,7 +149,7 @@ it.each(["inspect_pcap_client", "inspect_pcap_capture"] as const)(
         expect(evidence.authority).toBe("historical-reference");
         expect(evidence.subject).toMatchObject({
           local_path: path,
-          digest: { sha256: target.sha256 },
+          identity: { sha256: target.sha256 },
         });
       }
       pcapResultSchemas[operation].parse(evidence.normalized_result);
@@ -201,7 +201,10 @@ it("preserves pcap caller field constraints before provider execution", async ()
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "invalid_request",
     details: {
-      issues: [{ path: ["path"], reason: "out_of_range", minimum: 1 }],
+      issues: [
+        { path: ["path"], reason: "out_of_range", minimum: 1 },
+        { path: ["path"], reason: "invalid_format", expected: "regex" },
+      ],
     },
   });
   expect(calls).toBe(0);

@@ -1,6 +1,11 @@
 import type { FileHandle } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import {
   FileReadCancelled,
   readFileHandleChunks,
@@ -9,22 +14,13 @@ import {
 it.each(["complete", "fail"])(
   "settles the pending descriptor read before cancellation: %s",
   async (outcome) => {
-    let enter!: () => void;
-    let release!: (value: { bytesRead: number; buffer: Buffer }) => void;
-    let reject!: (cause: unknown) => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const pending = new Promise<{ bytesRead: number; buffer: Buffer }>(
-      (resolve, fail) => {
-        release = resolve;
-        reject = fail;
-      },
-    );
-    const read = vi.fn(async () => {
-      enter();
-      return pending;
-    }) as unknown as FileHandle["read"];
+    const descriptorRead = phaseGate<
+      void,
+      { bytesRead: number; buffer: Buffer }
+    >();
+    const read = vi.fn(() =>
+      descriptorRead.hold(),
+    ) as unknown as FileHandle["read"];
     const controller = new AbortController();
     const source = readFileHandleChunks(
       { read },
@@ -36,21 +32,29 @@ it.each(["complete", "fail"])(
       .finally(() => {
         settled = true;
       });
-    await entered;
-    controller.abort(null);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(settled).toBe(false);
-    expect(source.destroyed).toBe(false);
-    const failure = new Error("controlled native read failure");
-    if (outcome === "fail") reject(failure);
-    else release({ bytesRead: 0, buffer: Buffer.alloc(0) });
-    const error = await result;
-    if (outcome === "fail") expect(error).toBe(failure);
-    else {
-      expect(error).toBeInstanceOf(FileReadCancelled);
-      if (error instanceof FileReadCancelled) expect(error.reason).toBeNull();
-    }
-    expect(read).toHaveBeenCalledTimes(1);
+    await withVerifierCleanup(async () => {
+      await descriptorRead.reached(result, "descriptor read");
+      controller.abort(null);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(source.destroyed).toBe(false);
+      const failure = new Error("controlled native read failure");
+      if (outcome === "fail") descriptorRead.reject(failure);
+      else descriptorRead.release({ bytesRead: 0, buffer: Buffer.alloc(0) });
+      const error = await result;
+      if (outcome === "fail") expect(error).toBe(failure);
+      else {
+        expect(error).toBeInstanceOf(FileReadCancelled);
+        if (error instanceof FileReadCancelled) expect(error.reason).toBeNull();
+      }
+      expect(read).toHaveBeenCalledTimes(1);
+    }, [
+      () => controller.abort(null),
+      () => descriptorRead.release({ bytesRead: 0, buffer: Buffer.alloc(0) }),
+      async () => {
+        await result;
+      },
+    ]);
   },
 );
 
@@ -89,6 +93,49 @@ it("removes cancellation observation after normal stream completion", async () =
   controller.abort(null);
   expect(source.errored).toBeNull();
 });
+
+it.each([false, true])(
+  "preserves a rejected descriptor read before error forwarding (same reason: %s)",
+  async (sameReason) => {
+    const root = await createTestTempDirectory("rea-read-rejection-forward-");
+    const path = join(root, "write-only");
+    await writeFile(path, "inert bytes");
+    const handle = await open(path, "w");
+    const controller = new AbortController();
+    const original = handle.read.bind(handle);
+    const reason = new Error("caller cancelled after read rejection");
+    let physical: unknown;
+    const read = vi
+      .spyOn(handle, "read")
+      .mockImplementationOnce(async (...args) => {
+        try {
+          return await original(...args);
+        } catch (cause: unknown) {
+          physical = cause;
+          queueMicrotask(() =>
+            queueMicrotask(() => controller.abort(sameReason ? cause : reason)),
+          );
+          throw cause;
+        }
+      });
+    try {
+      const source = readFileHandleChunks(handle, {
+        signal: controller.signal,
+      });
+      const outcome: unknown = await buffer(source).catch(
+        (cause: unknown) => cause,
+      );
+      expect(physical).toBeInstanceOf(Error);
+      expect(outcome).toBe(physical);
+      expect(controller.signal.aborted).toBe(true);
+      expect(source.readCoverage()).toEqual({ kind: "incomplete", bytes: 0n });
+      expect(read).toHaveBeenCalledOnce();
+    } finally {
+      read.mockRestore();
+      await handle.close();
+    }
+  },
+);
 
 it.each(["range", "eof"])(
   "retains physical %s coverage independently of stream delivery",

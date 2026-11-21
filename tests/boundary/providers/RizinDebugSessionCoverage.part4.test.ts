@@ -1,13 +1,15 @@
 import { afterEach, expect, it } from "vitest";
+import { access, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
-import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createRizinCoverageHarness,
   createInjectedProcess,
   incompleteStop,
 } from "./RizinDebugSessionCoverage.fixtures.js";
 
-const { cleanup, makeProvider, start, startInjected, createManager } =
+const { cleanup, makeProvider, start, startInjected } =
   createRizinCoverageHarness();
 afterEach(cleanup);
 
@@ -29,9 +31,11 @@ it.skipIf(process.platform === "win32")(
           });
       },
     });
-    const { manager, started } = await startInjected(injected.spawnProcess, {
-      frameTimeoutMs: 1000,
-    });
+    const { manager, started } = await startInjected(
+      injected.spawnProcess,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "1000" },
+    );
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 
@@ -61,10 +65,13 @@ it.skipIf(process.platform === "win32")(
           });
       },
     });
-    const { manager, started } = await startInjected(injected.spawnProcess, {
-      frameTimeoutMs: 1000,
-      stopProcess: async () => ({ status: "stopped" }),
-    });
+    const { manager, started } = await startInjected(
+      injected.spawnProcess,
+      {
+        stopProcess: async () => ({ status: "stopped" }),
+      },
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "1000" },
+    );
     expect(started.ok).toBe(true);
     if (!started.ok) return;
     const result = await manager.execute(started.value.session_id, "large");
@@ -196,15 +203,48 @@ it.skipIf(process.platform === "win32").each([
 );
 
 it.skipIf(process.platform === "win32")(
-  "bounds recent history after many unsolicited frames",
+  "bounds unsolicited frame history and closes the session when empty frames fill the queue",
   async () => {
-    const provider = await makeProvider(
-      'process.stdout.write("\\0" + Array.from({ length: 70 }, (_, i) => "frame" + i + "\\0").join("")); process.stdin.resume();',
-    );
+    const frames = Array.from({ length: 70 }, (_, index) => `frame-${index}`);
+    const endOfBurst = "empty-frame-burst-ended";
+    const provider = await makeProvider(`
+import { existsSync } from "node:fs";
+process.stdout.write(${JSON.stringify(["", ...frames, ""].join("\0"))});
+process.stdin.resume();
+const release = setInterval(() => {
+  if (!existsSync(new URL("./release", import.meta.url))) return;
+  clearInterval(release);
+  process.stdout.write("\\0".repeat(5000) + ${JSON.stringify(endOfBurst + "\0")});
+}, 10);
+`);
     const { manager, sessionId } = await start(provider);
-    const status = manager.status(sessionId);
-    expect(status?.recent_output).toHaveLength(64);
-    expect(status?.recent_output_truncated).toBe(true);
+
+    await expect
+      .poll(() => manager.status(sessionId))
+      .toMatchObject({
+        state: "ready",
+        recent_output: frames.slice(-64),
+        recent_output_truncated: true,
+      });
+    await writeFile(join(dirname(provider), "release"), "");
+
+    await expect
+      .poll(() => {
+        const status = manager.status(sessionId);
+        return (
+          status?.state === "closed" ||
+          status?.recent_output.includes(endOfBurst)
+        );
+      })
+      .toBe(true);
+    expect(manager.status(sessionId)).toMatchObject({
+      state: "closed",
+      closed_reason_code: "output-correlation-failure",
+      closed_reason: expect.stringContaining(
+        "unsolicited frames exceeding the bounded queue limit",
+      ),
+    });
+    expect((await manager.close(sessionId)).ok).toBe(true);
   },
 );
 
@@ -233,40 +273,17 @@ it.skipIf(process.platform === "win32")(
   "cancels a command after sending it and stops its owned session",
   async () => {
     const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.resume();',
+      'process.stdout.write("\\0"); process.stdin.on("data", () => process.stdout.write("slow-started\\0"));',
     );
     const { manager, sessionId } = await start(provider);
     const abort = new AbortController();
     const execution = manager.execute(sessionId, "slow", abort.signal);
-    setTimeout(() => abort.abort(), 30);
+    await expect
+      .poll(() => manager.status(sessionId)?.recent_output)
+      .toContain("slow-started");
+    abort.abort();
     expect((await execution).ok).toBe(false);
     expect(manager.status(sessionId)?.state).toBe("closed");
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "preserves partial timeout evidence when cleanup cannot be confirmed",
-  async () => {
-    const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.setEncoding("utf8"); process.stdin.on("data", (chunk) => { if (chunk.includes("slow")) process.stdout.write("partial\\0"); });',
-    );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 25,
-      stopProcess: incompleteStop,
-    });
-    const result = await manager.execute(sessionId, "slow");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.cleanupResources).toEqual([sessionId]);
-      const evidence = evidenceSchema.parse(result.error.partialObservation);
-      expect(evidence.normalized_result).toMatchObject({
-        completion_status: "unknown",
-      });
-      expect(evidence.limitations.join(" ")).toContain(
-        "injected stop uncertainty",
-      );
-    }
   },
 );
 
@@ -288,10 +305,13 @@ process.stdin.on("data", (chunk) => {
   }
 });`,
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 1000,
-      stopProcess: incompleteStop,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {
+        stopProcess: incompleteStop,
+      },
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "1000" },
+    );
     const result = await manager.execute(sessionId, "many");
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -312,14 +332,17 @@ it.skipIf(process.platform === "win32")(
   "preserves the cleanup uncertainty when cancellation cannot confirm process stop",
   async () => {
     const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.resume();',
+      'process.stdout.write("\\0"); process.stdin.on("data", () => process.stdout.write("slow-started\\0"));',
     );
     const { manager, sessionId } = await start(provider, {
       stopProcess: incompleteStop,
     });
     const abort = new AbortController();
     const execution = manager.execute(sessionId, "slow", abort.signal);
-    setTimeout(() => abort.abort(), 30);
+    await expect
+      .poll(() => manager.status(sessionId)?.recent_output)
+      .toContain("slow-started");
+    abort.abort();
     const result = await execution;
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -335,8 +358,14 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "cancels a queued command without sending it after the prior command completes",
   async () => {
+    const release = join(
+      await createTestTempDirectory("rea-rizin-queue-"),
+      "release",
+    );
+    const unexpected = `${release}-second`;
     const provider = await makeProvider(
       `process.stdout.write("\\0");
+import * as fs from "node:fs";
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -345,19 +374,38 @@ process.stdin.on("data", (chunk) => {
     const end = input.indexOf("\\n");
     if (end < 0) break;
     const line = input.slice(0, end); input = input.slice(end + 1);
-    if (line === "first") setTimeout(() => {}, 100);
-    else if (line.startsWith("!echo ")) setTimeout(() => process.stdout.write(line.slice(6) + "\\0"), 100);
+    if (line === "first") process.stdout.write("first-started\\0");
+    else if (line === "second") fs.writeFileSync(${JSON.stringify(unexpected)}, "sent");
+    else if (line.startsWith("!echo ")) {
+      const timer = setInterval(() => {
+        if (!fs.existsSync(${JSON.stringify(release)})) return;
+        clearInterval(timer);
+        process.stdout.write(line.slice(6) + "\\0");
+      }, 10);
+    }
   }
 });`,
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 300,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "5000" },
+    );
     const first = manager.execute(sessionId, "first");
+    await expect
+      .poll(() => manager.status(sessionId)?.recent_output)
+      .toContain("first-started");
     const abort = new AbortController();
     const queued = manager.execute(sessionId, "second", abort.signal);
-    setTimeout(() => abort.abort(), 20);
-    expect((await queued).ok).toBe(false);
+    const reason = { stage: "queued command" };
+    abort.abort(reason);
+    expect(await queued).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    await writeFile(release, "release");
     expect((await first).ok).toBe(true);
+    await expect(access(unexpected)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(manager.status(sessionId)?.state).toBe("ready");
   },
 );

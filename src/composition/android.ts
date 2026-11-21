@@ -1,5 +1,5 @@
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
-import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
 import type { JadxLauncher } from "../android/JadxMcpTransport.js";
 import { JadxProvider } from "../android/JadxProvider.js";
 

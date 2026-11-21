@@ -1,7 +1,10 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import canonicalize from "canonicalize";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
@@ -11,31 +14,27 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import {
-  FULL_CATALOG_IDENTITY,
   DEFAULT_CATALOG_IDENTITY,
   createCatalogDigestProfiles,
   createCatalogDigests,
-  createCatalogIdentity,
-} from "../../../src/catalogIdentity.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
-import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
-import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
-import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+  CLI_COMMAND_NAMES,
+} from "../../../src/contracts/catalog/catalogIdentity.js";
 import {
-  expandToolAvailability,
-  sessionProvider,
-} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
-import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
+  TOOL_CONTRACTS,
+  toolContract,
+} from "../../../src/contracts/toolContracts.js";
+import { annotationsFromEffects } from "../../../src/contracts/toolEffects.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
+import type { PromptContract } from "../../../src/contracts/promptContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createServerIdentity } from "../../../src/serverIdentity.js";
-import { normalizeEntrypointPath } from "../../../src/process/CurrentEntrypointPath.js";
+import { createServerIdentity } from "../../../src/process/ServerIdentity.js";
 import { observed } from "../../fixtures/analysisExecution.js";
-import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import type {
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const availabilityProvider = (
   operations: readonly CapabilityDescriptor["operation"][] = [
@@ -72,158 +71,46 @@ const availabilityProvider = (
   };
 };
 
-const statusCapability = (
-  operation: string,
-  availability:
-    | { readonly available: true }
-    | {
-        readonly available: false;
-        readonly availability_code: "unsupported_host";
-        readonly reason: string;
-      } = { available: true },
-) => ({
-  provider: { id: "status-fixture", name: "Status fixture", version: null },
-  shared_limitations: [],
-  groups: [
-    {
-      operations: [operation],
-      effects: [],
-      limitations: [],
-      ...(availability.available
-        ? { available: true as const, reason: null, availability_code: null }
-        : availability),
-    },
-  ],
-});
-
 describe("server and catalog identity", () => {
-  it("derives package and SDK versions from canonical package metadata", async () => {
-    const packageJson = JSON.parse(await readFile("package.json", "utf8"));
-    const packageLock = JSON.parse(await readFile("package-lock.json", "utf8"));
-    expect(PACKAGE_METADATA).toMatchObject({
-      name: packageJson.name,
-      version: packageJson.version,
-      serverSdkVersion:
-        packageJson.dependencies["@modelcontextprotocol/server"],
-      clientSdkVersion:
-        packageJson.dependencies["@modelcontextprotocol/client"],
-      coreSdkVersion:
-        packageLock.packages["node_modules/@modelcontextprotocol/core"].version,
-    });
-    expect(PRODUCT_IDENTITY.packageVersion).toBe(packageJson.version);
-    expect(SDK_IDENTITY.server).toBe(
-      packageJson.dependencies["@modelcontextprotocol/server"],
+  it("covers target-content policy in the tool and combined digests", () => {
+    const contract = toolContract("binary_session");
+    const original = createCatalogDigests([contract], []);
+    const changed = createCatalogDigests(
+      [{ ...contract, returnsTargetContent: !contract.returnsTargetContent }],
+      [],
     );
-    expect(new Set(CLI_COMMAND_NAMES).size).toBe(CLI_COMMAND_NAMES.length);
-    expect(FULL_CATALOG_IDENTITY.counts).toEqual({
-      cli_commands: CLI_COMMAND_NAMES.length,
-      mcp_tools: TOOL_CONTRACTS.length,
-      mcp_prompts: PROMPT_CONTRACTS.length,
-    });
-    expect(FULL_CATALOG_IDENTITY.digests.combined_sha256).toMatch(
-      /^[a-f0-9]{64}$/u,
-    );
-  });
-
-  it("covers each tool's target-content policy in the catalog digest", () => {
-    expect(createCatalogDigests()).toEqual(FULL_CATALOG_IDENTITY.digests);
-    const [first] = TOOL_CONTRACTS;
-    if (first === undefined) throw new Error("expected a tool contract");
-    const toggled = TOOL_CONTRACTS.map((contract) =>
-      contract === first
-        ? { ...contract, returnsTargetContent: !contract.returnsTargetContent }
-        : contract,
-    );
-    const digests = createCatalogDigests(toggled);
-    expect(digests.combined_sha256).not.toBe(
-      FULL_CATALOG_IDENTITY.digests.combined_sha256,
-    );
-    expect(digests.tools_sha256).not.toBe(
-      FULL_CATALOG_IDENTITY.digests.tools_sha256,
-    );
-    expect(digests.prompts_sha256).toBe(
-      FULL_CATALOG_IDENTITY.digests.prompts_sha256,
-    );
+    expect(changed.combined_sha256).not.toBe(original.combined_sha256);
+    expect(changed.tools_sha256).not.toBe(original.tools_sha256);
+    expect(changed.prompts_sha256).toBe(original.prompts_sha256);
   });
 
   it("binds output schema profile and canonical output contracts into identity", () => {
-    const profiles = createCatalogDigestProfiles();
-    expect(FULL_CATALOG_IDENTITY.digests).toEqual(profiles.full.full);
-    expect(DEFAULT_CATALOG_IDENTITY.digests).toEqual(profiles.compact.full);
-    const changedOutput = TOOL_CONTRACTS.map((contract, index) =>
-      index === 0
-        ? {
-            ...contract,
-            outputSchema: z.strictObject({ profile_probe: z.literal(true) }),
-          }
-        : contract,
+    const contract = toolContract("binary_session");
+    const profiles = createCatalogDigestProfiles([contract], []);
+    const changed = createCatalogDigestProfiles(
+      [
+        {
+          ...contract,
+          outputSchema: z.strictObject({ profile_probe: z.literal(true) }),
+        },
+      ],
+      [],
     );
-    const changed = createCatalogDigestProfiles(changedOutput);
-    for (const input of ["full", "compact"] as const) {
-      const { full, off } = profiles[input];
-      expect(off.tools_sha256).not.toBe(full.tools_sha256);
-      expect(off.combined_sha256).not.toBe(full.combined_sha256);
-      expect(off.prompts_sha256).toBe(full.prompts_sha256);
-      for (const output of ["full", "off"] as const) {
-        expect(changed[input][output].tools_sha256).not.toBe(
-          profiles[input][output].tools_sha256,
-        );
-        expect(changed[input][output].combined_sha256).not.toBe(
-          profiles[input][output].combined_sha256,
-        );
-        expect(changed[input][output].prompts_sha256).toBe(
-          profiles[input][output].prompts_sha256,
-        );
-      }
+    const { compact, off } = profiles;
+    expect(off.tools_sha256).not.toBe(compact.tools_sha256);
+    expect(off.combined_sha256).not.toBe(compact.combined_sha256);
+    expect(off.prompts_sha256).toBe(compact.prompts_sha256);
+    for (const profile of ["compact", "off"] as const) {
+      expect(changed[profile].tools_sha256).not.toBe(
+        profiles[profile].tools_sha256,
+      );
+      expect(changed[profile].combined_sha256).not.toBe(
+        profiles[profile].combined_sha256,
+      );
+      expect(changed[profile].prompts_sha256).toBe(
+        profiles[profile].prompts_sha256,
+      );
     }
-  });
-
-  it("changes catalog identity when advertised input examples change", () => {
-    const contract = TOOL_CONTRACTS.find((item) => item.examples.length > 0);
-    if (contract === undefined) throw new Error("expected an input example");
-    const original = createCatalogDigests();
-    const withoutExamples = createCatalogDigests(
-      TOOL_CONTRACTS.map((item) =>
-        item === contract ? { ...item, examples: [] } : item,
-      ),
-    );
-    expect(withoutExamples.tools_sha256).not.toBe(original.tools_sha256);
-    expect(withoutExamples.combined_sha256).not.toBe(original.combined_sha256);
-    expect(withoutExamples.prompts_sha256).toBe(original.prompts_sha256);
-  });
-
-  it("reports unknown without a live comparison and distinguishes aligned from stale", () => {
-    const unknown = createServerIdentity({
-      catalog: DEFAULT_CATALOG_IDENTITY,
-      startedAt: "2026-07-13T00:00:00.000Z",
-      commandPath: normalizeEntrypointPath(""),
-    });
-    expect(unknown.alignment.state).toBe("unknown");
-    expect(unknown.server.command_path).toBeNull();
-    const aligned = createServerIdentity({
-      catalog: DEFAULT_CATALOG_IDENTITY,
-      startedAt: "2026-07-13T00:00:00.000Z",
-      commandPath: "/packaged/rea.mjs",
-      expected: {
-        package_version: PRODUCT_IDENTITY.packageVersion,
-        catalog_digest: DEFAULT_CATALOG_IDENTITY.digests.combined_sha256,
-        server_path: "/packaged/rea.mjs",
-      },
-    });
-    expect(aligned.alignment).toMatchObject({ state: "aligned", reasons: [] });
-    const stale = createServerIdentity({
-      catalog: DEFAULT_CATALOG_IDENTITY,
-      startedAt: "2026-07-13T00:00:00.000Z",
-      commandPath: "/packaged/rea.mjs",
-      expected: {
-        package_version: "1.2.0",
-        catalog_digest: "0".repeat(64),
-      },
-    });
-    expect(stale.alignment).toMatchObject({
-      state: "mcp_server_restart_required",
-      reasons: ["package_version_mismatch", "catalog_digest_mismatch"],
-    });
   });
 
   it("keeps registration alignment unknown when the server entrypoint is absent", () => {
@@ -243,180 +130,106 @@ describe("server and catalog identity", () => {
   });
 });
 
-describe("provider capability inventory", () => {
-  it("reports composed, host, and target-specific availability truthfully", () => {
-    const policy = {
-      processCaptureEnabled: true,
-      investigationInputRoots: 1,
-    };
-    const composed = buildCapabilityInventory(
-      {
-        open: true,
-        kind: "executable",
-        format: "mach-o",
-        capabilities: [
-          "list_segments",
-          "list_documents",
-          "list_procedures",
-          "list_strings",
-        ].map((operation) => statusCapability(operation)),
-      },
-      policy,
-    );
-    expect(composed).toContainEqual(
-      expect.objectContaining({ name: "binary_overview", available: true }),
-    );
-    const artifactTarget = buildCapabilityInventory(
-      {
-        open: true,
-        kind: "artifact",
-        format: "javascript",
-        capabilities: [statusCapability("current_address")],
-      },
-      policy,
-    );
-    expect(artifactTarget).toContainEqual(
-      expect.objectContaining({
-        name: "current_address",
-        available: false,
-        reason: "target_unsupported",
-      }),
-    );
-    const unsupportedHost = buildCapabilityInventory(
-      {
-        open: true,
-        kind: "executable",
-        format: "elf",
-        capabilities: [
-          statusCapability("inspect_macho", {
-            available: false,
-            availability_code: "unsupported_host",
-            reason: "Native macOS utilities require macOS.",
-          }),
-        ],
-      },
-      policy,
-    );
-    expect(unsupportedHost).toContainEqual(
-      expect.objectContaining({
-        name: "inspect_macho",
-        available: false,
-        reason: "unsupported_host",
-      }),
-    );
-  });
-});
+it.skipIf(process.platform === "win32")(
+  "compares the selected entrypoint through symlink and parent traversal",
+  async () => {
+    const root = await createTestTempDirectory("server-identity-path-");
+    const scripts = join(root, "package", "scripts");
+    const scratch = join(root, "scratch");
+    await mkdir(scripts, { recursive: true });
+    await mkdir(scratch);
+    const canonical = join(scripts, "rea.mjs");
+    const other = join(root, "other.mjs");
+    await writeFile(canonical, "entrypoint");
+    await writeFile(other, "other entrypoint");
+    await symlink(scripts, join(scratch, "link"));
+    const selected = `${scratch}/link/../scripts/rea.mjs`;
+    // Bun selects a script through native traversal (#8844).
+    const identity = (server_path: string) =>
+      createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: canonical,
+        expected: { server_path },
+        runtime: "bun",
+      });
 
-describe("guided prompt catalog identity", () => {
-  it("covers each guided prompt's objective in the catalog digest", () => {
-    const [first] = PROMPT_CONTRACTS;
-    if (first === undefined) throw new Error("expected a prompt contract");
-    const changed = PROMPT_CONTRACTS.map((contract) =>
-      contract === first
-        ? { ...contract, objective: `${contract.objective} changed` }
-        : contract,
-    );
-    const digests = createCatalogDigests(TOOL_CONTRACTS, changed);
-    expect(digests.prompts_sha256).not.toBe(
-      FULL_CATALOG_IDENTITY.digests.prompts_sha256,
-    );
-    expect(digests.combined_sha256).not.toBe(
-      FULL_CATALOG_IDENTITY.digests.combined_sha256,
-    );
-    expect(digests.tools_sha256).toBe(
-      FULL_CATALOG_IDENTITY.digests.tools_sha256,
-    );
-  });
-});
-
-describe("live server identity over MCP", () => {
-  it("exposes live identity, a stable catalog, and changing availability", async () => {
-    const session = createTestBinarySession(availabilityProvider());
-    const server = createServer({ kind: "session", session });
-    const client = new Client(
-      { name: "identity-test", version: "9" },
-      {
-        capabilities: {
-          elicitation: { form: {} },
-        },
-      },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    let toolListChanges = 0;
-    client.setNotificationHandler("notifications/tools/list_changed", () => {
-      toolListChanges += 1;
+    expect(identity(selected).alignment).toMatchObject({
+      state: "aligned",
+      reasons: [],
     });
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      await assertLiveIdentity(client);
-      await assertSessionIdentity(client);
-      expect(
-        (await client.listTools()).tools.map(({ name }) => name),
-      ).toContain("current_address");
-      await client.callTool({
-        name: "open_binary",
-        arguments: { path: process.execPath },
-      });
-      expect(toolListChanges).toBe(0);
-      expect(
-        (await client.listTools()).tools.map(({ name }) => name),
-      ).toContain("current_address");
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-    }
-  });
+    expect(identity(other).alignment).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
+    });
+    expect(identity(join(root, "missing.mjs")).alignment).toMatchObject({
+      state: "unknown",
+      reasons: [],
+    });
+    // Node resolves its entrypoint lexically, so this spelling runs
+    // scratch/rea.mjs even though traversal through the link leaves scratch.
+    // Bun traverses the link and runs a different file.
+    const lexical = join(scratch, "rea.mjs");
+    await writeFile(lexical, "lexical entrypoint");
+    await writeFile(join(root, "package", "rea.mjs"), "traversed entrypoint");
+    const crossing = (runtime: "node" | "bun") =>
+      createServerIdentity({
+        catalog: DEFAULT_CATALOG_IDENTITY,
+        startedAt: "2026-07-13T00:00:00.000Z",
+        commandPath: lexical,
+        expected: { server_path: `${scratch}/link/../rea.mjs` },
+        runtime,
+      }).alignment;
+    expect(crossing("node")).toMatchObject({ state: "aligned", reasons: [] });
+    expect(crossing("bun")).toMatchObject({
+      state: "mcp_server_restart_required",
+      reasons: ["registration_path_mismatch"],
+    });
+  },
+);
 
-  it("compares the caller's digest against the selected compact tools/list catalog", async () => {
-    const session = createTestBinarySession(availabilityProvider());
-    const server = createServer(
-      { kind: "session", session },
-      { environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" } },
-    );
-    const client = new Client({ name: "compact-identity-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const listed = await client.listTools();
-      expect(listed.tools).toHaveLength(TOOL_CONTRACTS.length);
+it("reports the connected client and compares caller expectations against the live catalog", async () => {
+  const session = createTestBinarySession(availabilityProvider());
+  const server = createServer({ kind: "session", session });
+  const client = new Client(
+    { name: "identity-test", version: "9" },
+    {
+      jsonSchemaValidator: createMcpSchemaValidation(),
+      capabilities: { elicitation: { form: {} } },
+    },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const status = await assertLiveIdentity(client);
+    const statusSchema = sessionOutputSchemas.binary_session;
+    expect(status.open).toBe(false);
+    expect(
+      statusSchema.safeParse({ result: { ...status, open: true } }).success,
+    ).toBe(false);
 
-      const response = await client.callTool({
-        name: "binary_session",
-        arguments: {
-          expected_catalog_digest:
-            server.catalogIdentity.digests.combined_sha256,
-        },
-      });
-      const status = z
-        .object({ result: sessionProvider })
-        .parse(response.structuredContent).result;
-      expect(status.server_identity.catalog).toEqual(server.catalogIdentity);
-      expect(status.server_identity.alignment).toMatchObject({
-        state: "aligned",
-        reasons: [],
-      });
-      expect(server.catalogIdentity.digests.tools_sha256).not.toBe(
-        FULL_CATALOG_IDENTITY.digests.tools_sha256,
-      );
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-    }
-  });
+    const digest = status.server_identity.catalog.digests.combined_sha256;
+    const aligned = await client.callTool({
+      name: "binary_session",
+      arguments: { expected_catalog_digest: digest },
+    });
+    expect(
+      statusSchema.parse(aligned.structuredContent).result.server_identity
+        .alignment,
+    ).toMatchObject({
+      state: "aligned",
+      reasons: [],
+    });
+    await assertStaleIdentity(client);
+  } finally {
+    await Promise.allSettled([client.close(), server.close(), session.close()]);
+  }
 });
 
 describe("active-target availability over MCP", () => {
-  it("advertises active-target tools only when a matching target is open", async () => {
+  it("changes availability with the target while keeping the advertised catalog stable", async () => {
     const session = createTestBinarySession(
       availabilityProvider(["inspect_macho", "inspect_artifact"]),
     );
@@ -425,7 +238,10 @@ describe("active-target availability over MCP", () => {
       { kind: "session", session },
       { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
     );
-    const client = new Client({ name: "availability-test", version: "1" });
+    const client = new Client(
+      { name: "availability-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const directory = await createTestTempDirectory("rea-target-availability-");
@@ -436,8 +252,9 @@ describe("active-target availability over MCP", () => {
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      const listed = await toolNames(client);
-      expect(await activeTargetReasons(client)).toEqual({
+      const listed = await client.listTools();
+      const before = await readStatus(client);
+      expect(activeTargetReasons(before)).toEqual({
         inspect_macho: "target_required",
         inspect_artifact: "target_required",
         inspect_managed_artifact: "available",
@@ -450,23 +267,28 @@ describe("active-target availability over MCP", () => {
         error: { code: "target_unavailable" },
       });
       await openTarget(client, plist);
-      expect(await activeTargetReasons(client)).toEqual({
+      const artifact = await readStatus(client);
+      expect(activeTargetReasons(artifact)).toEqual({
         inspect_macho: "target_unsupported",
         inspect_artifact: "available",
         inspect_managed_artifact: "available",
       });
       await client.callTool({ name: "close_binary", arguments: {} });
       await openTarget(client, executable);
-      expect(await activeTargetReasons(client)).toEqual({
+      const native = await readStatus(client);
+      expect(activeTargetReasons(native)).toEqual({
         inspect_macho: "available",
         inspect_artifact: "available",
         inspect_managed_artifact: "available",
       });
+      expect(await client.listTools()).toEqual(listed);
       await client.callTool({ name: "close_binary", arguments: {} });
-      expect((await activeTargetReasons(client)).inspect_macho).toBe(
-        "target_required",
-      );
-      expect(await toolNames(client)).toEqual(listed);
+      const closed = await readStatus(client);
+      expect(activeTargetReasons(closed).inspect_macho).toBe("target_required");
+      for (const status of [artifact, native, closed])
+        expect(status.server_identity.catalog).toEqual(
+          before.server_identity.catalog,
+        );
     } finally {
       await Promise.allSettled([
         client.close(),
@@ -480,9 +302,6 @@ describe("active-target availability over MCP", () => {
 const PLIST_XML =
   '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleName</key><string>Fixture</string></dict></plist>';
 
-const toolNames = async (client: Client): Promise<string[]> =>
-  (await client.listTools()).tools.map(({ name }) => name);
-
 const openTarget = async (client: Client, path: string): Promise<void> => {
   const opened = await client.callTool({
     name: "open_binary",
@@ -491,17 +310,19 @@ const openTarget = async (client: Client, path: string): Promise<void> => {
   expect(opened.isError ?? false).toBe(false);
 };
 
-const activeTargetReasons = async (
-  client: Client,
-): Promise<Record<string, unknown>> => {
+const readStatus = async (client: Client) => {
   const status = await client.callTool({
     name: "binary_session",
     arguments: {},
   });
-  const availability = expandToolAvailability(
-    z.object({ result: sessionProvider }).parse(status.structuredContent).result
-      .tool_availability,
-  );
+  return sessionOutputSchemas.binary_session.parse(status.structuredContent)
+    .result;
+};
+
+const activeTargetReasons = (
+  status: Awaited<ReturnType<typeof readStatus>>,
+) => {
+  const availability = expandToolAvailability(status.tool_availability);
   return Object.fromEntries(
     ["inspect_macho", "inspect_artifact", "inspect_managed_artifact"].map(
       (name) => [name, availability.find((tool) => tool.name === name)?.reason],
@@ -509,65 +330,88 @@ const activeTargetReasons = async (
   );
 };
 
-const assertLiveIdentity = async (client: Client): Promise<void> => {
+const assertLiveIdentity = async (client: Client) => {
   const identity = await client.callTool({
     name: "binary_session",
     arguments: { detail: "complete" },
   });
-  const status = z
-    .object({ result: sessionProvider })
-    .parse(identity.structuredContent).result;
-  expect(Object.keys(status.server_identity.catalog).sort()).toEqual([
-    "counts",
-    "digests",
-  ]);
+  const status = sessionOutputSchemas.binary_session.parse(
+    identity.structuredContent,
+  ).result;
   const availability = expandToolAvailability(status.tool_availability);
   expect(availability.map(({ name }) => name).sort()).toEqual(
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
   for (const contract of TOOL_CONTRACTS) {
+    const effects = contract.sessionEffects;
+    const annotations = annotationsFromEffects(effects);
     expect(availability).toContainEqual(
       expect.objectContaining({
         name: contract.name,
         surface: contract.kind,
-        effects: contract.effects,
+        effects,
         annotations: {
-          read_only: contract.annotations.readOnlyHint ?? false,
-          destructive: contract.annotations.destructiveHint ?? false,
-          idempotent: contract.annotations.idempotentHint ?? false,
-          open_world: contract.annotations.openWorldHint ?? true,
+          read_only: annotations.readOnlyHint,
+          destructive: annotations.destructiveHint,
+          idempotent: annotations.idempotentHint,
+          open_world: annotations.openWorldHint,
         },
       }),
     );
   }
-  expect(identity.structuredContent).toMatchObject({
-    result: {
-      server_identity: {
-        package: { version: PRODUCT_IDENTITY.packageVersion },
-        server: { version: PRODUCT_IDENTITY.packageVersion },
-        sdk: {
-          server: SDK_IDENTITY.server,
-          client_test: PACKAGE_METADATA.clientSdkVersion,
-        },
-        client: { name: "identity-test", version: "9" },
-        negotiated_protocol_version: expect.any(String),
-        catalog: createCatalogIdentity({
-          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-        }),
-        alignment: { state: "unknown" },
-      },
+  const root = resolve(fileURLToPath(import.meta.url), "../../../..");
+  const manifest = z
+    .object({ name: z.string(), version: z.string() })
+    .parse(JSON.parse(await readFile(join(root, "package.json"), "utf8")));
+  const { packages } = z
+    .object({
+      packages: z.record(
+        z.string(),
+        z.object({ version: z.string().optional() }),
+      ),
+    })
+    .parse(JSON.parse(await readFile(join(root, "package-lock.json"), "utf8")));
+  const tools = await client.listTools();
+  const { prompts } = await client.listPrompts();
+  expect(status.server_identity).toMatchObject({
+    package: {
+      name: manifest.name,
+      version: manifest.version,
+      root_path: root,
     },
+    server: { version: manifest.version },
+    sdk: {
+      server: packages["node_modules/@modelcontextprotocol/server"]?.version,
+      client_test:
+        packages["node_modules/@modelcontextprotocol/client"]?.version,
+      core: packages["node_modules/@modelcontextprotocol/core"]?.version,
+    },
+    client: { name: "identity-test", version: "9" },
+    negotiated_protocol_version: client.getNegotiatedProtocolVersion(),
+    catalog: {
+      counts: {
+        cli_commands: CLI_COMMAND_NAMES.length,
+        mcp_tools: tools.tools.length,
+        mcp_prompts: prompts.length,
+      },
+      digests: { combined_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+    },
+    alignment: { state: "unknown", reasons: [] },
   });
+  return status;
 };
 
-const assertSessionIdentity = async (client: Client): Promise<void> => {
+const assertStaleIdentity = async (client: Client): Promise<void> => {
   const status = await client.callTool({
     name: "binary_session",
-    arguments: { expected_package_version: "1.2.0" },
+    arguments: {
+      expected_package_version: "1.2.0",
+      expected_catalog_digest: "0".repeat(64),
+    },
   });
-  const parsed = z
-    .object({ result: sessionProvider })
-    .parse(status.structuredContent);
+  const parsed = sessionOutputSchemas.binary_session.parse(
+    status.structuredContent,
+  );
   expect({
     result: {
       ...parsed.result,
@@ -578,13 +422,10 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
   }).toMatchObject({
     result: {
       server_identity: {
-        catalog: {
-          counts: {
-            mcp_tools: TOOL_CONTRACTS.length,
-            cli_commands: CLI_COMMAND_NAMES.length,
-          },
+        alignment: {
+          state: "mcp_server_restart_required",
+          reasons: ["package_version_mismatch", "catalog_digest_mismatch"],
         },
-        alignment: { state: "mcp_server_restart_required" },
       },
       tool_availability: expect.arrayContaining([
         expect.objectContaining({
@@ -625,3 +466,36 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
     },
   });
 };
+
+it("hashes the exact canonical catalog, including escaped prompt text and empty inventories", () => {
+  const sha256 = (value: unknown) => {
+    const canonical = canonicalize(value);
+    if (canonical === undefined) throw new Error("invalid catalog fixture");
+    return createHash("sha256").update(canonical).digest("hex");
+  };
+  const escaped = {
+    name: "fixture",
+    title: 'Quote " slash \\ line\u2028 é 😀',
+    description: "Catalog fixture",
+    objective: "Preserve the exact prompt text.",
+    arguments: {
+      z_last: { description: "Tab\t and newline\n", required: false },
+      a_first: { description: "", required: true },
+    },
+    steps: [
+      { instruction: "Use the selected analysis.", tools: ["binary_session"] },
+    ],
+  } satisfies PromptContract;
+  for (const [prompts, profile] of [
+    [[escaped], "off"],
+    [[], "off"],
+    [[], "compact"],
+  ] as const) {
+    const tools = { output_schema_profile: profile, catalog: [] };
+    expect(createCatalogDigests([], prompts, undefined, profile)).toEqual({
+      tools_sha256: sha256(tools),
+      prompts_sha256: sha256(prompts),
+      combined_sha256: sha256({ cli: CLI_COMMAND_NAMES, tools, prompts }),
+    });
+  }
+});

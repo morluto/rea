@@ -2,23 +2,26 @@ import { expect, it } from "vitest";
 
 import { analyzeArtifactFiles } from "../../../tests/fixtures/javascriptArtifactAnalysis.js";
 
-const packageObservation = async (text: string) => {
+const packageObservation = async (text: string | null) => {
   const { analysis } = await analyzeArtifactFiles({
     files: [
       {
         path: "app/package.json",
         container_sha256: "a".repeat(64),
         sha256: "b".repeat(64),
-        bytes: Buffer.byteLength(text),
+        bytes: Buffer.byteLength(text ?? ""),
         inventory_artifact_id: "package-main-fixture",
         kind: "package-json",
         unpacked: false,
-        text: { included: true, value: text },
+        text:
+          text === null
+            ? { included: false, reason: "invalid-utf8" }
+            : { included: true, value: text },
       },
     ],
     unavailable_relevant_files: [],
     containers: [],
-    text_bytes_read: Buffer.byteLength(text),
+    text_bytes_read: Buffer.byteLength(text ?? ""),
     invalid_utf8_files: 0,
   });
   return analysis.packages[0];
@@ -36,7 +39,7 @@ it("retains declared package metadata and normal defaults", async () => {
     main: null,
     main_status: "default",
     main_entrypoint: "",
-    renderer: null,
+    renderer_declarations: {},
   });
   expect(declared).toMatchObject({
     status: "included",
@@ -45,9 +48,59 @@ it("retains declared package metadata and normal defaults", async () => {
     main: null,
     main_status: "invalid",
     main_entrypoint: "",
-    renderer: "source-browser.cjs",
+    renderer_declarations: { browser: "source-browser.cjs" },
+    renderer_entrypoint: { field: "browser", path: "source-browser.cjs" },
   });
 });
+
+it.each([
+  {
+    fields: {
+      renderer: "renderer.js",
+      browser: "browser.js",
+      module: "module.js",
+    },
+    field: "renderer",
+    path: "renderer.js",
+  },
+  {
+    fields: { renderer: false, browser: "browser.js", module: "module.js" },
+    field: "browser",
+    path: "browser.js",
+  },
+  {
+    fields: { renderer: "", browser: {}, module: "module.js" },
+    field: "module",
+    path: "module.js",
+  },
+])(
+  "keeps simultaneous renderer declarations separate from selected $field provenance",
+  async ({ fields, field, path }) => {
+    const observation = await packageObservation(JSON.stringify(fields));
+    expect(observation).toMatchObject({ renderer_entrypoint: { field, path } });
+    for (const [key, value] of Object.entries(fields))
+      expect(observation).toMatchObject({
+        renderer_declarations: {
+          [key]: typeof value === "string" ? value : { status: "non-string" },
+        },
+      });
+  },
+);
+
+it.each([
+  ["{}", {}],
+  ["{", null],
+  ["null", null],
+  [null, null],
+] as const)(
+  "keeps absent/invalid/unavailable renderer origins distinct for %s",
+  async (text, declarations) => {
+    expect(await packageObservation(text)).toMatchObject({
+      renderer_declarations: declarations,
+      renderer_entrypoint: null,
+    });
+  },
+);
 
 it.each([null, false, 123, {}, []].map((main) => ({ main })))(
   "retains non-string main $main evidence separately from Node index fallback",

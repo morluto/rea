@@ -4,16 +4,20 @@ import type { Evidence } from "../evidence.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { readEvidencePayload } from "../evidenceValidation.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import {
+  availableFunctionBodySchema,
   functionBodySchema,
   functionBodyEntryAgrees,
-  functionDossierSchema,
-} from "../hopperValues.js";
+} from "../native/functionBody.js";
+import { unavailableNativeFactSchema } from "./nativeFactAvailability.js";
 import { nativeSymbolOrigin } from "./nativeSymbol.js";
+import type { addressedValueSchema } from "./nativeInventory.js";
 import {
-  addressedValueSchema,
-  nativeInventoryRowsSchemas,
-} from "./nativeInventory.js";
+  listNamesFact,
+  listProceduresFact,
+  type NativeOperationFactContract,
+} from "./nativeOperationFacts.js";
 import { nativeAddressInputSchema } from "./nativeAddress.js";
 import { nativeByteReadSchema } from "./nativeByteRead.js";
 import { procedureInfoSchema } from "./procedureInfo.js";
@@ -23,14 +27,10 @@ import {
   type NativeMatchingCheckpoint,
 } from "./functionByteCoverage.js";
 
-const matchingRowsSchema = nativeInventoryRowsSchemas.names.element
-  .extend({ address: nativeAddressInputSchema })
-  .array();
-const availableBodySchema = functionBodySchema.options[1];
 const matchingBodySchema = z.discriminatedUnion("available", [
-  functionBodySchema.options[0],
-  availableBodySchema.safeExtend({
-    ranges: availableBodySchema.shape.ranges.element
+  unavailableNativeFactSchema,
+  availableFunctionBodySchema.safeExtend({
+    ranges: availableFunctionBodySchema.shape.ranges.element
       .extend({
         start: nativeAddressInputSchema,
         end: nativeAddressInputSchema,
@@ -66,6 +66,22 @@ const sourcePayload = <Output>(
 
 type Body = z.infer<typeof functionBodySchema>;
 type AddressedValue = z.infer<typeof addressedValueSchema>;
+
+/** Matching keys rows by normalized address: a step over the contract's typed rows. */
+const rowAddressesSchema = z.array(
+  z.object({ address: nativeAddressInputSchema }),
+);
+const matchingRows = (
+  contract: NativeOperationFactContract<string, AddressedValue[]>,
+  input: unknown,
+): AddressedValue[] => {
+  const rows = sourcePayload(contract.schema, input);
+  const addresses = sourcePayload(rowAddressesSchema, rows);
+  return rows.map((row, index) => ({
+    ...row,
+    address: addresses[index]!.address,
+  }));
+};
 
 export interface MatchingFunction {
   readonly member: NativeFunctionMatchMember;
@@ -157,8 +173,8 @@ const addNames = async (
   symbols: Facts["symbols"],
   checkpoint: NativeMatchingCheckpoint,
 ): Promise<void> => {
-  for (const symbol of sourcePayload(
-    matchingRowsSchema,
+  for (const symbol of matchingRows(
+    listNamesFact,
     observation.normalized_result,
   )) {
     await checkpoint(128 + symbol.value.length * 2);
@@ -318,7 +334,7 @@ export const readFunctionInventory = async (
   if (Array.isArray(source))
     for (const row of source as unknown[]) await checkpoint(rowBytes(row));
   await checkpoint(256 + 8 * inventory.evidence_id.length);
-  const rows = sourcePayload(matchingRowsSchema, source);
+  const rows = matchingRows(listProceduresFact, source);
   const facts: Facts = {
     details: new Map(),
     symbols: new Map(),

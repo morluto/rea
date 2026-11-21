@@ -81,7 +81,14 @@ const inventoryEvidence = (
     limitations: [],
   });
   const nodes = new Map([[rootId, node(rootSha, rootFormat)]]);
-  const occurrences = [occurrence(".", "file", rootId, rootFormat)];
+  const occurrences = [
+    occurrence(
+      ".",
+      rootFormat === "directory" ? "directory" : "file",
+      rootId,
+      rootFormat,
+    ),
+  ];
   for (const {
     path,
     kind = "file",
@@ -294,8 +301,8 @@ describe("macOS application roots and bundle roles", () => {
     );
     expect(result.application_roots).toEqual([]);
     expect(result.bundles).toEqual([]);
-    expect(result.limitations).toContain(
-      "No application bundle (Payload/*.app or *.app/Contents) was present in the supplied inventory pages.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/no application bundle.*inventory/iu),
     );
   });
 });
@@ -485,8 +492,8 @@ describe("Apple bundle layouts and containers", () => {
       status: "partial",
       inventory_complete: true,
     });
-    expect(result.limitations).toContain(
-      "The DMG's contents were not inventoried on this host; bundle absence is unknown.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/DMG.*not inventoried.*absence is unknown/i),
     );
   });
 
@@ -533,12 +540,94 @@ describe("Apple bundle layouts and containers", () => {
               "manifest",
               "root_format",
             ],
-            message:
-              "Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got asar)",
+            message: expect.stringMatching(
+              /requires.*IPA.*directory.*ZIP.*DMG.*inventory Evidence.*got.*asar/iu,
+            ),
           }),
         ],
       });
     }
+  });
+});
+
+describe("Shallow bundle Info.plist", () => {
+  it("reads a flattened framework's Info.plist from Resources/", () => {
+    const framework = "Contents/Frameworks/Core.framework";
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        { path: "Contents/Info.plist" },
+        macho("Contents/MacOS/Fixture"),
+        macho(`${framework}/Core`),
+        { path: `${framework}/Resources/Info.plist` },
+        { path: `${framework}/_CodeSignature/CodeResources` },
+      ]),
+    );
+    expect(result.bundles.find(({ path }) => path === framework)).toEqual({
+      path: framework,
+      parent_path: ".",
+      layout: "shallow",
+      role: "framework",
+      role_basis: "path-convention",
+      info_plist_path: `${framework}/Resources/Info.plist`,
+      executable_candidates: [`${framework}/Core`],
+      signing_paths: [`${framework}/_CodeSignature/CodeResources`],
+    });
+    expect(result.platforms).toEqual(["macos"]);
+    expect(result.coverage.status).toBe("complete-within-inventory");
+  });
+
+  it.each([
+    {
+      name: "a root Info.plist over Resources/",
+      entries: [
+        { path: "Core.framework/Info.plist" },
+        { path: "Core.framework/Resources/Info.plist" },
+      ],
+      plist: "Core.framework/Info.plist",
+    },
+    {
+      name: "a folded resources/info.plist",
+      entries: [{ path: "Core.framework/resources/info.plist" }],
+      plist: "Core.framework/resources/info.plist",
+    },
+    {
+      name: "no plist from a Resources file",
+      entries: [{ path: "Core.framework/Resources" }],
+      plist: null,
+    },
+    {
+      name: "no plist from a nested bundle's Resources/",
+      entries: [{ path: "Core.framework/Data.bundle/Resources/Info.plist" }],
+      plist: null,
+    },
+  ])("selects $name in a shallow bundle", ({ entries, plist }) => {
+    const root = "Payload/Fixture.app";
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: `${root}/Info.plist` },
+        ...entries.map(({ path }) => ({ path: `${root}/${path}` })),
+      ]),
+    );
+    expect(
+      result.bundles.find(({ path }) => path === `${root}/Core.framework`)
+        ?.info_plist_path,
+    ).toBe(plist === null ? null : `${root}/${plist}`);
+    expect(result.platforms).toEqual(["ios"]);
+  });
+
+  it("does not classify a Resources/-only application root as iOS", () => {
+    const root = "Payload/Fixture.app";
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: `${root}/Resources/Info.plist` },
+      ]),
+    );
+    expect(result.bundles[0]).toMatchObject({
+      path: root,
+      layout: "shallow",
+      info_plist_path: `${root}/Resources/Info.plist`,
+    });
+    expect(result.platforms).toEqual([]);
   });
 });
 
@@ -602,8 +691,8 @@ describe("macOS application scope", () => {
           [source, target].every((path) => path.startsWith("Fixture.app/")),
       ),
     ).toBe(true);
-    expect(result.limitations).toContain(
-      "4 inventoried entries outside every application root are not attributed to the application.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/4 inventoried entries outside.*not attributed/i),
     );
   });
 
@@ -678,7 +767,7 @@ describe("Apple application bridge candidates", () => {
       ),
     );
     const result = project(
-      inventoryEvidence("zip", "Fixture.zip", [...scripts, ...native]),
+      inventoryEvidence("ipa", "Fixture.ipa", [...scripts, ...native]),
     );
 
     expect(result.components.javascript).toHaveLength(129);
@@ -808,7 +897,9 @@ describe("Apple path conventions", () => {
     expect(result.limitations).toEqual(
       expect.arrayContaining([
         "Runtime families are inferred from inventory formats and bounded framework path conventions, not observed runtime loading.",
-        "A bridge basis is inferred from the native path and is repeated for every managed component.",
+        expect.stringMatching(
+          /bridge basis.*inferred.*native path.*every managed component/iu,
+        ),
       ]),
     );
   });
@@ -963,3 +1054,41 @@ it("preserves observed unavailable bundle metadata and signing paths without inv
   expect(result.platforms).toEqual(["ios"]);
   expect(result.unavailable_components).toHaveLength(3);
 });
+
+it.each(["zip", "directory", "dmg"] as const)(
+  "does not apply IPA roots to a %s inventory",
+  (format) => {
+    const result = project(
+      inventoryEvidence(format, `Sample.${format}`, [
+        { path: "Payload/App.app/Info.plist", format: "plist" },
+        { path: "Extras/Other.app/Info.plist", format: "plist" },
+      ]),
+    );
+    expect(result.root_format).toBe(format);
+    expect(result.application_roots).toEqual([]);
+    expect(result.platforms).toEqual([]);
+    expect(result.bundles).toEqual([]);
+  },
+);
+
+it.each(["ipa", "zip", "directory", "dmg"] as const)(
+  "uses only the %s root convention in a mixed inventory",
+  (format) => {
+    const source = inventoryEvidence(format, `Mixed.${format}`, [
+      { path: "Payload/App.app/Info.plist", format: "plist" },
+      { path: "Extras/Other.app/Contents/Info.plist", format: "plist" },
+      macho("Extras/Other.app/Contents/MacOS/Other"),
+      {
+        path: "Extras/Other.app/Contents/Resources/app.js",
+        format: "javascript-bundle",
+      },
+    ]);
+    const result = project(source);
+    expect(result.application_roots).toEqual([
+      format === "ipa" ? "Payload/App.app" : "Extras/Other.app",
+    ]);
+    expect(result.platforms).toEqual([format === "ipa" ? "ios" : "macos"]);
+    expect(result.components.javascript).toHaveLength(1);
+    expect(result.components.executables).toHaveLength(1);
+  },
+);

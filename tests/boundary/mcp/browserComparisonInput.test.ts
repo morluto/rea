@@ -18,6 +18,7 @@ import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenari
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
@@ -62,21 +63,23 @@ function invalidComparisonInputs(
   const scenarioCapture = browserScenarioCaptureSchema.parse(
     scenario.before_scenario,
   );
-  return [
+  const runtimeOnlyInvalid = [
+    { before: { inspection: {} }, after: passive.after },
+    { before: passive.before, after: { ...passive.after, webmcp: {} } },
+    { before_scenario: {}, after_scenario: {} },
+    { ...scenario, before_scenario: { ...scenarioCapture, steps: [{}] } },
+  ];
+  const advertisedInvalid = [
     {},
     { before: passive.before },
-    { before: { inspection: {} }, after: passive.after },
+    { before: { inspection: "{}" }, after: passive.after },
     {
       before: passive.before,
-      after: { ...passive.after, webmcp: {} },
+      after: { ...passive.after, webmcp: "{}" },
     },
-    { before_scenario: {}, after_scenario: {} },
+    { before_scenario: "{}", after_scenario: scenarioCapture },
     { before_scenario: scenario.before_scenario },
     { ...passive, unexpected: true },
-    {
-      ...scenario,
-      before_scenario: { ...scenarioCapture, steps: [{}] },
-    },
     {
       ...scenario,
       normalization: {
@@ -86,13 +89,17 @@ function invalidComparisonInputs(
       },
     },
   ];
+  return { advertisedInvalid, runtimeOnlyInvalid };
 }
 
 describe("browser comparison input boundary", () => {
   it("advertises producer captures and agrees with SDK validation on both comparison families", async () => {
     const browser = await startFakeCdpBrowser({ sensitiveShapes: true });
     const server = new McpServer({ name: "capture-input", version: "0" });
-    const client = new Client({ name: "capture-input", version: "0" });
+    const client = new Client(
+      { name: "capture-input", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     let calls = 0;
@@ -118,6 +125,10 @@ describe("browser comparison input boundary", () => {
         ({ name }) => name === contract.name,
       );
       if (advertised === undefined) throw new Error("Missing comparison tool");
+      // Claude Desktop rejects tools above its 64 KiB per-input-schema limit.
+      expect(
+        Buffer.byteLength(JSON.stringify(advertised.inputSchema)),
+      ).toBeLessThanOrEqual(65_536);
       expect(advertised.inputSchema.type).toBe("object");
       // Anthropic tool input schemas reject root combinators.
       expect(advertised.inputSchema).not.toHaveProperty("anyOf");
@@ -146,6 +157,9 @@ describe("browser comparison input boundary", () => {
         "before + after; before_scenario + after_scenario + [normalization]",
       );
       const runtimeOnlyInvalid = [
+        // Complete observations are copied from producer results, not authored
+        // from their declaration. Malformed payloads still fail before effects.
+        ...invalid.runtimeOnlyInvalid,
         { ...passive, ...scenario },
         { ...passive, normalization: { rules: [] } },
         {
@@ -165,7 +179,7 @@ describe("browser comparison input boundary", () => {
             runtimeValid: true,
           }),
         ),
-        ...invalid.map((input) => ({
+        ...invalid.advertisedInvalid.map((input) => ({
           input,
           advertisedValid: false,
           runtimeValid: false,

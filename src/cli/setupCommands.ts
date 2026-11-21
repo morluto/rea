@@ -1,15 +1,28 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { z } from "incur";
+import { z } from "zod";
 
 import type { DoctorScope } from "../application/Doctor.js";
-import { DOCTOR_PROVIDER_IDS } from "../application/DoctorProviderIds.js";
+import {
+  DESKTOP_BUILD_PROVIDER_ID,
+  DOCTOR_PROVIDER_IDS,
+} from "../domain/doctorProviderIds.js";
 import {
   isSetupFailure,
   type SetupOptions,
 } from "../application/SetupTypes.js";
 import { isUninstallFailure } from "../application/UninstallFailure.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+import {
+  mcpToolFamiliesSchema,
+  toolFamiliesConstraint,
+} from "../config/mcpToolFamilies.js";
 import { isUpdateFailure } from "../application/UpdateFailure.js";
+import {
+  mcpToolCatalogProfileSchema,
+  type McpToolCatalogProfile,
+} from "../config/mcpToolCatalogProfile.js";
 import {
   confirmInteractiveSetup,
   renderSetupDryRun,
@@ -18,8 +31,9 @@ import {
 } from "./interactiveSetup.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { logCliCommand } from "../cliLogging.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 
@@ -43,7 +57,7 @@ const registerSetupCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.setup, {
+  registerCliCommand(cli, CLI_COMMANDS.setup, {
     description: "Configure agent integrations and optional analysis providers",
     outputPolicy: "agent-only",
     options: z.object({
@@ -55,6 +69,18 @@ const registerSetupCommand = (
         .boolean()
         .default(false)
         .describe("Also approve Hopper installation with --yes"),
+      desktopBuild: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Prepare this host for desktop builds: pack REA's build-computer runtime and record the build settings in the selected registrations",
+        ),
+      installAgentenv: z
+        .boolean()
+        .default(false)
+        .describe(
+          "With --desktop-build, also install the agentenv-framework release bundles target with uv",
+        ),
       client: z
         .array(supportedClientSchema)
         .default([])
@@ -63,6 +89,23 @@ const registerSetupCommand = (
         .array(skillClientSchema)
         .default([])
         .describe("Existing client skill destination to update; repeatable"),
+      toolFamilies: z
+        .string()
+        .optional()
+        .refine(
+          (value) =>
+            value === undefined ||
+            mcpToolFamiliesSchema.safeParse(value).success,
+          { message: toolFamiliesConstraint },
+        )
+        .describe(
+          "Comma-separated tool families this registration advertises; omit to preserve the saved selection, or advertise every tool if none is saved. To restore every tool, remove REA_MCP_TOOL_FAMILIES from the client's registration and restart the client.",
+        ),
+      toolCatalogProfile: mcpToolCatalogProfileSchema
+        .optional()
+        .describe(
+          "MCP catalog: full advertises every in-scope tool; hot-cold loads tools on demand and requires client catalog refresh. Omit to preserve the saved profile, or use full if none is saved. Restart the client after changing it.",
+        ),
       allDetected: z
         .boolean()
         .default(false)
@@ -84,11 +127,14 @@ const registerSetupCommand = (
     }),
     alias: { yes: "y" },
     run: ({ options, formatExplicit }) =>
-      logCliCommand(
-        logger,
-        CLI_COMMANDS.setup,
-        () => runSetupCommand({ options, formatExplicit }, environment),
-        isSetupFailure,
+      withCommandCancellation((signal) =>
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.setup,
+          () =>
+            runSetupCommand({ options, formatExplicit }, environment, signal),
+          isSetupFailure,
+        ),
       ),
   });
 };
@@ -98,10 +144,12 @@ const registerDoctorCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.doctor, {
+  registerCliCommand(cli, CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
     options: z.object({
-      target: z.string().optional().describe("Optional app path to check"),
+      target: localPathStringSchema
+        .optional()
+        .describe("Optional app path to check"),
       client: z
         .array(supportedClientSchema)
         .default([])
@@ -109,7 +157,9 @@ const registerDoctorCommand = (
       provider: z
         .array(z.enum(DOCTOR_PROVIDER_IDS))
         .default([])
-        .describe("Deep-analysis provider whose readiness is required"),
+        .describe(
+          "Deep-analysis provider, or desktop_build for a desktop build host, whose readiness is required",
+        ),
       skill: z
         .boolean()
         .optional()
@@ -138,7 +188,7 @@ const registerMaintenanceCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.uninstall, {
+  registerCliCommand(cli, CLI_COMMANDS.uninstall, {
     description: "Remove REA-owned agent configuration and skill files",
     options: z.object({
       purgeData: z
@@ -156,16 +206,17 @@ const registerMaintenanceCommands = (
           return runUninstall(
             options.purgeData,
             systemUninstallHost(
-              homeDirectoryFromEnvironment(environment, process.platform),
+              homeDirectoryFromEnvironment(environment, HOST_PLATFORM.platform),
               undefined,
               environment,
+              HOST_PLATFORM.platform,
             ),
           );
         },
         isUninstallFailure,
       ),
   });
-  cli.command(CLI_COMMANDS.update, {
+  registerCliCommand(cli, CLI_COMMANDS.update, {
     description:
       "Update this REA installation and verify the installed release",
     run: ({ formatExplicit }) =>
@@ -179,7 +230,12 @@ const registerMaintenanceCommands = (
           ]);
           return runUpdate(
             PRODUCT_IDENTITY.packageVersion,
-            systemUpdateHost(undefined, undefined, environment),
+            systemUpdateHost(
+              undefined,
+              undefined,
+              environment,
+              HOST_PLATFORM.platform,
+            ),
             formatExplicit ? "structured" : "human",
           );
         },
@@ -191,8 +247,12 @@ const registerMaintenanceCommands = (
 interface SetupCommandOptions {
   readonly yes: boolean;
   readonly installHopper: boolean;
+  readonly desktopBuild: boolean;
+  readonly installAgentenv: boolean;
   readonly client: readonly string[];
   readonly skillClient: readonly string[];
+  readonly toolFamilies?: string | undefined;
+  readonly toolCatalogProfile?: McpToolCatalogProfile | undefined;
   readonly allDetected: boolean;
   readonly skill?: boolean | undefined;
   readonly dryRun: boolean;
@@ -205,6 +265,7 @@ const runSetupCommand = async (
     readonly formatExplicit: boolean;
   },
   environment: Readonly<NodeJS.ProcessEnv>,
+  signal: AbortSignal,
 ) => {
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
@@ -216,20 +277,19 @@ const runSetupCommand = async (
       import("../doctorRuntime.js"),
     ]);
   const result = await runSetup(
-    setupRunOptions(input, interactive, hasExplicitScope),
-    systemSetupHost(createSystemDoctorHost(environment), environment),
+    { ...setupRunOptions(input, interactive, hasExplicitScope), signal },
+    systemSetupHost(createSystemDoctorHost(environment, signal), environment),
     interactive
       ? (actions, context) =>
-          confirmInteractiveSetup(actions, options.accessible, context)
+          confirmInteractiveSetup(actions, options.accessible, context, signal)
       : undefined,
   );
   if (interactive) renderInteractiveSetupResult(result, environment);
-  else if (
-    options.dryRun &&
-    !input.formatExplicit &&
-    hasInteractiveTerminal()
-  ) {
-    if (result.status === "planned") renderSetupDryRun(result.plannedActions);
+  // Setup's output is agent-only, which incur hides when stdout is a terminal
+  // and no format was chosen, so that terminal gets a rendered summary instead.
+  else if (!input.formatExplicit && process.stdout.isTTY === true) {
+    if (result.status === "planned")
+      renderSetupDryRun(result.plannedActions, result.remediation);
     else renderInteractiveSetupResult(result, environment);
   }
   return result;
@@ -244,10 +304,12 @@ const setupRunOptions = (
   hasExplicitScope: boolean,
 ): SetupOptions => {
   const { options } = input;
+  const desktopBuild = desktopBuildSelected(options);
   const agentIntegrationSelected =
     options.allDetected ||
     options.client.length > 0 ||
-    options.skillClient.length > 0;
+    options.skillClient.length > 0 ||
+    desktopBuild;
   const hasSelectedClients =
     hasExplicitScope &&
     (options.client.length > 0 || options.skillClient.length > 0);
@@ -258,6 +320,7 @@ const setupRunOptions = (
     dryRun: options.dryRun,
     allDetectedClients: options.allDetected,
     proposeHopper: interactive || options.installHopper,
+    ...desktopBuildOptions(options),
     ...(hasSelectedClients ? { clientIds: options.client } : {}),
     ...(options.skillClient.length > 0
       ? { skillClientIds: options.skillClient }
@@ -265,6 +328,12 @@ const setupRunOptions = (
     ...(hasExplicitScope
       ? { installSkill: options.skill ?? agentIntegrationSelected }
       : {}),
+    ...(options.toolFamilies === undefined
+      ? {}
+      : { toolFamilies: options.toolFamilies }),
+    ...(options.toolCatalogProfile === undefined
+      ? {}
+      : { toolCatalogProfile: options.toolCatalogProfile }),
     ...(interactive ? { onProgress: renderSetupProgress } : {}),
     ...(hasSelectedClients && !options.allDetected
       ? {
@@ -273,13 +342,30 @@ const setupRunOptions = (
             ...(options.skillClient.length > 0
               ? { skillClients: options.skillClient }
               : {}),
-            providers: options.installHopper ? ["hopper"] : [],
+            providers: setupProviders(options),
             skill: options.skill ?? agentIntegrationSelected,
           },
         }
       : {}),
   };
 };
+
+/** `--install-agentenv` implies `--desktop-build`. */
+const desktopBuildSelected = (options: SetupCommandOptions): boolean =>
+  options.desktopBuild || options.installAgentenv;
+
+const desktopBuildOptions = (
+  options: SetupCommandOptions,
+): Pick<SetupOptions, "desktopBuild" | "installAgentenv"> =>
+  desktopBuildSelected(options)
+    ? { desktopBuild: true, installAgentenv: options.installAgentenv }
+    : {};
+
+/** Providers whose readiness the selected setup requires. */
+const setupProviders = (options: SetupCommandOptions): readonly string[] => [
+  ...(options.installHopper ? ["hopper"] : []),
+  ...(desktopBuildSelected(options) ? [DESKTOP_BUILD_PROVIDER_ID] : []),
+];
 
 const setupIsInteractive = (
   options: SetupCommandOptions,
@@ -300,7 +386,9 @@ const setupHasExplicitScope = (options: SetupCommandOptions): boolean =>
   options.client.length > 0 ||
   options.skillClient.length > 0 ||
   options.skill !== undefined ||
-  options.installHopper;
+  options.installHopper ||
+  options.desktopBuild ||
+  options.installAgentenv;
 
 const doctorScope = (options: {
   readonly client: readonly string[];

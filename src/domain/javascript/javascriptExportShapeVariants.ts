@@ -12,9 +12,14 @@ import type {
   RetainedJavaScriptExportShapes,
 } from "./javascriptExportShapeSelection.js";
 
-type Primitive = string | number | boolean | null;
 type Shape = RetainedJavaScriptExportShapes["shapes"][number];
-type Field = Shape["fields"][number];
+type Field =
+  | Shape["fields"][number]
+  | {
+      readonly state: "container";
+      readonly path: string;
+      readonly presence: "present";
+    };
 type SelectorResult = JavaScriptExportShapeComparisonResult["left"];
 type ValueAvailability = JavaScriptExportShapeComparisonChange["left"];
 type PropertyPresence =
@@ -190,9 +195,8 @@ const discriminantOccurrences = (
   shapes.forEach((shape, index) => {
     for (const field of shape.fields) {
       if (fieldPresence(shape, field, field.path) !== "present") continue;
-      const value = literalValue(field);
-      if (!value.found) continue;
-      const discriminant = { path: field.path, value: value.value };
+      if (field.state !== "literal") continue;
+      const discriminant = { path: field.path, value: field.value };
       const key = canonicalJson(
         discriminant,
         "JavaScript export shape comparison",
@@ -358,10 +362,7 @@ const fieldAtPath = (
   return {
     path,
     presence: "present",
-    state: "unknown",
-    value: null,
-    reason:
-      "A static container is retained at this path, but no primitive field value is projected.",
+    state: "container",
   };
 };
 
@@ -380,13 +381,6 @@ const fieldChangeStatus = ({
 }: FieldChangeInput):
   | JavaScriptExportShapeComparisonChange["status"]
   | null => {
-  if (
-    leftField !== undefined &&
-    rightField !== undefined &&
-    canonicalJson(leftField, "JavaScript export shape comparison") ===
-      canonicalJson(rightField, "JavaScript export shape comparison")
-  )
-    return null;
   if (leftPresence === "absent" && rightPresence === "absent") return null;
   if (
     leftPresence === "unknown-coverage" ||
@@ -395,8 +389,15 @@ const fieldChangeStatus = ({
     return "unknown";
   if (leftPresence === "absent") return "added";
   if (rightPresence === "absent") return "removed";
+  if (leftField?.state === "unknown" || rightField?.state === "unknown")
+    return "unknown";
   if (leftField !== undefined && rightField !== undefined) {
-    return leftField.state === "unknown" || rightField.state === "unknown"
+    if (
+      canonicalJson(leftField, "JavaScript export shape comparison") ===
+      canonicalJson(rightField, "JavaScript export shape comparison")
+    )
+      return null;
+    return leftField.state === "container" || rightField.state === "container"
       ? "unknown"
       : "changed";
   }
@@ -449,15 +450,15 @@ const fieldAvailability = (
       availability: "unknown",
       reason: field.reason ?? "Static field value is unknown.",
     };
+  if (field.state === "container")
+    return {
+      availability: "unknown",
+      reason:
+        "A static container is retained at this path, but no primitive field value is projected.",
+    };
   if (field.state === "union")
-    return { availability: "union", values: primitiveArray(field.value) };
-  const literal = literalValue(field);
-  return literal.found
-    ? { availability: "literal", value: literal.value }
-    : {
-        availability: "unknown",
-        reason: "Static literal field failed its projection boundary.",
-      };
+    return { availability: "union", values: field.value };
+  return { availability: "literal", value: field.value };
 };
 
 const selectionAvailability = (
@@ -520,24 +521,6 @@ const changeWithId = (
   ...semantic,
   change_id: `jesc_change_${digestCanonicalValue(semantic, "JavaScript export shape comparison")}`,
 });
-
-const literalValue = (
-  field: Field,
-):
-  | { readonly found: true; readonly value: Primitive }
-  | { readonly found: false } =>
-  field.state === "literal" && isPrimitive(field.value)
-    ? { found: true, value: field.value }
-    : { found: false };
-
-const primitiveArray = (value: unknown): Primitive[] =>
-  Array.isArray(value) ? value.filter(isPrimitive) : [];
-
-const isPrimitive = (value: unknown): value is Primitive =>
-  value === null ||
-  typeof value === "string" ||
-  typeof value === "number" ||
-  typeof value === "boolean";
 
 const capitalize = (value: string): string =>
   `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;

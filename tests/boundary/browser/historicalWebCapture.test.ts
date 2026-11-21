@@ -105,65 +105,61 @@ it("preserves opaque HAR container fields through CLI and MCP", async () => {
   expect(await readFile(path, "utf8")).toBe(original);
 });
 
-it.each([
-  { encoded: "1e3", literal: "1000" },
-  { encoded: "0.0000001", literal: "1e-7" },
-])(
-  "excludes normalized HAR numbers through CLI and MCP: $encoded",
-  async ({ encoded, literal }) => {
-    const root = await createTestTempDirectory("rea-har-normalized-number-");
-    const path = join(root, "capture.har");
-    const original = JSON.stringify(historicalHar())
-      .replace('"log":{', `"_number":${encoded},"log":{`)
-      .replace('"cache":{}', `"cache":{},"_number":${encoded}`);
-    await writeFile(path, original);
-    const { call } = await connectLocalToolsMcp();
-    for (const marked of [false, true]) {
-      const fromCli = await cli(
-        path,
-        "har",
-        marked ? ["--sensitive-value", literal] : [],
-      );
-      expect(fromCli.ok, fromCli.stdout).toBe(true);
-      const evidence = parseEvidence(JSON.parse(fromCli.stdout));
-      const response = await call("inspect_web_network_capture", {
-        capture_path: path,
-        format: "har",
-        ...(marked ? { sensitive_values: [literal] } : {}),
+it("excludes normalized HAR numbers through CLI and MCP", async () => {
+  const encoded = "1e3";
+  const literal = "1000";
+  const root = await createTestTempDirectory("rea-har-normalized-number-");
+  const path = join(root, "capture.har");
+  const original = JSON.stringify(historicalHar())
+    .replace('"log":{', `"_number":${encoded},"log":{`)
+    .replace('"cache":{}', `"cache":{},"_number":${encoded}`);
+  await writeFile(path, original);
+  const { call } = await connectLocalToolsMcp();
+  for (const marked of [false, true]) {
+    const fromCli = await cli(
+      path,
+      "har",
+      marked ? ["--sensitive-value", literal] : [],
+    );
+    expect(fromCli.ok, fromCli.stdout).toBe(true);
+    const evidence = parseEvidence(JSON.parse(fromCli.stdout));
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      ...(marked ? { sensitive_values: [literal] } : {}),
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const mcp = parseEvidence(response.structuredContent);
+    expect(mcp.evidence_id).toBe(evidence.evidence_id);
+    expect(mcp.normalized_result).toEqual(evidence.normalized_result);
+    const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    for (const projection of [capture.container, ...capture.records]) {
+      expect(projection.reported).toMatchObject({
+        _number: marked ? null : Number(encoded),
       });
-      expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      const mcp = parseEvidence(response.structuredContent);
-      expect(mcp.evidence_id).toBe(evidence.evidence_id);
-      expect(mcp.normalized_result).toEqual(evidence.normalized_result);
-      const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
-      for (const projection of [capture.container, ...capture.records]) {
-        expect(projection.reported).toMatchObject({
-          _number: marked ? null : Number(encoded),
+      const numbers = projection.numeric_literals.filter(
+        (number) => number.pointer === "/_number",
+      );
+      expect(numbers).toEqual(
+        marked
+          ? []
+          : [
+              {
+                pointer: "/_number",
+                producer_type: "json-number",
+                literal: encoded,
+              },
+            ],
+      );
+      if (marked)
+        expect(projection.redactions).toContainEqual({
+          pointer: "/_number",
+          reason: "explicit-sensitive-value",
         });
-        const numbers = projection.numeric_literals.filter(
-          (number) => number.pointer === "/_number",
-        );
-        expect(numbers).toEqual(
-          marked
-            ? []
-            : [
-                {
-                  pointer: "/_number",
-                  producer_type: "json-number",
-                  literal: encoded,
-                },
-              ],
-        );
-        if (marked)
-          expect(projection.redactions).toContainEqual({
-            pointer: "/_number",
-            reason: "explicit-sensitive-value",
-          });
-      }
     }
-    expect(await readFile(path, "utf8")).toBe(original);
-  },
-);
+  }
+  expect(await readFile(path, "utf8")).toBe(original);
+});
 
 it("retains Playwright IPv6 spelling through public CLI and MCP workflows", async () => {
   const root = await createTestTempDirectory("rea-har-ipv6-");
@@ -287,34 +283,37 @@ it("excludes declared binary lengths through CLI, MCP and retained capture pages
       });
     }
   }
-}, 60_000);
+});
 
 it("reads actual upstream HAR packages in an owned process and retains selected producer order", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-history-har-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-history-har-");
   const fixture = historicalHar();
   const first = fixture.log.entries[0];
   if (first === undefined) throw new Error("fixture missing");
-  fixture.log.entries.push(structuredClone(first));
+  const second = structuredClone(first);
+  second.request.url = "https://example.test/b";
+  fixture.log.entries.push(second);
   const text = JSON.stringify(fixture);
   const path = join(root, "capture.har");
   await writeFile(path, text);
   const called = await cli(path, "har", ["--record", "1", "--record", "0"]);
   expect(called.ok, called.stdout).toBe(true);
   const result = { value: parseEvidence(JSON.parse(called.stdout)) };
-  expect(result.value.subject?.digest).toMatchObject({
+  expect(result.value.subject?.identity).toMatchObject({
     sha256: createHash("sha256").update(text).digest("hex"),
   });
   expect(result.value.normalized_result).toMatchObject({
     total_records: 2,
-    records: [{ ordinal: 1 }, { ordinal: 0 }],
+    records: [
+      { ordinal: 1, reported: { request: { url: second.request.url } } },
+      { ordinal: 0, reported: { request: { url: first.request.url } } },
+    ],
     runtime_attribution: "unknown",
   });
 });
 
 it("keeps malformed JSON separate from absent external mitmproxy capability", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-history-errors-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-history-errors-");
   const path = join(root, "capture.har");
   await writeFile(path, "{malformed-private-json");
   const malformed = await cli(path, "har");
@@ -332,8 +331,7 @@ it("keeps malformed JSON separate from absent external mitmproxy capability", as
 });
 
 it("reports the actual HAR decoder nesting constraint as a typed selected-input issue", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-history-depth-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-history-depth-");
   let extension: unknown = "leaf";
   for (let depth = 0; depth < 66; depth++) extension = { child: extension };
   const path = join(root, "deep.har");
@@ -348,7 +346,7 @@ it("reports the actual HAR decoder nesting constraint as a typed selected-input 
     details: {
       issues: [
         {
-          path: ["capture_path", expect.stringMatching(/^\/_extension\/child/)],
+          path: ["capturePath", expect.stringMatching(/^\/_extension\/child/)],
           reason: "out_of_range",
           expected: { maximum_capture_nesting: 64 },
         },

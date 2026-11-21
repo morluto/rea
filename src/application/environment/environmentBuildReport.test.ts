@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
 import { scenarioCaptureFixture } from "../../../tests/fixtures/browserScenarioCapture.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
@@ -6,6 +7,7 @@ import {
   anonymousOrigin,
   credentialNamed,
   nameFromCaptureFile,
+  savedCredentialWarnings,
   scanCredentialNames,
   scanScenarioCredentialNames,
 } from "./environmentBuildReport.js";
@@ -181,25 +183,20 @@ describe("scanCredentialNames body formats", () => {
   };
   const FORM = "application/x-www-form-urlencoded; charset=UTF-8";
 
-  it("reads a form body as the form parser does, by its media type or, without one, by its shape", () => {
-    for (const mimeType of [FORM, ""]) {
-      expect(
-        scanCredentialNames([posted(mimeType, "password=example&")]),
-        mimeType,
-      ).toEqual({
-        count: 1,
-        pointers: ["record 3 request /password"],
-        skipped: NONE_SKIPPED,
-      });
-      expect(
-        scanCredentialNames([posted(mimeType, "user=a&&flag&token=example")]),
-        mimeType,
-      ).toEqual({
-        count: 1,
-        pointers: ["record 3 request /token"],
-        skipped: NONE_SKIPPED,
-      });
-    }
+  it.each([
+    [
+      "declared form media type",
+      FORM,
+      "password=example with space&",
+      "password",
+    ],
+    ["unlabelled form shape", "", "user=a&&flag&token=example&", "token"],
+  ])("reads a form body by its %s", (_source, mimeType, text, field) => {
+    expect(scanCredentialNames([posted(mimeType, text)])).toEqual({
+      count: 1,
+      pointers: [`record 3 request /${field}`],
+      skipped: NONE_SKIPPED,
+    });
   });
 
   it("finds nothing in plain text that is not a form", () => {
@@ -336,7 +333,7 @@ describe("scanCredentialNames coverage", () => {
             status: 200,
             content: {
               mimeType: "application/json",
-              text: "",
+              text: bytes.toString("base64"),
               encoding: "base64",
             },
           },
@@ -344,8 +341,11 @@ describe("scanCredentialNames coverage", () => {
         binary_fields: [
           {
             pointer: "/response/content/text",
+            representation: "har-base64-content",
             state: "retained",
             content_base64: bytes.toString("base64"),
+            bytes: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
           },
         ],
       }) as unknown as WebNetworkCaptureRecord;
@@ -455,3 +455,54 @@ it.each([
     });
   },
 );
+
+describe("savedCredentialWarnings", () => {
+  const entry = (name: string, secret?: boolean) => ({
+    name,
+    json_pointer: "/x",
+    ...(secret === undefined ? {} : { secret }),
+  });
+
+  it("points at saved values named like credentials that are not marked secret", () => {
+    expect(
+      savedCredentialWarnings({
+        actions: [
+          { action: "goto" },
+          {
+            action: "request",
+            save: [
+              entry("item_id"),
+              entry("access_token"),
+              entry("api_key", true),
+            ],
+          },
+          {
+            action: "click",
+            save_response: { save: [entry("password", false), entry("list")] },
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        code: "credential-named-saved-values",
+        message: expect.stringContaining("2 saved values"),
+        pointers: [
+          "/parameters/actions/1/save/1",
+          "/parameters/actions/2/save_response/save/0",
+        ],
+      },
+    ]);
+  });
+
+  it("warns about nothing when every credential-named value is secret, or the parameters are not a scenario", () => {
+    expect(
+      savedCredentialWarnings({
+        actions: [
+          { action: "request", save: [entry("token", true), entry("id")] },
+        ],
+      }),
+    ).toEqual([]);
+    expect(savedCredentialWarnings({ operation: "har" })).toEqual([]);
+    expect(savedCredentialWarnings(undefined)).toEqual([]);
+  });
+});

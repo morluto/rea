@@ -1,6 +1,8 @@
 import { access } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
@@ -9,7 +11,10 @@ import {
   OwnedWorkerRuntimeCleanupError,
   type OwnedWorkerRuntimeOptions,
 } from "./OwnedWorkerRuntime.js";
-import { spawnOwnedProviderProcess } from "./ProviderProcess.js";
+import {
+  spawnOwnedProviderProcess,
+  type ProviderProcessSupervisor,
+} from "./ProviderProcess.js";
 
 const runtimeOptions = (
   overrides: Partial<OwnedWorkerRuntimeOptions> = {},
@@ -25,45 +30,40 @@ const startOptions = () => ({
   stdin: "pipe" as const,
 });
 
-const waitFor = async (predicate: () => boolean): Promise<void> => {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (predicate()) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("Timed out waiting for owned worker startup");
-};
-
 it("waits for an admitted late handshake before closing its process and root", async () => {
   const runtime = new OwnedWorkerRuntime(runtimeOptions());
-  let announceInitialize: () => void = () => {};
-  const initializing = new Promise<void>((resolve) => {
-    announceInitialize = resolve;
-  });
-  let releaseInitialize: () => void = () => {};
-  const held = new Promise<void>((resolve) => {
-    releaseInitialize = resolve;
-  });
-  let closeSettled = false;
-  const starting = runtime.start(startOptions(), async () => {
-    announceInitialize();
-    await held;
-  });
-  await initializing;
-  await waitFor(() => runtime.supervisor !== undefined);
-  const rootPath = runtime.rootPath;
-  expect(rootPath).toBeDefined();
-  const closing = runtime.close().then(() => {
-    closeSettled = true;
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(closeSettled).toBe(false);
-  expect(runtime.supervisor).toBeDefined();
-  releaseInitialize();
-  await expect(starting).rejects.toThrow("closing");
-  await closing;
-  expect(runtime.supervisor).toBeUndefined();
-  expect(runtime.rootPath).toBeUndefined();
-  await expect(access(rootPath as string)).rejects.toThrow();
+  const initialization = phaseGate<ProviderProcessSupervisor>();
+  const starting = runtime.start(startOptions(), initialization.hold);
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    const supervisor = await initialization.reached(
+      starting,
+      "worker initialization",
+    );
+    const rootPath = runtime.rootPath;
+    if (rootPath === undefined) throw new Error("Worker root was not admitted");
+    const stop = vi.spyOn(supervisor, "stop");
+    closing = runtime.close();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(stop).not.toHaveBeenCalled();
+    await access(rootPath);
+    initialization.release();
+    await expect(starting).rejects.toThrow("closing");
+    await closing;
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(runtime.supervisor).toBeUndefined();
+    expect(runtime.rootPath).toBeUndefined();
+    await expect(access(rootPath)).rejects.toThrow();
+  }, [
+    initialization.release,
+    async () => {
+      await starting.catch(() => undefined);
+    },
+    async () => {
+      await closing;
+    },
+    () => runtime.close(),
+  ]);
 });
 
 it("resolves a bound cleanup error after shared pending-owner retry succeeds", async () => {
@@ -87,22 +87,31 @@ it("resolves a bound cleanup error after shared pending-owner retry succeeds", a
       },
     }),
   );
-  await runtime.start(startOptions());
-  const rootPath = runtime.rootPath;
-  const error = new ProviderCleanupError("owned-worker-test", [], {
-    reason: "controlled cleanup retry",
-  });
-  await expect(runtime.stop()).resolves.toMatchObject({ status: "incomplete" });
-  runtime.bindCleanupFailure(error);
-  expect(error.cleanupIncomplete).toBe(true);
-  expect(error.cleanupResources).toContain(rootPath);
+  await withVerifierCleanup(async () => {
+    await runtime.start(startOptions());
+    const rootPath = runtime.rootPath;
+    const error = new ProviderCleanupError("owned-worker-test", [], {
+      reason: "controlled cleanup retry",
+    });
+    await expect(runtime.stop()).resolves.toMatchObject({
+      status: "incomplete",
+    });
+    runtime.bindCleanupFailure(error);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain(rootPath);
 
-  await OwnedWorkerRuntime.retryPending();
+    await OwnedWorkerRuntime.retryPending();
 
-  expect(error.cleanupIncomplete).toBe(false);
-  expect(error.cleanupResources).toEqual([]);
-  expect(runtime.rootPath).toBeUndefined();
-  await expect(access(rootPath as string)).rejects.toThrow();
+    expect(error.cleanupIncomplete).toBe(false);
+    expect(error.cleanupResources).toEqual([]);
+    expect(runtime.rootPath).toBeUndefined();
+    await expect(access(rootPath as string)).rejects.toThrow();
+  }, [
+    () => {
+      failCleanup = false;
+    },
+    () => runtime.close(),
+  ]);
 });
 
 it("observes request-stream errors and resets them for a fresh child", async () => {
@@ -331,9 +340,10 @@ it("runs deferred delegated cleanup before registering a pending start acquisiti
     expect(stopped.status).not.toBe("incomplete");
     runtime.retainForCleanup();
 
-    await expect(runtime.start(startOptions())).rejects.toThrow(
-      "Owned worker runtime is closing",
-    );
+    await expect(runtime.start(startOptions())).rejects.toMatchObject({
+      _tag: "ProcessAdmissionError",
+      code: "runtime_closing",
+    });
     expect(delegateTimedOut).toBe(false);
     await delegatedClose;
     expect(runtime.rootPath).toBeUndefined();

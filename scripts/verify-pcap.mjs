@@ -1,19 +1,18 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, rmdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { readdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolContract } from "../dist/contracts/toolContracts.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
@@ -27,7 +26,11 @@ if (!(args.length === 0 || (args.length === 2 && args[0] === "--pcap")))
 const path = args[1] === undefined ? null : resolve(args[1]);
 // This parent is shared by independent CLI/MCP owners. A leased Windows
 // runtime root would prevent their native admission of its directory handle.
-const root = await mkdtemp(join(tmpdir(), "rea-pcap-verifier-"));
+const fixture = await VerifierFixture.open({
+  prefix: "rea-pcap-verifier-",
+  private: false,
+});
+const root = fixture.path;
 const resources = new ArtifactResourceScope();
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
@@ -47,7 +50,18 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 transport.stderr?.resume();
-await withVerifierCleanup(async () => {
+fixture.releaseAfter(() => client.close());
+fixture.releaseAfter(() => transport.close());
+fixture.releaseAfter(() => resources.close());
+// The product releases what it created under TMPDIR; anything left fails.
+fixture.releaseAfter(async () =>
+  assert.deepEqual(
+    await readdir(root),
+    [],
+    `Owned capture resources remain under ${root}`,
+  ),
+);
+await withVerifierFixture(fixture, async () => {
   await client.connect(transport);
   const readiness = await run("inspect_pcap_client", {});
   assert(readiness.client.tshark_version && readiness.client.capinfos_version);
@@ -79,7 +93,9 @@ await withVerifierCleanup(async () => {
         (entry) =>
           entry.response_address_count > entry.response_addresses.length,
       );
-    assert.equal(result.coverage, partial ? "partial" : "complete");
+    // Count discrepancies prove partial coverage, but matching counts do not
+    // rule out unresolved HTTP targets or unavailable DNS identity extraction.
+    if (partial) assert.equal(result.coverage, "partial");
     assert.deepEqual(
       await hashVerifierFile(path, resources),
       identity,
@@ -89,21 +105,7 @@ await withVerifierCleanup(async () => {
       `[ok] ${result.packet_count} packets; ${result.endpoint_count} addresses; coverage=${result.coverage}`,
     );
   }
-}, [
-  async () => {
-    await closeVerifierResources([
-      () => client.close(),
-      () => transport.close(),
-      () => resources.close(),
-    ]);
-    assert.deepEqual(
-      await readdir(root),
-      [],
-      `Owned capture resources remain under ${root}`,
-    );
-    await rmdir(root);
-  },
-]);
+});
 console.log("All asserted pcap CLI/MCP checks passed");
 
 async function run(name, input) {
@@ -123,14 +125,13 @@ async function run(name, input) {
     { name, arguments: input },
     { timeout: 360_000 },
   );
-  assert.notEqual(response.isError, true, mcpTextValue(response));
-  const mcp = contract.outputSchema.parse(JSON.parse(mcpTextValue(response)));
+  const mcp = requireMcpOutput(response, name, contract);
   assert.deepEqual(mcp.normalized_result, cli.normalized_result);
   assert.deepEqual(mcp.subject, cli.subject);
   if (input.path !== undefined) {
     assert.equal(cli.subject.local_path, input.path);
     assert.equal(
-      cli.subject.digest.sha256,
+      cli.subject.identity.sha256,
       cli.normalized_result.target.sha256,
     );
   }

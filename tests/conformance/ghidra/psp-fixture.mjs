@@ -68,6 +68,7 @@ export async function buildPspFixture(directory, globalValue = 7) {
     ["rea_psp_entry", "FUNC"],
     ["rea_psp_leaf", "FUNC"],
     ["rea_psp_probe", "FUNC"],
+    ["rea_psp_vfpu_probe", "FUNC"],
     ["rea_psp_global", "OBJECT"],
     ["rea_psp_marker", "OBJECT"],
   ]) {
@@ -229,6 +230,36 @@ export function assertPspLoadedImage(image, targetSha256) {
   assert.equal(image.source_files.length, 1);
   assert.equal(image.source_files[0].original_sha256, targetSha256);
   assert.equal(image.source_files[0].modified_sha256, targetSha256);
+}
+
+/** Static decode coverage only: neither opaque CALLOTHER nor generated C proves vector math. */
+export const PSP_VFPU_DECODE_CASES = [
+  { index: 2, word: 0xdc0000e4, mnemonic: "vpfxs" },
+  { index: 3, word: 0xdd0000e4, mnemonic: "vpfxt" },
+  { index: 4, word: 0xde000000, mnemonic: "vpfxd" },
+  { index: 5, word: 0x60048090, mnemonic: "vadd.q" },
+  { index: 7, word: 0xdc0000c6, mnemonic: "vpfxs" },
+  { index: 8, word: 0x60048090, mnemonic: "vadd.q" },
+  { index: 10, word: 0x60048090, mnemonic: "vadd.q" },
+];
+
+/** Compare actual Ghidra listing instructions against source-owned PSP words. */
+export function assertPspVfpuProbe(observations) {
+  assert.equal(observations.length, PSP_VFPU_DECODE_CASES.length);
+  for (let i = 0; i < observations.length; i++) {
+    const expected = PSP_VFPU_DECODE_CASES[i];
+    const observed = observations[i];
+    const word = Buffer.alloc(4);
+    word.writeUInt32LE(expected.word);
+    assert.equal(
+      observed.status,
+      "decoded",
+      `VFPU instruction ${expected.index} did not decode`,
+    );
+    assert.equal(observed.length, 4);
+    assert.equal(observed.bytes.toLowerCase(), word.toString("hex"));
+    assert.equal(observed.mnemonic.toLowerCase(), expected.mnemonic);
+  }
 }
 
 /** Fixed source encodings and independently chosen immediate, not pseudocode. */

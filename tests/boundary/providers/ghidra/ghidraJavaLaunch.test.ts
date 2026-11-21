@@ -1,12 +1,33 @@
 import { ok as javaProbeOk } from "../../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../../src/ghidra/GhidraJavaProbe.js";
-import { mkdir, stat, writeFile, readFile, readdir } from "node:fs/promises";
+import {
+  mkdir,
+  stat,
+  writeFile,
+  readFile,
+  readdir,
+  realpath,
+  symlink,
+} from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { GhidraLaunchSupportError } from "../../../../src/ghidra/GhidraJavaLaunch.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
+import {
+  GhidraLaunchSupportError,
+  ghidraJavaLaunch,
+} from "../../../../src/ghidra/GhidraJavaLaunch.js";
+import {
+  inspectGhidraInstallation,
+  ghidraJavaEnvironment,
+} from "../../../../src/ghidra/GhidraInstallation.js";
+import {
+  SUPPORTED_GHIDRA_VERSION,
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+} from "../../../../src/ghidra/GhidraReleasePolicy.js";
+import { createInspectionResources } from "../../../fixtures/inspectionResources.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 
@@ -27,13 +48,117 @@ import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import { elf } from "../../../../src/domain/binaryTarget.fixture.js";
 import { silentLogger } from "../../../../src/logger.js";
 
 const warning =
   "[0.004s][warning][os,container] Cgroup limits may be inaccurate: /tmp/password-fixture?token=public-value";
+
+it.skipIf(process.platform === "win32")(
+  "keeps the same symlink parent selection from installation inspection through Java launch",
+  async () => {
+    const root = await createTestTempDirectory("rea-ghidra-selected-parent-");
+    const intended = join(root, "selected");
+    for (const directory of [
+      "child",
+      "bin",
+      "support",
+      "Ghidra/Framework/Utility/lib",
+      `Ghidra/Features/Decompiler/os/${process.platform === "darwin" ? "mac_x86_64" : "linux_x86_64"}`,
+    ])
+      await mkdir(join(intended, directory), { recursive: true });
+    await symlink(join(intended, "child"), join(root, "alias"));
+    const selected = `${root}/alias/..`;
+    await writeFile(
+      join(intended, "Ghidra/application.properties"),
+      `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${SUPPORTED_GHIDRA_JAVA_MAJOR}\n`,
+    );
+    for (const file of [
+      "support/analyzeHeadless",
+      "support/LaunchSupport.jar",
+      "Ghidra/Framework/Utility/lib/Utility.jar",
+      `Ghidra/Features/Decompiler/os/${process.platform === "darwin" ? "mac_x86_64" : "linux_x86_64"}/decompile`,
+    ])
+      await writeFile(join(intended, file), "selected", { mode: 0o700 });
+    await writeFile(
+      join(intended, "bin/java"),
+      `#!/bin/sh
+previous=""
+for argument do
+  if [ "$previous" = "-cp" ]; then
+    [ "$(/bin/cat "$argument")" = "selected" ] || exit 92
+  fi
+  previous="$argument"
+done
+if [ "$previous" = "-envvars" ]; then
+  printf 'GHIDRA_MAXMEM=1G\\n'
+else
+  printf '%s\\n' '-Dfile.encoding=UTF8'
+fi
+`,
+      { mode: 0o700 },
+    );
+    const resources = createInspectionResources();
+    onTestFinished(() => resources.close());
+    const observedJava: string[] = [];
+    const inspected = await inspectGhidraInstallation(
+      {
+        installDir: selected,
+        javaHome: selected,
+        environment: {},
+        platform: process.platform,
+        architecture: "x64",
+        resourceOwner: resources.owner,
+      },
+      {
+        readText: (path) => readFile(path, "utf8"),
+        executable: (path) => existsSync(path) && statSync(path).isFile(),
+        probeJava: async (command) => {
+          observedJava.push(await realpath(command));
+          return javaProbeOk({
+            version: `${SUPPORTED_GHIDRA_JAVA_MAJOR}.0.1`,
+            major: SUPPORTED_GHIDRA_JAVA_MAJOR,
+            home: await realpath(intended),
+            bits: 64,
+            runtime: "jdk",
+            osArch: "amd64",
+            osName: process.platform === "darwin" ? "Mac OS X" : "Linux",
+          });
+        },
+      },
+    );
+    expect(inspected.status).toBe("available");
+    expect(observedJava).toEqual([await realpath(join(intended, "bin/java"))]);
+    if (inspected.status !== "available")
+      throw new Error("Expected selected installation");
+    expect(inspected.installDir).toBe(selected);
+    expect(inspected.javaHome).toBe(selected);
+    const environment = ghidraJavaEnvironment(
+      inspected.javaHome,
+      {},
+      process.platform,
+    );
+    expect(environment.PATH?.split(":")[0]).toBe(`${selected}/bin`);
+    const launched = await ghidraJavaLaunch({
+      platform: process.platform,
+      analyzeHeadlessPath: inspected.analyzeHeadlessPath,
+      javaHome: inspected.javaHome,
+      homeRoot: root,
+      tempRoot: root,
+      arguments: [],
+      environment,
+      onStderr: () => {},
+    });
+    expect(await realpath(launched.command)).toBe(
+      await realpath(join(intended, "bin/java")),
+    );
+    expect(launched.arguments).toContain(
+      `${selected}/Ghidra/Framework/Utility/lib/Utility.jar`,
+    );
+  },
+);
 
 const fixture = async (
   mode: string,
@@ -136,7 +261,7 @@ describe.skipIf(process.platform === "win32")(
   "Ghidra inspected configuration identity",
   () => {
     it("prepares the inspected release directory without reinterpreting changed properties", async () => {
-      const { session, launcher } = await fixture("quiet");
+      const { session, launcher, resources } = await fixture("quiet");
       const propertiesRoot = join(
         session.runtimeRoot,
         "..",
@@ -148,7 +273,9 @@ describe.skipIf(process.platform === "win32")(
         join(propertiesRoot, "application.properties"),
         "application.version=12.1.2\napplication.release.name=OTHER\n",
       );
-      const launched = await launcher.launch(session);
+      const launched = await launcher.launch(session, {
+        resourceScope: resources,
+      });
       if (!launched.ok) throw launched.error;
       expect(
         (
@@ -170,12 +297,15 @@ describe.skipIf(process.platform === "win32")(
     });
 
     it("rejects unresolved identity before creating runtime directories or starting Java", async () => {
-      const { session, launcher, analysisArguments } = await fixture("quiet");
+      const { session, launcher, analysisArguments, resources } =
+        await fixture("quiet");
       const unresolved = new GhidraHeadlessLauncher({
         ...launcher.options,
         configurationDirectoryName: null,
       });
-      const launched = await unresolved.launch(session);
+      const launched = await unresolved.launch(session, {
+        resourceScope: resources,
+      });
       expect(launched).toMatchObject({
         ok: false,
         error: {
@@ -198,9 +328,11 @@ describe.skipIf(process.platform === "win32")(
   "Ghidra LaunchSupport JVM compatibility",
   () => {
     it("reports the selected heap after LaunchSupport's earlier heap argument", async () => {
-      const { session, launcher, analysisArguments } =
+      const { session, launcher, analysisArguments, resources } =
         await fixture("heap-override");
-      const launched = await launcher.launch(session);
+      const launched = await launcher.launch(session, {
+        resourceScope: resources,
+      });
       if (!launched.ok) throw launched.error;
       expect(
         analysisArguments[0]?.filter((argument) => argument.startsWith("-Xmx")),
@@ -223,11 +355,11 @@ describe.skipIf(process.platform === "win32")(
     it.each(["Eclipse OpenJ9 VM", "unrecognized VM", ""])(
       "keeps HotSpot-only flags off a VM identified as %s",
       async (javaVmName) => {
-        const { session, launcher, analysisArguments } = await fixture(
-          "non-hotspot",
-          javaVmName === "" ? null : javaVmName,
-        );
-        const launched = await launcher.launch(session);
+        const { session, launcher, analysisArguments, resources } =
+          await fixture("non-hotspot", javaVmName === "" ? null : javaVmName);
+        const launched = await launcher.launch(session, {
+          resourceScope: resources,
+        });
         if (!launched.ok) throw launched.error;
         expect(analysisArguments).toHaveLength(1);
         expect(launched.value.launchSupport).toBeUndefined();
@@ -241,11 +373,11 @@ describe.skipIf(process.platform === "win32")(
     ])(
       "preserves redirected warnings for %s while keeping the analysis JVM arguments clean",
       async (javaVmName) => {
-        const { session, launcher, analysisArguments } = await fixture(
-          "success",
-          javaVmName,
-        );
-        const launched = await launcher.launch(session);
+        const { session, launcher, analysisArguments, resources } =
+          await fixture("success", javaVmName);
+        const launched = await launcher.launch(session, {
+          resourceScope: resources,
+        });
         if (!launched.ok) throw launched.error;
         expect(analysisArguments[0]).toContain("-Dfile.encoding=UTF8");
         expect(analysisArguments[0]).toContain("-Xmx1G");
@@ -284,9 +416,11 @@ describe.skipIf(process.platform === "win32")(
     it.each(["env-failure", "vm-failure", "env-malformed", "vm-malformed"])(
       "retains helper warnings through session failure diagnostics after %s",
       async (mode) => {
-        const { session, launcher, analysisArguments } = await fixture(mode);
-        const launched = await launcher.launch(session);
-        expect(launched.ok).toBe(false);
+        const { session, launcher, analysisArguments, resources } =
+          await fixture(mode);
+        const launched = await launcher.launch(session, {
+          resourceScope: resources,
+        });
         if (launched.ok) throw new Error("Expected a helper failure");
         expect(analysisArguments).toEqual([]);
         const failure = bindGhidraSessionFailure(() => ({}))(
@@ -327,6 +461,13 @@ describe.skipIf(process.platform === "win32")(
               cause: { code: 3 },
             },
           });
+        if (mode === "env-malformed")
+          expect(cause).toMatchObject({
+            cause: {
+              code: "invalid_environment_entry",
+              detail: { check: "separator", line: "invalid environment" },
+            },
+          });
         if (mode === "vm-malformed")
           expect(cause).toMatchObject({
             launch_support: expect.arrayContaining([
@@ -342,16 +483,18 @@ describe.skipIf(process.platform === "win32")(
     it.each(["os-arch-override", "os-name-override"])(
       "rejects LaunchSupport %s before starting analysis",
       async (mode) => {
-        const { session, launcher, analysisArguments } = await fixture(mode);
-        const launched = await launcher.launch(session);
+        const { session, launcher, analysisArguments, resources } =
+          await fixture(mode);
+        const launched = await launcher.launch(session, {
+          resourceScope: resources,
+        });
         expect(launched.ok).toBe(false);
         expect(analysisArguments).toEqual([]);
         if (launched.ok)
           throw new Error("Expected a JVM platform override failure");
         expect(launched.error.cause).toMatchObject({
-          message: expect.stringContaining(
-            "may not override os.arch or os.name",
-          ),
+          _tag: "GhidraAdmissionError",
+          code: "platform_override",
         });
       },
     );
@@ -365,34 +508,43 @@ describe.skipIf(process.platform === "win32")(
     ])(
       "rejects helper-environment platform injection from %s=%s before analysis",
       async (key, value) => {
-        const { session, launcher, analysisArguments } = await fixture(
-          `env-injection:${key}=${value}`,
-        );
-        const launched = await launcher.launch(session);
+        const { session, launcher, analysisArguments, resources } =
+          await fixture(`env-injection:${key}=${value}`);
+        const launched = await launcher.launch(session, {
+          resourceScope: resources,
+        });
         expect(launched.ok).toBe(false);
         expect(analysisArguments).toEqual([]);
         if (launched.ok)
           throw new Error("Expected a JVM platform override failure");
         expect(launched.error.cause).toMatchObject({
-          message: expect.stringContaining(
-            "may not override os.arch or os.name",
-          ),
+          _tag: "GhidraAdmissionError",
+          code: "platform_override",
         });
       },
     );
 
     it("admits a quoted non-platform option without mistaking its value for a platform argument", async () => {
-      const { session, launcher, analysisArguments } = await fixture(
+      const { session, launcher, analysisArguments, resources } = await fixture(
         'env-injection:JAVA_TOOL_OPTIONS=-Ddescription="text -Dos.arch=x86_64"',
       );
-      const launched = await launcher.launch(session);
+      const launched = await launcher.launch(session, {
+        resourceScope: resources,
+      });
       if (!launched.ok) throw launched.error;
       expect(analysisArguments).toHaveLength(1);
     });
+  },
+);
 
+describe.skipIf(process.platform === "win32")(
+  "Ghidra LaunchSupport output diagnostics",
+  () => {
     it("bounds retained UTF-8 warnings and reports original byte counts", async () => {
-      const { session, launcher } = await fixture("large");
-      const launched = await launcher.launch(session);
+      const { session, launcher, resources } = await fixture("large");
+      const launched = await launcher.launch(session, {
+        resourceScope: resources,
+      });
       if (!launched.ok) throw launched.error;
       for (const output of launched.value.launchSupport ?? []) {
         expect(output.stderr_truncated).toBe(true);
@@ -409,15 +561,19 @@ describe.skipIf(process.platform === "win32")(
     });
 
     it("omits helper diagnostics when both stderr streams are empty", async () => {
-      const { session, launcher } = await fixture("quiet");
-      const launched = await launcher.launch(session);
+      const { session, launcher, resources } = await fixture("quiet");
+      const launched = await launcher.launch(session, {
+        resourceScope: resources,
+      });
       if (!launched.ok) throw launched.error;
       expect(launched.value.launchSupport).toBeUndefined();
     });
 
     it("redacts the explicit transport credential and preserves caller-selected paths and URL values", async () => {
-      const { session, launcher } = await fixture("credential");
-      const launched = await launcher.launch(session);
+      const { session, launcher, resources } = await fixture("credential");
+      const launched = await launcher.launch(session, {
+        resourceScope: resources,
+      });
       if (!launched.ok) throw launched.error;
       expect(launched.value.launchSupport).toHaveLength(2);
       for (const output of launched.value.launchSupport ?? []) {
@@ -453,9 +609,8 @@ describe.skipIf(process.platform === "win32")(
         if (launched.ok)
           throw new Error("Expected an effective platform override refusal");
         expect(launched.error.cause).toMatchObject({
-          message: expect.stringContaining(
-            "may not override os.arch or os.name",
-          ),
+          _tag: "GhidraAdmissionError",
+          code: "platform_override",
         });
       },
     );
@@ -475,7 +630,8 @@ describe.skipIf(process.platform === "win32")(
       if (launched.ok)
         throw new Error("Expected a JVM platform override failure");
       expect(launched.error.cause).toMatchObject({
-        message: expect.stringContaining("may not override os.arch or os.name"),
+        _tag: "GhidraAdmissionError",
+        code: "platform_override",
       });
     });
 
@@ -509,7 +665,9 @@ describe.skipIf(process.platform === "win32")(
       if (launched.ok)
         throw new Error("Expected an unreadable argument-file failure");
       expect(launched.error.cause).toMatchObject({
-        message: expect.stringContaining("argument file is unreadable"),
+        _tag: "GhidraAdmissionError",
+        code: "argument_file_unreadable",
+        detail: { path: optionsFile },
       });
     });
 
@@ -532,7 +690,8 @@ describe.skipIf(process.platform === "win32")(
       if (launched.ok)
         throw new Error("Expected a nested argument-file failure");
       expect(launched.error.cause).toMatchObject({
-        message: expect.stringContaining("may not nest @ references"),
+        _tag: "GhidraAdmissionError",
+        code: "nested_argument_file",
       });
     });
   },
@@ -622,7 +781,7 @@ describe.skipIf(process.platform === "win32")(
       expect(result.ok).toBe(false);
       expect(analysisArguments).toEqual([]);
       expect(resources.hasPending).toBe(false);
-    }, 5000);
+    });
   },
 );
 
@@ -698,9 +857,8 @@ describe.skipIf(process.platform === "win32")(
           );
           if (cleanup.fileCleanupFailure.outcome.kind === "failed")
             expect(cleanup.fileCleanupFailure.outcome.cause).toMatchObject({
-              message: expect.stringContaining(
-                "may not override os.arch or os.name",
-              ),
+              _tag: "GhidraAdmissionError",
+              code: "platform_override",
             });
           await resources.retryCleanup();
           expect(resources.hasPending).toBe(false);
@@ -782,7 +940,7 @@ describe.skipIf(process.platform === "win32")(
             platform: process.platform,
             architecture: process.arch,
             readText: () =>
-              "application.version=12.1.4\napplication.java.min=21\n",
+              "application.version=12.2\napplication.java.min=25\n",
             executable: () => true,
             probeJava: () =>
               javaProbeOk<GhidraJavaObservation>({
@@ -793,8 +951,8 @@ describe.skipIf(process.platform === "win32")(
                     : process.platform === "win32"
                       ? "Windows 11"
                       : "Linux",
-                version: "21.0.12",
-                major: 21,
+                version: "25.0.1",
+                major: 25,
                 home: "/fixture/jdk",
                 bits: 64,
                 runtime: "jdk",
@@ -815,7 +973,6 @@ describe.skipIf(process.platform === "win32")(
           {},
           { signal: controller.signal },
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected interrupted startup");
         const projected = analysisErrorProjectionSchema.parse(
           JSON.parse(JSON.stringify(projectAnalysisError(result.error))),

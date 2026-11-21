@@ -87,31 +87,11 @@ describe("strings a create composes from other fields", () => {
     },
   );
 
-  it("takes two clocks a create stamps alike as one source, but not two members that send the same text", () => {
+  it("takes two clocks a create stamps alike as one source", () => {
     const modified: FieldRule = { ...CLOCK, field: "modified" };
     expect(
       createdComposer(CREATED, [ECHO_URL, CLOCK, modified], [SEED])("snapshot"),
     ).toMatchObject({ rule: "composed" });
-    const folder = {
-      uid: "scratch-pier",
-      title: "Scratch Pier",
-      url: "/dashboards/f/scratch-pier/scratch-pier",
-    };
-    const seed = {
-      uid: "lighthouse-rota",
-      title: "Lighthouse Rota",
-      url: "/dashboards/f/lighthouse-rota/lighthouse-rota",
-    };
-    expect(
-      createdComposer(
-        folder,
-        [
-          { field: "uid", rule: "echo" },
-          { field: "title", rule: "echo" },
-        ],
-        [seed],
-      )("url"),
-    ).toBeUndefined();
   });
 });
 
@@ -272,31 +252,124 @@ describe("compositions serving could not keep", () => {
   );
 });
 
-it(
-  "indexes a wide body's repeated values once, and only when a string is left to compose",
-  { timeout: 5_000 },
-  () => {
-    const n = 8_000;
-    const shared = `https://shared.example.test/${"x".repeat(64)}`;
-    const body: JsonObject = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [`e${String(index)}`, shared]),
-    );
-    const rules: FieldRule[] = Array.from({ length: n }, (_, index) => ({
-      field: `e${String(index)}`,
-      rule: "echo",
-    }));
-    let reads = 0;
-    const counted = new Proxy(body, {
-      get: (target, key) => {
-        reads += 1;
-        return Reflect.get(target, key);
+it("indexes a wide body's repeated values once, and only when a string is left to compose", () => {
+  const n = 8_000;
+  const shared = `https://shared.example.test/${"x".repeat(64)}`;
+  const body: JsonObject = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [`e${String(index)}`, shared]),
+  );
+  const rules: FieldRule[] = Array.from({ length: n }, (_, index) => ({
+    field: `e${String(index)}`,
+    rule: "echo",
+  }));
+  let reads = 0;
+  const counted = new Proxy(body, {
+    get: (target, key) => {
+      reads += 1;
+      return Reflect.get(target, key);
+    },
+  });
+  const composer = createdComposer(counted, rules, []);
+  expect(reads).toBe(0);
+  expect(composer("e0")).toBeUndefined();
+  expect(composer("e1")).toBeUndefined();
+  // One read per source to index them, once, and one per composed field.
+  expect(reads).toBe(n + 2);
+});
+
+describe("slug spellings", () => {
+  it("spells & in a slug part as the word only when the part says so", () => {
+    const parts = (ampersand?: "and") => [
+      { text: "/dashboards/f/" },
+      { from: "uid", as: "value" as const },
+      { text: "/" },
+      {
+        from: "title",
+        as: "slug" as const,
+        ...(ampersand === undefined ? {} : { ampersand }),
       },
+    ];
+    const folder = { uid: "u1", title: "Tide & Wind" };
+    expect(composedValue(parts("and"), folder)).toBe(
+      "/dashboards/f/u1/tide-and-wind",
+    );
+    expect(composedValue(parts(), folder)).toBe("/dashboards/f/u1/tide-wind");
+  });
+
+  it("reads an address whose uid is its title's slug as held entities spell it", () => {
+    const held = [
+      {
+        uid: "a1b2c3",
+        title: "Lighthouse Rota",
+        url: "/dashboards/f/a1b2c3/lighthouse-rota",
+      },
+    ];
+    const created = {
+      uid: "scratch-pier",
+      title: "Scratch Pier",
+      url: "/dashboards/f/scratch-pier/scratch-pier",
+    };
+    const rules: FieldRule[] = [
+      { field: "uid", rule: "echo" },
+      { field: "title", rule: "echo" },
+    ];
+    expect(createdComposer(created, rules, held)("url")).toEqual({
+      field: "url",
+      rule: "composed",
+      parts: [
+        { text: "/dashboards/f/" },
+        { from: "uid", as: "value" },
+        { text: "/" },
+        { from: "title", as: "slug" },
+      ],
     });
-    const composer = createdComposer(counted, rules, []);
-    expect(reads).toBe(0);
-    expect(composer("e0")).toBeUndefined();
-    expect(composer("e1")).toBeUndefined();
-    // One read per source to index them, once, and one per composed field.
-    expect(reads).toBe(n + 2);
-  },
-);
+    expect(
+      createdComposer(created, rules, [
+        {
+          ...held[0]!,
+          uid: "lighthouse-rota",
+          url: "/dashboards/f/lighthouse-rota/lighthouse-rota",
+        },
+      ])("url"),
+    ).toBeUndefined();
+  });
+
+  it("bounds candidate combinations even when held values select one spelling", () => {
+    const sources = {
+      folder: "harbour-notes",
+      parent: "harbour-notes",
+      workspace: "harbour-notes",
+      title: "tide-log",
+      label: "tide-log",
+      heading: "tide-log",
+      name: "tide-log",
+    };
+    const created = { ...sources, url: "/notes/harbour-notes/tide-log" };
+    const held = [
+      {
+        folder: "lighthouse",
+        title: "night-shift",
+        url: "/notes/lighthouse/night-shift",
+      },
+    ];
+    const inferWithout = (excluded: string) => {
+      const rules: FieldRule[] = Object.keys(sources)
+        .filter((field) => field !== excluded)
+        .map((field) => ({ field, rule: "echo" }));
+      return createdComposer(created, rules, held)("url");
+    };
+    // Two folder values and four title values give eight combinations.
+    expect(inferWithout("workspace")).toEqual({
+      field: "url",
+      rule: "composed",
+      parts: [
+        { text: "/notes/" },
+        { from: "folder", as: "value" },
+        { text: "/" },
+        { from: "title", as: "value" },
+      ],
+    });
+    // Three folder values and three title values give nine combinations.
+    expect(inferWithout("name")).toBeUndefined();
+  });
+});

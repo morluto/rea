@@ -372,6 +372,36 @@ describe("runtime source and listener identity", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["DOM.getDocument", { root: {} }, "/root/nodeId"],
+    ["DOM.querySelector", { nodeId: -1 }, "/nodeId"],
+    ["DOM.describeNode", { node: { backendNodeId: 22 } }, "/node/nodeName"],
+    ["DOM.resolveNode", { object: { objectId: "" } }, "/object/objectId"],
+    ["DOMDebugger.getEventListeners", { listeners: "none" }, "/listeners"],
+  ] as const)(
+    "reports a malformed %s reply as a protocol error and releases the session",
+    async (method, reply, pointer) => {
+      const { browser, provider, listeners } = await fixture({
+        commandResult: (command) =>
+          command.method === method ? reply : undefined,
+      });
+      const result = await provider.inspectEventListeners(listeners);
+      if (result.ok) throw new Error("A malformed DOM reply must fail");
+      expect(result.error).toMatchObject({
+        _tag: "BrowserObservationError",
+        operation: "inspect_web_event_listeners",
+        reason: "protocol_error",
+        command: method,
+        pointer,
+      });
+      expect(
+        browser.commands.some(
+          (command) => command.method === "Target.detachFromTarget",
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("inspects listener source and releases only its owned object group", async () => {
     const { browser, provider, listeners } = await fixture();
     const result = await provider.inspectEventListeners(listeners);
@@ -465,12 +495,67 @@ describe("runtime lifecycle and invalid producer data", () => {
     });
     const result = await provider.observeExecution(execution);
     if (result.ok) throw new Error("Malformed producer coverage must fail");
-    expect(result.error._tag).toBe("AnalysisOutputError");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      operation: "observe_web_execution",
+      reason: "protocol_error",
+      command: "Profiler.takePreciseCoverage",
+      pointer: "/result",
+    });
     expect(
       browser.commands.some(
         (command) => command.method === "Profiler.stopPreciseCoverage",
       ),
     ).toBe(true);
+  });
+
+  it("rejects a malformed instrumentation start at the protocol boundary", async () => {
+    const { browser, provider, execution } = await fixture({
+      commandResult: (command) =>
+        command.method === "Profiler.startPreciseCoverage"
+          ? { timestamp: "now" }
+          : undefined,
+    });
+    const result = await provider.observeExecution(execution);
+    if (result.ok) throw new Error("Malformed instrumentation start must fail");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "protocol_error",
+      command: "Profiler.startPreciseCoverage",
+      pointer: "/timestamp",
+    });
+    expect(
+      browser.commands.some(
+        (command) => command.method === "Profiler.stopPreciseCoverage",
+      ),
+    ).toBe(true);
+  });
+
+  it("limits one script whose source reply is malformed and keeps the others", async () => {
+    const { provider, execution } = await fixture({
+      commandResult: (command) =>
+        command.method === "Debugger.getScriptSource" &&
+        command.params.scriptId === "script-b"
+          ? { scriptSource: 7 }
+          : undefined,
+    });
+    const result = await provider.observeExecution(execution);
+    if (!result.ok) throw result.error;
+    const source = (scriptId: string) =>
+      result.value.sources.find(({ script_id }) => script_id === scriptId)
+        ?.source;
+    expect(source("script-a")).toMatchObject({ state: "captured" });
+    expect(source("script-b")).toEqual({
+      state: "unavailable",
+      reason: expect.stringContaining(
+        "Debugger.getScriptSource returned a malformed result at /scriptSource",
+      ),
+    });
+    expect(
+      result.value.coverage.scripts
+        .find(({ script_id }) => script_id === "script-b")
+        ?.functions[0]?.ranges.map(({ source_bounds }) => source_bounds),
+    ).toEqual(["unknown"]);
   });
 
   it("rejects a source range measured as UTF-8 bytes instead of UTF-16 units", async () => {

@@ -9,6 +9,8 @@ import {
   webRuntimeCommandTimeoutSchema,
 } from "./browserDeadline.js";
 import { jsonObjectSchema } from "./jsonValue.js";
+import { cdpResourceColumnSchema } from "./cdpObservationSchemas.js";
+import { webTextFacts } from "./webContentArtifact.js";
 
 // CDP positions are zero-based and relative to the resource named by url.
 // With a script ID that is the script's enclosing resource: the script file,
@@ -18,17 +20,18 @@ import { jsonObjectSchema } from "./jsonValue.js";
 // association to join captured source or resource_start.
 // trace_web_source_location takes one-based, script-relative lines, so the
 // advertised units keep callers from passing a position off by one or by an
-// inline script's offset.
+// inline script's offset. Columns are kept as reported even when Chrome reports
+// a negative one, so subtracting resource_start's column stays consistent.
 const SCRIPT_ID =
   "CDP session script ID; empty for a position a request initiator reported, which has no session-script association for joining captured source or resource_start.";
 const RESOURCE_LINE =
   "Zero-based line in the resource named by url, as reported by CDP: the script file for an external script (including a module-import initiator), or the HTML document for an inline script or parser markup.";
 const RESOURCE_COLUMN =
-  "Zero-based UTF-16 column on that line of the resource named by url, as reported by CDP.";
+  "Zero-based UTF-16 column on that line of the resource named by url, as reported by CDP. Chrome can report a negative column, for example on the first line of a script whose resource_start column is negative; it then does not locate a column in url.";
 const START_LINE =
   "Zero-based line where the script text starts in its enclosing resource (the HTML document for an inline script).";
 const START_COLUMN =
-  "Zero-based UTF-16 column where the script text starts on that line of its enclosing resource.";
+  "Zero-based UTF-16 column where the script text starts on that line of its enclosing resource. Chrome reports a negative column for some inline scripts; it is kept as reported and does not locate a column in that resource.";
 
 /** Scope for one externally owned page; omitted origins select its current origin. */
 export const webRuntimeScopeSchema = z.strictObject({
@@ -53,17 +56,32 @@ export const webRuntimeSourceSchema = z.object({
   resource_start: z
     .object({
       line_number: z.int().min(0).describe(START_LINE),
-      column_number: z.int().min(0).describe(START_COLUMN),
+      column_number: cdpResourceColumnSchema.describe(START_COLUMN),
     })
     .nullable(),
   source: z.discriminatedUnion("state", [
-    z.object({
-      state: z.literal("captured"),
-      text: z.string(),
-      sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      utf8_bytes: z.int().min(0),
-      utf16_units: z.int().min(0),
-    }),
+    z
+      .object({
+        state: z.literal("captured"),
+        text: z.string(),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+        utf8_bytes: z.int().min(0),
+        utf16_units: z.int().min(0),
+      })
+      .superRefine((source, context) => {
+        const facts = webTextFacts(source.text);
+        for (const [field, expected] of [
+          ["sha256", facts.sha256],
+          ["utf8_bytes", facts.utf8Bytes],
+          ["utf16_units", facts.utf16Units],
+        ] as const)
+          if (source[field] !== expected)
+            context.addIssue({
+              code: "custom",
+              path: [field],
+              message: `${field} does not match captured source text.`,
+            });
+      }),
     z.object({
       state: z.enum(["unavailable", "excluded"]),
       reason: z.string().min(1),
@@ -77,7 +95,7 @@ export const webRuntimeLocationSchema = z.object({
   script_id: z.string().describe(SCRIPT_ID),
   url: z.string().nullable(),
   line_number: z.int().min(0).describe(RESOURCE_LINE),
-  column_number: z.int().min(0).nullable().describe(RESOURCE_COLUMN),
+  column_number: cdpResourceColumnSchema.nullable().describe(RESOURCE_COLUMN),
   function_name: z.string().nullable(),
   source_association: z.enum(["script_id", "unknown"]),
 });

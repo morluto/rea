@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { analysisStringSchema } from "../hopperValues.js";
+import { analysisStringSchema } from "../native/nativeString.js";
 import { addressedValueSchema } from "./nativeInventory.js";
 
 /** Tracing reuses the search row's qualifications without reinterpreting them. */

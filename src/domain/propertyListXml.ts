@@ -4,6 +4,7 @@ import type { Node } from "@xmldom/xmldom";
 import { readXmlPlistSource } from "./propertyListXmlSource.js";
 
 import { createPlistNumberCollector } from "./apple/plistNumbers.js";
+import { createPlistDuplicateKeyCollector } from "./apple/plistDuplicateKeys.js";
 import { UnknownPlistScalar } from "./apple/unknownPlistScalar.js";
 import { MAX_PLIST_DEPTH } from "./apple/plistValue.js";
 import {
@@ -23,6 +24,7 @@ export const decodeXmlPropertyList = (
   if (root?.nodeName !== "plist")
     throw new TypeError("malformed document. First element should be <plist>");
   const numbers = createPlistNumberCollector();
+  const duplicates = createPlistDuplicateKeyCollector();
   const textNode = (node: Node) => node.nodeType === node.TEXT_NODE;
   const characterNode = (node: Node) =>
     textNode(node) || node.nodeType === node.CDATA_SECTION_NODE;
@@ -92,7 +94,8 @@ export const decodeXmlPropertyList = (
         }
         if (key !== undefined)
           throw new TypeError("Missing value for key while parsing <dict/>");
-        // Define own properties safely, including __proto__; the caller owns omission accounting.
+        duplicates.dictionary(entries.map(([name]) => name));
+        // Dictionary names are data, including __proto__.
         const value = Object.fromEntries(entries);
         // XML archives use Foundation's CF$UID convention; a UID key is data.
         const keys = Object.keys(value);
@@ -110,8 +113,6 @@ export const decodeXmlPropertyList = (
         // The pinned decoder also accepted key elements as scalars. Keep their
         // first-child interpretation separate from dictionary key identities.
         const value = node.firstChild === null ? "" : node.firstChild.nodeValue;
-        if (value === "__proto__")
-          throw new TypeError("__proto__ is not a scalar plist key");
         return value;
       }
       case "string":
@@ -192,5 +193,6 @@ export const decodeXmlPropertyList = (
   return {
     value: values.length === 1 ? values[0] : values,
     numberLiterals: numbers.result(),
+    duplicateKeys: duplicates.result(),
   };
 };

@@ -6,10 +6,58 @@ import assert from "node:assert/strict";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseAnalysisSnapshot } from "../../dist/domain/analysisSnapshot.js";
-import { parseEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
+import { parseAnalysisSnapshot } from "#dist/domain/analysisSnapshot.js";
+import { parseEvidenceBundle } from "#dist/domain/evidenceBundle.js";
+import { toolContract } from "#dist/contracts/toolContracts.js";
 
-/** Keep mutable Ghidra observations out of immutable snapshots across target opens. */
+/** @typedef {import("@modelcontextprotocol/client").Client} Client */
+/** @typedef {import("./mcp-verifier-results.mjs").ToolName} ToolName */
+/**
+ * @template {ToolName} N
+ * @typedef {import("./mcp-verifier-results.mjs").VerifierOperationResult<N>} VerifierOperationResult
+ */
+/**
+ * The complete analyze_function dossier; a retained summary view has no
+ * procedure.
+ * @typedef {Extract<VerifierOperationResult<"analyze_function">, { readonly procedure: unknown }>} FunctionDossier
+ */
+/**
+ * Call one tool and return its contract-validated operation result.
+ * @typedef {<N extends ToolName>(name: N, args?: Record<string, unknown>) => Promise<VerifierOperationResult<N>>} CallTool
+ */
+/**
+ * Require a snapshot binding rejection from one tool call.
+ * @typedef {(name: ToolName, args: Record<string, unknown>) => Promise<void>} RejectSnapshot
+ */
+
+/**
+ * Require the complete dossier that `detail: "complete"` selects.
+ * @param {VerifierOperationResult<"analyze_function">} result
+ * @returns {FunctionDossier}
+ */
+const completeDossier = (result) => {
+  assert.ok(
+    "procedure" in result,
+    "analyze_function returned a summary view instead of its dossier",
+  );
+  return result;
+};
+
+// Bundle records keep each operation's normalized result as JSON; read it
+// through that operation's own contract.
+const annotationResult = toolContract("annotate_native_function").outputSchema
+  .shape.normalized_result;
+const nativeApiResult =
+  toolContract("inspect_native_api").outputSchema.shape.normalized_result;
+
+/**
+ * Keep live Ghidra edits distinct from historical Evidence across snapshots.
+ * @param {Client} client
+ * @param {{ readonly path: string; readonly sha256: string }} target
+ * @param {FunctionDossier} edited The MCP session's dossier after its edit.
+ * @param {(command: "function", value: string, flags?: readonly string[]) => Promise<FunctionDossier>} cli
+ *   Runs a one-shot CLI command against its own unmodified database.
+ */
 export async function verifyGhidraSnapshotLifecycle(
   client,
   target,
@@ -19,6 +67,7 @@ export async function verifyGhidraSnapshotLifecycle(
   const workspace = await mkdtemp(join(tmpdir(), "rea-ghidra-snapshot-proof-"));
   let successfulCalls = 0;
   let rejectedCalls = 0;
+  /** @type {CallTool} */
   const call = async (name, args = {}) => {
     const result = requireMcpOperationResult(
       await client.callTool({ name, arguments: args }, { timeout: 180000 }),
@@ -27,6 +76,7 @@ export async function verifyGhidraSnapshotLifecycle(
     successfulCalls++;
     return result;
   };
+  /** @type {RejectSnapshot} */
   const rejectSnapshot = async (name, args) => {
     const reply = await client.callTool({ name, arguments: args });
     assert.equal(
@@ -43,6 +93,11 @@ export async function verifyGhidraSnapshotLifecycle(
     assert.equal(error.retryable, false);
     rejectedCalls++;
   };
+  const currentRunId = async () => {
+    const { analysis_run: run } = await call("binary_session");
+    assert.ok(run !== null, "binary_session omitted the open analysis run");
+    return run.run_id;
+  };
   try {
     const entry = edited.procedure.address;
     const snapshotPath = join(workspace, "original.json");
@@ -52,9 +107,9 @@ export async function verifyGhidraSnapshotLifecycle(
     const snapshot = parseAnalysisSnapshot(
       JSON.parse(snapshotBytes.toString("utf8")),
     );
-    assert.equal(snapshot.target.sha256, target.sha256);
+    assert.equal(snapshot.target.identity.sha256, target.sha256);
     assert.notEqual(original.procedure.name, edited.procedure.name);
-    const runId = (await call("binary_session")).analysis_run.run_id;
+    const runId = await currentRunId();
     const api = await call("inspect_native_api", { procedure: entry });
     assert.equal(api.procedure.name, edited.procedure.name);
     for (const repeatedOpen of [false, true]) {
@@ -66,7 +121,7 @@ export async function verifyGhidraSnapshotLifecycle(
       );
       await rejectSnapshot("close_binary", { snapshot_path: destination });
       await assert.rejects(access(destination), { code: "ENOENT" });
-      assert.equal((await call("binary_session")).analysis_run.run_id, runId);
+      assert.equal(await currentRunId(), runId);
       assert.deepEqual(
         await call("analyze_function", {
           procedure: entry,
@@ -81,7 +136,7 @@ export async function verifyGhidraSnapshotLifecycle(
       snapshot_path: snapshotPath,
     });
     assert.deepEqual(await readFile(snapshotPath), snapshotBytes);
-    assert.equal((await call("binary_session")).analysis_run.run_id, runId);
+    assert.equal(await currentRunId(), runId);
     assert.deepEqual(
       await call("analyze_function", { procedure: entry, detail: "complete" }),
       edited,
@@ -93,18 +148,24 @@ export async function verifyGhidraSnapshotLifecycle(
     const bundle = parseEvidenceBundle(
       JSON.parse(await readFile(bundlePath, "utf8")),
     );
-    assert.ok(
-      bundle.records.some(
-        (record) => record.operation === "annotate_native_function",
-      ),
-    );
-    assert.ok(
-      bundle.records.some(
-        (record) =>
-          record.operation === "inspect_native_api" &&
-          record.normalized_result.procedure.name === edited.procedure.name,
-      ),
-    );
+    const annotation = bundle.records.find((record) => {
+      if (record.operation !== "annotate_native_function") return false;
+      const { annotations } = annotationResult.parse(record.normalized_result);
+      return (
+        annotations.name === edited.procedure.name &&
+        annotations.address === edited.procedure.address
+      );
+    });
+    const editedApi = bundle.records.find((record) => {
+      if (record.operation !== "inspect_native_api") return false;
+      const { procedure } = nativeApiResult.parse(record.normalized_result);
+      return (
+        procedure.name === edited.procedure.name &&
+        procedure.address === edited.procedure.address
+      );
+    });
+    assert.ok(annotation);
+    assert.ok(editedApi);
 
     await call("close_binary");
     await call("open_binary", {
@@ -112,26 +173,24 @@ export async function verifyGhidraSnapshotLifecycle(
       provider_id: "ghidra",
       snapshot_path: snapshotPath,
     });
-    const restored = await call("analyze_function", {
-      procedure: entry,
-      detail: "complete",
-    });
+    const restored = completeDossier(
+      await call("analyze_function", { procedure: entry, detail: "complete" }),
+    );
     assert.deepEqual(restored.procedure, original.procedure);
     assert.deepEqual(restored.comments, original.comments);
-    assert.notEqual((await call("binary_session")).analysis_run.run_id, runId);
+    assert.notEqual(await currentRunId(), runId);
     const freshPath = join(workspace, "fresh.json");
     await call("close_binary", { snapshot_path: freshPath });
     const fresh = parseAnalysisSnapshot(
       JSON.parse(await readFile(freshPath, "utf8")),
     );
-    assert.ok(
-      !fresh.evidence_bundle.records.some(
-        (record) =>
-          record.operation === "annotate_native_function" ||
-          (record.operation === "inspect_native_api" &&
-            record.normalized_result.procedure.name === edited.procedure.name),
-      ),
-    );
+    for (const historical of [annotation, editedApi])
+      assert.deepEqual(
+        fresh.evidence_bundle.records.find(
+          (record) => record.evidence_id === historical.evidence_id,
+        ),
+        historical,
+      );
     await call("open_binary", {
       path: target.path,
       provider_id: "ghidra",
@@ -151,6 +210,16 @@ export async function verifyGhidraSnapshotLifecycle(
   }
 }
 
+/**
+ * @param {{
+ *   readonly call: CallTool;
+ *   readonly rejectSnapshot: RejectSnapshot;
+ *   readonly workspace: string;
+ *   readonly target: { readonly path: string };
+ *   readonly entry: string;
+ *   readonly original: FunctionDossier;
+ * }} context
+ */
 async function verifyConcurrentSnapshotClose({
   call,
   rejectSnapshot,
@@ -178,8 +247,9 @@ async function verifyConcurrentSnapshotClose({
   await call("close_binary");
   await call("open_binary", { path: target.path, provider_id: "ghidra" });
   assert.deepEqual(
-    (await call("analyze_function", { procedure: entry, detail: "complete" }))
-      .procedure,
+    completeDossier(
+      await call("analyze_function", { procedure: entry, detail: "complete" }),
+    ).procedure,
     original.procedure,
   );
 }

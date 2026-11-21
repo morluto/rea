@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../../contracts/managed/managedWorkflowExamples.js";
@@ -39,36 +40,6 @@ it("managed reconstruction reports UTF-8 byte totals while preserving UTF-16 tex
     summary: { total_text_bytes: 20 },
     methods: [{ reconstruction: { text, text_length: 17 } }],
   });
-});
-
-it("managed reconstruction rejects text hash drift", () => {
-  const rejected = resolveManagedReconstructionImport({
-    ...exampleInput(),
-    methods: [
-      {
-        ...exampleMethod(),
-        reconstruction: {
-          ...exampleMethod().reconstruction,
-          text_sha256: "0".repeat(64),
-        },
-      },
-    ],
-  });
-  expect(rejected).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisInputError",
-      operation: "import_managed_reconstruction",
-      issues: [
-        {
-          path: ["methods", 0, "reconstruction", "text_sha256"],
-          reason: "invalid_value",
-          message: expect.stringContaining("Reconstruction text hash mismatch"),
-        },
-      ],
-    },
-  });
-  if (!rejected.ok) expect(rejected.error).toBeInstanceOf(AnalysisInputError);
 });
 
 it("managed reconstruction rejects stale method locks", () => {
@@ -121,7 +92,7 @@ it("managed reconstruction rejects static Evidence with a token MVID but no modu
   if (members.module === null || members.module.mvid === null)
     throw new Error("Expected fixture module identity and MVID");
   const inconsistentEvidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     input.static_members.provider,
     {
       operation: "inspect_managed_members",
@@ -169,7 +140,7 @@ it("managed reconstruction rejects locks for partial CIL without normalized iden
     coverage: { state: "partial" as const, issues: [] },
   };
   const partialEvidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     input.static_members.provider,
     {
       operation: "inspect_managed_members",
@@ -234,13 +205,15 @@ describe("managed reconstruction input diagnostics", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisInputError);
     expect(result.error).toMatchObject({
       _tag: "AnalysisInputError",
+      operation: "import_managed_reconstruction",
       issues: [
         {
           path: ["methods", 0, "reconstruction", "text_sha256"],
           reason: "invalid_value",
-          message: expect.stringMatching(/text hash mismatch/u),
+          message: expect.stringContaining("Reconstruction text hash mismatch"),
         },
       ],
     });
@@ -248,17 +221,21 @@ describe("managed reconstruction input diagnostics", () => {
 
   it("reports nested Evidence schema issues without a misleading request path", () => {
     const input = exampleInput();
-    const malformed = createEvidence(undefined, input.static_members.provider, {
-      operation: "inspect_managed_members",
-      parameters: {},
-      result: {
-        ...managedMemberInspectionSchema.parse(
-          input.static_members.normalized_result,
-        ),
-        artifact: { sha256: 7 },
+    const malformed = createEvidence(
+      unknownTarget("not-observed"),
+      input.static_members.provider,
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: {
+          ...managedMemberInspectionSchema.parse(
+            input.static_members.normalized_result,
+          ),
+          artifact: { sha256: 7 },
+        },
+        rawResult: null,
       },
-      rawResult: null,
-    });
+    );
     const result = importManagedReconstructionEvidence({
       ...MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
       static_members: malformed,

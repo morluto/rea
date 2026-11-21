@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -74,10 +75,17 @@ const canonicalRegularConfigPath = async (
 ): Promise<string | undefined> => {
   if (fileSystem.realpath === undefined) return requestedPath;
   let ancestor = absoluteCallerPath(requestedPath);
+  const directoryRequired =
+    HOST_PLATFORM.platform !== "win32" && ancestor.endsWith("/");
   const missing: string[] = [];
   while (true) {
     try {
-      return join(await fileSystem.realpath(ancestor), ...missing);
+      const canonical = join(await fileSystem.realpath(ancestor), ...missing);
+      // Reconstructing missing children must retain the caller's directory
+      // requirement; otherwise a missing `config.json/` becomes a writable file.
+      return directoryRequired && !canonical.endsWith("/")
+        ? `${canonical}/`
+        : canonical;
     } catch (cause: unknown) {
       if (!isAbsentPath(cause) || dirname(ancestor) === ancestor)
         return requestedPath;

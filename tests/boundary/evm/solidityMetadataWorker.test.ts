@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { selectedEvmProducerLimits } from "../../../src/domain/evm/evmInterface.js";
 import { solidityMetadataSchema } from "../../../src/domain/evm/solidityMetadata.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -47,6 +48,7 @@ it.each([
         reply_path: reply,
         failure_marker_path: join(directory, "resource.failure"),
         encoding: "hex",
+        producer_limits: selectedEvmProducerLimits(undefined),
       }),
     );
     await promisify(execFile)(
@@ -94,7 +96,17 @@ it.each([
     if (kind.startsWith("duplicate nested")) {
       expect(metadata.entries).toEqual([]);
       expect(metadata.compiler_version).toBeNull();
-      expect(metadata.diagnostic).toContain("repeat map key");
+      expect(metadata.diagnostic).toBe("repeated_map_key");
+      expect(metadata.admission).toMatchObject({ code: "repeated_map_key" });
+      if (kind === "duplicate nested text keys")
+        expect(metadata.admission?.detail).toEqual({
+          key: JSON.stringify({ kind: "text", value: "a" }),
+        });
+      else
+        expect(
+          metadata.admission?.detail?.key ??
+            metadata.admission?.detail?.key_length,
+        ).toBeDefined();
       expect(metadata.bytecode_offset).toBe(1);
       expect(metadata.cbor_bytes).toBe(19);
     }

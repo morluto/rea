@@ -1,4 +1,5 @@
 import {
+  ownMember,
   at,
   isObject,
   listItems,
@@ -120,11 +121,11 @@ const heldEntities = (
       ? (listItems(read.body!, view.pointer) ?? [])
       : isObject(object) &&
           read.itemId !== undefined &&
-          scalarText(object[read.idField]) === read.itemId
+          scalarText(ownMember(object, read.idField)) === read.itemId
         ? [object]
         : [];
   return shown.filter((entity) => {
-    const id = scalarText(entity[read.idField]);
+    const id = scalarText(ownMember(entity, read.idField));
     return (
       id !== undefined &&
       state.entity(view.type, read.collection, id) !== undefined

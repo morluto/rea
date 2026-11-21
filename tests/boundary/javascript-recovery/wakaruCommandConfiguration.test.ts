@@ -1,12 +1,13 @@
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { resolveWakaruCommand } from "../../../src/javascript/recovery/WakaruCommand.js";
+import { SIMULATED_LINUX_X64 } from "../../fixtures/simulatedHost.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const linuxX64 = it.skipIf(
-  process.platform !== "linux" || process.arch !== "x64",
-);
+// Wakaru admits only Linux x64; select that host and keep the real POSIX
+// filesystem for the configured paths.
+const linuxX64 = it.skipIf(process.platform === "win32");
 
 linuxX64(
   "refuses a directory configured as the Wakaru resource limiter",
@@ -18,10 +19,13 @@ linuxX64(
     await mkdir(limiter);
 
     await expect(
-      resolveWakaruCommand({
-        REA_WAKARU_COMMAND: command,
-        REA_JAVASCRIPT_PRLIMIT_COMMAND: limiter,
-      }),
+      resolveWakaruCommand(
+        {
+          REA_WAKARU_COMMAND: command,
+          REA_JAVASCRIPT_PRLIMIT_COMMAND: limiter,
+        },
+        SIMULATED_LINUX_X64,
+      ),
     ).rejects.toMatchObject({
       _tag: "AnalysisCapabilityUnavailableError",
       reason: expect.stringContaining(limiter),
@@ -39,9 +43,14 @@ linuxX64("allows a symlink to a regular Wakaru resource limiter", async () => {
   await symlink(target, limiter);
 
   await expect(
-    resolveWakaruCommand({
-      REA_WAKARU_COMMAND: command,
-      REA_JAVASCRIPT_PRLIMIT_COMMAND: limiter,
-    }),
-  ).resolves.toMatchObject({ limiter });
+    resolveWakaruCommand(
+      {
+        REA_WAKARU_COMMAND: command,
+        REA_JAVASCRIPT_PRLIMIT_COMMAND: limiter,
+      },
+      SIMULATED_LINUX_X64,
+    ),
+  ).resolves.toMatchObject({
+    limiter: { invocationPath: limiter, resolvedPath: await realpath(target) },
+  });
 });
