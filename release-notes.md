@@ -44,6 +44,7 @@
 
 * **mcp:** clarify DeepSeek catalog refresh compatibility ([#13041](https://github.com/morluto/rea/issues/13041)) ([baad68f](https://github.com/morluto/rea/commit/baad68f437edc5c41116092cbc5bf272b40fd5f7))
 * **readme:** refresh project badges ([c7bc743](https://github.com/morluto/rea/commit/c7bc7436b4c354aabd34723b22dae7e544ee9a5e))
+* **readme:** simplify setup and move target details to the reference ([a914bba](https://github.com/morluto/rea/commit/a914bba78df46985618598a8e4ef79145acd3784))
 * remove tracked planning and architecture records ([#12856](https://github.com/morluto/rea/issues/12856)) ([a1dec2d](https://github.com/morluto/rea/commit/a1dec2d2d502ebb56da8902ccde9bf3dd9dfaf23))
 
 
