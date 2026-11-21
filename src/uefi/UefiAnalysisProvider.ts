@@ -13,6 +13,7 @@ import {
   opendir,
   readdir,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -25,6 +26,7 @@ import { buffer } from "node:stream/consumers";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { isAbortOf } from "../process/SignalAbort.js";
+import { isPathWithinRoot } from "../domain/localPath.js";
 import {
   isWindowsBatchFile,
   windowsBatchCommand,
@@ -37,6 +39,7 @@ import {
   AnalysisCleanupLeaseGroup,
   SafeOutputTree,
   outputDirectoryAdmissionRefusal,
+  SafeOutputTreeDestinationRefusal,
   DirectoryArtifactReader,
   type DirectoryArtifactEntry,
   DirectoryArtifactRootFailure,
@@ -1255,6 +1258,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         if (remainingTimeMs !== undefined && stagedModules.length > 0) {
           const timeLeft = remainingTimeMs();
           if (timeLeft <= PUBLICATION_RESERVE_MS) {
+            isCoveragePartial = true;
             effectiveLimitations.push(
               `Decompilation halted early to finalize and publish ${stagedModules.length} completed modules before operation deadline.`,
             );
@@ -1693,13 +1697,35 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   execCmd = batch.command;
                   execArgs = [...batch.arguments];
                 }
-                await execFileOutput(execCmd, execArgs, {
-                  signal,
-                  stopSignal: "SIGTERM",
-                  timeout: ghidraTimeout,
-                  maxBuffer: 10 * 1024 * 1024,
-                  env: ghidraEnv,
-                });
+                if (HOST_PLATFORM.platform === "win32") {
+                  await runOwnedCommand(
+                    {
+                      command: execCmd,
+                      arguments: execArgs,
+                      runId: `rea-ghidra-decomp-${randomUUID()}`,
+                      windowsVerbatimArguments: true,
+                      platform: "win32",
+                      env: ghidraEnv,
+                      hostEnvironment: process.env,
+                      signal,
+                    },
+                    {
+                      timeoutMs: ghidraTimeout,
+                      diagnosticBytes: 10 * 1024 * 1024,
+                    },
+                    {
+                      signal,
+                    },
+                  );
+                } else {
+                  await execFileOutput(execCmd, execArgs, {
+                    signal,
+                    stopSignal: "SIGTERM",
+                    timeout: ghidraTimeout,
+                    maxBuffer: 10 * 1024 * 1024,
+                    env: ghidraEnv,
+                  });
+                }
                 if (existsSync(ghidraOutC)) {
                   const cStat = await stat(ghidraOutC);
                   if (cStat.size > remainingCBytes) {
@@ -1772,11 +1798,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               } catch (ghidraErr: unknown) {
                 if (signal.aborted) signal.throwIfAborted();
                 if (isAbortOf(ghidraErr, signal)) throw ghidraErr;
-                const errDetail = sanitizeDiag(errorMessage(ghidraErr));
+                const rawErrMsg = errorMessage(ghidraErr);
                 const budgetMatch =
                   /decompiled C output exceeded (\d+) byte limit/i.exec(
-                    errDetail,
+                    rawErrMsg,
                   );
+                const errDetail = sanitizeDiag(rawErrMsg);
                 if (budgetMatch) {
                   isCoveragePartial = true;
                   const limitBytes = Number(budgetMatch[1]);
@@ -2041,7 +2068,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             },
             image_sha256: imageSha256,
             output_directory: outputRoot,
-            coverage: isCoveragePartial ? "partial" : "complete",
+            coverage:
+              isCoveragePartial ||
+              stagedModules.length < discoveredModules.length
+                ? "partial"
+                : "complete",
             total_modules_found: discoveredModules.length,
             total_modules_decompiled: stagedModules.length,
             phases: phaseCounts,
@@ -2274,6 +2305,28 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     remainingTimeMs?: () => number,
   ): Promise<AnalysisExecution> {
     const input = request.input;
+    const canonicalInput = await realpath(input.path).catch(() => input.path);
+    const { canonicalOutput } = await SafeOutputTree.resolveDestination(
+      input.output_directory,
+    ).catch((cause: unknown) => {
+      throw outputDirectoryAdmissionRefusal(
+        request.operation,
+        "output_directory",
+        cause,
+      );
+    });
+    if (
+      isPathWithinRoot(canonicalInput, canonicalOutput) ||
+      canonicalInput === canonicalOutput
+    ) {
+      throw outputDirectoryAdmissionRefusal(
+        request.operation,
+        "output_directory",
+        new SafeOutputTreeDestinationRefusal(
+          `Decompilation output directory ${canonicalOutput} is inside or identical to directory input ${canonicalInput}. Choose a directory outside the source.`,
+        ),
+      );
+    }
     const MAX_DIRECTORY_INVENTORY_ENTRIES = 10_000;
     const limitations: string[] = [];
 

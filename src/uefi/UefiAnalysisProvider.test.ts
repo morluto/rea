@@ -4907,3 +4907,118 @@ it("sanitizes target module names in README limitations to prevent markdown forg
     }
   }
 });
+
+it("refuses output directory nested under directory input with outputDirectoryAdmissionRefusal", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-nested-out-");
+  const inDir = join(directory, "corpus");
+  const outDir = join(inDir, "nested-output");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "sample.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  const executed = await provider.execute(
+    decompileRequest(inDir, outDir, { include_disassembly: false }),
+  );
+  expect(executed.ok).toBe(false);
+  if (!executed.ok) {
+    expect(
+      (executed.error as { issues?: readonly { path: readonly string[] }[] })
+        .issues?.[0]?.path,
+    ).toEqual(["output_directory"]);
+  }
+});
+
+it("marks coverage partial when execution halts early to preserve deadline", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-deadline-partial-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  let callCount = 0;
+  const nowSpy = vi.spyOn(performance, "now").mockImplementation(() => {
+    callCount++;
+    return callCount <= 10 ? 0 : 58_000;
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.total_modules_found).toBe(2);
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Decompilation halted early"),
+      ]),
+    );
+  } finally {
+    nowSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("matches Ghidra decompilation budget failures before excerpting diagnostics", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-budget-err-",
+  );
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const longInvocation = "x".repeat(300);
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async () => {
+      throw new Error(
+        `Command failed: ${longInvocation}: decompiled C output exceeded 4194304 byte limit`,
+      );
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "stopped after reaching 4 MiB per-module limit",
+        ),
+      ]),
+    );
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
