@@ -32,6 +32,7 @@ const results: Readonly<Record<string, unknown>> = {
     devices: [
       {
         serial: "emulator-5554",
+        serial_status: "reported",
         state: "device",
         transport: "tcp",
         product: "sdk_gphone64_x86_64",
@@ -48,6 +49,7 @@ const results: Readonly<Record<string, unknown>> = {
       },
       {
         serial: "exact-serial",
+        serial_status: "reported",
         state: "device",
         transport: "usb",
         product: "product",

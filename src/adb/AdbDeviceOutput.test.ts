@@ -23,6 +23,7 @@ describe("parseAdbDevicesOutput", () => {
     expect(devices).toEqual([
       {
         serial: "emulator-5554",
+        serial_status: "reported",
         state: "device",
         transport: "tcp",
         product: "sdk_gphone64_x86_64",
@@ -40,6 +41,7 @@ describe("parseAdbDevicesOutput", () => {
       },
       {
         serial: "07ef9c2a",
+        serial_status: "reported",
         state: "device",
         transport: "usb",
         product: "raven",
@@ -57,6 +59,7 @@ describe("parseAdbDevicesOutput", () => {
       },
       {
         serial: "192.168.1.42:5555",
+        serial_status: "reported",
         state: "device",
         transport: "tcp",
         product: "mock",
@@ -87,8 +90,9 @@ describe("parseAdbDevicesOutput", () => {
     const { devices, unparsedLines } = parseAdbDevicesOutput(output);
     expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(
-      devices.map(({ serial, transport, kind, kind_basis }) => ({
+      devices.map(({ serial, serial_status, transport, kind, kind_basis }) => ({
         serial,
+        serial_status,
         transport,
         kind,
         kind_basis,
@@ -96,24 +100,28 @@ describe("parseAdbDevicesOutput", () => {
     ).toEqual([
       {
         serial: "adb-8c4f2a1b4e5d6f70-AbCdEf._adb-tls-connect._tcp",
+        serial_status: "reported",
         transport: "tcp",
         kind: "unknown",
         kind_basis: "none",
       },
       {
         serial: "phone._adb._tcp",
+        serial_status: "reported",
         transport: "tcp",
         kind: "unknown",
         kind_basis: "none",
       },
       {
         serial: "not-a-service._tcp",
+        serial_status: "reported",
         transport: "unknown",
         kind: "unknown",
         kind_basis: "none",
       },
       {
         serial: "adb-wired._adb-tls-connect._tcp",
+        serial_status: "reported",
         transport: "usb",
         kind: "physical",
         kind_basis: "usb_transport",
@@ -501,6 +509,7 @@ it.each([
   );
   expect(devices[0]).toMatchObject({
     serial: "serial",
+    serial_status: "reported",
     model: "Pixel",
     transport_identity: {
       status,
@@ -522,5 +531,84 @@ it("uses only the final transport field and distinguishes a missing field", () =
   });
   expect(devices[1]).toMatchObject({
     transport_identity: { status: "not_reported", source_token: null },
+  });
+});
+
+// AOSP `transport.cpp append_transport()` substitutes this placeholder when the transport has no
+// serial to report, which `client/usb_linux.cpp` keeps for a device that cannot report one during
+// early bringup (http://b/20883914). It contains spaces, and the long listing pads it with `%-22s`,
+// so the serial column is not one `\S+` token — and it names no device, so it is not an identity.
+it("parses the placeholder adb prints for a transport with no serial", () => {
+  const output = [
+    "List of devices attached",
+    "(no serial number)     device usb:1-3 product:beryllium model:POCO_F1 device:beryllium transport_id:2",
+    "(no serial number)     offline usb:1-4 transport_id:3",
+    "",
+  ].join("\n");
+  const { devices, unparsedLines } = parseAdbDevicesOutput(output);
+  expect(unparsedLines).toEqual({ sample: [], total: 0 });
+  expect(
+    devices.map(({ serial, serial_status, state, transport, kind }) => ({
+      serial,
+      serial_status,
+      state,
+      transport,
+      kind,
+    })),
+  ).toEqual([
+    {
+      serial: null,
+      serial_status: "not_reported",
+      state: "device",
+      transport: "usb",
+      kind: "physical",
+    },
+    {
+      serial: null,
+      serial_status: "not_reported",
+      state: "offline",
+      transport: "usb",
+      kind: "physical",
+    },
+  ]);
+  // The transport ID is what still identifies each of them.
+  expect(devices[0]?.transport_identity).toMatchObject({
+    status: "reported",
+    decimal: "2",
+  });
+  expect(devices[1]?.transport_identity).toMatchObject({
+    status: "reported",
+    decimal: "3",
+  });
+});
+
+it("keeps the other attached devices when one transport has no serial", () => {
+  // `AdbDeviceOperations` rejects any unparsed line outright, so a placeholder the pattern missed
+  // removed every healthy device from the result as well.
+  const output = [
+    "List of devices attached",
+    "emulator-5554\tdevice",
+    "07ef9c2a\tdevice",
+    "(no serial number)     offline usb:1-4 transport_id:3",
+    "",
+  ].join("\n");
+  const { devices, unparsedLines } = parseAdbDevicesOutput(output);
+  expect(unparsedLines.total).toBe(0);
+  expect(devices.map(({ serial }) => serial)).toEqual([
+    "emulator-5554",
+    "07ef9c2a",
+    null,
+  ]);
+});
+
+it("parses the placeholder in the short listing too", () => {
+  const { devices, unparsedLines } = parseAdbDevicesOutput(
+    ["List of devices attached", "(no serial number)\tdevice", ""].join("\n"),
+  );
+  expect(unparsedLines.total).toBe(0);
+  expect(devices[0]).toMatchObject({
+    serial: null,
+    serial_status: "not_reported",
+    state: "device",
   });
 });
