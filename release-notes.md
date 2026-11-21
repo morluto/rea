@@ -409,6 +409,7 @@
 * **website:** consolidate generated site verification checks ([#12783](https://github.com/morluto/rea/issues/12783)) ([e174349](https://github.com/morluto/rea/commit/e17434945f0d1108018363db379eb1c65c7eeb81))
 * **website:** consolidate verifier and fallback coverage ([e174349](https://github.com/morluto/rea/commit/e17434945f0d1108018363db379eb1c65c7eeb81))
 * **web:** verify importer integrity through Chromium ([#13076](https://github.com/morluto/rea/issues/13076)) ([ca1c328](https://github.com/morluto/rea/commit/ca1c3284ba825f4e757cd5d8011b7127cc8e5749))
+* **web:** verify network content source event provenance ([#13130](https://github.com/morluto/rea/issues/13130)) ([c3dbbd4](https://github.com/morluto/rea/commit/c3dbbd4ab58e432ba36a70c65c09857be5726e1f))
 * **windows:** consolidate executable lookup and cancellation coverage ([#12894](https://github.com/morluto/rea/issues/12894)) ([56682a7](https://github.com/morluto/rea/commit/56682a75c153ad4e8c0f1d1e55cad79555cebb68))
 * **windows:** consolidate Job Object settlement and output polling checks ([#12893](https://github.com/morluto/rea/issues/12893)) ([0ed5f76](https://github.com/morluto/rea/commit/0ed5f7671349917937ad9ca7068e315b238ad1a9))
 * **zip:** consolidate archive coverage and name checks ([#12857](https://github.com/morluto/rea/issues/12857)) ([ae449a3](https://github.com/morluto/rea/commit/ae449a3021f5cc573351aaa9acd9a6bf218ff420))
