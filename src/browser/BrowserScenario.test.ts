@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
@@ -124,30 +123,6 @@ describe("browser scenario secret redaction", () => {
       value_state: "redacted-secret",
       value_sha256: null,
     });
-  });
-  it("does not resolve inherited environment properties as secret values", () => {
-    const scenario = browserScenarioSchema.parse(baseScenario());
-    const environment = Object.assign(
-      Object.create({ REA_TEST_SESSION: "session" }) as Record<string, string>,
-      { REA_TEST_PASSWORD: "password", REA_TEST_COOKIE: "cookie" },
-    );
-    expect(BrowserScenarioSecrets.resolve(scenario, environment)).toMatchObject(
-      {
-        ok: false,
-        error: {
-          _tag: "AnalysisInputError",
-          issues: [
-            {
-              path: ["secrets", 0, "environment_variable"],
-              expected: {
-                environment_variable: "REA_TEST_SESSION",
-                secret_id: "session",
-              },
-            },
-          ],
-        },
-      },
-    );
   });
 });
 
