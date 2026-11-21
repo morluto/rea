@@ -1,4 +1,8 @@
 import type {
+  CommandRefusal,
+  CommandRejection,
+} from "../domain/commandObservation.js";
+import type {
   ProviderToolIdentification,
   ProviderVersionProbe,
   RizinInput,
@@ -73,6 +77,7 @@ export const rizinCommand = (input: RizinInput): readonly string[] => [
 export const rizinCommandLimitations = (
   input: RizinInput,
 ): readonly string[] => [
+  "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
   "completion_status covers process completion and Rizin shell refusals only. A statement that ran can still fail while Rizin returns exit_code 0, so inspect stderr before treating an empty response as absence.",
   ...(input.asm_arch === undefined &&
   input.asm_bits === undefined &&
@@ -96,34 +101,49 @@ export const rizinCommandLimitations = (
  */
 const RIZIN_SHELL_REFUSALS: readonly {
   readonly line: RegExp;
-  readonly refused: (match: RegExpExecArray) => string;
+  readonly reason: CommandRefusal["reason"];
+  /** The named command's capture group, when the line names one. */
+  readonly command?: 1;
+  readonly refused: (command: string | null) => string;
 }[] = [
   {
     line: /^ERROR: Command '(.*)' does not exist\.$/u,
-    refused: (match) => `the unknown command ${JSON.stringify(match[1])}`,
+    reason: "unknown_command",
+    command: 1,
+    refused: (command) => `the unknown command ${JSON.stringify(command)}`,
   },
   {
     line: /^ERROR: Wrong number of arguments passed to `(.*)`, see its help with `.*\?`$/u,
-    refused: (match) =>
-      `a wrong argument count for ${JSON.stringify(match[1])}`,
+    reason: "wrong_argument_count",
+    command: 1,
+    refused: (command) =>
+      `a wrong argument count for ${JSON.stringify(command)}`,
   },
   {
     line: /^ERROR: core: Error while executing command: /u,
+    reason: "invalid_statement",
     refused: () => "an invalid statement",
   },
   {
     line: /^ERROR: core: Error while parsing command: /u,
+    reason: "parse_failure",
     refused: () => "input that failed to parse",
   },
 ];
 
-/** Explain the first Rizin shell refusal in a completed process's stderr. */
-export const rizinCommandRejection = (stderr: string): string | undefined => {
+/** The first Rizin shell refusal in a completed process's stderr. */
+export const rizinCommandRejection = (
+  stderr: string,
+): CommandRejection | undefined => {
   for (const text of stderr.split(/\r?\n/u))
-    for (const { line, refused } of RIZIN_SHELL_REFUSALS) {
+    for (const { line, reason, command, refused } of RIZIN_SHELL_REFUSALS) {
       const match = line.exec(text);
-      if (match !== null)
-        return `Rizin refused ${refused(match)} (ERROR line on stderr). It skips a refused statement and every later one, so stdout holds at most the output of earlier statements; empty stdout is not an empty result. Correct the statement, using <command>? for Rizin's help, and run it again.`;
+      if (match === null) continue;
+      const named = command === undefined ? null : (match[command] ?? null);
+      return {
+        refusal: { reason, command: named, line: text },
+        limitation: `Rizin refused ${refused(named)} (ERROR line on stderr, recorded in refusal). It skips a refused statement and every later one, so stdout holds at most the output of earlier statements; empty stdout is not an empty result. Correct the statement, using <command>? for Rizin's help, and run it again.`,
+      };
     }
   return undefined;
 };

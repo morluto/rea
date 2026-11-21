@@ -4,5 +4,6 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 export const captureProviderEnvironment = (
   providerEnvironment: Readonly<NodeJS.ProcessEnv> | undefined,
   serverEnvironment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
 ): Readonly<NodeJS.ProcessEnv> =>
-  snapshotEnvironment(providerEnvironment ?? serverEnvironment);
+  snapshotEnvironment(providerEnvironment ?? serverEnvironment, platform);

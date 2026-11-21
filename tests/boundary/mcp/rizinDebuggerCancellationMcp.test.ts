@@ -1,9 +1,9 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
@@ -18,8 +18,7 @@ import {
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
 import { silentLogger } from "../../../src/logger.js";
-import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
-import type { RizinDebugToolManager } from "../../../src/server/registerRizinDebugTools.js";
+import type { RizinDebugToolOptions } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createBinarySessionTargets,
@@ -30,11 +29,13 @@ import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
   "reports Rizin launch provenance and lossy frame decoding through MCP",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-provenance-"));
+    const directory = await createTestTempDirectory("rea-rizin-provenance-");
     const provider = join(directory, "fake-rizin-provenance.mjs");
     await writeFile(
       provider,
@@ -56,23 +57,18 @@ process.stdin.on("data", (chunk) => {
     );
     await chmod(provider, 0o700);
     const manager = createRizinTestManager({ REA_RIZIN_COMMAND: provider });
-    const server = new McpServer({
-      name: "rizin-evidence-provenance",
-      version: "1",
-    });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = rizinDebugMcpServer("rizin-evidence-provenance", manager);
+    const client = new Client(
+      {
+        name: "rizin-evidence-provenance",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({
-      name: "rizin-evidence-provenance",
-      version: "1",
-    });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
-    const callerPath = "./relative/../rizin-fixture.bin";
+    // An absolute spelling that resolution changes: interior "." is removed.
+    const callerPath = "/tmp/./relative/../rizin-fixture.bin";
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
@@ -118,7 +114,6 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
         },
       ]);
     }
@@ -147,17 +142,16 @@ it("admits Rizin startup across a bound analysis session", async () => {
     status: () => undefined,
     close: async () => ({ ok: true, value: { target_state: "unknown" } }),
     retryCleanupFailures: async () => ok(null),
-  } satisfies RizinDebugToolManager;
-  const server = new McpServer({ name: "rizin-start-admission", version: "1" });
-  registerRizinDebugTools(
-    server,
+  } satisfies RizinDebugToolOptions["manager"];
+  const server = rizinDebugMcpServer(
+    "rizin-start-admission",
     manager,
-    silentLogger,
-    createToolResultDelivery(undefined),
-    undefined,
     analysisSession,
   );
-  const client = new Client({ name: "rizin-start-admission", version: "1" });
+  const client = new Client(
+    { name: "rizin-start-admission", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -196,7 +190,7 @@ it("admits Rizin startup across a bound analysis session", async () => {
 it.skipIf(process.platform === "win32")(
   "propagates MCP cancellation into a running Rizin debugger command",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-mcp-cancel-"));
+    const directory = await createTestTempDirectory("rea-rizin-mcp-cancel-");
     const provider = join(directory, "fake-rizin.mjs");
     const commandPath = join(directory, "command-started");
     await writeFile(
@@ -216,14 +210,11 @@ process.stdin.on("data", async (chunk) => {
     const manager = createRizinTestManager({
       REA_RIZIN_COMMAND: provider,
     });
-    const server = new McpServer({ name: "rizin-cancellation", version: "1" });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = rizinDebugMcpServer("rizin-cancellation", manager);
+    const client = new Client(
+      { name: "rizin-cancellation", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({ name: "rizin-cancellation", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -263,7 +254,6 @@ process.stdin.on("data", async (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
         },
       ]);
     }

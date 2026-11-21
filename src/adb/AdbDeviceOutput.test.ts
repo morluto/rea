@@ -394,19 +394,11 @@ describe("parsePackageListOutput", () => {
     ]);
   });
 
-  it("keeps unrecognized lines for partial coverage reporting", () => {
-    const { packages, unparsedLines } = parsePackageListOutput(
-      "package:/data/app/x/base.apk=com.ok\n  garbage line  \n",
-    );
-    expect(packages).toHaveLength(1);
-    expect(unparsedLines).toEqual({ sample: ["  garbage line  "], total: 1 });
-  });
-
-  it("samples the first ten unrecognized lines and counts every one", () => {
-    const rows = Array.from(
-      { length: 11 },
-      (_, index) => `row ${String(index + 1)}`,
-    );
+  it("preserves the first ten raw unrecognized lines and counts every one", () => {
+    const rows = [
+      "  garbage line  ",
+      ...Array.from({ length: 10 }, (_, index) => `row ${String(index + 1)}`),
+    ];
     const { packages, unparsedLines } = parsePackageListOutput(
       ["package:/data/app/x/base.apk=com.ok", ...rows].join("\n"),
     );
@@ -423,7 +415,7 @@ describe("parsePmPathOutput", () => {
       "package:/data/app/~~a==/com.example.b==/split_config.en.apk",
       "",
     ].join("\n");
-    const { paths, unparsedLines } = parsePmPathOutput(output);
+    const { paths, unparsedLines } = parsePmPathOutput(output, "linux");
     expect(unparsedLines).toEqual({ sample: [], total: 0 });
     expect(paths).toEqual([
       {
@@ -446,7 +438,10 @@ describe("parsePmPathOutput", () => {
   });
 
   it("reports an unknown role for names that follow neither convention", () => {
-    const { paths } = parsePmPathOutput("package:/system/app/X/Y.apk\n");
+    const { paths } = parsePmPathOutput(
+      "package:/system/app/X/Y.apk\n",
+      "linux",
+    );
     expect(paths[0]).toEqual({
       device_path: "/system/app/X/Y.apk",
       file_name: "Y.apk",
@@ -473,7 +468,7 @@ describe("parsePmPathOutput", () => {
 
   it("rejects an empty final component without normalizing the source", () => {
     const devicePath = "/data/app/pkg/base.apk/";
-    const parsed = parsePmPathOutput(`package:${devicePath}\n`);
+    const parsed = parsePmPathOutput(`package:${devicePath}\n`, "linux");
     expect(parsed.paths).toEqual([]);
     expect(parsed.rejectedPaths).toEqual([
       { device_path: devicePath, reason: "empty_file_name" },
@@ -482,7 +477,8 @@ describe("parsePmPathOutput", () => {
 
   it("retains malformed lines including surrounding whitespace", () => {
     expect(
-      parsePmPathOutput(" package:/data/app/pkg/base.apk \n").unparsedLines,
+      parsePmPathOutput(" package:/data/app/pkg/base.apk \n", "linux")
+        .unparsedLines,
     ).toEqual({ sample: [" package:/data/app/pkg/base.apk "], total: 1 });
   });
 });

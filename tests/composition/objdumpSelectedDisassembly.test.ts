@@ -1,17 +1,20 @@
 import { rm } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 
-import { createArtifact } from "../support/reverseEngineeringCompositionFixtures.js";
+import {
+  createArtifact,
+  ownedOutput,
+} from "../support/reverseEngineeringCompositionFixtures.js";
+import type { runOwnedCommand } from "../../src/process/OwnedCommand.js";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 
 it("keeps omitted and undefined selection out of default command Evidence", async () => {
   const { directory, path } = await createArtifact();
-  const run = vi.fn(async (_command: string, _args: readonly string[]) => ({
-    stdout: "complete disassembly\n",
-    stderr: "",
-  }));
-  const service = new TestReverseEngineeringService({ run });
+  const run = vi.fn<typeof runOwnedCommand>(async () =>
+    ownedOutput("complete disassembly\n"),
+  );
+  const service = new TestReverseEngineeringService({ runOwned: run });
   try {
     for (const selector of [{}, { symbol: undefined }]) {
       const result = await service.inspectWithObjdump({
@@ -39,11 +42,10 @@ it.each([
   "preserves native symbol %j as one argument and scoped Evidence",
   async (symbol) => {
     const { directory, path } = await createArtifact();
-    const run = vi.fn(async (_command: string, _args: readonly string[]) => ({
-      stdout: "selected disassembly\n",
-      stderr: "",
-    }));
-    const service = new TestReverseEngineeringService({ run });
+    const run = vi.fn<typeof runOwnedCommand>(async () =>
+      ownedOutput("selected disassembly\n"),
+    );
+    const service = new TestReverseEngineeringService({ runOwned: run });
     try {
       const result = await service.inspectWithObjdump({
         path,
@@ -51,7 +53,10 @@ it.each([
         symbol,
       });
       if (!result.ok) throw result.error;
-      expect(run.mock.calls[0]?.[1]).toEqual([`--disassemble=${symbol}`, path]);
+      expect(run.mock.calls[0]?.[0].arguments).toEqual([
+        `--disassemble=${symbol}`,
+        path,
+      ]);
       expect(result.value.parameters).toMatchObject({
         operation: "disassemble",
         symbol,
@@ -88,7 +93,10 @@ it.each([
   async (operation) => {
     const digest = vi.fn();
     const run = vi.fn();
-    const service = new TestReverseEngineeringService({ digest, run });
+    const service = new TestReverseEngineeringService({
+      digest,
+      runOwned: run,
+    });
     const result = await service.inspectWithObjdump({
       ...(operation === "architectures" ? {} : { path: "/unread-artifact" }),
       operation,
@@ -126,7 +134,7 @@ it.each([
 ])("rejects invalid symbol %j before artifact admission", async (symbol) => {
   const digest = vi.fn();
   const run = vi.fn();
-  const service = new TestReverseEngineeringService({ digest, run });
+  const service = new TestReverseEngineeringService({ digest, runOwned: run });
   const result = await service.inspectWithObjdump({
     path: "/unread-artifact",
     operation: "disassemble",

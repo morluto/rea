@@ -1,3 +1,7 @@
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
@@ -27,7 +31,7 @@ it("executes the advertised export presence example with matching analyzed Evide
     throw new Error("Missing advertised presence example");
   const { client, close } = await createApplicationMcpHarness({
     serverOptions: {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      environment: { ...process.env },
     },
   });
   onTestFinished(close);
@@ -35,7 +39,9 @@ it("executes the advertised export presence example with matching analyzed Evide
   const advertised = listing.tools.find(
     ({ name }) => name === "compare_javascript_export_shapes",
   );
-  const examples = z.array(z.unknown()).parse(advertised?.inputSchema.examples);
+  const examples = z
+    .array(z.unknown())
+    .parse(canonicalInputSchema("compare_javascript_export_shapes").examples);
   expect(new Set(examples.map((input) => JSON.stringify(input))).size).toBe(
     examples.length,
   );
@@ -220,16 +226,14 @@ describe("application workflow MCP parity", () => {
       const advertised = (await client.listTools()).tools.find(
         ({ name }) => name === "compare_javascript_export_shapes",
       );
-      if (advertised?.outputSchema === undefined)
+      if (advertised === undefined)
         throw new Error("Missing advertised export-shape output schema");
       const validate = new Ajv2020({
         strict: false,
         validateFormats: false,
         inlineRefs: false,
         code: { optimize: false },
-      }).compile(
-        z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
-      );
+      }).compile(canonicalOutputSchema(advertised.name));
       expect(validate(full.structuredContent)).toBe(true);
       expect(session.exportEvidenceBundle().records).toEqual(
         expect.arrayContaining([

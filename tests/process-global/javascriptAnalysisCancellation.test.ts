@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,7 +12,8 @@ import {
   createTestBinarySession,
 } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import type { ProgressUpdate } from "../../src/application/ProgressReporter.js";
+import type { ProgressUpdate } from "../../src/ports/ProgressReporter.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const progressBoundary = vi.hoisted(() => ({
   observe: undefined as ((update: ProgressUpdate) => Promise<void>) | undefined,
@@ -19,11 +21,9 @@ const progressBoundary = vi.hoisted(() => ({
 
 // Observe each application boundary deterministically; transport rate limiting
 // is covered by reporter tests and must not select the cancellation site.
-vi.mock("../../src/application/ProgressReporter.js", async (original) => {
+vi.mock("../../src/ports/ProgressReporter.js", async (original) => {
   const actual =
-    await original<
-      typeof import("../../src/application/ProgressReporter.js")
-    >();
+    await original<typeof import("../../src/ports/ProgressReporter.js")>();
   return {
     ...actual,
     createProgressReporter: (
@@ -99,7 +99,7 @@ it.each([
       );
     });
     const prior = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "prior_observation",
@@ -130,10 +130,13 @@ it.each([
       },
     );
     const server = createServer({ kind: "session", session }, { logger });
-    const client = new Client({
-      name: "javascript-cancellation",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "javascript-cancellation",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       boundary.release();
       progressBoundary.observe = undefined;

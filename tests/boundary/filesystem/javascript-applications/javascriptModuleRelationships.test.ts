@@ -667,7 +667,7 @@ it("does not assign one module origin to an export with colliding path encodings
 });
 
 describe("complete static application projections", () => {
-  it("retains exports and JSON keys beyond the former projection prefix", async () => {
+  it("retains all 140 exports and JSON keys", async () => {
     const root = await moduleFixture();
     const exportNames = Array.from(
       { length: 140 },

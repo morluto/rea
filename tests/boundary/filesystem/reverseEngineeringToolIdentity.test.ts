@@ -22,6 +22,7 @@ import {
 } from "../../../src/application/reverse/ReverseEngineeringService.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../../src/domain/analysisCleanupRelease.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { lookupExecutable } from "../../../src/process/ExecutableLookup.js";
 import { RIZIN_VERSION_PROBE } from "../../../src/rizin/RizinCommand.js";
@@ -30,7 +31,7 @@ import type { ProviderProcessSupervisor } from "../../../src/process/ProviderPro
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
-  type ExecFileOutputOptions,
+  type FakeCommandOptions,
   rizinExecutableFixture,
   versionProbeCount,
   versionProbeRunner,
@@ -147,7 +148,7 @@ posix(
       async (
         _command: string,
         _args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ) => ({ stdout: results.shift() ?? "unexpected call", stderr: "" }),
     );
     // As on a developer machine with Rizin installed; no lookup is injected.
@@ -267,7 +268,7 @@ posix(
       async (
         _command: string,
         args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ) => {
         if (args[0] === "-v")
           throw Object.assign(new Error("probe exited"), {
@@ -326,7 +327,7 @@ posix(
       async (
         _command: string,
         args: readonly string[],
-        options?: ExecFileOutputOptions,
+        options?: FakeCommandOptions,
       ) => {
         if (args[0] !== "-v") return { stdout: "command output", stderr: "" };
         (versionProbeCount(run) === 1 ? firstStarted : secondStarted).open();
@@ -743,7 +744,7 @@ posix.each([
       async (
         _command: string,
         _args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ): Promise<never> => {
         throw Object.assign(new Error("spawn EACCES"), { code: "EACCES" });
       },
@@ -776,7 +777,7 @@ posix.each(["ESTALE", "ENODEV"] as const)(
       async (
         _command: string,
         args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ) => {
         if (args[0] === "-v")
           throw Object.assign(new Error(`spawn ${code}`), { code });
@@ -816,7 +817,7 @@ posix(
       async (
         _command: string,
         _args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ): Promise<never> => {
         throw Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
       },
@@ -855,7 +856,7 @@ posix.each(["ENOENT", "EACCES"] as const)(
       async (
         _command: string,
         _args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ): Promise<never> => {
         throw Object.assign(new Error(`spawn ${code}`), { code });
       },
@@ -900,7 +901,7 @@ posix.each([
       async (
         _command: string,
         _args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ): Promise<never> => {
         throw Object.assign(new Error("spawn EACCES"), { code: "EACCES" });
       },
@@ -954,7 +955,7 @@ posix(
       async (
         _command: string,
         args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ) => {
         expect(args).toEqual(["-v"]);
         caller.abort(reason);
@@ -1050,18 +1051,17 @@ const COMPILER_OUTPUT = {
 
 /** A failed helper build with a retained compiler, resolved by its owner. */
 const retainedPreparationFailure = () => {
-  const cleanupFailure = new AnalysisOutputError(
-    "darwin_helper",
-    "helper compiler still running",
-    {
+  const release = new AnalysisCleanupRelease();
+  const cleanupFailure = release.bind(
+    new AnalysisOutputError("darwin_helper", "helper compiler still running", {
       cleanup: {
         reason: "helper compiler still running",
         resources: ["pid:7"],
       },
-    },
+    }),
   );
   const close = vi.fn(async () => {
-    cleanupFailure.resolveCleanup();
+    release.confirm();
   });
   return {
     close,
@@ -1402,7 +1402,7 @@ posix(
       async (
         _command: string,
         args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ) =>
         args[0] === "-v"
           ? {
@@ -1469,7 +1469,7 @@ posix(
       async (
         _command: string,
         args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ) => {
         if (args[0] === "-v")
           throw Object.assign(new Error("probe exited"), {
@@ -1504,7 +1504,7 @@ posix(
       async (
         _command: string,
         args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ) =>
         args[0] === "-v"
           ? {
@@ -1552,7 +1552,7 @@ posix(
       async (
         _command: string,
         args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ) =>
         args[0] === "-v"
           ? {
@@ -1800,7 +1800,7 @@ posix.each([
       async (
         _command: string,
         args: readonly string[],
-        _options?: ExecFileOutputOptions,
+        _options?: FakeCommandOptions,
       ) =>
         args[0] === "-v"
           ? { stdout, stderr }

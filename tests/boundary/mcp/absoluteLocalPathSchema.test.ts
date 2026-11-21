@@ -1,3 +1,4 @@
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { resolve } from "node:path";
@@ -7,6 +8,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface PathInputCase {
   readonly name: string;
@@ -16,10 +18,7 @@ interface PathInputCase {
   readonly issuePath: readonly string[];
 }
 
-const createMcp = async (
-  firmwareCalls: string[],
-  profile?: "full" | "compact",
-) => {
+const createMcp = async (firmwareCalls: string[], profile?: "compact") => {
   const session = createTestBinarySession(() => {
     throw new Error("Invalid path input must not acquire a binary provider");
   });
@@ -37,7 +36,10 @@ const createMcp = async (
       },
     },
   );
-  const client = new Client({ name: "absolute-path-schema", version: "1" });
+  const client = new Client(
+    { name: "absolute-path-schema", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
 
@@ -81,6 +83,7 @@ const standaloneAnalysisCases = (
     { name: "inspect_sqlite_database", input: {} },
     { name: "inspect_pe_resources", input: {} },
     { name: "inspect_native_exports", input: {} },
+    { name: "inspect_elf_dependencies", input: {} },
     { name: "inspect_electron_fuses", input: {} },
     { name: "inspect_packet_capture", input: { fields: ["ip.addr"] } },
     {
@@ -244,9 +247,9 @@ const inputCases = (
   ];
 };
 
-it("advertises full host-absolute path constraints after SDK schema conversion", async () => {
+it("advertises portable absolute-path constraints after SDK schema conversion", async () => {
   const firmwareCalls: string[] = [];
-  const { client, close } = await createMcp(firmwareCalls, "full");
+  const { client, close } = await createMcp(firmwareCalls, "compact");
   try {
     const listed = await client.listTools();
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
@@ -284,12 +287,11 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
     ];
     const checked: string[] = [];
     for (const { name, field, valid, invalid } of schemaCases) {
-      const schema = listed.tools.find(
-        (tool) => tool.name === name,
-      )?.inputSchema;
-      if (schema === undefined)
+      if (!listed.tools.some((tool) => tool.name === name))
         throw new Error(`Missing advertised tool ${name}`);
-      const validate = ajv.compile(schema);
+      // The canonical projection keeps portable constraints; handlers enforce
+      // the executing host's stricter path rules.
+      const validate = ajv.compile(canonicalInputSchema(name));
       expect(validate(invalid), `${name}.${field}`).toBe(false);
       expect(
         validate(valid),
@@ -354,23 +356,16 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
   }
 });
 
-it("rejects unpaired surrogates through in-memory MCP handlers without advertising them", async () => {
+// advertisedDialect.test.ts proves no schema profile advertises the
+// surrogate escape; this case proves the handlers still refuse such paths.
+it("rejects unpaired surrogates through in-memory MCP handlers", async () => {
   const firmwareCalls: string[] = [];
-  const { client, close } = await createMcp(firmwareCalls, "full");
+  const { client, close } = await createMcp(firmwareCalls);
   try {
     const absolute = resolve("rea-absolute-input");
     const cases = inputCases(absolute, `${absolute}\ud800`);
-    const listed = await client.listTools();
     const checked: string[] = [];
     for (const { name, field, invalid, issuePath } of cases) {
-      const schema = listed.tools.find(
-        (tool) => tool.name === name,
-      )?.inputSchema;
-      if (schema === undefined)
-        throw new Error(`Missing advertised tool ${name}`);
-      // Strict pattern compilers refuse the complete tools request for a
-      // `\uD800-\uDFFF` range, so the rule is enforced only by the handler.
-      expect(JSON.stringify(schema), name).not.toMatch(/\\\\u[dD][89a-fA-F]/u);
       const result = await client.callTool({ name, arguments: invalid });
       expect(result.isError, `${name}.${field}`).toBe(true);
       expect(parseMcpToolError(result).error, `${name}.${field}`).toMatchObject(

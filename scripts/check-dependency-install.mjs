@@ -14,7 +14,7 @@ const directDependencies = (rootPackage) => ({
 const installedPackageKey = (name) => `node_modules/${name}`;
 
 /** Compare root direct dependencies with npm's hidden installed lockfile. */
-export const dependencyInstallProblems = (rootLock, installedLock) => {
+const dependencyInstallProblems = (rootLock, installedLock) => {
   const rootPackage = rootLock.packages?.[""];
   if (rootPackage === undefined)
     return ["package-lock.json does not contain a root package entry"];

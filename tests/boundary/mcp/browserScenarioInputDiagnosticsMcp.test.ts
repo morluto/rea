@@ -2,17 +2,22 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { join, resolve } from "node:path";
-import { expect } from "vitest";
+import { afterAll, expect } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const scenarios = [
   {
     name: "undeclared secret references",
-    fullSchemaValid: true,
+    canonicalRefinement: true,
     issue: {
       path: ["secrets"],
       reason: "invalid_value",
@@ -29,7 +34,7 @@ const scenarios = [
   },
   {
     name: "duplicate action step IDs",
-    fullSchemaValid: true,
+    canonicalRefinement: true,
     issue: {
       path: ["actions"],
       reason: "invalid_value",
@@ -42,7 +47,7 @@ const scenarios = [
   },
   {
     name: "overflowing wait duration",
-    fullSchemaValid: false,
+    canonicalRefinement: false,
     issue: {
       path: ["actions", 0, "duration_ms"],
       reason: "out_of_range",
@@ -58,7 +63,7 @@ const scenarios = [
   },
   {
     name: "overflowing action deadline",
-    fullSchemaValid: false,
+    canonicalRefinement: false,
     issue: {
       path: ["actions", 0, "timeout_ms"],
       reason: "out_of_range",
@@ -76,16 +81,19 @@ const scenarios = [
   },
 ] as const;
 
-cliTest.for(["full", "compact"] as const)(
-  "projects browser scenario input diagnostics over stdio MCP (%s)",
-  async (profile, { cli }) => {
+cliTest(
+  "projects browser scenario input diagnostics over stdio MCP (compact)",
+  async ({ cli }) => {
     const home = await createTestTempDirectory(
       "rea-browser-scenario-mcp-home-",
     );
-    const client = new Client({
-      name: "browser-scenario-input-diagnostics",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "browser-scenario-input-diagnostics",
+        version: "1",
+      },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -94,7 +102,7 @@ cliTest.for(["full", "compact"] as const)(
         PATH: process.env.PATH ?? "",
         HOME: home,
         REA_LOG_LEVEL: "silent",
-        REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       },
       stderr: "pipe",
     });
@@ -124,9 +132,9 @@ cliTest.for(["full", "compact"] as const)(
         expect(
           validate(input),
           `${scenario.name}: ${JSON.stringify(validate.errors)}`,
-        ).toBe(scenario.fullSchemaValid || profile === "compact");
+        ).toBe(true);
 
-        const cliResult = await runFileCli(cli, {
+        const cliResult = await cli.run({
           arguments: [
             "capture-browser-scenario",
             JSON.stringify(input),
@@ -163,7 +171,8 @@ cliTest.for(["full", "compact"] as const)(
         });
         expect(mcpResult.structuredContent).toBeUndefined();
         const mcpError = parseMcpToolError(mcpResult).error;
-        if (scenario.fullSchemaValid) expect(mcpError).toEqual(cliDiagnostic);
+        if (scenario.canonicalRefinement)
+          expect(mcpError).toEqual(cliDiagnostic);
         else {
           // The SDK validates the canonical schema before invoking the handler.
           expect(mcpError).toMatchObject({

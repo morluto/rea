@@ -4,12 +4,10 @@ import { join } from "node:path";
 
 import { vi } from "vitest";
 
-import type { execFileOutput } from "../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import type { FakeCommandOptions } from "./reverseEngineeringService.js";
 
-export type ExecFileOutputOptions = NonNullable<
-  Parameters<typeof execFileOutput>[2]
->;
+export type { FakeCommandOptions };
 
 /** A selected executable on disk; the injected runner never executes it. */
 export const rizinExecutableFixture = async () => {
@@ -31,7 +29,7 @@ export const versionProbeRunner = (banner: () => string) =>
     async (
       _command: string,
       args: readonly string[],
-      _options?: ExecFileOutputOptions,
+      _options?: FakeCommandOptions,
     ) => ({
       stdout: args[0] === "-v" ? banner() : "command output",
       stderr: "",

@@ -32,16 +32,19 @@ import {
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { assertSetupActive } from "./SetupCancellation.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
 import type {
   SetupSkillInstallError,
   SkillInstallResult,
 } from "./SetupSkill.js";
 import { planDesktopBuild } from "./SetupDesktopBuild.js";
-import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
 import type {
   SetupHopperInstallFailure,
   SetupHopperInstallResult,
@@ -125,11 +128,11 @@ export const runSetup = async (
   if (threw) {
     if (cleanup === undefined) throw primaryFailure;
     if (primaryFailure instanceof AnalysisError)
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primaryFailure,
         cleanup,
         "setup",
-      ).bindCleanupDependencies([primaryFailure, cleanup]);
+      );
     throw new AggregateError(
       [primaryFailure, cleanup],
       "Setup and resource cleanup failed.",
@@ -159,16 +162,11 @@ export const runSetup = async (
   }
   // Cancellation observed only during the final doctor or cleanup is not success.
   if (options.signal?.aborted === true) {
-    const cancelled = new AnalysisCancelledError("setup", {
-      cause: options.signal.reason,
+    const cancelled = cancelledBy("setup", options.signal, {
       diagnostics: { setup_result: jsonValueSchema.parse(result) },
     });
     if (cleanup !== undefined)
-      throw analysisErrorWithCleanupFailure(
-        cancelled,
-        cleanup,
-        "setup",
-      ).bindCleanupDependencies([cancelled, cleanup]);
+      throw analysisErrorWithCleanupDependencies(cancelled, cleanup, "setup");
     throw cancelled;
   }
   if (cleanup === undefined) return result;
@@ -403,6 +401,9 @@ const runSetupWorkflow = async (
   if (!approved && confirm !== undefined && !options.structured) {
     const decision = await confirm?.(plannedActions, {
       stage: "confirm",
+      ...(manualRemediation === undefined
+        ? {}
+        : { remediation: manualRemediation }),
       clientStates,
       selectedClientIds,
       clientSelectionAllowed: false,

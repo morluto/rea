@@ -1,6 +1,11 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { describe, expect, it } from "vitest";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
 import {
+  fixtureDosLoadImage,
   fixtureDosOverlapLoadImage,
   compareDosClientFixture,
 } from "../../../src/ghidra/GhidraLoadImage.fixture.js";
@@ -10,12 +15,13 @@ import { join } from "node:path";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { nativeLoadImageSchema } from "../../../src/domain/native/nativeLoadImage.js";
 import { nativeApiInspectionResultSchema } from "../../../src/domain/native/nativeApiBoundary.js";
+import type { NativePrototypeConflict } from "../../../src/domain/native/nativeApiBoundary.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ok } from "../../../src/domain/result.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 it("retains complete load-image facts and pages selected relocations through the advertised SDK contracts", async () => {
   const fixture = fixtureDosOverlapLoadImage();
@@ -47,14 +53,16 @@ it("retains complete load-image facts and pages selected relocations through the
       input: Record<string, unknown>,
     ) => {
       const definition = catalog.tools.find((tool) => tool.name === name);
-      if (!definition?.outputSchema) throw new Error("Missing named schema");
+      if (definition === undefined) throw new Error("Missing named schema");
       const inputSchema: Record<string, unknown> = definition.inputSchema;
-      const outputSchema: Record<string, unknown> = definition.outputSchema;
+      const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+        definition.name,
+      );
       expect(ajv.validateSchema(inputSchema)).toBe(true);
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const reply = await harness.mcp.callTool(
         { name, arguments: input },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(reply.isError).not.toBe(true);
       return sessionEvidence(harness.session, reply.structuredContent);
@@ -69,7 +77,10 @@ it("retains complete load-image facts and pages selected relocations through the
       source_analysis_profile_digest: complete.analysis_profile?.digest,
       source_parameters: complete.parameters,
       summary: {
-        verification: { status: "verified", format: "dos-mz" },
+        verification: {
+          status: "unsupported",
+          reason: expect.stringContaining("no established application order"),
+        },
         counts: { relocations: 2 },
       },
     });
@@ -87,7 +98,7 @@ it("retains complete load-image facts and pages selected relocations through the
     const parsed = analysisViewResultSchema.parse(page.normalized_result);
     if (parsed.kind !== "native-load-image")
       throw new Error("Expected load-image page");
-    expect(parsed.verification_status).toBe("verified");
+    expect(parsed.verification_status).toBe("unsupported");
     expect(parsed.items.rows).toEqual([
       {
         source_index: 1,
@@ -110,26 +121,24 @@ it("retains complete load-image facts and pages selected relocations through the
 
 it.each([
   { state: "final", failed: [] },
-  { state: "intermediate", failed: ["relocation_records"] },
+  { state: "wrong-window", failed: ["relocation_records"] },
   { state: "missing-record", failed: ["relocation_records"] },
   { state: "duplicate-record", failed: ["relocation_records"] },
-  { state: "reversed-records", failed: [] },
   { state: "bad-source", failed: ["modified_file_sha256"] },
   { state: "bad-mapping", failed: ["mapping[1].memory_sha256"] },
 ])(
-  "retains final overlapping MZ relocation Evidence through MCP ($state)",
+  "retains MZ relocation verification through MCP ($state)",
   async ({ state, failed }) => {
-    const fixture = fixtureDosOverlapLoadImage();
+    const fixture = fixtureDosLoadImage();
     const first = fixture.observation.relocations[0];
     const source = fixture.observation.source_files[0];
     const mapping = fixture.observation.mappings[1];
     if (first === undefined || source === undefined || mapping === undefined)
       throw new Error("Missing authored overlap facts");
-    if (state === "intermediate") first.memory_bytes_hex = "0410";
+    if (state === "wrong-window") first.memory_bytes_hex = "0400";
     if (state === "missing-record") fixture.observation.relocations.pop();
     if (state === "duplicate-record")
       fixture.observation.relocations.push(structuredClone(first));
-    if (state === "reversed-records") fixture.observation.relocations.reverse();
     if (state === "bad-source") source.modified_sha256 = "f".repeat(64);
     if (state === "bad-mapping") mapping.sha256 = "f".repeat(64);
     const directory = await createTestTempDirectory("rea-mcp-mz-overlap-");
@@ -179,6 +188,151 @@ it.each([
     }
   },
 );
+
+const prototypeConflicts = (): NativePrototypeConflict[] => [
+  {
+    kind: "stack-argument-read",
+    inferred_signature: "undefined f(void)",
+    signature_source: "analysis",
+    inferred_parameter_count: 0,
+    instruction_address: "0x406400",
+    instruction: "FLD qword ptr [EBP + 0x8]",
+    frame_offset_bytes: 8,
+    unresolved_assumptions: [
+      "The frame-relative read is not proof of a source-level parameter.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined f(int, int, int, int)",
+    signature_source: "analysis",
+    inferred_parameter_count: 4,
+    instruction_address: "0x401b10",
+    instruction: "RET 0x14",
+    cleanup_bytes: 20,
+    inferred_stack_bytes: 16,
+    unresolved_assumptions: [
+      "The cleanup difference does not prove a fifth source parameter.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined g(int, int, int, int)",
+    signature_source: "analysis",
+    inferred_parameter_count: 4,
+    instruction_address: "0x401c00",
+    instruction: "RET 0x0",
+    cleanup_bytes: 0,
+    inferred_stack_bytes: 16,
+    unresolved_assumptions: [
+      "A zero-byte cleanup does not establish the compiler's calling convention.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined h(void)",
+    signature_source: "analysis",
+    inferred_parameter_count: 0,
+    instruction_address: "0x401d00",
+    instruction: "RET 0x8",
+    cleanup_bytes: 8,
+    inferred_stack_bytes: 0,
+    unresolved_assumptions: [
+      "A nonzero cleanup does not establish a source-level parameter.",
+    ],
+  },
+];
+
+const connectPrototypeConflictHarness = async (name: string) => {
+  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  if (!dossier.native_api?.available) throw new Error("Expected native API");
+  const conflicts = prototypeConflicts();
+  dossier.native_api.prototype_conflicts = conflicts;
+  const harness = await connectGhidraMcp(name, async (operation) => {
+    if (operation !== "analyze_function")
+      throw new Error(`Unexpected operation: ${operation}`);
+    return ok(jsonValueSchema.parse({ value: dossier, limitations: [] }));
+  });
+  return { harness, conflicts };
+};
+
+describe("Ghidra prototype conflict diagnostics", () => {
+  it("reports prototype conflicts in the summary and complete dossier", async () => {
+    const { harness, conflicts } = await connectPrototypeConflictHarness(
+      "ghidra-prototype-conflicts-analysis",
+    );
+    try {
+      const summary = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "fixture_main" },
+      });
+      expect(summary.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, summary.structuredContent)
+          .normalized_result,
+      ).toMatchObject({
+        summary: { counts: { prototype_conflicts: conflicts.length } },
+      });
+      const analyze = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "fixture_main", detail: "complete" },
+      });
+      expect(analyze.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, analyze.structuredContent)
+          .normalized_result,
+      ).toMatchObject({
+        native_api: { prototype_conflicts: conflicts },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("retains prototype conflicts through inspection and selected views", async () => {
+    const { harness, conflicts } = await connectPrototypeConflictHarness(
+      "ghidra-prototype-conflicts-views",
+    );
+    try {
+      const analyze = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "fixture_main", detail: "complete" },
+      });
+      expect(analyze.isError).not.toBe(true);
+      const evidence = sessionEvidence(
+        harness.session,
+        analyze.structuredContent,
+      );
+      const inspection = await harness.mcp.callTool({
+        name: "inspect_native_api",
+        arguments: { procedure: "fixture_main" },
+      });
+      expect(inspection.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, inspection.structuredContent)
+          .normalized_result,
+      ).toMatchObject({ boundary: { prototype_conflicts: conflicts } });
+      const view = await harness.mcp.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: evidence.evidence_id,
+          },
+          view: { kind: "native", facet: "native_api", offset: 0, limit: 64 },
+        },
+      });
+      expect(view.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, view.structuredContent),
+      ).toMatchObject({
+        normalized_result: { item: { prototype_conflicts: conflicts } },
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+});
 
 describe("Ghidra MCP native API evidence", () => {
   it("retains transient failure Evidence without freezing the composed API inspection", async () => {

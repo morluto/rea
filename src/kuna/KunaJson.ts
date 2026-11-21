@@ -24,7 +24,7 @@ export const parseKunaJson = (
   addressKeys: ReadonlySet<string>,
 ): unknown => {
   if (Buffer.byteLength(text) > limit)
-    throw new KunaDocumentError("buffered_capacity");
+    throw new KunaDocumentError("buffered_capacity", { maximum_bytes: limit });
   return JSON.parse(
     text,
     (

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

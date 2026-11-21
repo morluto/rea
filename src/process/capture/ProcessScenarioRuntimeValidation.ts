@@ -15,7 +15,7 @@ import { processCaptureCancelled } from "./ProcessCaptureError.js";
 export const resolveProcessScenarioRuntimePaths = async (
   scenario: ProcessScenario,
   environment: Readonly<Record<string, string | undefined>> = process.env,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<ProcessScenario> => {
   const selectedWorkingDirectory = absoluteCallerPath(
     scenario.working_directory,

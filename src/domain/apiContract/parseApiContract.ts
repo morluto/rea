@@ -1,3 +1,4 @@
+import { Budget } from "../budget.js";
 import { escapeJsonPointerToken } from "../jsonPointer.js";
 import {
   AnalysisCancelledError,
@@ -17,6 +18,7 @@ import {
   type ApiContractDiagnostic,
   type ApiContractOperation,
 } from "./apiContract.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const methods = [
   "get",
@@ -42,9 +44,7 @@ const pathMetadata = new Set([
 // HTTP methods are case-sensitive tokens; additionalOperations preserves that spelling.
 const httpToken = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  isRecord(value) ? (value as Record<string, unknown>) : undefined;
 const identity = (prefix: string, facts: unknown) =>
   `${prefix}_${digestCanonicalValue(facts)}`;
 
@@ -60,14 +60,13 @@ class ContractInventory {
   readonly operations: ApiContract["operations"] = [];
   readonly references: ApiContract["path_item_references"] = [];
   readonly diagnostics: ApiContractDiagnostic[] = [];
-  #retainedBytes = 0;
+  readonly #retainedBytes = new Budget(API_CONTRACT_FACT_BYTES);
 
   constructor(readonly artifact: ApiContractArtifact) {}
 
   reserve(bytes: number): Result<void, AnalysisError> {
     // Includes object/index overhead and repeated escaped Evidence delivery, not just source bytes.
-    this.#retainedBytes += bytes;
-    return this.#retainedBytes <= API_CONTRACT_FACT_BYTES
+    return this.#retainedBytes.tryCharge(bytes)
       ? ok(undefined)
       : err(
           new AnalysisResourceConstraintError(

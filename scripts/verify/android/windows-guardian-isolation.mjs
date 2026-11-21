@@ -6,6 +6,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { createJadxWorkspaceRoot } from "../../../dist/android/JadxWorkspaceRoot.js";
+import { HOST_PLATFORM } from "../../../dist/platform/HostPlatform.js";
 
 const source = fileURLToPath(import.meta.url);
 const marker = "REA synthetic guardian isolation test\n";
@@ -19,7 +20,7 @@ const exists = (path) =>
   );
 
 if (process.argv[1] === source && process.argv[2] === "owner") {
-  const root = await createJadxWorkspaceRoot();
+  const root = await createJadxWorkspaceRoot(HOST_PLATFORM.platform);
   await writeFile(join(root.path, "synthetic.txt"), marker);
   process.stdout.write(JSON.stringify({ path: root.path }) + "\n");
   await new Promise(() => {});
@@ -82,8 +83,10 @@ const stop = async ({ child, exit, path }) => {
 };
 
 /** Two independent owners must never delete one another's private workspace. */
-export async function verifyWindowsGuardianIsolation() {
-  assert.equal(process.platform, "win32");
+export async function verifyWindowsGuardianIsolation(
+  platform = HOST_PLATFORM.platform,
+) {
+  assert.equal(platform, "win32");
   const first = await launch();
   let second;
   try {

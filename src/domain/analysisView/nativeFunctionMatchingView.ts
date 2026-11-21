@@ -314,7 +314,7 @@ export const projectNativeFunctionMatchingView = (
       view,
       ...shared,
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (view.collection === "byte-sources") {
     if (entry.report.byte_sources === undefined)

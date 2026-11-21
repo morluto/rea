@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 const writeFileMock = vi.hoisted(() => vi.fn());
 const windowsWriteTransientFile = vi.hoisted(() => vi.fn());
@@ -121,27 +121,23 @@ describe("writeJavaScriptAnalysisSourceTransfer", () => {
         return actual.writeFile(...args);
       },
     );
-    const root = await mkdtemp(join(tmpdir(), "rea-js-source-transfer-"));
+    const root = await createTestTempDirectory("rea-js-source-transfer-");
     const path = join(root, "job.source");
-    try {
-      await writeJavaScriptAnalysisSourceTransfer(path, "source-bytes", {
+    await writeJavaScriptAnalysisSourceTransfer(path, "source-bytes", {
+      platform: "linux",
+    });
+    expect(await readFile(path, "utf8")).toBe("source-bytes");
+    expect(writeFileMock).toHaveBeenCalledWith(path, "source-bytes", {
+      flag: "wx",
+      mode: 0o600,
+      signal: undefined,
+    });
+    expect(windowsPrivateRuntime).not.toHaveBeenCalled();
+    await expect(
+      writeJavaScriptAnalysisSourceTransfer(path, "again", {
         platform: "linux",
-      });
-      expect(await readFile(path, "utf8")).toBe("source-bytes");
-      expect(writeFileMock).toHaveBeenCalledWith(path, "source-bytes", {
-        flag: "wx",
-        mode: 0o600,
-        signal: undefined,
-      });
-      expect(windowsPrivateRuntime).not.toHaveBeenCalled();
-      await expect(
-        writeJavaScriptAnalysisSourceTransfer(path, "again", {
-          platform: "linux",
-        }),
-      ).rejects.toMatchObject({ code: "EEXIST" });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+      }),
+    ).rejects.toMatchObject({ code: "EEXIST" });
   });
 
   it("surfaces EPERM from the POSIX exclusive create path", async () => {

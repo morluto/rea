@@ -1,8 +1,24 @@
 import { isAbsolute } from "node:path";
 import { appendCallerPath } from "../filesystem/callerPath.js";
-import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import {
+  homeDirectoryFromEnvironment,
+  selectedHomeDirectorySettings,
+} from "../config/homeDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
+
+const suppliedCacheRoot = (environment: Readonly<NodeJS.ProcessEnv>) =>
+  environment.XDG_CACHE_HOME || undefined;
+
+/** Settings consulted to locate the authenticated release cache. */
+export const linuxHopperReleaseCacheLocationSettings = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): readonly string[] => [
+  "XDG_CACHE_HOME",
+  ...(suppliedCacheRoot(environment) === undefined
+    ? selectedHomeDirectorySettings("linux", environment)
+    : []),
+];
 
 /** One owner for the selected cache location, shared with the approval plan. */
 export const linuxHopperReleaseCacheDirectory = (
@@ -10,7 +26,7 @@ export const linuxHopperReleaseCacheDirectory = (
   selectedHome?: string,
 ): Result<string, HopperReleaseError> => {
   try {
-    const supplied = environment.XDG_CACHE_HOME || undefined;
+    const supplied = suppliedCacheRoot(environment);
     if (supplied !== undefined && !isAbsolute(supplied))
       return err(
         new HopperReleaseError(

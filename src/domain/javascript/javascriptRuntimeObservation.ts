@@ -190,10 +190,7 @@ export const javascriptRuntimeObservationSchema = z.strictObject({
     parse_failed_total: z
       .int()
       .min(0)
-      .optional()
-      .describe(
-        "Valid scriptFailedToParse events observed; absent in legacy snapshots.",
-      ),
+      .describe("Valid scriptFailedToParse events observed."),
     excluded: z.strictObject({
       unsupported_location: z.int().min(0),
       invalid_protocol_value: z.int().min(0),

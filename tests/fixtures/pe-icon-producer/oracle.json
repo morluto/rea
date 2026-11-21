@@ -1,0 +1,296 @@
+{
+  "pillow": "13.0.0",
+  "pefile": "2024.8.26",
+  "binutils": [
+    "GNU windres (GNU Binutils) 2.44",
+    "GNU ld (GNU Binutils for Debian) 2.44"
+  ],
+  "samples": [
+    {
+      "name": "icons-pe32.dll",
+      "format": "pe32",
+      "size": 531186,
+      "sha256": "9c7515fcd44c4db28cd1f9c9d6db385cc1f3d702f45af59f2d8cdb5a140f7bf9",
+      "deflate_base64": "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",
+      "resources": [
+        {
+          "index": 0,
+          "type": 3,
+          "name": 1,
+          "language": 1033,
+          "offset": 2376,
+          "size": 1064,
+          "sha256": "c070a2f03056d717f5318cdf99116599070c62f12abc391c9f48b996707a739c"
+        },
+        {
+          "index": 1,
+          "type": 3,
+          "name": 2,
+          "language": 1033,
+          "offset": 3440,
+          "size": 262184,
+          "sha256": "1ffb423dc00e775c72f564a0ccb2cf4d3bc8f51d7365b2732553e6d9bc0aac79"
+        },
+        {
+          "index": 2,
+          "type": 3,
+          "name": 3,
+          "language": 1041,
+          "offset": 265624,
+          "size": 1064,
+          "sha256": "c070a2f03056d717f5318cdf99116599070c62f12abc391c9f48b996707a739c"
+        },
+        {
+          "index": 3,
+          "type": 3,
+          "name": 4,
+          "language": 1041,
+          "offset": 266688,
+          "size": 262184,
+          "sha256": "1ffb423dc00e775c72f564a0ccb2cf4d3bc8f51d7365b2732553e6d9bc0aac79"
+        },
+        {
+          "index": 4,
+          "type": 14,
+          "name": 1,
+          "language": 1033,
+          "offset": 528872,
+          "size": 34,
+          "sha256": "44dfd578699827c2da7ff3604cab2744778ef1732ae88591e0b3f2c57a023d45"
+        },
+        {
+          "index": 5,
+          "type": 14,
+          "name": 1,
+          "language": 1041,
+          "offset": 528912,
+          "size": 34,
+          "sha256": "26c1999e236a3af61beb5b4f5c720cdf344f2bc447da5bf75d191c6de3e6cce8"
+        }
+      ],
+      "groups": [
+        {
+          "resource_index": 4,
+          "images": [
+            {
+              "location": {
+                "offset": 528878,
+                "bytes": 14
+              },
+              "width": 16,
+              "height": 16,
+              "color_count": 0,
+              "reserved": 0,
+              "planes": 1,
+              "bit_count": 32,
+              "declared_bytes": 1064,
+              "resource_id": 1,
+              "candidate_resource_indices": [0],
+              "same_language_resource_index": 0,
+              "size_matches": true
+            },
+            {
+              "location": {
+                "offset": 528892,
+                "bytes": 14
+              },
+              "width": 0,
+              "height": 0,
+              "color_count": 0,
+              "reserved": 0,
+              "planes": 1,
+              "bit_count": 32,
+              "declared_bytes": 262184,
+              "resource_id": 2,
+              "candidate_resource_indices": [1],
+              "same_language_resource_index": 1,
+              "size_matches": true
+            }
+          ]
+        },
+        {
+          "resource_index": 5,
+          "images": [
+            {
+              "location": {
+                "offset": 528918,
+                "bytes": 14
+              },
+              "width": 16,
+              "height": 16,
+              "color_count": 0,
+              "reserved": 0,
+              "planes": 1,
+              "bit_count": 32,
+              "declared_bytes": 1064,
+              "resource_id": 3,
+              "candidate_resource_indices": [2],
+              "same_language_resource_index": 2,
+              "size_matches": true
+            },
+            {
+              "location": {
+                "offset": 528932,
+                "bytes": 14
+              },
+              "width": 0,
+              "height": 0,
+              "color_count": 0,
+              "reserved": 0,
+              "planes": 1,
+              "bit_count": 32,
+              "declared_bytes": 262184,
+              "resource_id": 4,
+              "candidate_resource_indices": [3],
+              "same_language_resource_index": 3,
+              "size_matches": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "icons-pe64.dll",
+      "format": "pe32-plus",
+      "size": 531122,
+      "sha256": "bea4d008c4fb2ad96c5690eb96bde7734de90e80cbd13ad96ba5029dfb6a6417",
+      "deflate_base64": "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",
+      "resources": [
+        {
+          "index": 0,
+          "type": 3,
+          "name": 1,
+          "language": 1033,
+          "offset": 2376,
+          "size": 1064,
+          "sha256": "c070a2f03056d717f5318cdf99116599070c62f12abc391c9f48b996707a739c"
+        },
+        {
+          "index": 1,
+          "type": 3,
+          "name": 2,
+          "language": 1033,
+          "offset": 3440,
+          "size": 262184,
+          "sha256": "1ffb423dc00e775c72f564a0ccb2cf4d3bc8f51d7365b2732553e6d9bc0aac79"
+        },
+        {
+          "index": 2,
+          "type": 3,
+          "name": 3,
+          "language": 1041,
+          "offset": 265624,
+          "size": 1064,
+          "sha256": "c070a2f03056d717f5318cdf99116599070c62f12abc391c9f48b996707a739c"
+        },
+        {
+          "index": 3,
+          "type": 3,
+          "name": 4,
+          "language": 1041,
+          "offset": 266688,
+          "size": 262184,
+          "sha256": "1ffb423dc00e775c72f564a0ccb2cf4d3bc8f51d7365b2732553e6d9bc0aac79"
+        },
+        {
+          "index": 4,
+          "type": 14,
+          "name": 1,
+          "language": 1033,
+          "offset": 528872,
+          "size": 34,
+          "sha256": "44dfd578699827c2da7ff3604cab2744778ef1732ae88591e0b3f2c57a023d45"
+        },
+        {
+          "index": 5,
+          "type": 14,
+          "name": 1,
+          "language": 1041,
+          "offset": 528912,
+          "size": 34,
+          "sha256": "26c1999e236a3af61beb5b4f5c720cdf344f2bc447da5bf75d191c6de3e6cce8"
+        }
+      ],
+      "groups": [
+        {
+          "resource_index": 4,
+          "images": [
+            {
+              "location": {
+                "offset": 528878,
+                "bytes": 14
+              },
+              "width": 16,
+              "height": 16,
+              "color_count": 0,
+              "reserved": 0,
+              "planes": 1,
+              "bit_count": 32,
+              "declared_bytes": 1064,
+              "resource_id": 1,
+              "candidate_resource_indices": [0],
+              "same_language_resource_index": 0,
+              "size_matches": true
+            },
+            {
+              "location": {
+                "offset": 528892,
+                "bytes": 14
+              },
+              "width": 0,
+              "height": 0,
+              "color_count": 0,
+              "reserved": 0,
+              "planes": 1,
+              "bit_count": 32,
+              "declared_bytes": 262184,
+              "resource_id": 2,
+              "candidate_resource_indices": [1],
+              "same_language_resource_index": 1,
+              "size_matches": true
+            }
+          ]
+        },
+        {
+          "resource_index": 5,
+          "images": [
+            {
+              "location": {
+                "offset": 528918,
+                "bytes": 14
+              },
+              "width": 16,
+              "height": 16,
+              "color_count": 0,
+              "reserved": 0,
+              "planes": 1,
+              "bit_count": 32,
+              "declared_bytes": 1064,
+              "resource_id": 3,
+              "candidate_resource_indices": [2],
+              "same_language_resource_index": 2,
+              "size_matches": true
+            },
+            {
+              "location": {
+                "offset": 528932,
+                "bytes": 14
+              },
+              "width": 0,
+              "height": 0,
+              "color_count": 0,
+              "reserved": 0,
+              "planes": 1,
+              "bit_count": 32,
+              "declared_bytes": 262184,
+              "resource_id": 4,
+              "candidate_resource_indices": [3],
+              "same_language_resource_index": 3,
+              "size_matches": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

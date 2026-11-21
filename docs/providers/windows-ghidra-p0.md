@@ -15,8 +15,8 @@ additional permission flag or degraded mode is required.
 
 - Windows 10+ x64 with fixed local NTFS/ReFS target and temporary volumes;
 - Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+;
-- an operator-installed Ghidra 12.x (>=12.1) distribution (verified with 12.1.4);
-- a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
+- an operator-installed Ghidra distribution and 64-bit full JDK in the
+  [supported range](../getting-started/installation.md#ghidra);
 - an explicit native, non-managed x86, x86-64, ARMNT (Thumb-2) or ARM64 PE application/DLL, a
   [DOS MZ executable](ghidra-dos.md), or a
   [raw NMOS 6502 image](raw-binary.md#nmos-6502) with a caller-supplied entry; and
@@ -66,8 +66,8 @@ and DLLs.
 
 ```powershell
 npm install --global rea-agents
-$env:GHIDRA_INSTALL_DIR = "C:\tools\ghidra_12.1.4_PUBLIC"
-$env:JAVA_HOME = "C:\tools\jdk-21"
+$env:GHIDRA_INSTALL_DIR = "C:\tools\ghidra_12.2_PUBLIC"
+$env:JAVA_HOME = "C:\tools\jdk-25"
 $env:REA_ANALYSIS_PROVIDER = "ghidra"
 
 rea doctor --json
@@ -115,8 +115,8 @@ For MCP, register the resolved Node entry point and the same provider settings:
       "args": ["C:\\tools\\rea\\scripts\\rea.mjs", "mcp"],
       "env": {
         "REA_ANALYSIS_PROVIDER": "ghidra",
-        "GHIDRA_INSTALL_DIR": "C:\\tools\\ghidra_12.1.4_PUBLIC",
-        "JAVA_HOME": "C:\\tools\\jdk-21"
+        "GHIDRA_INSTALL_DIR": "C:\\tools\\ghidra_12.2_PUBLIC",
+        "JAVA_HOME": "C:\\tools\\jdk-25"
       }
     }
   }
@@ -160,11 +160,11 @@ x64 host. The packaged verifier accepts the same flags. These fixtures are not
 compiler-produced programs. ARM64EC (machine 0xA641) and ARM64X are not admitted;
 this target support does not establish Windows-on-Arm host support.
 
-Real Windows x64 verification with Ghidra 12.1.4 and JDK 21 completed the ARM64
-application and ARMNT/Thumb DLL fixtures' 26 read-only operations, constant-return
-decompilation, byte searches, CLI/MCP file-offset parity, source identity, and
-owned cleanup. The DLL fixture also verifies the exported caller/callee
-relationship. The x86/x64 compact-reference value-flow battery does not cover
+Recorded on Ghidra 12.1.4 with JDK 21 (no longer accepted); not yet re-run on
+12.2. That Windows x64 run completed the ARM64 application and ARMNT/Thumb DLL
+fixtures' 26 read-only operations, constant-return decompilation, byte searches,
+CLI/MCP file-offset parity, source identity, and owned cleanup. The DLL fixture
+also verified the exported caller/callee relationship. The x86/x64 compact-reference value-flow battery does not cover
 ARM or ARM64 instructions. ARM64 EXE file-offset verification includes ambiguous
 mappings; the single-section ARM32 DLL cannot exercise that case.
 
@@ -251,6 +251,12 @@ passing result does not test writes by Ghidra's child JVM, so a host that
 restricts only child processes can still pass doctor and fail at startup with
 the message above.
 The startup-output match is limited to the English `Access is denied` text.
+
+Windows cannot open an existing Ghidra project. When the client's registration
+sets `REA_GHIDRA_PROJECT_PATH`, `rea doctor` reports a failed
+`existing_project` check and the Ghidra provider as unavailable, the same
+refusal REA returns at runtime. Unset the setting to import targets into an
+ephemeral project.
 
 Process creation assigns a suspended child atomically to an owned Job Object.
 Membership and kill-on-owner-close policy are verified before resume.

@@ -24,13 +24,23 @@ describe("real Hopper fixture binding", () => {
     );
   });
 
-  it("binds exact source-owned artifacts and their semantic oracle", async () => {
+  it("binds a caller-selected local manifest and its exact artifact digests", async () => {
     const manifest = await fixtureManifest();
     await expect(loadRealHopperFixtureTargets(manifest)).resolves.toMatchObject(
       {
-        primary: { path: join(root ?? "", "c") },
-        secondary: { path: join(root ?? "", "version-v2") },
-        large: { path: join(root ?? "", "large") },
+        manifestPath: manifest,
+        primary: {
+          path: join(root ?? "", "c"),
+          sha256: digest(Buffer.from("primary")),
+        },
+        secondary: {
+          path: join(root ?? "", "version-v2"),
+          sha256: digest(Buffer.from("secondary")),
+        },
+        large: {
+          path: join(root ?? "", "large"),
+          sha256: digest(Buffer.from("large")),
+        },
         largeOracle: {
           symbolPrefix: "_rea_inventory_",
           symbolCount: 1_205,

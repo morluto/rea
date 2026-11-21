@@ -29,6 +29,8 @@ const TRUNCATED_LIMITATION =
   "Upstream callgraph was truncated; additional callees remain unknown.";
 const POSSIBLY_TRUNCATED_LIMITATION =
   "Upstream callgraph may be truncated; additional callees may remain unknown.";
+const UNDECLARED_TRUNCATION_LIMITATION =
+  "Upstream callgraph did not declare whether it truncated the root scan; additional callees may remain unknown.";
 const expectedReadFailure = (cause: unknown): boolean =>
   cause instanceof AnalysisProtocolError ||
   cause instanceof AnalysisOutputError ||
@@ -122,12 +124,19 @@ export const readCallGraphCallees = async (
   const saturated =
     row.max_edges_per_func !== undefined &&
     edges.length >= row.max_edges_per_func;
+  // Completeness needs both upstream markers: the graph-level truncation flag
+  // and the per-function cap. An omitted marker is unknown, never "not truncated".
+  const undeclared =
+    row.truncated === undefined ||
+    (row.per_func_capped === undefined && row.max_edges_per_func === undefined);
   if (truncated) {
     limitations.push(TRUNCATED_LIMITATION);
     coverageLimitations.push(TRUNCATED_LIMITATION);
   } else if (saturated) {
     limitations.push(POSSIBLY_TRUNCATED_LIMITATION);
     coverageLimitations.push(POSSIBLY_TRUNCATED_LIMITATION);
+  } else if (undeclared) {
+    limitations.push(UNDECLARED_TRUNCATION_LIMITATION);
   }
 
   const names = new Map<string, string>();
@@ -175,14 +184,26 @@ export const readCallGraphCallees = async (
     }),
     limitations,
     coverage:
-      coverageLimitations.length > 0
+      coverageLimitations.length === 0 && undeclared
         ? {
-            status: "partial",
-            limitations: coverageLimitations,
+            status: "unknown",
+            reason: UNDECLARED_TRUNCATION_LIMITATION,
             limited_directions: ["callees"],
             diagnostics,
             discovery: IDA_CALLEE_DISCOVERY,
           }
-        : { status: "complete", diagnostics, discovery: IDA_CALLEE_DISCOVERY },
+        : coverageLimitations.length > 0
+          ? {
+              status: "partial",
+              limitations: coverageLimitations,
+              limited_directions: ["callees"],
+              diagnostics,
+              discovery: IDA_CALLEE_DISCOVERY,
+            }
+          : {
+              status: "complete",
+              diagnostics,
+              discovery: IDA_CALLEE_DISCOVERY,
+            },
   };
 };

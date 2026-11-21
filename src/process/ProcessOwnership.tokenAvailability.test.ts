@@ -48,6 +48,11 @@ it.each([
   { present: false, reason: "unused", availability: "absent" },
   { present: true, reason: "process_not_in_snapshot", availability: "absent" },
   { present: true, reason: "sysctl_failed_13", availability: "unavailable" },
+  {
+    present: true,
+    reason: "process_table_failed_13",
+    availability: "unavailable",
+  },
 ])(
   "retains native run-token availability at the host adapter: %j",
   async (state) => {

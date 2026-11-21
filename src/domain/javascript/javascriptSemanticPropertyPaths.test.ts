@@ -51,6 +51,26 @@ it("preserves numeric key identity and absent capture identity", () => {
   expect(coverage.covers([1], ["captured"])).toBe(false);
 });
 
+it("touches a prefix through members retained below it", () => {
+  const coverage = new SemanticPropertyPathCoverage();
+  expect(coverage.retain(["global", "Object", "prototype", "load"])).toBe(true);
+  expect(coverage.covers(["global", "Object", "prototype"])).toBe(false);
+  expect(coverage.touches(["global", "Object", "prototype"])).toBe(true);
+  expect(coverage.touches(["global", "Object", "prototype", "load"])).toBe(
+    true,
+  );
+  expect(coverage.touches(["global", "Object", "prototype", "other"])).toBe(
+    false,
+  );
+  expect(coverage.touches(["global", "Array", "prototype"])).toBe(false);
+  expect(coverage.touches(["import-meta"])).toBe(false);
+  expect(coverage.retain(["import-meta", "url"], ["site", undefined])).toBe(
+    true,
+  );
+  expect(coverage.touches(["import-meta"], ["site"])).toBe(true);
+  expect(coverage.touches(["import-meta"], ["other"])).toBe(false);
+});
+
 it("lets an escaped root cover every deeper capture", () => {
   const coverage = new SemanticPropertyPathCoverage();
   expect(coverage.retain([])).toBe(true);

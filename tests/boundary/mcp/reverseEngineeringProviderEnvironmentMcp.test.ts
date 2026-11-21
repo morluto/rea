@@ -1,21 +1,15 @@
 import { createHash } from "node:crypto";
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 import { createServer } from "../../../src/server/createServer.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok } from "../../../src/domain/result.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const analysis = {
@@ -45,7 +39,7 @@ const sha256 = async (path: string): Promise<string> =>
     .digest("hex");
 
 it("uses the server-selected environment unless a provider environment overrides it", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-env-"));
+  const directory = await createTestTempDirectory("rea-reverse-env-");
   const selectedPath = join(directory, "selected");
   const overridePath = join(directory, "override");
   const artifactPath = join(directory, "sample.bin");
@@ -64,81 +58,80 @@ it("uses the server-selected environment unless a provider environment overrides
     writeFile(artifactPath, "fixture"),
   ]);
 
-  try {
-    for (const scenario of [
+  for (const scenario of [
+    {
+      environment: selectedPath,
+      expected: "selected environment",
+      tool: { name: "Rizin", version: "0.9.1" },
+      banner: "rizin 0.9.1 @ linux-x86-64",
+      executable: join(selectedPath, "rizin"),
+    },
+    {
+      environment: selectedPath,
+      provider: overridePath,
+      expected: "provider override",
+      tool: { name: "radare2", version: "6.1.8" },
+      banner: "radare2 6.1.8 +0 abi:110 @ darwin-arm_64",
+      executable: join(overridePath, "rizin"),
+    },
+  ]) {
+    const server = createServer(
+      { kind: "fixed", analysis },
       {
-        environment: selectedPath,
-        expected: "selected environment",
-        tool: { name: "Rizin", version: "0.9.1" },
-        banner: "rizin 0.9.1 @ linux-x86-64",
-        executable: join(selectedPath, "rizin"),
+        environment: { ...process.env, PATH: scenario.environment },
+        ...(scenario.provider === undefined
+          ? {}
+          : {
+              providerEnvironment: {
+                ...process.env,
+                PATH: scenario.provider,
+              },
+            }),
       },
-      {
-        environment: selectedPath,
-        provider: overridePath,
-        expected: "provider override",
-        tool: { name: "radare2", version: "6.1.8" },
-        banner: "radare2 6.1.8 +0 abi:110 @ darwin-arm_64",
-        executable: join(overridePath, "rizin"),
-      },
-    ]) {
-      const server = createServer(
-        { kind: "fixed", analysis },
-        {
-          environment: { ...process.env, PATH: scenario.environment },
-          ...(scenario.provider === undefined
-            ? {}
-            : {
-                providerEnvironment: {
-                  ...process.env,
-                  PATH: scenario.provider,
-                },
-              }),
+    );
+    const client = new Client(
+      { name: "reverse-env-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({
+        name: "execute_rizin_command",
+        arguments: { path: artifactPath, command: "iI" },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        raw_result: { stdout: `${scenario.expected}\n` },
+        provider: { id: "rizin", ...scenario.tool },
+        parameters: {
+          provider_executable: "rizin",
+          provider_executable_path: scenario.executable,
+          provider_executable_sha256: await sha256(scenario.executable),
+          provider_version_banner: scenario.banner,
         },
-      );
-      const client = new Client({ name: "reverse-env-test", version: "1" });
-      const [clientTransport, serverTransport] =
-        InMemoryTransport.createLinkedPair();
-      try {
-        await server.connect(serverTransport);
-        await client.connect(clientTransport);
-        const result = await client.callTool({
-          name: "execute_rizin_command",
-          arguments: { path: artifactPath, command: "iI" },
+      });
+      const notRizin = expect.arrayContaining([
+        expect.stringContaining("REA_RIZIN_COMMAND selected radare2 6.1.8"),
+      ]);
+      if (scenario.tool.name === "Rizin")
+        expect(result.structuredContent).not.toMatchObject({
+          limitations: notRizin,
         });
-        expect(result.isError).not.toBe(true);
+      else
         expect(result.structuredContent).toMatchObject({
-          raw_result: { stdout: `${scenario.expected}\n` },
-          provider: { id: "rizin", ...scenario.tool },
-          parameters: {
-            provider_executable: "rizin",
-            provider_executable_path: scenario.executable,
-            provider_executable_sha256: await sha256(scenario.executable),
-            provider_version_banner: scenario.banner,
-          },
+          limitations: notRizin,
         });
-        const notRizin = expect.arrayContaining([
-          expect.stringContaining("REA_RIZIN_COMMAND selected radare2 6.1.8"),
-        ]);
-        if (scenario.tool.name === "Rizin")
-          expect(result.structuredContent).not.toMatchObject({
-            limitations: notRizin,
-          });
-        else
-          expect(result.structuredContent).toMatchObject({
-            limitations: notRizin,
-          });
-      } finally {
-        await Promise.all([client.close(), server.close()]);
-      }
+    } finally {
+      await Promise.all([client.close(), server.close()]);
     }
-  } finally {
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
 it("keeps the probe's identification when the command then fails to start", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-launch-"));
+  const directory = await createTestTempDirectory("rea-reverse-launch-");
   const executable = join(directory, "rizin");
   const artifactPath = join(directory, "sample.bin");
   await writeFile(artifactPath, "fixture");
@@ -147,7 +140,10 @@ it("keeps the probe's identification when the command then fails to start", asyn
     { kind: "fixed", analysis },
     { environment: { ...process.env, PATH: directory } },
   );
-  const client = new Client({ name: "reverse-launch-test", version: "1" });
+  const client = new Client(
+    { name: "reverse-launch-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -220,6 +216,5 @@ it("keeps the probe's identification when the command then fails to start", asyn
     }
   } finally {
     await Promise.all([client.close(), server.close()]);
-    await rm(directory, { recursive: true, force: true });
   }
 });

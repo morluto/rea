@@ -93,6 +93,10 @@ describe("build secrets", () => {
       expect(found(text)).toContain("licence");
       expect(found(gzipSync(Buffer.from(text)))).toContain("licence");
     }
+    // A UTF-8 signature must not hide the JSON strings from the scan.
+    const signed = Buffer.from(`﻿{"password":"${encoded}"}`);
+    expect(found(signed)).toContain("licence");
+    expect(found(gzipSync(signed))).toContain("licence");
     const utf16 = Buffer.from(`{"password":"${encoded}"}`, "utf16le");
     for (const bytes of [
       utf16,

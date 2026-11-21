@@ -1,9 +1,7 @@
 import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  BrowserNetworkBody,
-  BrowserNetworkHeaders,
-} from "../browserNetworkEvidence.js";
+import type { BrowserNetworkBody } from "../browserNetworkEvidence.js";
+import { retainedNetworkMediaType } from "../browserNetworkMediaType.js";
 import {
   retainedBrowserScenarioCaptureSchema,
   type RetainedBrowserScenarioCapture,
@@ -20,6 +18,7 @@ import { analysisViewResultInputError } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
 type ContentEvent = Extract<BrowserScenarioEvent, { kind: "network-content" }>;
@@ -46,23 +45,6 @@ const onlyContent = (
   return found?.length === 1 ? found[0] : undefined;
 };
 
-const headerValue = (
-  headers: BrowserNetworkHeaders | undefined,
-  name: string,
-): string | undefined => {
-  if (headers?.state !== "captured") return undefined;
-  let value: string | undefined;
-  for (const item of headers.items) {
-    if (item.name.toLowerCase() !== name) continue;
-    // A singleton field has no certain value if declarations disagree or one
-    // was excluded. Never let ordering choose an interpretation of Evidence.
-    if (item.value === null || (value !== undefined && value !== item.value))
-      return undefined;
-    value = item.value;
-  }
-  return value;
-};
-
 const captured = (
   content: ContentEvent | undefined,
 ): CapturedBody | undefined =>
@@ -79,7 +61,7 @@ const retainedBody = (
 /** Strictly decoded text, keeping a byte-order mark; undefined for bytes that are not UTF-8. */
 const utf8Text = (body: CapturedBody): string | undefined => {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+    return strictUtf8Decoder("preserve").decode(
       Buffer.from(body.content, "base64"),
     );
   } catch {
@@ -87,12 +69,11 @@ const utf8Text = (body: CapturedBody): string | undefined => {
   }
 };
 
-/** A content event's media type: its captured body's, else its retained Content-Type value. */
+/** Use the retained type fact for the content event. */
 export const scenarioContentMediaType = (
   content: ContentEvent | undefined,
 ): string | undefined =>
-  captured(content)?.media_type ??
-  headerValue(content?.headers, "content-type");
+  retainedNetworkMediaType(content?.body, content?.headers);
 
 /** Whether a request sent no body: Playwright exposed none and the request names no Content-Type, which the bodies browsers send carry. */
 const unsentBody = (
