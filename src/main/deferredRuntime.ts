@@ -127,7 +127,7 @@ export const runDeferred = async (
     layer: "server",
   });
   // `main.ts` defers only the default output profile, which omits output
-  // schemas from listings; the recorded catalog keeps them for validation.
+  // schemas from listings. Canonical result validation loads on first use.
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
   const toolFamilies =
     config.mcpToolFamilies === undefined

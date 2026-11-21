@@ -377,6 +377,32 @@ it.each(["get", "complete"] as const)(
   },
 );
 
+it("records only the output schema material needed by the deferred catalog", async () => {
+  const { tools } = z
+    .object({
+      tools: z.array(
+        z.object({
+          name: z.string(),
+          outputSchema: z.record(z.string(), z.unknown()),
+        }),
+      ),
+    })
+    .parse(JSON.parse(await readFile("dist/mcp-catalog.json", "utf8")));
+  const objectRoots = tools.filter(
+    ({ name, outputSchema }) =>
+      name !== "binary_session" && outputSchema.type === "object",
+  );
+  expect(objectRoots.length).toBeGreaterThan(0);
+  expect(
+    objectRoots
+      .filter(({ outputSchema }) => Object.keys(outputSchema).length !== 1)
+      .map(({ name }) => name),
+  ).toEqual([]);
+  expect(
+    tools.find(({ name }) => name === "binary_session")?.outputSchema,
+  ).toHaveProperty("properties");
+});
+
 it.each([
   { mode: "legacy", environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
   { mode: "auto", environment: {} },

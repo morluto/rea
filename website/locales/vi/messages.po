@@ -5706,6 +5706,11 @@ msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr "Đặt tên cho các toán hạng và kiểm tra cả hai đường dẫn toán tử."
 
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "Một nhà phân tích suy nghĩ tại một máy tính"
+
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
 msgid "Illustrative expert reasoning"
@@ -14908,15 +14913,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "Tìm người đóng góp"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "Từ {ph0}danh sách người đóng góp trên GitHub{ph1} · Cập nhật: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -14993,6 +14989,50 @@ msgstr "Đánh giá"
 msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr "Hướng dẫn xây dựng môi trường"
+
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}Tạo môi trường cho ứng dụng máy tính{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "Tạo môi trường cho ứng dụng máy tính"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"Mô tả nhiệm vụ bạn muốn tác tử thực hành trong một ứng dụng máy tính Linux. "
+"Ví dụ, yêu cầu tạo môi trường Gnote để tác tử thêm dầu ô liu vào danh sách "
+"mua sắm. Tác tử cài ứng dụng trên máy dựng cục bộ, viết nhiệm vụ, xuất môi "
+"trường rồi kiểm tra trên một máy mới bằng ảnh chụp màn hình, chuột và bàn "
+"phím."
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"Máy dựng cần Linux trên amd64 hoặc arm64, Docker và phiên bản AgentEnv được "
+"chỉ định. Làm theo {ph0}hướng dẫn thiết lập máy dựng{ph1} để cài đặt và kiểm"
+" tra mức độ sẵn sàng."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -17473,3 +17513,8 @@ msgstr ""
 #~ "Windows x64 có hỗ trợ thử nghiệm, chỉ đọc cho các ứng dụng VÀ Dll X86 và x64"
 #~ " pe gốc trên các ổ đĩa ntfs cục bộ cố định. Sử DỤNG Ghidra 12.1 hiện có.x "
 #~ "cài đặt VÀ 64-bit JDK 21 hoặc mới hơn:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "Từ {ph0}danh sách người đóng góp trên GitHub{ph1} · Cập nhật: {ph2}."

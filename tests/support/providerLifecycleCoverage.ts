@@ -482,7 +482,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
-          "cancels queued work and stops active provider work on cancellation",
+          "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
         ),
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
@@ -1720,17 +1720,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "src/browser/modules/NativeModuleResolver.test.ts",
-          "closes a browser whose connection completes after cancellation",
-        ),
-        test(
-          "src/browser/modules/NativeModuleResolver.test.ts",
-          "reports failed cleanup of a browser whose connection completes after cancellation",
+          "awaits and closes the late browser connection after cancellation",
         ),
       ),
       operation: covered(
         test(
           "tests/boundary/filesystem/webModuleArtifacts.test.ts",
-          "verifies original bytes and tolerates relocation without inventing URL paths",
+          "verifies relocated source identity before accepting the captured bytes",
         ),
       ),
       cancel: covered(
@@ -1786,7 +1782,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "tests/boundary/filesystem/webSourceLocationArtifacts.test.ts",
-          "reads exact selected map bytes, retaining a BOM and explicitly selected URL context",
+          "retains exact selected map bytes and completed reads across failures",
         ),
       ),
       cancel: covered(

@@ -29,6 +29,7 @@ import {
   type NativeSectionDirectory,
 } from "../domain/native/nativeSectionDirectory.js";
 import { readElfStringBytes } from "../domain/native/elfStringBytes.js";
+import { decodeElfExportName } from "../domain/native/nativeExports.js";
 import { elfSymbolSize, readElfSymbol } from "../domain/elfSymbol.js";
 import {
   ELF_SHN_XINDEX,
@@ -97,6 +98,21 @@ const blankKernel = (
   sources: { parameters: null, registers: null, shared: null, private: null },
   limitations: [],
 });
+/** CUDA symbol names are ELF bytes; keep valid UTF-8 and disclose a Latin-1 fallback. */
+const cudaSymbolKernel = (
+  source: GpuSource,
+  id: string,
+  nameBytes: Buffer,
+  location: GpuLocation,
+): GpuKernel => {
+  const decoded = decodeElfExportName(nameBytes);
+  const kernel = blankKernel(source, id, decoded.name, location);
+  if (!decoded.name_utf8_decodable)
+    kernel.limitations.push(
+      `CUDA kernel symbol name is not valid UTF-8; name shows its bytes as Latin-1 (base64 ${decoded.name_bytes_base64!})`,
+    );
+  return kernel;
+};
 export const readGpuElfKernels = async (
   source: GpuSource,
   kind: "cubin" | "amdgpu",
@@ -333,10 +349,10 @@ const cudaKernels = async (
           : undefined;
       if (text === undefined || text.type !== 1 || (text.flags & 4n) === 0n)
         rejectGpu("CUBIN kernel symbol has no executable section");
-      const kernel = blankKernel(
+      const kernel = cudaSymbolKernel(
         source,
         `sym:${section.index}:${offset / width}`,
-        readElfStringBytes(names, symbol.name_offset).toString("latin1"),
+        readElfStringBytes(names, symbol.name_offset),
         site(source, section, offset, width),
       );
       if (

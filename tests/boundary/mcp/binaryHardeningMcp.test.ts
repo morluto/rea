@@ -1,10 +1,12 @@
-import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
-import type { RecordedMcpCatalog } from "../../../src/recordedMcpCatalog.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
@@ -17,20 +19,12 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
 mcpTest(
-  "ships a recorded hardening schema that validates Windows and POSIX result paths",
+  "validates Windows and POSIX hardening result paths against the canonical MCP schema",
   async ({ mcp }) => {
-    const catalog: RecordedMcpCatalog = JSON.parse(
-      await readFile("dist/mcp-catalog.json", "utf8"),
-    );
-    const definition = catalog.tools.find(
-      ({ name }) => name === "inspect_binary_hardening",
-    );
-    if (definition?.outputSchema === undefined)
-      throw new Error("Missing recorded hardening output schema");
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(definition.outputSchema as AnySchema);
+    }).compile(canonicalOutputSchema("inspect_binary_hardening") as AnySchema);
     const session = createTestBinarySession(() => {
       throw new Error("Hardening inspection must not acquire a provider");
     });

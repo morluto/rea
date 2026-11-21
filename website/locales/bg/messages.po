@@ -2832,15 +2832,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1116
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr ""
-
 #: website/public/contributors/index.html:1121
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -7752,6 +7743,50 @@ msgctxt "page:guides/native/index.html"
 msgid "Back to top"
 msgstr ""
 
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}Създаване на среда за настолно приложение{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "Създаване на среда за настолно приложение"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"Опишете задачата, която агентът да упражнява в настолно приложение за Linux."
+" Например поискайте среда за Gnote, в която агентът добавя зехтин в списък "
+"за пазаруване. Агентът инсталира приложението на локална машина за "
+"компилиране, описва задачата, експортира средата и я проверява на чиста "
+"машина чрез екранни снимки, мишка и клавиатура."
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"Машината за компилиране изисква Linux за amd64 или arm64, Docker и "
+"посочената версия на AgentEnv. Следвайте {ph0}ръководството за настройка на "
+"машината{ph1} за инсталиране и проверка на готовността."
+
 #: website/public/guides/rl-environments/index.html:113
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Skip to content"
@@ -8611,6 +8646,11 @@ msgstr ""
 msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr ""
+
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "Анализатор размишлява пред компютър"
 
 #: website/public/index.html:522 website/public/index.html:449
 msgctxt "page:index.html"
@@ -13936,4 +13976,9 @@ msgstr ""
 #~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
 #~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
 #~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
 #~ msgstr ""
