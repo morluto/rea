@@ -1,17 +1,26 @@
 #!/usr/bin/env node
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
+import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
+import {
+  verifierFailureReasons,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 const { values } = parseArgs({
   options: {
@@ -89,6 +98,7 @@ try {
 }
 if (!registration.ok) throw registration.error;
 const config = registration.value;
+const run = createVerifierRun();
 const environment = Object.fromEntries(
   Object.entries({
     ...process.env,
@@ -106,6 +116,7 @@ const expectedXref =
   values["expected-xref"] === undefined
     ? undefined
     : binaryNinjaAddressSchema.parse(values["expected-xref"]);
+const commands = await createVerifierCommands();
 let phase = "target admission";
 const digest = async () => {
   const hash = createHash("sha256");
@@ -143,26 +154,32 @@ const activeView = async () => {
 };
 const cli = async () => {
   phase = "production CLI function analysis";
-  const { stdout } = await promisify(execFile)(
-    process.execPath,
-    [
-      entry,
-      "function",
-      target,
-      values.procedure,
-      "--provider",
-      "binary-ninja",
-      "--json",
-    ],
-    {
-      env: environment,
-      timeout: config.timeoutMs * 3,
-      maxBuffer: 64 * 1024 * 1024,
-    },
-  ).catch((cause) => {
-    report.failed_cli = { stdout: cause.stdout, stderr: cause.stderr };
-    throw cause;
-  });
+  const { stdout } = await commands
+    .exec(
+      process.execPath,
+      [
+        entry,
+        "function",
+        target,
+        values.procedure,
+        "--provider",
+        "binary-ninja",
+        "--json",
+      ],
+      {
+        env: environment,
+        timeout: config.timeoutMs * 3,
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    )
+    .catch((cause) => {
+      if (cause?.snapshot != null)
+        report.failed_cli = {
+          stdout: cause.snapshot.stdout.text,
+          stderr: cause.snapshot.stderr.text,
+        };
+      throw cause;
+    });
   const dossier = functionDossierSchema.parse(observe(JSON.parse(stdout)));
   assert.ok(dossier.pseudocode.length > 0);
   assert.ok(dossier.assembly.length > 0);
@@ -171,17 +188,20 @@ const cli = async () => {
   return dossier;
 };
 const mcp = async (cliDossier) => {
+  phase = "production MCP connection";
   const client = new Client({
     name: "rea-real-binary-ninja-verifier",
     version: "1",
   });
-  const transport = new StdioClientTransport({
+  const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
-    args: [entry, "mcp"],
-    env: environment,
-    stderr: "pipe",
+    arguments: [entry, "mcp"],
+    hostEnvironment: environment,
+    cwd: process.cwd(),
+    expectedCommand: null,
+    sweepTokenOwnedProcesses: true,
   });
-  transport.stderr?.on("data", () => undefined);
+  commands.adopt(transport, "Binary Ninja verifier MCP process");
   const call = async (name, args) => {
     phase = `production MCP ${name}`;
     const result = await artifactMcpCall(
@@ -194,7 +214,7 @@ const mcp = async (cliDossier) => {
     return toolContract(name).outputSchema.parse(result.structuredContent);
   };
   let opened = false;
-  try {
+  const verifyMcp = async () => {
     await client.connect(transport, { timeout: config.timeoutMs });
     const admission = await call("open_binary", {
       path: target,
@@ -354,18 +374,19 @@ const mcp = async (cliDossier) => {
     report.checks.push(
       "CLI/MCP function identity, pseudocode, assembly, instructions, and relationship parity",
     );
-  } finally {
-    const completedPhase = phase;
-    try {
-      if (opened) await call("close_binary", {});
-    } finally {
+  };
+  await withVerifierCleanup(verifyMcp, [
+    async () => {
+      if (!opened) return;
+      const completedPhase = phase;
       try {
-        await client.close();
+        await call("close_binary", {});
       } finally {
         phase = completedPhase;
       }
-    }
-  }
+    },
+    () => client.close(),
+  ]);
 };
 /** Call sites Binary Ninja reported for the callers of an entry, read from their Evidence. */
 const callSites = async (call, address) => {
@@ -382,7 +403,7 @@ const callSites = async (call, address) => {
   assert.ok(callers.length === 0 || sites.size > 0);
   return sites;
 };
-try {
+const verify = async () => {
   const before = await digest();
   phase = "pre-run shared view selection";
   const selectionBefore = await activeView();
@@ -404,11 +425,26 @@ try {
   }
   assert.equal(await digest(), before);
   report.checks.push("original binary unchanged and never executed");
+  phase = "verifier process cleanup";
+};
+try {
+  await withVerifierCleanup(verify, [
+    () => commands.close(),
+    async () => {
+      report.verifier_run = await completeVerifierRun(run);
+      // Windows verifies cleanup through the native process owners.
+      if (process.platform !== "win32")
+        assertVerifierCleanupComplete(report.verifier_run.process_lineage);
+    },
+  ]);
   report.passed = true;
 } catch (cause) {
   report.failure = {
     phase,
     message: cause instanceof Error ? cause.message : String(cause),
+    ...(cause instanceof AggregateError
+      ? { reasons: verifierFailureReasons(cause) }
+      : {}),
   };
   process.exitCode = 1;
 } finally {
