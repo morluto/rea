@@ -262,7 +262,7 @@ describe("Windows Ghidra doctor authority", () => {
       classification: "missing_dependency",
       detail: "Authored native artifact unavailable diagnostic",
       remediation: expect.stringContaining(
-        "matching published Windows x64 REA package",
+        "matches this Windows host's architecture",
       ),
     });
   });
@@ -345,7 +345,12 @@ describe("Windows native doctor failure diagnostics", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it.each([
-    ["host", "unsupported_host", "unsupported_host", "Windows x64 host"],
+    [
+      "host",
+      "unsupported_host",
+      "unsupported_host",
+      "Windows x64 or arm64 host",
+    ],
     [
       "artifact",
       "runtime_missing",
