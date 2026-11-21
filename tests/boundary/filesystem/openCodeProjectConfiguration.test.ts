@@ -133,3 +133,28 @@ it.each(["legacy", "native"] as const)(
     });
   },
 );
+
+it("keeps OpenCode activation tied to the authored row dialect", async () => {
+  const { client, projectDirectory, read } = await fixture();
+  const project = join(projectDirectory, "opencode.json");
+  const user = localServer("user");
+  const projectServer = localServer("project");
+  await writeConfiguration(client.configPath, {
+    mcp: { rea: { ...user, enabled: false } },
+  });
+  await writeConfiguration(project, {
+    mcp: { servers: { rea: { ...projectServer, enabled: false } } },
+  });
+  const native = await read();
+  if (!native.ok) throw Error(native.error.detail);
+  expect(readReaServer(native.value.document)).toEqual(projectServer);
+  await writeConfiguration(project, {
+    mcp: { servers: { other: localServer("other") } },
+  });
+  const migrated = await read();
+  if (!migrated.ok) throw Error(migrated.error.detail);
+  expect(readReaServer(migrated.value.document)).toEqual({
+    ...user,
+    disabled: true,
+  });
+});

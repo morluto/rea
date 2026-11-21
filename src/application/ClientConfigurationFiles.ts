@@ -673,11 +673,15 @@ export const readEffectiveClientRegistrationConfiguration = async (
     if (!override.ok) return override;
   }
 
+  const projectedSources =
+    client.format === "opencode"
+      ? sources.map((source) => projectOpenCodeSource(source, wholeRows))
+      : sources;
   const document = piOverride
     ? withPiOverride(sources, active)
     : replaces
-      ? replacedServerConfiguration(sources)
-      : mergeClientConfigurationDocuments(sources, platform);
+      ? replacedServerConfiguration(projectedSources)
+      : mergeClientConfigurationDocuments(projectedSources, platform);
   const environment = clientRegistrationEnvironment(document, client, platform);
   if (!environment.ok) {
     const source =
@@ -1025,6 +1029,43 @@ const contributingEnvironmentSource = (
         Object.keys(environment).some((key) => rejected.has(normalize(key))))
     );
   })?.source;
+};
+
+/** OpenCode V2 migrates enabled from legacy rows and only reads disabled on native rows. */
+const projectOpenCodeSource = (
+  source: ClientConfigurationSource,
+  nativeProjection: boolean,
+): ClientConfigurationSource => {
+  const normalize = (
+    servers: Readonly<Record<string, unknown>>,
+    native: boolean,
+  ) =>
+    Object.fromEntries(
+      Object.entries(servers).map(([name, entry]) => {
+        if (!isRecord(entry)) return [name, entry];
+        const { enabled, disabled, ...server } = entry;
+        if (native)
+          return [
+            name,
+            disabled === undefined ? server : { ...server, disabled },
+          ];
+        if (enabled === undefined) return [name, server];
+        return [
+          name,
+          nativeProjection
+            ? {
+                ...server,
+                disabled: typeof enabled === "boolean" ? !enabled : enabled,
+              }
+            : { ...server, enabled },
+        ];
+      }),
+    );
+  return {
+    ...source,
+    servers: normalize(source.servers, source.dialect === "opencode_v2"),
+    legacyServers: normalize(source.legacyServers, false),
+  };
 };
 
 const replacedServerConfiguration = (
