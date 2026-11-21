@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { afterEach, expect, it } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 import {
   AnalysisCancelledError,
@@ -1179,10 +1180,7 @@ it("converts non-Error queue cancellation failures into a tagged error", async (
 
 it("closes an idle GDB with a quoted executable after its inherited output settles", async () => {
   const commands: string[] = [];
-  let reportLeaderExit!: () => void;
-  const leaderExited = new Promise<void>((resolve) => {
-    reportLeaderExit = resolve;
-  });
+  const leaderExited = phaseArrival();
   const fake = createFakeSpawner((child, token, command) => {
     commands.push(command);
     if (command === "-list-thread-groups --recurse 1")
@@ -1192,7 +1190,7 @@ it("closes an idle GDB with a quoted executable after its inherited output settl
     else if (command === "-gdb-exit") {
       child.stdout.write(`${token}^exit\n`);
       child.exitLeader(0);
-      reportLeaderExit();
+      leaderExited.arrive();
     } else child.stdout.write(`${token}^done\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess);
@@ -1205,14 +1203,13 @@ it("closes an idle GDB with a quoted executable after its inherited output settl
   const closing = manager.close(started.value.session_id).finally(() => {
     settled = true;
   });
-  // Await either the observed exit or an unexpected early completion so a
-  // broken close fails promptly even when it never requests the exit.
   try {
-    await Promise.race([leaderExited, closing]);
+    await leaderExited.reached(closing, "GDB leader exit");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
   } finally {
     child.closeInheritedOutput();
+    await closing;
   }
 
   expect(await closing).toMatchObject({
