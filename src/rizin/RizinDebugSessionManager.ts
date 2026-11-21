@@ -1522,12 +1522,7 @@ export class RizinDebugSessionManager {
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
     );
-    if (
-      after.some(
-        ([activeFd, activePid]) => activeFd === fd || activePid === pid,
-      ) ||
-      after.length !== 0
-    )
+    if (after.length !== 0)
       throw new Error(
         "Rizin did not confirm that the selected inferior FD was detached.",
       );
