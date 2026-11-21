@@ -75,10 +75,7 @@ export interface FakeOptions {
   readonly closeOnMethod?: string;
   readonly hangOnMethod?: string;
   readonly unsupportedMethods?: readonly string[];
-  readonly transitionalFrameReads?: number;
-  readonly attachedFrameUrl?: string;
   readonly frameUrlAfterFirstRead?: string;
-  readonly navigateDuringObservationUrl?: string;
   readonly navigateDuringCaptureUrl?: string;
   readonly navigateDuringScreenshotUrl?: string;
   readonly extraCollections?: boolean;
