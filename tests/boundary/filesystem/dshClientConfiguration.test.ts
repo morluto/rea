@@ -597,6 +597,72 @@ describe("DeepSeek Harness repair boundaries", () => {
     );
   });
 
+  it("recognizes REA inside nested Cordis groups and removes only its row", async () => {
+    const { home, client } = await harnessClient();
+    const entry = canonicalEntry();
+    const callerPeer = { id: "caller-peer", name: "caller-plugin" };
+    const opaque = {
+      id: "caller-config",
+      name: "caller-plugin",
+      group: false,
+      config: [entry],
+    };
+    const group = {
+      id: "tools",
+      name: "@deepseek-ai/cordis-plugin-group",
+      group: true,
+      config: [
+        {
+          id: "local",
+          name: "@deepseek-ai/cordis-plugin-group",
+          group: true,
+          config: [entry, callerPeer, opaque],
+        },
+      ],
+    };
+    const initial = stringifyYaml([{ insert: [group] }]).replace(
+      /^(\s*)- id: caller-peer$/m,
+      "$1# keep group sibling\n$1- id: caller-peer",
+    );
+    await writeFile(client.configPath, initial);
+
+    expect(await inspectClientConfiguration(client, {}, command)).toMatchObject(
+      {
+        status: "invalid",
+        remediation: expect.stringContaining("group"),
+      },
+    );
+    expect(await dshStatus(home)).toMatchObject({
+      state: "invalid",
+      remediation: expect.stringContaining("group"),
+    });
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("failed");
+    expect(await readFile(client.configPath, "utf8")).toBe(initial);
+
+    const host = systemUninstallHost(home);
+    expect(await host.inspectClient(client)).toBeUndefined();
+    expect((await host.removeClient(client)).status).toBe("removed");
+    const text = await readFile(client.configPath, "utf8");
+    expect(parseYaml(text)).toEqual([
+      {
+        insert: [
+          {
+            ...group,
+            config: [{ ...group.config[0], config: [callerPeer, opaque] }],
+          },
+        ],
+      },
+    ]);
+    expect(text).toContain("# keep group sibling");
+    expect((await host.removeClient(client)).status).toBe("skipped");
+    expect(await readFile(client.configPath, "utf8")).toBe(text);
+    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+      initial,
+    );
+  });
+
   it("blocks malformed literal patches but still uninstalls a known owned sibling", async () => {
     const { home, client } = await harnessClient();
     const initial = stringifyYaml([
