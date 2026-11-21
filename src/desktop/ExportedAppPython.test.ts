@@ -11,9 +11,19 @@ import {
 } from "../domain/desktop/appExportPython.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 
+/**
+ * Exported readers require Python 3.11 or later
+ * (docs/desktop-application-export.md): the helpers call
+ * `sqlite3.Connection.setlimit` and `binascii.a2b_base64(strict_mode=True)`.
+ * An older `python3`, such as macOS's 3.9 or Ubuntu 22.04's 3.10, skips.
+ */
 const hasPython = (() => {
   try {
-    execFileSync("python3", ["-c", "import sqlite3"], { stdio: "ignore" });
+    execFileSync(
+      "python3",
+      ["-c", "import sqlite3, sys; sys.exit(sys.version_info < (3, 11))"],
+      { stdio: "ignore" },
+    );
     return true;
   } catch {
     return false;
