@@ -852,62 +852,56 @@ it("recovers a fetched map by raising its exact structural admission on the next
 });
 
 it.each([
-  { limits: { decoded_records: 4 }, directory: "maps" },
-  { limits: { fetch_bytes: 1500 }, directory: "m".repeat(1000) },
+  {
+    limits: { decoded_records: 4 },
+    directory: "maps",
+    limit: "decoded_records",
+  },
+  {
+    limits: { fetch_bytes: 1500 },
+    directory: "m".repeat(1000),
+    limit: "fetch_bytes",
+  },
 ])(
-  "releases discarded map interpretations before the next map: $limits",
-  async ({ limits, directory }) => {
-    const selected = {
+  "charges $limit for retained map interpretations and releases discarded ones",
+  async ({ limits, directory, limit }) => {
+    const requests = ["1", "2", "3"].map((key) => ({
       ...request,
+      scriptKey: `scr_${key.repeat(64)}`,
       fetchUrl: `https://app.example.test/${directory}/app.js.map`,
-    };
-    const responses = ["ACAA", "AAAA"].map((mappings) =>
+    }));
+    const responses = ["ACAA", "AAAA", "AAAA"].map((mappings) =>
       JSON.stringify({ version: 3, sources: ["a.js"], names: [], mappings }),
     );
     const result = await fetchWebSourceMapsOk(
-      [selected, { ...selected, scriptKey: `scr_${"2".repeat(64)}` }],
+      requests,
       {
         ...input,
-        allowed_origins: [new URL(selected.fetchUrl).origin],
+        allowed_origins: ["https://app.example.test"],
         source_map_limits: limits,
       },
       undefined,
       { fetch: async () => new Response(responses.shift()) },
     );
 
-    expect(result.items.map(({ status }) => status)).toEqual([
-      "invalid",
-      "included",
-    ]);
-    expect(result.items[0]).toMatchObject({
-      response_identity: { representation: "fetch-response-body-bytes" },
+    expect(result).toMatchObject({
+      status: "partial",
+      requested: 3,
+      processed: 3,
+      items: [
+        {
+          status: "invalid",
+          response_identity: { representation: "fetch-response-body-bytes" },
+        },
+        {
+          status: "included",
+          mappings: [{ source: `https://app.example.test/${directory}/a.js` }],
+        },
+        {
+          status: "fetch_failed",
+          limitation: expect.stringContaining(`source_map_limits.${limit} is`),
+        },
+      ],
     });
-    expect(result.items[1]?.mappings).toMatchObject([
-      { source: `https://app.example.test/${directory}/a.js` },
-    ]);
-    const retained = await fetchWebSourceMapsOk(
-      [selected, { ...selected, scriptKey: `scr_${"2".repeat(64)}` }],
-      {
-        ...input,
-        allowed_origins: [new URL(selected.fetchUrl).origin],
-        source_map_limits: limits,
-      },
-      undefined,
-      {
-        fetch: async () =>
-          new Response(
-            JSON.stringify({
-              version: 3,
-              sources: ["a.js"],
-              names: [],
-              mappings: "AAAA",
-            }),
-          ),
-      },
-    );
-    expect(retained.items.map(({ status }) => status)).toEqual([
-      "included",
-      "fetch_failed",
-    ]);
   },
 );
