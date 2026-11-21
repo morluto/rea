@@ -423,7 +423,7 @@ export const prepareCaptureProtobuf = async (
     );
     for (const field of record.binary_fields) {
       await work.checkpoint();
-      if (pointers !== undefined && !pointers.has(field.pointer)) continue;
+      const interpret = pointers?.has(field.pointer) ?? true;
       const metadata = bodyMetadata(
         record,
         field.pointer,
@@ -433,23 +433,32 @@ export const prepareCaptureProtobuf = async (
       // Framing overrides interpret bodies; header and extension bytes remain their own facts.
       if (metadata === undefined) continue;
       if (field.state !== "retained") {
-        incomplete = true;
+        incomplete ||= interpret;
         continue;
       }
       const { contentType, mimeProfile, declaredFramings } = metadata;
       const automatic = mimeProfile.ok ? mimeProfile.value.framing : undefined;
-      if (!mimeProfile.ok) {
+      if (interpret && !mimeProfile.ok) {
         if (automaticSelected) incomplete = true;
         record.limitations.push(mimeProfile.error.issue);
       }
-      if (automaticSelected && !metadata.contentTypeKnown && field.bytes > 0) {
+      if (
+        interpret &&
+        automaticSelected &&
+        !metadata.contentTypeKnown &&
+        field.bytes > 0
+      ) {
         incomplete = true;
         record.limitations.push(
           "Selected body's MIME metadata is excluded, conflicting or unavailable, so automatic protobuf framing applicability is unknown; its retained bytes were not interpreted. Select explicit framing to decode them.",
         );
       }
-      const framing =
-        explicitFraming ?? (metadata.contentTypeKnown ? automatic : undefined);
+      // A body filter scopes wire analysis. Every body that remains in the
+      // retained records still needs its source-declared transport checks.
+      const framing = interpret
+        ? (explicitFraming ??
+          (metadata.contentTypeKnown ? automatic : undefined))
+        : undefined;
       if (framing === undefined && declaredFramings.size === 0) continue;
       if (
         field.bytes > captureBudgets().inputBytes ||
@@ -480,7 +489,7 @@ export const prepareCaptureProtobuf = async (
       if (excluded !== undefined) {
         excludeBody(record, field.pointer, excluded);
         binaryByPointer.delete(field.pointer);
-        incomplete = true;
+        incomplete ||= interpret;
         continue;
       }
       // Analysis eligibility never bypasses the independent source exclusions.
@@ -495,6 +504,7 @@ export const prepareCaptureProtobuf = async (
               "Use a capture with available HTTP coding metadata, or select records whose transport can be inspected. Unchecked source bytes were not published.",
           },
         );
+      if (!interpret) continue;
       if (!metadata.httpIdentityKnown) {
         incomplete = true;
         record.limitations.push(

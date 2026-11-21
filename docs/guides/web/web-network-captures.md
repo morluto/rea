@@ -246,10 +246,11 @@ when MIME metadata is unavailable. CLI exposes `--protobuf-body-pointer` and
 base64 layer also checks explicit exclusions; newly recognized trailer
 credentials exclude the entire affected binary sidecar and its reported
 encoding, preserving a redaction coordinate instead of a credential digest.
-Credential inspection covers every selected body before descriptor reads or
-field expansion. Later capacity or schema failures can therefore retain the
-sanitized source even with explicit sensitivity options. If that source pass
-is interrupted, unchecked bodies are not published as partial Evidence.
+Credential checks use visible transport declarations for format-owned bodies in
+selected records before descriptor reads or field expansion. The `body_pointers`
+filter applies to wire interpretation. Later capacity or schema failures can
+retain the sanitized source even with explicit sensitivity options. An interrupted
+source pass withholds unchecked bodies from partial Evidence.
 Framing overrides apply only to format-owned body coordinates and preserve
 exclusions for the transport declared in MIME metadata.
 Explicitly excluded or conflicting MIME metadata is not treated as absent:

@@ -200,20 +200,25 @@ cliTest(
     const original = JSON.stringify(archive);
     await writeFile(path, original);
     const call = await cli.sharedMcpCall!();
-    for (const framing of ["auto", "raw"] as const) {
+    for (const protobuf of [
+      { framing: "auto", body_pointers: ["/response/content/text"] },
+      { framing: "raw" },
+      { body_pointers: [] },
+    ]) {
+      const selected = protobuf.body_pointers?.length !== 0;
       const reply = await call("inspect_web_network_capture", {
         capture_path: path,
         format: "har",
         record_ordinals: [0, 1, 2, 3],
         sensitive_values: ["excluded-declaration"],
-        protobuf: { framing },
+        protobuf,
       });
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const report = webNetworkCaptureSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,
       );
       expect(report.protobuf_coverage).toEqual({
-        status: "partial",
+        status: selected ? "partial" : "complete",
         selected_records: 4,
         inspected_records: 4,
       });
@@ -223,7 +228,7 @@ cliTest(
       for (const [ordinal, record] of report.records.slice(0, 3).entries()) {
         expect(
           record.protobuf,
-          `record ${ordinal} (${framing})`,
+          `record ${ordinal} (${protobuf.framing ?? "unselected"})`,
         ).toBeUndefined();
         expect(record.reported).toMatchObject({
           response: {
@@ -244,11 +249,13 @@ cliTest(
           reason: "transport-credential",
         });
       }
-      expect(report.records[3]?.protobuf?.[0]).toMatchObject({
-        content_type: raw.value,
-        framing: "raw",
-        fields: [{ number: 1, value: "1" }],
-      });
+      if (selected)
+        expect(report.records[3]?.protobuf?.[0]).toMatchObject({
+          content_type: raw.value,
+          framing: "raw",
+          fields: [{ number: 1, value: "1" }],
+        });
+      else expect(report.records[3]?.protobuf).toBeUndefined();
       expect(report.records[3]?.binary_fields).toContainEqual(
         expect.objectContaining({
           pointer: "/response/content/text",
