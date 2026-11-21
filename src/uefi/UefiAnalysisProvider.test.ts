@@ -25,7 +25,10 @@ import {
   buildSection,
   guidBytes,
 } from "../../tests/fixtures/uefiImage.js";
-import { UefiAnalysisProvider } from "./UefiAnalysisProvider.js";
+import {
+  UefiAnalysisProvider,
+  buildUefiEntryPointScaffolding,
+} from "./UefiAnalysisProvider.js";
 import {
   uefiRequestSchema,
   type UefiDecompileResult,
@@ -1645,6 +1648,7 @@ it("decompiles UEFI image modules into structured C scaffolding, headers and rel
     expect(mod?.relative_c_file).toContain("DXE/");
     expect(mod?.c_file).toBe(join(outDir, mod!.relative_c_file!));
 
+    expect(executed.value.subject?.format).toBe("file");
     expect(result.receipts).toBeDefined();
     expect(result.receipts!.length).toBeGreaterThan(0);
     expect(existsSync(mod!.c_file!)).toBe(true);
@@ -1652,6 +1656,9 @@ it("decompiles UEFI image modules into structured C scaffolding, headers and rel
     expect(existsSync(mod!.payload_file!)).toBe(true);
     expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
     expect(existsSync(join(outDir, "README.md"))).toBe(true);
+
+    expect(mod!.c_generator).toBe("scaffold");
+    expect(result.producers).toBeDefined();
 
     expect(mod!.c_sha256).toBe(sha256(await readFile(mod!.c_file!)));
     expect(mod!.header_sha256).toBe(sha256(await readFile(mod!.header_file!)));
@@ -1742,6 +1749,7 @@ it("decompiles directory of pre-extracted binaries with bounded sniffing, duplic
       duplicates[1]?.relative_c_file,
     );
 
+    expect(executed.value.subject?.format).toBe("directory");
     expect(existsSync(duplicates[0]!.c_file!)).toBe(true);
     expect(existsSync(duplicates[1]!.c_file!)).toBe(true);
 
@@ -2092,4 +2100,16 @@ it("gracefully filters out non-PE, corrupt, and oversized files during directory
   } finally {
     await provider.close();
   }
+});
+
+it("generates correct ABI signature for PEI core entry point including Context parameter", () => {
+  const scaffold = buildUefiEntryPointScaffolding(
+    "PeiCore",
+    "PeiCoreModule",
+    1024,
+    "PEI",
+    "pei-core",
+  );
+  expect(scaffold.prototype).toContain("void *Context");
+  expect(scaffold.functionDefinition).toContain("void *Context");
 });

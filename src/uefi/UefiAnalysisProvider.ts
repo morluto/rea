@@ -5,7 +5,7 @@ import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { open, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { inflate } from "node:zlib";
 import { promisify } from "node:util";
 import { join, relative, resolve } from "node:path";
@@ -37,6 +37,11 @@ import {
   AnalysisInputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
+import {
+  compareUnicodeCodePoints,
+  compositeKey,
+} from "../domain/unicodeCodePointOrder.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -112,7 +117,7 @@ interface UefiEntryPointScaffolding {
   readonly functionDefinition: string;
 }
 
-const buildUefiEntryPointScaffolding = (
+export const buildUefiEntryPointScaffolding = (
   identifier: string,
   rawName: string,
   byteLength: number,
@@ -126,16 +131,18 @@ const buildUefiEntryPointScaffolding = (
         "typedef void* EFI_SEC_PEI_HAND_OFF;",
         "typedef void* EFI_PEI_PPI_DESCRIPTOR;",
       ],
-      prototype: `void EFIAPI ${identifier}EntryPoint(const EFI_SEC_PEI_HAND_OFF *SecCoreData, const EFI_PEI_PPI_DESCRIPTOR *PpiList);`,
+      prototype: `void EFIAPI ${identifier}EntryPoint(const EFI_SEC_PEI_HAND_OFF *SecCoreData, const EFI_PEI_PPI_DESCRIPTOR *PpiList, void *Context);`,
       functionDefinition: [
         `void EFIAPI ${identifier}EntryPoint(`,
         "    const EFI_SEC_PEI_HAND_OFF *SecCoreData,",
-        "    const EFI_PEI_PPI_DESCRIPTOR *PpiList",
+        "    const EFI_PEI_PPI_DESCRIPTOR *PpiList,",
+        "    void *Context",
         ") {",
         `    // Reconstructed PEI Core EntryPoint scaffolding for ${rawName}`,
         `    // Size: ${byteLength} bytes`,
         "    (void)SecCoreData;",
         "    (void)PpiList;",
+        "    (void)Context;",
         "}",
       ].join("\n"),
     };
@@ -928,6 +935,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     limitations: readonly string[],
     signal: AbortSignal,
     checkpoint: () => void,
+    format: "file" | "directory" = "file",
   ): Promise<AnalysisExecution> {
     const input = request.input;
     const modulesToProcess = discoveredModules.slice(0, input.max_modules);
@@ -947,7 +955,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
     const MAX_DISASSEMBLY_MODULE_BYTES = 2 * 1024 * 1024;
     const MAX_DISASSEMBLY_TOTAL_BYTES = 64 * 1024 * 1024;
+    const MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS = 20;
+    let recordedDisassemblyFailures = 0;
     let totalStagedAsmBytes = 0;
+    let disassemblyEngineUsed: "llvm-objdump" | "objdump" | "none" = "none";
 
     const MAX_DECOMPILE_MODULE_BYTES = 4 * 1024 * 1024;
     const MAX_DECOMPILE_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -984,6 +995,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         asm_sha256: string | null;
         header_sha256: string;
         payload_sha256: string | null;
+        c_generator: "ghidra" | "scaffold";
+        asm_generator: "llvm-objdump" | "objdump" | null;
         code_bytes: number;
       }> = [];
       const publicationEntries: UefiPublicationEntry[] = [];
@@ -1090,48 +1103,36 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
         let asmRelPath: string | null = null;
         let asmSha256: string | null = null;
+        let asmGenerator: "llvm-objdump" | "objdump" | null = null;
         let disassemblyStatus: "ok" | "failed" | "omitted" = "omitted";
         const tempEfiPath = join(
           tempRoot.path,
           `${cIdentifier}_${occurrence}.efi`,
         );
+        let ghidraOutC: string | undefined;
+
         await writeFile(tempEfiPath, modBytes);
-        if (input.include_disassembly) {
-          if (totalStagedAsmBytes >= MAX_DISASSEMBLY_TOTAL_BYTES) {
-            disassemblyStatus = "omitted";
-            if (
-              !effectiveLimitations.includes(
-                "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
-              )
-            ) {
-              effectiveLimitations.push(
-                "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
-              );
-            }
-          } else {
-            let asmOutput: string | null = null;
-            let llvmErrorMsg: string | null = null;
-            let objdumpErrorMsg: string | null = null;
-            try {
-              const { stdout } = await execFileOutput(
-                "llvm-objdump",
-                ["-d", "--no-show-raw-insn", tempEfiPath],
-                {
-                  signal,
-                  stopSignal: "SIGTERM",
-                  timeout: 15_000,
-                  maxBuffer: MAX_DISASSEMBLY_MODULE_BYTES,
-                },
-              );
-              asmOutput = stdout;
-            } catch (llvmError: unknown) {
-              if (signal.aborted) signal.throwIfAborted();
-              if (isAbortOf(llvmError, signal)) throw llvmError;
-              llvmErrorMsg = errorMessage(llvmError);
+        try {
+          if (input.include_disassembly) {
+            if (totalStagedAsmBytes >= MAX_DISASSEMBLY_TOTAL_BYTES) {
+              disassemblyStatus = "omitted";
+              if (
+                !effectiveLimitations.includes(
+                  "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                )
+              ) {
+                effectiveLimitations.push(
+                  "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                );
+              }
+            } else {
+              let asmOutput: string | null = null;
+              let llvmErrorMsg: string | null = null;
+              let objdumpErrorMsg: string | null = null;
               try {
                 const { stdout } = await execFileOutput(
-                  "objdump",
-                  ["-d", tempEfiPath],
+                  "llvm-objdump",
+                  ["-d", "--no-show-raw-insn", tempEfiPath],
                   {
                     signal,
                     stopSignal: "SIGTERM",
@@ -1140,147 +1141,203 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   },
                 );
                 asmOutput = stdout;
-              } catch (objdumpError: unknown) {
+                asmGenerator = "llvm-objdump";
+                disassemblyEngineUsed = "llvm-objdump";
+              } catch (llvmError: unknown) {
                 if (signal.aborted) signal.throwIfAborted();
-                if (isAbortOf(objdumpError, signal)) throw objdumpError;
-                objdumpErrorMsg = errorMessage(objdumpError);
-                asmOutput = null;
-              }
-            }
-            if (asmOutput !== null) {
-              const asmName = `${mod.cleanName}.asm`;
-              asmRelPath = `${moduleRelDir}/${asmName}`;
-              const asmBytes = Buffer.from(asmOutput, "utf8");
-              asmSha256 = sha256Hex(asmBytes);
-              publicationEntries.push({
-                relativePath: asmRelPath,
-                bytes: asmBytes,
-              });
-              totalStagedAsmBytes += asmBytes.length;
-              disassemblyStatus = "ok";
-            } else {
-              disassemblyStatus = "failed";
-              effectiveLimitations.push(
-                `Disassembly for ${mod.rawName} failed: llvm-objdump (${llvmErrorMsg ?? "unknown"}), objdump (${objdumpErrorMsg ?? "unknown"})`,
-              );
-            }
-          }
-        }
-
-        const cName = `${mod.cleanName}.c`;
-        const cRelPath = `${moduleRelDir}/${cName}`;
-        let cContent: string | null = null;
-
-        if (ghidraBin !== null) {
-          if (totalStagedCBytes >= MAX_DECOMPILE_TOTAL_BYTES) {
-            if (
-              !effectiveLimitations.includes(
-                "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-              )
-            ) {
-              effectiveLimitations.push(
-                "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-              );
-            }
-          } else {
-            const ghidraOutC = join(
-              tempRoot.path,
-              `${cIdentifier}_${occurrence}_decompiled.c`,
-            );
-            try {
-              const bridgeDir = resolve(
-                fileURLToPath(import.meta.url),
-                "..",
-                "..",
-                "bridge",
-                "ghidra",
-              );
-              const ghidraArgs = [
-                tempRoot.path,
-                `UefiDecomp_${cIdentifier}_${occurrence}`,
-                "-import",
-                tempEfiPath,
-                "-scriptPath",
-                bridgeDir,
-                "-postScript",
-                "ReaDecompileToC.java",
-                ghidraOutC,
-                "-deleteProject",
-              ];
-              let execCmd = ghidraBin;
-              let execArgs = ghidraArgs;
-              if (
-                HOST_PLATFORM.platform === "win32" &&
-                isWindowsBatchFile(ghidraBin)
-              ) {
-                const batch = windowsBatchCommand({
-                  environment: process.env,
-                  batchPath: ghidraBin,
-                  arguments: ghidraArgs,
-                });
-                execCmd = batch.command;
-                execArgs = [...batch.arguments];
-              }
-              await execFileOutput(execCmd, execArgs, {
-                signal,
-                stopSignal: "SIGTERM",
-                timeout: 45_000,
-                maxBuffer: 10 * 1024 * 1024,
-              });
-              if (existsSync(ghidraOutC)) {
-                const cStat = await stat(ghidraOutC);
-                if (cStat.size <= MAX_DECOMPILE_MODULE_BYTES) {
-                  cContent = await readFile(ghidraOutC, "utf8");
-                  totalStagedCBytes += Buffer.byteLength(cContent, "utf8");
+                if (isAbortOf(llvmError, signal)) throw llvmError;
+                llvmErrorMsg = errorMessage(llvmError);
+                try {
+                  const { stdout } = await execFileOutput(
+                    "objdump",
+                    ["-d", tempEfiPath],
+                    {
+                      signal,
+                      stopSignal: "SIGTERM",
+                      timeout: 15_000,
+                      maxBuffer: MAX_DISASSEMBLY_MODULE_BYTES,
+                    },
+                  );
+                  asmOutput = stdout;
+                  asmGenerator = "objdump";
+                  if (disassemblyEngineUsed === "none") {
+                    disassemblyEngineUsed = "objdump";
+                  }
+                } catch (objdumpError: unknown) {
+                  if (signal.aborted) signal.throwIfAborted();
+                  if (isAbortOf(objdumpError, signal)) throw objdumpError;
+                  objdumpErrorMsg = errorMessage(objdumpError);
+                  asmOutput = null;
                 }
               }
-            } catch (ghidraErr: unknown) {
-              if (signal.aborted) signal.throwIfAborted();
-              if (isAbortOf(ghidraErr, signal)) throw ghidraErr;
+              if (asmOutput !== null) {
+                const asmName = `${mod.cleanName}.asm`;
+                asmRelPath = `${moduleRelDir}/${asmName}`;
+                const asmBytes = Buffer.from(asmOutput, "utf8");
+                asmSha256 = sha256Hex(asmBytes);
+                publicationEntries.push({
+                  relativePath: asmRelPath,
+                  bytes: asmBytes,
+                });
+                totalStagedAsmBytes += asmBytes.length;
+                disassemblyStatus = "ok";
+              } else {
+                disassemblyStatus = "failed";
+                const sanitizeDiag = (msg: string | null): string => {
+                  if (msg === null) return "unknown";
+                  const line = msg.replace(/[\r\n\t]+/g, " ").trim();
+                  return ellipsisExcerpt(line, 120);
+                };
+                if (
+                  recordedDisassemblyFailures <
+                  MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS
+                ) {
+                  effectiveLimitations.push(
+                    `Disassembly for ${mod.rawName} failed: llvm-objdump (${sanitizeDiag(llvmErrorMsg)}), objdump (${sanitizeDiag(objdumpErrorMsg)})`,
+                  );
+                  recordedDisassemblyFailures++;
+                } else if (
+                  !effectiveLimitations.includes(
+                    "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
+                  )
+                ) {
+                  effectiveLimitations.push(
+                    "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
+                  );
+                }
+              }
             }
           }
-        }
 
-        if (cContent === null) {
-          cContent = [
-            "/**",
-            ` * Reconstructed Entry Scaffolding: ${mod.rawName}`,
-            ` * Phase: ${mod.phase}${mod.typeName ? ` | Type: ${mod.typeName}` : ""}`,
-            ` * GUID: ${mod.guid ?? "N/A"}`,
-            " *",
-            " * NOTE: This file is reconstructed entry point scaffolding for integration",
-            " * and analysis. Native executable instructions reside in the accompanying",
-            " * disassembly and binary payload.",
-            " */",
-            `#include "${headerName}"`,
-            "",
-            scaffold.functionDefinition,
-            "",
-          ].join("\n");
-        }
-        const cBytes = Buffer.from(cContent, "utf8");
-        const cSha256 = sha256Hex(cBytes);
-        publicationEntries.push({
-          relativePath: cRelPath,
-          bytes: cBytes,
-        });
+          const cName = `${mod.cleanName}.c`;
+          const cRelPath = `${moduleRelDir}/${cName}`;
+          let cContent: string | null = null;
+          let cGenerator: "ghidra" | "scaffold" = "scaffold";
 
-        stagedModules.push({
-          occurrence,
-          guid: mod.guid,
-          name: mod.rawName,
-          phase: mod.phase,
-          disassembly_status: disassemblyStatus,
-          relative_c_file: cRelPath,
-          relative_asm_file: asmRelPath,
-          relative_header_file: headerRelPath,
-          relative_payload_file: relativePayloadFile,
-          c_sha256: cSha256,
-          asm_sha256: asmSha256,
-          header_sha256: headerSha256,
-          payload_sha256: payloadSha256,
-          code_bytes: modBytes.length,
-        });
+          if (ghidraBin !== null) {
+            if (totalStagedCBytes >= MAX_DECOMPILE_TOTAL_BYTES) {
+              if (
+                !effectiveLimitations.includes(
+                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                )
+              ) {
+                effectiveLimitations.push(
+                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                );
+              }
+            } else {
+              ghidraOutC = join(
+                tempRoot.path,
+                `${cIdentifier}_${occurrence}_decompiled.c`,
+              );
+              try {
+                const bridgeDir = resolve(
+                  fileURLToPath(import.meta.url),
+                  "..",
+                  "..",
+                  "bridge",
+                  "ghidra",
+                );
+                const ghidraArgs = [
+                  tempRoot.path,
+                  `UefiDecomp_${cIdentifier}_${occurrence}`,
+                  "-import",
+                  tempEfiPath,
+                  "-scriptPath",
+                  bridgeDir,
+                  "-postScript",
+                  "ReaDecompileToC.java",
+                  ghidraOutC,
+                  "-deleteProject",
+                ];
+                let execCmd = ghidraBin;
+                let execArgs = ghidraArgs;
+                if (
+                  HOST_PLATFORM.platform === "win32" &&
+                  isWindowsBatchFile(ghidraBin)
+                ) {
+                  const batch = windowsBatchCommand({
+                    environment: process.env,
+                    batchPath: ghidraBin,
+                    arguments: ghidraArgs,
+                  });
+                  execCmd = batch.command;
+                  execArgs = [...batch.arguments];
+                }
+                await execFileOutput(execCmd, execArgs, {
+                  signal,
+                  stopSignal: "SIGTERM",
+                  timeout: 45_000,
+                  maxBuffer: 10 * 1024 * 1024,
+                });
+                if (existsSync(ghidraOutC)) {
+                  const cStat = await stat(ghidraOutC);
+                  if (cStat.size <= MAX_DECOMPILE_MODULE_BYTES) {
+                    cContent = await readFile(ghidraOutC, "utf8");
+                    totalStagedCBytes += Buffer.byteLength(cContent, "utf8");
+                    cGenerator = "ghidra";
+                  }
+                }
+              } catch (ghidraErr: unknown) {
+                if (signal.aborted) signal.throwIfAborted();
+                if (isAbortOf(ghidraErr, signal)) throw ghidraErr;
+              }
+            }
+          }
+
+          if (cContent === null) {
+            cContent = [
+              "/**",
+              ` * Reconstructed Entry Scaffolding: ${mod.rawName}`,
+              ` * Phase: ${mod.phase}${mod.typeName ? ` | Type: ${mod.typeName}` : ""}`,
+              ` * GUID: ${mod.guid ?? "N/A"}`,
+              " *",
+              " * NOTE: This file is reconstructed entry point scaffolding for integration",
+              " * and analysis. Native executable instructions reside in the accompanying",
+              " * disassembly and binary payload.",
+              " */",
+              `#include "${headerName}"`,
+              "",
+              scaffold.functionDefinition,
+              "",
+            ].join("\n");
+          }
+          const cBytes = Buffer.from(cContent, "utf8");
+          const cSha256 = sha256Hex(cBytes);
+          publicationEntries.push({
+            relativePath: cRelPath,
+            bytes: cBytes,
+          });
+
+          stagedModules.push({
+            occurrence,
+            guid: mod.guid,
+            name: mod.rawName,
+            phase: mod.phase,
+            disassembly_status: disassemblyStatus,
+            relative_c_file: cRelPath,
+            relative_asm_file: asmRelPath,
+            relative_header_file: headerRelPath,
+            relative_payload_file: relativePayloadFile,
+            c_sha256: cSha256,
+            asm_sha256: asmSha256,
+            header_sha256: headerSha256,
+            payload_sha256: payloadSha256,
+            c_generator: cGenerator,
+            asm_generator: asmGenerator,
+            code_bytes: modBytes.length,
+          });
+        } finally {
+          // Remove each module's temporary scratch files immediately
+          try {
+            await rm(tempEfiPath, { force: true });
+            if (ghidraOutC !== undefined) {
+              await rm(ghidraOutC, { force: true });
+            }
+          } catch {
+            // Ignore scratch unlink error
+          }
+        }
       }
 
       const manifestData = {
@@ -1396,6 +1453,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             total_modules_decompiled: stagedModules.length,
             phases: phaseCounts,
             modules: finalModules,
+            producers: {
+              ghidra: ghidraBin,
+              disassembler: input.include_disassembly
+                ? disassemblyEngineUsed
+                : "none",
+            },
             receipts: receipts.map((r) => ({
               relative_path: r.relativePath,
               path: r.path,
@@ -1422,7 +1485,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }
 
       return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
-        subject: { path: input.path, sha256: imageSha256, format: "file" },
+        subject: { path: input.path, sha256: imageSha256, format },
         locations: [{ kind: "artifact-path", path: input.path }],
         limitations: effectiveLimitations,
       });
@@ -1542,6 +1605,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       scan.limitations,
       signal,
       checkpoint,
+      "file",
     );
   }
 
@@ -1650,8 +1714,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       });
     }
 
-    // Sort candidates deterministically by normalized relative path
-    candidates.sort((a, b) => a.normRelPath.localeCompare(b.normRelPath));
+    // Sort candidates deterministically by Unicode code point order (locale-independent)
+    candidates.sort((a, b) =>
+      compareUnicodeCodePoints(a.normRelPath, b.normRelPath),
+    );
 
     const dirHash = createHash("sha256");
     const discoveredModules: DiscoveredUefiModule[] = [];
@@ -1661,7 +1727,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       signal.throwIfAborted();
       const content = await readFile(candidate.fullPath);
       const fileSha256 = sha256Hex(content);
-      dirHash.update(`${candidate.normRelPath}:${fileSha256}:`);
+      dirHash.update(compositeKey([candidate.normRelPath, fileSha256]) + "\n");
       discoveredModules.push({
         guid: candidate.guid,
         rawName: candidate.rawName,
@@ -1684,6 +1750,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       [],
       signal,
       checkpoint,
+      "directory",
     );
   }
 
