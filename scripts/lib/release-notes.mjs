@@ -390,6 +390,10 @@ const VERSION_ONLY_PLUGIN_METADATA = new Set([
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
 ]);
+const VERSION_ONLY_CURSOR_SKILL =
+  ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md";
+const RELEASE_OWNED_SEMVER =
+  /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/gu;
 
 /** Serialize plugin metadata with only its release-owned version fields blanked. */
 function pluginMetadataWithoutVersions(path, text) {
@@ -397,14 +401,21 @@ function pluginMetadataWithoutVersions(path, text) {
   if (manifest === null || typeof manifest !== "object") return text;
   if (path.endsWith("marketplace.json")) {
     if (Array.isArray(manifest.plugins))
-      for (const plugin of manifest.plugins)
+      for (const plugin of manifest.plugins) {
+        if (plugin?.name !== "rea") continue;
+        // Claude marketplace pins an entry version and a published-launcher
+        // version argument. Codex/agents marketplace uses a versionless local path.
+        if (typeof plugin.version === "string") plugin.version = "";
+        const launch = plugin.mcpServers?.rea?.args;
+        if (Array.isArray(launch) && typeof launch[1] === "string")
+          launch[1] = launch[1].replace(RELEASE_OWNED_SEMVER, "");
         if (
-          plugin?.name === "rea" &&
           plugin?.source?.source === "npm" &&
           plugin.source.package === "rea-agents" &&
           typeof plugin.source.version === "string"
         )
           plugin.source.version = "";
+      }
     return JSON.stringify(manifest);
   }
   if ("version" in manifest) manifest.version = "";
@@ -413,17 +424,30 @@ function pluginMetadataWithoutVersions(path, text) {
   // keep a package name such as rea-agents@ so a renamed package still counts
   // as a product change. The executable and path remain product behavior.
   if (Array.isArray(launch) && typeof launch[1] === "string")
-    launch[1] = launch[1].replace(
-      /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/u,
-      "",
-    );
+    launch[1] = launch[1].replace(RELEASE_OWNED_SEMVER, "");
   return JSON.stringify(manifest);
 }
 
 /**
+ * Blank only Release Please Generic pins in the Cursor skill: SemVer inside
+ * start-version blocks and on x-release-please-version lines. Other skill
+ * text stays comparable so product edits still fail the history check.
+ */
+function cursorSkillWithoutReleasePins(text) {
+  const blankPins = (fragment) => fragment.replace(RELEASE_OWNED_SEMVER, "");
+  return text
+    .replace(
+      /<!-- x-release-please-start-version -->[\s\S]*?<!-- x-release-please-end -->/gu,
+      blankPins,
+    )
+    .replace(/^.*x-release-please-version.*$/gmu, blankPins);
+}
+
+/**
  * Plugin metadata also carries behavior, so a release may change only
- * its version, pinned server launch, and exact REA marketplace version. Any other difference, an unreadable
- * side, or a manifest added by the release counts as a product change.
+ * its version, pinned server launch, and Claude marketplace version/pin.
+ * Any other difference, an unreadable side, or a manifest added by the
+ * release counts as a product change.
  */
 async function changesOnlyPluginVersions(run, path, from, to) {
   try {
@@ -436,6 +460,19 @@ async function changesOnlyPluginVersions(run, path, from, to) {
         path,
         await run("git", ["show", `${to}:${path}`]),
       )
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function changesOnlyCursorSkillReleasePins(run, path, from, to) {
+  try {
+    return (
+      cursorSkillWithoutReleasePins(
+        await run("git", ["show", `${from}:${path}`]),
+      ) ===
+      cursorSkillWithoutReleasePins(await run("git", ["show", `${to}:${path}`]))
     );
   } catch {
     return false;
@@ -517,6 +554,16 @@ export async function verifyInventoryHistory(run, raw, source) {
       if (
         VERSION_ONLY_PLUGIN_METADATA.has(path) &&
         (await changesOnlyPluginVersions(run, path, inventory.target, resolved))
+      )
+        continue;
+      if (
+        path === VERSION_ONLY_CURSOR_SKILL &&
+        (await changesOnlyCursorSkillReleasePins(
+          run,
+          path,
+          inventory.target,
+          resolved,
+        ))
       )
         continue;
       product.push(path);

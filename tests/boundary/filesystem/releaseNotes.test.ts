@@ -55,17 +55,68 @@ const pluginMarketplaces = [
   ".claude-plugin/marketplace.json",
   ".agents/plugins/marketplace.json",
 ] as const;
-const pluginMarketplace = (version: string, packageName = "rea-agents") => ({
+const versionOnlyCursorSkill =
+  ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md";
+const cursorSkillWithPins = (version: string, body = "skill body") =>
+  `<!-- x-release-please-start-version -->
+\`npx -y rea-agents@${version} analyze\`
+<!-- x-release-please-end -->
+Prefer \`npx -y rea-agents@${version}\` <!-- x-release-please-version --> when needed.
+${body}
+`;
+const claudeMarketplace = (
+  version: string,
+  {
+    source = "./",
+    skills = ["./.cursor-plugin/skills/reverse-engineer-anything"],
+  }: { source?: string; skills?: string[] } = {},
+) => ({
   plugins: [
-    { name: "rea", source: { source: "npm", package: packageName, version } },
+    {
+      name: "rea",
+      source,
+      strict: false,
+      version,
+      skills,
+      mcpServers: {
+        rea: {
+          command: "node",
+          args: [
+            "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
+            version,
+          ],
+        },
+      },
+      icon: "./assets/rea-plugin.png",
+    },
   ],
 });
+
+const agentsMarketplace = (path = "./") => ({
+  plugins: [
+    {
+      name: "rea",
+      source: { source: "local", path },
+    },
+  ],
+});
+
+const pluginMarketplaceFor = (path: string, version: string) =>
+  path === ".claude-plugin/marketplace.json"
+    ? claudeMarketplace(version)
+    : agentsMarketplace();
 
 const pluginServer = (version: string, command = "node") => ({
   mcpServers: {
     rea: {
       command,
-      args: ["./scripts/plugin-mcp-launcher.mjs", version],
+      args:
+        command === "node"
+          ? [
+              "${PLUGIN_ROOT}/scripts/plugin-published-mcp-launcher.mjs",
+              version,
+            ]
+          : ["./scripts/plugin-mcp-launcher.mjs", version],
       startup_timeout_sec: 30,
     },
   },
@@ -98,6 +149,34 @@ const pluginManifestFor = (
       }
     : pluginManifest(version, options);
 
+const writeBaselinePluginPins = async (directory: string, version: string) => {
+  for (const path of pluginManifests) {
+    await mkdir(join(directory, dirname(path)), { recursive: true });
+    await writeFile(
+      join(directory, path),
+      JSON.stringify(pluginManifestFor(path, version)),
+    );
+  }
+  await writeFile(
+    join(directory, pluginServerConfig),
+    JSON.stringify(pluginServer(version)),
+  );
+  for (const path of pluginMarketplaces) {
+    await mkdir(join(directory, dirname(path)), { recursive: true });
+    await writeFile(
+      join(directory, path),
+      JSON.stringify(pluginMarketplaceFor(path, version)),
+    );
+  }
+  await mkdir(join(directory, dirname(versionOnlyCursorSkill)), {
+    recursive: true,
+  });
+  await writeFile(
+    join(directory, versionOnlyCursorSkill),
+    cursorSkillWithPins(version),
+  );
+};
+
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-release-notes-seed-");
   seedWorkspaceRoot = workspace.root;
@@ -113,24 +192,7 @@ beforeAll(async () => {
     join(directory, ".release-please-manifest.json"),
     JSON.stringify({ ".": "6.3.0" }),
   );
-  for (const path of pluginManifests) {
-    await mkdir(join(directory, dirname(path)), { recursive: true });
-    await writeFile(
-      join(directory, path),
-      JSON.stringify(pluginManifestFor(path, "6.3.0")),
-    );
-  }
-  await writeFile(
-    join(directory, pluginServerConfig),
-    JSON.stringify(pluginServer("6.3.0")),
-  );
-  for (const path of pluginMarketplaces) {
-    await mkdir(join(directory, dirname(path)), { recursive: true });
-    await writeFile(
-      join(directory, path),
-      JSON.stringify(pluginMarketplace("6.3.0")),
-    );
-  }
+  await writeBaselinePluginPins(directory, "6.3.0");
   await git(directory, ["add", "."]);
   await git(directory, ["commit", "-m", "chore: baseline"]);
   const base = await git(directory, ["rev-parse", "HEAD"]);
@@ -468,7 +530,7 @@ it("binds publication to complete recorded history and the reviewed base", async
   for (const path of pluginMarketplaces)
     await writeFile(
       join(f.directory, path),
-      JSON.stringify(pluginMarketplace("6.4.0")),
+      JSON.stringify(pluginMarketplaceFor(path, "6.4.0")),
     );
   await git(f.directory, [
     "add",
@@ -753,13 +815,16 @@ it("fails closed on partial GitHub errors and non-advancing pagination without s
 });
 
 it.each(pluginMarketplaces)(
-  "treats a marketplace package change in %s as product behavior",
+  "treats a marketplace source change in %s as product behavior",
   async (path) => {
     const f = await fixture();
-    await writeFile(
-      join(f.directory, path),
-      JSON.stringify(pluginMarketplace("6.4.0", "another-package")),
-    );
+    const changed =
+      path === ".claude-plugin/marketplace.json"
+        ? claudeMarketplace("6.4.0", {
+            skills: ["./.agents/skills/reverse-engineer-anything"],
+          })
+        : agentsMarketplace("./plugins/rea");
+    await writeFile(join(f.directory, path), JSON.stringify(changed));
     await git(f.directory, ["add", "CHANGELOG.md", path]);
     await git(f.directory, ["commit", "-m", "chore: release notes"]);
     await expect(
@@ -771,6 +836,34 @@ it.each(pluginMarketplaces)(
     });
   },
 );
+
+it("accepts a Cursor skill change limited to Release Please version pins", async () => {
+  const f = await fixture();
+  await writeFile(
+    join(f.directory, versionOnlyCursorSkill),
+    cursorSkillWithPins("6.4.0"),
+  );
+  await git(f.directory, ["add", "CHANGELOG.md", versionOnlyCursorSkill]);
+  await git(f.directory, ["commit", "-m", "chore: release skill pin"]);
+  await f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]);
+});
+
+it("treats non-pin Cursor skill edits as a product change", async () => {
+  const f = await fixture();
+  await writeFile(
+    join(f.directory, versionOnlyCursorSkill),
+    cursorSkillWithPins("6.3.0", "changed skill guidance"),
+  );
+  await git(f.directory, ["add", "CHANGELOG.md", versionOnlyCursorSkill]);
+  await git(f.directory, ["commit", "-m", "chore: release skill body"]);
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining(
+      `Product changed after notes target; regenerate inventory: ${versionOnlyCursorSkill}`,
+    ),
+  });
+});
 
 it.each([
   {
