@@ -308,6 +308,28 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         }),
       ]),
     );
+    const handlers = application.graph.nodes
+      .filter(({ kind }) => kind === "ipc-handler")
+      .flatMap(({ observations }) => observations);
+    expect(handlers).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({ channel: "autofill.stable" }),
+        evidence: expect.objectContaining({
+          state: "inferred",
+          artifact: expect.objectContaining({
+            available: true,
+            sha256: createHash("sha256").update(source).digest("hex"),
+          }),
+          location: expect.objectContaining({
+            available: true,
+            value: expect.objectContaining({
+              source: "preload.cjs",
+              start: expect.objectContaining({ line: 5 }),
+            }),
+          }),
+        }),
+      }),
+    );
   },
 );
 
