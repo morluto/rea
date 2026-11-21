@@ -1567,8 +1567,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
       cancel: covered(
         test(
-          "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "cancels an active action and still closes the session",
+          "src/browser/PlaywrightScenarioSession.test.ts",
+          "preserves $outcome action rejection through provider cancellation (cleanup refused: $cleanupFails)",
         ),
       ),
       cleanup: covered(

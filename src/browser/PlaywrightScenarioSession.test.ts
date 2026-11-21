@@ -1,3 +1,5 @@
+import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import {
@@ -1875,3 +1877,104 @@ it("projects both request and route cleanup failures with declared secrets redac
     await provider.close();
   }
 });
+
+it.each(
+  (["physical", "cancelled"] as const).flatMap((outcome) =>
+    [false, true].map((cleanupFails) => ({ outcome, cleanupFails })),
+  ),
+)(
+  "preserves $outcome action rejection through provider cancellation (cleanup refused: $cleanupFails)",
+  async ({ outcome, cleanupFails }) => {
+    const { page, cleanup } = fixture();
+    const caller = new AbortController();
+    const reason = { caller: "observed at the action boundary" };
+    const physical = new Error("physical page wait failure");
+    const content = vi.fn(async () => "<initial/>");
+    const waitForTimeout = vi.fn(async () => {
+      if (outcome === "physical") throw physical;
+      caller.abort(reason);
+    });
+    Object.assign(page, { content, waitForTimeout });
+    if (cleanupFails)
+      cleanup.close.mockRejectedValueOnce(
+        new Error("controlled cleanup refusal"),
+      );
+    const input = browserScenarioSchema.parse({
+      ...scenario,
+      actions: [
+        ...scenario.actions,
+        { ...scenario.actions[0], step_id: "later" },
+      ],
+      capture: { after_each_step: ["dom"], at_end: [], events: [] },
+    });
+    let observed: unknown;
+    const provider = new PlaywrightBrowserScenarioProvider(
+      async (selected, options) => {
+        const session = await PlaywrightScenarioSession.open(
+          selected,
+          {},
+          options,
+        );
+        const perform = session.perform.bind(session);
+        vi.spyOn(session, "perform").mockImplementation(
+          async (action, signal) => {
+            try {
+              await perform(action, signal);
+            } catch (cause: unknown) {
+              observed = cause;
+              if (outcome === "physical") caller.abort(reason);
+              throw cause;
+            }
+          },
+        );
+        return session;
+      },
+    );
+    try {
+      const result = await provider.captureScenario(input, {
+        signal: caller.signal,
+      });
+      if (result.ok)
+        throw new Error("Expected action observations after cancellation");
+      if (outcome === "physical") expect(observed).toBe(physical);
+      else expect(observed).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error).toMatchObject({
+        cleanupIncomplete: cleanupFails,
+        partialObservation: {
+          kind: "browser-scenario-observation",
+          capture: {
+            browser: {
+              cleanup: cleanupFails ? "incomplete" : "terminated-owned-process",
+            },
+            steps: [
+              {
+                status: "completed",
+                artifacts: { dom: { value: { text: "<initial/>" } } },
+              },
+              outcome === "physical"
+                ? { status: "failed", error: physical.message }
+                : { status: "cancelled" },
+              {
+                status: "cancelled",
+                error:
+                  outcome === "physical"
+                    ? "not executed after an earlier action failure"
+                    : "not executed after scenario request cancellation",
+              },
+            ],
+          },
+        },
+      });
+      expect(waitForTimeout).toHaveBeenCalledOnce();
+      expect(content).toHaveBeenCalledOnce();
+      expect(cleanup.close).toHaveBeenCalledOnce();
+      const primary = primaryAnalysisError(result.error);
+      expect(primary).toBeInstanceOf(AnalysisCancelledError);
+      expect(primary.cause).toBe(reason);
+      await provider.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      await provider.close();
+    }
+  },
+);
