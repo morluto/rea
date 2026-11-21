@@ -40,6 +40,7 @@ import {
   artifactPathResolutionProperties,
   moduleResolutionModeProperties,
   resolveArtifactPathByContext,
+  UNKNOWN_MODULE_LOADER_LIMITATION,
   type ArtifactPathResolution,
 } from "./JavaScriptArtifactPathResolution.js";
 import { projectJavaScriptExportReturnShapes } from "../../domain/javascript/javascriptExportReturnShapeProjection.js";
@@ -342,9 +343,7 @@ const resolveModuleTarget = (
       resolution_context: "module-specifier",
       resolution_status: "unavailable",
       resolved_path: null,
-      limitations: [
-        "The module loader is unknown, so this dependency cannot be resolved against the source file.",
-      ],
+      limitations: [UNKNOWN_MODULE_LOADER_LIMITATION],
     };
     return {
       node: unresolvedModuleNode(input, specifier, resolution),

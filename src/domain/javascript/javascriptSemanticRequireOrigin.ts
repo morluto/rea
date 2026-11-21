@@ -8,6 +8,7 @@ import {
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
+import { isBuiltin } from "node:module";
 import {
   createGlobalPathReader,
   type GlobalReferenceRead,
@@ -17,6 +18,7 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
+import type { RequireResolveSearchPaths } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -39,6 +41,8 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
+  argumentValue,
+  staticFileExpressionPath,
   staticSourceRelativeUrlPath,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
@@ -49,6 +53,7 @@ import {
 import {
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
+  opaqueCodeMayChangeGlobalRead,
   semanticEffectMayPrecede,
 } from "./javascriptSemanticEffectLog.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
@@ -698,6 +703,98 @@ export interface JavaScriptRequireCallFact {
   /** A createRequire filename relative to the current source directory, when proven. */
   readonly sourceRelativePath?: string;
 }
+
+/** Valid path arrays can leave disk lookup unknown while preserving package scope. */
+export const requireResolveSearchBase = (
+  { operation, arguments: callArguments }: JavaScriptRequireCallFact,
+  bindings: JavaScriptSemanticAnalysisState,
+  site: t.Node,
+): "loader" | RequireResolveSearchPaths => {
+  const arguments_ = callArguments ?? [];
+  const specifier = argumentValue(arguments_[0]);
+  if (specifier !== undefined && isBuiltin(specifier)) return "loader";
+  const defaultSearch = (): "loader" | "unknown" =>
+    ambientPathMayObserveAt(
+      bindings,
+      site,
+      ["global", "Object", "prototype", "paths"],
+      "contents",
+    ) || opaqueCodeMayChangeGlobalRead(site, bindings, "Object")
+      ? "unknown"
+      : "loader";
+  if (operation !== "resolve") return "loader";
+  if (arguments_.length < 2) return defaultSearch();
+  if (arguments_.length !== 2) return "unknown";
+  const options = t.isExpression(arguments_[1])
+    ? unwrapJavaScriptExpression(arguments_[1]).node
+    : undefined;
+  const definitelyUndefined = (node: t.Node): boolean => {
+    const value = unwrapJavaScriptExpression(node).node;
+    return (
+      isUnmodifiedGlobalReference(value, bindings, "undefined") ||
+      (t.isUnaryExpression(value, { operator: "void" }) &&
+        t.isNumericLiteral(value.argument))
+    );
+  };
+  if (
+    t.isNullLiteral(options) ||
+    (options !== undefined && definitelyUndefined(options))
+  )
+    return defaultSearch();
+  if (options === undefined || !t.isObjectExpression(options)) return "unknown";
+  if (options.properties.length === 0) return defaultSearch();
+  if (options.properties.length !== 1) return "unknown";
+  const property = options.properties[0];
+  if (!t.isObjectProperty(property)) return "unknown";
+  if (semanticStaticPropertyKey(property.key, property.computed) !== "paths")
+    return "unknown";
+  const value = t.isExpression(property.value)
+    ? unwrapJavaScriptExpression(property.value).node
+    : undefined;
+  if (value !== undefined && definitelyUndefined(value)) return "loader";
+  if (!t.isArrayExpression(value)) return "unknown";
+  const sourceDirectory = (node: t.Node): boolean =>
+    javaScriptRuntimeContext(bindings.program) === "commonjs" &&
+    t.isIdentifier(node, { name: "__dirname" }) &&
+    isUnmodifiedGlobalReference(node, bindings, "__dirname");
+  const [directory] = value.elements;
+  const unwrappedDirectory =
+    directory == null ? undefined : unwrapJavaScriptExpression(directory).node;
+  const suffix =
+    t.isBinaryExpression(unwrappedDirectory, { operator: "+" }) &&
+    sourceDirectory(unwrapJavaScriptExpression(unwrappedDirectory.left).node)
+      ? stringValue(unwrappedDirectory.right)
+      : undefined;
+  const pathFact =
+    directory == null
+      ? undefined
+      : staticFileExpressionPath(
+          directory,
+          (node, fact) => fact === "source-directory" && sourceDirectory(node),
+        );
+  if (
+    value.elements.length === 1 &&
+    directory != null &&
+    (sourceDirectory(unwrappedDirectory ?? directory) ||
+      (pathFact?.base === "source-directory" &&
+        pathFact.path === "." &&
+        suffix !== undefined &&
+        /^\/(?:\.?\/)*\.?$/u.test(suffix)))
+  )
+    return "source-file";
+  return value.elements.every(
+    (element) =>
+      element !== null &&
+      (stringValue(element) !== undefined ||
+        sourceDirectory(element) ||
+        staticFileExpressionPath(
+          element,
+          (node, fact) => fact === "source-directory" && sourceDirectory(node),
+        )?.base === "source-directory"),
+  )
+    ? "package-scope"
+    : "unknown";
+};
 
 /** A child-property write does not replace the selected callable itself. */
 export const semanticSelectedMemberMayHaveChanged = (

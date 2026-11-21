@@ -30,6 +30,11 @@ export interface JavaScriptSourceRange {
   readonly end: JavaScriptSourcePoint;
 }
 
+export type RequireResolveSearchPaths =
+  | "source-file"
+  | "package-scope"
+  | "unknown";
+
 interface JavaScriptStaticReferenceState {
   /** Resolution discovers a target without loading or executing it. */
   readonly operation: "load" | "resolve";
@@ -44,6 +49,8 @@ interface JavaScriptStaticReferenceState {
   readonly module_runtime?: string;
   /** Source-relative filename selected by a proven createRequire factory. */
   readonly resolution_base_path?: string;
+  /** Resolver options can limit disk lookup without changing the enclosing package. */
+  readonly resolution_search_paths?: RequireResolveSearchPaths;
   /**
    * Which loader produced this reference. A `factory-loader` specifier is a
    * recovered bundle module key, so it names a module inside the artifact even
