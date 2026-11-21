@@ -87,7 +87,10 @@ describe("mergeUserConfig", () => {
       { GHIDRA_INSTALL_DIR: "/from-env" },
       JSON.stringify({ GHIDRA_INSTALL_DIR: "/from-config" }),
     );
-    expect(merged.ok && merged.value.GHIDRA_INSTALL_DIR).toBe("/from-env");
+    expect(merged.ok && merged.value.environment.GHIDRA_INSTALL_DIR).toBe(
+      "/from-env",
+    );
+    expect(merged.ok && merged.value.savedDefaults.size).toBe(0);
   });
 
   it("fills unset values from the config file", () => {
@@ -95,8 +98,13 @@ describe("mergeUserConfig", () => {
       { HOME: "/home/user" },
       JSON.stringify({ GHIDRA_INSTALL_DIR: "/from-config" }),
     );
-    expect(merged.ok && merged.value.GHIDRA_INSTALL_DIR).toBe("/from-config");
-    expect(merged.ok && merged.value.HOME).toBe("/home/user");
+    expect(merged.ok && merged.value.environment.GHIDRA_INSTALL_DIR).toBe(
+      "/from-config",
+    );
+    expect(merged.ok && merged.value.environment.HOME).toBe("/home/user");
+    expect(merged.ok && [...merged.value.savedDefaults]).toEqual([
+      "GHIDRA_INSTALL_DIR",
+    ]);
   });
 
   it("treats a missing config as absent rather than an error", () => {
@@ -114,7 +122,7 @@ describe("mergeUserConfig", () => {
       {},
       JSON.stringify({ GHIDRA_INSTALL_DIR: "/opt/ghidra" }),
     );
-    expect(Object.isFrozen(merged.ok && merged.value)).toBe(true);
+    expect(Object.isFrozen(merged.ok && merged.value.environment)).toBe(true);
   });
 });
 

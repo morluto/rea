@@ -1,3 +1,4 @@
+import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
@@ -129,6 +130,7 @@ export const hostRemediation = (host: SetupHost): string | undefined =>
 export const systemSetupHost = (
   selectedDoctorHost: DoctorHost | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  savedDefaults?: ReadonlySet<string>,
 ): SetupHost => {
   const doctorHost = selectedDoctorHost ?? systemDoctorHost({ environment });
   const platform = doctorHost.platform;
@@ -191,13 +193,19 @@ export const systemSetupHost = (
       scope?: DoctorScope,
     ): Promise<SetupInitialState> => {
       const diagnosis = await runDoctor(undefined, doctorHost, scope);
-      const providerEnvironment: SetupProviderEnvironment = {
-        ...providerRegistrationEnvironment(diagnosis.providerInspections ?? []),
-        ...(diagnosis.hopperPath === undefined
-          ? {}
-          : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
-        ...explicitSetupRegistrationEnvironment(environment),
-      };
+      const providerEnvironment: SetupProviderEnvironment =
+        omitEnvironmentSettings(
+          {
+            ...providerRegistrationEnvironment(
+              diagnosis.providerInspections ?? [],
+            ),
+            ...(diagnosis.hopperPath === undefined
+              ? {}
+              : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
+            ...explicitSetupRegistrationEnvironment(environment),
+          },
+          savedDefaults,
+        );
       const requestedProvider = analysisProviderSelectorSchema.safeParse(
         environment.REA_ANALYSIS_PROVIDER,
       );

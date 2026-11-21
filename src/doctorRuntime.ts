@@ -330,6 +330,7 @@ export const createSystemDoctorHost = (
   signal?: AbortSignal,
   /** The host diagnosed; tests select another host's client layout. */
   host: HostPlatform = HOST_PLATFORM,
+  savedDefaults?: ReadonlySet<string>,
 ): DoctorHost => {
   const { platform } = host;
   const registrationReads = new WeakMap<
@@ -362,6 +363,7 @@ export const createSystemDoctorHost = (
     environment,
     platform,
     architecture: host.architecture,
+    savedDefaults,
     ...(signal === undefined ? {} : { signal }),
     resolveProviderRequestBudget: Object.assign(
       async (

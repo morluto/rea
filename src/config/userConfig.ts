@@ -23,9 +23,8 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
  * `${XDG_CONFIG_HOME:-~/.config}/rea/rea.json`.
  *
  * Precedence is env > config file > auto-detect. Values are merged into the
- * environment snapshot at the single seam that every consumer already reads
- * (doctor, setup, the registered MCP server, and direct analysis), so all
- * entry points resolve provider settings identically.
+ * environment snapshot for provider inspection and execution. Retain the
+ * names filled in from the file so client registrations can inherit them.
  */
 const CONFIG_DIRECTORY_NAME = "rea";
 const CONFIG_FILE_NAME = "rea.json";
@@ -123,24 +122,27 @@ export const parseUserConfig = (
   return ok(parsed);
 };
 
-/**
- * Overlay persisted settings onto an environment snapshot. Ambient env
- * values always win; a missing or unreadable config file is not an error
- * (absent), while a present-but-malformed one is, so a broken edit is
- * diagnosed at startup instead of being ignored.
- */
+interface UserConfiguration {
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly savedDefaults: ReadonlySet<string>;
+}
+
+/** Fill unset variables from the saved file and retain the origin of each default. */
 export const mergeUserConfig = (
   environment: Readonly<NodeJS.ProcessEnv>,
   configContents: string | undefined,
-): Result<Readonly<NodeJS.ProcessEnv>, ConfigurationError> => {
-  if (configContents === undefined) return ok(environment);
+): Result<UserConfiguration, ConfigurationError> => {
+  const savedDefaults = new Set<string>();
+  if (configContents === undefined) return ok({ environment, savedDefaults });
   const parsed = parseUserConfigText(configContents);
   if (!parsed.ok) return parsed;
   const merged: NodeJS.ProcessEnv = { ...environment };
   for (const [key, value] of Object.entries(parsed.value)) {
-    if (merged[key] === undefined) merged[key] = value;
+    if (merged[key] !== undefined) continue;
+    merged[key] = value;
+    savedDefaults.add(key);
   }
-  return ok(Object.freeze(merged));
+  return ok({ environment: Object.freeze(merged), savedDefaults });
 };
 
 const parseUserConfigText = (contents: string) => {
@@ -185,7 +187,7 @@ export const readUserConfig = async (
 export const loadUserConfiguration = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
-): Promise<Result<Readonly<NodeJS.ProcessEnv>, ConfigurationError>> => {
+): Promise<Result<UserConfiguration, ConfigurationError>> => {
   const contents = await readUserConfig(environment, platform);
   if (!contents.ok) return contents;
   const result = mergeUserConfig(environment, contents.value);

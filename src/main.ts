@@ -139,7 +139,7 @@ const runWithUserConfiguration = async (
     dependencies.writeStderr(`${configuration.error.message}\n`);
     return 1;
   }
-  return run({ ...dependencies, env: configuration.value });
+  return run({ ...dependencies, env: configuration.value.environment });
 };
 
 /** Run the executable boundary without exposing an unexpected startup cause. */

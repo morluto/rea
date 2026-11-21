@@ -142,11 +142,13 @@ export const createCli = (
   > = process.env,
   resultOutput?: CliResultOutput,
   fridaInstrumentation?: FridaInstrumentationPort,
+  savedDefaults?: ReadonlySet<string>,
 ): CliInstance =>
   createCliShell({
     selectedEnvironment,
     resultOutput,
     fridaInstrumentation,
+    savedDefaults,
     createAnalysis: createDirectAnalysis,
     registrations: CLI_REGISTRATION_ORDER.map((id) => ({
       registration: CLI_COMMAND_REGISTRATIONS[id],

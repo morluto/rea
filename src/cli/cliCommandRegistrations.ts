@@ -13,6 +13,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.cli,
         context.logger,
         context.environment,
+        context.savedDefaults,
       ),
   ),
   coreAnalysis: withAnalysis(

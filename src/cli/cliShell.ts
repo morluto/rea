@@ -30,6 +30,7 @@ export interface LoadedCliCommandRegistration {
 
 export interface CliShellOptions {
   readonly selectedEnvironment: Readonly<Record<string, string | undefined>>;
+  readonly savedDefaults?: ReadonlySet<string> | undefined;
   /** Registrars to run, in registration order. */
   readonly registrations: readonly LoadedCliCommandRegistration[];
   /** Required when any registrar declares analysis. */
@@ -91,6 +92,7 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
       cli,
       logger,
       environment,
+      savedDefaults: options.savedDefaults,
       fridaInstrumentation: options.fridaInstrumentation,
     },
     options,

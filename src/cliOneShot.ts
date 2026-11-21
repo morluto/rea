@@ -126,6 +126,7 @@ export const runOneShotCli = async (
   }
 
   let environment = host.environment;
+  let savedDefaults: ReadonlySet<string> | undefined;
   if (
     host.persistentUserConfig === true &&
     global !== undefined &&
@@ -153,12 +154,12 @@ export const runOneShotCli = async (
       host.setExitCode(1);
       return;
     }
-    environment = configuration.value;
+    ({ environment, savedDefaults } = configuration.value);
   }
 
   // Loaded only now: the documents above answer without the command catalog.
   const { loadCliRuntime } = await import("./cli/cliLoader.js");
-  const runtime = await loadCliRuntime(global, environment);
+  const runtime = await loadCliRuntime(global, environment, savedDefaults);
   host.ownCliResources(runtime.closeCliResources);
   const { createCliResultOutput, cliOutputCancellationStatus } =
     await import("./cli/cliResultOutput.js");

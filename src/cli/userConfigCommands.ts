@@ -60,11 +60,11 @@ export const registerUserConfigCommands = (
           if (!read.ok) throw read.error;
           const result: Record<string, { value: string; source: string }> = {};
           for (const name of persistable) {
-            const value = read.value[name];
+            const value = read.value.environment[name];
             if (value === undefined || value.length === 0) continue;
             result[name] = {
               value,
-              source: environment[name] === undefined ? "config" : "env",
+              source: read.value.savedDefaults.has(name) ? "config" : "env",
             };
           }
           return result;
