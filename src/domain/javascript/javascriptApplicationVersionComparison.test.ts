@@ -1,3 +1,4 @@
+import { unknownTarget } from "../targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../evidence.js";
@@ -6,8 +7,6 @@ import {
   createJavaScriptApplicationEdge,
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
-  isValidatedImmutableJavaScriptApplicationGraph,
-  parseJavaScriptApplicationGraph,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
 import {
@@ -98,8 +97,8 @@ const compare = () =>
     rightNativeEvidence: [],
   });
 
-const unrelatedGraph = (artifactSha: string): JavaScriptApplicationGraph => {
-  const node = createJavaScriptApplicationNode({
+const unrelatedNode = (artifactSha: string) =>
+  createJavaScriptApplicationNode({
     kind: "javascript-chunk",
     identity: {
       strategy: "canonical-path",
@@ -115,20 +114,11 @@ const unrelatedGraph = (artifactSha: string): JavaScriptApplicationGraph => {
       },
     ],
   });
-  return createJavaScriptApplicationGraph({
-    schema: "JavaScriptApplicationGraph",
-    root_node_ids: [node.node_id],
-    nodes: [node],
-    edges: [],
-    coverage: completeCoverage,
-    limitations: [],
-  });
-};
 
 const nativeEvidence = (sha256: string | undefined, ordinal: number) =>
   createEvidence(
     sha256 === undefined
-      ? undefined
+      ? unknownTarget("not-observed")
       : {
           path: `/fixture/native-${ordinal}.js`,
           sha256,
@@ -259,108 +249,93 @@ it.each(occurrenceDifferences)(
   },
 );
 
-describe("application version comparison Evidence links", () => {
-  it("links every exact digest observation only to its paired or unmatched item", () => {
-    const left = buildGraph(LEFT_SHA, 1);
-    const right = buildGraph(RIGHT_SHA, 2);
-    const leftEvidenceId = `ev_${"1".repeat(64)}`;
-    const rightEvidenceId = `ev_${"2".repeat(64)}`;
-    const leftBDigest = `${"0".repeat(63)}1`;
-    const leftNative = [
-      nativeEvidence(leftBDigest, 1),
-      nativeEvidence(leftBDigest, 2),
-      nativeEvidence("9".repeat(64), 3),
-    ];
-    const rightNative = [
-      nativeEvidence("0".repeat(64), 4),
+it("attributes native Evidence to exact observations on the owning side", () => {
+  const left = buildGraph(LEFT_SHA, 1);
+  const fullRight = buildGraph(RIGHT_SHA, 2);
+  const byLabel = (graph: JavaScriptApplicationGraph, label: string) => {
+    const node = graph.nodes.find(({ observations }) =>
+      observations.some((value) => value.label === label),
+    );
+    if (node === undefined) throw new Error(`Missing fixture node ${label}`);
+    return node;
+  };
+  const leftA = byLabel(left, "a.js");
+  const leftB = byLabel(left, "b.js");
+  const rightA = byLabel(fullRight, "a.js");
+  const rightB = byLabel(fullRight, "b.js");
+  const unrelated = unrelatedNode(RIGHT_SHA);
+  const { graph_id: _graphId, ...rightInput } = fullRight;
+  const right = createJavaScriptApplicationGraph({
+    ...rightInput,
+    nodes: [
+      ...fullRight.nodes.filter(({ node_id }) => node_id !== rightB.node_id),
+      unrelated,
+    ],
+    edges: fullRight.edges.filter(
+      ({ source_node_id, target_node_id }) =>
+        source_node_id !== rightB.node_id && target_node_id !== rightB.node_id,
+    ),
+  });
+  const leftEvidenceId = `ev_${"1".repeat(64)}`;
+  const rightEvidenceId = `ev_${"2".repeat(64)}`;
+  const parents = [leftEvidenceId, rightEvidenceId];
+  const bDigest = `${"0".repeat(63)}1`;
+  const leftNativeA = nativeEvidence("0".repeat(64), 1);
+  const leftNativeB = nativeEvidence(bDigest, 2);
+  const leftNativeB2 = nativeEvidence(bDigest, 3);
+  const rightNativeA = nativeEvidence("0".repeat(64), 4);
+  const result = compareJavaScriptApplicationVersions({
+    left: {
+      evidenceId: leftEvidenceId,
+      rootArtifactSha256: LEFT_SHA,
+      graph: left,
+    },
+    right: {
+      evidenceId: rightEvidenceId,
+      rootArtifactSha256: RIGHT_SHA,
+      graph: right,
+    },
+    leftNativeEvidence: [leftNativeA, leftNativeB, leftNativeB2],
+    rightNativeEvidence: [
+      rightNativeA,
+      nativeEvidence(bDigest, 5),
       nativeEvidence(undefined, 6),
-    ];
-    const unrelatedRight = unrelatedGraph(RIGHT_SHA);
-    const unmatched = compareJavaScriptApplicationVersions({
-      left: {
-        evidenceId: leftEvidenceId,
-        rootArtifactSha256: LEFT_SHA,
-        graph: left,
-      },
-      right: {
-        evidenceId: rightEvidenceId,
-        rootArtifactSha256: RIGHT_SHA,
-        graph: unrelatedRight,
-      },
-      leftNativeEvidence: leftNative,
-      rightNativeEvidence: rightNative,
-    });
-    const leftB = left.nodes.find(({ observations }) =>
-      observations.some(({ label }) => label === "b.js"),
-    );
-    if (leftB === undefined) throw new Error("Missing left b.js node");
-    const unmatchedB = unmatched.items.find(
-      ({ left_node_id: id }) => id === leftB.node_id,
-    );
-    expect(unmatchedB?.evidence_links).toEqual(
-      [
-        leftEvidenceId,
-        rightEvidenceId,
-        leftNative[0]!.evidence_id,
-        leftNative[1]!.evidence_id,
-      ].sort(),
-    );
-    const unrelatedItem = unmatched.items.find(
-      ({ right_node_id: id }) => id === unrelatedRight.nodes[0]?.node_id,
-    );
-    expect(unrelatedItem?.evidence_links).toEqual(
-      [leftEvidenceId, rightEvidenceId].sort(),
-    );
-
-    const paired = compareJavaScriptApplicationVersions({
-      left: {
-        evidenceId: leftEvidenceId,
-        rootArtifactSha256: LEFT_SHA,
-        graph: left,
-      },
-      right: {
-        evidenceId: rightEvidenceId,
-        rootArtifactSha256: RIGHT_SHA,
-        graph: right,
-      },
-      leftNativeEvidence: [nativeEvidence("0".repeat(64), 5)],
-      rightNativeEvidence: rightNative,
-    });
-    const leftA = left.nodes.find(({ observations }) =>
-      observations.some(({ label }) => label === "a.js"),
-    );
-    if (leftA === undefined) throw new Error("Missing left a.js node");
-    const pairedA = paired.items.find(
-      ({ left_node_id: id }) => id === leftA.node_id,
-    );
-    expect(pairedA?.match.status).toBe("matched");
-    expect(pairedA?.evidence_links).toEqual(
-      [
-        leftEvidenceId,
-        rightEvidenceId,
-        nativeEvidence("0".repeat(64), 5).evidence_id,
-        rightNative[0]!.evidence_id,
-      ].sort(),
-    );
+    ],
+  });
+  expect(
+    result.items.find(({ left_node_id }) => left_node_id === leftA.node_id),
+  ).toMatchObject({
+    right_node_id: rightA.node_id,
+    match: { status: "matched" },
+    evidence_links: [
+      ...parents,
+      leftNativeA.evidence_id,
+      rightNativeA.evidence_id,
+    ].sort(),
+  });
+  expect(
+    result.items.find(({ left_node_id }) => left_node_id === leftB.node_id),
+  ).toMatchObject({
+    right_node_id: null,
+    status: "removed",
+    evidence_links: [
+      ...parents,
+      leftNativeB.evidence_id,
+      leftNativeB2.evidence_id,
+    ].sort(),
+  });
+  expect(
+    result.items.find(
+      ({ right_node_id }) => right_node_id === unrelated.node_id,
+    ),
+  ).toMatchObject({
+    left_node_id: null,
+    status: "added",
+    evidence_links: parents.sort(),
   });
 });
 
 describe("application version comparison graph ownership", () => {
-  it("returns a sealed change graph that passes complete validation", () => {
-    const result = compare();
-    expect(
-      result.graph.edges.some(({ relation }) => relation === "changed_from"),
-    ).toBe(true);
-    expect(isValidatedImmutableJavaScriptApplicationGraph(result.graph)).toBe(
-      true,
-    );
-    expect(Object.isFrozen(result.graph.edges)).toBe(true);
-    expect(parseJavaScriptApplicationGraph(result.graph)).toEqual(result.graph);
-    expect(applicationVersionComparisonResultSchema.parse(result)).toEqual(
-      result,
-    );
-  });
-
   it("retains deduplicated complete input limits on the change graph and inferred edge", () => {
     const leftLimits = [
       { name: "modules", value: 100, unit: "items" as const },
@@ -413,29 +388,141 @@ describe("application version comparison graph ownership", () => {
     });
   });
 
-  it("does not reuse a change graph without an owned proof", () => {
+  it("reuses only the owned change graph and validates its enclosing result", () => {
     const result = compare();
-    const copy = structuredClone(result.graph);
-    expect(isValidatedImmutableJavaScriptApplicationGraph(copy)).toBe(false);
-    expect(() =>
-      ownedApplicationVersionComparisonResultSchema.parse({
-        ...result,
-        graph: copy,
-      }),
-    ).toThrow();
     expect(
-      applicationVersionComparisonResultSchema.parse({ ...result, graph: copy })
-        .graph,
-    ).toEqual(result.graph);
-  });
+      ownedApplicationVersionComparisonResultSchema.parse(result).graph,
+    ).toBe(result.graph);
 
-  it("keeps coverage validation for owned results", () => {
-    const result = compare();
-    expect(() =>
-      ownedApplicationVersionComparisonResultSchema.parse({
+    const copied = { ...result, graph: structuredClone(result.graph) };
+    expect(
+      ownedApplicationVersionComparisonResultSchema.safeParse(copied).error
+        ?.issues,
+    ).toMatchObject([{ path: ["graph"] }]);
+    expect(applicationVersionComparisonResultSchema.parse(copied)).toEqual(
+      result,
+    );
+
+    for (const status of ["partial", "unknown"] as const) {
+      const checked = ownedApplicationVersionComparisonResultSchema.safeParse({
         ...result,
-        coverage: { ...result.coverage, status: "partial" },
-      }),
-    ).toThrow("Comparison coverage must match source graph completeness");
+        coverage: { ...result.coverage, status },
+      });
+      const messages = checked.error?.issues.map(({ path, message }) => ({
+        path,
+        message,
+      }));
+      expect(messages).toEqual([
+        {
+          path: ["coverage", "status"],
+          message: "Comparison coverage must match source graph completeness",
+        },
+        ...(status === "unknown"
+          ? [
+              {
+                path: ["coverage", "status"],
+                message:
+                  "Comparison coverage is unknown exactly when a source graph's coverage is unknown or unavailable",
+              },
+            ]
+          : []),
+      ]);
+    }
   });
+});
+
+describe("version comparison coverage", () => {
+  const withCoverage = (
+    graph: JavaScriptApplicationGraph,
+    coverage: JavaScriptApplicationGraph["coverage"],
+  ): JavaScriptApplicationGraph => {
+    const { graph_id: _graphId, ...input } = graph;
+    return createJavaScriptApplicationGraph({
+      ...input,
+      coverage,
+      limitations: ["Fixture graph coverage is incomplete."],
+    });
+  };
+  const compareWith = (
+    left: JavaScriptApplicationGraph["coverage"],
+    right: JavaScriptApplicationGraph["coverage"],
+  ) =>
+    compareJavaScriptApplicationVersions({
+      left: {
+        evidenceId: `ev_${"1".repeat(64)}`,
+        rootArtifactSha256: LEFT_SHA,
+        graph: withCoverage(buildGraph(LEFT_SHA, 1), left),
+      },
+      right: {
+        evidenceId: `ev_${"2".repeat(64)}`,
+        rootArtifactSha256: RIGHT_SHA,
+        graph: withCoverage(buildGraph(RIGHT_SHA, 2), right),
+      },
+      leftNativeEvidence: [],
+      rightNativeEvidence: [],
+    });
+  type Coverage = JavaScriptApplicationGraph["coverage"];
+  const unknown = (status: "unknown" | "unavailable"): Coverage => ({
+    status,
+    truncated: false,
+    omitted_count: null,
+    limits: [],
+  });
+  const truncated: Coverage = {
+    status: "partial",
+    truncated: true,
+    omitted_count: 3,
+    limits: [{ name: "modules", value: 3, unit: "items" }],
+  };
+
+  it.each([
+    {
+      name: "unknown source",
+      left: unknown("unknown"),
+      right: completeCoverage,
+      status: "unknown",
+      graphCoverage: {
+        status: "unknown",
+        truncated: false,
+        omitted_count: null,
+      },
+    },
+    {
+      name: "unavailable source with truncation",
+      left: truncated,
+      right: unknown("unavailable"),
+      status: "unknown",
+      graphCoverage: {
+        status: "unknown",
+        truncated: false,
+        omitted_count: null,
+      },
+    },
+    {
+      name: "reported truncation",
+      left: truncated,
+      right: completeCoverage,
+      status: "truncated",
+      graphCoverage: { status: "partial", truncated: true, omitted_count: 3 },
+    },
+  ])(
+    "publishes supported coverage for $name",
+    ({ left, right, status, graphCoverage }) => {
+      const result = compareWith(left, right);
+      expect(result.coverage).toEqual({
+        status,
+        left_graph_status: left.status,
+        right_graph_status: right.status,
+        left_graph_omitted_count: left.omitted_count,
+        right_graph_omitted_count: right.omitted_count,
+      });
+      expect(result.graph.coverage).toMatchObject(graphCoverage);
+      const changed = result.graph.edges.filter(
+        ({ relation }) => relation === "changed_from",
+      );
+      expect(changed.length).toBeGreaterThan(0);
+      for (const edge of changed)
+        expect(edge.evidence.coverage).toMatchObject(graphCoverage);
+    },
+  );
 });

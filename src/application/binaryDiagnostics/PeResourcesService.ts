@@ -1,6 +1,6 @@
 import { insideArtifact } from "./artifactRange.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { PeResourcesPort } from "./PeResourcesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";

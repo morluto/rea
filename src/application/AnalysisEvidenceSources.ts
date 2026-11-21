@@ -1,6 +1,7 @@
 import { readArtifactInspectionSources } from "../domain/artifactInspection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { tryParseEvidence, type Evidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -131,10 +132,12 @@ export const undeliveredSourceClosure = (
   options: { readonly inlineRecords: boolean },
 ): UndeliveredSourceClosure | UnavailableSourceClosure | undefined => {
   try {
-    const observation = tryParseEvidence(partialObservation);
-    return observation === undefined
+    const observation = recognizeEvidence(partialObservation);
+    // A record that fails authentication cannot select which sources it
+    // cites; the failure carrying it is reported unchanged.
+    return !observation.ok || observation.value === undefined
       ? undefined
-      : collectSourceClosure(observation, captured, options);
+      : collectSourceClosure(observation.value, captured, options);
   } catch (cause: unknown) {
     return {
       publication: "not_published",

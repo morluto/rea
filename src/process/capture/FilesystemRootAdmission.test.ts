@@ -1,7 +1,7 @@
 import { createTestProcessCaptureResourceScope } from "../../../tests/fixtures/processCaptureResourceScope.js";
 import { expect, it } from "vitest";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
+import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import { AnalysisAccessDeniedError } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,

@@ -5,6 +5,7 @@ import {
   type SpellingSummary,
 } from "./environmentManifestSpelling.js";
 import type { RouteRule } from "./webNetworkRouteTemplates.js";
+import { appendAll } from "../appendAll.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
 export const TEMPLATE_RULES = [
@@ -300,7 +301,7 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
       else bucket.push(group);
     }
     for (const bucket of buckets.values())
-      output.push(...mergeSiblings(bucket, position));
+      appendAll(output, mergeSiblings(bucket, position));
     current = output;
   }
   return current;
@@ -394,7 +395,7 @@ const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
       else bucket.push(group);
     }
     for (const bucket of buckets.values())
-      output.push(...mergePairBucket(bucket, position));
+      appendAll(output, mergePairBucket(bucket, position));
     current = output;
   }
   return current;
@@ -486,7 +487,7 @@ const sharedShape = (bucket: readonly ToolGroup[]): ToolGroup => {
   );
 };
 
-/** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method or length. */
+/** Template literals at positions another tool templates by an opt-in rule after the same preceding parts, at any method, on routes within the segment limit. */
 const mergePrefixVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
   let current = [...groups];
   const longest = Math.max(0, ...current.map((group) => group.parts.length));

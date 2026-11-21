@@ -1,6 +1,6 @@
 import { expect, it as test, vi } from "vitest";
 import { runWithAnalysisOperationSnapshot } from "../../../../src/domain/analysisOperationSnapshot.js";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival, phaseGate } from "../../../support/lifecycleHarness.js";
 import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -131,14 +131,14 @@ it("answers a queued request from the export once it finishes first", async () =
   );
   const client = open();
   const holder = new AbortController();
-  const admission = deferred<void>();
+  const admission = phaseArrival();
   const acquire = KunaRunSlots.prototype.acquire;
   let arrivals = 0;
   const requests = vi
     .spyOn(KunaRunSlots.prototype, "acquire")
     .mockImplementation(function (this: KunaRunSlots, signal) {
       const pending = acquire.call(this, signal);
-      if (++arrivals === 2) admission.resolve();
+      if (++arrivals === 2) admission.arrive();
       return pending;
     });
   let queued: ReturnType<typeof client.execute> | undefined;
@@ -151,11 +151,7 @@ it("answers a queued request from the export once it finishes first", async () =
   try {
     await awaitKunaCommand(kuna, "decompile", holding);
     queued = client.execute("procedure_pseudo_code", { procedure: "parse" });
-    await awaitAcknowledgement(
-      admission.promise,
-      queued,
-      "queued single-function admission",
-    );
+    await admission.reached(queued, "queued single-function admission");
     await releaseFakeKunaCommand(kuna, "decompile-project");
     const completed = await queued;
     if (!completed.ok) throw completed.error;
@@ -201,7 +197,7 @@ it("keeps the slot of a run whose stop is unproven until close proves it", async
       ),
     ).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
     // The timed-out tree may still run, so the next run must not start.
-    const admission = deferred<void>();
+    const admission = phaseArrival();
     const acquire = KunaRunSlots.prototype.acquire;
     let granted = false;
     const requests = vi
@@ -211,7 +207,7 @@ it("keeps the slot of a run whose stop is unproven until close proves it", async
         void pending.then(() => {
           granted = true;
         });
-        admission.resolve();
+        admission.arrive();
         return pending;
       });
     restoreAcquire = () => requests.mockRestore();
@@ -220,11 +216,7 @@ it("keeps the slot of a run whose stop is unproven until close proves it", async
       { procedure: "parse" },
       { signal: waiter.signal },
     );
-    await awaitAcknowledgement(
-      admission.promise,
-      queued,
-      "retained single-function slot",
-    );
+    await admission.reached(queued, "retained single-function slot");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(granted).toBe(false);
     expect(await decompilesOf(kuna)).toHaveLength(1);
@@ -312,30 +304,18 @@ it("keeps answering repeats from the completed run after the export fails", asyn
   }
 });
 
-const deferred = <T>() => {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-};
-
 it("reports sibling unavailability when fallback observes settled export failure without prior assembly call", async () => {
-  const exportSettled = deferred<void>();
-  exportSettled.promise.catch(() => undefined);
+  // Held decompile launches continue once the export build settles.
+  const exportSettled = phaseGate();
   const originalBuild = KunaProjectCache.prototype.build;
   const exportBuild = vi
     .spyOn(KunaProjectCache.prototype, "build")
     .mockImplementation(function (this: KunaProjectCache, ...args) {
       const promise = originalBuild.apply(this, args);
-      return promise.finally(() => exportSettled.resolve());
+      return promise.finally(() => exportSettled.release());
     });
   const launcher: KunaProcessLauncher = async (options) => {
-    if (options.arguments[0] === "decompile") {
-      await exportSettled.promise;
-    }
+    if (options.arguments[0] === "decompile") await exportSettled.hold();
     return spawnOwnedProviderProcess(options);
   };
   const { kuna, open } = await session(
@@ -359,9 +339,9 @@ it("reports sibling unavailability when fallback observes settled export failure
     ]);
     expect(answer.siblingUnavailability?.providerId).toBe("kuna");
     expect(await decompilesOf(kuna)).toHaveLength(1);
-    await exportSettled.promise;
+    await exportSettled.hold();
   } finally {
-    exportSettled.resolve();
+    exportSettled.release();
     try {
       expect(await client.close()).toEqual({ ok: true, value: null });
     } finally {

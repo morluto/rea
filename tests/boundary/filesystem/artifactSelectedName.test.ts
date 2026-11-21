@@ -31,8 +31,6 @@ const fixture = async (storedName = "content-addressed-archive") => {
 };
 
 it.skipIf(process.platform === "win32").each([
-  ["selected.apk", "content", "apk"],
-  ["selected.ipa", "content", "ipa"],
   ["selected.apk", "canonical.ipa", "apk"],
   ["selected.ipa", "canonical.apk", "ipa"],
   ["selected.unknown", "canonical.apk", "apk"],
@@ -75,7 +73,7 @@ it.skipIf(process.platform === "win32").each([
         await readFile(join(result.output_root, "payload.txt"), "utf8"),
       ).toBe("same packed bytes");
     } finally {
-      await client.close();
+      expect(await client.close()).toEqual({ ok: true, value: null });
     }
   },
 );

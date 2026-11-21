@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it } from "vitest";
 
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../contracts/managed/managedWorkflowExamples.js";
@@ -25,6 +27,7 @@ const native = (format: NativeFormat, path: string, decorated: boolean) => {
           items: [
             {
               name: symbolTableName,
+              runtime_name: name,
               address: "0x1000",
               weak: false,
               reexport: false,
@@ -82,20 +85,24 @@ const verify = (
   const managed = managedNativeBoundaryInspectionSchema.parse(
     original.normalized_result,
   );
-  const managedEvidence = createEvidence(undefined, original.provider, {
-    operation: original.operation,
-    parameters: {},
-    result: {
-      ...managed,
-      pinvoke_imports: managed.pinvoke_imports.map((item) => ({
-        ...item,
-        import_scope_name: scope,
-        no_mangle: !decorated,
-        char_set: decorated ? "unicode" : "not-specified",
-        call_convention: "cdecl",
-      })),
+  const managedEvidence = createEvidence(
+    unknownTarget("not-observed"),
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: {},
+      result: {
+        ...managed,
+        pinvoke_imports: managed.pinvoke_imports.map((item) => ({
+          ...item,
+          import_scope_name: scope,
+          no_mangle: !decorated,
+          char_set: decorated ? "unicode" : "not-specified",
+          call_convention: "cdecl",
+        })),
+      },
     },
-  });
+  );
   const nativeEvidence = native(format, path, decorated);
   const execution = executeManagedNativeBoundaries({
     managed_boundaries: managedEvidence,
@@ -106,7 +113,9 @@ const verify = (
     managedEvidence,
     nativeEvidence,
   ]);
-  expect(execution.value.sourceEvidence[1]?.subject?.format).toBe(format);
+  expect(fileIdentity(execution.value.sourceEvidence[1]?.subject).format).toBe(
+    format,
+  );
   const result = managedNativeVerificationResultSchema.parse(
     execution.value.evidence.normalized_result,
   );

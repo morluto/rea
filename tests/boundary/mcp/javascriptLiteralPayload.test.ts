@@ -48,7 +48,6 @@ cliTest(
         "directory",
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(cliResponse.exitCode).toBe(0);
     const cliEvidence = toolContract(

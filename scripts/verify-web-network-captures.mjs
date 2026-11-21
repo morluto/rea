@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../dist/domain/webNetworkCapture.js";
 import {
@@ -24,6 +23,7 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const executable = process.env.REA_MITMDUMP_COMMAND;
 if (
@@ -38,7 +38,7 @@ await access(executable);
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const runtime = await PrivateRuntimeRoot.create({
+const runtime = await VerifierFixture.open({
   prefix: "rea-history-verifier-",
 });
 const environment = Object.fromEntries(
@@ -214,6 +214,10 @@ try {
         format: "mitmproxy",
         sensitive_values: marked ? ["1e-7", "000000"] : [],
       });
+      assert.deepEqual(
+        value.records.map(({ ordinal }) => ordinal),
+        [0, 1],
+      );
       for (const record of value.records) {
         assert.deepEqual(record.reported.metadata.numeric_spellings, {
           small: marked ? null : 1e-7,
@@ -225,12 +229,11 @@ try {
           ["large", "1e+20"],
         ]) {
           const pointer = "/metadata/numeric_spellings/" + key;
-          assert.equal(
-            record.numeric_literals.some(
-              (number) =>
-                number.pointer === pointer && number.literal === literal,
-            ),
-            !marked,
+          assert.deepEqual(
+            record.numeric_literals
+              .filter((number) => number.pointer === pointer)
+              .map(({ literal }) => literal),
+            marked ? [] : [literal],
           );
           assert.equal(
             record.redactions.some(
@@ -764,7 +767,9 @@ try {
         "invalid_input",
       );
       assert.equal(failure.details.issues[0].reason, "out_of_range");
-      assert.deepEqual(failure.details.issues[0].path, ["capture_path"]);
+      assert.deepEqual(failure.details.issues[0].path, [
+        mode === "cli" ? "capturePath" : "capture_path",
+      ]);
       assert.equal(
         failure.details.issues[0].expected.maximum_capture_bytes,
         WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
@@ -785,7 +790,10 @@ try {
       );
       const issue = failure.details.issues[0];
       assert.equal(issue.reason, "out_of_range");
-      assert.equal(issue.path[0], "capture_path");
+      assert.equal(
+        issue.path[0],
+        mode === "cli" ? "capturePath" : "capture_path",
+      );
       assert.match(issue.path[1], /^\/_extension\/child/);
       assert.equal(
         issue.expected.maximum_capture_nesting,
@@ -893,16 +901,13 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const cleanup of [
-    () => client.close(),
-    () => transport.close(),
-    () => runtime.close(),
-  ]) {
-    try {
-      await cleanup();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  // The root is removed only after the client and transport confirm.
+  runtime.releaseAfter(() => client.close());
+  runtime.releaseAfter(() => transport.close());
+  try {
+    await runtime.release();
+  } catch (cause) {
+    failures.push(cause);
   }
 }
 const verifier = await completeVerifierRun(run);
@@ -920,9 +925,13 @@ if (failures.length > 0) {
       2,
     ),
   );
-  throw new AggregateError(
-    failures,
-    "Historical capture verification failed; analysis and cleanup failures are retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Historical capture verification failed; analysis and cleanup failures are retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    runtime.released ? {} : { cleanupLeases: [runtime] },
   );
 }
 console.log(
@@ -1052,8 +1061,9 @@ function assertSensitiveLimitations(evidence, literals) {
           "Declared literal retained in Evidence parameter",
         );
   const result = evidence.normalized_result;
-  if (result.artifact.sha256 === null) assert.equal(evidence.subject, null);
-  else assert.equal(evidence.subject.digest.sha256, result.artifact.sha256);
+  if (result.artifact.sha256 === null)
+    assert.equal(evidence.subject.identity.kind, "unknown");
+  else assert.equal(evidence.subject.identity.sha256, result.artifact.sha256);
   assert.deepEqual(
     evidence.provider,
     result.decoder,

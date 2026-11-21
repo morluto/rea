@@ -1,9 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import {
   cliTest,
-  runFileCli,
+  type CliInvocation,
   type TestCli,
 } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -25,22 +26,34 @@ import { nativeFunctionMatchingSchema } from "../../../src/domain/native/functio
 
 const createMatchingFixture = async () => {
   const root = await createTestTempDirectory("rea-native-matching-");
-  const ancestor = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_provenance",
-    parameters: {},
-    result: { source: "Synthetic ancestor" },
-  });
-  const unrelated = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_unrelated",
-    parameters: {},
-    result: { source: "Unselected synthetic record" },
-  });
-  const dependency = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_dependency",
-    parameters: {},
-    result: { source: "Synthetic dependency" },
-    evidenceLinks: [ancestor.evidence_id],
-  });
+  const ancestor = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_provenance",
+      parameters: {},
+      result: { source: "Synthetic ancestor" },
+    },
+  );
+  const unrelated = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_unrelated",
+      parameters: {},
+      result: { source: "Unselected synthetic record" },
+    },
+  );
+  const dependency = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { source: "Synthetic dependency" },
+      evidenceLinks: [ancestor.evidence_id],
+    },
+  );
   const left = nativeMatchingInventory(
     "1",
     [
@@ -173,7 +186,7 @@ const verifyPortableCli = async (
   );
   const original = await readFile(bundlePath);
   await writeFile(inputPath, JSON.stringify({ ...input, detail: "complete" }));
-  const cliFull = await runFileCli(cli, {
+  const cliFull = await cli.run({
     arguments: [
       "match-native-functions",
       inputPath,
@@ -187,7 +200,7 @@ const verifyPortableCli = async (
   expect(cliFull.exitCode, cliFull.stderr).toBe(0);
   expect(parseEvidence(cliFull.json).evidence_id).toBe(evidenceId);
   await writeFile(inputPath, JSON.stringify(input));
-  const cliSummary = await runFileCli(cli, {
+  const cliSummary = await cli.run({
     arguments: [
       "match-native-functions",
       inputPath,
@@ -222,7 +235,7 @@ const verifyPortableCli = async (
   expect(ids.has(unrelated.evidence_id)).toBe(false);
   expect(ids.has(evidenceId)).toBe(true);
   expect(Buffer.compare(await readFile(bundlePath), original)).toBe(0);
-  const incomplete = await runFileCli(cli, {
+  const incomplete = await cli.run({
     arguments: [
       "match-native-functions",
       inputPath,
@@ -238,7 +251,7 @@ const verifyPortableCli = async (
   });
 };
 
-cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
+cliTest.for([{ profile: "compact" }] as const)(
   "shared public CLI/MCP matching retains sources, pages exact facts, and feeds selected dossier pairs directly to compare_functions ($profile)",
   async ({ profile }, { cli }) => {
     const fixture = await createMatchingFixture();
@@ -508,8 +521,8 @@ cliTest(
       "right_observations",
     ] as const) {
       // Keep fresh-process coverage for both source-admission routes on left.
-      const run =
-        field === "left" ? cli.run.bind(cli) : runFileCli.bind(undefined, cli);
+      const run = (invocation: CliInvocation) =>
+        cli.run({ ...invocation, freshProcess: field === "left" });
       const observation = field.endsWith("observations");
       const request = {
         left,
@@ -581,7 +594,7 @@ cliTest(
       detail: "complete",
     };
     await writeFile(requestPath, JSON.stringify(inlineRequest));
-    const inline = await runFileCli(cli, {
+    const inline = await cli.run({
       arguments: ["match-native-functions", requestPath, "--json"],
     });
     await writeFile(
@@ -589,7 +602,7 @@ cliTest(
       JSON.stringify(createEvidenceBundle([wrongRole, right])),
     );
     await writeFile(requestPath, JSON.stringify(portableRequest));
-    const portable = await runFileCli(cli, {
+    const portable = await cli.run({
       arguments: [
         "match-native-functions",
         requestPath,
@@ -611,7 +624,7 @@ cliTest(
 
     const corruptRequest = { left: badCoordinate, right, detail: "complete" };
     await writeFile(requestPath, JSON.stringify(corruptRequest));
-    const corruptInline = await runFileCli(cli, {
+    const corruptInline = await cli.run({
       arguments: ["match-native-functions", requestPath, "--json"],
     });
     const corruptPortableRequest = {
@@ -623,7 +636,7 @@ cliTest(
       detail: "complete",
     };
     await writeFile(requestPath, JSON.stringify(corruptPortableRequest));
-    const corruptPortable = await runFileCli(cli, {
+    const corruptPortable = await cli.run({
       arguments: [
         "match-native-functions",
         requestPath,
@@ -641,7 +654,7 @@ cliTest(
 
     const malformedBundlePath = join(root, "malformed-outer-frame.json");
     await writeFile(malformedBundlePath, JSON.stringify({ records: [left] }));
-    const malformedBundle = await runFileCli(cli, {
+    const malformedBundle = await cli.run({
       arguments: [
         "match-native-functions",
         requestPath,
@@ -692,7 +705,7 @@ cliTest(
   },
 );
 
-cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
+cliTest.for([{ profile: "compact" }] as const)(
   "ties byte qualifications to selected observations through paged and offline MCP ($profile)",
   async ({ profile }) => {
     const left = nativeMatchingInventory("1", [

@@ -1,14 +1,15 @@
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import {
   referenceEdgeSchema,
   unresolvedCallSchema,
@@ -17,7 +18,12 @@ import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { nativeCallClassificationSchema } from "../domain/native/nativeCallReference.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { HopperClient } from "./HopperClient.js";
+import {
+  HopperReplyContractError,
+  type HopperReply,
+} from "./HopperReplyContracts.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   hopperCallerScanBudgetForMilliseconds,
   hopperCallerScanRecovery,
@@ -34,53 +40,14 @@ import {
   type HopperCallerScanStop,
 } from "../domain/native/hopperCallerReconciliation.js";
 
-const compactEdgeSchema = z.strictObject({
-  source_address: z.string(),
-  target_address: z.string(),
-  source_procedure: z.union([
-    z.literal("caller"),
-    procedureIdentitySchema,
-    z.null(),
-  ]),
-  target_procedure: z.string(),
-  call: nativeCallClassificationSchema,
-});
-const pageSchema = z.strictObject({
-  start: z.int().nonnegative(),
-  next: z.int().nonnegative(),
-  total: z.int().nonnegative(),
-  oversized: z.boolean(),
-  items: z.array(
-    z.strictObject({
-      caller: procedureIdentitySchema,
-      callees: z.array(z.string()),
-      references: z.array(compactEdgeSchema),
-    }),
-  ),
-});
-const targetSchema = z.strictObject({
-  target: procedureIdentitySchema,
-  instructions: z.array(z.string()),
-  instructions_complete: z.boolean(),
-});
-const callersBaseSchema = targetSchema.extend({
-  callers: z.array(z.string()),
-  callers_complete: z.boolean(),
-});
-const referencesSchema = z.strictObject({
-  procedure: procedureIdentitySchema,
-  direction: z.enum(["incoming", "outgoing"]),
-  reference_kinds_available: z.boolean(),
-  unresolved_calls: z.array(unresolvedCallSchema),
-  references: z.array(referenceEdgeSchema),
-});
 type Operation =
   | "procedure_callers"
   | "procedure_references"
   | "analyze_function";
 type Identity = z.infer<typeof procedureIdentitySchema>;
 type Edge = z.infer<typeof referenceEdgeSchema>;
-type CompactEdge = z.infer<typeof compactEdgeSchema>;
+type CompactEdge =
+  HopperReply<"rea_caller_scan_page">["items"][number]["references"][number];
 type Destination = {
   callers: Map<string, Identity>;
   references: Array<{ caller: Identity; edge: CompactEdge }>;
@@ -168,8 +135,9 @@ async function buildIndex(
     bytes = 0;
   const began = performance.now();
   let stop: HopperCallerScanStop = { code: "complete" };
+  // Called only after the caller's signal aborted.
   const cancelled = (): AnalysisCancelledError =>
-    new AnalysisCancelledError(operation, { cause: options?.signal?.reason });
+    cancelledBy(operation, carriedReason(options?.signal?.reason));
   const fail = (
     error: AnalysisError,
     failureStop: HopperCallerScanStop,
@@ -203,11 +171,14 @@ async function buildIndex(
                   : reportScanProgress(options, start, total),
             },
           };
-    const page = await client.callTool(
-      "rea_caller_scan_page",
-      args,
-      pageOptions,
-    );
+    const page = await client.callTool("rea_caller_scan_page", args, {
+      ...pageOptions,
+      operation,
+    });
+    if (!page.ok && page.error instanceof HopperReplyContractError)
+      return options?.signal?.aborted
+        ? fail(cancelled(), { code: "cancelled" }, page.error.reply)
+        : fail(page.error, { code: "invalid_page" }, page.error.reply);
     if (!page.ok)
       return options?.signal?.aborted
         ? fail(cancelled(), { code: "cancelled" })
@@ -215,20 +186,7 @@ async function buildIndex(
             analysisClientFailureForOperation(page.error, "hopper", operation),
             { code: "page_failure" },
           );
-    const decoded = pageSchema.safeParse(page.value);
-    if (!decoded.success)
-      return options?.signal?.aborted
-        ? fail(cancelled(), { code: "cancelled" }, page.value)
-        : fail(
-            new AnalysisOutputError(
-              operation,
-              "Invalid Hopper caller scan page",
-              { cause: decoded.error },
-            ),
-            { code: "invalid_page" },
-            page.value,
-          );
-    const value = decoded.data;
+    const value = page.value;
     if (
       value.start !== start ||
       value.next < start ||
@@ -241,14 +199,14 @@ async function buildIndex(
       (value.oversized && value.next !== start)
     )
       return options?.signal?.aborted
-        ? fail(cancelled(), { code: "cancelled" }, page.value)
+        ? fail(cancelled(), { code: "cancelled" }, value)
         : fail(
             new AnalysisOutputError(
               operation,
               "Invalid Hopper caller scan progress",
             ),
             { code: "invalid_progress" },
-            page.value,
+            value,
           );
     if (total !== undefined && value.total !== total) {
       stop = { code: "inventory_changed" };
@@ -369,11 +327,17 @@ const compactForwardDestinations = (
   };
 };
 
+/** The validated native reply each reconciled operation starts from. */
+export type HopperCallerNativeReply =
+  | HopperReply<"rea_caller_base">
+  | HopperReply<"analyze_function">
+  | HopperReply<"procedure_references">;
+
 export const reconcileHopperCallers = async (
   client: HopperClient,
   operation: Operation,
   parameters: Readonly<Record<string, JsonValue>>,
-  original: JsonValue,
+  nativeReply: Result<HopperCallerNativeReply, HopperReplyContractError>,
   options: ExecutionOptions | undefined,
   budget: number | HopperCallerScanBudget,
 ): Promise<
@@ -387,14 +351,24 @@ export const reconcileHopperCallers = async (
     AnalysisError
   >
 > => {
+  // The native reply exactly as Hopper sent it, kept when it missed its contract.
+  const original: JsonValue = nativeReply.ok
+    ? nativeReply.value
+    : nativeReply.error.reply;
   const scanBudget =
     typeof budget === "number"
       ? hopperCallerScanBudgetForMilliseconds(budget)
       : budget;
-  const budgetMs = scanBudget.milliseconds;
+  const admittedBudget = readRuntimeSetting(() => ({
+    ...scanBudget,
+    milliseconds: scanBudget.milliseconds,
+    source: scanBudget.source,
+  }));
+  if (!admittedBudget.ok) return admittedBudget;
+  const budgetMs = admittedBudget.value.milliseconds;
   const describeScan = (facts: HopperCallerScanFacts): string => {
     const observed = formatHopperCallerScanReason(facts);
-    const recovery = hopperCallerScanRecovery(facts, scanBudget);
+    const recovery = hopperCallerScanRecovery(facts, admittedBudget.value);
     return recovery === "" ? observed : `${observed} ${recovery}`;
   };
   const retainNative = (
@@ -433,91 +407,52 @@ export const reconcileHopperCallers = async (
     );
     return error;
   };
-  const base =
-    operation === "procedure_callers"
-      ? callersBaseSchema.safeParse(original)
-      : undefined;
-  if (base !== undefined && !base.success)
+  // The client validated the native reply against its method contract.
+  if (!nativeReply.ok)
     return err(
-      retainNative(
-        new AnalysisOutputError(
-          operation,
-          "Invalid Hopper caller observation",
-          { cause: base.error },
-        ),
-        { scan: null, destinations: null },
-      ),
+      retainNative(nativeReply.error, { scan: null, destinations: null }),
     );
-  const parsed =
-    operation === "procedure_callers"
-      ? z
-          .array(z.string())
-          .safeParse(base?.success ? base.data.callers : undefined)
-      : operation === "analyze_function"
-        ? functionDossierSchema.safeParse(original)
-        : referencesSchema.safeParse(original);
-  if (!parsed.success)
-    return err(
-      retainNative(
-        new AnalysisOutputError(
-          operation,
-          "Invalid Hopper caller observation",
-          { cause: parsed.error },
-        ),
-        { scan: null, destinations: null },
-      ),
-    );
+  const native = nativeReply.value;
+  const base = "callers_complete" in native ? native : undefined;
   const args: Record<string, JsonValue> = {};
   if (parameters.document !== undefined) args.document = parameters.document;
   if (parameters.procedure !== undefined) args.procedure = parameters.procedure;
-  const targetResponse = base?.success
-    ? ok({
-        target: base.data.target,
-        instructions: base.data.instructions,
-        instructions_complete: base.data.instructions_complete,
-      })
-    : await client.callTool(
-        "rea_caller_scan_target",
-        args,
-        reconciliationChildOptions(options),
-      );
-  if (!targetResponse.ok)
-    return err(
-      retainNative(
-        analysisClientFailureForOperation(
-          targetResponse.error,
-          "hopper",
+  // The callers base already carries its scan target.
+  const selected =
+    base !== undefined
+      ? ok(base)
+      : await client.callTool("rea_caller_scan_target", args, {
+          ...reconciliationChildOptions(options),
           operation,
-        ),
-        { scan: null, destinations: null },
-      ),
+        });
+  if (
+    options?.signal?.aborted &&
+    (selected.ok || selected.error instanceof HopperReplyContractError)
+  )
+    return err(
+      retainNative(cancelledBy(operation, options.signal), {
+        scan: null,
+        destinations: null,
+      }),
     );
-  if (options?.signal?.aborted)
+  if (!selected.ok)
     return err(
       retainNative(
-        new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        }),
+        selected.error instanceof HopperReplyContractError
+          ? selected.error
+          : analysisClientFailureForOperation(
+              selected.error,
+              "hopper",
+              operation,
+            ),
         { scan: null, destinations: null },
       ),
     );
-  const selected = targetSchema.safeParse(targetResponse.value);
-  if (!selected.success)
-    return err(
-      retainNative(
-        new AnalysisOutputError(
-          operation,
-          "Invalid Hopper caller scan target",
-          { cause: selected.error },
-        ),
-        { scan: null, destinations: null },
-      ),
-    );
-  const { target, instructions, instructions_complete } = selected.data;
+  const { target, instructions, instructions_complete } = selected.value;
   if (
     operation !== "procedure_callers" &&
-    "procedure" in parsed.data &&
-    parsed.data.procedure.address !== target.address
+    "procedure" in native &&
+    native.procedure.address !== target.address
   )
     return ok({
       result: original,
@@ -546,9 +481,8 @@ export const reconcileHopperCallers = async (
           scan: {
             ...failure.counts,
             instructions_complete,
-            native_callers_complete: base?.success
-              ? base.data.callers_complete
-              : null,
+            native_callers_complete:
+              base !== undefined ? base.callers_complete : null,
           },
           destinations: failure.destinations,
           ...(failure.unreadPage === undefined
@@ -568,10 +502,16 @@ export const reconcileHopperCallers = async (
   }
   const addresses = new Set(instructions);
   addresses.add(target.address);
-  const selectedDestination = index.destinations.get(target.address);
-  const callers = new Map(selectedDestination?.callers ?? []);
+  // The index holds forward observations from the examined procedures only. A
+  // miss means none of them named the target: it adds no callers, and does
+  // not show there are none. Relationship coverage stays unknown, with the
+  // scan facts as its reason, whatever the index holds.
+  const selectedDestination: Destination = index.destinations.get(
+    target.address,
+  ) ?? { callers: new Map(), references: [] };
+  const callers = new Map(selectedDestination.callers);
   const selectedReferences: Array<{ caller: Identity; edge: CompactEdge }> = [];
-  for (const item of selectedDestination?.references ?? []) {
+  for (const item of selectedDestination.references) {
     if (!addresses.has(item.edge.target_address)) continue;
     const source =
       item.edge.source_procedure === "caller"
@@ -620,7 +560,7 @@ export const reconcileHopperCallers = async (
   const compactReferences = selectedReferences.map(({ caller, edge }) =>
     compactCallReference(caller, edge),
   );
-  const inventoryCallers = selectedDestination?.callers ?? new Map();
+  const inventoryCallers = selectedDestination.callers;
   const siteCallers = new Map<string, Identity>();
   for (const { caller } of selectedReferences)
     if (
@@ -635,9 +575,8 @@ export const reconcileHopperCallers = async (
     const scan: HopperCallerScanFacts = {
       ...index.counts,
       instructions_complete,
-      native_callers_complete: base?.success
-        ? base.data.callers_complete
-        : null,
+      native_callers_complete:
+        base !== undefined ? base.callers_complete : null,
       stop: {
         code: "retention_budget",
         allowance_bytes: HOPPER_CALLER_SCAN_RETENTION_BYTES,
@@ -702,10 +641,10 @@ export const reconcileHopperCallers = async (
     return [...merged.values()];
   };
   let result: JsonValue;
-  if (operation === "procedure_callers")
-    result = [...new Set([...(parsed.data as string[]), ...callers.keys()])];
-  else if (operation === "analyze_function") {
-    const dossier = functionDossierSchema.parse(parsed.data);
+  if ("callers_complete" in native)
+    result = [...new Set([...native.callers, ...callers.keys()])];
+  else if ("incoming_references" in native) {
+    const dossier = native;
     const identities = new Map(
       dossier.callers.map((item) => [item.address, item]),
     );
@@ -720,13 +659,12 @@ export const reconcileHopperCallers = async (
       ),
     };
   } else {
-    const facts = referencesSchema.parse(parsed.data);
-    result = { ...facts, references: mergeReferences(facts.references) };
+    result = { ...native, references: mergeReferences(native.references) };
   }
   const scan: HopperCallerScanFacts = {
     ...index.counts,
     instructions_complete,
-    native_callers_complete: base?.success ? base.data.callers_complete : null,
+    native_callers_complete: base !== undefined ? base.callers_complete : null,
   };
   return ok({
     result,
@@ -734,9 +672,7 @@ export const reconcileHopperCallers = async (
       native_result: retainedNativeResult,
       forward_observations: {
         target,
-        callee_inventory_callers: [
-          ...(selectedDestination?.callers.values() ?? []),
-        ],
+        callee_inventory_callers: [...selectedDestination.callers.values()],
         call_site_callers: [...siteCallers.values()],
         call_references: compactReferences,
         provenance:

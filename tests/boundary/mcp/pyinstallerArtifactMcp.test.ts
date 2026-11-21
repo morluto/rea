@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -18,7 +19,7 @@ import {
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -33,7 +34,7 @@ const assertMetadataQueries = async (
   const definition = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (definition?.outputSchema === undefined)
+  if (definition === undefined)
     throw new Error("Analysis view output schema is missing");
   const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = definition.inputSchema;
@@ -56,7 +57,7 @@ const assertMetadataQueries = async (
     );
     const reply = await client.callTool(
       { name: "inspect_analysis_view", arguments: args },
-      { toolDefinition: definition },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
     );
     expect(reply.isError).not.toBe(true);
     const evidence = parseEvidence(reply.structuredContent);

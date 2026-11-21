@@ -6,7 +6,7 @@ import {
   type GodotPckTrailerFacts,
 } from "../domain/godotPckFormat.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 
 export interface GodotPckLocation {
   readonly start: number;

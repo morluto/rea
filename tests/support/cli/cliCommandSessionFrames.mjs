@@ -45,7 +45,7 @@ export const createCliSessionFrameReader = (onFrame) => {
   /** @type {Buffer[]} */
   const chunks = [];
   let buffered = 0;
-  return (chunk) => {
+  const read = (chunk) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     chunks.push(bytes);
     buffered += bytes.length;
@@ -74,4 +74,10 @@ export const createCliSessionFrameReader = (onFrame) => {
       if (rest.length > 0) chunks.push(Buffer.from(rest));
     }
   };
+  return Object.assign(read, {
+    finish() {
+      if (buffered > 0)
+        throw new Error("CLI session ended with an incomplete frame");
+    },
+  });
 };

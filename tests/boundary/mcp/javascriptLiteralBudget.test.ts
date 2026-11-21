@@ -46,7 +46,6 @@ for (const scenario of [
       const digest = createHash("sha256").update(source).digest("hex");
       const cliResponse = await cli.run({
         arguments: ["analyze-javascript-application", root, "--json"],
-        timeoutMs: 60_000,
       });
       expect(cliResponse.exitCode).toBe(0);
       const cliEvidence = toolContract(

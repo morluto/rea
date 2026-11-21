@@ -9,11 +9,18 @@ import {
   appleIpsMetadataLine,
   appleIpsReport,
 } from "../../../tests/fixtures/binaryDiagnostics/appleIps.js";
-import {
-  AppleIpsFormatFailure,
-  AppleIpsResourceFailure,
-} from "./AppleIps.errors.js";
+
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
+
+const parserLimit = (name: string, maximum: number) =>
+  expect.objectContaining({
+    failure: expect.objectContaining({
+      kind: "limit",
+      format: "apple-ips",
+      limit: { name, maximum },
+    }),
+  });
 
 const input = inspectAppleIpsInputSchema.parse({
   path: "/artifacts/report.ips",
@@ -45,7 +52,7 @@ it.each(
           : `${metadata}\n${body}${character}`,
     );
     expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-      AppleIpsFormatFailure,
+      ParseFailureError,
     );
   },
 );
@@ -57,6 +64,30 @@ it("accepts only JSON whitespace around each object", () => {
   expect(parseAppleIps(bytes, artifact(bytes), input).coverage.status).toBe(
     "complete",
   );
+});
+
+it("accepts previously recorded rows that omit newly added unknown-key fields", () => {
+  const bytes = appleIpsBytes();
+  const current = parseAppleIps(bytes, artifact(bytes), input);
+  expect(current.threads.length).toBeGreaterThan(0);
+  expect(current.threads[0]?.frames.length).toBeGreaterThan(0);
+  expect(current.images.length).toBeGreaterThan(0);
+  const historical = {
+    ...current,
+    threads: current.threads.map(
+      ({ unlisted_keys: _threadKeys, ...thread }) => ({
+        ...thread,
+        frames: thread.frames.map(
+          ({ unlisted_keys: _frameKeys, ...frame }) => frame,
+        ),
+      }),
+    ),
+    images: current.images.map(
+      ({ unlisted_keys: _imageKeys, ...image }) => image,
+    ),
+  };
+  expect(appleIpsSchema.safeParse(historical).success).toBe(true);
+  expect(appleIpsSchema.safeParse(current).success).toBe(true);
 });
 
 it.each([
@@ -121,10 +152,7 @@ it("refuses integer text amplification before retaining every derived address", 
   const bytes = integerAmplificationBytes();
   expect(bytes.length).toBeLessThan(input.max_file_bytes);
   expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-    expect.objectContaining({
-      boundary: "integer_text",
-      maximum: 8 * 1024 * 1024,
-    }),
+    parserLimit("integer_text", 8 * 1024 * 1024),
   );
 });
 
@@ -176,17 +204,20 @@ it("refuses a stackshot bug_type without a crash body", () => {
   } catch (cause) {
     failure = cause;
   }
-  expect(failure).toBeInstanceOf(AppleIpsFormatFailure);
+  expect(failure).toBeInstanceOf(ParseFailureError);
   expect(failure).toMatchObject({
-    kind: "unsupported",
-    message: expect.stringContaining("288"),
+    failure: {
+      kind: "unsupported",
+      format: "apple-ips",
+      detail: expect.stringContaining("288"),
+    },
   });
 });
 
 it("fails closed on a truncated crash body", () => {
   const bytes = appleIpsBytes({ truncateBody: true });
   expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-    AppleIpsFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -266,7 +297,7 @@ it("fails closed when the image budget is exhausted", () => {
         max_images: 1,
       }),
     ),
-  ).toThrow(AppleIpsResourceFailure);
+  ).toThrow(parserLimit("images", 1));
 });
 
 const parse = (bytes: Buffer, options: Record<string, number> = {}) =>
@@ -552,7 +583,7 @@ it("bounds rejected index text before retaining it", () => {
       ...input,
       max_integer_text_bytes: 19,
     }),
-  ).toThrow(expect.objectContaining({ boundary: "integer_text", maximum: 19 }));
+  ).toThrow(parserLimit("integer_text", 19));
   const parsed = parseAppleIps(bytes, artifact(bytes), {
     ...input,
     max_integer_text_bytes: 20,
@@ -827,14 +858,12 @@ const registerFlood = (count: number): Buffer =>
 it("budgets register slots before expanding threadState rows", () => {
   const flood = registerFlood(150_000);
   expect(flood.length).toBeLessThan(400_000);
-  expect(() => parse(flood)).toThrow(
-    expect.objectContaining({ boundary: "registers", maximum: 16384 }),
-  );
+  expect(() => parse(flood)).toThrow(parserLimit("registers", 16384));
   expect(parse(registerFlood(4), { max_registers: 4 }).coverage.registers).toBe(
     4,
   );
   expect(() => parse(registerFlood(5), { max_registers: 4 })).toThrow(
-    AppleIpsResourceFailure,
+    parserLimit("registers", 4),
   );
 });
 
@@ -849,7 +878,7 @@ it("budgets Rosetta registers with the ordinary registers they follow", () => {
   });
   // The register past the allowance is invalid JSON; the budget must refuse first.
   expect(() => parse(rosetta("?"), { max_registers: 3 })).toThrow(
-    expect.objectContaining({ boundary: "registers", maximum: 3 }),
+    parserLimit("registers", 3),
   );
 });
 
@@ -897,7 +926,7 @@ it("shares the register allowance across Rosetta groups and later ordinary regis
     registers: 3,
   });
   expect(() => parse(mixed("?"), { max_registers: 2 })).toThrow(
-    expect.objectContaining({ boundary: "registers", maximum: 2 }),
+    parserLimit("registers", 2),
   );
 });
 
@@ -905,17 +934,17 @@ it("refuses an over-budget collection before parsing the rows past the allowance
   // Rows after the allowance are invalid JSON; the budget must refuse first.
   const threads = withBody(`{"threads":[{},{},{},?],"usedImages":[]}`);
   expect(() => parse(threads, { max_threads: 3 })).toThrow(
-    expect.objectContaining({ boundary: "threads", maximum: 3 }),
+    parserLimit("threads", 3),
   );
   const frames = withBody(
     `{"threads":[{"frames":[{},{}]},{"frames":[{},?]}],"usedImages":[]}`,
   );
   expect(() => parse(frames, { max_frames: 3 })).toThrow(
-    expect.objectContaining({ boundary: "frames", maximum: 3 }),
+    parserLimit("frames", 3),
   );
   const images = withBody(`{"threads":[],"usedImages":[{},?]}`);
   expect(() => parse(images, { max_images: 1 })).toThrow(
-    expect.objectContaining({ boundary: "images", maximum: 1 }),
+    parserLimit("images", 1),
   );
 });
 
@@ -932,14 +961,14 @@ it("skips unconsumed producer members and bounds fixed structural allowances", (
     (_, index) => `"k${String(index)}":0`,
   ).join(",");
   expect(() => parse(withBody(`{${keys}}`))).toThrow(
-    expect.objectContaining({ boundary: "unlisted_keys", maximum: 1024 }),
+    parserLimit("unlisted_keys", 1024),
   );
   const deep = `${"[".repeat(100)}${"]".repeat(100)}`;
   expect(() => parse(withBody(`{"vmSummary":${deep}}`))).toThrow(
-    expect.objectContaining({ boundary: "nesting", maximum: 64 }),
+    parserLimit("nesting", 64),
   );
   const reasons = JSON.stringify(Array.from({ length: 257 }, () => "r"));
   expect(() =>
     parse(withBody(`{"termination":{"reasons":${reasons}}}`)),
-  ).toThrow(expect.objectContaining({ boundary: "termination_reasons" }));
+  ).toThrow(parserLimit("termination_reasons", 256));
 });

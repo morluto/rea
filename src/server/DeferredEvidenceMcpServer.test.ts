@@ -1,4 +1,3 @@
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { Tool, ServerContext } from "@modelcontextprotocol/server";
@@ -8,14 +7,12 @@ import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
 import { DeferredEvidenceMcpServer } from "./DeferredEvidenceMcpServer.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
+import {
+  phaseArrival,
+  phaseGate,
+  type PhaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 
-const barrier = () => {
-  let release!: () => void;
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-};
 const input = z.strictObject({ n: z.number().int().nonnegative().default(3) });
 const output = z.strictObject({ n: z.number().int() });
 const parameters = {
@@ -51,6 +48,8 @@ const catalog: RecordedMcpCatalog = {
       outputSchema: z.toJSONSchema(output),
     },
   ],
+  toolFamilies: { fixture: "artifact" },
+  promptRequirements: { explain: ["fixture"] },
   evidenceReferenceAlternatives: [],
   prompts: [
     {
@@ -71,7 +70,8 @@ afterEach(async () => {
 
 const fixture = async (
   options: {
-    readonly hold?: ReturnType<typeof barrier>;
+    /** Holds deferred runtime loading after its cleanup is owned. */
+    readonly startup?: PhaseGate;
     readonly analysisSettings?: AnalysisSettings;
     readonly execute?: () => Promise<void>;
     readonly failClose?: () => boolean;
@@ -85,7 +85,6 @@ const fixture = async (
     readonly mode?: "legacy" | "auto";
   } = {},
 ) => {
-  const started = barrier();
   const calls = vi.fn<(n: number, context: ServerContext) => void>();
   const closed = vi.fn();
   let loads = 0;
@@ -111,8 +110,7 @@ const fixture = async (
         if (options.failClose?.()) throw new Error("cleanup denied");
         await target.closePartialRuntime();
       });
-      started.release();
-      await options.hold?.promise;
+      await options.startup?.hold();
       if (options.failLoad) throw new Error("PRIVATE startup cause");
       target.analysisSettings = options.analysisSettings;
       target.materialize(() => {
@@ -156,7 +154,7 @@ const fixture = async (
         );
       });
     },
-    options.maximumInputElements,
+    { maximumInputElements: options.maximumInputElements },
   );
   const client = new Client(
     { name: "deferred-fixture-client", version: "1" },
@@ -177,7 +175,6 @@ const fixture = async (
     server,
     client,
     serverTransport,
-    started,
     calls,
     closed,
     loads: () => loads,
@@ -272,10 +269,13 @@ it("uses recorded Evidence-reference guidance without loading the deferred runti
 });
 
 it("discovers without initialization, then shares one canonical runtime and preserves request metadata", async () => {
-  const hold = barrier();
-  const f = await fixture({ hold });
+  const startup = phaseGate();
+  const f = await fixture({ startup });
   const before = await f.client.listTools();
-  expect(before.tools).toEqual(catalog.tools);
+  // Listings omit the recorded output schemas (the default `off` profile).
+  expect(before.tools).toEqual(
+    catalog.tools.map(({ outputSchema: _output, ...tool }) => tool),
+  );
   expect((await f.client.listPrompts()).prompts).toEqual(
     catalog.prompts.map(({ parameters: _parameters, ...prompt }) => prompt),
   );
@@ -289,10 +289,10 @@ it("discovers without initialization, then shares one canonical runtime and pres
   });
   const pending: Promise<unknown>[] = [a];
   try {
-    await awaitAcknowledgement(f.started.promise, a, "deferred initialization");
+    await startup.reached(a, "deferred initialization");
     const b = f.client.callTool({ name: "fixture", arguments: { n: 7 } });
     pending.push(b);
-    hold.release();
+    startup.release();
     expect((await a).structuredContent).toEqual({ n: 3 });
     expect((await b).structuredContent).toEqual({ n: 7 });
     expect(f.loads()).toBe(1);
@@ -306,7 +306,7 @@ it("discovers without initialization, then shares one canonical runtime and pres
     expect(invalid.isError).toBe(true);
     expect(f.calls).toHaveBeenCalledTimes(2);
   } finally {
-    hold.release();
+    startup.release();
     await Promise.allSettled(pending);
   }
 });
@@ -322,13 +322,9 @@ it.each(["legacy", "auto"] as const)(
   async (mode) => {
     const valid = await fixture({ unionOutput: true, mode });
     const before = await valid.client.listTools();
-    const schema = before.tools.find(
-      ({ name }) => name === "fixture",
-    )?.outputSchema;
-    if (schema === undefined) throw new Error("Missing union output schema");
-    expect(schema).toHaveProperty("anyOf");
-    expect(schema).not.toHaveProperty("properties.result");
-    if (mode === "legacy") expect(schema.type).toBe("object");
+    expect(
+      before.tools.find(({ name }) => name === "fixture")?.outputSchema,
+    ).toBeUndefined();
     expect(valid.loads()).toBe(0);
     const success = await valid.client.callTool({
       name: "fixture",
@@ -358,8 +354,9 @@ it.each(["legacy", "auto"] as const)(
   },
 );
 
-it("initializes through prompt retrieval or completion without an internal client", async () => {
+it("completes a prompt argument as the first operation", async () => {
   const f = await fixture();
+  expect(f.loads()).toBe(0);
   expect(
     (
       await f.client.complete({
@@ -368,36 +365,33 @@ it("initializes through prompt retrieval or completion without an internal clien
       })
     ).completion.values,
   ).toEqual(["Example"]);
-  expect(
-    (
-      await f.client.getPrompt({
-        name: "explain",
-        arguments: { document: "Example" },
-      })
-    ).messages[0]?.content,
-  ).toEqual({ type: "text", text: "Example" });
   expect(f.loads()).toBe(1);
 });
 
 it("retrieves a prompt as the first operation", async () => {
   const f = await fixture();
+  expect(f.loads()).toBe(0);
   const result = await f.client.getPrompt({
     name: "explain",
     arguments: { document: "Example" },
   });
   expect(result.messages).toHaveLength(1);
+  expect(result.messages[0]?.content).toEqual({
+    type: "text",
+    text: "Example",
+  });
   expect(f.loads()).toBe(1);
 });
 
 it("does not execute a tool cancelled while canonical loading is pending", async () => {
-  const hold = barrier();
-  const f = await fixture({ hold });
-  const cancelled = barrier();
+  const startup = phaseGate();
+  const f = await fixture({ startup });
+  const cancelled = phaseArrival();
   const previous = f.serverTransport.onmessage;
   f.serverTransport.onmessage = (message, extra) => {
     previous?.(message, extra);
     if ("method" in message && message.method === "notifications/cancelled")
-      cancelled.release();
+      cancelled.arrive();
   };
   const controller = new AbortController();
   const pending = f.client.callTool(
@@ -406,18 +400,13 @@ it("does not execute a tool cancelled while canonical loading is pending", async
   );
   const rejected = expect(pending).rejects.toBeDefined();
   try {
-    await awaitAcknowledgement(
-      f.started.promise,
-      pending,
-      "cancelled caller initialization",
-    );
+    await startup.reached(pending, "cancelled caller initialization");
     controller.abort();
-    await awaitAcknowledgement(
-      cancelled.promise,
+    await cancelled.reached(
       f.server.ensureRuntime(),
       "cancellation notification",
     );
-    hold.release();
+    startup.release();
     await rejected;
     await f.server.ensureRuntime();
     expect(f.calls).not.toHaveBeenCalled();
@@ -426,7 +415,7 @@ it("does not execute a tool cancelled while canonical loading is pending", async
     ).not.toBe(true);
   } finally {
     controller.abort();
-    hold.release();
+    startup.release();
     await Promise.allSettled([pending, rejected, f.server.ensureRuntime()]);
     if (previous === undefined) delete f.serverTransport.onmessage;
     else f.serverTransport.onmessage = previous;
@@ -434,10 +423,10 @@ it("does not execute a tool cancelled while canonical loading is pending", async
 });
 
 it("keeps an independent caller alive when its peer cancels during shared loading", async () => {
-  const hold = barrier();
-  const f = await fixture({ hold });
-  const secondRequest = barrier();
-  const cancelled = barrier();
+  const startup = phaseGate();
+  const f = await fixture({ startup });
+  const secondRequest = phaseArrival();
+  const cancelled = phaseArrival();
   let toolCalls = 0;
   const previous = f.serverTransport.onmessage;
   f.serverTransport.onmessage = (message, extra) => {
@@ -447,9 +436,9 @@ it("keeps an independent caller alive when its peer cancels during shared loadin
       message.method === "tools/call" &&
       ++toolCalls === 2
     )
-      secondRequest.release();
+      secondRequest.arrive();
     if ("method" in message && message.method === "notifications/cancelled")
-      cancelled.release();
+      cancelled.arrive();
   };
   const controller = new AbortController();
   const a = f.client
@@ -457,28 +446,23 @@ it("keeps an independent caller alive when its peer cancels during shared loadin
     .catch(() => undefined);
   const pending: Promise<unknown>[] = [a];
   try {
-    await awaitAcknowledgement(f.started.promise, a, "shared initialization");
+    await startup.reached(a, "shared initialization");
     const b = f.client.callTool({ name: "fixture", arguments: { n: 8 } });
     pending.push(b);
-    await awaitAcknowledgement(
-      secondRequest.promise,
-      b,
-      "independent caller admission",
-    );
+    await secondRequest.reached(b, "independent caller admission");
     controller.abort();
-    await awaitAcknowledgement(
-      cancelled.promise,
+    await cancelled.reached(
       f.server.ensureRuntime(),
       "peer cancellation notification",
     );
-    hold.release();
+    startup.release();
     await a;
     expect((await b).structuredContent).toEqual({ n: 8 });
     expect(f.calls).toHaveBeenCalledTimes(1);
     expect(f.loads()).toBe(1);
   } finally {
     controller.abort();
-    hold.release();
+    startup.release();
     await Promise.allSettled([...pending, f.server.ensureRuntime()]);
     if (previous === undefined) delete f.serverTransport.onmessage;
     else f.serverTransport.onmessage = previous;
@@ -486,27 +470,23 @@ it("keeps an independent caller alive when its peer cancels during shared loadin
 });
 
 it("joins late initialization during close and prevents target execution", async () => {
-  const hold = barrier();
-  const f = await fixture({ hold });
+  const startup = phaseGate();
+  const f = await fixture({ startup });
   const pending = f.client
     .callTool({ name: "fixture", arguments: {} })
     .catch(() => undefined);
   let closing: Promise<void> | undefined;
   try {
-    await awaitAcknowledgement(
-      f.started.promise,
-      pending,
-      "initialization before close",
-    );
+    await startup.reached(pending, "initialization before close");
     closing = f.server.close();
-    hold.release();
+    startup.release();
     await closing;
     await pending;
     expect(f.calls).not.toHaveBeenCalled();
     expect(f.closed).toHaveBeenCalledTimes(1);
     await expect(f.server.ensureRuntime()).rejects.toThrow("closed");
   } finally {
-    hold.release();
+    startup.release();
     await Promise.allSettled([pending, closing]);
   }
 });
@@ -554,24 +534,18 @@ it("never executes a partially registered handler after initialization fails", a
 
 it("keeps one accepted settings snapshot through a deferred handler while the next call sees updates", async () => {
   const settings = new AnalysisSettings({});
-  const entered = barrier();
-  const held = barrier();
+  const handler = phaseGate();
   const seen: Array<number | undefined> = [];
   const f = await fixture({
     analysisSettings: settings,
     execute: async () => {
-      entered.release();
-      await held.promise;
+      await handler.hold();
       seen.push(settings.read().overrides["asar.max_header_bytes"]);
     },
   });
   const pending = f.client.callTool({ name: "fixture", arguments: {} });
   try {
-    await awaitAcknowledgement(
-      entered.promise,
-      pending,
-      "settings snapshot handler entry",
-    );
+    await handler.reached(pending, "settings snapshot handler entry");
     expect(
       settings.update({
         changes: [
@@ -580,7 +554,7 @@ it("keeps one accepted settings snapshot through a deferred handler while the ne
       }).ok,
     ).toBe(true);
   } finally {
-    held.release();
+    handler.release();
     await Promise.allSettled([pending]);
   }
   expect((await pending).isError).not.toBe(true);

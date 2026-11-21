@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
@@ -373,15 +374,15 @@ export function parseRiscvFarCalls(listing) {
 }
 
 /** Disassemble one fixture symbol with an independent LLVM tool. */
-const disassembleRiscvSymbol = async (path, symbol) => {
-  const command = process.env.REA_RISCV_OBJDUMP ?? "llvm-objdump";
+const disassembleRiscvSymbol = async (path, symbol, run) => {
+  const command = fixtureCommand(FIXTURE_TOOLS.riscvObjdump);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
     maxBuffer: 1024 * 1024,
   };
-  const version = await execute(command, ["--version"], options);
-  const { stdout, stderr } = await execute(
+  const version = await run(command, ["--version"], options);
+  const { stdout, stderr } = await run(
     command,
     ["-d", "--no-show-raw-insn", `--disassemble-symbols=${symbol}`, path],
     options,
@@ -395,19 +396,21 @@ const disassembleRiscvSymbol = async (path, symbol) => {
 };
 
 /** Disassemble the typed fixture's caller with an independent LLVM tool. */
-export async function inspectRiscvCallSites(path) {
+export async function inspectRiscvCallSites(path, run = execute) {
   const { listing, ...tool } = await disassembleRiscvSymbol(
     path,
     "rea_riscv_abi_caller",
+    run,
   );
   return { ...tool, calls: parseRiscvCallSites(listing) };
 }
 
 /** Find the unrelaxed calls of the soft-float fixture's no-return caller. */
-export async function inspectRiscvFarCalls(path) {
+export async function inspectRiscvFarCalls(path, run = execute) {
   const { listing, ...tool } = await disassembleRiscvSymbol(
     path,
     "rea_riscv_stop_caller",
+    run,
   );
   return { ...tool, calls: parseRiscvFarCalls(listing) };
 }

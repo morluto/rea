@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -13,7 +14,7 @@ import {
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { DshCordisDocument } from "../../../src/application/DshCordisPatch.js";
-
+import { ok } from "../../../src/domain/result.js";
 import {
   configureClientConfiguration,
   inspectClientConfiguration,
@@ -98,7 +99,12 @@ describe("DeepSeek Harness configuration paths", () => {
         markerPath: join(home, dshRoot),
       });
       expect(
-        clientSkillDirectories(home, ["dsh"], environment).directories,
+        clientSkillDirectories(
+          home,
+          ["dsh"],
+          environment,
+          HOST_PLATFORM.platform,
+        ).directories,
       ).toEqual([{ client, directory: join(home, agentsRoot, "skills") }]);
     },
   );
@@ -118,7 +124,12 @@ describe("DeepSeek Harness configuration paths", () => {
         markerPath: root,
       });
       expect(
-        clientSkillDirectories(home, ["dsh"], environment).directories,
+        clientSkillDirectories(
+          home,
+          ["dsh"],
+          environment,
+          HOST_PLATFORM.platform,
+        ).directories,
       ).toEqual([{ client: "dsh", directory: join(root, "skills") }]);
     },
   );
@@ -136,9 +147,14 @@ describe("DeepSeek Harness configuration paths", () => {
       resolve("/custom/harness", "cordis.patch.yml"),
     );
     expect(
-      clientSkillDirectories(join("/home/a"), ["dsh"], {
-        DSH_AGENTS_HOME: "/custom/agents",
-      }).directories,
+      clientSkillDirectories(
+        join("/home/a"),
+        ["dsh"],
+        {
+          DSH_AGENTS_HOME: "/custom/agents",
+        },
+        HOST_PLATFORM.platform,
+      ).directories,
     ).toEqual([
       { client: "dsh", directory: resolve("/custom/agents", "skills") },
     ]);
@@ -201,6 +217,7 @@ describe("DeepSeek Harness Cordis patch registration", () => {
               transport: "stdio",
               command: command[0],
               args: command.slice(1),
+              toolCallTimeoutMs: 450_000,
             },
           },
         ],
@@ -304,6 +321,58 @@ describe("DeepSeek Harness Cordis patch registration", () => {
       "not-the-harness-client",
     );
   });
+});
+
+describe("DeepSeek Harness caller-selected platform", () => {
+  it.each([
+    ["win32", { GHIDRA_INSTALL_DIR: "/new", CALLER: "keep" }],
+    [
+      "linux",
+      {
+        ghidra_install_dir: "/old",
+        CALLER: "keep",
+        GHIDRA_INSTALL_DIR: "/new",
+      },
+    ],
+  ] as const)(
+    "writes environment names with %s identity",
+    async (platform, env) => {
+      const { client } = await harnessClient();
+      await writeFile(
+        client.configPath,
+        `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: stale-launcher
+        args: [mcp]
+        env:
+          ghidra_install_dir: /old
+          CALLER: keep
+`,
+      );
+      // Windows names match case-insensitively, so the caller's row is
+      // renamed in place; elsewhere the names are distinct settings.
+      expect(
+        (
+          await configureClientConfiguration(
+            client,
+            { GHIDRA_INSTALL_DIR: "/new" },
+            command,
+            undefined,
+            platform,
+          )
+        ).status,
+      ).toBe("configured");
+      const patches = parseYaml(await readFile(client.configPath, "utf8")) as {
+        insert: { config?: { env?: Record<string, string> } }[];
+      }[];
+      const written = patches[0]?.insert[0]?.config?.env ?? {};
+      expect(Object.entries(written)).toEqual(Object.entries(env));
+    },
+  );
 });
 
 describe("DeepSeek Harness registration identity", () => {
@@ -434,6 +503,7 @@ describe("DeepSeek Harness registration identity", () => {
               transport: "stdio",
               command: command[0],
               args: command.slice(1),
+              toolCallTimeoutMs: 450_000,
             },
           },
         ],
@@ -477,6 +547,7 @@ describe("DeepSeek Harness repair boundaries", () => {
               transport: "stdio",
               command: command[0],
               args: command.slice(1),
+              toolCallTimeoutMs: 450_000,
             },
           },
         ],
@@ -581,6 +652,116 @@ describe("DeepSeek Harness repair boundaries", () => {
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("configured");
   });
+});
+
+it("recognizes REA inside nested Cordis groups and removes only its row", async () => {
+  const { home, client } = await harnessClient();
+  const entry = canonicalEntry();
+  const callerPeer = { id: "caller-peer", name: "caller-plugin" };
+  const opaque = {
+    id: "caller-config",
+    name: "caller-plugin",
+    group: false,
+    config: [entry],
+  };
+  const group = {
+    id: "tools",
+    name: "@deepseek-ai/cordis-plugin-group",
+    group: true,
+    config: [
+      {
+        id: "local",
+        name: "@deepseek-ai/cordis-plugin-group",
+        group: true,
+        config: [entry, callerPeer, opaque],
+      },
+    ],
+  };
+  const initial = stringifyYaml([{ insert: [group] }]).replace(
+    /^(\s*)- id: caller-peer$/m,
+    "$1# keep group sibling\n$1- id: caller-peer",
+  );
+  await writeFile(client.configPath, initial);
+
+  expect(await inspectClientConfiguration(client, {}, command)).toMatchObject({
+    status: "invalid",
+    remediation: expect.stringContaining("group"),
+  });
+  expect(await dshStatus(home)).toMatchObject({
+    state: "invalid",
+    remediation: expect.stringContaining("group"),
+  });
+  expect((await configureClientConfiguration(client, {}, command)).status).toBe(
+    "failed",
+  );
+  expect(await readFile(client.configPath, "utf8")).toBe(initial);
+
+  const host = systemUninstallHost(home);
+  expect(await host.inspectClient(client)).toBeUndefined();
+  expect((await host.removeClient(client)).status).toBe("removed");
+  const text = await readFile(client.configPath, "utf8");
+  expect(parseYaml(text)).toEqual([
+    {
+      insert: [
+        {
+          ...group,
+          config: [{ ...group.config[0], config: [callerPeer, opaque] }],
+        },
+      ],
+    },
+  ]);
+  expect(text).toContain("# keep group sibling");
+  expect((await host.removeClient(client)).status).toBe("skipped");
+  expect(await readFile(client.configPath, "utf8")).toBe(text);
+  expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+    initial,
+  );
+});
+
+it("preserves alias-site comments when removing a nested DSH row", async () => {
+  const { home, client } = await harnessClient();
+  const initial = `- insert:
+    - id: holder
+      name: caller-plugin
+      config:
+        group: &group
+          id: tools
+          name: "@deepseek-ai/cordis-plugin-group"
+          group: true
+          config: &rows
+            - id: rea-mcp
+              name: "@deepseek-ai/dsh-mcp-client"
+            - id: caller-peer
+              name: caller-plugin
+    # caller group placement
+    - *group # caller group explanation
+    - id: second-tools
+      name: "@deepseek-ai/cordis-plugin-group"
+      group: true
+      config: *rows # caller config explanation
+`;
+  await writeFile(client.configPath, initial);
+  const host = systemUninstallHost(home);
+  expect((await host.removeClient(client)).status).toBe("removed");
+  const text = await readFile(client.configPath, "utf8");
+  for (const comment of [
+    "# caller group placement",
+    "# caller group explanation",
+    "# caller config explanation",
+  ])
+    expect(text).toContain(comment);
+  const rows = loadedInserts(text);
+  const expectedPeer = { id: "caller-peer", name: "caller-plugin" };
+  expect(rows.find(({ id }) => id === "holder")?.config).toMatchObject({
+    group: {
+      config: [expect.objectContaining({ id: "rea-mcp" }), expectedPeer],
+    },
+  });
+  for (const id of ["tools", "second-tools"])
+    expect(rows.find((row) => row.id === id)?.config).toEqual([expectedPeer]);
+  expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+    initial,
+  );
 });
 
 describe("DeepSeek Harness expression-backed structure", () => {
@@ -747,6 +928,185 @@ describe("DeepSeek Harness registration state", () => {
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("unchanged");
+  });
+});
+
+describe("DeepSeek Harness tool call timeout", () => {
+  it("writes the recommended tool call timeout into a fresh registration", async () => {
+    const { client } = await harnessClient();
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(450_000);
+  });
+
+  it("derives a deadline beyond Node's timer ceiling for an overridden provider startup", async () => {
+    const { client } = await harnessClient();
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          {
+            REA_ANALYSIS_PROVIDER: "ida",
+            REA_GHIDRA_STARTUP_TIMEOUT_MS: "2147483647",
+          },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(2_147_603_647);
+  });
+
+  it("preserves a caller-selected positive timeout through a refresh", async () => {
+    const { home, client } = await harnessClient();
+    const entry = canonicalEntry();
+    await writeFile(
+      client.configPath,
+      stringifyYaml([
+        {
+          insert: [
+            {
+              ...entry,
+              config: { ...entry.config, toolCallTimeoutMs: 900_000 },
+            },
+          ],
+        },
+      ]),
+    );
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("unchanged");
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(900_000);
+    expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
+  });
+
+  it("advises when a configured timeout is shorter than the provider allowance", async () => {
+    const { home, client } = await harnessClient();
+    const entry = canonicalEntry();
+    await writeFile(
+      client.configPath,
+      stringifyYaml([
+        {
+          insert: [
+            {
+              ...entry,
+              config: { ...entry.config, toolCallTimeoutMs: 300_000 },
+            },
+          ],
+        },
+      ]),
+    );
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("unchanged");
+    expect(await dshStatus(home)).toMatchObject({
+      state: "aligned",
+      advisory: expect.stringContaining("toolCallTimeoutMs = 450000 ms"),
+    });
+  });
+});
+
+describe("DeepSeek Harness tool call timeout repair", () => {
+  it("repairs a registration without a tool timeout", async () => {
+    const { home, client } = await harnessClient();
+    await writeFile(
+      client.configPath,
+      `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: ${command[0]}
+        args: [${command.slice(1).join(", ")}]
+`,
+    );
+    expect(await dshStatus(home)).toMatchObject({ state: "stale" });
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(450_000);
+    expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("unchanged");
+  });
+
+  it("repairs a malformed literal timeout with the recommended deadline", async () => {
+    const { client } = await harnessClient();
+    const entry = canonicalEntry();
+    await writeFile(
+      client.configPath,
+      stringifyYaml([
+        {
+          insert: [
+            {
+              ...entry,
+              config: { ...entry.config, toolCallTimeoutMs: '"450000"' },
+            },
+          ],
+        },
+      ]),
+    );
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(450_000);
+  });
+
+  it("preserves an expression-backed timeout and reports its value unknown", async () => {
+    const { home, client } = await harnessClient();
+    const document = parseDocument(
+      stringifyYaml([{ insert: [canonicalEntry()] }]),
+    );
+    const expression = document.createNode("process.env.REA_TOOL_TIMEOUT");
+    expression.tag = "tag:yaml.org,2002:js";
+    expression.comment = " caller timeout";
+    document.setIn([0, "insert", 0, "config", "toolCallTimeoutMs"], expression);
+    const original = document.toString();
+    await writeFile(client.configPath, original);
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("unchanged");
+    expect(await readFile(client.configPath, "utf8")).toBe(original);
+    expect(await dshStatus(home)).toMatchObject({
+      state: "aligned",
+      advisory: expect.stringContaining("effective timeout is unknown"),
+    });
+
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          { REA_ANALYSIS_PROVIDER: "ghidra" },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    const refreshed = await readFile(client.configPath, "utf8");
+    expect(
+      cordisPatches(refreshed)[0]?.insert?.[0]?.config?.toolCallTimeoutMs,
+    ).toEqual({ __jsExpr: "process.env.REA_TOOL_TIMEOUT" });
+    expect(refreshed).toContain("# caller timeout");
+    expect(cordisPatches(refreshed)[0]?.insert?.[0]?.config?.env).toMatchObject(
+      { REA_ANALYSIS_PROVIDER: "ghidra" },
+    );
   });
 });
 
@@ -1111,6 +1471,111 @@ describe("DeepSeek Harness entry ownership", () => {
     expect(await readFile(client.configPath, "utf8")).toContain(
       "!!js process.env.GHIDRA_INSTALL_DIR",
     );
+  });
+});
+
+describe("DeepSeek Harness budget resolver expressions", () => {
+  const budgetResolver = (budgetMs: number) =>
+    Object.assign(async () => ok(budgetMs), {
+      budgetSettings: () => new Set(["REA_IDA_MCP_CONFIG"]),
+    });
+
+  it("keeps an environment expression while a budget resolver is supplied", async () => {
+    const { home, client } = await harnessClient();
+    await writeFile(
+      client.configPath,
+      `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: stale-launcher
+        args: [mcp]
+        env:
+          GHIDRA_INSTALL_DIR: !!js process.env.GHIDRA_INSTALL_DIR
+`,
+    );
+    const resolver = budgetResolver(45_000);
+    // A declared read set keeps the budget gate fail-closed only for settings
+    // the resolver may read, so the unrelated expression stays preserved and
+    // the row is still classified instead of rejected.
+    expect(
+      await readClientRegistrationStatuses(home, undefined, {
+        platform: process.platform,
+        environment: {},
+        resolveProviderRequestBudget: resolver,
+      }),
+    ).toMatchObject([
+      expect.objectContaining({ client: "dsh", state: "stale" }),
+    ]);
+    expect(
+      (await configureClientConfiguration(client, {}, command, resolver))
+        .status,
+    ).toBe("configured");
+    const text = await readFile(client.configPath, "utf8");
+    expect(text).toContain("!!js process.env.GHIDRA_INSTALL_DIR");
+    expect(text).not.toContain("stale-launcher");
+  });
+
+  it("derives the declared provider request budget into the written timeout", async () => {
+    const { home, client } = await harnessClient();
+    await writeFile(
+      client.configPath,
+      `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: stale-launcher
+        args: [mcp]
+`,
+    );
+    const resolver = budgetResolver(900_000);
+    expect(
+      (await configureClientConfiguration(client, {}, command, resolver))
+        .status,
+    ).toBe("configured");
+    // The 900000 ms upstream request budget joins the allowance instead of
+    // leaving the written deadline at the startup-only estimate.
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(1_020_000);
+    expect(
+      await readClientRegistrationStatuses(home, undefined, {
+        platform: process.platform,
+        environment: {},
+        resolveProviderRequestBudget: resolver,
+      }),
+    ).toMatchObject([
+      expect.objectContaining({ client: "dsh", state: "aligned" }),
+    ]);
+  });
+
+  it("fails closed when a budget-read setting stays an expression", async () => {
+    const { client } = await harnessClient();
+    const initial = `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: stale-launcher
+        args: [mcp]
+        env:
+          REA_IDA_MCP_CONFIG: !!js process.env.REA_IDA_MCP_CONFIG
+`;
+    await writeFile(client.configPath, initial);
+    const resolver = budgetResolver(900_000);
+    // The resolver may read REA_IDA_MCP_CONFIG, so an unresolved expression
+    // there blocks budget derivation instead of treating it as absent.
+    expect(
+      (await configureClientConfiguration(client, {}, command, resolver))
+        .status,
+    ).toBe("failed");
+    expect(await readFile(client.configPath, "utf8")).toBe(initial);
   });
 });
 
@@ -1611,6 +2076,54 @@ describe("DeepSeek Harness inert anchors", () => {
 });
 
 describe("DeepSeek Harness alias anchors", () => {
+  it.each(["setup", "uninstall"] as const)(
+    "retains caller alias annotations when %s removes their anchor",
+    async (operation) => {
+      const { home, client } = await harnessClient();
+      const initial = `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        command: &oldLauncher stale-launcher
+- insert:
+    - id: caller
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        command:
+          # caller command explanation
+          *oldLauncher # caller inline comment
+        transport: &callerTransport stdio
+        env:
+          CALLER_TRANSPORT: *callerTransport # unrelated alias
+`;
+      await writeFile(client.configPath, initial);
+      const result =
+        operation === "setup"
+          ? await configureClientConfiguration(client, {}, command)
+          : await systemUninstallHost(home).removeClient(client);
+      expect(result.status).toBe(
+        operation === "setup" ? "configured" : "removed",
+      );
+      const text = await readFile(client.configPath, "utf8");
+      expect(loadedInserts(text).find(({ id }) => id === "caller")).toEqual({
+        id: "caller",
+        name: "@deepseek-ai/dsh-mcp-client",
+        config: {
+          command: "stale-launcher",
+          transport: "stdio",
+          env: { CALLER_TRANSPORT: "stdio" },
+        },
+      });
+      expect(text).toContain("# caller command explanation");
+      expect(text).toContain("# caller inline comment");
+      expect(text).toContain("*callerTransport # unrelated alias");
+      expect(text).not.toContain("*oldLauncher");
+      expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+        initial,
+      );
+    },
+  );
+
   it("rewrites an entry id alias before removing its anchor", async () => {
     const { client } = await harnessClient();
     await writeFile(
@@ -1693,6 +2206,7 @@ const canonicalEntry = () => ({
     transport: "stdio",
     command: command[0],
     args: command.slice(1),
+    toolCallTimeoutMs: 450_000,
   },
 });
 
@@ -2344,14 +2858,19 @@ describe("DeepSeek Harness caller node metadata", () => {
 });
 
 describe("DeepSeek Harness uninstall of a shared operation", () => {
-  it("keeps a group patch's own fields and comment when its only row was REA's", async () => {
+  it("keeps a group insert from activating its ignored overrides on uninstall", async () => {
     const { home, client } = await harnessClient();
     const entry = canonicalEntry();
-    await writeFile(
-      client.configPath,
-      `- insert:
-    - id: user-a
-      name: plugin-a
+    const initial = `- insert:
+    - id: tools
+      name: "@deepseek-ai/cordis-plugin-group"
+      group: true
+      config:
+        - id: user-a
+          name: plugin-a
+- id: user-a
+  config:
+    sandbox: permissive
 # caller group patch
 - id: tools
   config:
@@ -2364,18 +2883,32 @@ describe("DeepSeek Harness uninstall of a shared operation", () => {
         transport: stdio
         command: ${entry.config.command}
         args: ${JSON.stringify(entry.config.args)}
-`,
-    );
+`;
+    await writeFile(client.configPath, initial);
 
-    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
-      "removed",
-    );
+    const host = systemUninstallHost(home);
+    expect((await host.removeClient(client)).status).toBe("removed");
     const text = await readFile(client.configPath, "utf8");
     expect(parseYaml(text)).toEqual([
-      { insert: [{ id: "user-a", name: "plugin-a" }] },
-      { id: "tools", config: { sandbox: "strict" } },
+      {
+        insert: [
+          {
+            id: "tools",
+            name: "@deepseek-ai/cordis-plugin-group",
+            group: true,
+            config: [{ id: "user-a", name: "plugin-a" }],
+          },
+        ],
+      },
+      { id: "user-a", config: { sandbox: "permissive" } },
+      { id: "tools", config: { sandbox: "strict" }, insert: [] },
     ]);
     expect(text).toContain("# caller group patch");
+    expect((await host.removeClient(client)).status).toBe("skipped");
+    expect(await readFile(client.configPath, "utf8")).toBe(text);
+    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+      initial,
+    );
   });
 
   it("keeps an operation's own fields when setup removes a second REA row from it", async () => {
@@ -2406,7 +2939,10 @@ ${row("second-launcher")}`,
     const text = await readFile(client.configPath, "utf8");
     expect(text).toContain("# caller operation");
     expect(loadedInserts(text)).toHaveLength(1);
-    expect((parseYaml(text) as unknown[]).at(-1)).toEqual({ disabled: false });
+    expect((parseYaml(text) as unknown[]).at(-1)).toEqual({
+      disabled: false,
+      insert: [],
+    });
     expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
   });
 

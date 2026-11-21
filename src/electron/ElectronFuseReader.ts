@@ -1,4 +1,10 @@
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
+import {
+  malformedInput,
+  unsupportedInput,
+  ParseFailureError,
+  type LimitRef,
+} from "../domain/parseFailure.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
 import { decodePeMachine } from "../domain/peMachine.js";
@@ -6,13 +12,13 @@ import type { ResolvedElectronFuseFile } from "./ElectronFusePath.js";
 import { createHash } from "node:crypto";
 import { lstat, type FileHandle } from "node:fs/promises";
 
-import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
+import { readMachoImage } from "../domain/apple/machoLoadCommandReader.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
   hasMachoMagic,
   readFatHeaderPrefix,
 } from "../domain/apple/machoContainer.js";
-import type { ReadAt } from "../artifacts/apple/MachoLoadCommandReader.js";
+import type { ReadAt } from "../domain/apple/machoLoadCommandReader.js";
 import {
   electronFuseName,
   electronFuseState,
@@ -25,11 +31,11 @@ import {
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 
 /** Admission and search bounds for one Electron executable. */
 export const ELECTRON_FUSE_LIMITS = {
@@ -59,24 +65,15 @@ interface SliceRange {
   readonly hidden?: boolean;
 }
 
-/** The selected container is malformed or outside the supported formats. */
-export class ElectronFuseFormatFailure extends Error {
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    message: string,
-  ) {
-    super(message);
-    this.name = "ElectronFuseFormatFailure";
-  }
-}
-
 /** A measured bound was hit before a complete fuse report could be returned. */
-export class ElectronFuseResourceFailure extends Error {
+export class ElectronFuseResourceFailure extends ParseFailureError<"limit"> {
   constructor(
-    readonly boundary: "file-size" | "capacity",
+    readonly limit: LimitRef & {
+      readonly name: "maximum_input_bytes" | "maximum_sentinels_per_slice";
+    },
     message: string,
   ) {
-    super(message);
+    super({ kind: "limit", format: "electron-fuses", detail: message, limit });
     this.name = "ElectronFuseResourceFailure";
   }
 }
@@ -130,13 +127,17 @@ export const readElectronFuseImage = async (
   )
     throw new RegularFileChangedError(path);
   if (!before.isFile() || before.isSymbolicLink())
-    throw new ElectronFuseFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      "native-binary",
       `Expected a regular file without a symlink: ${path}`,
     );
   if (before.size > BigInt(ELECTRON_FUSE_LIMITS.maximumFileBytes))
     throw new ElectronFuseResourceFailure(
-      "file-size",
+      {
+        name: "maximum_input_bytes",
+        maximum: ELECTRON_FUSE_LIMITS.maximumFileBytes,
+        required: before.size,
+      },
       `Selected artifact exceeds ${ELECTRON_FUSE_LIMITS.maximumFileBytes} bytes: ${path}`,
     );
   const size = Number(before.size);
@@ -227,8 +228,8 @@ const identifyContainer = async (
         { index: 0, fileOffset: 0, size, architecture: pe.architecture },
       ],
     };
-  throw new ElectronFuseFormatFailure(
-    "unsupported",
+  throw unsupportedInput(
+    "native-binary",
     `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`,
   );
 };
@@ -248,10 +249,9 @@ const identifyMacho = async (
       facts.status === "not-mach-o"
         ? `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`
         : facts.reason;
-    throw new ElectronFuseFormatFailure(
-      facts.status === "malformed" ? "malformed" : "unsupported",
-      reason,
-    );
+    throw facts.status === "malformed"
+      ? malformedInput("macho", reason)
+      : unsupportedInput("macho", reason);
   }
   const fat = readFatHeaderPrefix(head);
   const format =
@@ -356,7 +356,10 @@ const absorbChunk = (
       if (!state.hits.includes(sentinelOffset)) {
         if (state.hits.length >= ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice)
           throw new ElectronFuseResourceFailure(
-            "capacity",
+            {
+              name: "maximum_sentinels_per_slice",
+              maximum: ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice,
+            },
             `Slice ${state.slice.index} contains more than ${ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice} Electron fuse sentinels.`,
           );
         state.hits.push(sentinelOffset);
