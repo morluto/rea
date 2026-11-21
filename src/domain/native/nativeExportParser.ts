@@ -168,7 +168,10 @@ const PE_LIMITATIONS = [
 ];
 
 /** Read the PE export directory: every used address-table slot and its names. */
-const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
+function* parsePeExports(
+  bytes: Buffer,
+  artifact: Artifact,
+): Generator<void, NativeExports> {
   const image = readPeImage(bytes);
   const base = image.image_base ?? 0n;
   const directory = image.pe_data_directories?.[PE_EXPORT_DIRECTORY];
@@ -241,6 +244,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
   const namesByFunction = new Map<number, string[]>();
   const namedFunctions = new Set<number>();
   for (let index = 0; index < nameCount; index++) {
+    if (index % 1024 === 0) yield;
     const functionIndex = reader.u16(ordinals + index * 2);
     const nameRva = reader.u32(names + index * 4);
     if (functionIndex >= functionCount) {
@@ -273,6 +277,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
   const forwarderEnd = directory.address + directory.size;
   const exports: PeExport[] = [];
   for (let index = 0; index < functionCount; index++) {
+    if (index % 1024 === 0) yield;
     const rva = reader.u32(functions + index * 4);
     // A zero slot is an unused ordinal, not an export.
     if (rva === 0) continue;
@@ -301,6 +306,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     const exportNames = namesByFunction.get(index);
     if (exportNames !== undefined)
       for (const name of exportNames) {
+        if (exports.length % 1024 === 0) yield;
         retain.row(target.forwarder);
         exports.push({ name, ordinal, ...target });
       }
@@ -324,7 +330,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     issues,
     limitations: PE_LIMITATIONS,
   };
-};
+}
 
 const ELF_LIMITATIONS = [
   "Rows list defined default- or protected-visibility global, weak and unique dynamic symbols; local, hidden, internal and undefined symbols are not exports.",
@@ -943,7 +949,7 @@ export function* parseNativeExportsSteps(
       readElfDirectoryFromBuffer(bytes, OPERATION),
     );
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ")))
-    return parsePeExports(bytes, artifact);
+    return yield* parsePeExports(bytes, artifact);
   throw new BinaryFormatFailure(
     "unsupported",
     "Only PE and ELF images are supported; inspect Mach-O exports with inspect_macho",
@@ -962,13 +968,13 @@ export const parseNativeExportsCooperative = async (
   artifact: Artifact,
   pause: ZstandardFramePause,
 ): Promise<NativeExports> => {
-  if (!hasElfMagic(bytes)) return parseNativeExports(bytes, artifact);
-  const directory = await readElfDirectoryFromBufferCooperative(
-    bytes,
-    pause,
-    OPERATION,
-  );
-  const steps = parseElfExportsFromDirectorySteps(bytes, artifact, directory);
+  const steps = hasElfMagic(bytes)
+    ? parseElfExportsFromDirectorySteps(
+        bytes,
+        artifact,
+        await readElfDirectoryFromBufferCooperative(bytes, pause, OPERATION),
+      )
+    : parseNativeExportsSteps(bytes, artifact);
   let step = steps.next();
   while (!step.done) {
     await pause();
