@@ -93,6 +93,14 @@ export const observeCdpSession = async (
       context.sessionId,
       context.signal,
     );
+    // Page.enable can replay earlier Page history. Observe subsequent events
+    // before enabling Network so preparation retains new navigation and the
+    // request identities needed for failures inside the armed window.
+    removeListener = onCdpTargetEvent(
+      context.connection,
+      context.sessionId,
+      (event) => capture.ingest(event),
+    );
     await context.connection.send(
       "Network.enable",
       {},
@@ -104,11 +112,6 @@ export const observeCdpSession = async (
       { timeDomain: "timeTicks" },
       context.sessionId,
       context.signal,
-    );
-    removeListener = onCdpTargetEvent(
-      context.connection,
-      context.sessionId,
-      (event) => capture.ingest(event),
     );
     // Host wall time marks command dispatch. The returned browser monotonic
     // timestamp is the authoritative cutoff for timestamped lifecycle facts.
