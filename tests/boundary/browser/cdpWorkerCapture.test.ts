@@ -25,7 +25,10 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { readScopedWorkerSource } from "../../../src/browser/CdpWorkerCapture.js";
+import {
+  readScopedWorkerSource,
+  workerSetupInterruptedLimitation,
+} from "../../../src/browser/CdpWorkerCapture.js";
 import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { browserWorkerEvidenceScopeSchema } from "../../../src/domain/browserWorkerEvidenceScope.js";
@@ -1698,11 +1701,7 @@ it("retains the coverage gap when service worker control returns after interrupt
   expect(observation.completeness.unavailable_sections).toEqual(
     expect.arrayContaining(["scripts", "script_sources", "network_requests"]),
   );
-  expect(
-    observation.limitations.some((reason) =>
-      reason.includes("domain setup was interrupted"),
-    ),
-  ).toBe(true);
+  expect(observation.limitations).toContain(workerSetupInterruptedLimitation);
 });
 
 it.each([false, true, null])(

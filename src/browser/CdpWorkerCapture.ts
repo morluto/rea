@@ -29,6 +29,9 @@ import {
   sourceResult,
 } from "./CdpCaptureValues.js";
 
+export const workerSetupInterruptedLimitation =
+  "Worker domain setup was interrupted when the session detached or page control ended. Coverage remains incomplete for this observation.";
+
 const workerAutoAttachParameters = {
   autoAttach: true,
   waitForDebuggerOnStart: false,
@@ -997,7 +1000,7 @@ export class CdpWorkerCapture {
       for (const domain of ["Runtime", "Debugger", "Network"] as const) {
         if (!this.#canCollect(worker)) {
           worker.item.observation.limitations.push(
-            "Worker domain setup was interrupted when the session detached or page control ended. Coverage remains incomplete for this observation.",
+            workerSetupInterruptedLimitation,
           );
           return;
         }
