@@ -1,16 +1,19 @@
+import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
+import { testWaitDeadline } from "../../support/testWait.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import type { ProviderProcessHandle } from "../../../src/process/ProviderProcess.js";
 import { createRizinCoverageHarness } from "./RizinDebugSessionCoverage.fixtures.js";
 import {
   rizinTestInferiorTty,
   stopFakeNoInferior,
 } from "./RizinTestInferiorTty.js";
 
-const { cleanup, createManager, makeProvider, start } =
+const { cleanup, createManager, makeProvider, start, spawnOwnedProcess } =
   createRizinCoverageHarness();
 afterEach(cleanup);
 
@@ -86,20 +89,28 @@ receiveLines((line) => {
 );
 
 it.skipIf(process.platform === "win32").each(["stopped", "rejected"] as const)(
-  "retains timeout output when Rizin's first stop is %s",
+  "retains timeout output and process ownership when Rizin's first stop is %s",
   async (stopOutcome) => {
     const provider = await makeProvider(`
 ${receiveLines}
 process.stdout.write("\\0");
 receiveLines((line) => {
-  if (line === "slow") process.stdout.write("partial-timeout\\0");
+  if (line === "slow") process.stdout.write(Buffer.from("partial-timeout\\xff\\0", "latin1"));
 });
 `);
+    let child: ProviderProcessHandle | undefined;
     let attemptedStop = false;
     const { manager, sessionId } = await start(
       provider,
       {
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProcess(options);
+          child = launched.process;
+          return launched;
+        },
         stopProcess: (session, name, options) => {
+          // The command clock is controlled; physical stop uses its real budget.
+          vi.useRealTimers();
           if (stopOutcome === "rejected" && !attemptedStop) {
             attemptedStop = true;
             return Promise.reject("stop failed");
@@ -109,33 +120,67 @@ receiveLines((line) => {
       },
       { REA_DEBUGGER_COMMAND_DEADLINE_MS: "50" },
     );
-    const timedOut = await manager.execute(sessionId, "slow");
-    expect(timedOut.ok).toBe(stopOutcome === "stopped");
-
-    if (timedOut.ok) {
-      expect(timedOut.value.result).toMatchObject({
-        output: "partial-timeout",
-        output_truncated: true,
-        completion_status: "unknown",
+    const stdout = child?.stdout;
+    if (!stdout) throw new Error("Expected an owned provider stdout stream");
+    const controller = new AbortController();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const command = manager.execute(sessionId, "slow", controller.signal);
+    const partialResult = {
+      output: "partial-timeout�",
+      output_invalid_utf8: true,
+      output_truncated: true,
+      completion_status: "unknown",
+    };
+    try {
+      const signal = AbortSignal.timeout(testWaitDeadline());
+      while (
+        !manager.status(sessionId)?.recent_output.includes(partialResult.output)
+      )
+        await once(stdout, "data", { signal });
+      await vi.advanceTimersByTimeAsync(49);
+      expect(manager.status(sessionId)?.state).toBe("ready");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(manager.status(sessionId)).toMatchObject({
+        state: "closed",
+        closed_reason_code: "command-deadline",
       });
-      expect(timedOut.value.evidence.limitations.join(" ")).toContain(
-        "timed out",
-      );
-    } else {
-      expect(timedOut.error.cleanupIncomplete).toBe(true);
-      expect(
-        evidenceSchema.parse(timedOut.error.partialObservation)
-          .normalized_result,
-      ).toMatchObject({
-        output: "partial-timeout",
-        completion_status: "unknown",
-      });
-      expect(timedOut.error.cleanup?.reason).toContain("stop failed");
+    } finally {
+      vi.useRealTimers();
+      if (manager.status(sessionId)?.closed_reason_code !== "command-deadline")
+        controller.abort("timeout fixture cleanup");
+      await command;
     }
 
-    expect(manager.status(sessionId)?.state).toBe("closed");
+    const timedOut = await command;
+    expect(timedOut.ok).toBe(stopOutcome === "stopped");
+    const evidence = timedOut.ok
+      ? timedOut.value.evidence
+      : evidenceSchema.parse(timedOut.error.partialObservation);
+    expect(evidence.normalized_result).toMatchObject(partialResult);
+    expect(evidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/timed out.*50 ms.*completion is unknown/u),
+        expect.stringContaining("did not form valid UTF-8"),
+      ]),
+    );
+    if (timedOut.ok) {
+      expect(timedOut.value.result).toMatchObject(partialResult);
+      expect(child?.signalCode).toBe("SIGTERM");
+    } else {
+      expect(timedOut.error).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [sessionId],
+        diagnostics: { session_stop: "command-deadline" },
+      });
+      expect(timedOut.error.cleanup?.reason).toContain("stop failed");
+      expect(evidence.limitations.join(" ")).toContain("stop failed");
+      expect(child?.signalCode).toBeNull();
+    }
+
     expect((await manager.execute(sessionId, "dr")).ok).toBe(false);
     expect((await manager.close(sessionId)).ok).toBe(true);
+    expect(child?.signalCode).toBe("SIGTERM");
+    expect(manager.status(sessionId)).toBeUndefined();
     if (!timedOut.ok) expect(timedOut.error.cleanupIncomplete).toBe(false);
   },
 );

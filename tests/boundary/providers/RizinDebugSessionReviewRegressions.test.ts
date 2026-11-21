@@ -79,12 +79,6 @@ const startRizinWithOwnedStop = async (provider: string) => {
   };
 };
 
-const expectOwnedProcessExited = async (pidText: string): Promise<void> => {
-  const pid = Number(pidText);
-  expect(Number.isInteger(pid)).toBe(true);
-  expect(() => process.kill(pid, 0)).toThrow();
-};
-
 afterEach(async () => {
   for (const inferior of inferiorProcesses.splice(0)) {
     if (inferior.exitCode !== null || inferior.signalCode !== null) continue;
@@ -652,54 +646,6 @@ process.stdin.on("data", (chunk) => {
       });
     }
     expect(manager.status(sessionId)).toBeDefined();
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "waits for the Rizin process to exit when command correlation times out",
-  async () => {
-    directory = await createTestTempDirectory("rea-rizin-command-timeout-");
-    const provider = join(directory, "fake-rizin-command-timeout.mjs");
-    await writeFile(
-      provider,
-      `#!/usr/bin/env node
-await import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(join(directory ?? "", "pid"))}, String(process.pid)));
-process.stdout.write("\\0");
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", () => process.stdout.write(Buffer.from([0xff, 0])));
-`,
-    );
-    await chmod(provider, 0o700);
-    const manager = createRizinTestManager({
-      REA_RIZIN_COMMAND: provider,
-      REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
-    });
-    managers.push(manager);
-    const started = await manager.start({
-      path: "/tmp/fixture.bin",
-      inferior_tty: await rizinTestInferiorTty(),
-    });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-
-    const result = await manager.execute(started.value.session_id, "dr");
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.result).toMatchObject({
-        output: "�",
-        output_truncated: true,
-        completion_status: "unknown",
-        output_invalid_utf8: true,
-      });
-      expect(result.value.evidence.limitations).toContain(
-        "Collected command frames contained invalid UTF-8 bytes; decoded text may contain replacement characters.",
-      );
-    }
-    await expectOwnedProcessExited(
-      await readFile(join(directory, "pid"), "utf8"),
-    );
-    expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
 
