@@ -51,6 +51,8 @@
 * **native:** label XML plists that file calls data as xml ([#12910](https://github.com/morluto/rea/issues/12910)) ([f03cce9](https://github.com/morluto/rea/commit/f03cce9c01d184ffade34dcb36fd05c0c0350a5e))
 * **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
 * **pe:** exclude section padding from RVA metadata reads ([#12755](https://github.com/morluto/rea/issues/12755)) ([c5b5d9f](https://github.com/morluto/rea/commit/c5b5d9f7ea3f0f32a3ebf0834314ae3888ab4132))
+* **reference:** preserve host spelling for Git metadata paths ([ae8cd50](https://github.com/morluto/rea/commit/ae8cd50ff755e810643ee7f6918121796becbc31))
+* **reference:** render invalid Git config path with native separators ([0d71123](https://github.com/morluto/rea/commit/0d7112321d52013fb2be5a593b5bfbe7006a8888))
 * **reference:** retain physical Git read failure after cleanup refusal ([#12848](https://github.com/morluto/rea/issues/12848)) ([f4937a0](https://github.com/morluto/rea/commit/f4937a04be3148a7f9a191f1114a8210b7264108))
 * **rizin:** report the required inferior terminal field ([#13019](https://github.com/morluto/rea/issues/13019)) ([d84652e](https://github.com/morluto/rea/commit/d84652e55b43ad7c494efe67d8324b35d4a05695))
 * **setup:** accept hyphenated client names and suggest the closest one ([ed5c3dd](https://github.com/morluto/rea/commit/ed5c3dd10d937eb5e6bb8c41afa44eb6b0af2052))
