@@ -36,7 +36,7 @@ export const registerUserConfigCommands = (
       get: z
         .string()
         .optional()
-        .describe("Show the configured value and source for one setting"),
+        .describe("Show the value and source for one provider setting"),
     }),
     run: async ({ options }) =>
       logCliCommand(logger, CLI_COMMANDS.config, async () => {
@@ -74,9 +74,16 @@ export const registerUserConfigCommands = (
             rejectSetting(options.get, supported);
           }
           const entry = (await effectiveSettings())[options.get];
-          return entry === undefined
-            ? { setting: options.get, value: null, source: "auto-detect" }
-            : { setting: options.get, ...entry };
+          if (entry !== undefined) return { setting: options.get, ...entry };
+          const platform = HOST_PLATFORM.platform;
+          const value =
+            options.get === "HOPPER_LAUNCHER_PATH" &&
+            (platform === "darwin" || platform === "linux")
+              ? (
+                  await import("../hopperPaths/HopperLauncherDiscovery.js")
+                ).selectedHopperLauncherPath(undefined, platform, environment)
+              : null;
+          return { setting: options.get, value, source: "auto-detect" };
         }
         if (options.set.length > 0 || options.unset.length > 0) {
           const settings: Partial<Record<PersistedSetting, string>> = {};

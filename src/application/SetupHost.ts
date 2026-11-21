@@ -1,4 +1,5 @@
 import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
+import { userConfigRegistrationEnvironment } from "../config/userConfig.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
@@ -193,8 +194,8 @@ export const systemSetupHost = (
       scope?: DoctorScope,
     ): Promise<SetupInitialState> => {
       const diagnosis = await runDoctor(undefined, doctorHost, scope);
-      const providerEnvironment: SetupProviderEnvironment =
-        omitEnvironmentSettings(
+      const providerEnvironment: SetupProviderEnvironment = {
+        ...omitEnvironmentSettings(
           {
             ...providerRegistrationEnvironment(
               diagnosis.providerInspections ?? [],
@@ -205,7 +206,11 @@ export const systemSetupHost = (
             ...explicitSetupRegistrationEnvironment(environment),
           },
           savedDefaults,
-        );
+        ),
+        ...(savedDefaults !== undefined && savedDefaults.size > 0
+          ? userConfigRegistrationEnvironment(environment, platform)
+          : {}),
+      };
       const requestedProvider = analysisProviderSelectorSchema.safeParse(
         environment.REA_ANALYSIS_PROVIDER,
       );

@@ -1230,9 +1230,13 @@ policy.
 
 Use `rea config --set NAME=VALUE` to save a provider path in
 `${XDG_CONFIG_HOME:-~/.config}/rea/rea.json`. `rea config --get NAME --json`
-shows the configured value and its source. `rea config --unset NAME` removes
-the saved value. Environment variables override the file, and absent settings
-use provider discovery.
+shows the value and its source. For Hopper on macOS and Linux, it reports
+the launcher path the provider would try when no value is set.
+`rea config --unset NAME` removes the saved value. Environment variables override the file, and absent settings
+use provider discovery. When setup relies on saved defaults from a non-default
+`XDG_CONFIG_HOME`, it records that directory in the server environment. Each
+MCP start reads the saved file again. Setup uses its saved IDA request budget
+when recommending client deadlines and preserves any existing client deadline.
 
 An edit to an existing file retains its original contents in
 `rea.json.rea.backup`. If doctor reports malformed or unreadable configuration,

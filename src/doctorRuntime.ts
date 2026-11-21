@@ -28,7 +28,8 @@ import {
 } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
-import { ok } from "./domain/result.js";
+import { ok, type Result } from "./domain/result.js";
+import type { ConfigurationError } from "./domain/configurationErrors.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import {
@@ -46,6 +47,10 @@ import {
 } from "./process/snapshotEnvironment.js";
 import { resolveSupportedClients } from "./application/SupportedClients.js";
 import { homeDirectoryFromEnvironment } from "./config/homeDirectory.js";
+import {
+  loadUserConfiguration,
+  userConfigFilePath,
+} from "./config/userConfig.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
@@ -333,6 +338,37 @@ export const createSystemDoctorHost = (
   savedDefaults?: ReadonlySet<string>,
 ): DoctorHost => {
   const { platform } = host;
+  const startupConfig = userConfigFilePath(environment, platform);
+  const savedConfigReads = new Map<
+    string,
+    Promise<Result<string | undefined, ConfigurationError>>
+  >();
+  const savedIdaConfig = async (
+    registration: Readonly<Record<string, string>>,
+  ) => {
+    const configEnvironment = {
+      ...environment,
+      ...registration,
+      REA_IDA_MCP_CONFIG: undefined,
+    };
+    const path = userConfigFilePath(configEnvironment, platform);
+    // Reuse the invocation's validated snapshot when it establishes presence
+    // or absence. An explicit terminal override can hide the saved value.
+    if (path === startupConfig && savedDefaults !== undefined) {
+      const current = environment.REA_IDA_MCP_CONFIG;
+      if (savedDefaults.has("REA_IDA_MCP_CONFIG") || current === undefined)
+        return ok(current);
+    }
+    let read = savedConfigReads.get(path);
+    if (read === undefined) {
+      read = loadUserConfiguration(configEnvironment, platform).then(
+        (config) =>
+          config.ok ? ok(config.value.environment.REA_IDA_MCP_CONFIG) : config,
+      );
+      savedConfigReads.set(path, read);
+    }
+    return read;
+  };
   const registrationReads = new WeakMap<
     RetainedResourceScope,
     Map<string, ReturnType<typeof readIdaConfiguration>>
@@ -374,10 +410,15 @@ export const createSystemDoctorHost = (
       ) => {
         if (analysisProvider !== "ida" && analysisProvider !== "auto")
           return ok(undefined);
-        const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
-        if (path === undefined) return ok(undefined);
+        const explicit = registrationEnvironment.REA_IDA_MCP_CONFIG;
+        const path =
+          explicit === undefined
+            ? await savedIdaConfig(registrationEnvironment)
+            : ok(explicit);
+        if (!path.ok) return path;
+        if (path.value === undefined) return ok(undefined);
         const registration = await readRegistration(
-          path,
+          path.value,
           resourceScope,
           inspectionSignal,
         );
@@ -387,9 +428,17 @@ export const createSystemDoctorHost = (
         // parser-owned error when IDA itself was explicitly selected.
         return analysisProvider === "ida" ? registration : ok(undefined);
       },
-      // The only environment setting this resolver reads; an unresolved
-      // expression for it blocks budget derivation.
-      { budgetSettings: new Set(["REA_IDA_MCP_CONFIG"]) },
+      // A registration may locate saved settings through its own config home.
+      {
+        budgetSettings: new Set([
+          "REA_IDA_MCP_CONFIG",
+          "XDG_CONFIG_HOME",
+          "HOME",
+          "USERPROFILE",
+          "HOMEDRIVE",
+          "HOMEPATH",
+        ]),
+      },
     ),
     providerInspections: async (
       resourceScope: RetainedResourceScope,

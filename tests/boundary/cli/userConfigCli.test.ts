@@ -18,6 +18,7 @@ cliTest(
       USERPROFILE: home,
       XDG_CONFIG_HOME: xdg,
       JAVA_HOME: undefined,
+      HOPPER_LAUNCHER_PATH: undefined,
     };
     const run = (
       arguments_: readonly string[],
@@ -44,6 +45,18 @@ cliTest(
       source: "env",
     });
 
+    if (process.platform === "darwin" || process.platform === "linux") {
+      const hopper = await run([
+        "config",
+        "--get",
+        "HOPPER_LAUNCHER_PATH",
+        "--json",
+      ]);
+      expect(hopper.json).toMatchObject({
+        source: "auto-detect",
+        value: expect.stringMatching(/[/]hopper$/iu),
+      });
+    }
     await mkdir(dirname(config), { recursive: true });
     await writeFile(config, "{ broken");
     const version = await run(["--version", "--json"]);

@@ -42,22 +42,39 @@ export const PERSISTED_SETTINGS = [
 
 export type PersistedSetting = (typeof PERSISTED_SETTINGS)[number];
 
-export const userConfigFilePath = (
-  environment: Readonly<Record<string, string | undefined>>,
+const defaultConfigHome = (
+  environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-): string => {
+): string =>
+  join(homeDirectoryFromEnvironment(environment, platform), ".config");
+
+const selectedConfigHome = (environment: Readonly<NodeJS.ProcessEnv>) => {
   const xdg = environment.XDG_CONFIG_HOME;
-  const configRoot =
-    xdg !== undefined && xdg.length > 0 && isAbsolute(xdg)
-      ? xdg
-      : join(
-          homeDirectoryFromEnvironment(
-            environment as Readonly<NodeJS.ProcessEnv>,
-            platform,
-          ),
-          ".config",
-        );
-  return join(configRoot, CONFIG_DIRECTORY_NAME, CONFIG_FILE_NAME);
+  return xdg !== undefined && isAbsolute(xdg) ? xdg : undefined;
+};
+
+const configFileAt = (home: string): string =>
+  join(home, CONFIG_DIRECTORY_NAME, CONFIG_FILE_NAME);
+
+export const userConfigFilePath = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): string =>
+  configFileAt(
+    selectedConfigHome(environment) ?? defaultConfigHome(environment, platform),
+  );
+
+/** A session-independent locator for clients that rely on saved defaults. */
+export const userConfigRegistrationEnvironment = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): Readonly<Record<string, string>> => {
+  const selected = selectedConfigHome(environment);
+  return selected === undefined ||
+    configFileAt(selected) ===
+      configFileAt(defaultConfigHome(environment, platform))
+    ? {}
+    : { XDG_CONFIG_HOME: selected };
 };
 
 type RawUserConfig = Partial<Record<PersistedSetting, unknown>>;
