@@ -667,9 +667,21 @@ describe("Ghidra installation rejection diagnostics", () => {
 
 describe("Ghidra native decompiler remediation", () => {
   it.each([
-    ["darwin", "x64", "installation.md#missing-macos-native-decompiler"],
-    ["darwin", "arm64", "installation.md#macos-arm64-native-decompiler"],
-    ["linux", "arm64", "installation.md#ghidra"],
+    [
+      "darwin",
+      "x64",
+      "https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md#missing-macos-native-decompiler",
+    ],
+    [
+      "darwin",
+      "arm64",
+      "https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md#macos-arm64-native-decompiler",
+    ],
+    [
+      "linux",
+      "arm64",
+      "https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md#ghidra",
+    ],
     ["linux", "x64", undefined],
   ] as const)(
     "points a missing %s/%s decompiler to how to build it",
