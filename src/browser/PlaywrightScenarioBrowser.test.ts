@@ -15,7 +15,6 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import type {
@@ -525,8 +524,7 @@ it("does not let a stuck Android launch block later launches", async () => {
   const nodeOs = createRequire(import.meta.url)("node:os") as {
     tmpdir: () => string;
   };
-  const firstEntered = deferred<void>();
-  const releaseFirst = deferred<void>();
+  const firstLaunch = phaseGate();
   let firstLookup: string | undefined;
   let firstLookupAfterWait: string | undefined;
   let secondLookup: string | undefined;
@@ -549,16 +547,11 @@ it("does not let a stuck Android launch block later launches", async () => {
     );
   const first = opening(firstRoot, async () => {
     firstLookup = nodeOs.tmpdir();
-    firstEntered.resolve(undefined);
-    await releaseFirst.promise;
+    await firstLaunch.hold();
     firstLookupAfterWait = nodeOs.tmpdir();
   });
   try {
-    await awaitAcknowledgement(
-      firstEntered.promise,
-      first,
-      "stuck Android launch",
-    );
+    await firstLaunch.reached(first, "stuck Android launch");
     await expect(
       opening(secondRoot, async () => {
         secondLookup = nodeOs.tmpdir();
@@ -567,7 +560,7 @@ it("does not let a stuck Android launch block later launches", async () => {
       diagnostics: { startup_error: "launch boundary reached" },
     });
   } finally {
-    releaseFirst.resolve(undefined);
+    firstLaunch.release();
     await Promise.allSettled([first]);
   }
   await expect(first).rejects.toMatchObject({
