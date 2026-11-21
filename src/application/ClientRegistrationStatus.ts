@@ -2,6 +2,7 @@ import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   contributingRegistrationSource,
+  hasProjectRegistrationContribution,
   inlineRegistrationOrigins,
   readEffectiveClientRegistrationConfiguration,
   type ClientRegistrationScope,
@@ -140,8 +141,8 @@ interface ClientRegistrationReadOptions {
   readonly providerSettings?: Readonly<Record<string, string>>;
   /** Which recorded provider settings hold a value the caller owns. */
   readonly ownedProviderSetting?: OwnedProviderSetting;
-  /** Inspect selected resolved settings without returning their values in status. */
-  readonly observeProviderSetting?: (
+  /** Supply probe-admitted settings without returning their values in status. */
+  readonly observeProbeSetting?: (
     client: string,
     name: string,
     value: string,
@@ -460,6 +461,11 @@ export const readClientRegistrationInspections = async (
             client: effectiveClient,
             commandFacts,
           });
+      const observeProbeSetting = hasProjectRegistrationContribution(
+        configuration.value,
+      )
+        ? undefined
+        : options.observeProbeSetting;
       const status = configuredStatus({
         client: effectiveClient,
         command,
@@ -530,10 +536,10 @@ export const readClientRegistrationInspections = async (
                 options.providerSettings,
                 options.platform,
                 options.ownedProviderSetting,
-                options.observeProviderSetting === undefined
+                observeProbeSetting === undefined
                   ? undefined
                   : (name, value) =>
-                      options.observeProviderSetting!(client.name, name, value),
+                      observeProbeSetting(client.name, name, value),
               ),
         activation,
       });

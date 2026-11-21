@@ -549,6 +549,12 @@ export interface EffectiveClientRegistrationConfiguration {
   readonly projectUserAliases?: readonly string[];
 }
 
+/** Reading an effective registration does not authorize probes from project settings. */
+export const hasProjectRegistrationContribution = ({
+  declarations,
+}: EffectiveClientRegistrationConfiguration): boolean =>
+  declarations.some(({ source }) => source.scope === "project");
+
 interface ProjectConfigurationReadOptions {
   readonly projectDirectory: string;
   readonly mode?: "ownership";

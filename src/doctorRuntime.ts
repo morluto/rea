@@ -38,7 +38,10 @@ import {
 } from "./resources/index.js";
 import type { RetainedResourceScope } from "./ports/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
-import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
+import {
+  hasProjectRegistrationContribution,
+  readEffectiveClientRegistrationConfiguration,
+} from "./application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "./application/ClientRegistrationEnvironment.js";
 import {
   mergeEnvironmentOverrides,
@@ -189,13 +192,7 @@ const readSelectedRegistration = async (
     return { unavailable: "unreadable" };
   }
   if (configuration.value.document === undefined) return undefined;
-  // Inspecting a project registration does not approve its provider commands.
-  // Pass no project-controlled settings to any of the provider probes.
-  if (
-    configuration.value.declarations.some(
-      ({ source }) => source.scope === "project",
-    )
-  )
+  if (hasProjectRegistrationContribution(configuration.value))
     return { unavailable: "project_scope" };
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,

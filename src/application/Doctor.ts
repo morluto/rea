@@ -132,11 +132,7 @@ export interface DoctorHost {
     selectedClientIds?: readonly string[],
     providerSettings?: Readonly<Record<string, string>>,
     ownedProviderSetting?: OwnedProviderSetting,
-    observeProviderSetting?: (
-      client: string,
-      name: string,
-      value: string,
-    ) => void,
+    observeProbeSetting?: (client: string, name: string, value: string) => void,
   ): Promise<readonly ClientRegistrationStatus[]>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
   /** Desktop build host facts; read only when that scope is selected. */
@@ -997,7 +993,7 @@ export const systemDoctorHost = (
       selectedClientIds,
       providerSettings,
       ownedProviderSetting,
-      observeProviderSetting,
+      observeProbeSetting,
     ) =>
       runInChildResourceScope(resources, "client-registrations", (child) =>
         readClientRegistrationStatuses(homeDirectory, undefined, {
@@ -1011,9 +1007,7 @@ export const systemDoctorHost = (
           ...(ownedProviderSetting === undefined
             ? {}
             : { ownedProviderSetting }),
-          ...(observeProviderSetting === undefined
-            ? {}
-            : { observeProviderSetting }),
+          ...(observeProbeSetting === undefined ? {} : { observeProbeSetting }),
           ...(providerSettings === undefined
             ? {}
             : {
