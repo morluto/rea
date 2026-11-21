@@ -1,0 +1,8 @@
+[package]
+name = "rt-spark-register"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Register operations observed in one RT-Spark flash image"
+
+[dependencies]

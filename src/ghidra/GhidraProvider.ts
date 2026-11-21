@@ -107,6 +107,7 @@ const GHIDRA_ARCHITECTURES = {
   arm: true,
   arm64: true,
   arm64_32: false,
+  "cortex-m": true,
   mips: true,
   "6502": true,
   riscv: true,
@@ -770,8 +771,11 @@ const inspectWindowsP0TargetSupport = (
   target: BinaryTarget,
   diagnostics: Readonly<Record<string, JsonValue>>,
 ): ProviderTargetSupport => {
-  // The raw 6502 lane uses the same immutable snapshot and native ownership boundary.
-  if (target.format === "raw-binary" && target.architecture === "6502")
+  // Raw 6502 and Cortex-M use the same immutable snapshot and native ownership boundary.
+  if (
+    target.format === "raw-binary" &&
+    (target.architecture === "6502" || target.architecture === "cortex-m")
+  )
     return { status: "supported", code: null, reason: null, diagnostics };
   // DOS MZ reuses the host-neutral MzLoader import and its attested load image.
   if (target.format === "dos-mz")
@@ -790,7 +794,7 @@ const inspectWindowsP0TargetSupport = (
       status: "unsupported",
       code: "target_format_unsupported",
       reason:
-        "Windows Ghidra P0 accepts native PE, DOS MZ, and explicitly selected raw 6502 targets only.",
+        "Windows Ghidra P0 accepts native PE, DOS MZ, and explicitly selected raw 6502 and Cortex-M targets only.",
       diagnostics,
     };
   if (!WINDOWS_P0_NATIVE_PE_ARCHITECTURES.includes(target.architecture))

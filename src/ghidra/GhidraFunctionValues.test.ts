@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ghidraDecoderContext } from "./GhidraProcessorContext.js";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -1116,6 +1117,21 @@ describe("Ghidra native instruction decoder context for ARM TMode and MIPS ISA_M
     expect(
       parseFunctionValueFixture("inspect_native_instruction", emptySource).ok,
     ).toBe(false);
+  });
+});
+
+describe("Ghidra bridge script processor context contract", () => {
+  it("returns TMode for ARM and ISA_MODE for MIPS", () => {
+    expect(ghidraDecoderContext("ARM:LE:32:v7", "1")).toEqual([
+      { register: "TMode", value: "1", source: "ghidra-program-context" },
+    ]);
+    expect(ghidraDecoderContext("ARM:LE:32:Cortex", "1")).toEqual([
+      { register: "TMode", value: "1", source: "ghidra-program-context" },
+    ]);
+    expect(ghidraDecoderContext("MIPS:LE:32:default", "0")).toEqual([
+      { register: "ISA_MODE", value: "0", source: "ghidra-program-context" },
+    ]);
+    expect(ghidraDecoderContext("x86:LE:64:default", null)).toEqual([]);
   });
 });
 
