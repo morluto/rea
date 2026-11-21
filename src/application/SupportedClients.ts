@@ -228,6 +228,12 @@ interface ClientDefinitionBase {
   readonly readOnlyLowerLayers?: true;
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
+  /**
+   * On macOS the client starts MCP servers through a helper that disclaims TCC
+   * responsibility, so macOS attributes their Apple Events to REA's runtime
+   * rather than to the client.
+   */
+  readonly disclaimsMcpServerTccResponsibility?: true;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
   readonly skillPath?: ClientPath;
   readonly configPaths?: (context: ClientPathContext) => readonly string[];
@@ -1189,6 +1195,8 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     displayName: "Claude Desktop",
     location: claudeDesktopLocation,
     quitBeforeSetup: true,
+    // Observed on macOS: Contents/Helpers/disclaimer --pgroup -- <server>.
+    disclaimsMcpServerTccResponsibility: true,
     format: "json",
   }),
   defineClient({
@@ -1888,6 +1896,21 @@ export const supportedClientDefinition = (
   if (definition === undefined)
     throw new Error(`No supported client definition for ${name}`);
   return definition;
+};
+
+/**
+ * The display name of a client whose MCP servers macOS holds responsible for
+ * their own Apple Events, or undefined when the client keeps that responsibility.
+ */
+export const tccDisclaimingClientDisplayName = (
+  name: string,
+): string | undefined => {
+  const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
+  return definitions.find(
+    (definition) =>
+      definition.name === name &&
+      definition.disclaimsMcpServerTccResponsibility === true,
+  )?.displayName;
 };
 
 /**

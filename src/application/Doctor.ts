@@ -80,6 +80,7 @@ import {
   type DoctorScopeReport,
 } from "./DoctorScope.js";
 import { selectedDesktopBuildChecks } from "./DesktopBuildDoctor.js";
+import { tccDisclaimingClientDisplayName } from "./SupportedClients.js";
 import type {
   DesktopBuildFacts,
   DesktopBuildFactsInput,
@@ -279,6 +280,11 @@ const inspectDoctor = async (
     ...diagnosticChecks,
     ...identity.checks,
     ...registrationAdvisoryChecks(identity.value.registrations),
+    ...registrationAppleEventsChecks(
+      identity.value.registrations,
+      host.platform,
+      hopperPath ?? host.configuredHopperPath,
+    ),
     ...registrationEnvironmentChecks(identity.value.registrations, selections),
     ...(await selectedDesktopBuildChecks(host, scope, identity.value.skill)),
   ];
@@ -324,6 +330,33 @@ const registrationAdvisoryChecks = (
           },
         ],
   );
+
+/**
+ * Hopper is driven through Apple Events. A client that disclaims TCC
+ * responsibility for its MCP servers leaves macOS to attribute those events to
+ * REA's runtime, which it denies without prompting. Advisory only: the
+ * registration itself is valid and non-Hopper operations still work.
+ */
+const registrationAppleEventsChecks = (
+  registrations: readonly ClientRegistrationStatus[],
+  platform: NodeJS.Platform,
+  hopperPath: string | undefined,
+): readonly DoctorCheck[] =>
+  platform !== "darwin" || hopperPath === undefined
+    ? []
+    : registrations.flatMap(({ client, command }) => {
+        const displayName = tccDisclaimingClientDisplayName(client);
+        return command.length === 0 || displayName === undefined
+          ? []
+          : [
+              {
+                name: `registration_apple_events:${client}`,
+                ok: true,
+                classification: "healthy" as const,
+                detail: `${displayName} starts MCP servers through a helper that disclaims macOS TCC responsibility, so macOS attributes Hopper's Apple Events to REA's runtime (node/bun) and denies them without prompting. Hopper-backed analysis from this registration is expected to fail; register REA with a client that keeps TCC responsibility, such as Claude Code, or start it from Terminal.`,
+              },
+            ];
+      });
 
 /** Settings an available provider's checks in this report relied on. */
 interface ProviderSettingSelection {
