@@ -482,7 +482,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
-          "cancels queued work and stops active provider work on cancellation",
+          "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
         ),
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
