@@ -607,9 +607,9 @@ describe("OpenCode V2 native server table", () => {
   });
 });
 
-it.each([null, [1]])(
+it.each([{ args: null }, { args: [1] }])(
   "uses the array command for ownership when obsolete args are %j",
-  async (args) => {
+  async ({ args }) => {
     const { home, client } = await openCodeClient("rea-opencode-array-args-");
     const other = { type: "local", command: ["node", "other.js"] };
     const original = JSON.stringify({
