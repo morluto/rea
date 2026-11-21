@@ -111,6 +111,10 @@ it("keeps failed-request status sentinels unknown without losing recorded respon
       999,
       200,
     ]);
+    expect(report.streams.map(({ state }) => state)).toEqual([
+      "supported",
+      "supported",
+    ]);
     expect(report.events.at(-1)).toMatchObject({
       status: 200,
       method: null,

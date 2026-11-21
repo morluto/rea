@@ -350,11 +350,10 @@ cliTest(
     const recordedOrigin = new URL(
       JSON.parse(base.network.split("\n")[0]!).snapshot.request.url,
     ).origin;
+    const origin = `http://127.0.0.1:${address.port}`;
+    const validTrace = base.trace.replaceAll(recordedOrigin, origin);
     const trace =
-      base.trace.replaceAll(
-        recordedOrigin,
-        `http://127.0.0.1:${address.port}`,
-      ) +
+      validTrace +
       JSON.stringify({
         type: "console",
         messageType: "log",
@@ -362,23 +361,13 @@ cliTest(
         time: 123,
       }) +
       '\n{"type":"console","text":NaN}\n';
-    const network = base.network.replaceAll(
-      recordedOrigin,
-      `http://127.0.0.1:${address.port}`,
-    );
+    const network = base.network.replaceAll(recordedOrigin, origin);
     const fixture = await playwrightTraceFixture({ trace, network });
     const { call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application,session",
       PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
     });
-    const valid = await playwrightTraceFixture({
-      trace: base.trace.replaceAll(
-        recordedOrigin,
-        `http://127.0.0.1:${address.port}`,
-      ),
-      network,
-      resources: true,
-    });
+    const valid = await playwrightTraceFixture({ trace: validTrace, network });
     const control = await call("inspect_playwright_trace", {
       path: valid.path,
       detail: "complete",
@@ -387,8 +376,15 @@ cliTest(
     expect(
       playwrightTraceSchema.parse(
         parseEvidence(control.structuredContent).normalized_result,
-      ).source_coverage.interpretation,
-    ).toBe("scoped");
+      ),
+    ).toMatchObject({
+      diagnostics: [],
+      summary: { unavailable_references: 8 },
+      source_coverage: {
+        interpretation: "partial",
+        recording_completeness: "unknown",
+      },
+    });
     const response = await call("inspect_playwright_trace", {
       path: fixture.path,
       view: {
