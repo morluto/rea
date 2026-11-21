@@ -224,7 +224,11 @@ it("preserves wide storage, history, text artifacts and metadata through capture
   const capture = {
     ...base,
     browser: { ...base.browser, product: longText, version: longText },
-    scenario: { ...base.scenario, secret_references: [longText] },
+    scenario: {
+      ...base.scenario,
+      start_origin: longText,
+      secret_references: [longText],
+    },
     steps: base.steps.map((step) => ({
       ...step,
       step_id: step.step_index === 0 ? step.step_id : longText,
