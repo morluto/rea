@@ -8,6 +8,7 @@
 ### Features
 
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
+* **website:** publish page-specific previews with the original REA blue ([1dd25d8](https://github.com/morluto/rea/commit/1dd25d87c7ba440b6256c644a556901eac1b3bbb))
 * **website:** recognize contributors in a shared commit-ranked directory ([ba31a11](https://github.com/morluto/rea/commit/ba31a111809e727891c238d1ca5ff9d62f751f0b))
 
 
@@ -382,6 +383,7 @@
 * **web:** consolidate scenario alignment and ordering proofs ([#13078](https://github.com/morluto/rea/issues/13078)) ([b723393](https://github.com/morluto/rea/commit/b7233936118915a1f9c230873c95be08f7ae06e7))
 * **web:** consolidate scenario event coverage proofs ([#13079](https://github.com/morluto/rea/issues/13079)) ([2dc27d1](https://github.com/morluto/rea/commit/2dc27d164ab2c989d3fe06e8f1dcb2892366f686))
 * **web:** consolidate scenario request cleanup checks ([#13116](https://github.com/morluto/rea/issues/13116)) ([ad4c558](https://github.com/morluto/rea/commit/ad4c558789289f42f3be74694080d5a99c4ad16d))
+* **web:** consolidate scenario response body bounds ([#13120](https://github.com/morluto/rea/issues/13120)) ([6ae91b2](https://github.com/morluto/rea/commit/6ae91b2a10ee178c057c0afecf2c6a012824cdde))
 * **web:** consolidate scenario storage identity checks ([#13115](https://github.com/morluto/rea/issues/13115)) ([447b791](https://github.com/morluto/rea/commit/447b79139c6b7a43a48c88a9838dfcd3e814ee9b))
 * **web:** consolidate scenario transaction and context proofs ([#13081](https://github.com/morluto/rea/issues/13081)) ([3a60c55](https://github.com/morluto/rea/commit/3a60c55a91c3211fe087c572570c8e907d881e7e))
 * **web:** consolidate screenshot document and reply checks ([#13107](https://github.com/morluto/rea/issues/13107)) ([383709c](https://github.com/morluto/rea/commit/383709ca7e2af26249d19143e3b6b1b736c6fb88))
