@@ -196,6 +196,7 @@ it("preserves a required conformance pointer's unknown reason", () => {
     segments: [],
     readers: {
       u32: () => 0,
+      i32: () => 0,
       pointer: () => 0n,
       resolvePointer: () => ({ kind: "raw", target: 0n }),
       string: () => "unused",
@@ -366,6 +367,7 @@ it("returns a located issue for an emitted unresolved witness slot", () => {
     segments: [],
     readers: {
       u32: (address) => values.get(address) ?? 0,
+      i32: (address) => values.get(address) ?? 0,
       pointer: (address) => (address === 0x380n ? 0x200n : 0x900n),
       resolvePointer: (address) => ({
         kind: "raw",
@@ -451,6 +453,7 @@ it("decodes a retroactive static witness slot when flags include retroactive bit
     ],
     readers: {
       u32: (address) => values.get(address) ?? 0,
+      i32: (address) => values.get(address) ?? 0,
       pointer: (address) => (address === 0x380n ? 0x200n : 0x900n),
       resolvePointer: (address) => ({
         kind: "raw",
@@ -539,6 +542,7 @@ it("retains partial coverage for retroactive conformance when conditional requir
     segments: [],
     readers: {
       u32: (address) => values.get(address) ?? 0,
+      i32: (address) => values.get(address) ?? 0,
       pointer: () => 0n,
       resolvePointer: (address) => ({
         kind: "raw",
