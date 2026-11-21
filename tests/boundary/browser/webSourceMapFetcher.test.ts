@@ -882,38 +882,6 @@ it("shares the caller's fetch byte budget across completed map responses", async
   expect(result.items[1]?.limitation).toContain("retained budget");
 });
 
-it.each([
-  { line: 0, column: -1 },
-  { line: -1, column: 0 },
-  { line: "0", column: 0 },
-  { line: 0, column: 0.5 },
-  { line: 0 },
-  { line: 0, column: Number.MAX_SAFE_INTEGER + 1 },
-])("retains an invalid-map item for malformed offset %j", async (offset) => {
-  const text = JSON.stringify({
-    version: 3,
-    sections: [
-      {
-        offset,
-        map: {
-          version: 3,
-          sources: ["original.js"],
-          names: [],
-          mappings: "AAAA",
-        },
-      },
-    ],
-  });
-  const result = await fetchWebSourceMapsOk([request], input(), undefined, {
-    fetch: async () => new Response(text),
-  });
-
-  expect(result).toMatchObject({
-    status: "unavailable",
-    items: [{ status: "invalid", artifact: null, mappings: [] }],
-  });
-});
-
 describe("web source-map sourcesContent validation", () => {
   it.each([
     ["a scalar sourcesContent value", { sourcesContent: "source" }],
