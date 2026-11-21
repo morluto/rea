@@ -8,7 +8,28 @@
       name="description"
       content="Trace a Notes CSV export through a renderer API, preload and IPC handler with REA. Includes downloadable example files and a verified analysis result."
     />
+    <!-- website:theme:start -->
+    <meta name="theme-color" content="#ffffff" />
+    <script>
+      (() => {
+        let theme;
+        try {
+          theme = localStorage.getItem("rea-theme");
+        } catch {}
+        if (theme !== "light" && theme !== "dark")
+          theme = matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content =
+          theme === "dark" ? "#1e1e2e" : "#ffffff";
+      })();
+    </script>
+    <script defer src="../../assets/theme.js"></script>
+    <!-- website:theme:end -->
+    <link rel="stylesheet" href="../../assets/styles.css" />
     <!-- website:sharing:start -->
+    <meta name="robots" content="max-image-preview:large" />
     <!-- prettier-ignore -->
     <link rel="canonical" href="https://rea.tools/guides/javascript/" />
     <!-- website:languages:start -->
@@ -63,9 +84,8 @@
     <!-- prettier-ignore -->
     <link rel="alternate" hreflang="x-default" href="https://rea.tools/guides/javascript/" />
     <!-- website:languages:end -->
-    <!-- prettier-ignore -->
     <meta property="og:type" content="website" />
-    <!-- prettier-ignore -->
+    <link rel="apple-touch-icon" href="../../assets/rea-icon.png" />
     <meta property="og:site_name" content="REA" />
     <!-- prettier-ignore -->
     <meta property="og:title" content="JavaScript and Electron Analysis — REA" />
@@ -74,7 +94,7 @@
     <!-- prettier-ignore -->
     <meta property="og:url" content="https://rea.tools/guides/javascript/" />
     <!-- prettier-ignore -->
-    <meta property="og:image" content="https://rea.tools/assets/social-card.png" />
+    <meta property="og:image" content="https://rea.tools/assets/share/electron-export.png" />
     <!-- prettier-ignore -->
     <meta property="og:image:type" content="image/png" />
     <!-- prettier-ignore -->
@@ -84,29 +104,23 @@
     <!-- prettier-ignore -->
     <meta
       property="og:image:alt"
-      content="REA: Find out how software works. Reverse engineering with your coding agent."
+      content="JavaScript and Electron Analysis — REA"
     />
-    <!-- prettier-ignore -->
+    <link rel="icon" sizes="192x192" href="../../assets/rea-icon.png" />
     <meta name="twitter:card" content="summary_large_image" />
     <!-- prettier-ignore -->
     <meta name="twitter:title" content="JavaScript and Electron Analysis — REA" />
     <!-- prettier-ignore -->
     <meta name="twitter:description" content="Trace a Notes CSV export through a renderer API, preload and IPC handler with REA. Includes downloadable example files and a verified analysis result." />
     <!-- prettier-ignore -->
-    <meta name="twitter:image" content="https://rea.tools/assets/social-card.png" />
+    <meta name="twitter:image" content="https://rea.tools/assets/share/electron-export.png" />
     <!-- prettier-ignore -->
     <meta
       name="twitter:image:alt"
-      content="REA: Find out how software works. Reverse engineering with your coding agent."
+      content="JavaScript and Electron Analysis — REA"
     />
     <!-- website:sharing:end -->
-    <!-- website:theme:start -->
-    <meta name="theme-color" content="#ffffff" />
-    <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
-    <script src="../../assets/theme.js"></script>
-    <!-- website:theme:end -->
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="../../assets/styles.css" />
     <script src="../../assets/main.js" defer></script>
   </head>
   <body id="top">

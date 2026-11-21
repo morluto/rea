@@ -285,7 +285,7 @@ Laporkan kerentanan melalui [SECURITY.md](../../SECURITY.md).
 Terima kasih kepada semua orang yang menggunakan REA, melaporkan bug, meminta fitur, menguji build, dan berkontribusi dalam perbaikan.
 
 <a href="https://rea.tools/id/contributors/">
-  <img src="https://contrib.rocks/image?repo=morluto/rea&amp;max=500&amp;columns=30" alt="Kontributor REA" />
+  <img src="../../website/public/contributors/avatars.png" alt="Kontributor REA" />
 </a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">

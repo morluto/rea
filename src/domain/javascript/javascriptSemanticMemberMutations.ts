@@ -721,7 +721,14 @@ export function* collectSemanticMemberMutationsSteps(
     "commonjs-module",
     "require",
   ]);
-  const observablePaths = observableMutationPaths(state);
+  const observablePaths = observableMutationPaths(
+    state,
+    interop.boundIntrinsic,
+  );
+  const boundStorePaths = new WeakMap<
+    JavaScriptSemanticBindingState,
+    Map<string, PropertyPath>
+  >();
   const ambientEffectAt = createSemanticAmbientEffectQuery(state);
   const opaqueReferenceEffect = createSemanticOpaqueReferenceEffectQuery(state);
   const recordedRequiredEffects = new Set<string>();
@@ -1285,6 +1292,14 @@ export function* collectSemanticMemberMutationsSteps(
           current.path,
           effect,
         );
+        // A slot stored after allocation can hold a callable even when it
+        // is absent from the receiver's initializer.
+        if (
+          path === null &&
+          effect === "escape" &&
+          boundStorePaths.has(binding)
+        )
+          path = current.path;
         if (path === null) continue;
         const selectorIndex = path.findIndex(
           (key) => key !== null && typeof key === "object",
@@ -1526,14 +1541,60 @@ export function* collectSemanticMemberMutationsSteps(
             current.path.length > 1
               ? (current.memberReadAt ?? current.originAt)
               : current.originAt;
-          if (effect === "escape")
+          if (effect === "escape") {
+            for (const storedPath of boundStorePaths.get(binding)?.values() ??
+              []) {
+              if (
+                current.path.length > storedPath.length ||
+                current.path.some(
+                  (key, i) =>
+                    typeof storedPath[i] === "string" &&
+                    !semanticPropertyPathKeyMatches(key, String(storedPath[i])),
+                )
+              )
+                continue;
+              // The same member may have been overwritten since the bind.
+              // Select its stored source at the consumer before following captures.
+              const selected = semanticProjectedSourceFactsAtRead(
+                binding,
+                current.node,
+                storedPath,
+                state,
+                false,
+                current.memberReadAt ?? current.node,
+                current.capturedSelections,
+              );
+              for (const source of selected?.storedSources ?? [])
+                if (
+                  source.path.length === 0 &&
+                  interop.boundIntrinsic(source.node) !== undefined
+                )
+                  enqueue({
+                    node: source.node,
+                    path: [],
+                    originAt: source.node,
+                    memberReadAt: source.node,
+                    bindings: nested,
+                    definiteReceiver: false,
+                  });
+            }
             recordBindingEffect(binding.escapedPaths, {
               path,
               node: mutation,
               receiverInitializers,
               ...(receiverAt === undefined ? {} : { receiverAt }),
             });
-          else
+          } else {
+            if (
+              assignedSources?.some(
+                (source) => interop.boundIntrinsic(source.node) !== undefined,
+              )
+            ) {
+              const paths =
+                boundStorePaths.get(binding) ?? new Map<string, PropertyPath>();
+              paths.set(JSON.stringify(path), path);
+              boundStorePaths.set(binding, paths);
+            }
             recordBindingEffect(binding.memberWrites, {
               receiverIdentity: definiteReceiver ? "definite" : "possible",
               path,
@@ -1542,6 +1603,7 @@ export function* collectSemanticMemberMutationsSteps(
               ...(receiverAt === undefined ? {} : { receiverAt }),
               ...(assignedSources === undefined ? {} : { assignedSources }),
             });
+          }
           clearSemanticValueCaches(state);
           // Resolve a stored child at the receiver capture, before selecting
           // the final written slot. The source owner preserves replacements
@@ -1667,6 +1729,29 @@ export function* collectSemanticMemberMutationsSteps(
           ]),
         });
       } else {
+        if (
+          effect === "escape" &&
+          current.path.length === 0 &&
+          t.isCallExpression(expression)
+        ) {
+          const bound = interop.boundIntrinsic(expression);
+          if (bound?.kind === "known") {
+            // The consumer can invoke this value later. Its inputs were
+            // selected at bind time, even if their bindings changed since.
+            for (const input of [bound.receiver, ...(bound.arguments ?? [])]) {
+              if (input === undefined) continue;
+              enqueue({
+                node: input,
+                path: [],
+                bindings: current.bindings,
+                originAt: input,
+                memberReadAt: input,
+                definiteReceiver: false,
+              });
+            }
+            continue;
+          }
+        }
         const references =
           effect === "escape"
             ? escapedReferenceLeaves(
@@ -1853,6 +1938,9 @@ export function* collectSemanticMemberMutationsSteps(
   ): boolean {
     if (
       value.iterableFallbackPath !== undefined ||
+      (value.path.length === 0 &&
+        t.isCallExpression(node) &&
+        interop.boundIntrinsic(node)?.kind === "known") ||
       t.isMemberExpression(node) ||
       t.isOptionalMemberExpression(node)
     ) {
@@ -2351,6 +2439,11 @@ export function* collectSemanticMemberMutationsSteps(
       interop.boundIntrinsic(node)?.kind === "known"
     )
       return;
+    if (
+      invocation?.kind === "opaque" &&
+      interop.boundIntrinsic(node.callee) !== undefined
+    )
+      markEscaped(node.callee, node);
     for (const source of returnedReferences(
       node.callee,
       t.isNewExpression(node) ? undefined : node,
@@ -3038,6 +3131,9 @@ interface MutationObserverNode {
 
 const observableMutationPaths = (
   state: JavaScriptSemanticAnalysisState,
+  boundIntrinsic: ReturnType<
+    typeof createSemanticModuleInterop
+  >["boundIntrinsic"],
 ): {
   readonly normalize: (
     bindingId: string,
@@ -3182,6 +3278,11 @@ const observableMutationPaths = (
           )
             (observer.origins ??= new Set()).add("opaque");
         }
+        if (
+          t.isCallExpression(expression) &&
+          boundIntrinsic(expression)?.kind === "known"
+        )
+          (observer.origins ??= new Set()).add("opaque");
         if (t.isFunction(expression))
           // Keep own-member writes precise without replacing the existing
           // links to references handed to a function's eventual caller.

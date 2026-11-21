@@ -613,6 +613,9 @@ export const createSemanticModuleInterop = (
           visited.has(binding.bindingId)
         )
           return undefined;
+        // A saved copy keeps the binding read that created it. A later
+        // read of the mutable alias can also select an unknown callable.
+        opaqueArguments ||= opaqueCodeMayRebindBinding(binding, state, current);
         visited.add(binding.bindingId);
         current = initializer.node;
         continue;

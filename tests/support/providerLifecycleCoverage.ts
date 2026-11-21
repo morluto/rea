@@ -1562,13 +1562,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "returns an initial state and every step of a long scenario",
+          "retains all long-scenario steps and monotonic elapsed time",
         ),
       ),
       cancel: covered(
         test(
-          "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "cancels an active action and still closes the session",
+          "src/browser/PlaywrightScenarioSession.test.ts",
+          "preserves $outcome action rejection through provider cancellation (cleanup refused: $cleanupFails)",
         ),
       ),
       cleanup: covered(
@@ -1580,7 +1580,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       retry: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "shares concurrent close and retries browser cleanup after failure",
+          "retries all opening leases after a refusal and reports only those still owned",
         ),
       ),
     },

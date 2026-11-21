@@ -48,3 +48,57 @@ it.each(["call", "apply", "other"])(
     expect(shared?.escapedPaths).toEqual([]);
   },
 );
+
+it.each([
+  ["let select=Object.keys.bind(null,shared);eval(source);select();", true],
+
+  ["const holder={};holder.select=Object.keys.bind(null,shared);", false],
+  [
+    "const holder={};holder.select=Object.keys.bind(null,shared);consume(holder);",
+    true,
+  ],
+  [
+    "const holder={};holder.select=Object.keys.bind(null,shared);consume(holder.select);",
+    true,
+  ],
+  [
+    "const holder={};holder.select=Object.keys.bind(null,shared);holder.select=()=>0;consume(holder.select);",
+    false,
+  ],
+  [
+    "const holder={};holder.select=Object.keys.bind(null,shared);consume(holder.other);",
+    false,
+  ],
+  [
+    "let cell=shared;const select=Object.keys.bind(null,cell);cell={};consume(select);",
+    true,
+  ],
+  [
+    "let cell={};const select=Object.keys.bind(null,cell);cell=shared;consume(select);",
+    false,
+  ],
+
+  ["const select=Object.keys.bind(null,shared);", false],
+  ["const select=Object.keys.bind(null,shared);consume(select);", true],
+  [
+    "const holder={select:Object.keys.bind(null,shared)};holder.select();",
+    true,
+  ],
+  [
+    "const holder={};holder.select=Object.keys.bind(null,shared);holder.select();",
+    true,
+  ],
+  ["const select=Object.keys.bind(null,shared);consume(select.name);", false],
+  [
+    "const select=Object.keys.bind(null,shared);consume(select.bind(null));",
+    true,
+  ],
+  ["const select=Object.prototype.valueOf.bind(shared);consume(select);", true],
+])(
+  "tracks bound callback inputs when the callable escapes: %s",
+  (body, escaped) => {
+    const shared = indexedBindings(body).find(({ name }) => name === "shared");
+    expect(shared).toBeDefined();
+    expect((shared?.escapedPaths.length ?? 0) > 0).toBe(escaped);
+  },
+);

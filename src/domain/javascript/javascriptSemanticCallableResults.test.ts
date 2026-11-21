@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
-import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import {
+  semanticCallableResultExpressions,
+  semanticCallableHasNoReturnValue,
+} from "./javascriptSemanticCallableResults.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 it("reuses direct result syntax while excluding nested callable results", () => {
@@ -79,3 +82,20 @@ it("retains empty results and bare return/yield source sites", () => {
   ]);
   expect(semanticCallableResultExpressions(generator)).toBe(result);
 });
+
+it.each([
+  ["function f(){}", true],
+  ["function f(flag){if(flag)return;}", true],
+  ["function f(){function nested(){return external;} }", true],
+  ["function f(flag){if(flag)return external;}", false],
+  ["async function f(){}", false],
+  ["function* f(){}", false],
+  ["function f(){return { value: 1 };}", false],
+  ["class F{}", false],
+])(
+  "recognizes a completed ordinary call without a result: %s",
+  (source, expected) => {
+    const target = parseJavaScriptSource(source)?.program.body[0];
+    expect(semanticCallableHasNoReturnValue(target)).toBe(expected);
+  },
+);

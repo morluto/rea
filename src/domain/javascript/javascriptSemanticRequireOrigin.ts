@@ -51,6 +51,7 @@ import {
   SemanticPropertyPathCoverage,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
+import { semanticCallableHasNoReturnValue } from "./javascriptSemanticCallableResults.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
   resolveLocalCallables,
@@ -2719,7 +2720,19 @@ const writesModuleRequire = (
         const returned = returnedReferences(value.callee, value);
         if (returned.unresolvedInvocation) return true;
         const results = returned.references;
-        if (results.length === 0) return true;
+        if (
+          results.length === 0 &&
+          (callable.callableIds.length === 0 ||
+            (!t.isFunction(value.callee) &&
+              semanticGlobalCodeSites(state).some((site) =>
+                semanticEffectMayPrecede(state, value.callee, site),
+              )) ||
+            !callable.callableIds.every((id) =>
+              semanticCallableHasNoReturnValue(state.callableNodesById.get(id)),
+            ))
+        )
+          return true;
+        // Even a call that falls through evaluates its arguments.
         pending.push(
           ...value.arguments.map((node) => ({ node, path: [], readAt })),
           ...results.map((reference) => ({

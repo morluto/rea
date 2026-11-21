@@ -313,3 +313,15 @@ it("reuses builtin receiver evidence within one mutation epoch and refreshes on 
     reads.mockRestore();
   }
 });
+
+it("reads a mutable bound alias at its use and preserves earlier captures", () => {
+  const calls = invocationKinds(`
+    let keys = Object.keys.bind(null);
+    const saved = keys;
+    keys({});
+    eval(source);
+    keys({});
+    saved({});
+  `).filter((fact) => fact?.path.join(".") === "intrinsic.Object.keys");
+  expect(calls.map((fact) => fact?.kind)).toEqual(["known", "opaque", "known"]);
+});

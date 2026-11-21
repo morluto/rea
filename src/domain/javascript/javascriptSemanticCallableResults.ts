@@ -74,3 +74,13 @@ export const semanticCallableResultKind = (
   if (callable.generator) return callable.async ? "async-iterator" : "iterator";
   return callable.async ? "promise" : "value";
 };
+
+/** A normal completion can only produce undefined for these call targets. */
+export const semanticCallableHasNoReturnValue = (
+  callable: t.Node | undefined,
+): boolean =>
+  t.isFunction(callable) &&
+  semanticCallableResultKind(callable) === "value" &&
+  semanticCallableResultExpressions(callable).every(
+    ({ node }) => node === null,
+  );

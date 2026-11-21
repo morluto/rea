@@ -320,7 +320,7 @@ REA use karne, bugs report karne, features suggest karne, builds test karne aur
 fixes contribute karne wale sab logon ka shukriya.
 
 <a href="https://rea.tools/ur-Latn/contributors/">
-  <img src="https://contrib.rocks/image?repo=morluto/rea&amp;max=500&amp;columns=30" alt="REA mein hissa lene wale" />
+  <img src="../../website/public/contributors/avatars.png" alt="REA mein hissa lene wale" />
 </a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
