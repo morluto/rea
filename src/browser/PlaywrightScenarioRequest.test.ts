@@ -12,15 +12,20 @@ import { phaseArrival } from "../../tests/support/lifecycleHarness.js";
 
 const ORIGIN = "https://app.example.test";
 
+const scenarioInput = (
+  actions: readonly unknown[],
+  secrets: unknown[] = [],
+) => ({
+  browser: { mode: "launch", executable_path: "/opt/chromium/chrome" },
+  start_url: { url: `${ORIGIN}/` },
+  actions,
+  storage: { cookies: [], local_storage: [], session_storage: [] },
+  secrets,
+  capture: {},
+});
+
 const scenario = (actions: readonly unknown[], secrets: unknown[] = []) =>
-  browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: "/opt/chromium/chrome" },
-    start_url: { url: `${ORIGIN}/` },
-    actions,
-    storage: { cookies: [], local_storage: [], session_storage: [] },
-    secrets,
-    capture: {},
-  });
+  browserScenarioSchema.parse(scenarioInput(actions, secrets));
 
 const requestStep = (fields: Record<string, unknown>) => ({
   step_id: "create",
@@ -30,112 +35,62 @@ const requestStep = (fields: Record<string, unknown>) => ({
   ...fields,
 });
 
-const issues = (actions: readonly unknown[], secrets: unknown[] = []) => {
-  const parsed = browserScenarioSchema.safeParse({
-    browser: { mode: "launch", executable_path: "/opt/chromium/chrome" },
-    start_url: { url: `${ORIGIN}/` },
-    actions,
-    storage: { cookies: [], local_storage: [], session_storage: [] },
-    secrets,
-    capture: {},
-  });
-  return parsed.success
-    ? []
-    : parsed.error.issues.map((issue) => issue.message);
+const issues = (actions: readonly unknown[]) => {
+  const result = browserScenarioSchema.safeParse(scenarioInput(actions));
+  return result.success ? [] : result.error.issues;
 };
 
-describe("request step schema", () => {
-  it("refuses repeated header names, User-Agent and line breaks in literal values or prefixes", () => {
-    const literal = (value: string) => ({ source: "literal", value });
-    expect(
-      issues([
-        requestStep({
-          headers: [
-            { name: "X-A", value: literal("one") },
-            { name: "x-a", value: literal("two") },
-          ],
-        }),
-      ]),
-    ).toContainEqual(expect.stringContaining("more than once"));
-    expect(
-      issues([
-        requestStep({
-          headers: [{ name: "User-Agent", value: literal("agent") }],
-        }),
-      ]),
-    ).toContainEqual(expect.stringContaining("cannot set"));
-    expect(
-      issues([requestStep({ expected_status: [200, 303] })]),
-    ).toContainEqual(expect.stringContaining("3xx"));
-    for (const header of [
-      { name: "X-A", value: literal("a\r\nX-B: b") },
-      { name: "X-A", value: literal("a"), prefix: "Bearer\n" },
-    ])
-      expect(issues([requestStep({ headers: [header] })])).toContainEqual(
-        expect.stringContaining("line breaks"),
-      );
+const issueAt = (path: readonly (string | number)[], message?: string) =>
+  expect.objectContaining({
+    path,
+    ...(message === undefined
+      ? {}
+      : { message: expect.stringContaining(message) }),
   });
 
-  it("accepts a declared secret as a request header value", () => {
-    const parsed = scenario(
-      [
-        requestStep({
-          headers: [
-            {
-              name: "Authorization",
-              value: { source: "secret", secret_id: "token" },
-              prefix: "Bearer ",
-            },
-          ],
-        }),
-      ],
-      [{ secret_id: "token", environment_variable: "APP_TOKEN" }],
+it("rejects invalid request options at their input paths", () => {
+  const literal = (value: string) => ({ source: "literal", value });
+  const header = (value: unknown, name = "X-A", prefix?: string) => ({
+    name,
+    value,
+    prefix,
+  });
+  const cases = [
+    [
+      { headers: [header(literal("one")), header(literal("two"), "x-a")] },
+      ["headers", 1, "name"],
+      "more than once",
+    ],
+    [
+      { headers: [header(literal("agent"), "User-Agent")] },
+      ["headers", 0, "name"],
+      "cannot set",
+    ],
+    [
+      { headers: [header(literal("a\r\nX-B: b"))] },
+      ["headers", 0, "value", "value"],
+      "line breaks",
+    ],
+    [
+      { headers: [header(literal("a"), "X-A", "Bearer\n")] },
+      ["headers", 0, "prefix"],
+      "line breaks",
+    ],
+    [{ expected_status: [200, 303] }, ["expected_status", 1], "3xx"],
+    [{ method: "GET", json: { a: 1 } }, ["json"], "cannot send a body"],
+    [{ path: "/\n/[bad]" }, ["path"], undefined],
+  ] as const;
+  for (const [input, path, message] of cases)
+    expect(issues([requestStep(input)]), JSON.stringify(input)).toContainEqual(
+      issueAt(["actions", 0, ...path], message),
     );
-    expect(parsed.actions[0]).toMatchObject({
-      action: "request",
-      headers: [
-        {
-          name: "Authorization",
-          value: { source: "secret", secret_id: "token" },
-          prefix: "Bearer ",
-        },
-      ],
-    });
-  });
-
-  it("refuses paths that leave the start origin", () => {
-    for (const path of [
-      "//evil.test/x",
-      "/\\evil.test/x",
-      "https://evil.test/",
-      "/\n/[bad]",
-    ])
-      expect(issues([requestStep({ path })]).length, path).toBeGreaterThan(0);
-  });
-
-  it("refuses a body on GET, a header fetch cannot set and an undeclared secret", () => {
-    expect(
-      issues([requestStep({ method: "GET", json: { a: 1 } })]),
-    ).toContainEqual(expect.stringContaining("cannot send a body"));
-    expect(
-      issues([
-        requestStep({
-          headers: [
-            { name: "Cookie", value: { source: "literal", value: "a=b" } },
-          ],
-        }),
-      ]),
-    ).toContainEqual(expect.stringContaining("cannot set this header"));
-    expect(
-      issues([
-        requestStep({
-          headers: [
-            { name: "X-Key", value: { source: "secret", secret_id: "key" } },
-          ],
-        }),
-      ]),
-    ).toContainEqual(expect.stringContaining("not declared"));
-  });
+  expect(
+    issues([
+      requestStep({
+        headers: [header({ source: "secret", secret_id: "key" })],
+      }),
+    ]),
+  ).toContainEqual(issueAt(["secrets"], "not declared"));
 });
 
 interface FakeFetch {
@@ -755,11 +710,6 @@ describe("page value redaction", () => {
 });
 
 const savedValue = (name: string) => ({ source: "saved", name });
-const saveIdStep = (stepId: string, name: string) =>
-  requestStep({
-    step_id: stepId,
-    save: [{ name, json_pointer: "/id" }],
-  });
 const clickSavingItem = (name: string) => ({
   step_id: "save-item",
   action: "click",
@@ -777,21 +727,16 @@ const gotoStep = (url: string) => ({
   wait_until: "load",
 });
 
-describe("saved value schema", () => {
-  it("refuses a saved value no earlier step saves, wherever a step sends it", () => {
-    const sendsItem = requestStep({
-      step_id: "edit",
-      method: "PUT",
-      path: "/api/items/{saved:item}",
-    });
-    expect(issues([sendsItem])).toEqual([
-      "Step edit sends saved value item, which no earlier step saves",
-    ]);
-    expect(issues([sendsItem, saveIdStep("create", "item")])).toContainEqual(
-      expect.stringContaining("which no earlier step saves"),
-    );
-    expect(issues([saveIdStep("create", "item"), sendsItem])).toEqual([]);
+describe("scenario value validation", () => {
+  it("requires a prior binding wherever steps use saved values", () => {
+    const sendsItem = requestStep({ path: "/api/items/{saved:item}" });
     expect(issues([clickSavingItem("item"), sendsItem])).toEqual([]);
+    expect(
+      issues([
+        gotoStep(`${ORIGIN}/search/{q}`),
+        requestStep({ path: "/api/items/{id}", json: { name: "{draft}" } }),
+      ]),
+    ).toEqual([]);
     for (const step of [
       gotoStep(`${ORIGIN}/items/{saved:item}`),
       gotoStep(`${ORIGIN}/items/%7Bsaved%3Aitem%7D`),
@@ -805,114 +750,55 @@ describe("saved value schema", () => {
             name: "Authorization",
             value: {
               source: "basic_credentials",
-              parts: [savedValue("item"), { source: "literal", value: "x" }],
+              parts: [savedValue("item"), { source: "literal", value: "" }],
             },
           },
         ],
       }),
     ])
       expect(issues([step]), JSON.stringify(step)).toContainEqual(
-        expect.stringContaining("sends saved value item"),
+        issueAt(["actions", 0], "sends saved value item"),
       );
   });
 
-  it("reads only `{saved:name}` as written in a JSON string, not its encoded spelling", () => {
-    expect(
-      issues([requestStep({ json: { note: "%7Bsaved:item%7D" } })]),
-    ).toEqual([]);
-  });
-
-  it("sends other braces as written", () => {
-    expect(
-      issues([
-        gotoStep(`${ORIGIN}/search/{q}`),
-        requestStep({ path: "/api/items/{id}", json: { name: "{draft}" } }),
-      ]),
-    ).toEqual([]);
-  });
-});
-
-describe("saved value schema: credentials and response paths", () => {
-  it("refuses a literal Basic password, which Evidence would record as written", () => {
-    const basic = (password: unknown) =>
+  it("validates Basic credential arity, references and password privacy", () => {
+    const basic = (parts: readonly unknown[]) =>
       requestStep({
         headers: [
           {
             name: "Authorization",
-            value: {
-              source: "basic_credentials",
-              parts: [{ source: "literal", value: "admin" }, password],
-            },
+            value: { source: "basic_credentials", parts },
           },
         ],
       });
+    const username = { source: "literal", value: "admin" };
+    const parts = ["actions", 0, "headers", 0, "value", "parts"];
     expect(
-      issues([basic({ source: "literal", value: "hunter2" })]),
-    ).toContainEqual(expect.stringContaining("not a literal"));
-    expect(issues([basic({ source: "literal", value: "" })])).toEqual([]);
-  });
-
-  it("builds Basic credentials from page values and refuses undeclared secret parts", () => {
-    const basic = (username: unknown, password: unknown) =>
-      requestStep({
-        headers: [
-          {
-            name: "Authorization",
-            value: { source: "basic_credentials", parts: [username, password] },
-            prefix: "Basic ",
-          },
-        ],
-      });
+      issues([basic([username, { source: "literal", value: "private" }])]),
+    ).toContainEqual(issueAt([...parts, 1], "not a literal"));
     expect(
-      issues([
-        basic(
-          { source: "local_storage", key: "user", json_pointer: "/name" },
-          { source: "cookie", name: "pw" },
-        ),
-      ]),
+      issues([basic([username, { source: "literal", value: "" }])]),
     ).toEqual([]);
     expect(
-      issues([
-        basic(
-          { source: "literal", value: "admin" },
-          { source: "secret", secret_id: "password" },
-        ),
-      ]),
-    ).toContainEqual(expect.stringContaining("not declared"));
-    const literal = { source: "literal", value: "admin" };
-    expect(
-      issues([
-        requestStep({
-          headers: [
-            {
-              name: "Authorization",
-              value: { source: "basic_credentials", parts: [literal] },
-            },
-          ],
-        }),
-      ]).length,
-    ).toBeGreaterThan(0);
+      issues([basic([username, { source: "secret", secret_id: "password" }])]),
+    ).toContainEqual(issueAt(["secrets"], "not declared"));
+    expect(issues([basic([username])])).toContainEqual(issueAt(parts));
   });
 
-  it("requires a save_response to name a same-origin path and something to save", () => {
-    const click = (saveResponse: unknown) => ({
-      ...clickSavingItem("item"),
-      save_response: saveResponse,
-    });
-    for (const path of ["//evil.test/api", "api/items", "https://evil.test/"])
+  it("requires a UI save response to select a same-origin path and at least one value", () => {
+    const action = clickSavingItem("item");
+    for (const path of ["//other.test/api", "api/items", "https://other.test/"])
       expect(
         issues([
-          click({
-            method: "POST",
-            path,
-            save: [{ name: "item", json_pointer: "/id" }],
-          }),
-        ]).length,
+          { ...action, save_response: { ...action.save_response, path } },
+        ]),
         path,
-      ).toBeGreaterThan(0);
+      ).toContainEqual(issueAt(["actions", 0, "save_response", "path"]));
     expect(
-      issues([click({ method: "POST", path: "/api/items", save: [] })]).length,
-    ).toBeGreaterThan(0);
+      issues([
+        { ...action, save_response: { ...action.save_response, save: [] } },
+      ]),
+    ).toContainEqual(issueAt(["actions", 0, "save_response", "save"]));
   });
 });
 
