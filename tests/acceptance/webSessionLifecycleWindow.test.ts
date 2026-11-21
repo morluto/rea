@@ -7,69 +7,64 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { startFakeCdpBrowser } from "../fixtures/fakeCdpBrowser.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const startLifecycleBrowser = () =>
+  startFakeCdpBrowser({
+    eventsBeforeReply: [
+      "Performance.getMetrics",
+      "Page.setLifecycleEventsEnabled",
+    ],
+    commandResult: ({ method }) => {
+      if (method === "Performance.enable") return {};
+      if (method === "Performance.getMetrics")
+        return { metrics: [{ name: "Timestamp", value: 20 }] };
+      return undefined;
+    },
+    commandEvents: ({ method, sessionId }, origin) => {
+      const milestone = (loaderId: string, timestamp: number | string) => ({
+        method: "Page.lifecycleEvent",
+        sessionId,
+        params: { frameId: "frame-main", loaderId, name: "load", timestamp },
+      });
+      if (method === "Performance.getMetrics")
+        return [
+          milestone("loader-before-window", 19),
+          {
+            method: "Page.navigatedWithinDocument",
+            sessionId,
+            params: {
+              frameId: "frame-main",
+              url: `${origin}#during-clock-response`,
+              navigationType: "historyApi",
+            },
+          },
+        ];
+      if (method === "Page.setLifecycleEventsEnabled")
+        return [
+          milestone("loader-before-window-replayed-after-arm", 19),
+          milestone("loader-current-window", 21),
+          milestone("loader-malformed-clock", "21"),
+          {
+            method: "Page.frameNavigated",
+            sessionId,
+            params: {
+              type: "BackForwardCacheRestore",
+              frame: {
+                id: "frame-main",
+                loaderId: "restored-loader",
+                url: `${origin}/app`,
+                urlFragment: "#restored",
+              },
+            },
+          },
+        ];
+      return undefined;
+    },
+  });
+
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "filters replayed lifecycle milestones before the observation window through %s",
+  "retains in-window navigation and lifecycle evidence through %s",
   async (surface, { cli }) => {
-    const browser = await startFakeCdpBrowser({
-      eventsBeforeReply: [
-        "Performance.getMetrics",
-        "Page.setLifecycleEventsEnabled",
-      ],
-      commandResult: (command) => {
-        if (command.method === "Performance.enable") return {};
-        if (command.method === "Performance.getMetrics")
-          return { metrics: [{ name: "Timestamp", value: 20 }] };
-        return undefined;
-      },
-      commandEvents: (command, origin) => {
-        if (command.method === "Performance.getMetrics")
-          return [
-            {
-              method: "Page.lifecycleEvent",
-              sessionId: command.sessionId,
-              params: {
-                frameId: "frame-main",
-                loaderId: "loader-before-window",
-                name: "load",
-                timestamp: 19,
-              },
-            },
-            {
-              method: "Page.navigatedWithinDocument",
-              sessionId: command.sessionId,
-              params: {
-                frameId: "frame-main",
-                url: `${origin}#during-clock-response`,
-                navigationType: "historyApi",
-              },
-            },
-          ];
-        if (command.method === "Page.setLifecycleEventsEnabled")
-          return [
-            {
-              method: "Page.lifecycleEvent",
-              sessionId: command.sessionId,
-              params: {
-                frameId: "frame-main",
-                loaderId: "loader-before-window-replayed-after-arm",
-                name: "load",
-                timestamp: 19,
-              },
-            },
-            {
-              method: "Page.lifecycleEvent",
-              sessionId: command.sessionId,
-              params: {
-                frameId: "frame-main",
-                loaderId: "loader-current-window",
-                name: "load",
-                timestamp: 21,
-              },
-            },
-          ];
-        return undefined;
-      },
-    });
+    const browser = await startLifecycleBrowser();
     onTestFinished(() => browser.close());
 
     let evidence: unknown;
@@ -105,26 +100,33 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const normalized = z
       .object({ normalized_result: webObservationSessionSchema })
       .parse(sourceEvidence).normalized_result;
-    expect(normalized.timeline).toContainEqual(
+    expect(
+      normalized.timeline.filter(({ type }) => type === "lifecycle"),
+    ).toEqual([
       expect.objectContaining({
-        type: "lifecycle",
         loader_id: "loader-current-window",
         timestamp: 21,
       }),
-    );
-    expect(normalized.timeline).not.toContainEqual(
-      expect.objectContaining({ loader_id: "loader-before-window" }),
-    );
-    expect(normalized.timeline).not.toContainEqual(
-      expect.objectContaining({
-        loader_id: "loader-before-window-replayed-after-arm",
-      }),
-    );
+    ]);
     expect(normalized.timeline).toContainEqual(
       expect.objectContaining({
         type: "same_document_navigation",
         url: `${browser.allowedOrigin}#during-clock-response`,
         timestamp: null,
+      }),
+    );
+    expect(normalized.completeness.excluded).toContainEqual({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+    expect(normalized.timeline).toContainEqual(
+      expect.objectContaining({
+        type: "navigation_committed",
+        frame_id: "frame-main",
+        loader_id: "restored-loader",
+        url: `${browser.allowedOrigin}/app#restored`,
+        detail: "backforwardcacherestore",
       }),
     );
     expect(normalized.limitations).toContainEqual(
