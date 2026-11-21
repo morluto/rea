@@ -5,7 +5,6 @@ import type { BrowserContext, Page, Request, Response } from "playwright-core";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
-import { waitFor } from "../../tests/support/testWait.js";
 
 describe("declared secrets in scenario events", () => {
   it("redacts encoded declared secrets from text evidence and fingerprints", () => {
@@ -463,12 +462,12 @@ const sourceTransactionCapture = async (
     ],
   };
   listeners.get("request")!(request);
-  if (!options.metadataOnly)
-    await waitFor(() =>
-      expect(capture.result().items).toContainEqual(
-        expect.objectContaining({ kind: "network-content", phase: "request" }),
-      ),
+  if (!options.metadataOnly) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(capture.result().items).toContainEqual(
+      expect.objectContaining({ kind: "network-content", phase: "request" }),
     );
+  }
   if (options.latePageValue !== undefined)
     secrets.admitPageValue("later.cookie", options.latePageValue);
   const sourceId = capture
@@ -511,17 +510,12 @@ const sourceTransactionCapture = async (
       body: async () => Buffer.from(body),
     });
     listeners.get("requestfinished")!(followup);
-    if (!options.metadataOnly)
-      await waitFor(() =>
-        expect(
-          capture
-            .result()
-            .items.filter(
-              (event) =>
-                event.kind === "network-content" && event.phase === "response",
-            ),
-        ).toHaveLength(1),
+    if (!options.metadataOnly) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(capture.result().items).toContainEqual(
+        expect.objectContaining({ kind: "network-content", phase: "response" }),
       );
+    }
   }
   if (options.learnDirect) secrets.save("click.token", "token", value, true);
   listeners.get("requestfinished")!(request);
@@ -557,75 +551,70 @@ it("keeps byte redaction for a hidden binary declaration during the final privac
   expect(text).not.toContain("1000");
 });
 
-it("redacts earlier source transaction metadata and request content before publishing", async () => {
-  const { capture, sourceId, value } = await sourceTransactionCapture();
-  const source = capture
-    .result()
-    .items.filter(
+it.each([false, true])(
+  "finalizes earlier source data with a failed marked response: %s",
+  async (fail) => {
+    const { capture, sourceId, value } = await sourceTransactionCapture({
+      fail,
+    });
+    const result = capture.result();
+    const source = result.items.filter(
       (event) => "transaction_id" in event && event.transaction_id === sourceId,
     );
-  expect(source.filter((event) => event.kind === "request")).toHaveLength(1);
-  expect(source).toContainEqual(
-    expect.objectContaining({
-      kind: "request",
-      url: expect.objectContaining({
+    expect(JSON.stringify(source)).not.toContain(value);
+    expect(source.find(({ kind }) => kind === "request")).toMatchObject({
+      url: fail
+        ? { url: "", origin: null, query_parameter_names: [], redacted: true }
+        : {
+            origin: "https://example.test",
+            query_parameter_names: ["token", "safe"],
+            redacted: true,
+            url: expect.stringContaining("safe=visible"),
+          },
+    });
+    expect(
+      result.items.find(
+        (event) =>
+          event.kind === "request" && event.transaction_id !== sourceId,
+      ),
+    ).toMatchObject({
+      url: {
         origin: "https://example.test",
-        query_parameter_names: ["token", "safe"],
-        redacted: true,
+        redacted: !fail,
         url: expect.stringContaining("safe=visible"),
-      }),
-    }),
-  );
-  expect(JSON.stringify(source)).not.toContain(value);
-  for (const event of source)
-    if (event.kind === "network-content" && event.body.state === "captured") {
-      const text = Buffer.from(event.body.content, "base64").toString();
-      expect(text).not.toContain(value);
-      expect(JSON.parse(text).token).toBe("[REDACTED:page:click.token]");
-    }
-  expect(capture.result().items).toContainEqual(
-    expect.objectContaining({
-      kind: "request",
-      transaction_id: expect.not.stringMatching(new RegExp(`^${sourceId}$`)),
-      url: expect.objectContaining({
-        origin: "https://example.test",
-        redacted: true,
-        url: expect.stringContaining("safe=visible"),
-      }),
-    }),
-  );
-  const finished = JSON.stringify(capture.result());
-  await capture.finish();
-  expect(JSON.stringify(capture.result())).toBe(finished);
-});
+      },
+    });
 
-it("withholds source URLs and earlier content if source values cannot be read", async () => {
-  const { capture, sourceId, value } = await sourceTransactionCapture({
-    fail: true,
-  });
-  const source = capture
-    .result()
-    .items.filter(
-      (event) => "transaction_id" in event && event.transaction_id === sourceId,
-    );
-  expect(JSON.stringify(source)).not.toContain(value);
-  expect(source).toContainEqual(
-    expect.objectContaining({
-      kind: "request",
-      url: { url: "", origin: null, query_parameter_names: [], redacted: true },
-    }),
-  );
-  expect(source).toContainEqual(
-    expect.objectContaining({
-      kind: "network-content",
-      phase: "request",
-      body: expect.objectContaining({ state: "unavailable" }),
-    }),
-  );
-  expect(capture.limitations().join(" ")).toContain(
-    "marked response values were unavailable",
-  );
-});
+    const content = source.filter((event) => event.kind === "network-content");
+    expect(content.map(({ phase }) => phase).sort()).toEqual([
+      "request",
+      "response",
+    ]);
+    for (const { body } of content) {
+      if (fail) {
+        expect(body).toMatchObject({
+          state: "unavailable",
+          reason: "body-read-failed",
+        });
+      } else {
+        if (body.state !== "captured") throw new Error("Missing source bytes");
+        expect(
+          JSON.parse(Buffer.from(body.content, "base64").toString()),
+        ).toEqual({
+          token: "[REDACTED:page:click.token]",
+          public: "kept",
+        });
+      }
+    }
+    if (fail)
+      expect(capture.limitations()).toContainEqual(
+        expect.stringContaining("marked response values were unavailable"),
+      );
+    const finished = JSON.stringify(capture.result());
+    await capture.finish();
+    expect(JSON.stringify(capture.result())).toBe(finished);
+  },
+);
 
 it("accounts for source metadata redaction expansion before publishing replacements", async () => {
   const { capture, sourceId } = await sourceTransactionCapture({
@@ -643,60 +632,62 @@ it("accounts for source metadata redaction expansion before publishing replaceme
   );
 });
 
-it("re-protects follow-up URLs, headers and both body phases recorded before source secrets were learned", async () => {
-  const { capture, value } = await sourceTransactionCapture({ followup: true });
-  const request = capture
-    .result()
-    .items.find(
-      (event) =>
-        event.kind === "request" && event.url.url.includes("/followup?"),
-    );
-  expect(request).toBeDefined();
-  if (request?.kind !== "request")
-    throw new Error("Expected actual follow-up request");
-  const events = capture
-    .result()
-    .items.filter(
-      (event) =>
-        "transaction_id" in event &&
-        event.transaction_id === request.transaction_id,
-    );
-  expect(JSON.stringify(events)).not.toContain(value);
-  const bodies = events.flatMap((event) =>
-    event.kind === "network-content" && event.body.state === "captured"
-      ? [Buffer.from(event.body.content, "base64").toString()]
-      : [],
-  );
-  expect(bodies).toHaveLength(2);
-  for (const body of bodies) {
-    expect(body).not.toContain(value);
-    expect(JSON.parse(body)).toEqual({
-      token: "[REDACTED:page:click.token]",
-      public: "kept",
+it.each([false, true])(
+  "protects a previously recorded follow-up after learning a response secret (metadata only: %s)",
+  async (metadataOnly) => {
+    const { capture, value } = await sourceTransactionCapture({
+      followup: true,
+      metadataOnly,
+      learnDirect: metadataOnly,
     });
-  }
-});
-
-it("protects metadata-only follow-ups when direct saves learn a secret without unambiguous source identity", async () => {
-  const { capture, value } = await sourceTransactionCapture({
-    followup: true,
-    metadataOnly: true,
-    learnDirect: true,
-  });
-  const request = capture
-    .result()
-    .items.find(
+    const { items } = capture.result();
+    const followup = items.find(
       (event) =>
         event.kind === "request" && event.url.url.includes("/followup?"),
     );
-  expect(request).toMatchObject({
-    url: { redacted: true, origin: "https://example.test" },
-  });
-  expect(JSON.stringify(capture.result().items)).not.toContain(value);
-  expect(
-    capture.result().items.some((event) => event.kind === "network-content"),
-  ).toBe(false);
-});
+    if (followup?.kind !== "request")
+      throw new Error("Missing follow-up request");
+    expect(followup.url).toMatchObject({
+      redacted: true,
+      origin: "https://example.test",
+    });
+    expect(JSON.stringify(items)).not.toContain(value);
+    const content = items.filter(
+      (event) =>
+        event.kind === "network-content" &&
+        event.transaction_id === followup.transaction_id,
+    );
+    if (metadataOnly) {
+      expect(items.some(({ kind }) => kind === "network-content")).toBe(false);
+    } else {
+      expect(content).toHaveLength(2);
+      expect(content).toContainEqual(
+        expect.objectContaining({
+          phase: "response",
+          headers: {
+            state: "captured",
+            items: [
+              {
+                name: "X-Followup",
+                value: "[REDACTED:page:click.token]",
+                redacted: true,
+              },
+            ],
+          },
+        }),
+      );
+      for (const event of content) {
+        if (event.kind !== "network-content" || event.body.state !== "captured")
+          throw new Error("Missing follow-up bytes");
+        const body = Buffer.from(event.body.content, "base64").toString();
+        expect(JSON.parse(body)).toEqual({
+          token: "[REDACTED:page:click.token]",
+          public: "kept",
+        });
+      }
+    }
+  },
+);
 
 it("protects earlier non-network event text after a response secret is learned, without network selection", async () => {
   const listeners = new Map<string, (value: unknown) => void>();
