@@ -163,19 +163,24 @@ export function selectRecoveryRelease({
 /** Bind existing npm bytes to the original qualified archive, without rebuilding it. */
 export async function verifyRecoveryPackage({
   directory,
+  sourceDirectory,
   sourceSha,
   runId,
   runAttempt,
   version,
   integrity,
 }) {
+  const pin = (await readFile(join(sourceDirectory, ".nvmrc"), "utf8")).trim();
+  const nodeVersion = `v${pin.replace(/^v/u, "")}`;
+  if (!/^v\d+\.\d+\.\d+$/u.test(nodeVersion))
+    throw new Error("Released source must pin an exact Node.js version");
   const tarball = await validateVerifiedPackage({
     directory,
     sourceSha,
     runId,
     runAttempt,
     packageVersion: version,
-    nodeVersion: process.version,
+    nodeVersion,
     // Existing published releases retain their original v1 artifact; never rewrite it.
     allowLegacyManifest: true,
   });
@@ -298,6 +303,7 @@ async function main() {
     );
   const result = await verifyRecoveryPackage({
     directory: z.string().min(1).parse(process.env.RECOVERY_ARTIFACT_DIRECTORY),
+    sourceDirectory,
     sourceSha,
     runId,
     runAttempt: positive.parse(process.env.RECOVERY_RUN_ATTEMPT),

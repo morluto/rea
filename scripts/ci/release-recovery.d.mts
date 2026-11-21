@@ -14,6 +14,7 @@ export function selectRecoveryRelease(input: {
 
 export function verifyRecoveryPackage(input: {
   directory: string;
+  sourceDirectory: string;
   sourceSha: string;
   runId: number;
   runAttempt: number;

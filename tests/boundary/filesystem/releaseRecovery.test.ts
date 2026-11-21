@@ -199,10 +199,11 @@ it("refuses foreign runs, unrelated workflows and unpublished releases", () => {
 });
 
 it.each([1, 2])(
-  "requires npm bytes to match the original v%d archive/source/run",
+  "requires npm bytes and the released Node pin to match the original v%d archive/source/run",
   async (schemaVersion) => {
     const directory = await createTestTempDirectory("rea-release-recovery-");
     const archive = "original qualified archive";
+    await writeFile(join(directory, ".nvmrc"), "22.14.0\n");
     await writeFile(join(directory, "package.tgz"), archive);
     await writeFile(
       join(directory, "manifest.json"),
@@ -215,12 +216,13 @@ it.each([1, 2])(
         platform: "linux",
         architecture: "x64",
         packageVersion: "6.5.0",
-        nodeVersion: process.version,
+        nodeVersion: "v22.14.0",
         sha256: createHash("sha256").update(archive).digest("hex"),
       }),
     );
     const input = {
       directory,
+      sourceDirectory: directory,
       sourceSha,
       runId: 123,
       runAttempt: 1,
@@ -240,6 +242,14 @@ it.each([1, 2])(
     await expect(
       verifyRecoveryPackage({ ...input, runId: 456 }),
     ).rejects.toThrow("workflow run ID mismatch");
+    await writeFile(join(directory, ".nvmrc"), "22.15.0\n");
+    await expect(verifyRecoveryPackage(input)).rejects.toThrow(
+      "Node.js version mismatch",
+    );
+    await writeFile(join(directory, ".nvmrc"), "22\n");
+    await expect(verifyRecoveryPackage(input)).rejects.toThrow(
+      "exact Node.js version",
+    );
   },
 );
 
