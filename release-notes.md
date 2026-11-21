@@ -381,6 +381,7 @@
 * **web:** consolidate passive HTTP metadata proofs ([#13087](https://github.com/morluto/rea/issues/13087)) ([e144285](https://github.com/morluto/rea/commit/e1442859dc492a666de9777547d9ac235528d89f))
 * **web:** consolidate passive script map matching proofs ([#13088](https://github.com/morluto/rea/issues/13088)) ([e94475b](https://github.com/morluto/rea/commit/e94475bdccc5f122f53dbde5a162348c10de0567))
 * **web:** consolidate redirect ancestry comparison proofs ([#13082](https://github.com/morluto/rea/issues/13082)) ([5b04c74](https://github.com/morluto/rea/commit/5b04c74ae05d3c5acf739f2941cd8d9145761f3d))
+* **web:** consolidate saved scenario path checks ([#13122](https://github.com/morluto/rea/issues/13122)) ([b5cb5e2](https://github.com/morluto/rea/commit/b5cb5e2f0dd740993dc35a02c8d94068cf79df46))
 * **web:** consolidate scenario alignment and ordering proofs ([#13078](https://github.com/morluto/rea/issues/13078)) ([b723393](https://github.com/morluto/rea/commit/b7233936118915a1f9c230873c95be08f7ae06e7))
 * **web:** consolidate scenario event coverage proofs ([#13079](https://github.com/morluto/rea/issues/13079)) ([2dc27d1](https://github.com/morluto/rea/commit/2dc27d164ab2c989d3fe06e8f1dcb2892366f686))
 * **web:** consolidate scenario request cleanup checks ([#13116](https://github.com/morluto/rea/issues/13116)) ([ad4c558](https://github.com/morluto/rea/commit/ad4c558789289f42f3be74694080d5a99c4ad16d))
