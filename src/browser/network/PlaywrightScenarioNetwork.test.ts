@@ -187,13 +187,13 @@ it.each([true, false])(
       request,
       JSON.stringify({ token: secret, public: "kept" }),
     );
-    vi.spyOn(response, "headers").mockReturnValue({
+    response.headers = () => ({
       "content-type": "application/json",
       "x-derived-token": secret,
     });
-    vi.spyOn(response, "headersArray").mockResolvedValue([
+    response.headersArray = async () => [
       { name: "X-Derived-Token", value: secret },
-    ]);
+    ];
     secrets.responseProtector("login", [
       { name: "token", json_pointer: "/token", secret: true },
     ])?.(request);
@@ -206,8 +206,16 @@ it.each([true, false])(
     );
     if (content?.kind !== "network-content")
       throw new Error("Missing response content");
-    expect(JSON.stringify(content.headers)).not.toContain(secret);
-    expect(content.headers.state).toBe("captured");
+    expect(content.headers).toEqual({
+      state: "captured",
+      items: [
+        {
+          name: "X-Derived-Token",
+          value: "[REDACTED:page:login.token]",
+          redacted: true,
+        },
+      ],
+    });
     if (responseBody)
       expect(JSON.parse(bodyText(content))).toEqual({
         token: "[REDACTED:page:login.token]",
@@ -221,16 +229,33 @@ it.each([true, false])(
   },
 );
 
+const sourceMarker = '"[REDACTED:page:login.token]"';
+
 it.each([
-  ['{"token":"\\u0073ecret-token"}', "/token"],
-  ['{"token":"secret\\/token"}', "/token"],
-  ['{"token":1e3}', "/token"],
-  ['{"token":1000.0}', "/token"],
-  ['{"items":[{"a/b":"\\u0073ecret-token"}]}', "/items/0/a~1b"],
-  ['{"token":"shadowed","token":"\\u0073ecret-token"}', "/token"],
+  {
+    label: "escaped pointer and alias, with unrelated spellings",
+    body: '{ "items":[{"a/b":"\\u0073ecret-token"}], "mirror":"\\u0073ecret-token", "unknown":1e-400 }',
+    pointer: "/items/0/a~1b",
+    retained: `{ "items":[{"a/b":${sourceMarker}}], "mirror":${sourceMarker}, "unknown":1e-400 }`,
+  },
+  {
+    label: "escaped slash",
+    body: '{"token":"secret\\/token"}',
+    retained: `{"token":${sourceMarker}}`,
+  },
+  {
+    label: "numeric source and an exact alias",
+    body: '{"token":1e3,"mirror":1000.0}',
+    retained: `{"token":${sourceMarker},"mirror":${sourceMarker}}`,
+  },
+  {
+    label: "duplicate scalar keys",
+    body: '{"token":"shadowed","token":"\\u0073ecret-token"}',
+    retained: `{"token":${sourceMarker},"token":${sourceMarker}}`,
+  },
 ])(
-  "redacts the selected source JSON token structurally: %s",
-  async (body, pointer) => {
+  "redacts $label without rewriting unselected source bytes",
+  async ({ body, pointer = "/token", retained }) => {
     const { collector, events, secrets } = harness({
       request_body: false,
       response_body: true,
@@ -248,11 +273,8 @@ it.each([
     const content = events.find(
       (event) => event.kind === "network-content" && event.phase === "response",
     );
-    expect(content).toBeDefined();
-    const text = bodyText(content!);
-    expect(text).not.toMatch(/secret|0073|shadowed|1e3|1000/u);
-    expect(JSON.parse(text)).toBeDefined();
-    expect(text).toContain("[REDACTED:page:login.token]");
+    if (content === undefined) throw new Error("Missing response content");
+    expect(bodyText(content)).toBe(retained);
   },
 );
 
@@ -295,33 +317,6 @@ it.each([
     expect(response.bodyReads).toBe(1);
   },
 );
-
-it("preserves unselected source spellings while redacting escaped aliases", async () => {
-  const { collector, events, secrets } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: false,
-  });
-  const request = new RequestFixture("marked");
-  const body =
-    '{ "token":"secret-token", "mirror":"\\u0073ecret-token", "unknown":1e-400 }';
-  request.responseSize = Buffer.byteLength(body);
-  secrets.responseProtector("login", [
-    { name: "token", json_pointer: "/token", secret: true },
-  ])?.(request);
-  collector.request(request);
-  collector.response(new ResponseFixture(request, body));
-  collector.finished(request);
-  await collector.finish();
-  const content = events.find(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  const text = bodyText(content!);
-  expect(text).toContain('"unknown":1e-400');
-  expect(text).toContain('{ "token":');
-  expect(text).not.toMatch(/secret|0073/u);
-  expect(JSON.parse(text).mirror).toBe("[REDACTED:page:login.token]");
-});
 
 it("associates sensitive fields by request identity while keeping same-URL unmarked values", async () => {
   const { collector, events, secrets } = harness({
