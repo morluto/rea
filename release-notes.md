@@ -373,6 +373,7 @@
 * **web:** consolidate DOM snapshot position and SVG proofs ([#13104](https://github.com/morluto/rea/issues/13104)) ([4ad0e3e](https://github.com/morluto/rea/commit/4ad0e3ea786dfc2fe1784ca8d2d3e8328637ad9c))
 * **web:** consolidate exact response number checks ([#13118](https://github.com/morluto/rea/issues/13118)) ([fba0e43](https://github.com/morluto/rea/commit/fba0e43af3292a57d07420bb1db2c6e388d23a10))
 * **web:** consolidate interrupted module resolution evidence ([#13072](https://github.com/morluto/rea/issues/13072)) ([f63915d](https://github.com/morluto/rea/commit/f63915d6f2bc55328bd3e38a337079b127d8113d))
+* **web:** consolidate marked response redaction checks ([#13131](https://github.com/morluto/rea/issues/13131)) ([c53c701](https://github.com/morluto/rea/commit/c53c7018e4f9fa6776c631b6e71e8a817509597e))
 * **web:** consolidate module context and resolver evidence checks ([#13071](https://github.com/morluto/rea/issues/13071)) ([56a0617](https://github.com/morluto/rea/commit/56a0617f518432f14ba981c8c55f1b920f857f5e))
 * **web:** consolidate module syntax and capture identity fixtures ([#13073](https://github.com/morluto/rea/issues/13073)) ([8322b55](https://github.com/morluto/rea/commit/8322b555523ed83aa895af5e4ff666023ca511fc))
 * **web:** consolidate network capture queue lifecycle checks ([#13125](https://github.com/morluto/rea/issues/13125)) ([9a9ee6c](https://github.com/morluto/rea/commit/9a9ee6cf3d97fffea4849902872ad9b028cbc54f))
