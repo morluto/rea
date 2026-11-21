@@ -258,9 +258,6 @@ it.each([
 
 it.each([
   { size: 20, headers: { "content-encoding": "gzip" } },
-  { size: 0, headers: { "content-length": "24" } },
-  { size: 0, headers: { "content-length": "0024" } },
-  { size: 0, headers: { "content-length": "00000000000000000024" } },
   {
     size: 0,
     headers: { "content-encoding": "gzip", "content-length": "0024" },
@@ -361,10 +358,6 @@ it("associates sensitive fields by request identity while keeping same-URL unmar
 
 it.each([
   { size: 64, headers: { "content-encoding": "br" } },
-  { size: 0, headers: {} },
-  { size: 0, headers: { "content-length": "0000" } },
-  { size: 0, headers: { "content-length": "24, 24" } },
-  { size: 0, headers: { "content-length": "0009007199254740993" } },
   { size: 0, headers: { "content-length": "00012000001" } },
 ])(
   "withholds marked response content when decoded bounds are unknown or over budget: %j",

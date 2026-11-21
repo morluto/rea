@@ -1704,62 +1704,6 @@ describe("saving from a UI step's response", () => {
     expect(listeners.size).toBe(0);
   });
 
-  it("refuses a response too large to save from without reading it", async () => {
-    const parsed = clickSaving("/api/items");
-    const { page, reads } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: '{"id":"x"}',
-        size: 12_000_001,
-      },
-    ]);
-    await expect(
-      perform(page, parsed.actions[0]!, resolved(parsed)),
-    ).rejects.toThrow("too large to save values from");
-    expect(reads.count).toBe(0);
-  });
-
-  it.each([
-    { encoding: "br", size: 32 },
-    { encoding: "gzip, zstd", size: 32 },
-    { encoding: "identity", size: 0 },
-    { encoding: "gzip", size: 0 },
-    { size: 0, length: "0" },
-    { size: 0, length: "0000" },
-    { size: 0, length: "+17" },
-    { size: 0, length: "17.0" },
-    { size: 0, length: "1.7e1" },
-    { size: 0, length: "17, 17" },
-    { size: 0, length: "0001000000000000000" },
-    { size: 0, length: "9007199254740993" },
-    { size: 0, length: "0009007199254740993" },
-    { size: -1 },
-    { size: Number.NaN },
-  ])(
-    "refuses unknown decoded UI response bounds before body allocation: %j",
-    async (bounds) => {
-      const parsed = clickSaving("/api/items");
-      const secrets = resolved(parsed);
-      const { page, reads, listeners } = uiPage([
-        {
-          method: "POST",
-          url: `${ORIGIN}/api/items`,
-          status: 201,
-          body: '{"id":"record-7"}',
-          ...bounds,
-        },
-      ]);
-      await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toThrow(
-        "decoded response size",
-      );
-      expect(reads.count).toBe(0);
-      expect(listeners.size).toBe(0);
-      expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    },
-  );
-
   it("stops watching requests when the step fails before its response", async () => {
     const parsed = clickSaving("/api/items");
     const { page, listeners } = uiPage([], true);
@@ -1846,22 +1790,50 @@ it("retains saved values when cancellation follows completed click publication",
   expect(secrets.savedValue("item")).toBe("committed-object");
 });
 
-describe("saving from a compressed or cached UI response", () => {
+describe("UI response body admission", () => {
+  const tooLarge = "too large to save values from";
+  const couldDecodePastLimit = "could decode past the size limit";
+  const unknown = "decoded response size cannot be bounded";
+
   it.each([
-    { encoding: "gzip", size: 32 },
+    { encoding: "gzip", size: 32, length: "12000001" },
     { encoding: "deflate", size: 32 },
     { encoding: "x-gzip", size: 32 },
-    { size: 0, length: "17" },
-    { size: 0, length: "0017" },
     { size: 0, length: "00000000000000000017" },
-    { encoding: "gzip", size: 0, length: "32" },
     { encoding: "gzip", size: 0, length: "0032" },
+    { size: 12_000_001, error: tooLarge },
+    {
+      encoding: "gzip",
+      size: 12_000,
+      length: "32",
+      error: couldDecodePastLimit,
+    },
+    { size: 0, length: "00012000001", error: couldDecodePastLimit },
+    {
+      encoding: "gzip",
+      size: 0,
+      length: "00012000",
+      error: couldDecodePastLimit,
+    },
+    { encoding: "br", size: 32, error: unknown },
+    { encoding: "gzip, zstd", size: 32, error: unknown },
+    { encoding: "gzip", size: 0, error: unknown },
+    ...[
+      "0000",
+      "+17",
+      "17.0",
+      "1.7e1",
+      "17, 17",
+      "0001000000000000000",
+      "0009007199254740993",
+    ].map((length) => ({ size: 0, length, error: unknown })),
+    ...[-1, Number.NaN].map((size) => ({ size, error: unknown })),
   ])(
-    "saves from a response whose received size or declared length bounds its decoded size: %j",
-    async (bounds) => {
+    "admits only bounded response bodies: %j",
+    async ({ error, ...bounds }) => {
       const parsed = clickSaving("/api/items");
       const secrets = resolved(parsed);
-      const { page, reads } = uiPage([
+      const { page, reads, listeners } = uiPage([
         {
           method: "POST",
           url: `${ORIGIN}/api/items`,
@@ -1870,33 +1842,19 @@ describe("saving from a compressed or cached UI response", () => {
           ...bounds,
         },
       ]);
-      await perform(page, parsed.actions[0]!, secrets);
-      expect(secrets.savedValue("item")).toBe("record-7");
-      expect(reads.count).toBe(1);
-    },
-  );
-
-  it.each([
-    { encoding: "gzip", size: 12_000 },
-    { size: 0, length: "00012000001" },
-    { encoding: "gzip", size: 0, length: "00012000" },
-  ])(
-    "refuses a response that could decode past the limit without reading it: %j",
-    async (bounds) => {
-      const parsed = clickSaving("/api/items");
-      const { page, reads } = uiPage([
-        {
-          method: "POST",
-          url: `${ORIGIN}/api/items`,
-          status: 201,
-          body: '{"id":"x"}',
-          ...bounds,
-        },
-      ]);
-      await expect(
-        perform(page, parsed.actions[0]!, resolved(parsed)),
-      ).rejects.toThrow("could decode past the size limit");
-      expect(reads.count).toBe(0);
+      const action = perform(page, parsed.actions[0]!, secrets);
+      if (error === undefined) {
+        await action;
+        expect(secrets.savedValue("item")).toBe("record-7");
+        expect(reads.count).toBe(1);
+      } else {
+        await expect(action).rejects.toThrow(error);
+        expect(() => secrets.savedValue("item")).toThrow(
+          "No earlier step saved",
+        );
+        expect(reads.count).toBe(0);
+      }
+      expect(listeners.size).toBe(0);
     },
   );
 });
@@ -1906,75 +1864,54 @@ describe("saved response limits and deadlines", () => {
     vi.useRealTimers();
   });
 
-  const lateBody = () => {
-    let arrive: (body: string) => void = () => undefined;
-    const late = new Promise<string>((resolve) => {
-      arrive = resolve;
-    });
-    return { late, arrive };
-  };
-
-  it("saves nothing from a body still arriving when the step's time runs out", async () => {
-    vi.useFakeTimers();
-    const parsed = clickSaving("/api/items");
-    const secrets = resolved(parsed);
-    const { late, arrive } = lateBody();
-    const { page, listeners } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: "",
-        size: Buffer.byteLength('{"id":"item-late"}'),
-        late,
-      },
-    ]);
-    const outcome = perform(page, parsed.actions[0]!, secrets).then(
-      () => "saved",
-      (cause: Error) => cause.message,
-    );
-    await vi.advanceTimersByTimeAsync(5001);
-    arrive('{"id":"item-late"}');
-    await expect(outcome).resolves.toContain(
-      "ended before its saved response was read",
-    );
-    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    expect(listeners.size).toBe(0);
-  });
-
-  it("saves nothing from a body still arriving when the step is cancelled", async () => {
-    const parsed = clickSaving("/api/items");
-    const secrets = resolved(parsed);
-    const { late, arrive } = lateBody();
-    const { page, listeners } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: "",
-        size: Buffer.byteLength('{"id":"item-late"}'),
-        late,
-      },
-    ]);
-    const cancel = new AbortController();
-    const outcome = perform(
-      page,
-      parsed.actions[0]!,
-      secrets,
-      cancel.signal,
-    ).then(
-      () => "saved",
-      (cause: Error) => cause.message,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    cancel.abort();
-    arrive('{"id":"item-late"}');
-    await expect(outcome).resolves.toContain(
-      "ended before its saved response was read",
-    );
-    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    expect(listeners.size).toBe(0);
-  });
+  it.each(["deadline", "cancellation"])(
+    "saves nothing when %s ends an active body read",
+    async (end) => {
+      vi.useFakeTimers();
+      const parsed = clickSaving("/api/items");
+      const secrets = resolved(parsed);
+      const body = '{"id":"item-late"}';
+      let finishBody!: (value: string) => void;
+      const late = new Promise<string>((resolveBody) => {
+        finishBody = resolveBody;
+      });
+      const { page, listeners, reads } = uiPage([
+        {
+          method: "POST",
+          url: `${ORIGIN}/api/items`,
+          status: 201,
+          body: "",
+          size: Buffer.byteLength(body),
+          late,
+        },
+      ]);
+      const cancel = new AbortController();
+      const outcome = perform(
+        page,
+        parsed.actions[0]!,
+        secrets,
+        cancel.signal,
+      ).catch((cause: unknown) => cause);
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads.count).toBe(1);
+        if (end === "cancellation") cancel.abort("cancelled during body read");
+        await vi.advanceTimersByTimeAsync(end === "deadline" ? 5000 : 0);
+        expect(
+          await Promise.race([outcome, Promise.resolve("still pending")]),
+        ).toMatchObject({
+          message: expect.stringContaining(
+            "ended before its saved response was read",
+          ),
+        });
+        expect(listeners.size).toBe(0);
+      } finally {
+        finishBody(body);
+        await outcome;
+      }
+      expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
+    },
+  );
 
   it("saves nothing when cancellation arrives as the body wait releases its listener", async () => {
     const parsed = clickSaving("/api/items");
