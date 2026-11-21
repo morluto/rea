@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -35,20 +35,31 @@ export async function verifyElectronToolContracts({
   });
   const root = rootFixture.path;
   const applicationRoot = join(root, "app");
+  const profileOption = "--rea-verifier-profile=";
+  const profiles = {
+    inspection: join(root, "inspection-profile"),
+    capture: join(root, "capture-profile"),
+    cancellation: join(root, "cancellation-profile"),
+  };
   const main = join(applicationRoot, "main.cjs");
   const preload = join(applicationRoot, "preload.cjs");
   const ready = join(root, "ready");
   const entrypoint = join(repositoryRoot, "scripts", "rea.mjs");
   const runId = randomUUID();
   const prepare = async () => {
-    await mkdir(applicationRoot);
+    await Promise.all(
+      [applicationRoot, ...Object.values(profiles)].map((path) => mkdir(path)),
+    );
     await writeFile(
       main,
       `const electron = require("electron");
 const path = require("node:path");
 const { app, BrowserWindow, ipcMain } = electron;
 const fs = require("node:fs");
-app.setPath("userData", fs.mkdtempSync(path.join(${JSON.stringify(root)}, "profile-")));
+const profileOption = ${JSON.stringify(profileOption)};
+const profile = process.argv.find((argument) => argument.startsWith(profileOption));
+if (profile === undefined) throw new Error("Missing Electron verifier profile");
+app.setPath("userData", profile.slice(profileOption.length));
 const Window = BrowserWindow;
 const mainIpc = ipcMain;
 app.whenReady().then(() => {
@@ -132,8 +143,9 @@ bridge.exposeInMainWorld("fixture", {
         [
           "--remote-debugging-address=127.0.0.1",
           "--remote-debugging-port=0",
-          `--user-data-dir=${join(root, "profile")}`,
+          `--user-data-dir=${profiles.inspection}`,
           main,
+          profileOption + profiles.inspection,
         ],
         {
           cwd: root,
@@ -266,12 +278,12 @@ bridge.exposeInMainWorld("fixture", {
         JSON.parse(cli.stdout).normalized_result.target.file_path,
         target.file_path,
       );
-      const inspectionProfile = await readFile(ready, "utf8");
-      assert.equal(dirname(inspectionProfile), root);
+      assert.equal(await readFile(ready, "utf8"), profiles.inspection);
       const input = {
         executable_path: executable,
         application_path: main,
         application_root: applicationRoot,
+        args: [profileOption + profiles.capture],
         actions: [{ step_id: "ipc", kind: "click", selector: "#run" }],
       };
       const active = await client.callTool(
@@ -301,9 +313,7 @@ bridge.exposeInMainWorld("fixture", {
         assert.equal(capture.application.cleanup, "terminated-owned-process");
       }
       assert.equal(capture.actions[0].status, "completed");
-      const activeProfile = await readFile(ready, "utf8");
-      assert.equal(dirname(activeProfile), root);
-      assert.notEqual(activeProfile, inspectionProfile);
+      assert.equal(await readFile(ready, "utf8"), profiles.capture);
       assert.ok(
         capture.ipc.events.some(
           ({ kind, channel }) =>
@@ -328,7 +338,8 @@ bridge.exposeInMainWorld("fixture", {
       );
       if (process.platform !== "win32")
         await verifyCancellation({
-          input,
+          input: { ...input, args: [profileOption + profiles.cancellation] },
+          profilePath: profiles.cancellation,
           ready,
           entrypoint,
           root,
@@ -361,7 +372,14 @@ async function waitForEndpoint(application, diagnostics) {
   );
 }
 
-async function verifyCancellation({ input, ready, entrypoint, root, fixture }) {
+async function verifyCancellation({
+  input,
+  profilePath,
+  ready,
+  entrypoint,
+  root,
+  fixture,
+}) {
   await rm(ready, { force: true });
   const child = spawn(
     process.execPath,
@@ -465,7 +483,7 @@ async function verifyCancellation({ input, ready, entrypoint, root, fixture }) {
       await pause(100);
     }
     assert.ok(ownership, "CLI did not acquire an owned Electron application");
-    await access(ready);
+    assert.equal(await readFile(ready, "utf8"), profilePath);
     // The fixture's readiness precedes Playwright's Inspector acquisition;
     // interrupt the long action rather than its separate startup boundary.
     await pause(1_000);
