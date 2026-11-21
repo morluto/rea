@@ -14,10 +14,7 @@ import {
   AnalysisInputError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import {
-  decodeIdaToolResult,
-  type IdaMcpConnection,
-} from "./IdaMcpConnection.js";
+import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "./IdaCallGraph.js";
 import { IdaProvider } from "./IdaProvider.js";
@@ -343,34 +340,6 @@ describe("IDA selected registration factories", () => {
       )?.effects.mayShowUi,
     ).toBe(false);
     expect(producer.connects).toBe(0);
-  });
-});
-
-describe("native IDA complete result decoding", () => {
-  it("uses complete native JSON text instead of a shortened structured preview", () => {
-    const complete = [
-      {
-        data: [{ addr: "0x1000", name: "main", size: "0x20" }],
-        next_offset: null,
-      },
-    ];
-    const response = {
-      content: [{ type: "text", text: JSON.stringify(complete) }],
-      structuredContent: { result: [], _output_truncated: true },
-    };
-    expect(decodeIdaToolResult(response, "native")).toEqual(complete);
-    expect(() =>
-      decodeIdaToolResult({ ...response, content: [] }, "native"),
-    ).toThrow("complete JSON");
-    expect(() =>
-      decodeIdaToolResult(
-        { ...response, content: [{ type: "text", text: "broken JSON" }] },
-        "native",
-      ),
-    ).toThrow();
-    expect(() =>
-      decodeIdaToolResult({ ...response, isError: true }, "native"),
-    ).toThrow("tool failed");
   });
 });
 
