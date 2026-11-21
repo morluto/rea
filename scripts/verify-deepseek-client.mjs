@@ -8,6 +8,7 @@ import { parse as parseYaml } from "yaml";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
@@ -89,7 +90,8 @@ let artifactDigest;
 let mainRequests = 0;
 const lifecycle = [];
 const patterns = new Set();
-const commands = await createVerifierCommands();
+const commandOwner = await createVerifierCommands();
+const commands = bindVerifierCommandInterruption(commandOwner);
 await withVerifierCleanup(async () => {
   await withVerifierCleanup(async () => {
     await Promise.all([
@@ -412,20 +414,24 @@ await withVerifierCleanup(async () => {
     assert.equal(await pathExists(skillPath), false);
     lifecycle.push("uninstall");
   }, [
-    () => commands.close(),
+    () => commandOwner.close(),
     async () => {
       await fixture?.close();
     },
   ]);
+  commands.throwIfInterrupted();
   passed = true;
 }, [
   async () => {
+    const completed = await completeVerifierRun(verifier);
+    const reason = commands.finish();
     const receipt = {
       client: "deepseek-harness",
       clientVersion,
       mode,
       lifecycle,
-      passed,
+      passed: passed && reason === undefined,
+      interruption: reason?.message,
       artifacts: lab,
       runtimeRoot,
       host: {
@@ -448,7 +454,7 @@ await withVerifierCleanup(async () => {
       clientFinalSeen,
       requests: fixture?.requests,
       fixtureFailure: fixture?.failure,
-      verifier: await completeVerifierRun(verifier),
+      verifier: completed,
     };
     await withVerifierCleanup(
       () =>
@@ -459,5 +465,9 @@ await withVerifierCleanup(async () => {
         },
       ],
     );
+  },
+  () => {
+    const reason = commands.finish();
+    if (passed && reason !== undefined) throw reason;
   },
 ]);
