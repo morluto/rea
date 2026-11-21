@@ -790,6 +790,94 @@ cliTest(
   },
 );
 
+cliTest(
+  "Codex setup replaces the stored Binary Ninja registration with an explicit path",
+  async ({ cli }) => {
+    const codexHome = join(home, "codex");
+    await mkdir(codexHome, { recursive: true });
+    const previous = join(home, "previous-binary-ninja.json");
+    const replacement = join(home, "replacement-binary-ninja.json");
+    await Promise.all([
+      writeFile(
+        previous,
+        JSON.stringify({
+          url: "http://127.0.0.1:12345/mcp",
+          timeoutMs: 1_800_001,
+        }),
+      ),
+      writeFile(
+        replacement,
+        JSON.stringify({
+          url: "http://127.0.0.1:12346/mcp",
+          timeoutMs: 2_400_001,
+        }),
+      ),
+    ]);
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      CODEX_HOME: codexHome,
+      ...missingHopperAndGhidraEnvironment(home),
+    };
+    const setup = (registration: string) =>
+      cli.run({
+        arguments: [
+          "setup",
+          "--client",
+          "codex",
+          "--skill=false",
+          "--yes",
+          "--json",
+        ],
+        cwd: home,
+        environment: {
+          ...environment,
+          REA_ANALYSIS_PROVIDER: "binary-ninja",
+          REA_BINARY_NINJA_MCP_CONFIG: registration,
+        },
+      });
+    const readRegistration = async () =>
+      effectiveClientServer(
+        parseClientConfiguration(
+          await readFile(join(codexHome, "config.toml"), "utf8"),
+          "toml",
+        ),
+        "rea",
+      );
+    const original = await setup(previous);
+    expect(original.exitCode, original.stdout).toBe(0);
+    expect(await readRegistration()).toMatchObject({
+      tool_timeout_sec: 1921,
+      env: { REA_BINARY_NINJA_MCP_CONFIG: previous },
+    });
+
+    const updated = await setup(replacement);
+    expect(updated.exitCode, updated.stdout).toBe(0);
+    expect(await readRegistration()).toMatchObject({
+      tool_timeout_sec: 1921,
+      env: { REA_BINARY_NINJA_MCP_CONFIG: replacement },
+    });
+    const doctor = await cli.run({
+      arguments: ["doctor", "--client", "codex", "--json"],
+      cwd: home,
+      environment,
+    });
+    expect(doctor.exitCode, doctor.stdout).toBe(0);
+    expect(doctor.json).toMatchObject({
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({
+            client: "codex",
+            advisory: expect.stringContaining(
+              "tool_timeout_sec = 2521 seconds",
+            ),
+          }),
+        ]),
+      },
+    });
+  },
+);
+
 for (const [client, provider, engine] of [
   ["codex", "ida", "ida"],
   ["kimi", "ida", "ida"],
