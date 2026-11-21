@@ -324,8 +324,8 @@ describe("source-map section-boundary candidates", () => {
 });
 
 describe("source-map layout admission", () => {
-  it.each(["AAAAC", "g", "!", "AA", "D"])(
-    "rejects malformed VLQ/components/indexes: %s",
+  it.each(["g", "!", "AA", "D"])(
+    "rejects malformed VLQ/components: %s",
     (mappings) => {
       expect(() => trace({ ...leaf, mappings })).toThrow();
     },
@@ -394,7 +394,12 @@ it.each(["ACAA", "AAAAC"])(
         url,
         point,
       ),
-    ).toThrow(/index/u);
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind: "malformed" }),
+        message: expect.stringMatching(/index/u),
+      }),
+    );
   },
 );
 it.each(["ggggggEAAA", "gggggggBAAA"])(

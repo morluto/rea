@@ -1,6 +1,6 @@
 import * as zlib from "node:zlib";
 import { createHash } from "node:crypto";
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, open, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
@@ -9,6 +9,8 @@ import { createElfDebugLinkService } from "../../../src/composition/binaryDiagno
 import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
+  ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
   ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION,
   elfDebugLinkSchema,
 } from "../../../src/domain/native/elfDebugLink.js";
@@ -27,6 +29,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 
 vi.mock(import("node:zlib"), { spy: true });
+vi.mock(import("node:fs/promises"), { spy: true });
 
 it("inflates section names once per artifact while preserving build-ID comparison", async () => {
   const root = await createTestTempDirectory("rea-elf-debug-link-name-reuse-");
@@ -97,7 +100,8 @@ describe("ELF debug-link stable filesystem boundary", () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-candidate-");
     const path = join(root, "prog");
     const alias = join(root, "alias.debug");
-    await writeFile(path, elfDebugLinkFixture());
+    const image = elfDebugLinkFixture();
+    await writeFile(path, image);
     await symlink(path, alias);
     const service = createElfDebugLinkService();
     try {
@@ -107,15 +111,44 @@ describe("ELF debug-link stable filesystem boundary", () => {
       });
       if (!missing.ok) throw missing.error;
       const report = elfDebugLinkSchema.parse(missing.value.normalized_result);
-      expect(report.debuglink.status).toBe("present");
+      expect(report.artifact).toEqual({
+        path,
+        sha256: createHash("sha256").update(image).digest("hex"),
+        bytes: image.length,
+      });
+      expect(report.debuglink).toMatchObject({
+        status: "present",
+        filename: { text: FIXTURE_DEBUG_NAME },
+        crc32_hex: "12345678",
+      });
       expect(report.build_id.hex).toBe(FIXTURE_BUILD_ID_HEX);
-      expect(report.lookup_paths.length).toBeGreaterThan(0);
+      expect(report.lookup_paths).toContainEqual({
+        kind: "debug_subdirectory",
+        path: join(root, ".debug", FIXTURE_DEBUG_NAME),
+        trust: "observed-untrusted",
+      });
+      expect(report.limitations).toEqual(
+        expect.arrayContaining([
+          ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
+          ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
+        ]),
+      );
       expect(report.candidate).toBeNull();
-      expect(report.verification).toMatchObject({
+      expect(report.verification).toEqual({
         status: "cannot_verify",
         reason: "candidate_unreadable",
-        crc32: { status: "unavailable", reason: "candidate_unreadable" },
-        build_id: { status: "unavailable", reason: "candidate_unreadable" },
+        crc32: {
+          status: "unavailable",
+          expected_hex: "12345678",
+          observed_hex: null,
+          reason: "candidate_unreadable",
+        },
+        build_id: {
+          status: "unavailable",
+          binary_hex: FIXTURE_BUILD_ID_HEX,
+          candidate_hex: null,
+          reason: "candidate_unreadable",
+        },
       });
       const linked = await service.inspect({ path, candidate_path: alias });
       const relative = await service.inspect({
@@ -126,7 +159,7 @@ describe("ELF debug-link stable filesystem boundary", () => {
         throw new Error("Expected a symlinked candidate rejection");
       expect(linked.error).toMatchObject({
         _tag: "AnalysisInputError",
-        issues: [{ path: ["candidate_path"] }],
+        issues: [{ path: ["candidate_path"], reason: "invalid_format" }],
       });
       if (relative.ok)
         throw new Error("Expected a relative candidate rejection");
@@ -167,25 +200,38 @@ describe("ELF debug-link stable filesystem boundary", () => {
       await service.close();
     }
   });
+});
 
-  it("does not open a conventional lookup path when no candidate is selected", async () => {
-    const root = await createTestTempDirectory("rea-elf-debug-link-decoy-");
-    const path = join(root, "prog");
-    await writeFile(path, elfDebugLinkFixture());
-    await mkdir(join(root, ".debug"));
-    await mkdir(join(root, ".debug", "prog.debug"));
-    const service = createElfDebugLinkService();
-    try {
-      const result = await service.inspect({ path });
-      if (!result.ok) throw result.error;
-      const report = elfDebugLinkSchema.parse(result.value.normalized_result);
-      expect(report.verification).toBeNull();
-      expect(report.candidate).toBeNull();
-      expect(report.debuglink.status).toBe("present");
-    } finally {
-      await service.close();
-    }
-  });
+it("does not open a conventional lookup path when no candidate is selected", async () => {
+  const root = await createTestTempDirectory("rea-elf-debug-link-decoy-");
+  const path = join(root, "prog");
+  const decoy = join(root, ".debug", FIXTURE_DEBUG_NAME);
+  await writeFile(path, elfDebugLinkFixture());
+  await mkdir(join(root, ".debug"));
+  await writeFile(decoy, elfDebugCandidateFixture());
+
+  const service = createElfDebugLinkService();
+  try {
+    vi.mocked(open).mockClear();
+    const result = await service.inspect({ path });
+    if (!result.ok) throw result.error;
+    const selectedPaths = vi
+      .mocked(open)
+      .mock.calls.map(([selected]) => selected);
+    expect(selectedPaths).toContain(path);
+    expect(selectedPaths).not.toContain(decoy);
+    const report = elfDebugLinkSchema.parse(result.value.normalized_result);
+    expect(report.lookup_paths).toContainEqual({
+      kind: "debug_subdirectory",
+      path: decoy,
+      trust: "observed-untrusted",
+    });
+    expect(report.verification).toBeNull();
+    expect(report.candidate).toBeNull();
+    expect(report.debuglink.status).toBe("present");
+  } finally {
+    await service.close();
+  }
 });
 
 describe("ELF debug-link streamed candidate boundary", () => {

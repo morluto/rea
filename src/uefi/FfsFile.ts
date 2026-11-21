@@ -1,5 +1,6 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
+import { byteToHex } from "../kernel/byteToHex.js";
 import {
   absoluteOffset,
   alignUp,
@@ -7,6 +8,7 @@ import {
   type ScanRegion,
 } from "./UefiBytes.js";
 import { formatGuidLittleEndian } from "./UefiGuid.js";
+import type { FirmwareVolumeHeader } from "./FirmwareVolume.js";
 import { FFS_ATTRIBUTE_MASKS, FFS_HEADER_LAYOUT } from "./UefiCodeTables.js";
 
 const FFS_DATA_ALIGNMENT_EXPONENTS = [0, 4, 7, 9, 10, 12, 15, 16] as const;
@@ -28,6 +30,7 @@ export interface FfsFileHeader {
   readonly declaredLength: number;
   readonly observedLength: number;
   readonly body: { readonly start: number; readonly end: number } | null;
+  readonly bodyIssue: "data-not-valid" | null;
   readonly extentIssue:
     | "unusable-header-state"
     | "declared-length-below-header"
@@ -46,9 +49,20 @@ export interface FfsFileHeader {
   readonly implausibilities: readonly string[];
 }
 
+interface UnrepresentableFfsExtent {
+  readonly kind: "unrepresentable";
+  readonly size: bigint;
+  readonly unusableState: "header-construction" | "header-invalid" | null;
+}
+
+interface UnconfirmedFfsState {
+  readonly kind: "unconfirmed-state";
+  readonly rawState: number;
+}
+
 /**
- * Parse one FFS header at a local position; null when the position cannot
- * hold the minimum header. Checksum findings are observations on the header,
+ * Parse one FFS header at a local position; null when framing is unconfirmed.
+ * Checksum findings are observations on the header,
  * not rejections — invalid files stay in the inventory with their notes.
  */
 export function parseFfsFileHeader(
@@ -56,6 +70,15 @@ export function parseFfsFileHeader(
   localBase: number,
   erasePolarity: boolean,
 ): FfsFileHeader | null {
+  const parsed = observeFfsFileHeader(region, localBase, erasePolarity);
+  return parsed !== null && !("kind" in parsed) ? parsed : null;
+}
+
+function observeFfsFileHeader(
+  region: ScanRegion,
+  localBase: number,
+  erasePolarity: boolean,
+): FfsFileHeader | UnrepresentableFfsExtent | UnconfirmedFfsState | null {
   if (
     localBase < region.start ||
     localBase + FFS_HEADER_LAYOUT.length > region.end
@@ -74,6 +97,20 @@ export function parseFfsFileHeader(
   const declaredCompact = sizeB0 | (sizeB1 << 8) | (sizeB2 << 16);
   const largeFile = (attributes & FFS_ATTRIBUTE_MASKS.largeFile) !== 0;
   const implausibilities: string[] = [];
+  const rawState =
+    region.buffer[localBase + FFS_HEADER_LAYOUT.stateOffset] ?? 0;
+  const normalizedState = erasePolarity ? ~rawState & 0x3f : rawState & 0x3f;
+  const stateFlags = STATE_BIT_NAMES.filter(
+    ([bit]) => (normalizedState & bit) !== 0,
+  ).map(([, name]) => name);
+  // PI state is the highest set bit. An incomplete or invalid header supplies
+  // only its fixed extent; the stored size cannot consume the next file.
+  const state = stateFlags.at(-1);
+  if (state === undefined) return { kind: "unconfirmed-state", rawState };
+  const unusableState =
+    state === "header-construction" || state === "header-invalid"
+      ? state
+      : null;
 
   let headerLength: number = FFS_HEADER_LAYOUT.length;
   let declaredLength = declaredCompact;
@@ -85,33 +122,25 @@ export function parseFfsFileHeader(
       localBase + FFS_HEADER_LAYOUT.extendedSizeOffset,
       64,
     );
-    if (size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    if (size > BigInt(Number.MAX_SAFE_INTEGER))
+      return { kind: "unrepresentable", size, unusableState };
     declaredLength = Number(size);
     if (declaredCompact !== 0)
       implausibilities.push("large-file-compact-size-is-nonzero");
   }
-  const rawState =
-    region.buffer[localBase + FFS_HEADER_LAYOUT.stateOffset] ?? 0;
-  const normalizedState = erasePolarity ? ~rawState & 0x3f : rawState & 0x3f;
-  const stateFlags = STATE_BIT_NAMES.filter(
-    ([bit]) => (normalizedState & bit) !== 0,
-  ).map(([, name]) => name);
-  // PI state is the highest set bit. An incomplete or invalid header supplies
-  // only its fixed extent; the stored size cannot consume the next file.
-  const state = stateFlags.at(-1);
-  const unusableState =
-    state === "header-construction" || state === "header-invalid";
-  const extentIssue = unusableState
-    ? "unusable-header-state"
-    : declaredLength < headerLength
-      ? "declared-length-below-header"
-      : declaredLength > available
-        ? "declared-length-truncates-region"
-        : null;
+  const extentIssue =
+    unusableState !== null
+      ? "unusable-header-state"
+      : declaredLength < headerLength
+        ? "declared-length-below-header"
+        : declaredLength > available
+          ? "declared-length-truncates-region"
+          : null;
   if (extentIssue !== null) implausibilities.push(extentIssue);
-  const observedLength = unusableState
-    ? headerLength
-    : Math.min(Math.max(declaredLength, headerLength), available);
+  const observedLength =
+    unusableState !== null
+      ? headerLength
+      : Math.min(Math.max(declaredLength, headerLength), available);
 
   const headerChecksumField =
     region.buffer[localBase + FFS_HEADER_LAYOUT.integrityCheckOffset] ?? 0;
@@ -135,6 +164,7 @@ export function parseFfsFileHeader(
       extentIssue === null || extentIssue === "declared-length-truncates-region"
         ? { start: localBase + headerLength, end: localBase + observedLength }
         : null,
+    bodyIssue: state === "header-valid" ? "data-not-valid" : null,
     extentIssue,
     nameGuid: formatGuidLittleEndian(
       region.buffer.subarray(localBase, localBase + 16),
@@ -182,16 +212,29 @@ function verifyFfsHeaderChecksum(
   return total === 0;
 }
 
-/** Check the declared checksum only when the full file body is available. */
-export function checkFfsFileData(region: ScanRegion, header: FfsFileHeader) {
+/** Check the file's fixed integrity marker or its declared body checksum. */
+export function checkFfsFileIntegrity(
+  region: ScanRegion,
+  header: FfsFileHeader,
+) {
   if (header.typeCode === 0xf0)
     return { verdict: "pad-file-unchecked" } as const;
   if (
     header.extentIssue !== null ||
-    !header.fileChecksumRequired ||
+    header.bodyIssue !== null ||
     header.body === null
   )
     return { verdict: "unchecked" } as const;
+  if (!header.fileChecksumRequired) {
+    if (header.fileChecksumField === 0xaa)
+      return { verdict: "unchecked" } as const;
+    return {
+      verdict: "invalid",
+      offset: header.absoluteBase + FFS_HEADER_LAYOUT.integrityCheckOffset + 1,
+      length: 1,
+      detail: `FFS IntegrityCheck.File is 0x${byteToHex(header.fileChecksumField)}. PI requires 0xaa when the file checksum attribute is clear.`,
+    } as const;
+  }
   const { start, end } = header.body;
   const length = end - start;
   if (length === 0) return { verdict: "unchecked" } as const;
@@ -205,6 +248,8 @@ export function checkFfsFileData(region: ScanRegion, header: FfsFileHeader) {
         verdict: "invalid",
         offset: absoluteOffset(region, start),
         length,
+        detail:
+          "File data checksum differs from the declared IntegrityCheck.File byte.",
       } as const);
 }
 
@@ -236,6 +281,14 @@ type FfsHeaderRead =
       readonly kind: "unparsed";
       readonly offset: number;
       readonly length: number;
+      readonly detail?: string;
+    }
+  | {
+      readonly kind: "unusable-header";
+      readonly offset: number;
+      readonly length: number;
+      readonly nextLocal: number;
+      readonly detail: string;
     }
   | {
       readonly kind: "file";
@@ -248,7 +301,10 @@ type FfsHeaderRead =
 export function readFfsHeader(
   region: ScanRegion,
   local: number,
-  erasePolarity: boolean,
+  {
+    erasePolarity,
+    fileSystem,
+  }: Pick<FirmwareVolumeHeader, "erasePolarity" | "fileSystem">,
   reserve: () => boolean = () => true,
 ): FfsHeaderRead {
   if (local >= region.end) return { kind: "end" };
@@ -260,15 +316,68 @@ export function readFfsHeader(
       isWindowUniform(region.buffer, prefixEnd, region.end, erase)
     )
       return { kind: "end" };
-  } else {
+  } else if (!isWindowUniform(region.buffer, local, prefixEnd, erase ^ 0xff)) {
     if (!reserve()) return { kind: "limited" };
-    const header = parseFfsFileHeader(region, local, erasePolarity);
+    const header = observeFfsFileHeader(region, local, erasePolarity);
+    if (header !== null && "kind" in header) {
+      const offset = absoluteOffset(region, local);
+      if (header.kind === "unconfirmed-state") {
+        return {
+          kind: "unparsed",
+          offset,
+          length: region.end - local,
+          detail: `FFS header at 0x${offset.toString(16)} has no recognized state bits (raw State 0x${byteToHex(header.rawState)}). Its declared extent is unconfirmed.`,
+        };
+      }
+      const detail = `FFS ExtendedSize at 0x${offset.toString(16)} declares 0x${header.size.toString(16)} bytes, exceeding exactly representable lengths.`;
+      if (header.unusableState === null)
+        return { kind: "unparsed", offset, length: region.end - local, detail };
+      return {
+        kind: "unusable-header",
+        offset,
+        length: FFS_HEADER_LAYOUT.extendedLength,
+        nextLocal: local + FFS_HEADER_LAYOUT.extendedLength,
+        detail: `${detail} The ${header.unusableState} state permits advancing by the fixed header extent.`,
+      };
+    }
     if (header !== null) {
       const end = local + header.observedLength;
       const nextLocal = Math.min(
         region.end,
         region.start + alignUp(end - region.start, 8),
       );
+      if (
+        fileSystem === "ffs2" &&
+        header.headerLength === FFS_HEADER_LAYOUT.extendedLength
+      ) {
+        const detail = `FFS2 volume contains an FFS3 file header at 0x${header.absoluteBase.toString(16)}.`;
+        const fixedHeaderOnly = header.extentIssue === "unusable-header-state";
+        if (
+          !fixedHeaderOnly &&
+          (header.extentIssue !== null ||
+            !header.headerChecksumValid ||
+            header.declaredLength <= 0xff_ffff ||
+            header.implausibilities.includes(
+              "large-file-compact-size-is-nonzero",
+            ))
+        )
+          return {
+            kind: "unparsed",
+            offset: header.absoluteBase,
+            length: region.end - local,
+            detail: `${detail} Its occupied extent could not be confirmed.`,
+          };
+        const skipEnd = fixedHeaderOnly ? end : nextLocal;
+        return {
+          kind: "unusable-header",
+          offset: header.absoluteBase,
+          length: skipEnd - local,
+          nextLocal: skipEnd,
+          detail: fixedHeaderOnly
+            ? `${detail} Its state permits advancing by the fixed header extent.`
+            : detail,
+        };
+      }
       return {
         kind: "file",
         header,

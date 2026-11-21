@@ -394,14 +394,14 @@ it("preserves an explicit root cap below the edge limit through every relationsh
 
 it("does not treat omitted x86 callee truncation as a definite miss", async () => {
   const { client, producer } = await callGraphSession(
-    {
-      callees: [{ addr: "0x2000", name: "square", type: "internal" }],
-    },
+    { callees: [] },
     "x86_64",
   );
   const inner = producer.overrideCall;
   producer.overrideCall = (name, args) =>
-    name === "callees"
+    name === "callees" &&
+    Array.isArray(args.addrs) &&
+    args.addrs[0] === "0x1000"
       ? [{ callees: [{ addr: "0x2000", name: "square", type: "internal" }] }]
       : inner?.(name, args);
   try {
@@ -412,6 +412,15 @@ it("does not treat omitted x86 callee truncation as a definite miss", async () =
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       goal_status: "unknown",
+      edges: [{ source_address: "0x1000", target_address: "0x2000" }],
+      relationship_coverage: {
+        "0x1000": {
+          status: "unknown",
+          reason: expect.stringMatching(
+            /omitted.*truncation marker.*callees remain unknown/iu,
+          ),
+        },
+      },
       residual_unknowns: expect.arrayContaining([
         expect.stringContaining(
           "Call relationship coverage is unknown for 0x1000:",

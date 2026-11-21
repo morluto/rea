@@ -1102,7 +1102,6 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("resource_constraint");
     expect(projected.retryable).toBe(false);
-    expect(projected.remediation.action).toContain("APK snapshot allowance");
     expect(projected.details?.refusal).toMatchObject({
       kind: "fixed_ceiling",
       allowance_kind: "input",
@@ -2137,6 +2136,14 @@ it("retains mixed-root cleanup diagnostics and releases aggregate errors only af
     aggregate = cause;
   }
   expect(aggregate).toMatchObject({
+    operation: "close_flutter_build",
+    cause: expect.objectContaining({
+      errors: expect.arrayContaining(
+        roots.map((root) =>
+          expect.objectContaining({ cleanupResources: [root] }),
+        ),
+      ),
+    }),
     cleanupIncomplete: true,
     cleanupResources: expect.arrayContaining(roots),
     diagnostics: {

@@ -449,6 +449,31 @@ it("applies XML end-of-line handling to POM text", () => {
   ]);
 });
 
+it.each([
+  ["&#xA0;", "\u00a0"],
+  ["&#xFEFF;", "\ufeff"],
+  ["&#x20;", ""],
+])(
+  "preserves declared POM version characters at a %s boundary",
+  (reference, retained) => {
+    const report = parse(`<project>
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>example</groupId>
+    <artifactId>demo</artifactId>
+    <version>  ${reference}1.0${reference}  </version>
+    <dependencies>
+      <dependency>
+        <groupId>example</groupId>
+        <artifactId>library</artifactId>
+        <version>  ${reference}2.0${reference}  </version>
+      </dependency>
+    </dependencies>
+  </project>`);
+    expect(report.coordinates.version).toBe(`${retained}1.0${retained}`);
+    expect(report.dependencies[0]?.version).toBe(`${retained}2.0${retained}`);
+  },
+);
+
 it("lists properties in packaging, scope, type and classifier", () => {
   const report = parse(`<project>
   <groupId>com.example</groupId>
@@ -623,11 +648,11 @@ it("refuses a document type declaration", () => {
   );
 });
 
-it("refuses XML that is not a Maven project", () => {
-  expectFailure(
-    "<module><artifactId>demo</artifactId></module>",
-    "unsupported",
-  );
+it.each([
+  "<module><artifactId>demo</artifactId></module>",
+  '<project xmlns:ext="urn:example"><ext:artifactId>demo</ext:artifactId></project>',
+])("refuses XML that is not a Maven project: %s", (source) => {
+  expectFailure(source, "unsupported");
 });
 
 it("refuses a POM with two top-level dependencies blocks", () => {
@@ -823,8 +848,8 @@ it("reports the repeated variant-name refusal as a fixed report allowance", asyn
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      remediation: {
-        action: expect.stringContaining("fixed report allowance"),
+      details: {
+        refusal: { kind: "fixed_ceiling", allowance_kind: "report" },
       },
     });
   } finally {

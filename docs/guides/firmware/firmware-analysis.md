@@ -35,8 +35,15 @@ Unblob. FFS file and section discovery applies to FFS2 and FFS3 volumes.
 Volumes with other file-system GUIDs retain their header and extent, with the
 body reported as unparsed. REA checks the volume header and block map against
 the declared volume extent. FFS traversal accounts for volume extensions and
-retains valid files after an unusable file header. A truncated file body
-does not receive a verified checksum verdict.
+retains later files when the observed header or state establishes the next
+file boundary. Otherwise the remaining bytes stay unparsed. Malformed FV extension
+entries and conflicts between `UsedSize` and the claimed erased tail appear as
+volume-scoped gaps. Readable FFS files remain selectable. A truncated file body
+does not receive a verified checksum verdict. For a file without a body
+checksum, a wrong fixed integrity marker is reported at its header byte.
+A valid header can identify an occupied file range even when the file state
+says its body is not yet valid. Those bodies produce a gap while later files
+remain selectable.
 
 ```sh
 rea inspect-uefi-firmware /path/to/flash.bin --json
@@ -83,13 +90,20 @@ LZMA-custom, LZMAF86, and AMD-zlib can yield nested volumes or section chains.
 The LZMAF86 worker reverses the x86 branch filter before mapping decoded bytes.
 A decoder limit makes inspection partial and appears as a size gap in
 extraction. When decoded bytes lack confirmed framing, extraction retains the
-decoded stream and reports its unparsed range. When the common section header
+decoded stream and reports its unparsed range. Decode derivations cover the
+input range examined by the decoder. Unread LZMA carrier bytes are reported
+as a gap, including an optional end marker when a known-size stream completes
+without examining it. When the common section header
 bounds a malformed section, extraction reports that section's range and keeps
 later valid sections selectable. Leaf payload ranges exclude type-specific
 header fields. Nonzero bytes between aligned sections appear as a gap and
-later sections remain selectable.
-Readable guided section streams are mapped directly when the section does
-not require processing. Guided integrity and authentication remain unverified.
+later sections remain selectable. An FV-image section must begin with one
+confirmed volume. A missing volume or bytes beyond it produce a gap.
+Incomplete UI names remain unknown, with their stored bytes available for
+extraction. Readable guided section streams are mapped directly when the
+section does not require processing. Reserved guided attributes produce a
+gap and leave the carrier available. Guided integrity and authentication
+remain unverified.
 EFI standard compression and unsupported guided handlers make inspection
 partial and produce extraction gaps. Set MCP `include_compressed` to false or pass
 `--no-include-compressed` to omit undecoded carriers. PSP tables require a matching directory checksum. Failed checks stay in
@@ -103,9 +117,9 @@ reports partial coverage for incomplete successors.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
 structural records. Artifact inventory applies the same ceiling to volume
-candidates and their block maps. Inventory reports unknown coverage when
-a volume exceeds the readable range, the file walk meets an unparsed suffix,
-or a scan limit is reached.
+candidates, block maps, extension entries, and FFS headers. Inventory reports
+unknown coverage when a volume exceeds the readable range, metadata conflicts
+with the bytes, the file walk meets an unparsed suffix, or a scan limit is reached.
 The nesting depth defaults to 3 for firmware and 2 for NVAR. Decoding is limited to 64 MiB per stream and 128 MiB across one operation.
 An admitted operation has a 60-second deadline covering input, parsing,
 decoding, and staging. Owned cleanup can continue past the deadline. Extraction

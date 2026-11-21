@@ -1,6 +1,6 @@
 import type { ProcessTableEntry } from "./ProcessOwnership.js";
 
-/** Exclude process-table entries that the operating system has already reaped. */
+/** Exclude exited processes whose zombie rows remain until reaping. */
 export const liveProcesses = (
   members: readonly ProcessTableEntry[],
 ): readonly ProcessTableEntry[] =>
