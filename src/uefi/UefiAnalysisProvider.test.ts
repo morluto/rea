@@ -2791,6 +2791,7 @@ it("surfaces a ProviderCleanupError with completedObservation when closing scrat
   const spy = vi
     .spyOn(PrivateRuntimeRoot.prototype, "close")
     .mockRejectedValueOnce(new Error("scratch root close locked"));
+  let cleanupErr: ProviderCleanupError | undefined;
   try {
     const executed = await provider.execute(
       decompileRequest(path, join(root, "out")),
@@ -2798,7 +2799,7 @@ it("surfaces a ProviderCleanupError with completedObservation when closing scrat
     expect(executed.ok).toBe(false);
     if (!executed.ok) {
       expect(executed.error).toBeInstanceOf(ProviderCleanupError);
-      const cleanupErr = executed.error as ProviderCleanupError;
+      cleanupErr = executed.error as ProviderCleanupError;
       expect(cleanupErr.cleanupIncomplete).toBe(true);
       expect(cleanupErr.completedObservation).toBeDefined();
       if (
@@ -2812,6 +2813,7 @@ it("surfaces a ProviderCleanupError with completedObservation when closing scrat
     spy.mockRestore();
     await provider.close();
   }
+  expect(cleanupErr?.cleanupIncomplete).toBe(false);
 });
 
 it("surfaces a ProviderCleanupError when closing directory sniff file handle fails", async () => {
@@ -2827,6 +2829,7 @@ it("surfaces a ProviderCleanupError when closing directory sniff file handle fai
   const spy = vi
     .spyOn(OwnedFileHandle.prototype, "close")
     .mockRejectedValueOnce(new Error("file handle close error"));
+  let cleanupErr: ProviderCleanupError | undefined;
   try {
     const executed = await provider.execute(
       decompileRequest(efiDir, join(root, "out")),
@@ -2834,11 +2837,12 @@ it("surfaces a ProviderCleanupError when closing directory sniff file handle fai
     expect(executed.ok).toBe(false);
     if (!executed.ok) {
       expect(executed.error).toBeInstanceOf(ProviderCleanupError);
-      const cleanupErr = executed.error as ProviderCleanupError;
+      cleanupErr = executed.error as ProviderCleanupError;
       expect(cleanupErr.cleanupIncomplete).toBe(true);
     }
   } finally {
     spy.mockRestore();
     await provider.close();
   }
+  expect(cleanupErr?.cleanupIncomplete).toBe(false);
 });

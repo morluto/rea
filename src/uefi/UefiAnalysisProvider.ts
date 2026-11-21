@@ -1649,7 +1649,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             : undefined;
         cleanupError = new ProviderCleanupError(
           UEFI_PROVIDER_IDENTITY.id,
-          [tempRoot.path],
+          released.lease.cleanupResources ?? [tempRoot.path],
           { reason: errorMessage(released.cause) },
           {
             cause: released.cause,
@@ -1659,6 +1659,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               : { completedObservation }),
           },
         );
+        new AnalysisCleanupLeaseGroup(cleanupError, [released.lease]);
       }
 
       if (signal.aborted) {
@@ -1689,7 +1690,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               });
 
         if (cleanupError !== undefined) {
-          terminationError = analysisErrorWithCleanupFailure(
+          terminationError = analysisErrorWithCleanupDependencies(
             terminationError,
             cleanupError,
             "decompile_uefi_firmware",
@@ -1715,7 +1716,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         establishedError instanceof AnalysisError &&
         cleanupError !== undefined
       ) {
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           establishedError,
           cleanupError,
           "decompile_uefi_firmware",
@@ -1902,12 +1903,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             handle: owner,
           });
           if (released.kind === "failed") {
-            throw new ProviderCleanupError(
+            const cleanupErr = new ProviderCleanupError(
               UEFI_PROVIDER_IDENTITY.id,
-              [fullPath],
+              released.lease.cleanupResources ?? [fullPath],
               { reason: errorMessage(released.cause) },
               { cause: released.cause, operation: "decompile_uefi_firmware" },
             );
+            new AnalysisCleanupLeaseGroup(cleanupErr, [released.lease]);
+            throw cleanupErr;
           }
         }
       }
