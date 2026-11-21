@@ -1342,9 +1342,13 @@ it("retries the same cleanup lease for a browser that opens after cancellation",
     expect(removeProfile).toHaveBeenCalledOnce();
     expect(page.goto).not.toHaveBeenCalled();
   } finally {
+    controller.abort();
     opening.release(lateOpened);
     closing.release();
-    await result.catch(() => undefined);
+    const unexpectedSession = await result.catch(() => undefined);
+    await unexpectedSession?.close();
+    const recovery = retained[0] ?? lateOpened.cleanup.cleanupLease;
+    await recovery.release().catch(() => recovery.release());
   }
 });
 
