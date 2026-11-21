@@ -57,6 +57,7 @@ import {
   semanticEffectMayPrecede,
   semanticMemberWriteSources,
 } from "./javascriptSemanticEffectLog.js";
+import { semanticGlobalCodeSites } from "./javascriptSemanticEffectRecord.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import {
@@ -1569,6 +1570,8 @@ const hasClosedLocalReceiverSources = (
 ): boolean => {
   if (
     !state.memberMutationFactsComplete ||
+    // The closure follows inherited members without selecting a read time.
+    semanticGlobalCodeSites(state).length > 0 ||
     semanticPrototypeOwners.some((owner) =>
       ambientPathOrMemberMayHaveChanged(state, ["global", owner]),
     )

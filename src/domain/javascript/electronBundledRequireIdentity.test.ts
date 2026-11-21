@@ -362,6 +362,16 @@ describe("exhausted CommonJS delegate-write receiver selections", () => {
       0,
     ],
     [
+      "indirect eval that can change inherited members",
+      `(0, eval)(code);let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "constructed code that can change inherited members",
+      `Function(code)();let receiver={};${writes}`,
+      0,
+    ],
+    [
       "an unfinished source closure",
       `let receiver=[${Array<string>(24).fill("0").join(",")}];${writes}`,
       0,
