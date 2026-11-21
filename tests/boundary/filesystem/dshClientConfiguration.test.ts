@@ -718,6 +718,52 @@ it("recognizes REA inside nested Cordis groups and removes only its row", async 
   );
 });
 
+it("preserves alias-site comments when removing a nested DSH row", async () => {
+  const { home, client } = await harnessClient();
+  const initial = `- insert:
+    - id: holder
+      name: caller-plugin
+      config:
+        group: &group
+          id: tools
+          name: "@deepseek-ai/cordis-plugin-group"
+          group: true
+          config: &rows
+            - id: rea-mcp
+              name: "@deepseek-ai/dsh-mcp-client"
+            - id: caller-peer
+              name: caller-plugin
+    # caller group placement
+    - *group # caller group explanation
+    - id: second-tools
+      name: "@deepseek-ai/cordis-plugin-group"
+      group: true
+      config: *rows # caller config explanation
+`;
+  await writeFile(client.configPath, initial);
+  const host = systemUninstallHost(home);
+  expect((await host.removeClient(client)).status).toBe("removed");
+  const text = await readFile(client.configPath, "utf8");
+  for (const comment of [
+    "# caller group placement",
+    "# caller group explanation",
+    "# caller config explanation",
+  ])
+    expect(text).toContain(comment);
+  const rows = loadedInserts(text);
+  const expectedPeer = { id: "caller-peer", name: "caller-plugin" };
+  expect(rows.find(({ id }) => id === "holder")?.config).toMatchObject({
+    group: {
+      config: [expect.objectContaining({ id: "rea-mcp" }), expectedPeer],
+    },
+  });
+  for (const id of ["tools", "second-tools"])
+    expect(rows.find((row) => row.id === id)?.config).toEqual([expectedPeer]);
+  expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+    initial,
+  );
+});
+
 describe("DeepSeek Harness expression-backed structure", () => {
   it.each([
     `- !!js process.env.DSH_PATCH\n`,
