@@ -3385,3 +3385,115 @@ it("validates manifest rows and emits limitations with payload fallbacks on malf
     await provider.close();
   }
 });
+
+it("sanitizes Windows device basenames like CON to avoid reserved name collisions", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-win-device-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x77, 140);
+  await writeFile(join(inDir, "CON.efi"), pe);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const mod = result.modules[0];
+    expect(mod?.name).toBe("CON");
+    expect(mod?.relative_c_file).toContain("_CON.c");
+    expect(mod?.relative_header_file).toContain("_CON.h");
+    expect(mod?.relative_payload_file).toContain("_CON.efi");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("escapes special Markdown characters in module names when generating README", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-md-escape-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x88, 140);
+  await writeFile(join(inDir, "Special.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      modules: [
+        {
+          payload_file: "Special.efi",
+          name: "Driver|With`Pipe\nAndNewline[Bracket]",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+
+    const readmeRaw = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeRaw).toContain("\\|");
+    expect(readmeRaw).toContain("\\`");
+    expect(readmeRaw).toContain("Driver_With_Pipe AndNewline_Bracket_.c");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves manifest identity in dirHash for empty module directories", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-empty-manifest-");
+  const inDir1 = join(directory, "input1");
+  const inDir2 = join(directory, "input2");
+  const outDir1 = join(directory, "output1");
+  const outDir2 = join(directory, "output2");
+  await mkdir(inDir1, { recursive: true });
+  await mkdir(inDir2, { recursive: true });
+
+  await writeFile(
+    join(inDir1, "firmware_manifest.json"),
+    JSON.stringify({ note: "Manifest A" }),
+  );
+  await writeFile(
+    join(inDir2, "firmware_manifest.json"),
+    JSON.stringify({ note: "Manifest B" }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res1 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir1, outDir1, { include_disassembly: false }),
+      ),
+    );
+    const sha1 = (res1.value.result as UefiDecompileResult).image_sha256;
+
+    const res2 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir2, outDir2, { include_disassembly: false }),
+      ),
+    );
+    const sha2 = (res2.value.result as UefiDecompileResult).image_sha256;
+
+    expect(sha1).not.toBe(sha2);
+  } finally {
+    await provider.close();
+  }
+});

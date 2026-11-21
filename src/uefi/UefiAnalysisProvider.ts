@@ -1173,7 +1173,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         const idPrefix =
           mod.guid ?? `noguid_${sha256Hex(modBytes).slice(0, 8)}`;
         const maxCleanNameLen = 160;
-        const boundedName = mod.cleanName.slice(0, maxCleanNameLen);
+        const boundedRawCleanName = mod.cleanName.slice(0, maxCleanNameLen);
+        const WINDOWS_RESERVED_DEVICE_NAMES =
+          /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+        const boundedName = WINDOWS_RESERVED_DEVICE_NAMES.test(
+          boundedRawCleanName,
+        )
+          ? `_${boundedRawCleanName}`
+          : boundedRawCleanName;
         let moduleRelDir = `${mod.phase}/${idPrefix}_${boundedName}`;
         let occurrence = 0;
         while (allocatedRelDirs.has(moduleRelDir)) {
@@ -1405,7 +1412,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     isBufferLimitExceeded(objdumpError)
                   ) {
                     disassemblyStatus = "omitted";
-                    if (
+                    if (maxAsmBuffer < remainingAsmBytes) {
+                      const perModLimit = `Disassembly output for ${mod.rawName} exceeded 2 MiB module budget; omitted disassembly.`;
+                      if (!effectiveLimitations.includes(perModLimit)) {
+                        effectiveLimitations.push(perModLimit);
+                      }
+                    } else if (
                       !effectiveLimitations.includes(
                         "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
                       )
@@ -1486,6 +1498,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 ]);
                 const ghidraEnv: NodeJS.ProcessEnv = {
                   ...process.env,
+                  _JAVA_OPTIONS: "",
+                  JAVA_TOOL_OPTIONS: "",
+                  JDK_JAVA_OPTIONS: "",
+                  GHIDRA_JAVA_OPTIONS: "",
                   HOME: ghidraHome,
                   TMPDIR: ghidraTemp,
                   XDG_CONFIG_HOME: ghidraConfig,
@@ -1717,10 +1733,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         "## Modules Index",
         "| Phase | Name | GUID | Size (Bytes) | Disassembly Status | C Scaffold | Disassembly |",
         "|---|---|---|---|---|---|---|",
-        ...stagedModules.map(
-          (m) =>
-            `| ${m.phase} | \`${m.name}\` | \`${m.guid ?? "N/A"}\` | ${m.code_bytes} | ${m.disassembly_status} | [${m.name}.c](${m.relative_c_file}) | ${m.relative_asm_file ? `[${m.name}.asm](${m.relative_asm_file})` : "N/A"} |`,
-        ),
+        ...stagedModules.map((m) => {
+          const safeCellName = m.name
+            .replace(/[\r\n]+/g, " ")
+            .replace(/\|/g, "\\|")
+            .replace(/`/g, "\\`");
+          const safeLinkName = m.name
+            .replace(/[\r\n]+/g, " ")
+            .replace(/[[\]|`]/g, "_");
+          return `| ${m.phase} | \`${safeCellName}\` | \`${m.guid ?? "N/A"}\` | ${m.code_bytes} | ${m.disassembly_status} | [${safeLinkName}.c](${m.relative_c_file}) | ${m.relative_asm_file ? `[${safeLinkName}.asm](${m.relative_asm_file})` : "N/A"} |`;
+        }),
       ];
       publicationEntries.push({
         relativePath: "README.md",
@@ -2181,7 +2203,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       let fileStat;
       try {
         fileStat = await stat(fullPath);
-      } catch {
+      } catch (sniffErr: unknown) {
+        if (limitations.length < 50) {
+          limitations.push(
+            `Candidate file ${entry.name} could not be read: ${errorMessage(sniffErr)}`,
+          );
+        }
         continue;
       }
       if (fileStat.size < 40 || fileStat.size > 32 * 1024 * 1024) continue;
@@ -2258,7 +2285,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             }
           }
         }
-      } catch {
+      } catch (sniffErr: unknown) {
+        if (limitations.length < 50) {
+          limitations.push(
+            `Candidate file ${entry.name} could not be read: ${errorMessage(sniffErr)}`,
+          );
+        }
         continue;
       } finally {
         if (owner !== undefined) {
@@ -2410,7 +2442,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     }
 
     const dirSha256 =
-      candidates.length === 0
+      candidates.length === 0 && manifestSha256 === null
         ? sha256Hex(Buffer.alloc(0))
         : dirHash.digest("hex");
 
