@@ -47,6 +47,29 @@ it("runs a cold independent request without starting a project export", async ()
       return result.structuredContent;
     };
     await call("open_binary", { path: target, provider_id: "kuna" });
+    const refused = await harness.client.callTool({
+      name: "procedure_pseudo_code",
+      arguments: { procedure: "0x1000", analysis: "call_destination" },
+    });
+    expect(refused.isError).toBe(true);
+    expect(
+      JSON.parse((refused.content[0] as { text: string }).text).error,
+    ).toMatchObject({ code: "invalid_request" });
+    const status = await call("binary_session", { detail: "summary" });
+    expect(status).toMatchObject({
+      result: {
+        capabilities: expect.arrayContaining([
+          expect.objectContaining({
+            groups: expect.arrayContaining([
+              expect.objectContaining({
+                operations: expect.arrayContaining(["procedure_pseudo_code"]),
+                available: true,
+              }),
+            ]),
+          }),
+        ]),
+      },
+    });
     const evidence = parseEvidence(
       await call("procedure_pseudo_code", {
         procedure: "main",

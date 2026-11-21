@@ -13,7 +13,7 @@ import { currentClientRegistrationCommand } from "../../../src/application/Clien
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // These writer tests model setup running from REA's actual entrypoint, not Vitest's worker.

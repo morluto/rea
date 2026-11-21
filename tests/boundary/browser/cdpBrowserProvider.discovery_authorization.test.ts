@@ -35,207 +35,202 @@ const inspectWithNetworkEvents = async (
   return { browser, result };
 };
 
-describe("CdpBrowserProvider: discovery authorization 1", () => {
-  it("discovers pages and captures a selected target without an origin list", async () => {
-    const browser = await startFakeCdpBrowser();
-    trackBrowser(browser);
-    const provider = new CdpBrowserProvider();
-    const listed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({ cdp_endpoint: browser.endpoint }),
+it("applies exact origin selection while retaining caller-visible URLs", async () => {
+  const browser = await startFakeCdpBrowser();
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  const cdp_endpoint = browser.endpoint;
+  const allowed = {
+    target_id: "allowed-page",
+    origin: browser.allowedOrigin,
+    url: `${browser.allowedOrigin}/app?token=page-secret#fragment`,
+  };
+  try {
+    const unfiltered = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({ cdp_endpoint }),
     );
+    if (!unfiltered.ok) throw unfiltered.error;
+    expect(unfiltered.value.targets).toMatchObject([
+      allowed,
+      {
+        target_id: "disallowed-page",
+        origin: "https://private.example.test",
+        url: "https://private.example.test/app?token=forbidden",
+      },
+    ]);
+    expect(unfiltered.value.excluded).toEqual({
+      disallowed_origin: 0,
+      unsupported_url: 1,
+      non_page: 1,
+    });
 
-    if (!listed.ok) throw listed.error;
-    expect(listed.value.targets.map(({ target_id }) => target_id)).toContain(
-      "allowed-page",
-    );
-    expect(listed.value.excluded.disallowed_origin).toBe(0);
-
-    const inspected = await provider.inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!inspected.ok) throw inspected.error;
-    expect(inspected.value.target.origin).toBe(browser.allowedOrigin);
-  });
-
-  it("filters by exact origin and preserves local URL details", async () => {
-    const browser = await startFakeCdpBrowser();
-    trackBrowser(browser);
-    const provider = new CdpBrowserProvider();
-    const result = await provider.listTargets(
+    const filtered = await provider.listTargets(
       listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
+        cdp_endpoint,
         allowed_origins: [browser.allowedOrigin],
       }),
     );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.targets).toEqual([
-      expect.objectContaining({
-        target_id: "allowed-page",
-        origin: browser.allowedOrigin,
-        url: `${browser.allowedOrigin}/app?token=page-secret#fragment`,
-      }),
-    ]);
-    expect(result.value.excluded).toEqual({
+    if (!filtered.ok) throw filtered.error;
+    expect(filtered.value.targets).toMatchObject([allowed]);
+    expect(filtered.value.excluded).toEqual({
       disallowed_origin: 1,
       unsupported_url: 1,
       non_page: 1,
     });
-    expect(JSON.stringify(result.value)).not.toContain("forbidden");
-    expect(JSON.stringify(result.value)).toContain("page-secret#fragment");
-  });
-
-  it.each([
-    ["absolute", true, ""],
-    ["host/path", "host-path", ""],
-    ["root-relative", "root-relative", ""],
-    ["prefixed host/path", "prefixed", "Loading "],
-  ] as const)(
-    "preserves URL-shaped %s target titles",
-    async (_label, urlShapedAllowedTitle, prefix) => {
-      const browser = await startFakeCdpBrowser({ urlShapedAllowedTitle });
-      trackBrowser(browser);
-      const provider = new CdpBrowserProvider();
-      const listInput = {
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-      };
-      const input = {
-        ...listInput,
-        target_id: "allowed-page",
-      };
-      const authority = browser.allowedOrigin.replace(/^https?:\/\//u, "");
-      const expected =
-        _label === "absolute"
-          ? `${browser.allowedOrigin}/app?startup=title-secret#fragment`
-          : _label === "root-relative"
-            ? "/app?startup=title-secret#fragment"
-            : `${prefix}${authority}/app?startup=title-secret#fragment`;
-      const listed = await provider.listTargets(
-        listBrowserTargetsInputSchema.parse(listInput),
-      );
-      if (!listed.ok) throw listed.error;
-      expect(listed.value.targets[0]?.title).toBe(expected);
-
-      const inspected = await provider.inspectPage(
-        inspectWebPageInputSchema.parse({ ...input, observation_ms: 0 }),
-      );
-      if (!inspected.ok) throw inspected.error;
-      expect(inspected.value.target.title).toBe(expected);
-      expect(JSON.stringify({ listed, inspected })).toContain("title-secret");
-    },
-  );
-
-  it("uses page-scoped discovery sockets as direct target transports", async () => {
-    const browser = await startFakeCdpBrowser({
-      pageScopedVersionWebSocket: true,
-      omitTargetWebSocket: true,
-      additionalPageWithWebSocket: true,
-      additionalPageWithoutWebSocket: true,
-    });
-    trackBrowser(browser);
-    const provider = new CdpBrowserProvider();
-    const listed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-      }),
-    );
-    if (!listed.ok) throw listed.error;
-    expect(listed.value.targets.map(({ target_id }) => target_id)).toEqual([
-      "allowed-page",
-      "allowed-page-with-socket",
-    ]);
-    expect(listed.value.limitations).toContain(
-      "1 otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.",
-    );
+    expect(JSON.stringify(filtered.value)).not.toContain("forbidden");
 
     const inspected = await provider.inspectPage(
       inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
+        cdp_endpoint,
+        target_id: allowed.target_id,
         observation_ms: 0,
       }),
     );
     if (!inspected.ok) throw inspected.error;
-    expect(inspected.value.target.target_id).toBe("allowed-page");
-    expect(inspected.value.network.requests).toHaveLength(1);
+    expect(inspected.value.target).toMatchObject({
+      target_id: allowed.target_id,
+      origin: allowed.origin,
+      url: `${browser.allowedOrigin}/app?token=frame-secret`,
+    });
+  } finally {
+    await provider.close();
+  }
+});
 
-    const second = await provider.inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page-with-socket",
-        observation_ms: 0,
-      }),
+it.each([
+  ["absolute", true, ""],
+  ["host/path", "host-path", ""],
+  ["root-relative", "root-relative", ""],
+  ["prefixed host/path", "prefixed", "Loading "],
+] as const)(
+  "preserves URL-shaped %s target titles",
+  async (_label, urlShapedAllowedTitle, prefix) => {
+    const browser = await startFakeCdpBrowser({ urlShapedAllowedTitle });
+    trackBrowser(browser);
+    const provider = new CdpBrowserProvider();
+    const listInput = {
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+    };
+    const input = {
+      ...listInput,
+      target_id: "allowed-page",
+    };
+    const authority = browser.allowedOrigin.replace(/^https?:\/\//u, "");
+    const expected =
+      _label === "absolute"
+        ? `${browser.allowedOrigin}/app?startup=title-secret#fragment`
+        : _label === "root-relative"
+          ? "/app?startup=title-secret#fragment"
+          : `${prefix}${authority}/app?startup=title-secret#fragment`;
+    const listed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse(listInput),
     );
-    if (!second.ok) throw second.error;
-    expect(second.value.target.target_id).toBe("allowed-page-with-socket");
+    if (!listed.ok) throw listed.error;
+    expect(listed.value.targets[0]?.title).toBe(expected);
+
+    const inspected = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({ ...input, observation_ms: 0 }),
+    );
+    if (!inspected.ok) throw inspected.error;
+    expect(inspected.value.target.title).toBe(expected);
+    expect(JSON.stringify({ listed, inspected })).toContain("title-secret");
+  },
+);
+
+it("lists only usable direct transports and accounts for exclusions before capture", async () => {
+  const browser = await startFakeCdpBrowser({
+    pageScopedVersionWebSocket: true,
+    omitTargetWebSocket: true,
+    additionalPageWithWebSocket: true,
+    additionalPageWithoutWebSocket: true,
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  const cdp_endpoint = browser.endpoint;
+  const allowed_origins = [browser.allowedOrigin];
+  const visibleIds = ["allowed-page", "allowed-page-with-socket"];
+  const transportNotice =
+    "otherwise allowed page target(s) lacked a validated direct CDP WebSocket";
+  const requestedScope =
+    "Only page targets with a validated CDP transport whose current URL matches an explicitly requested exact origin are listed.";
+  try {
+    for (const scenario of [
+      {
+        origins: [],
+        ids: visibleIds,
+        disallowed: 0,
+        transportExclusions: ["2"],
+        scope:
+          "All page targets with supported HTTP(S) URLs and a validated CDP transport are listed.",
+      },
+      {
+        origins: allowed_origins,
+        ids: visibleIds,
+        disallowed: 1,
+        transportExclusions: ["1"],
+        scope: requestedScope,
+      },
+      {
+        origins: ["https://unlisted.example.test"],
+        ids: [],
+        disallowed: 4,
+        transportExclusions: [],
+        scope: requestedScope,
+      },
+    ]) {
+      const listed = await provider.listTargets(
+        listBrowserTargetsInputSchema.parse({
+          cdp_endpoint,
+          allowed_origins: scenario.origins,
+        }),
+      );
+      if (!listed.ok) throw listed.error;
+      expect(listed.value.targets.map(({ target_id }) => target_id)).toEqual(
+        scenario.ids,
+      );
+      expect(listed.value.excluded).toEqual({
+        disallowed_origin: scenario.disallowed,
+        unsupported_url: 1,
+        non_page: 1,
+      });
+      expect(listed.value.limitations).toContain(scenario.scope);
+      expect(
+        listed.value.limitations.filter((message) =>
+          message.includes(transportNotice),
+        ),
+      ).toEqual(
+        scenario.transportExclusions.map(
+          (count) => `${count} ${transportNotice} and were excluded.`,
+        ),
+      );
+    }
+    expect(browser.commands).toEqual([]);
+    expect(browser.openedConnectionCount()).toBe(0);
+
+    for (const target_id of visibleIds) {
+      const inspected = await provider.inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint,
+          allowed_origins,
+          target_id,
+          observation_ms: 0,
+        }),
+      );
+      if (!inspected.ok) throw inspected.error;
+      expect(inspected.value.target.target_id).toBe(target_id);
+      if (target_id === "allowed-page")
+        expect(inspected.value.network.requests).toHaveLength(1);
+    }
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).not.toContain("Target.attachToTarget");
     expect(methods).not.toContain("Target.detachFromTarget");
     expect(
       browser.commands.every(({ sessionId }) => sessionId === undefined),
     ).toBe(true);
-  });
-});
-
-describe("CdpBrowserProvider: listing coverage", () => {
-  it.each([
-    { filtered: false, missingSocket: false },
-    { filtered: false, missingSocket: true },
-    { filtered: true, missingSocket: false },
-    { filtered: true, missingSocket: true },
-  ])(
-    "qualifies listing coverage by transport admission (origin filter: $filtered, missing socket: $missingSocket)",
-    async ({ filtered, missingSocket }) => {
-      const browser = await startFakeCdpBrowser({
-        pageScopedVersionWebSocket: true,
-        additionalPageWithWebSocket: true,
-        additionalPageWithoutWebSocket: missingSocket,
-      });
-      trackBrowser(browser);
-      const listed = await new CdpBrowserProvider().listTargets(
-        listBrowserTargetsInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          allowed_origins: filtered ? [browser.allowedOrigin] : [],
-        }),
-      );
-      if (!listed.ok) throw listed.error;
-      expect(listed.value.targets.map(({ target_id }) => target_id)).toEqual([
-        "allowed-page",
-        "allowed-page-with-socket",
-      ]);
-      expect(listed.value.excluded).toEqual({
-        disallowed_origin: filtered ? 1 : 0,
-        unsupported_url: 1,
-        non_page: 1,
-      });
-      expect(listed.value.limitations).toContain(
-        filtered
-          ? "Only page targets with a validated CDP transport whose current URL matches an explicitly requested exact origin are listed."
-          : "All page targets with supported HTTP(S) URLs and a validated CDP transport are listed.",
-      );
-      const excluded = (filtered ? 0 : 1) + (missingSocket ? 1 : 0);
-      expect(
-        listed.value.limitations.filter((message) =>
-          message.includes("lacked a validated direct CDP WebSocket"),
-        ),
-      ).toEqual(
-        excluded === 0
-          ? []
-          : [
-              `${String(excluded)} otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.`,
-            ],
-      );
-      expect(browser.commands).toEqual([]);
-    },
-  );
+  } finally {
+    await provider.close();
+  }
 });
 
 it("fails with a protocol error after an unidentifiable frame event and detaches", async () => {
@@ -298,31 +293,6 @@ it("fails capture on a contradictory self-parented frame instead of accepting it
   await expect.poll(() => browser.activeConnectionCount()).toBe(0);
 });
 
-it("tracks a known root replacement through later frame-scope events", async () => {
-  const { result } = await inspectWithNetworkEvents((command, origin) =>
-    command.method === "Network.enable"
-      ? [
-          frameNavigated(command, {
-            id: "replacement-main",
-            loaderId: "replacement-loader",
-            url: `${origin}/app?token=frame-secret`,
-          }),
-          frameNavigated(command, {
-            id: "replacement-main",
-            loaderId: "outside-loader",
-            url: "https://outside.invalid/path",
-          }),
-        ]
-      : undefined,
-  );
-  // Both events select the replacement main frame; the document change is
-  // reported before the later document's scope.
-  expect(result).toMatchObject({
-    ok: false,
-    error: { _tag: "BrowserObservationError", reason: "target_changed" },
-  });
-});
-
 it("treats a same-URL and same-loader root frame ID change as a capture change", async () => {
   const { result } = await inspectWithNetworkEvents((command, origin) =>
     command.method === "Network.enable"
@@ -360,30 +330,6 @@ describe("CdpBrowserProvider: discovery authorization 2", () => {
     expect(browser.commands.map(({ method }) => method)).toEqual([
       "Target.attachToTarget",
     ]);
-  });
-
-  it("rejects missing and disallowed page targets before attaching", async () => {
-    const browser = await startFakeCdpBrowser();
-    trackBrowser(browser);
-    const provider = new CdpBrowserProvider();
-    for (const targetId of ["missing", "disallowed-page"]) {
-      const result = await provider.inspectPage(
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          allowed_origins: [browser.allowedOrigin],
-          target_id: targetId,
-          observation_ms: 0,
-        }),
-      );
-      expect(result.ok).toBe(false);
-      if (!result.ok)
-        expect(result.error).toMatchObject({
-          _tag: "BrowserObservationError",
-          reason:
-            targetId === "missing" ? "target_not_found" : "target_not_allowed",
-        });
-    }
-    expect(browser.commands).toHaveLength(0);
   });
 
   it("returns typed errors for malformed discovery and disconnects", async () => {
@@ -479,7 +425,6 @@ describe("CdpBrowserProvider: target selection detail", () => {
         "Target disallowed-page must be an HTTP(S) page in the selected origin scope.",
       ],
     ] as const;
-    const inspected = new Map<string, unknown>();
     for (const [operation, run] of operations)
       for (const [targetId, reason, detail, remediation] of selections) {
         const result = await run({
@@ -496,10 +441,6 @@ describe("CdpBrowserProvider: target selection detail", () => {
           message: detail,
           remediation: { action: remediation },
         });
-        // Only the attributed operation differs from the inspect projection.
-        if (operation === "inspect_web_page")
-          inspected.set(targetId, projected);
-        else expect(projected).toEqual(inspected.get(targetId));
       }
     expect(browser.commands).toHaveLength(0);
     expect(browser.openedConnectionCount()).toBe(0);

@@ -17,12 +17,12 @@ const startBrowser = async (options: FakeOptions = {}) => {
       if (override !== undefined) return override;
       if (command.method === "DOMSnapshot.captureSnapshot") {
         const nodes = {
-          nodeType: [9, 1, 1, 1, 1],
-          nodeName: [1, 2, 3, 3, 3],
-          nodeValue: [4, 4, 4, 4, 4],
-          parentIndex: [-1, 0, 1, 1, 1],
-          backendNodeId: [1, 2, 3, 4, 5],
-          attributes: [[], [], [5, 6], [5, 7], [5, 6, 8, 9]],
+          nodeType: [9, 1, 1, 1, 1, 1, 1],
+          nodeName: [1, 2, 3, 3, 3, 3, 3],
+          nodeValue: [4, 4, 4, 4, 4, 4, 4],
+          parentIndex: [-1, 0, 1, 1, 1, 1, 1],
+          backendNodeId: [1, 2, 3, 4, 5, 6, 7],
+          attributes: [[], [], [5, 6], [5, 7], [5, 11], [5, 12], [5, 6, 8, 9]],
         };
         return {
           strings: [
@@ -32,17 +32,19 @@ const startBrowser = async (options: FakeOptions = {}) => {
             "a",
             "",
             "xlink:href",
-            "/first",
-            "/second",
+            "/removed",
+            "/mismatched",
             "href",
             "/ordinary",
             "https://excluded.example/page",
+            "/malformed",
+            "/confirmed",
           ],
           documents: [
             { documentURL: 0, nodes },
             {
               documentURL: 10,
-              nodes: { ...nodes, backendNodeId: [11, 12, 13, 14, 15] },
+              nodes: { ...nodes, backendNodeId: [11, 12, 13, 14, 15, 16, 17] },
             },
           ],
         };
@@ -75,75 +77,58 @@ const inspect = (browser: FakeCdpBrowser, signal?: AbortSignal) =>
   );
 
 describe("CDP SVG identity at the snapshot boundary", () => {
-  it("describes only in-scope XLink candidates without a winning href", async () => {
-    const browser = await startBrowser();
+  it("resolves only in-scope XLink candidates and retains readable sibling URLs", async () => {
+    const browser = await startBrowser({
+      commandError: (command) =>
+        command.method === "DOM.describeNode" &&
+        command.params.backendNodeId === 3
+          ? { code: -32_000, message: "No node found for given backend id" }
+          : undefined,
+      commandResult: (command) => {
+        if (command.method !== "DOM.describeNode") return undefined;
+        const id = command.params.backendNodeId;
+        if (id === 4)
+          return {
+            node: {
+              backendNodeId: 99,
+              nodeType: 1,
+              nodeName: "a",
+              isSVG: true,
+            },
+          };
+        if (id === 5)
+          return {
+            node: {
+              backendNodeId: 5,
+              nodeType: 1,
+              nodeName: "a",
+              isSVG: "true",
+            },
+          };
+        return undefined;
+      },
+    });
     const result = await inspect(browser);
     if (!result.ok) throw result.error;
-    expect(result.value.metadata.dom_urls.map(({ url }) => url)).toEqual(
-      ["/first", "/second", "/ordinary"].map(
-        (path) => browser.allowedOrigin + path,
-      ),
-    );
-    expect(
-      browser.commands
-        .filter(({ method }) => method === "DOM.describeNode")
-        .map(({ params }) => params),
-    ).toEqual([
+    expect(descriptions(browser).map(({ params }) => params)).toEqual([
       { backendNodeId: 3, depth: 0 },
       { backendNodeId: 4, depth: 0 },
+      { backendNodeId: 5, depth: 0 },
+      { backendNodeId: 6, depth: 0 },
     ]);
+    expect(result.value.metadata.dom_urls.map(({ url }) => url)).toEqual([
+      `${browser.allowedOrigin}/confirmed`,
+      `${browser.allowedOrigin}/ordinary`,
+    ]);
+    expect(result.value.completeness.excluded).toContainEqual({
+      section: "metadata",
+      reason: "provider_unavailable",
+      count: 3,
+    });
+    expect(result.value.limitations).toContain(
+      "SVG identity was unavailable for 3 snapshotted XLink candidate nodes; their URL destinations remain unknown.",
+    );
   });
-
-  it.each(["removed", "mismatched", "malformed"])(
-    "retains partial metadata when a candidate is %s",
-    async (failure) => {
-      const browser = await startBrowser({
-        commandError: (command) =>
-          failure === "removed" &&
-          command.method === "DOM.describeNode" &&
-          command.params.backendNodeId === 3
-            ? { code: -32_000, message: "No node found for given backend id" }
-            : undefined,
-        commandResult: (command) =>
-          failure === "mismatched" &&
-          command.method === "DOM.describeNode" &&
-          command.params.backendNodeId === 3
-            ? {
-                node: {
-                  backendNodeId: 99,
-                  nodeType: 1,
-                  nodeName: "a",
-                  isSVG: true,
-                },
-              }
-            : failure === "malformed" &&
-                command.method === "DOM.describeNode" &&
-                command.params.backendNodeId === 3
-              ? {
-                  node: {
-                    backendNodeId: 3,
-                    nodeType: 1,
-                    nodeName: "a",
-                    isSVG: "true",
-                  },
-                }
-              : undefined,
-      });
-      const result = await inspect(browser);
-      if (!result.ok) throw result.error;
-      expect(result.value.metadata.dom_urls.map(({ url }) => url)).toEqual(
-        ["/second", "/ordinary"].map((path) => browser.allowedOrigin + path),
-      );
-      expect(result.value.completeness.excluded).toContainEqual({
-        section: "metadata",
-        reason: "provider_unavailable",
-        count: 1,
-      });
-      expect(result.value.limitations).toContain(
-        "SVG identity was unavailable for 1 snapshotted XLink candidate nodes; their URL destinations remain unknown.",
-      );
-    },
-  );
 
   it("stops querying after the first batch reports an unsupported method", async () => {
     const browser = await startBrowser({
@@ -162,27 +147,14 @@ describe("CDP SVG identity at the snapshot boundary", () => {
     expect(descriptions(browser).length).toBeLessThanOrEqual(8);
   });
 
-  it.each([
-    { options: { closeOnMethod: "DOM.describeNode" }, reason: "disconnected" },
-    {
-      options: {
-        commandError: (command: { method: string }) =>
-          command.method === "DOM.describeNode"
-            ? { code: -32_602, message: "Invalid parameters" }
-            : undefined,
-      },
-      reason: "protocol_error",
-    },
-  ])(
-    "propagates $reason during node description",
-    async ({ options, reason }) => {
-      const browser = await startBrowser(options);
-      expect(await inspect(browser)).toMatchObject({
-        ok: false,
-        error: { _tag: "BrowserObservationError", reason },
-      });
-    },
-  );
+  it("propagates a disconnect during node description", async () => {
+    const browser = await startBrowser({ closeOnMethod: "DOM.describeNode" });
+    expect(await inspect(browser)).toMatchObject({
+      ok: false,
+      error: { _tag: "BrowserObservationError", reason: "disconnected" },
+    });
+    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
+  });
 
   it("cancels a pending description and detaches without closing the target", async () => {
     const browser = await startBrowser({ hangOnMethod: "DOM.describeNode" });

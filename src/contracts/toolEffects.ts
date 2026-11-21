@@ -127,7 +127,7 @@ export const annotationsFromEffects = (
  * failure reasons and availability diagnostics) and the adb and apktool
  * client probes (version output and stderr excerpts) can.
  */
-export const TARGET_CONTENT_FREE_TOOLS: ReadonlySet<string> = new Set([
+const TARGET_CONTENT_FREE_TOOLS: ReadonlySet<string> = new Set([
   "inspect_analysis_settings",
   "update_analysis_settings",
   "export_evidence_bundle",

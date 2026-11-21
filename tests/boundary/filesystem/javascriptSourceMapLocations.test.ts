@@ -11,55 +11,65 @@ import {
   serializeJavaScriptApplicationGraph,
 } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
 
-it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
-  "preserves source-map graph evidence coordinates after %j",
-  async (separator) => {
-    const root = await createTestTempDirectory("rea-source-map-locations-");
-    const directive = "//# sourceMappingURL=app.js.map";
-    const source = `const marker = "😀";${separator}  ${directive}`;
-    await writeFile(join(root, "app.js"), source);
-    const result = await reconstructJavaScriptArtifact({ input_path: root });
-    expect(result.statistics.parse_failures).toBe(0);
-    const nodes = new Map(
-      result.graph.nodes.map((node) => [node.node_id, node]),
-    );
-    const edge = result.graph.edges.find(
-      ({ relation, target_node_id }) =>
-        relation === "maps_to" &&
-        nodes.get(target_node_id)?.kind === "source-map",
-    );
-    expect(edge).toMatchObject({
-      properties: {
-        declared_url_sha256: createHash("sha256")
-          .update("app.js.map")
-          .digest("hex"),
-        resolved_path: null,
-      },
-      evidence: {
-        state: "inferred",
-        artifact: {
-          sha256: createHash("sha256").update(source).digest("hex"),
-        },
-        location: {
-          available: true,
-          value: {
-            kind: "source-range",
-            source: "app.js",
-            start: { line: 2, column: 2 },
-            end: { line: 2, column: directive.length + 2 },
+it("publishes the location of real source-map comments across JavaScript line breaks", async () => {
+  const root = await createTestTempDirectory("rea-source-map-locations-");
+  const directive = "//# sourceMappingURL=app.js.map";
+  const quoted = [
+    'const marker = "😀 //# sourceMappingURL=ghost.map";',
+    "const template = `/*# sourceMappingURL=template.map */`;",
+  ].join(" ");
+  const files = ["\n", "\r\n", "\r", "\u2028", "\u2029"].map(
+    (separator, index) => ({
+      name: `app-${index}.js`,
+      text: `${quoted}${separator}  ${directive}`,
+    }),
+  );
+  await Promise.all(
+    files.map(({ name, text }) => writeFile(join(root, name), text)),
+  );
+
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+  expect(result.statistics.parse_failures).toBe(0);
+  const nodes = new Map(result.graph.nodes.map((node) => [node.node_id, node]));
+  const edges = result.graph.edges.filter(
+    ({ relation, target_node_id }) =>
+      relation === "maps_to" &&
+      nodes.get(target_node_id)?.kind === "source-map",
+  );
+  expect(edges).toHaveLength(files.length);
+  for (const { name, text } of files)
+    expect(edges).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          declared_url_sha256: createHash("sha256")
+            .update("app.js.map")
+            .digest("hex"),
+          resolved_path: null,
+        }),
+        evidence: expect.objectContaining({
+          state: "inferred",
+          artifact: expect.objectContaining({
+            sha256: createHash("sha256").update(text).digest("hex"),
+          }),
+          location: {
+            available: true,
+            value: {
+              kind: "source-range",
+              source: name,
+              start: { line: 2, column: 2 },
+              end: { line: 2, column: directive.length + 2 },
+            },
           },
-        },
-      },
-    });
-    expect(
-      nodes
-        .get(edge?.target_node_id ?? "")
-        ?.observations.some(
-          ({ properties }) => properties.declared_url === "app.js.map",
-        ),
-    ).toBe(true);
-  },
-);
+        }),
+      }),
+    );
+  const declaredUrls = result.graph.nodes
+    .filter(({ kind }) => kind === "source-map")
+    .flatMap(({ observations }) =>
+      observations.map(({ properties }) => properties.declared_url),
+    );
+  expect(new Set(declaredUrls)).toEqual(new Set(["app.js.map"]));
+});
 
 it("owns an inline source-map URL once and recovers it from the target after JSON roundtrip", async () => {
   const root = await createTestTempDirectory("rea-inline-source-map-url-");
@@ -134,6 +144,8 @@ it("associates each source-map URL with its edge when aliases share one physical
   );
   expect(mapEdges).toHaveLength(2);
   expect(mapEdges[0]?.target_node_id).toBe(mapEdges[1]?.target_node_id);
+  const mapNode = nodes.get(mapEdges[0]?.target_node_id ?? "");
+  expect(mapNode?.identity.strategy).toBe("content-digest");
   // Edge order follows content-derived edge IDs, so pair each edge with the
   // script whose comment declared it.
   const declaredBySource = new Map(
@@ -152,6 +164,8 @@ it("associates each source-map URL with its edge when aliases share one physical
         {
           declared_url: observation?.properties.declared_url,
           resolved_path: edge.properties.resolved_path,
+          resolution_status: edge.properties.resolution_status,
+          available: observation?.properties.available,
         },
       ];
     }),
@@ -160,15 +174,19 @@ it("associates each source-map URL with its edge when aliases share one physical
     "dist/one.js": {
       declared_url: "app.js.map",
       resolved_path: "dist/app.js.map",
+      resolution_status: "resolved",
+      available: true,
     },
     "dist/two.js": {
       declared_url: "./app.js.map",
       resolved_path: "dist/app.js.map",
+      resolution_status: "resolved",
+      available: true,
     },
   });
 });
 
-it("resolves a bare source-map file name and module worker URL next to the script", async () => {
+it("resolves a module worker relative to its script while keeping the document base unknown", async () => {
   const root = await createTestTempDirectory("rea-source-map-relative-");
   await mkdir(join(root, "dist"));
   await writeFile(
@@ -176,7 +194,6 @@ it("resolves a bare source-map file name and module worker URL next to the scrip
     [
       'new Worker(new URL("worker.js", import.meta.url));',
       'navigator.serviceWorker.register("sw.js");',
-      "//# sourceMappingURL=app.js.map",
     ].join("\n"),
   );
   await writeFile(
@@ -184,43 +201,8 @@ it("resolves a bare source-map file name and module worker URL next to the scrip
     "self.onmessage = () => {};",
   );
   await writeFile(join(root, "dist", "sw.js"), "self.onfetch = () => {};");
-  await writeFile(
-    join(root, "dist", "app.js.map"),
-    JSON.stringify({
-      version: 3,
-      sources: ["../src/app.js"],
-      sourcesContent: ['new Worker("worker.js");'],
-      names: [],
-      mappings: "AAAA",
-    }),
-  );
   const result = await reconstructJavaScriptArtifact({ input_path: root });
   const nodes = new Map(result.graph.nodes.map((node) => [node.node_id, node]));
-  const mapEdge = result.graph.edges.find(
-    ({ relation, target_node_id }) =>
-      relation === "maps_to" &&
-      nodes.get(target_node_id)?.kind === "source-map",
-  );
-  expect(mapEdge?.properties).toEqual({
-    declared_url_sha256: createHash("sha256")
-      .update("app.js.map")
-      .digest("hex"),
-    resolved_path: "dist/app.js.map",
-    resolution_status: "resolved",
-  });
-  expect(
-    nodes
-      .get(mapEdge?.target_node_id ?? "")
-      ?.observations.some(
-        ({ properties }) =>
-          properties.declared_url === "app.js.map" &&
-          properties.resolved_path === "dist/app.js.map" &&
-          properties.available === true,
-      ),
-  ).toBe(true);
-  expect(nodes.get(mapEdge?.target_node_id ?? "")?.identity.strategy).toBe(
-    "content-digest",
-  );
   const workerEdge = result.graph.edges.find(
     ({ relation, source_node_id }) =>
       relation === "maps_to" && nodes.get(source_node_id)?.kind === "worker",

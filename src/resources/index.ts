@@ -37,6 +37,7 @@ export {
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,
+  yieldArtifactRead,
   bindArtifactFileCleanup,
   mapArtifactFileFailure,
   withArtifactFileHandle,
@@ -145,7 +146,6 @@ export {
 } from "./withArtifactTargetIdentity.js";
 export {
   ZIP_READER_OPTIONS,
-  ZIP_ZSTANDARD_WINDOW_CEILING,
   ZipArtifactReader,
   decodeZipEntryText,
   zipEntryNameLimitations,

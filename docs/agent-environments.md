@@ -3,9 +3,6 @@
 For a first environment, start with the
 [quickstart](agent-environments-quickstart.md): record an app or use a saved
 session, build and run the environment, and add tasks and reward checks.
-The [implementation index](specs/agent-environments/README.md) links
-the contributing PRs and their verification records. This page is the detailed
-command and behavior reference.
 
 Use `rea environment-build` to turn one recorded capture into an agent
 environment bundle in one offline step: a folder `agent-env run` builds and
@@ -1189,7 +1186,9 @@ chooses its own), and a request with no recorded
 answer is made, since it may have changed the application, but not compared: each probe lists them under `unobserved` with the reason, and the summary counts them. A live
 body the probe did not record compares by status only and is counted as `unobserved_bodies`, unless the answer never
 carries one (204, 205, 304, `HEAD`). A browser probe captured without `capture.network.response_body` is refused, as
-is one that makes POST, PUT or PATCH calls without `capture.network.request_body`.
+is one that makes POST, PUT or PATCH calls, or calls a served tool with a body argument (including a state-backed
+bulk DELETE), without `capture.network.request_body`. A DELETE whose served tool has no body argument does not
+require that selection.
 
 Agreement covers only the calls the probes make, after the mapping the answers allow. Clocks compared by format
 and fields normalized under explicit generation rules can still differ in content, and an equal answer after a write shows the state matched for that
@@ -1198,7 +1197,7 @@ read, not that the write had no other effect.
 ## Compatibility verification
 
 `npm run verify:agentenv:environment` is the hosted `real-agentenv` lane
-described in [testing](development/testing.md#exported-environment-bundles). It projects
+described in [exported bundle verification](testing-lanes.md#exported-environment-bundles). It projects
 the Grafana-shaped source-owned capture through the built CLI, packs the
 checkout, exports a bundle with `--package-tarball`, runs it with the pinned
 `agentenv-framework` release on the runner's Docker and requires the smoke task

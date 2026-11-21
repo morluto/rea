@@ -1,4 +1,4 @@
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -6,24 +6,19 @@ import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-cliTest.for([
-  { marker: true, skill: true },
-  { marker: true, skill: false },
-  { marker: false, skill: true },
-])(
-  "automatic setup excludes manual hosted connectors (marker: $marker, skill: $skill)",
-  async ({ marker, skill }, { cli }) => {
+const sharedSkill = ".agents/skills/reverse-engineer-anything/SKILL.md";
+
+cliTest.for([true, false])(
+  "automatic setup excludes detected manual hosted connectors (skill: %s)",
+  async (skill, { cli }) => {
     const home = await createTestTempDirectory("rea-automatic-clients-");
-    if (marker) await mkdir(join(home, ".grokbot"));
+    const marker = join(home, ".grokbot");
+    const skillPath = join(home, sharedSkill);
+    const arguments_ = ["setup", "--all-detected", "--yes", "--json"];
+    await mkdir(marker);
     const run = () =>
       cli.run({
-        arguments: [
-          "setup",
-          "--all-detected",
-          "--yes",
-          "--json",
-          ...(skill ? [] : ["--skill=false"]),
-        ],
+        arguments: skill ? arguments_ : [...arguments_, "--skill=false"],
         cwd: home,
         environment: { HOME: home, USERPROFILE: home, TMPDIR: home },
       });
@@ -31,38 +26,41 @@ cliTest.for([
     expect(first.exitCode, first.stdout).toBe(0);
     expect(first.json).toMatchObject({
       status: "ready",
+      plannedActions: skill ? [{ id: "install_skill" }] : [],
       appliedActions: skill ? ["installed_skill"] : [],
-      clients: {},
       doctor: { healthy: true, scope: { clients: [], skill } },
+      clientStates: expect.arrayContaining([
+        expect.objectContaining({
+          client: expect.objectContaining({ name: "grok_bot" }),
+          detected: true,
+        }),
+      ]),
     });
-    if (marker)
-      expect(first.json).toMatchObject({
-        clientStates: expect.arrayContaining([
-          expect.objectContaining({
-            client: expect.objectContaining({ name: "grok_bot" }),
-            detected: true,
-          }),
-        ]),
+    expect(first.json).toHaveProperty("clients", {});
+    if (skill) {
+      const installed = await readFile(skillPath, "utf8");
+      expect(installed).toContain("name: reverse-engineer-anything");
+      const repeated = await run();
+      expect(repeated.exitCode, repeated.stdout).toBe(0);
+      expect(repeated.json).toMatchObject({
+        status: "ready",
+        plannedActions: [],
+        appliedActions: [],
+        doctor: { healthy: true, scope: { clients: [], skill } },
       });
-    const repeated = await run();
-    expect(repeated.exitCode, repeated.stdout).toBe(0);
-    expect(repeated.json).toMatchObject({
-      status: "ready",
-      plannedActions: [],
-      appliedActions: [],
-      doctor: { healthy: true, scope: { clients: [], skill } },
-    });
-    await expect(
-      access(join(home, ".grokbot", "mcp.json")),
-    ).rejects.toMatchObject({
+      expect(await readFile(skillPath, "utf8")).toBe(installed);
+    } else {
+      await expect(access(skillPath)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    await expect(access(join(marker, "mcp.json"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   },
 );
 
-cliTest.for([true, false])(
-  "explicit Grok Bot setup retains manual instructions (all detected: %s)",
-  async (allDetected, { cli }) => {
+cliTest(
+  "explicit Grok Bot selection retains manual instructions with all detected clients",
+  async ({ cli }) => {
     const home = await createTestTempDirectory("rea-explicit-manual-client-");
     await mkdir(join(home, ".grokbot"));
     const result = await cli.run({
@@ -73,7 +71,7 @@ cliTest.for([true, false])(
         "--skill=false",
         "--yes",
         "--json",
-        ...(allDetected ? ["--all-detected"] : []),
+        "--all-detected",
       ],
       cwd: home,
       environment: { HOME: home, USERPROFILE: home, TMPDIR: home },

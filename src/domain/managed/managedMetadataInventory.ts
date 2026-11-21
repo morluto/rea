@@ -1,6 +1,8 @@
 import type {
   ManagedArtifactInspection,
   ManagedParseIssue,
+  NamedManagedModule,
+  UnresolvedManagedModuleName,
 } from "./managedArtifact.js";
 import {
   METADATA_TABLE_NAMES,
@@ -25,7 +27,6 @@ import {
 } from "./managedReaderFailure.js";
 import type { ManagedPeLayout } from "./managedPeReader.js";
 
-type ModuleIdentity = NonNullable<ManagedArtifactInspection["module"]>;
 type AssemblyIdentity = NonNullable<ManagedArtifactInspection["assembly"]>;
 type AssemblyReference = ManagedArtifactInspection["references"][number];
 type ManagedResource = ManagedArtifactInspection["resources"][number];
@@ -55,7 +56,8 @@ export const readManagedResourceDirectory = (
 };
 
 export interface ManagedMetadataInventory {
-  readonly module: ModuleIdentity | null;
+  readonly module: NamedManagedModule | null;
+  readonly unresolvedModuleName: UnresolvedManagedModuleName | null;
   readonly assembly: AssemblyIdentity | null;
   readonly targetFrameworks: readonly string[];
   readonly referenceNames: readonly string[];
@@ -77,9 +79,6 @@ const readRows = <Item>(
   }
   return items;
 };
-
-const heapExtent = (layout: ManagedMetadataLayout): number =>
-  Math.max(layout.strings.size, layout.blob?.size ?? 0);
 
 const validateIdentityTableCounts = (
   layout: ManagedMetadataLayout,
@@ -108,15 +107,21 @@ const validateIdentityTableCounts = (
 export const readManagedModuleIdentity = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-): Pick<ManagedMetadataInventory, "module" | "issues"> => {
-  const issues: ManagedParseIssue[] = [];
+): Pick<
+  ManagedMetadataInventory,
+  "module" | "unresolvedModuleName" | "issues"
+> => {
+  const issues: ManagedParseIssue[] =
+    layout.guid.issue === null ? [] : [layout.guid.issue];
+  if (layout.blob?.issue) issues.push(layout.blob.issue);
+  if (layout.strings.issue !== null) issues.push(layout.strings.issue);
   validateIdentityTableCounts(layout, issues);
-  const module =
-    readManagedValue(
-      () => readModule(bytes, layout, heapExtent(layout)),
-      issues,
-    ) ?? null;
-  return { module, issues };
+  const row = readManagedValue(() => readModule(bytes, layout, issues), issues);
+  return {
+    module: row?.name === null ? null : (row ?? null),
+    unresolvedModuleName: row?.name === null ? row : null,
+    issues,
+  };
 };
 
 const readReferences = (
@@ -127,16 +132,17 @@ const readReferences = (
   readonly references: readonly AssemblyReference[];
   readonly referenceNames: readonly string[];
 } => {
-  const references = readRows(layout.table(35), (row) =>
-    readManagedValue(
-      () => readAssemblyReference(bytes, layout, row, heapExtent(layout)),
+  const referenceNames = new Set<string>();
+  const references = readRows(layout.table(35), (row) => {
+    const observed = readManagedValue(
+      () => readAssemblyReference(bytes, layout, row),
       issues,
-    ),
-  );
-  return {
-    references,
-    referenceNames: [...new Set(references.map(({ name }) => name))].sort(),
-  };
+    );
+    if (observed === undefined) return undefined;
+    referenceNames.add(observed.name);
+    return observed.reference ?? undefined;
+  });
+  return { references, referenceNames: [...referenceNames].sort() };
 };
 
 const readResources = ({
@@ -177,15 +183,7 @@ const readAttributes = (
   const attributes = readRows(layout.table(12), (row) =>
     readManagedValue(
       () =>
-        readCustomAttribute(
-          bytes,
-          layout,
-          row,
-          heapExtent(layout),
-          issues,
-          memberLists,
-          typeNames,
-        ),
+        readCustomAttribute(bytes, layout, row, issues, memberLists, typeNames),
       issues,
     ),
   );
@@ -210,18 +208,15 @@ export const readManagedMetadataInventory = (
   memberLists: TypeMemberListFacts,
   identity: Pick<
     ManagedMetadataInventory,
-    "module" | "issues"
+    "module" | "unresolvedModuleName" | "issues"
   > = readManagedModuleIdentity(bytes, layout),
   typeNames?: ManagedMetadataTypeNameLookup,
 ): ManagedMetadataInventory => {
   const issues: ManagedParseIssue[] = [...memberLists.issues];
   appendManagedParseIssues(issues, identity.issues);
-  const { module } = identity;
+  const { module, unresolvedModuleName } = identity;
   const assembly =
-    readManagedValue(
-      () => readAssembly(bytes, layout, heapExtent(layout)),
-      issues,
-    ) ?? null;
+    readManagedValue(() => readAssembly(bytes, layout), issues) ?? null;
   const { references, referenceNames } = readReferences(bytes, layout, issues);
   const resources = readResources({
     bytes,
@@ -238,6 +233,7 @@ export const readManagedMetadataInventory = (
   );
   return {
     module,
+    unresolvedModuleName,
     assembly,
     targetFrameworks,
     referenceNames,
@@ -247,6 +243,14 @@ export const readManagedMetadataInventory = (
     issues: uniqueManagedParseIssues(issues),
   };
 };
+
+/** Add row-local identity only when the checked Module row has an unresolved name. */
+export const unresolvedModuleMetadata = (
+  identity: Pick<ManagedMetadataInventory, "unresolvedModuleName">,
+): { readonly unresolved_module_name?: UnresolvedManagedModuleName } =>
+  identity.unresolvedModuleName === null
+    ? {}
+    : { unresolved_module_name: identity.unresolvedModuleName };
 
 /** Stable table-name/count projection for caller-visible coverage. */
 export const managedTableRowCounts = (

@@ -17,7 +17,7 @@ import {
   codexToolPolicy,
   codexToolPolicySource,
 } from "../../fixtures/codexToolPolicy.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it.each(["tables", "inline table"] as const)(
   "preserves Codex %s policy and status through refresh",

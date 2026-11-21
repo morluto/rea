@@ -1,9 +1,6 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
-import {
-  EVIDENCE_FORMAT_REVISION,
-  RECREATE_EVIDENCE_GUIDANCE,
-} from "../../../src/domain/evidenceFormat.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
 import {
   access,
@@ -258,6 +255,18 @@ cliTest.for([
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "evidence_integrity_mismatch",
+      details: {
+        path,
+        reason: "invalid-json",
+        content_issues: [
+          {
+            reason: "invalid_format",
+            message: expect.stringMatching(
+              /byte-order mark.*UTF-8 without a byte-order mark/iu,
+            ),
+          },
+        ],
+      },
       message: expect.stringMatching(
         /byte-order mark.*UTF-8 without a byte-order mark/iu,
       ),
@@ -305,51 +314,47 @@ cliTest.for([
 });
 
 cliTest(
-  "reports standalone import counts for every unknown revision",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-evidence-import-");
-    const path = join(root, "bundle.json");
-    await writeFile(path, JSON.stringify(revisionBundle()));
-    const result = await cli.run({
-      arguments: ["evidence-import", path, "--json"],
-    });
-    expect(result.exitCode).toBe(0);
-    expect(result.json).toEqual({ imported: 2, unknowns_added: 2, total: 2 });
-  },
-);
-
-cliTest(
-  "reports exported residual-unknown revision counts",
+  "reports record and residual-unknown revision counts in export receipts",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-evidence-export-counts-");
-    for (const [label, bundle] of [
-      ["empty", createEvidenceBundle([])],
-      ["revisions", revisionBundle()],
+    const history = revisionBundle();
+    const extra = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation: "observe", parameters: {}, result: { observed: true } },
+    );
+    const fullHistory = createEvidenceBundle(
+      [...history.records, extra],
+      history.unknowns,
+    );
+    for (const [label, bundle, full, records, unknowns] of [
+      ["empty", createEvidenceBundle([]), false, 0, 0],
+      ["revisions", fullHistory, true, 3, 2],
     ] as const) {
       const source = join(root, `${label}.json`);
+      const output = join(root, `${label}-exported.json`);
       await writeFile(source, JSON.stringify(bundle));
-      for (const full of [false, true]) {
-        const output = join(root, `${label}-${String(full)}.json`);
-        const result = await cli.run({
-          arguments: [
-            "evidence-export",
-            source,
-            output,
-            "--json",
-            ...(full ? ["--full-output"] : []),
-          ],
-        });
-        expect(result.exitCode, result.stderr).toBe(0);
-        const receipt = full
-          ? (result.json as { data: unknown }).data
-          : result.json;
-        expect(receipt).toMatchObject({
-          path: output,
-          records: bundle.records.length,
-          unknowns: bundle.unknowns.length,
-        });
-        expect(JSON.parse(await readFile(output, "utf8"))).toEqual(bundle);
-      }
+      const result = await cli.run({
+        arguments: [
+          "evidence-export",
+          source,
+          output,
+          "--json",
+          ...(full ? ["--full-output"] : []),
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const receipt = full
+        ? (result.json as { data: unknown }).data
+        : result.json;
+      const bytes = await readFile(output);
+      expect(receipt).toMatchObject({
+        path: output,
+        bytes: bytes.length,
+        records,
+        unknowns,
+      });
+      expect(JSON.parse(bytes.toString("utf8"))).toEqual(bundle);
     }
   },
 );
@@ -490,39 +495,33 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
-    const record = PRE_66_NULL_COVERAGE_EVIDENCE;
-    // A current-format bundle carrying an earlier record is refused by the
-    // record's own format marker, before its ID is checked.
-    const bundle = {
-      evidence_format: EVIDENCE_FORMAT_REVISION,
-      artifacts: [],
-      providers: [record.provider],
-      environments: [],
-      scenarios: [],
-      captures: [],
-      unknowns: [],
-      records: [record],
+    await writeFile(
+      path,
+      JSON.stringify({
+        ...createEvidenceBundle([]),
+        records: [PRE_66_NULL_COVERAGE_EVIDENCE],
+      }),
+    );
+    const refusal = {
+      code: "evidence_integrity_mismatch",
+      retryable: false,
+      message: expect.stringContaining(
+        "Evidence record predates format revision",
+      ),
     };
-    await writeFile(path, JSON.stringify(bundle));
     const imported = await cli.run({
       arguments: ["evidence-import", path, "--json"],
     });
     expect(imported.exitCode).toBe(1);
-    expect(imported.json).toMatchObject({
-      code: "evidence_integrity_mismatch",
-      retryable: false,
-      message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
-    });
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected shared MCP session");
     const response = await call("import_evidence_bundle", { path });
     expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response)).toMatchObject({
-      error: {
-        code: "evidence_integrity_mismatch",
-        retryable: false,
+    for (const error of [imported.json, parseMcpToolError(response).error]) {
+      expect(error).toMatchObject(refusal);
+      expect(error).toMatchObject({
         message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
-      },
-    });
+      });
+    }
   },
 );

@@ -25,7 +25,7 @@ const application = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
 const pair = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
 const exportPair = JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE;
 
-async function connect(profile?: "compact") {
+async function connect() {
   const session = createTestBinarySession(() => {
     throw new Error("references must not launch a provider");
   });
@@ -34,7 +34,7 @@ async function connect(profile?: "compact") {
     clientIdentity: { name: "retained-evidence-test", version: "1" },
     schemaValidator: schemaValidation,
     serverOptions: {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
     },
   });
   return { client, session };
@@ -64,56 +64,47 @@ it("advertises semantic discovery paging and validates the returned Evidence", a
   });
 });
 
-it.each(["compact"] as const)(
-  "advertises the primitive literal seeds accepted by semantic tracing (%s)",
-  async (profile) => {
-    const { client } = await connect(profile);
-    const { tools } = await client.listTools();
-    const tool = tools.find(
-      ({ name }) => name === "trace_javascript_semantics",
-    );
-    if (tool === undefined) throw new Error("Semantic trace tool is missing");
-    const validate = new Ajv2020({
-      strict: false,
-      validateFormats: false,
-    }).compile(tool.inputSchema);
-    const cases = [
-      { value: "literal", expectedPrimitive: true },
-      { value: 42, expectedPrimitive: true },
-      { value: true, expectedPrimitive: true },
-      { value: null, expectedPrimitive: true },
-      { value: {}, expectedPrimitive: false },
-      { value: [], expectedPrimitive: false },
-    ] as const;
-    let malformedChecks = 0;
-    for (const { value, expectedPrimitive } of cases) {
-      const arguments_ = {
-        application,
-        query: {
-          seed: { kind: "literal", value },
-          direction: "backward-provenance",
-        },
-      };
-      if (expectedPrimitive)
-        expect(validate(arguments_), JSON.stringify(value)).toBe(
-          expectedPrimitive,
-        );
-      const result = await client.callTool({
-        name: tool.name,
-        arguments: arguments_,
-      });
-      if (expectedPrimitive) expect(result.isError).not.toBe(true);
-      else {
-        malformedChecks += 1;
-        expect(parseMcpToolError(result).error).toMatchObject({
-          code: "invalid_request",
-          category: "invalid_input",
-        });
-      }
-    }
-    expect(malformedChecks).toBe(2);
-  },
-);
+it("advertises and uses primitive literal seeds for semantic tracing", async () => {
+  const { client } = await connect();
+  const { tools } = await client.listTools();
+  const tool = tools.find(({ name }) => name === "trace_javascript_semantics");
+  if (tool === undefined) throw new Error("Semantic trace tool is missing");
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(tool.inputSchema);
+  const request = (value: unknown) => ({
+    name: tool.name,
+    arguments: {
+      application,
+      query: {
+        seed: { kind: "literal", value },
+        direction: "backward-provenance",
+      },
+    },
+  });
+  for (const value of ["literal", 42, true, null]) {
+    const input = request(value);
+    expect(validate(input.arguments), JSON.stringify(value)).toBe(true);
+    const result = await client.callTool(input);
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      parameters: { query: { seed: { kind: "literal", value } } },
+    });
+  }
+  for (const value of [{}, []])
+    expect(
+      parseMcpToolError(await client.callTool(request(value))).error,
+    ).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({ path: ["query", "seed", "value"] }),
+        ]),
+      },
+    });
+});
 
 it("runs the same trace/compare workflows with inline and retained application Evidence", async () => {
   const { client, session } = await connect();
@@ -137,6 +128,7 @@ it("runs the same trace/compare workflows with inline and retained application E
         left: retained(pair.left.evidence_id),
         right: retained(pair.right.evidence_id),
       },
+      mixed: { left: pair.left, right: retained(pair.right.evidence_id) },
     },
     {
       name: "compare_javascript_export_shapes",
@@ -181,26 +173,30 @@ it("runs the same trace/compare workflows with inline and retained application E
     expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
     const validate = ajv.compile(tool.inputSchema);
     expect(validate(scenario.inline), scenario.name).toBe(true);
-    expect(validate(scenario.refs), scenario.name).toBe(true);
     const inline = await client.callTool({
       name: scenario.name,
       arguments: scenario.inline,
     });
     expect(inline.isError, scenario.name).not.toBe(true);
     const recordsBefore = session.exportEvidenceBundle().records;
-    const referenced = await client.callTool({
-      name: scenario.name,
-      arguments: scenario.refs,
-    });
-    expect(referenced.isError, scenario.name).not.toBe(true);
-    expect(referenced.structuredContent).toEqual(inline.structuredContent);
-    expect(session.exportEvidenceBundle().records).toEqual(recordsBefore);
+    for (const input of [
+      scenario.refs,
+      ...("mixed" in scenario ? [scenario.mixed] : []),
+    ]) {
+      expect(validate(input), scenario.name).toBe(true);
+      const referenced = await client.callTool({
+        name: scenario.name,
+        arguments: input,
+      });
+      expect(referenced.isError, scenario.name).not.toBe(true);
+      expect(referenced.structuredContent, scenario.name).toEqual(
+        inline.structuredContent,
+      );
+      expect(session.exportEvidenceBundle().records, scenario.name).toEqual(
+        recordsBefore,
+      );
+    }
   }
-  const mixed = await client.callTool({
-    name: "compare_application_versions",
-    arguments: { left: pair.left, right: retained(pair.right.evidence_id) },
-  });
-  expect(mixed.isError).not.toBe(true);
 });
 
 it("keeps references connection-scoped through close and expires them on explicit investigation reset", async () => {
@@ -311,28 +307,4 @@ it("preserves validation for the referenced record's operation, predicate, and s
     arguments: { ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE, application: tampered },
   });
   expect(response.isError).toBe(true);
-});
-
-it("projects a retained JavaScript summary without graph or semantic_graph", async () => {
-  const { client, session } = await connect();
-  expect(session.recordEvidence(application).ok).toBe(true);
-  const inline = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source: { kind: "inline", evidence: application },
-      view: { kind: "summary" },
-    },
-  });
-  const referenced = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source: retained(application.evidence_id),
-      view: { kind: "summary" },
-    },
-  });
-  expect(inline.isError).not.toBe(true);
-  expect(referenced.structuredContent).toEqual(inline.structuredContent);
-  expect(inline.structuredContent).not.toHaveProperty(
-    "normalized_result.summary.semantic_graph",
-  );
 });

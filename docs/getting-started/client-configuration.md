@@ -94,7 +94,8 @@ raising a REA startup or operation deadline, separately ensure the client allows
 enough time for the full request. Use `inspect_analysis_settings` for the running
 server's defaults; `rea doctor` checks launch configuration and cannot observe
 another process's runtime overrides. See the
-[settings design](../design/limits-and-recovery.md) for ownership and lifetime.
+[analysis settings and recovery](../reference/limits-and-recovery.md#precedence-and-lifetime)
+for precedence and lifetime.
 
 ## Client tool names and discovery
 
@@ -117,7 +118,7 @@ unfamiliar prefix. The unavailable fork reported in
 
 ## Hot/cold catalogs
 
-For a client that supports MCP catalog refresh, set
+For a client that can call newly listed tools during an active task, set
 `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
 the connection. REA then advertises a small initial catalog and loads other
 named tools through `discover_tools`. Setup can record the explicit choice:
@@ -400,7 +401,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime settle settings `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`, `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`, and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime runtime settings `windows.change_time_drift_ms` (`REA_WINDOWS_CHANGE_TIME_DRIFT_MS`), `windows.change_time_settle_poll_ms` (`REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`), and `windows.change_time_settle_max_polls` (`REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`), provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their
@@ -1009,7 +1010,19 @@ The written entry is:
         transport: stdio
         command: /absolute/path/to/node
         args: ["/absolute/path/to/rea/scripts/rea.mjs", mcp]
+        toolCallTimeoutMs: 450000
 ```
+
+The `toolCallTimeoutMs` field is derived from REA's known provider allowance
+plus 120 seconds of operation headroom, with the same derivation as the Kimi
+Code tool timeout above. The default is 450000 ms, covering the default
+330-second Ghidra startup; without the field, DeepSeek Harness applies its own
+60000 ms tool-call default, which a native provider startup alone can exceed.
+Setup preserves positive caller-selected `toolCallTimeoutMs` values and Cordis
+expressions. It writes the recommended literal when the field is missing or
+malformed. Doctor reports those registrations as stale. Its non-blocking
+advisories identify a timeout whose effective value is unknown because it is an
+expression, or a positive literal shorter than the known provider allowance.
 
 Setup preserves caller-owned Cordis expressions and replaces launcher fields
 with literal values that doctor can verify. It refuses to edit an expression
@@ -1023,6 +1036,14 @@ review the destination, then `rea setup --skill --yes` to install the workflow
 in `~/.agents/skills` (`$DSH_AGENTS_HOME/skills` when configured); Harness
 discovers that directory, and its native `skill` tool can load
 `reverse-engineer-anything`.
+
+Keep the default `full` catalog with Harness 0.2.0-rc.2. In a headless
+loopback-model probe, `discover_tools` activated the requested tool. Harness
+re-fetched `tools/list` and received the new definition, but its next model
+request still omitted that tool. Verify that an active task can call a newly
+listed tool before opting into hot/cold on another Harness version. To restore
+upfront advertisement, run `rea setup --client dsh --tool-catalog-profile full`
+and restart Harness.
 
 REA's optional [native client verification](../development/testing.md#end-to-end-integration-and-golden-evidence)
 checks headless chat, skill loading, all tool input schemas and actual analysis

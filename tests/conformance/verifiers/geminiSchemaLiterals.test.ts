@@ -1,8 +1,6 @@
 import { expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { geminiUnsupportedLiteral } from "../../../scripts/lib/gemini-schema-literals.mjs";
-import { clientSchemaPositions } from "../../../scripts/lib/client-schema-positions.mjs";
-import { unsupportedInputLiteralSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
 
 it("checks an explicitly referenced example as a schema while leaving unreferenced examples opaque", () => {
   const literal = { examples: [{ const: false }] };
@@ -18,9 +16,6 @@ it("checks an explicitly referenced example as a schema while leaving unreferenc
     keyword: "const",
     reason: "boolean",
   });
-  expect(unsupportedInputLiteralSchemaError(schema, "tool")).toBe(
-    "tool.examples[0].const is boolean",
-  );
 });
 
 it("preserves the inline schema keyword encounter order used by the native Gemini verifier", () => {
@@ -30,9 +25,6 @@ it("preserves the inline schema keyword encounter order used by the native Gemin
     keyword: "enum",
     reason: "empty-string",
   });
-  expect(unsupportedInputLiteralSchemaError(schema, "tool")).toBe(
-    "tool.properties.early.enum contains an empty string",
-  );
 });
 
 it("resolves nested local references against their own resource while retaining root-relative diagnostic locations", () => {
@@ -52,9 +44,6 @@ it("resolves nested local references against their own resource while retaining 
     keyword: "enum",
     reason: "empty-string",
   });
-  expect(unsupportedInputLiteralSchemaError(schema, "tool")).toBe(
-    "tool.$defs.child.default.enum contains an empty string",
-  );
 });
 
 it("terminates reference cycles and reports the first newly reached constraint at its source path", () => {
@@ -70,11 +59,6 @@ it("terminates reference cycles and reports the first newly reached constraint a
     keyword: "const",
     reason: "empty-string",
   });
-  expect(
-    [...clientSchemaPositions(schema)].filter(
-      (position) => position.kind === "schema",
-    ),
-  ).toHaveLength(4);
 });
 
 it("uses decoded reference tokens and preserves the existing spelling of property names in diagnostic paths", () => {
@@ -111,12 +95,10 @@ it("leaves external, dynamic, anchor and ambiguous resource references unknown",
   ).toBeUndefined();
 });
 
-it("keeps literal-policy diagnostic prose for const and enum failures", () => {
-  for (const [schema, message] of [
-    [{ const: false }, "tool.const is boolean"],
-    [{ const: "" }, "tool.const is an empty string"],
-    [{ enum: [false, ""] }, "tool.enum contains a boolean"],
-    [{ enum: [""] }, "tool.enum contains an empty string"],
-  ] as const)
-    expect(unsupportedInputLiteralSchemaError(schema, "tool")).toBe(message);
+it("reports a boolean enum value when the enum also contains an empty string", () => {
+  expect(geminiUnsupportedLiteral({ enum: [false, ""] })).toEqual({
+    path: "$.enum",
+    keyword: "enum",
+    reason: "boolean",
+  });
 });

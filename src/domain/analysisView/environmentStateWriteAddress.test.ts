@@ -40,27 +40,6 @@ const SHELVED_INIT_ROWS: readonly TimedCaptureRow[] = [
 ];
 
 describe("bulk writes at a collection", () => {
-  it("serves a delete whose body names its rows, as the reads after it confirm", () => {
-    expect(
-      planOf(
-        [
-          ...BOOK_INIT_ROWS,
-          ["DELETE", "/api/books", [{ id: 2 }], 200, [{ id: 2 }]],
-          ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
-          ["GET", "/api/books", [FIRST_BOOK]],
-        ],
-        "delete_books",
-      ),
-    ).toMatchObject({
-      effect: "delete",
-      target: "/api/books",
-      served: true,
-      address: { by: "elements", member: null },
-      response: { ordinal: 3, shape: "entity", pointer: "/0" },
-      checked_record_ordinals: [4, 5],
-    });
-  });
-
   it("updates each id a body's id array names with the members it shares", () => {
     expect(
       planOf(
@@ -132,7 +111,10 @@ describe("bulk responses listing each written entity", () => {
         "delete_books",
       ),
     ).toMatchObject({
+      effect: "delete",
+      target: "/api/books",
       served: true,
+      address: { by: "elements", member: null },
       response: { ordinal: 3, shape: "entity", pointer: "/0" },
       checked_record_ordinals: [4, 5, 6],
     });
@@ -271,13 +253,13 @@ describe("item actions", () => {
     ).toMatchObject({ served: false, reason: "unexplained-change" });
   });
 
-  it("takes a POST answering another entity, a 201 or one sharing the path's id, for a sub-resource", () => {
+  it("keeps subresource creation and partial replies outside item-action inference", () => {
     const rows: TimedCaptureRow[] = [
       ...BOOK_INIT_ROWS,
       [
         "POST",
         "/api/books/1/comments",
-        { id: 1, text: "Nice" },
+        FIRST_BOOK,
         201,
         {
           text: "Nice",
@@ -293,14 +275,15 @@ describe("item actions", () => {
         },
       ],
     ];
-    expect(planOf(rows, "post_books_comments_by_id")).toMatchObject({
-      effect: "none",
-      reason: "no-state-target",
-    });
-    expect(planOf(rows, "post_books_notes_by_id")).toMatchObject({
-      effect: "none",
-      reason: "no-state-target",
-    });
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows));
+    for (const tool of ["post_books_comments_by_id", "post_books_notes_by_id"])
+      expect(
+        writes.find((plan) => plan.tool === tool),
+        tool,
+      ).toMatchObject({
+        effect: "none",
+        reason: "no-state-target",
+      });
   });
 
   it("leaves an action unmodelled where another write to the entity still awaits the read after it", () => {
@@ -310,11 +293,16 @@ describe("item actions", () => {
       ["POST", "/api/books/1/publish", "", 204],
       ["GET", "/api/books/1", RENAMED_AT_3],
     ];
-    expect(planOf(rows, "patch_books_by_id")).toMatchObject({
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows));
+    expect(
+      writes.find((plan) => plan.tool === "patch_books_by_id"),
+    ).toMatchObject({
       served: true,
       checked_record_ordinals: [5],
     });
-    expect(planOf(rows, "post_books_publish_by_id")).toMatchObject({
+    expect(
+      writes.find((plan) => plan.tool === "post_books_publish_by_id"),
+    ).toMatchObject({
       effect: "update",
       served: false,
       reason: "no-observation",

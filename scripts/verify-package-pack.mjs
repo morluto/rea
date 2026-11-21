@@ -61,8 +61,9 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     `${JSON.stringify(shrinkwrap, null, 2)}\n`,
   );
   // Materialize exactly the locked runtime tree without executing installers.
-  await commands.execNpm(
-    ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
+  await commands.installWithoutScripts(
+    "ci",
+    ["--omit=dev", "--no-audit", "--no-fund"],
     { cwd: stagingDirectory },
   );
   if (packageJson.dependencies?.["@lydell/node-pty"] !== undefined) {

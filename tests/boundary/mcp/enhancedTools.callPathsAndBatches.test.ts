@@ -1,3 +1,4 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -13,7 +14,10 @@ import { batchDecompileResultSchema } from "../../../src/domain/native/batchDeco
 import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
-import { MAX_ENHANCED_RECORDS } from "../../../src/contracts/enhancedInputs.js";
+import {
+  enhancedInputSchemas,
+  MAX_ENHANCED_RECORDS,
+} from "../../../src/contracts/enhancedInputs.js";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
@@ -457,46 +461,80 @@ describe("enhanced MCP batch cancellation", () => {
   );
 });
 
-describe("enhanced MCP batches", () => {
-  it("advertises and enforces the batch input budget before provider calls", async () => {
-    let calls = 0;
-    const client = await connect(
-      {
-        execute: async () => {
-          calls += 1;
-          throw new Error("provider must not be called for invalid input");
-        },
+it("advertises and enforces the batch input budget before provider calls", async () => {
+  let calls = 0;
+  const client = await connect(
+    {
+      execute: async () => {
+        calls += 1;
+        throw new Error("provider must not be called for invalid input");
       },
-      {
-        // Admit the array plus its object member before schema validation.
-        REA_MCP_MAX_INPUT_ELEMENTS: String(MAX_ENHANCED_RECORDS + 2),
-      },
-    );
-    const { tools } = await client.listTools();
-    expect(tools.some(({ name }) => name === "batch_decompile")).toBe(true);
-    // The budget is a canonical input constraint; the server enforces it
-    // whatever the compact advertisement retains.
-    expect(canonicalInputSchema("batch_decompile")).toMatchObject({
-      properties: { addresses: { maxItems: MAX_ENHANCED_RECORDS } },
-    });
-
-    const result = await client.callTool({
-      name: "batch_decompile",
-      arguments: {
-        addresses: Array.from(
-          { length: MAX_ENHANCED_RECORDS + 1 },
-          () => "0x0",
-        ),
-      },
-    });
-
-    expect(result.isError).toBe(true);
-    expect(parseMcpToolError(result)).toMatchObject({
-      error: { code: "invalid_request", category: "invalid_input" },
-    });
-    expect(calls).toBe(0);
+    },
+    {
+      // Admit the array plus its object member before schema validation.
+      REA_MCP_MAX_INPUT_ELEMENTS: String(MAX_ENHANCED_RECORDS + 2),
+    },
+  );
+  const { tools } = await client.listTools();
+  expect(tools.some(({ name }) => name === "batch_decompile")).toBe(true);
+  // The compact wire presentation may widen the canonical array bound.
+  const canonical = canonicalInputSchema("batch_decompile");
+  expect(canonical).toMatchObject({
+    properties: {
+      addresses: { type: "array", maxItems: MAX_ENHANCED_RECORDS },
+    },
   });
 
+  const addresses = Array.from({ length: MAX_ENHANCED_RECORDS }, () => "0x0");
+  const overLimit = { addresses: [...addresses, "0x1"] };
+  expect(
+    enhancedInputSchemas.batch_decompile.safeParse({ addresses }).success,
+  ).toBe(true);
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(canonical);
+  expect(validate({ addresses })).toBe(true);
+  expect(validate(overLimit)).toBe(false);
+
+  const result = await client.callTool({
+    name: "batch_decompile",
+    arguments: overLimit,
+  });
+
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["addresses"],
+            reason: "out_of_range",
+            maximum: MAX_ENHANCED_RECORDS,
+          },
+        ],
+      },
+    },
+  });
+  const malformed = await client.callTool({
+    name: "batch_decompile",
+    arguments: { addresses: "bad" },
+  });
+  expect(malformed.isError).toBe(true);
+  expect(parseMcpToolError(malformed)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["addresses"], reason: "invalid_type" }],
+      },
+    },
+  });
+  expect(calls).toBe(0);
+});
+
+describe("enhanced MCP batches", () => {
   it("returns every batch item in caller order with its own result", async () => {
     const addresses = Array.from(
       { length: 37 },

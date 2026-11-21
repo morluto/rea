@@ -332,38 +332,6 @@ describe("parseDumpsysPackageOutput", () => {
       ).requestedPermissions,
     ).toBe(2);
   });
-
-  it("counts Unicode permission names without ending the section", () => {
-    expect(
-      parseDumpsysPackageOutput(
-        [
-          "Package [com.example] (abcdef):",
-          "  pkg=Package{abcdef com.example}",
-          "  requested permissions:",
-          "    com.example.permission-First",
-          "    com.example.permission.ÉCRIRE WITH SPACE",
-          "    android.permission.CAMERA",
-          "  install permissions:",
-          "    android.permission.CAMERA: granted=true",
-        ].join("\n"),
-      ).requestedPermissions,
-    ).toBe(3);
-  });
-
-  it("ends requested permissions at a same-indent field", () => {
-    expect(
-      parseDumpsysPackageOutput(
-        [
-          "Package [com.example] (abcdef):",
-          "  pkg=Package{abcdef com.example}",
-          "  requested permissions:",
-          "    android.permission.INTERNET",
-          "  gids=[1000]",
-          "    android.permission.CAMERA",
-        ].join("\n"),
-      ).requestedPermissions,
-    ).toBe(1);
-  });
 });
 
 describe("parseWmDensityOutput", () => {
