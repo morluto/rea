@@ -1,16 +1,8 @@
-import {
-  chmod,
-  mkdir,
-  readdir,
-  readFile,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { planOutputTree, writeOutputTree } from "./DesktopOutputTree.js";
 
 it("does not create output parents or invoke the writer after cancellation", async () => {
@@ -63,18 +55,19 @@ it("keeps a caller's file when an accepted directory is no longer empty", async 
     undefined,
   ).catch((cause: unknown) => cause);
   expect(written).toBe(false);
-  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-  if (!(failure instanceof ArtifactReaderFailure))
-    throw new Error("expected retained output cleanup");
-  expect(failure.cleanup?.resources).toEqual([directory]);
+  expect(failure).toMatchObject({
+    _tag: "AnalysisInputError",
+    operation: refusal.operation,
+    userMessage: "Output directory is not empty",
+    issues: [
+      expect.objectContaining({
+        path: [refusal.field],
+        message: "Output directory is not empty",
+      }),
+    ],
+  });
   expect(await readFile(keep, "utf8")).toBe("existing");
-  const lease = failure.cleanupLeases?.[0];
-  if (lease === undefined) throw new Error("expected a cleanup lease");
-  await expect(lease.release()).rejects.toThrow();
-  expect(await readFile(keep, "utf8")).toBe("existing");
-  await unlink(keep);
-  await lease.release();
-  expect(await readdir(directory)).toEqual([]);
+  expect(await readdir(directory)).toEqual(["keep"]);
 });
 
 it("refuses a regular file in the output parent path instead of failing a host write", async () => {
