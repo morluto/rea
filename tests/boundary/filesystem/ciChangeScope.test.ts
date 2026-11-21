@@ -1095,7 +1095,6 @@ it.each([
     { code: false, website: true, package: false },
   ],
   ["scripts/website_i18n.py", { code: false, website: true, package: false }],
-  ["scripts/read-authored-skill-manifest.mjs", { website: true }],
   ["src/domain/skillManifest.ts", { website: true }],
   [
     "docs/readme/README_ja.md",

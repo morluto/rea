@@ -727,7 +727,6 @@ const PATH_SCOPES = {
   website: [
     "website/**",
     "scripts/*website*.py",
-    "scripts/read-authored-skill-manifest.mjs",
     "README*.md",
     "docs/readme/README*.md",
     ".github/workflows/website-check.yml",
