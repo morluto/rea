@@ -329,69 +329,6 @@ describe("CDP command cancellation causes", () => {
       await connection.close();
     }
   });
-
-  it("waits for an unresponsive command until caller cancellation", async () => {
-    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
-    browsers.push(browser);
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "observe_web_session",
-    );
-    try {
-      const controller = new AbortController();
-      const pending = connection.send(
-        "Page.enable",
-        {},
-        undefined,
-        controller.signal,
-      );
-      await waitFor(() => expect(browser.commands).toHaveLength(1));
-      const reason = new Error("cancel the pending CDP command");
-      controller.abort(reason);
-      const failure = await pending.then(
-        () => undefined,
-        (cause: unknown) => cause,
-      );
-      expect(failure).toBeInstanceOf(AnalysisCancelledError);
-      if (!(failure instanceof AnalysisCancelledError))
-        throw new Error("Expected command cancellation");
-      expect(failure.operation).toBe("observe_web_session");
-      expect(failure.cause).toBe(reason);
-    } finally {
-      await connection.close();
-    }
-  });
-
-  it("preserves AbortController's default reason for an in-flight command", async () => {
-    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
-    browsers.push(browser);
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "observe_web_session",
-    );
-    const controller = new AbortController();
-    try {
-      const pending = connection.send(
-        "Page.enable",
-        {},
-        undefined,
-        controller.signal,
-      );
-      await waitFor(() => expect(browser.commands).toHaveLength(1));
-      controller.abort();
-      const failure = await pending.then(
-        () => undefined,
-        (cause: unknown) => cause,
-      );
-      expect(failure).toBeInstanceOf(AnalysisCancelledError);
-      if (!(failure instanceof AnalysisCancelledError))
-        throw new Error("Expected command cancellation");
-      expect(failure.cause).toBe(controller.signal.reason);
-      expect(failure.cause).toMatchObject({ name: "AbortError" });
-    } finally {
-      await connection.close();
-    }
-  });
 });
 
 describe("CDP handshake cancellation", () => {
@@ -435,39 +372,6 @@ describe("CDP handshake cancellation", () => {
           error === undefined ? resolve() : reject(error),
         ),
       );
-    }
-  });
-});
-
-describe("CDP transport failure precedence", () => {
-  it("keeps a completed transport failure primary over a later abort", async () => {
-    const browser = await startFakeCdpBrowser({ closeOnMethod: "Page.enable" });
-    browsers.push(browser);
-    const controller = new AbortController();
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "observe_web_session",
-    );
-    try {
-      const pending = connection
-        .send("Page.enable", {}, undefined, controller.signal)
-        .then(
-          () => undefined,
-          (cause: unknown) => cause,
-        );
-      await waitFor(() => expect(browser.commands).toHaveLength(1));
-      const failure = await pending;
-      expect(failure).toMatchObject({
-        _tag: "BrowserObservationError",
-        reason: "disconnected",
-      });
-      controller.abort(new Error("abort after transport failure"));
-      expect(failure).toMatchObject({
-        _tag: "BrowserObservationError",
-        reason: "disconnected",
-      });
-    } finally {
-      await connection.close();
     }
   });
 });

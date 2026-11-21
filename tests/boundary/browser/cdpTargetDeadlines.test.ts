@@ -174,58 +174,86 @@ it.each([
   },
 );
 
-it("ignores a late timed-out reply and keeps following commands correlated", async () => {
-  const browser = await startFakeCdpBrowser({
-    hangOnMethod: "Storage.getStorageKey",
-  });
-  const connection = await CdpConnection.connect(
-    browser.browserWebSocketUrl,
-    "inspect_web_page",
-  );
-  try {
-    const rejection = expect(
-      connection.send(
-        "Storage.getStorageKey",
-        {},
-        undefined,
-        AbortSignal.timeout(10_000),
-      ),
-    ).rejects.toMatchObject({ reason: "timeout" });
-    await waitFor(() => expect(browser.commands).toHaveLength(1));
-    expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
-    await rejection;
-    const next = expect(
-      connection.send("Storage.getStorageKey"),
-    ).resolves.toEqual({
-      storageKey: "following",
-    });
-    await waitFor(() => expect(browser.commands).toHaveLength(2));
-    const [expired, following] = browser.commands;
-    if (expired === undefined || following === undefined)
-      throw new Error("Expected both commands");
-    browser.emitRawMessage(JSON.stringify({ id: expired.id, result: [] }));
-    browser.emitRawMessage(
-      JSON.stringify({
-        id: following.id,
-        result: { storageKey: "following" },
-      }),
-    );
-    await next;
-  } finally {
-    await connection.close();
-    await browser.close();
-  }
-});
-
-it.each(["success", "rejection", "abort", "disconnect"])(
-  "releases handshake and command timers on %s",
+it.each(["timeout", "custom abort", "default abort"] as const)(
+  "releases a command after %s and ignores its late reply",
   async (outcome) => {
     const browser = await startFakeCdpBrowser({
-      ...(outcome === "abort" || outcome === "success"
-        ? { hangOnMethod: "Runtime.enable" }
-        : {}),
-      ...(outcome === "disconnect" ? { closeOnMethod: "Runtime.enable" } : {}),
+      hangOnMethod: "Storage.getStorageKey",
     });
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
+    const controller = new AbortController();
+    const reason = new Error("cancel the pending CDP command");
+    try {
+      const pending = connection
+        .send("Storage.getStorageKey", {}, undefined, controller.signal)
+        .catch((failure: unknown) => failure);
+      await waitFor(() => expect(browser.commands).toHaveLength(1));
+      if (outcome === "timeout") {
+        expireTimer(WEB_RUNTIME_LIMITS.commandTimeoutMs);
+        expect(await pending).toMatchObject({ reason: "timeout" });
+      } else {
+        controller.abort(outcome === "custom abort" ? reason : undefined);
+        const failure = await pending;
+        expect(failure).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          operation: "inspect_web_page",
+        });
+        if (!(failure instanceof Error))
+          throw new Error("Expected cancellation error");
+        expect(failure.cause).toBe(
+          outcome === "custom abort" ? reason : controller.signal.reason,
+        );
+        if (outcome === "default abort")
+          expect(failure.cause).toMatchObject({ name: "AbortError" });
+      }
+      expect(activeTimers(WEB_RUNTIME_LIMITS.commandTimeoutMs)).toHaveLength(0);
+      expect(getEventListeners(controller.signal, "abort")).toEqual([]);
+
+      const next = expect(
+        connection.send("Storage.getStorageKey"),
+      ).resolves.toEqual({ storageKey: "following" });
+      await waitFor(() => expect(browser.commands).toHaveLength(2));
+      const [finished, following] = browser.commands;
+      if (finished === undefined || following === undefined)
+        throw new Error("Expected both commands");
+      browser.emitRawMessage(JSON.stringify({ id: finished.id, result: [] }));
+      browser.emitRawMessage(
+        JSON.stringify({
+          id: following.id,
+          result: { storageKey: "following" },
+        }),
+      );
+      await next;
+    } finally {
+      await connection.close();
+      await browser.close();
+    }
+  },
+);
+
+it.each([
+  { outcome: "success", options: {}, failure: undefined },
+  {
+    outcome: "rejection",
+    options: { unsupportedMethods: ["Runtime.enable"] },
+    failure: {
+      reason: "protocol_error",
+      command: "Runtime.enable",
+      code: -32_601,
+    },
+  },
+  {
+    outcome: "disconnect",
+    options: { closeOnMethod: "Runtime.enable" },
+    failure: { reason: "disconnected" },
+  },
+])(
+  "releases handshake and command resources on $outcome",
+  async ({ options, failure }) => {
+    const browser = await startFakeCdpBrowser(options);
     const controller = new AbortController();
     const connection = await CdpConnection.connect(
       browser.browserWebSocketUrl,
@@ -234,29 +262,13 @@ it.each(["success", "rejection", "abort", "disconnect"])(
     );
     try {
       const pending = connection.send(
-        outcome === "rejection" ? "Storage.getStorageKey" : "Runtime.enable",
+        "Runtime.enable",
         {},
         undefined,
         controller.signal,
       );
-      const assertion =
-        outcome === "success"
-          ? expect(pending).resolves.toEqual({})
-          : expect(pending).rejects.toMatchObject({
-              _tag:
-                outcome === "abort"
-                  ? "AnalysisCancelledError"
-                  : "BrowserObservationError",
-            });
-      if (outcome === "success") {
-        await waitFor(() => expect(browser.commands).toHaveLength(1));
-        const command = browser.commands[0];
-        if (command === undefined)
-          throw new Error("Expected a pending command");
-        browser.emitRawMessage(JSON.stringify({ id: command.id, result: {} }));
-      }
-      if (outcome === "abort") controller.abort();
-      await assertion;
+      if (failure === undefined) await expect(pending).resolves.toEqual({});
+      else await expect(pending).rejects.toMatchObject(failure);
       expect(activeTimers(WEB_RUNTIME_LIMITS.commandTimeoutMs)).toHaveLength(0);
       expect(getEventListeners(controller.signal, "abort")).toEqual([]);
     } finally {
@@ -599,13 +611,15 @@ it("reschedules a raised command deadline onto the fixed cleanup grace", async (
   }
 });
 
-it("keeps runtime cleanup on the fixed grace when command_timeout_ms is shorter", async () => {
-  const commandTimeoutMs = 250;
-  const browser = await startRuntimeBrowser({
-    hangOnMethod: "Profiler.disable",
-  });
-  const provider = new CdpWebRuntimeProvider();
-  try {
+it.each(["completed", "expired"] as const)(
+  "uses the fixed grace for %s runtime restoration",
+  async (outcome) => {
+    const commandTimeoutMs = 250;
+    const browser = await startRuntimeBrowser({
+      hangOnMethod: "Profiler.disable",
+    });
+    const provider = new CdpWebRuntimeProvider();
+    const controller = new AbortController();
     const pending = provider.observeExecution(
       observeWebExecutionInputSchema.parse({
         cdp_endpoint: browser.endpoint,
@@ -613,73 +627,54 @@ it("keeps runtime cleanup on the fixed grace when command_timeout_ms is shorter"
         observation_ms: 1,
         command_timeout_ms: commandTimeoutMs,
       }),
-      { signal: AbortSignal.timeout(10_000) },
+      { signal: controller.signal },
     );
-    await waitFor(() =>
-      expect(browser.commands.map(({ method }) => method)).toContain(
-        "Profiler.disable",
-      ),
-    );
-    expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
-    expect(
-      activeTimers(WEB_RUNTIME_LIMITS.cleanupTimeoutMs).length,
-    ).toBeGreaterThan(0);
-    const hung = browser.commands.find(
-      ({ method }) => method === "Profiler.disable",
-    );
-    if (hung === undefined) throw new Error("Expected Profiler.disable");
-    browser.emitRawMessage(
-      JSON.stringify({
-        id: hung.id,
-        ...(hung.sessionId === undefined ? {} : { sessionId: hung.sessionId }),
-        result: {},
-      }),
-    );
-    const result = await pending;
-    expect(result.ok).toBe(true);
-  } finally {
-    await provider.close();
-    await browser.close();
-  }
-});
-
-it("names the fixed cleanup grace when runtime restoration stalls", async () => {
-  const commandTimeoutMs = 250;
-  const browser = await startRuntimeBrowser({
-    hangOnMethod: "Profiler.disable",
-  });
-  const provider = new CdpWebRuntimeProvider();
-  try {
-    const pending = provider.observeExecution(
-      observeWebExecutionInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 1,
-        command_timeout_ms: commandTimeoutMs,
-      }),
-      { signal: AbortSignal.timeout(10_000) },
-    );
-    await waitFor(() =>
-      expect(browser.commands.map(({ method }) => method)).toContain(
-        "Profiler.disable",
-      ),
-    );
-    expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
-    expireEveryTimer(WEB_RUNTIME_LIMITS.cleanupTimeoutMs);
-    const result = await pending;
-    if (result.ok) throw new Error("Expected cleanup grace failure");
-    const text = JSON.stringify(result.error.diagnostics);
-    expect(text).toContain("5000 ms");
-    expect(text).toContain("no runtime override");
-    expect(text).not.toContain(
-      `${String(commandTimeoutMs)} ms command_timeout_ms`,
-    );
-    expect(text).not.toContain("Increase command_timeout_ms");
-  } finally {
-    await provider.close();
-    await browser.close();
-  }
-});
+    try {
+      await waitFor(() =>
+        expect(browser.commands.map(({ method }) => method)).toContain(
+          "Profiler.disable",
+        ),
+      );
+      expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
+      if (outcome === "completed") {
+        expect(
+          activeTimers(WEB_RUNTIME_LIMITS.cleanupTimeoutMs).length,
+        ).toBeGreaterThan(0);
+        const hung = browser.commands.find(
+          ({ method }) => method === "Profiler.disable",
+        );
+        if (hung === undefined) throw new Error("Expected Profiler.disable");
+        browser.emitRawMessage(
+          JSON.stringify({
+            id: hung.id,
+            ...(hung.sessionId === undefined
+              ? {}
+              : { sessionId: hung.sessionId }),
+            result: {},
+          }),
+        );
+        expect(await pending).toMatchObject({ ok: true });
+      } else {
+        expireEveryTimer(WEB_RUNTIME_LIMITS.cleanupTimeoutMs);
+        const result = await pending;
+        if (result.ok) throw new Error("Expected cleanup grace failure");
+        const text = JSON.stringify(result.error.diagnostics);
+        expect(text).toContain("5000 ms");
+        expect(text).toContain("no runtime override");
+        expect(text).not.toContain(
+          `${String(commandTimeoutMs)} ms command_timeout_ms`,
+        );
+        expect(text).not.toContain("Increase command_timeout_ms");
+      }
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    } finally {
+      controller.abort();
+      await pending.catch(() => undefined);
+      await provider.close();
+      await browser.close();
+    }
+  },
+);
 
 it("applies caller-selected discovery_timeout_ms to browser-socket discovery", async () => {
   const discoveryTimeoutMs = 45_000;
