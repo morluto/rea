@@ -791,7 +791,7 @@ describe("OpenCode project-scoped precedence and drift", () => {
     });
   });
 
-  it("reports stale project-scoped registration with project-scoped remediation without suggesting rea setup", async () => {
+  it("directs project launcher migration and activation repairs to the project file", async () => {
     const home = await createTestTempDirectory("rea-opencode-stale-home-");
     const projectDir = await createTestTempDirectory(
       "rea-opencode-project-cwd-",
@@ -829,9 +829,11 @@ describe("OpenCode project-scoped precedence and drift", () => {
       config_path: projectConfigPath,
     });
     expect(status?.remediation).toContain(
-      "REA setup writes only user-level configuration; update the package version in",
+      `Replace the launcher in ${projectConfigPath} with the installed JavaScript runtime and REA entry script`,
     );
-    expect(status?.remediation).not.toContain("rea setup --client");
+    expect(status?.remediation).toContain(
+      "remove the project override and run rea setup --client opencode",
+    );
 
     // Disabled project registration
     await writeFile(
@@ -866,7 +868,7 @@ describe("OpenCode project-scoped precedence and drift", () => {
       config_path: projectConfigPath,
     });
     expect(disabledStatus?.remediation).toContain(
-      "REA setup writes only user-level client configuration and does not modify project-scoped configuration",
+      `Update or remove the rea registration in ${projectConfigPath}`,
     );
     expect(disabledStatus?.remediation).not.toContain("Run rea setup");
   });
