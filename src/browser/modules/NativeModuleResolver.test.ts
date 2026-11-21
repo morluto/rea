@@ -393,43 +393,42 @@ it.each([
 it.each(["caller", "deadline"] as const)(
   "attributes an in-flight SDK rejection to the owned %s stop",
   async (control) => {
+    const controller = new AbortController();
+    const reason = { request: "cancel active browser operation" };
+    const active = phaseGate<undefined, never>();
+    let closes = 0;
+    const provider = new NativeModuleResolver(
+      { REA_BROWSER_EXECUTABLE: "/browser" },
+      async () => ({
+        version: () => "controlled-browser",
+        newContext: () => active.hold(undefined),
+        close: async () => {
+          closes += 1;
+          active.reject(new Error("controlled SDK target closed"));
+        },
+      }),
+    );
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     try {
-      const controller = new AbortController();
-      const reason = { request: "cancel active browser operation" };
-      const active = phaseGate<undefined, never>();
-      let closes = 0;
-      const provider = new NativeModuleResolver(
-        { REA_BROWSER_EXECUTABLE: "/browser" },
-        async () => ({
-          version: () => "controlled-browser",
-          newContext: () => active.hold(undefined),
-          close: async () => {
-            closes += 1;
-            active.reject(new Error("controlled SDK target closed"));
-          },
-        }),
-      );
       const pending = provider.resolve(input, { signal: controller.signal });
-      onTestFinished(async () => {
+      try {
+        await active.reached(pending, "active SDK call");
+        if (control === "caller") controller.abort(reason);
+        else await vi.advanceTimersByTimeAsync(20001);
+        const result = await pending;
+        if (result.ok) throw new Error("expected interrupted active call");
+        expect(projectAnalysisError(result.error).code).toBe(
+          control === "caller" ? "cancelled" : "provider_timeout",
+        );
+        if (control === "caller") expect(result.error.cause).toBe(reason);
+        expect(result.error.partialObservation).toBeUndefined();
+      } finally {
         active.reject(new Error("test finished"));
-        await pending;
-        await provider.close();
-      });
-      await active.reached(pending, "active SDK call");
-      if (control === "caller") controller.abort(reason);
-      else await vi.advanceTimersByTimeAsync(20001);
-      const result = await pending;
-      if (result.ok) throw new Error("expected interrupted active call");
-      expect(projectAnalysisError(result.error).code).toBe(
-        control === "caller" ? "cancelled" : "provider_timeout",
-      );
-      if (control === "caller") expect(result.error.cause).toBe(reason);
-      expect(result.error.partialObservation).toBeUndefined();
-      await provider.close();
-      expect(closes).toBe(1);
+        await pending.finally(() => provider.close());
+      }
     } finally {
       vi.useRealTimers();
     }
+    expect(closes).toBe(1);
   },
 );
