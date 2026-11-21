@@ -30,7 +30,7 @@ afterEach(() => {
   cleanup.denied = false;
   cleanup.onRemoval = undefined;
 });
-import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { createJavaScriptSourceAnalysis } from "./JavaScriptSourceAnalysis.js";
 import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 

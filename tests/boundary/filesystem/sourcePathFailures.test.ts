@@ -49,7 +49,14 @@ it.skipIf(process.platform === "win32")(
       code: "invalid_request",
       category: "invalid_input",
       message: expect.stringContaining("ELOOP"),
-      details: { issues: [expect.objectContaining({ path: ["input_file"] })] },
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["input_file"],
+            observed: { file_reason: "symlink-traversal" },
+          }),
+        ],
+      },
     });
   },
 );

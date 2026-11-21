@@ -29,7 +29,10 @@ it.each([
       (operation) => operation.kind === "response-consumer",
     );
     expect(consumers).toHaveLength(1);
-    expect(consumers[0]).toMatchObject({ endpoint, resolution: "complete" });
+    expect(consumers[0]).toMatchObject({
+      endpoint,
+      resolution: endpoint === null ? "partial" : "complete",
+    });
     expect(consumers[0]?.linkedRequestIds).toEqual([request?.requestId]);
   },
 );
@@ -43,7 +46,7 @@ it("does not prove an incoming response was initialized by a conditional request
       (operation) => operation.kind === "response-consumer",
     ),
   ).toEqual([
-    expect.objectContaining({ endpoint: null, resolution: "complete" }),
+    expect.objectContaining({ endpoint: null, resolution: "partial" }),
   ]);
 });
 

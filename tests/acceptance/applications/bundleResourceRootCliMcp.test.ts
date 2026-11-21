@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { build } from "plist";
 import { lstat, mkdir, writeFile } from "node:fs/promises";
@@ -105,19 +106,32 @@ cliTest.skipIf(process.platform !== "darwin")(
         response.exitCode,
         `${scenario.operation}: ${response.stdout} ${response.stderr}`,
       ).toBe(0);
-      const evidence = expectResourceEvidence(
-        response.json,
-        scenario.operation,
-        firstBundle,
-      );
-      if (scenario.operation === "inspect_keyed_archive")
-        expect(evidence.normalized_result).toMatchObject({
-          archive_path: "Resources/Archive.plist",
-          objects: expect.arrayContaining([
-            expect.objectContaining({ value: "resource-only-value" }),
-          ]),
-        });
+      expectResourceEvidence(response.json, scenario.operation, firstBundle);
     }
+  },
+);
+
+cliTest(
+  "inspects a keyed archive from a bundle with an empty Info.plist",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-keyless-archive-");
+    const bundle = await createKeylessBundle(root, "Archive");
+    await writeFile(join(bundle, "Info.plist"), "<plist><dict/></plist>");
+    const archive = "Resources/Archive.plist";
+    const reply = await cli.run({
+      arguments: ["inspect-keyed-archive", bundle, archive, "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(reply.exitCode, `${reply.stdout} ${reply.stderr}`).toBe(0);
+    expect(
+      expectResourceEvidence(reply.json, "inspect_keyed_archive", bundle)
+        .normalized_result,
+    ).toMatchObject({
+      archive_path: archive,
+      objects: expect.arrayContaining([
+        expect.objectContaining({ value: "resource-only-value" }),
+      ]),
+    });
   },
 );
 
@@ -311,10 +325,6 @@ const cliScenarios = (bundle: string) =>
       operation: "inspect_asset_catalog",
       arguments: ["inspect-asset-catalog", bundle],
     },
-    {
-      operation: "inspect_keyed_archive",
-      arguments: ["inspect-keyed-archive", bundle, "Resources/Archive.plist"],
-    },
   ] as const;
 
 const expectResourceEvidence = (
@@ -327,7 +337,11 @@ const expectResourceEvidence = (
   );
   expect(evidence).toMatchObject({
     operation,
-    subject: null,
+    subject: {
+      identity: unknownTarget("not-observed"),
+      name: null,
+      local_path: null,
+    },
     normalized_result: {
       resource_root: {
         caller_path: bundle,

@@ -32,6 +32,7 @@ import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCallableResultKind } from "./javascriptSemanticCallableResults.js";
 import { assignedSemanticResultBindings } from "./javascriptSemanticDataEffectHelpers.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
+import { isSemanticDirectEvalSite } from "./javascriptSemanticEffectRecord.js";
 
 /** Local call, flow, capture, and unsupported-frontier facts. */
 export interface JavaScriptSemanticCallAnalysis {
@@ -454,7 +455,7 @@ const collectDynamicScope = (
 ): void => {
   const reason = t.isWithStatement(node)
     ? "`with` introduces a runtime binding environment; names inside are not statically resolvable."
-    : state.opaqueEffects.sites.has(node)
+    : isSemanticDirectEvalSite(node, state)
       ? "`eval` can change bindings and reachable objects at runtime; its effects are not statically resolvable."
       : null;
   if (reason === null) return;

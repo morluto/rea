@@ -1,4 +1,11 @@
 import * as t from "@babel/types";
+import {
+  semanticAmbientEffectGeneration,
+  semanticBindingEffectGeneration,
+  semanticMemberWriteSources,
+} from "./javascriptSemanticEffectLog.js";
+import { semanticGlobalCodeSites } from "./javascriptSemanticEffectRecord.js";
+import { intrinsicPrototypeMemberMayHaveChanged } from "./javascriptSemanticIntrinsicInstances.js";
 
 import {
   semanticStaticPropertyKey,
@@ -14,10 +21,7 @@ import {
   resolveJavaScriptGenericInvocation,
   type JavaScriptSourceInvocationContext,
 } from "./javascriptIntrinsicInvocation.js";
-import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticReferenceSourcesInactive,
   semanticKnownArrayIteration,
@@ -45,6 +49,7 @@ import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
+import { semanticDirectInvocationArgument } from "./javascriptSemanticDirectInvocations.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -80,6 +85,15 @@ export interface SemanticReturnedReferenceResult {
   readonly precision: "exact" | "widened";
 }
 
+interface SemanticReturnedReferenceReader {
+  (
+    callee: t.Node,
+    invocation?: t.CallExpression | t.OptionalCallExpression,
+  ): SemanticReturnedReferenceResult;
+  /** Whether the callee-only read depends on live ambient effects. */
+  readonly observesAmbientEffects: (callee: t.Node) => boolean;
+}
+
 /** Resolve local result references conservatively, without claiming call execution. */
 export const createSemanticReturnedReferences = (
   state: JavaScriptSemanticAnalysisState,
@@ -87,42 +101,46 @@ export const createSemanticReturnedReferences = (
     | "potential-reference"
     | "direct-call"
     | "awaited-call" = "potential-reference",
-): ((
-  callee: t.Node,
-  invocation?: t.CallExpression | t.OptionalCallExpression,
-) => SemanticReturnedReferenceResult) => {
+): SemanticReturnedReferenceReader => {
   const results = new WeakMap<
     t.Node,
     {
       readonly result: SemanticReturnedReferenceResult;
       readonly invocation: t.Node | undefined;
       readonly iterationUnknown: boolean;
-      readonly ambientWrites: number;
+      readonly ambientGeneration: number | undefined;
+      readonly opaqueSites: number;
       readonly dependencies: readonly {
         readonly binding: JavaScriptSemanticBindingState;
-        readonly writes: number;
-        readonly escapes: number;
+        readonly generation: number;
       }[];
     }
   >();
-  return (callee, invocation) => {
+  const resolve = (
+    callee: t.Node,
+    invocation?: t.CallExpression | t.OptionalCallExpression,
+  ): SemanticReturnedReferenceResult => {
     const existing = results.get(callee);
     if (
       existing !== undefined &&
       existing.invocation === invocation &&
       existing.iterationUnknown === state.arrayIterationUnknown &&
-      existing.ambientWrites === state.ambientWriteEffects.length &&
+      existing.opaqueSites === semanticGlobalCodeSites(state).length &&
+      (existing.ambientGeneration === undefined ||
+        existing.ambientGeneration ===
+          semanticAmbientEffectGeneration(state, "contents")) &&
       existing.dependencies.every(
-        ({ binding, writes, escapes }) =>
-          binding.memberWrites.length === writes &&
-          binding.escapedPaths.length === escapes,
+        ({ binding, generation }) =>
+          semanticBindingEffectGeneration(binding) === generation,
       )
     )
       return existing.result;
-    const dependencies = new Map<
-      JavaScriptSemanticBindingState,
-      { readonly writes: number; readonly escapes: number }
-    >();
+    // Plain lexical alias and callable walks depend on binding generations.
+    // Only transitions that can consult live ambient effects require their
+    // generation too; recording an unrelated ambient effect does not change
+    // the syntax or binding identity of a plain callable.
+    let readsAmbientEffects = invocation !== undefined;
+    const dependencies = new Map<JavaScriptSemanticBindingState, number>();
     const functions = new Set<t.Function>();
     const work: Candidate[] = [];
     // A transition depends on the source read and current projection, not the
@@ -152,20 +170,14 @@ export const createSemanticReturnedReferences = (
     const sourceGenericInvocation =
       invocation !== undefined &&
       javaScriptGenericInvocationMethod(invocation.callee) !== undefined;
-    const inheritedInvocationChanged = (method: "call" | "apply"): boolean => {
-      if (invocation === undefined) return false;
-      const inheritedPath = ["global", "Function", "prototype", method];
-      return state.ambientWriteEffects.some(
-        (effect) =>
-          effect.path.length <= inheritedPath.length &&
-          effect.path.every(
-            (key, index) =>
-              key === null ||
-              semanticPropertyPathKeyMatches(key, inheritedPath[index] ?? ""),
-          ) &&
-          semanticEffectTiming(invocation, effect.node, state) !== "after",
+    const inheritedInvocationChanged = (method: "call" | "apply"): boolean =>
+      invocation !== undefined &&
+      intrinsicPrototypeMemberMayHaveChanged(
+        state,
+        "Function",
+        method,
+        invocation,
       );
-    };
     // Exact finite alternatives retain unrelated keys and cross-path
     // correlations. Growing/shrinking cycles still converge at any depth;
     // selector-budget widening retains the complete may-target closure.
@@ -317,10 +329,37 @@ export const createSemanticReturnedReferences = (
             result.unresolvedInvocation = true;
           continue;
         }
-        dependencies.set(binding, {
-          writes: binding.memberWrites.length,
-          escapes: binding.escapedPaths.length,
-        });
+        // Binding effects are fixed during this synchronous walk. Many
+        // source reads can select the same binding at different captures;
+        // record its cache dependencies once and still resolve every read.
+        if (!dependencies.has(binding)) {
+          const generation = semanticBindingEffectGeneration(binding);
+          dependencies.set(binding, generation);
+          if (!readsAmbientEffects)
+            readsAmbientEffects =
+              generation > 0 ||
+              binding.initializers.some(
+                ({ iterationSources }) => iterationSources !== undefined,
+              ) ||
+              binding.referenceInitializers.some(
+                ({ iterationSources, fallbackSources, requiredSources }) =>
+                  iterationSources !== undefined ||
+                  fallbackSources !== undefined ||
+                  requiredSources !== undefined,
+              );
+        }
+        // A directly invoked function's parameter starts as its argument,
+        // which therefore did not escape at the call.
+        const argument = semanticDirectInvocationArgument(node, binding, state);
+        if (argument !== undefined)
+          enqueue(
+            argument,
+            current.path,
+            current.path?.length === 0 ? undefined : (current.readAt ?? node),
+            current.capturedSelections,
+            current.invocation,
+            current.classKind,
+          );
         if (current.path !== undefined) {
           if (
             sourceGenericInvocation &&
@@ -413,10 +452,9 @@ export const createSemanticReturnedReferences = (
           });
         }
         if (current.path === undefined)
-          for (const effect of binding.memberWrites)
-            for (const source of effect.assignedSources ?? [])
-              if (!semanticReferenceSourcesInactive(source, state))
-                pending.push({ node: source.node, path: undefined });
+          for (const source of semanticMemberWriteSources(binding))
+            if (!semanticReferenceSourcesInactive(source, state))
+              pending.push({ node: source.node, path: undefined });
       } else if (
         t.isMemberExpression(node) ||
         t.isOptionalMemberExpression(node)
@@ -504,6 +542,8 @@ export const createSemanticReturnedReferences = (
           }
         }
       } else if (t.isObjectExpression(node)) {
+        // Getter dispatch and prototype selection can consult live effects.
+        readsAmbientEffects = true;
         const [key, ...suffix] = current.path ?? [];
         for (const choice of key === undefined
           ? [undefined]
@@ -537,10 +577,13 @@ export const createSemanticReturnedReferences = (
       } else if (t.isArrayExpression(node)) {
         const [key, ...path] = current.path ?? [];
         if (current.path !== undefined && key !== undefined) {
+          readsAmbientEffects ||= node.elements.some(t.isSpreadElement);
           for (const choice of semanticAliasSelectionChoices(key))
-            for (const source of semanticArrayPropertyReferences(node, [
-              choice,
-            ])) {
+            for (const source of semanticArrayPropertyReferences(
+              node,
+              [choice],
+              state,
+            )) {
               let projection = source.path;
               if (
                 source.capturedSelectionAt !== undefined &&
@@ -551,6 +594,7 @@ export const createSemanticReturnedReferences = (
                     source.capturedSelectionAt,
                   )?.value,
                   state,
+                  source.capturedSelectionAt,
                 )
               )
                 projection = [null, ...source.path.slice(1)];
@@ -620,6 +664,7 @@ export const createSemanticReturnedReferences = (
       } else if (t.isNewExpression(node))
         pending.push({ ...current, node: node.callee, classKind: "instance" });
       else if (t.isClass(node)) {
+        readsAmbientEffects = true;
         const [key, ...path] = current.path ?? [];
         if (current.path !== undefined && key !== undefined) {
           for (const choice of semanticAliasSelectionChoices(key)) {
@@ -737,14 +782,23 @@ export const createSemanticReturnedReferences = (
       result,
       invocation,
       iterationUnknown: state.arrayIterationUnknown,
-      ambientWrites: state.ambientWriteEffects.length,
-      dependencies: [...dependencies].map(([binding, counts]) => ({
+      ambientGeneration: readsAmbientEffects
+        ? semanticAmbientEffectGeneration(state, "contents")
+        : undefined,
+      opaqueSites: semanticGlobalCodeSites(state).length,
+      dependencies: [...dependencies].map(([binding, generation]) => ({
         binding,
-        ...counts,
+        generation,
       })),
     });
     if (result.precision === "widened")
       state.returnedReferenceWidenings.add(callee);
     return result;
   };
+  return Object.assign(resolve, {
+    observesAmbientEffects: (callee: t.Node): boolean => {
+      resolve(callee);
+      return results.get(callee)?.ambientGeneration !== undefined;
+    },
+  });
 };

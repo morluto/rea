@@ -30,28 +30,56 @@ const timingsSchema = {
   },
 };
 
-// Observed producers that copy Chromium's bracketed IPv6 remote address into
-// serverIPAddress. Chromium DevTools declares WebInspector with the frozen
-// AppleWebKit version from its user agent.
-const BRACKETED_IPV6_PRODUCERS = [
-  { name: "Playwright", version: "1.58.2", label: "Playwright 1.58.2" },
+interface HarProducerProfile {
+  readonly name: string;
+  readonly version: string;
+  readonly label?: string;
+  readonly bracketedIpv6?: true;
+  readonly emptyServerAddress?: true;
+  readonly unavailableFailedRequestTimings?: true;
+  readonly nullPostDataText?: true;
+}
+
+// Match exact observed profiles. Chromium DevTools declares WebInspector with
+// the frozen AppleWebKit version from its user agent.
+const HAR_PRODUCER_PROFILES: readonly HarProducerProfile[] = [
+  {
+    name: "Playwright",
+    version: "1.58.2",
+    bracketedIpv6: true,
+  },
+  {
+    name: "Playwright",
+    version: "1.64.1",
+    bracketedIpv6: true,
+    unavailableFailedRequestTimings: true,
+  },
   {
     name: "WebInspector",
     version: "537.36",
     label: "Chromium DevTools (WebInspector 537.36)",
+    bracketedIpv6: true,
+    emptyServerAddress: true,
   },
-] as const;
+  { name: "mitmproxy", version: "12.2.3", nullPostDataText: true },
+];
 
-/** Entries whose bracketed IPv6 address was adapted, and the declared producer. */
-interface BracketedIpv6Adaptation {
+/** Validation changes tied to observed spelling and the declared producer. */
+interface HarEntryAdaptation {
   readonly producer: string;
   readonly entries: readonly number[];
+}
+
+interface HarProducerAdaptations {
+  readonly bracketedIpv6: HarEntryAdaptation | null;
+  readonly emptyServerAddress: HarEntryAdaptation | null;
+  readonly failedRequests: HarEntryAdaptation | null;
 }
 
 /** Validate with pinned HAR 1.2 draft-06 schemas and the owned schema corrections. */
 export const createHarValidator = (): ((
   value: unknown,
-) => BracketedIpv6Adaptation | null) => {
+) => HarProducerAdaptations) => {
   const require = createRequire(import.meta.url);
   const schemas = z
     .record(z.string(), z.record(z.string(), z.unknown()))
@@ -102,7 +130,7 @@ export const createHarValidator = (): ((
       // AJV messages name the violated constraint, such as the missing
       // property, without restating any captured value.
       throw new CaptureFormatError(
-        "format",
+        "malformed",
         error === undefined
           ? "HAR schema validation failed: unknown constraint."
           : `HAR schema validation failed: ${error.keyword} (${error.message ?? "no detail"}).`,
@@ -113,49 +141,90 @@ export const createHarValidator = (): ((
   };
 };
 
-/** Name the declared producer when it is observed to bracket IPv6 addresses. */
-const bracketedIpv6ProducerOf = (
-  creator: Record<string, unknown>,
-): string | null =>
-  BRACKETED_IPV6_PRODUCERS.find(
-    ({ name, version }) => creator.name === name && creator.version === version,
-  )?.label ?? null;
-
 /** Adapt only observed producer representations in the disposable validation copy. */
 const allowObservedProducerRepresentations = (
   value: unknown,
-): BracketedIpv6Adaptation | null => {
-  if (!captureObject(value) || !captureObject(value.log)) return null;
+): HarProducerAdaptations => {
+  const none = {
+    bracketedIpv6: null,
+    emptyServerAddress: null,
+    failedRequests: null,
+  };
+  if (!captureObject(value) || !captureObject(value.log)) return none;
   const log = value.log;
-  if (!captureObject(log.creator) || !Array.isArray(log.entries)) return null;
-  const mitmproxy =
-    log.creator.name === "mitmproxy" && log.creator.version === "12.2.3";
-  const bracketedIpv6Producer = bracketedIpv6ProducerOf(log.creator);
-  if (!mitmproxy && bracketedIpv6Producer === null) return null;
+  const creator = log.creator;
+  if (!captureObject(creator) || !Array.isArray(log.entries)) return none;
+  const profile = HAR_PRODUCER_PROFILES.find(
+    ({ name, version }) => creator.name === name && creator.version === version,
+  );
+  if (profile === undefined) return none;
+  const failedRequests: number[] = [];
   const adaptedEntries: number[] = [];
+  const emptyAddressEntries: number[] = [];
   for (const [ordinal, entry] of log.entries.entries()) {
     const candidate: unknown = entry;
     if (!captureObject(candidate)) continue;
+    // Playwright leaves required durations at -1 when a request fails before
+    // response timing is available. Adapt only this observed sentinel in the
+    // disposable validation copy; the recorded values remain unchanged.
+    const response = candidate.response;
+    const timings = candidate.timings;
+    if (
+      profile.unavailableFailedRequestTimings &&
+      captureObject(response) &&
+      typeof response._failureText === "string" &&
+      response._failureText.length > 0 &&
+      captureObject(timings)
+    ) {
+      let adapted = false;
+      for (const field of ["send", "wait", "receive"])
+        if (timings[field] === -1) {
+          timings[field] = 0;
+          adapted = true;
+        }
+      if (adapted) failedRequests.push(ordinal);
+    }
     const address = candidate.serverIPAddress;
     if (
-      bracketedIpv6Producer !== null &&
+      profile.bracketedIpv6 &&
       typeof address === "string" &&
       address.startsWith("[") &&
       address.endsWith("]") &&
+      !address.includes("%") &&
       isIP(address.slice(1, -1)) === 6
     ) {
       candidate.serverIPAddress = address.slice(1, -1);
       adaptedEntries.push(ordinal);
     }
-    if (!mitmproxy) continue;
+    // DevTools writes request.remoteAddress(), which stays "" when a request
+    // has no remote endpoint (a failed connection, an aborted or internally
+    // redirected request). serverIPAddress is optional, so only the
+    // validation copy omits that empty value.
+    if (profile.emptyServerAddress && address === "") {
+      delete candidate.serverIPAddress;
+      emptyAddressEntries.push(ordinal);
+    }
+    if (!profile.nullPostDataText) continue;
     const request = candidate.request;
     if (!captureObject(request)) continue;
     const body = request.postData;
     if (captureObject(body) && body.text === null) delete body.text;
   }
-  return bracketedIpv6Producer === null
-    ? null
-    : { producer: bracketedIpv6Producer, entries: adaptedEntries };
+  const producer = profile.label ?? `${profile.name} ${profile.version}`;
+  return {
+    bracketedIpv6:
+      adaptedEntries.length === 0
+        ? null
+        : { producer, entries: adaptedEntries },
+    emptyServerAddress:
+      emptyAddressEntries.length === 0
+        ? null
+        : { producer, entries: emptyAddressEntries },
+    failedRequests:
+      failedRequests.length === 0
+        ? null
+        : { producer, entries: failedRequests },
+  };
 };
 
 const HAR_REQUEST_URL_FORMAT = "absolute-url";

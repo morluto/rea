@@ -48,6 +48,7 @@ export const nodeReconciliationFixture = (scriptObserved: boolean) => {
           ]
         : [],
       observed_total: scriptObserved ? 1 : 0,
+      parse_failed_total: 0,
       excluded: { unsupported_location: 0, invalid_protocol_value: 0 },
     },
     execution_contexts: [],

@@ -130,7 +130,9 @@ export const hasCaptureTruncation = (
 ): boolean =>
   omitted(details.raw_terminal) ||
   omitted(details.rendered_terminal) ||
+  // optional-fact-default: absent without a normalized stream; raw retention is checked above.
   (details.normalized_terminal?.omitted_frames ?? 0) > 0 ||
+  // optional-fact-default: TerminalRenderer omits the field when the count is zero.
   (details.rendered_terminal.unknown_size_frames ?? 0) > 0 ||
   filesystemTruncated(details.filesystem_before) ||
   filesystemTruncated(details.filesystem_after) ||

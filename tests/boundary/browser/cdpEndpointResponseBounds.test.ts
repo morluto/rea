@@ -1,9 +1,10 @@
 import { createServer } from "node:http";
 import type { RequestListener, Server } from "node:http";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   discoverCdpEndpoint,
@@ -74,7 +75,7 @@ describe("CDP discovery response UTF-8", () => {
         operation: "list_browser_targets",
         reason: "invalid_endpoint_response",
       });
-      await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+      await expect.poll(() => responseClosed).toBe(true);
       sendMalformed = false;
       await expect(
         discoverCdpEndpoint(server.url.href, "list_browser_targets"),
@@ -146,83 +147,64 @@ describe("CDP discovery response bounds", () => {
       _tag: "BrowserObservationError",
       reason: "payload_limit",
     });
-    await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+    await expect.poll(() => responseClosed).toBe(true);
   });
 
-  it("ends a response that exceeds the total elapsed deadline", async () => {
-    let responseClosed = false;
-    let requestStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      requestStarted = resolve;
-    });
-    const server = await startServer((_request, response) => {
-      response.once("close", () => {
-        responseClosed = true;
+  it.each(["deadline", "cancellation"] as const)(
+    "closes an in-flight discovery response on %s before reading the target list",
+    async (end) => {
+      let responseClosed = false;
+      const requestedPaths: Array<string | undefined> = [];
+      const cdpRequest = phaseArrival();
+      const server = await startServer((request, response) => {
+        requestedPaths.push(request.url);
+        response.once("close", () => {
+          responseClosed = true;
+        });
+        response.flushHeaders();
+        cdpRequest.arrive();
       });
-      requestStarted?.();
-    });
-    const controller = new AbortController();
-    const pending = readCdpJson(
-      server.url,
-      "list_browser_targets",
-      controller.signal,
-      {
-        bytes: 16,
-        timeoutMs: 50,
-      },
-    );
-    await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(started, pending, "CDP request");
-      await expect(pending).rejects.toMatchObject({
-        _tag: "BrowserObservationError",
-        reason: "timeout",
-      });
-      await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
-    }, [
-      () => controller.abort(),
-      async () => {
-        await pending.catch(() => undefined);
-      },
-    ]);
-  });
-
-  it("preserves caller cancellation and closes the response", async () => {
-    let responseClosed = false;
-    let requestStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      requestStarted = resolve;
-    });
-    const server = await startServer((_request, response) => {
-      response.once("close", () => {
-        responseClosed = true;
-      });
-      requestStarted?.();
-    });
-    const controller = new AbortController();
-    const pending = readCdpJson(
-      server.url,
-      "list_browser_targets",
-      controller.signal,
-      {
-        bytes: 16,
-        timeoutMs: 1_000,
-      },
-    );
-    await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(started, pending, "CDP request");
-      controller.abort();
-      await expect(pending).rejects.toMatchObject({
-        _tag: "AnalysisCancelledError",
-        operation: "list_browser_targets",
-      });
-      await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
-    }, [
-      () => controller.abort(),
-      async () => {
-        await pending.catch(() => undefined);
-      },
-    ]);
-  });
+      const controller = new AbortController();
+      const reason = { caller: "stopped discovery" };
+      const timeoutMs = 50;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const pending = discoverCdpEndpoint(
+        server.url.href,
+        "list_browser_targets",
+        controller.signal,
+        timeoutMs,
+      );
+      await withVerifierCleanup(async () => {
+        await cdpRequest.reached(pending, "CDP version request");
+        if (end === "deadline") await vi.advanceTimersByTimeAsync(timeoutMs);
+        else controller.abort(reason);
+        const error: unknown = await pending.catch(
+          (failure: unknown) => failure,
+        );
+        if (end === "deadline") {
+          expect(error).toMatchObject({
+            _tag: "BrowserObservationError",
+            operation: "list_browser_targets",
+            reason: "timeout",
+          });
+        } else {
+          if (!(error instanceof AnalysisCancelledError))
+            throw new Error("Expected caller cancellation", { cause: error });
+          expect(error.operation).toBe("list_browser_targets");
+          expect(error.cause).toBe(reason);
+        }
+        vi.useRealTimers();
+        await expect.poll(() => responseClosed).toBe(true);
+        expect(requestedPaths).toEqual(["/json/version"]);
+      }, [
+        () => controller.abort(),
+        async () => {
+          await pending.catch(() => undefined);
+        },
+        () => vi.useRealTimers(),
+      ]);
+    },
+  );
 
   it("destroys an unsuccessful HTTP response", async () => {
     let responseClosed = false;
@@ -242,7 +224,7 @@ describe("CDP discovery response bounds", () => {
       _tag: "BrowserObservationError",
       reason: "invalid_endpoint_response",
     });
-    await expect.poll(() => responseClosed, { timeout: 2_000 }).toBe(true);
+    await expect.poll(() => responseClosed).toBe(true);
   });
 });
 

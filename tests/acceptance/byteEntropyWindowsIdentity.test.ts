@@ -8,6 +8,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { ByteEntropyService } from "../../src/application/binaryDiagnostics/ByteEntropyService.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 describe.skipIf(process.platform !== "win32")(
   "Windows selected-file spelling",
@@ -25,7 +26,10 @@ describe.skipIf(process.platform !== "win32")(
           throw new Error("No analysis provider should start");
         });
         const server = createServer({ kind: "session", session });
-        const client = new Client({ name: "entropy-case", version: "1" });
+        const client = new Client(
+          { name: "entropy-case", version: "1" },
+          { jsonSchemaValidator: createMcpSchemaValidation() },
+        );
         const [clientTransport, serverTransport] =
           InMemoryTransport.createLinkedPair();
         await server.connect(serverTransport);

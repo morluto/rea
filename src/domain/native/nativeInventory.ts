@@ -72,17 +72,3 @@ export const analysisBookmarkSchema = z.strictObject({
   address: z.string(),
   name: z.string().nullable(),
 });
-/** Count only complete canonical inventories, using the advertised row contracts. */
-export const parseNativeInventoryCount = (
-  value: JsonValue,
-  operation: "list_procedures" | "list_strings",
-): Result<number, AnalysisOutputError> => {
-  const schema =
-    operation === "list_procedures"
-      ? nativeInventoryRowsSchemas.names
-      : nativeInventoryRowsSchemas.strings;
-  const parsed = schema.safeParse(value);
-  return parsed.success
-    ? ok(parsed.data.length)
-    : invalidNativeOutput(operation, "inventory rows", parsed.error);
-};

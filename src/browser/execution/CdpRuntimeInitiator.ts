@@ -1,10 +1,11 @@
 import type { WebExecution } from "../../domain/webExecution.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
+import { isRecord } from "../../kernel/isRecord.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 
 type Initiator = WebExecution["requests"][number]["reported_initiator"];
 const isObject = (value: Initiator[string] | undefined): value is Initiator =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  isRecord(value);
 
 /** Sanitize known transport fields while retaining declarations and every unknown producer field. */
 export const sanitizeRuntimeInitiator = (

@@ -1,19 +1,10 @@
 #!/usr/bin/env node
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import Ajv from "ajv/dist/2020.js";
@@ -23,6 +14,7 @@ import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import {
   buildRiscvFixture,
   stripRiscvFixture,
@@ -40,7 +32,15 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-riscv.mjs");
@@ -61,12 +61,23 @@ const installation = await inspectVerifierGhidraInstallation({
     : { javaHome: process.env.JAVA_HOME }),
 });
 assert.equal(installation.status, "available", JSON.stringify(installation));
-assert.equal(installation.providerVersion, "12.1.4");
+assert.equal(installation.providerVersion, SUPPORTED_GHIDRA_VERSION);
 
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-riscv-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("riscv");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-riscv-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -80,10 +91,16 @@ const env = {
 };
 for (const key of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"])
   if (process.env[key] !== undefined) env[key] = process.env[key];
+// Public CLI launches share one command owner. A timeout stops that process group.
+const commands = await createVerifierCommands();
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env,
+  env: env,
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-riscv-proof", version: "1" });
@@ -95,19 +112,28 @@ transport.stderr?.on("data", (chunk) => {
 /** The profile a fixture's lane must commit, from independent declarations. */
 const expectedLane = (fixture) => {
   const soft = fixture.riscv.flags === 1;
+  const pie = fixture.riscv.type === 3;
   return {
-    lane: `elf${fixture.riscv.elfClass}-exec-le-${soft ? "soft" : "double"}-float-generic-v1`,
+    lane: `elf${fixture.riscv.elfClass}-${pie ? "pie" : "exec"}-le-${soft ? "soft" : "double"}-float-generic-v1`,
     callingConvention: soft ? "ilp32-prototype-v1" : undefined,
     riscvElf: {
       elf_class: fixture.riscv.elfClass,
       byte_order: "little",
-      type: 2,
+      type: pie ? 3 : 2,
       flags: fixture.riscv.flags,
       float_abi_double: !soft,
       ...(soft ? { float_abi: "soft", arch: fixture.riscv.isa.arch } : {}),
       rvc_declared: true,
       rve_declared: false,
       tso_declared: false,
+      ...(pie
+        ? {
+            has_interpreter: true,
+            load_model: "pie",
+            expected_default_image_base:
+              fixture.riscv.elfClass === 32 ? "0x10000" : "0x100000",
+          }
+        : {}),
     },
   };
 };
@@ -118,35 +144,48 @@ const OUTCOME =
 const reports = [];
 let failure;
 try {
-  await client.connect(transport);
-  const catalog = await client.listTools();
+  await untilInterrupted(
+    client.connect(transport, { signal: commandInterruption.signal }),
+  );
+  const catalog = await untilInterrupted(
+    client.listTools(undefined, { signal: commandInterruption.signal }),
+  );
   const ajv = new Ajv({ strict: false });
   addFormats(ajv);
   const validators = new Map();
   for (const tool of catalog.tools) {
     assert.ok(
-      ajv.validateSchema(tool.outputSchema),
+      ajv.validateSchema(canonicalOutputSchema(tool.name)),
       `${tool.name}: invalid output schema`,
     );
     const existing =
-      typeof tool.outputSchema.$id === "string"
-        ? ajv.getSchema(tool.outputSchema.$id)
+      typeof canonicalOutputSchema(tool.name).$id === "string"
+        ? ajv.getSchema(canonicalOutputSchema(tool.name).$id)
         : undefined;
-    validators.set(tool.name, existing ?? ajv.compile(tool.outputSchema));
+    validators.set(
+      tool.name,
+      existing ?? ajv.compile(canonicalOutputSchema(tool.name)),
+    );
   }
 
-  const typedSoft = await buildRiscvFixture(workspace, 32, "soft");
-  const callSites = await inspectRiscvCallSites(typedSoft.path);
+  const typedSoft = await buildRiscvFixture(workspace, 32, {
+    variant: "soft",
+    execute: execOwned,
+  });
+  const callSites = await inspectRiscvCallSites(typedSoft.path, execOwned);
   assertRiscvIlp32CallSites(callSites.calls);
   const fixtures = [
-    await buildRiscvFixture(workspace, 32),
-    await buildRiscvFixture(workspace, 64),
+    await buildRiscvFixture(workspace, 32, { execute: execOwned }),
+    await buildRiscvFixture(workspace, 64, { execute: execOwned }),
+    await buildRiscvFixture(workspace, 32, { pie: true, execute: execOwned }),
+    await buildRiscvFixture(workspace, 64, { pie: true, execute: execOwned }),
     typedSoft,
-    await stripRiscvFixture(workspace, typedSoft),
+    await stripRiscvFixture(workspace, typedSoft, execOwned),
   ];
   for (const fixture of fixtures) {
     const bits = fixture.riscv.elfClass;
     const soft = fixture.riscv.flags === 1;
+    const pie = fixture.riscv.type === 3;
     const stripped = fixture.stripped === true;
     const expected = expectedLane(fixture);
     const resolved = await parseBinaryTarget(fixture.path);
@@ -161,14 +200,14 @@ try {
       const parameters = profile.parameters;
       assert.equal(parameters.language_id, expectedLanguage);
       assert.equal(parameters.compiler_spec_id, "gcc");
-      assert.equal(parameters.language_selection, "provider-pinned-v1");
+      assert.equal(parameters.language_selection, "provider-pinned");
       assert.equal(parameters.riscv_support_lane, want.lane);
       assert.equal(parameters.riscv_calling_convention, want.callingConvention);
       assert.deepEqual(parameters.riscv_elf, want.riscvElf);
     };
     const assertEvidence = (evidence) => {
-      assert.equal(evidence.subject.architecture, "riscv");
-      assert.equal(evidence.subject.digest.sha256, fixture.sha256);
+      assert.equal(evidence.subject.identity.architecture, "riscv");
+      assert.equal(evidence.subject.identity.sha256, fixture.sha256);
       // Composed workflows such as inspect_native_api commit the Ghidra
       // profile as their upstream profile. The residual-unknown registry
       // records what they could not establish, such as the types of a
@@ -185,9 +224,10 @@ try {
       }
     };
     const call = async (name, args = {}) => {
+      throwIfInterrupted();
       const reply = await client.callTool(
         { name, arguments: args },
-        { timeout: 240000 },
+        { timeout: 240000, signal: commandInterruption.signal },
       );
       const lifecycle = [
         "open_binary",
@@ -222,6 +262,17 @@ try {
       assert.equal(source.original_sha256, fixture.sha256);
       assert.equal(source.modified_sha256, fixture.sha256);
     }
+    const expectedBase = pie ? (bits === 32 ? 0x10000n : 0x100000n) : 0n;
+    if (pie) {
+      assert.equal(
+        image.observations.image_base,
+        `0x${expectedBase.toString(16)}`,
+      );
+    }
+    const addressFor = (name) => {
+      const symbolAddress = BigInt(fixture.symbols[name]);
+      return `0x${(pie ? expectedBase + symbolAddress : symbolAddress).toString(16)}`;
+    };
     const procedures = await call("list_procedures");
     const names = soft
       ? [
@@ -246,21 +297,21 @@ try {
       // A stripped image has no names; the typed twin's addresses locate it.
       const procedure = procedures.find((value) =>
         stripped
-          ? BigInt(value.address) === BigInt(fixture.symbols[name])
+          ? BigInt(value.address) === BigInt(addressFor(name))
           : value.value === name,
       );
       assert.ok(procedure, `${name} missing from Ghidra inventory`);
-      assert.equal(BigInt(procedure.address), BigInt(fixture.symbols[name]));
+      assert.equal(BigInt(procedure.address), BigInt(addressFor(name)));
     }
     const probe = await call("inspect_native_instruction", {
-      address: fixture.symbols.rea_riscv_probe,
+      address: addressFor("rea_riscv_probe"),
     });
     assert.equal(probe.status, "decoded");
     assert.equal(probe.architecture, expectedLanguage);
     assert.equal(probe.length, 4);
     assert.equal(probe.bytes, "13051501"); // addi a0, a0, 17
     const mapping = await call("address_to_file_offset", {
-      address: fixture.symbols.rea_riscv_probe,
+      address: addressFor("rea_riscv_probe"),
     });
     const sourceBytes = await readFile(fixture.path);
     assert.equal(
@@ -277,7 +328,7 @@ try {
         [4n, "f32200b0", /^csrr/iu],
       ]) {
         const instruction = await call("inspect_native_instruction", {
-          address: `0x${(BigInt(fixture.symbols.rea_riscv_isa_probe) + offset).toString(16)}`,
+          address: `0x${(BigInt(addressFor("rea_riscv_isa_probe")) + offset).toString(16)}`,
         });
         assert.equal(instruction.status, "decoded");
         assert.equal(instruction.bytes, bytes);
@@ -286,33 +337,30 @@ try {
       }
     }
     const global = await call("read_bytes", {
-      address: fixture.symbols.rea_riscv_global,
+      address: addressFor("rea_riscv_global"),
       length: 4,
     });
     assert.equal(global.bytes_hex, "07000000");
     const callees = await call("procedure_callees", {
-      procedure: fixture.symbols.rea_riscv_entry,
+      procedure: addressFor("rea_riscv_entry"),
     });
     for (const name of soft
       ? ["rea_riscv_abi_caller", "rea_riscv_isa_probe", "rea_riscv_probe"]
       : ["rea_riscv_leaf", "rea_riscv_probe"])
       assert.ok(
-        callees.some(
-          (address) => BigInt(address) === BigInt(fixture.symbols[name]),
-        ),
+        callees.some((address) => BigInt(address) === BigInt(addressFor(name))),
         `${name} missing from the entry's callees`,
       );
     const dossier = functionDossierSchema.parse(
       await call("analyze_function", {
-        procedure: fixture.symbols.rea_riscv_entry,
+        procedure: addressFor("rea_riscv_entry"),
         detail: "complete",
       }),
     );
     assert.ok(dossier.pseudocode.trim().length > 0);
     if (!stripped) {
       const floatCode = await call("procedure_pseudo_code", {
-        procedure:
-          fixture.symbols[soft ? "rea_riscv_abi_wide" : "rea_riscv_float"],
+        procedure: addressFor(soft ? "rea_riscv_abi_wide" : "rea_riscv_float"),
       });
       assert.ok(typeof floatCode === "string" && floatCode.trim().length > 0);
       assert.match(floatCode, /\bdouble\b/u);
@@ -322,12 +370,12 @@ try {
       const boundaries = {};
       for (const name of Object.keys(RISCV_ILP32_ABI))
         boundaries[name] = (
-          await call("inspect_native_api", { procedure: fixture.symbols[name] })
+          await call("inspect_native_api", { procedure: addressFor(name) })
         ).boundary;
       assertRiscvIlp32Storage(boundaries, { stripped });
       const caller = functionDossierSchema.parse(
         await call("analyze_function", {
-          procedure: fixture.symbols.rea_riscv_abi_caller,
+          procedure: addressFor("rea_riscv_abi_caller"),
           detail: "complete",
         }),
       );
@@ -351,15 +399,15 @@ try {
 
     const snapshotPath = join(
       workspace,
-      `${fixture.path.split("/").at(-1)}.snapshot.json`,
+      `${fixture.path.split(/[/\\]/).at(-1)}.snapshot.json`,
     );
     const saved = await call("close_binary", { snapshot_path: snapshotPath });
     assert.ok(saved.evidence_records > 0);
     const snapshot = parseAnalysisSnapshot(
       JSON.parse(await readFile(snapshotPath, "utf8")),
     );
-    assert.equal(snapshot.target.architecture, "riscv");
-    assert.equal(snapshot.target.sha256, fixture.sha256);
+    assert.equal(snapshot.target.identity.architecture, "riscv");
+    assert.equal(snapshot.target.identity.sha256, fixture.sha256);
     assertProfile(snapshot.binding.analysis_profile);
     for (const record of snapshot.evidence_bundle.records)
       assertEvidence(parseEvidence(record));
@@ -388,10 +436,10 @@ try {
       ...(stripped ? [] : [["search", ["rea_riscv_", "--kind", "procedures"]]]),
       [
         "function",
-        [stripped ? fixture.symbols.rea_riscv_entry : "rea_riscv_entry"],
+        [stripped ? addressFor("rea_riscv_entry") : "rea_riscv_entry"],
       ],
     ]) {
-      const cli = await execute(
+      const cli = await execOwned(
         process.execPath,
         [
           entrypoint,
@@ -420,90 +468,146 @@ try {
       }
     }
     const headers = [];
-    // Header-mutated copies test admission; they are not new compiler claims.
-    for (const [flags, outcome] of stripped
-      ? []
-      : soft
-        ? [
-            [0x3, "single-float ABI (ilp32f)"],
-            [0x80000001, "(0x80000000)"],
-          ]
-        : bits === 32
-          ? [
-              [0x1, "admitted"],
-              [0x80000005, "(0x80000000)"],
-            ]
-          : [
-              [0x1, "soft-float ABI (lp64)"],
-              [0x80000005, "(0x80000000)"],
-            ]) {
-      const mutatedPath = join(
-        workspace,
-        `rv${bits}${soft ? "-soft" : ""}-flags-${flags.toString(16)}.elf`,
-      );
-      const mutatedBytes = Buffer.from(sourceBytes);
-      mutatedBytes.writeUInt32LE(flags, bits === 32 ? 36 : 48);
-      await writeFile(mutatedPath, mutatedBytes);
+    if (pie) {
+      // Mutate program headers to clear PT_INTERP and verify shared library refusal.
+      const is64 = bits === 64;
+      const phoff = is64
+        ? Number(sourceBytes.readBigUInt64LE(32))
+        : sourceBytes.readUInt32LE(28);
+      const phentsize = sourceBytes.readUInt16LE(is64 ? 54 : 42);
+      const phnum = sourceBytes.readUInt16LE(is64 ? 56 : 44);
+      const sharedBytes = Buffer.from(sourceBytes);
+      for (let i = 0; i < phnum; i += 1) {
+        const offset = phoff + i * phentsize;
+        if (sharedBytes.readUInt32LE(offset) === 3) {
+          sharedBytes.writeUInt32LE(0, offset); // PT_NULL
+        }
+      }
+      const sharedPath = join(workspace, `rv${bits}-shared.so`);
+      await writeFile(sharedPath, sharedBytes);
       const reply = await client.callTool(
         {
           name: "open_binary",
-          arguments: { path: mutatedPath, provider_id: "ghidra" },
+          arguments: { path: sharedPath, provider_id: "ghidra" },
         },
-        { timeout: 240000 },
+        { timeout: 60000, signal: commandInterruption.signal },
       );
-      const cliArguments = [
-        entrypoint,
-        "function",
-        mutatedPath,
-        "rea_riscv_entry",
-        "--provider",
-        "ghidra",
-        "--json",
-      ];
-      const cliOptions = { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 };
-      if (outcome === "admitted") {
-        // The double-float image now declares ilp32: refused before, admitted
-        // now through the soft-float lane with the image's own ISA string.
-        assert.equal(
-          requireMcpLifecycleResult(reply, "open_binary").sha256,
-          createHash("sha256").update(mutatedBytes).digest("hex"),
-        );
-        requireMcpLifecycleResult(
-          await client.callTool(
-            { name: "close_binary", arguments: {} },
-            { timeout: 240000 },
-          ),
-          "close_binary",
-        );
-        const want = {
-          lane: "elf32-exec-le-soft-float-generic-v1",
-          callingConvention: "ilp32-prototype-v1",
-          riscvElf: {
-            ...expected.riscvElf,
-            flags,
-            float_abi_double: false,
-            float_abi: "soft",
-            arch: fixture.riscv.isa.arch,
-          },
-        };
-        const cli = await execute(process.execPath, cliArguments, cliOptions);
-        assertProfile(
-          parseEvidence(JSON.parse(cli.stdout)).analysis_profile,
-          want,
-        );
-        headers.push({ flags, outcome, lane: want.lane });
-        continue;
-      }
       const error = requireMcpToolError(reply);
-      assert.ok(JSON.stringify(error).includes(outcome), JSON.stringify(error));
-      await assert.rejects(
-        execute(process.execPath, cliArguments, cliOptions),
-        (cause) =>
-          Number.isInteger(cause.code) &&
-          cause.code !== 0 &&
-          `${cause.stdout}\n${cause.stderr}`.includes(outcome),
+      assert.equal(error.details?.selection_reason, "target_unsupported");
+      assert.equal(error.details?.requested_provider_id, "ghidra");
+      const rejections = error.details?.rejections;
+      assert.ok(Array.isArray(rejections));
+      const rejection = rejections.find(
+        ({ provider_id }) => provider_id === "ghidra",
       );
-      headers.push({ flags, outcome: "refused", reason: outcome });
+      assert.ok(rejection);
+      assert.equal(rejection.code, "architecture_unsupported");
+      headers.push({
+        flags: "shared",
+        outcome: "refused",
+        reason: rejection.reason,
+      });
+    } else {
+      // Header-mutated copies test admission; they are not new compiler claims.
+      for (const [flags, outcome] of stripped
+        ? []
+        : soft
+          ? [
+              [0x3, "single-float ABI (ilp32f)"],
+              [0x80000001, "(0x80000000)"],
+            ]
+          : bits === 32
+            ? [
+                [0x1, "admitted"],
+                [0x80000005, "(0x80000000)"],
+              ]
+            : [
+                [0x1, "soft-float ABI (lp64)"],
+                [0x80000005, "(0x80000000)"],
+              ]) {
+        const mutatedPath = join(
+          workspace,
+          `rv${bits}${soft ? "-soft" : ""}-flags-${flags.toString(16)}.elf`,
+        );
+        const mutatedBytes = Buffer.from(sourceBytes);
+        mutatedBytes.writeUInt32LE(flags, bits === 32 ? 36 : 48);
+        await writeFile(mutatedPath, mutatedBytes);
+        const reply = await client.callTool(
+          {
+            name: "open_binary",
+            arguments: { path: mutatedPath, provider_id: "ghidra" },
+          },
+          { timeout: 240000, signal: commandInterruption.signal },
+        );
+        const cliArguments = [
+          entrypoint,
+          "function",
+          mutatedPath,
+          "rea_riscv_entry",
+          "--provider",
+          "ghidra",
+          "--json",
+        ];
+        const cliOptions = {
+          env,
+          timeout: 240000,
+          maxBuffer: 16 * 1024 * 1024,
+        };
+        if (outcome === "admitted") {
+          // The double-float image now declares ilp32: refused before, admitted
+          // now through the soft-float lane with the image's own ISA string.
+          assert.equal(
+            requireMcpLifecycleResult(reply, "open_binary").sha256,
+            createHash("sha256").update(mutatedBytes).digest("hex"),
+          );
+          requireMcpLifecycleResult(
+            await client.callTool(
+              { name: "close_binary", arguments: {} },
+              { timeout: 240000, signal: commandInterruption.signal },
+            ),
+            "close_binary",
+          );
+          const want = {
+            lane: "elf32-exec-le-soft-float-generic-v1",
+            callingConvention: "ilp32-prototype-v1",
+            riscvElf: {
+              ...expected.riscvElf,
+              flags,
+              float_abi_double: false,
+              float_abi: "soft",
+              arch: fixture.riscv.isa.arch,
+            },
+          };
+          const cli = await execOwned(
+            process.execPath,
+            cliArguments,
+            cliOptions,
+          );
+          assertProfile(
+            parseEvidence(JSON.parse(cli.stdout)).analysis_profile,
+            want,
+          );
+          headers.push({ flags, outcome, lane: want.lane });
+          continue;
+        }
+        const error = requireMcpToolError(reply);
+        assert.ok(
+          JSON.stringify(error).includes(outcome),
+          JSON.stringify(error),
+        );
+        await assert.rejects(
+          execOwned(process.execPath, cliArguments, cliOptions),
+          (cause) => {
+            const output = `${cause?.snapshot?.stdout?.text ?? ""}\n${cause?.snapshot?.stderr?.text ?? ""}`;
+            return (
+              Number.isInteger(cause?.code) &&
+              cause.code !== 0 &&
+              output.includes(outcome)
+            );
+          },
+        );
+        headers.push({ flags, outcome: "refused", reason: outcome });
+      }
     }
     assert.equal(
       createHash("sha256")
@@ -540,7 +644,10 @@ try {
   // .flash.text's addresses. Ghidra 12.1.4's loader puts such code in an overlay
   // that DWARF import and default-space references never reach, unless REA
   // prepares the memory map before analysis.
-  const esp = await buildRiscvFixture(workspace, 32, "esp");
+  const esp = await buildRiscvFixture(workspace, 32, {
+    variant: "esp",
+    execute: execOwned,
+  });
   assert.equal(esp.riscv.sectionOverlap.status, "code-reservation");
   const resolvedEsp = await parseBinaryTarget(esp.path);
   if (!resolvedEsp.ok) throw resolvedEsp.error;
@@ -561,7 +668,7 @@ try {
     async (name, args = {}) => {
       const reply = await client.callTool(
         { name, arguments: args },
-        { timeout: 240000 },
+        { timeout: 240000, signal: commandInterruption.signal },
       );
       const lifecycle = ["open_binary", "close_binary"].includes(name);
       const admitted = lifecycle
@@ -758,7 +865,7 @@ try {
   const espCli = parseEvidence(
     JSON.parse(
       (
-        await execute(
+        await execOwned(
           process.execPath,
           [
             entrypoint,
@@ -800,12 +907,12 @@ try {
         name: "open_binary",
         arguments: { path: shrunkPath, provider_id: "ghidra" },
       },
-      { timeout: 240000 },
+      { timeout: 240000, signal: commandInterruption.signal },
     ),
   );
   assert.ok(JSON.stringify(refused).includes(refusal), JSON.stringify(refused));
   await assert.rejects(
-    execute(
+    execOwned(
       process.execPath,
       [
         entrypoint,
@@ -819,16 +926,18 @@ try {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     ),
     (cause) =>
-      Number.isInteger(cause.code) &&
+      Number.isInteger(cause?.code) &&
       cause.code !== 0 &&
-      `${cause.stdout}\n${cause.stderr}`.includes(refusal),
+      `${cause?.snapshot?.stdout?.text ?? ""}\n${cause?.snapshot?.stderr?.text ?? ""}`.includes(
+        refusal,
+      ),
   );
   // The pre-analysis script refuses a code block whose file mapping is not the
   // committed one; REA's admission would never commit this plan. Ghidra then
   // skips auto-analysis of the program REA discards.
   const javaRefusal = join(workspace, "java-refusal");
   await mkdir(join(javaRefusal, "tmp"), { recursive: true });
-  const headless = await execute(
+  const headless = await execOwned(
     join(installation.installDir, "support", "analyzeHeadless"),
     [
       javaRefusal,
@@ -876,16 +985,15 @@ try {
 
   // A reservation named like the default space still moves into an overlay
   // space, named as Ghidra's memory map names overlay blocks.
-  const named = await buildRiscvFixture(
-    workspace,
-    32,
-    "esp-reservation-named-ram",
-  );
+  const named = await buildRiscvFixture(workspace, 32, {
+    variant: "esp-reservation-named-ram",
+    execute: execOwned,
+  });
   assert.equal(named.riscv.sectionOverlap.status, "code-reservation");
   assert.equal(named.riscv.sectionOverlap.reservation.name, "ram");
   const namedProject = join(workspace, "java-named-ram");
   await mkdir(join(namedProject, "tmp"), { recursive: true });
-  const namedRun = await execute(
+  const namedRun = await execOwned(
     join(installation.installDir, "support", "analyzeHeadless"),
     [
       namedProject,
@@ -926,7 +1034,10 @@ try {
 
   // Sections named like the temporary blocks, the reservation among them, do
   // not refuse the image, and the move still takes place.
-  const edge = await buildRiscvFixture(workspace, 32, "esp-edge-names");
+  const edge = await buildRiscvFixture(workspace, 32, {
+    variant: "esp-edge-names",
+    execute: execOwned,
+  });
   assert.equal(edge.riscv.sectionOverlap.status, "code-reservation");
   assert.equal(edge.riscv.sectionOverlap.reservation.name, ".flash.text.rea");
   const edgeLimitations = new Set();
@@ -959,7 +1070,10 @@ try {
 
   // With the reservation first, Ghidra already loads the code in the default
   // space, and the preparation changes nothing.
-  const first = await buildRiscvFixture(workspace, 32, "esp-reservation-first");
+  const first = await buildRiscvFixture(workspace, 32, {
+    variant: "esp-reservation-first",
+    execute: execOwned,
+  });
   assert.equal(first.riscv.sectionOverlap.status, "code-reservation");
   assert.ok(
     first.riscv.sectionOverlap.reservation.index <
@@ -1006,7 +1120,7 @@ try {
         name: "open_binary",
         arguments: { path: truncatedPath, provider_id: "ghidra" },
       },
-      { timeout: 240000 },
+      { timeout: 240000, signal: commandInterruption.signal },
     ),
   );
   assert.ok(
@@ -1069,25 +1183,67 @@ for (const close of [() => client.close(), () => transport.close()]) {
     );
   }
 }
+// Close the command owner before the parent-tree check. A failed close stays
+// registered for retry and the diagnostic workspace is retained.
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw retainWorkspace(
+    `RISC-V command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        failure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [failure, cleanupFailure],
+              "RISC-V verification and command cleanup both failed",
+            ),
+    },
+  );
 const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw new Error(`Cleanup unverified; retained workspace: ${workspace}`, {
-    cause: failure,
-  });
+let lineageFailure;
+try {
+  assertVerifierCleanupComplete(completed.process_lineage);
+} catch (cause) {
+  lineageFailure = cause;
+}
+if (lineageFailure !== undefined)
+  throw retainWorkspace(
+    `Cleanup unverified; retained workspace: ${workspace}`,
+    {
+      cause:
+        failure === undefined
+          ? lineageFailure
+          : new AggregateError(
+              [failure, lineageFailure],
+              "RISC-V verification failed and cleanup was unverified",
+            ),
+    },
+  );
 if (failure !== undefined)
-  throw new Error(
+  throw retainWorkspace(
     `RISC-V verification failed; retained workspace: ${workspace}; MCP stderr: ${stderr}`,
     { cause: failure },
   );
-assert.deepEqual(
-  await readdir(runtime),
-  [],
-  `Runtime resources survived server shutdown; retained workspace: ${workspace}`,
-);
-await rm(workspace, { recursive: true, force: true });
+const survivors = await readdir(runtime);
+if (survivors.length > 0)
+  throw retainWorkspace(
+    `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
+  );
+const interrupted = commandInterruption.reason();
+if (interrupted !== undefined)
+  throw retainWorkspace(
+    `RISC-V verification interrupted; retained diagnostic workspace: ${workspace}`,
+    { cause: interrupted },
+  );
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
+await workspaceFixture.release();
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 console.log(
   JSON.stringify(
     {

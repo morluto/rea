@@ -2,7 +2,7 @@ import type { Readable } from "node:stream";
 import type { McpServerFactory } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
-import type { OptionalProviderLoadResult } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadResult } from "../ports/OptionalObservationProviders.js";
 
 /** Teardown handle every MCP transport returns to the runtime. */
 export interface McpServerHandle {

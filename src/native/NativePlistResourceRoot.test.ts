@@ -19,11 +19,11 @@ it("inspects a resolved app plist without executable identity", async () => {
   };
   expect(resolveBundleResourcePlistSelection(root, undefined)).toEqual({
     ok: true,
-    value: { path: infoPlist, origin: "default" },
+    value: { path: infoPlist, origin: "default", bundleRoot: bundle },
   });
   expect(resolveBundleResourcePlistSelection(root, "Info.plist")).toEqual({
     ok: true,
-    value: { path: infoPlist, origin: "selected" },
+    value: { path: infoPlist, origin: "selected", bundleRoot: bundle },
   });
   const client = new NativeMacOSProvider(
     {},

@@ -2,7 +2,7 @@ import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
 import {
   SIGN_IN_END,
@@ -26,24 +26,26 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
-import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import {
+  readComputerScreenshotBytes,
+  type AgentEnvComputer,
+} from "../../desktop/AgentEnvComputer.js";
+import {
+  controller,
+  parseBuildComputerJson,
+} from "../../desktop/BuildComputerController.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../../ports/BuildComputerControl.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
   notAnswered,
   type CaptureStep,
 } from "./DesktopBuildCaptureFailure.js";
-import {
-  adapterError,
-  controller,
-  errorText,
-  refused,
-  runRea,
-  WORK,
-  type Answer,
-} from "./DesktopBuildCommands.js";
+import { adapterError, refused, runRea, WORK } from "./DesktopBuildCommands.js";
 import {
   exportBuild,
   type BuildExportRequest,
@@ -54,6 +56,7 @@ import {
   secretDraftRefusal,
   type StoppedCapture,
 } from "./DesktopBuildSummary.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const START = "start_build_capture";
 const MARK = "mark_build_checkpoint";
@@ -82,12 +85,10 @@ const keepScreenshot = async (
       CHECKPOINT_SHOT,
       signal,
     );
-    const image = shot.content.find((block) => block.type === "image")?.data;
-    if (shot.isError || typeof image !== "string") return;
+    const image = readComputerScreenshotBytes(shot);
+    if (image === undefined) return;
     await computer.addHomeFiles(
-      new Map([
-        [`${folder}/screens/${name}.jpg`, Buffer.from(image, "base64")],
-      ]),
+      new Map([[`${folder}/screens/${name}.jpg`, image]]),
       signal,
     );
   } catch (cause: unknown) {
@@ -180,10 +181,8 @@ const checkExportRuntime = async (
       );
     let rawSchema: unknown;
     try {
-      rawSchema = JSON.parse(content.toString("utf8"));
+      rawSchema = parseBuildComputerJson(content, "REA export schema");
     } catch {
-      // Parser errors can quote only a fragment of a credential, which cannot
-      // be removed reliably by exact-token redaction.
       return err(
         adapterError(
           START,
@@ -212,9 +211,8 @@ const checkExportRuntime = async (
       );
     return ok(undefined);
   } catch (cause: unknown) {
-    if (signal.aborted)
-      return err(new AnalysisCancelledError(START, { cause: signal.reason }));
-    const message = errorText(cause);
+    if (signal.aborted) return err(cancelledBy(START, signal));
+    const message = errorMessage(cause);
     const redacted = computer.redacted(message);
     return err(
       adapterError(
@@ -398,10 +396,13 @@ export class DesktopBuildCapture {
         readonly package_lists: number;
         readonly package_lists_error: string | null;
       },
-      { readonly failure: AnalysisError; readonly answer?: Answer }
+      {
+        readonly failure: AnalysisError;
+        readonly answer?: BuildControllerAnswer;
+      }
     >
   > {
-    let answer: Answer;
+    let answer: BuildControllerAnswer;
     try {
       answer = await controller(
         this.computer,
@@ -425,7 +426,7 @@ export class DesktopBuildCapture {
         failure:
           cause instanceof AnalysisError
             ? cause
-            : adapterError(START, errorText(cause), cause),
+            : adapterError(START, errorMessage(cause), cause),
       });
     }
     if (answer.refused !== undefined)
@@ -533,7 +534,7 @@ export class DesktopBuildCapture {
       return err(
         cause instanceof AnalysisError
           ? cause
-          : adapterError(MARK, errorText(cause), cause),
+          : adapterError(MARK, errorMessage(cause), cause),
       );
     }
   }
@@ -593,7 +594,7 @@ export class DesktopBuildCapture {
       return err(
         cause instanceof AnalysisError
           ? cause
-          : adapterError(STOP, errorText(cause), cause),
+          : adapterError(STOP, errorMessage(cause), cause),
       );
     }
   }
@@ -677,8 +678,8 @@ export class DesktopBuildCapture {
         cause instanceof AnalysisError
           ? cause
           : signal.aborted
-            ? new AnalysisCancelledError(EXPORT, { cause: signal.reason })
-            : adapterError(EXPORT, errorText(cause), cause),
+            ? cancelledBy(EXPORT, signal)
+            : adapterError(EXPORT, errorMessage(cause), cause),
       );
     }
     return exportBuild(

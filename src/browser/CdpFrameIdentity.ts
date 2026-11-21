@@ -3,7 +3,6 @@ import {
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import type { CdpEvent } from "./CdpConnection.js";
 
 export type FrameSelection = "main" | "other" | "unknown";
 export type FrameParentRelation =
@@ -144,8 +143,6 @@ export interface CdpFrameFacts extends Pick<
     | "within_document"
     | "requested"
     | "not_applicable";
-  /** Borrowed only for the frame URL observation owner. */
-  readonly source: UnknownRecord | undefined;
   readonly loaderId: string | undefined;
   readonly loaderIssue: "invalid_loader_id" | null;
 }
@@ -165,7 +162,6 @@ export const cdpFrameRecordFacts = (
   const frameId = nonEmptyString(source?.id) ?? null;
   return {
     kind: "record",
-    source,
     frameId,
     identityIssue: identityIssueFor(true, source, source?.id),
     ...frameParentFacts(source),
@@ -173,23 +169,25 @@ export const cdpFrameRecordFacts = (
   };
 };
 
-/** Event method selects its protocol shape; unrelated aliases never supply identity. */
-export const cdpFrameEventFacts = (event: CdpEvent): CdpFrameFacts => {
-  const kind =
-    event.method === "Page.frameNavigated"
-      ? "navigated"
-      : event.method === "Page.frameAttached"
-        ? "attached"
-        : event.method === "Page.frameDetached"
-          ? "detached"
-          : event.method === "Page.navigatedWithinDocument"
-            ? "within_document"
-            : event.method === "Page.frameRequestedNavigation"
-              ? "requested"
-              : "not_applicable";
+/** The frame lifecycle events whose payload carries frame identity. */
+export type CdpFrameEventKind =
+  | "navigated"
+  | "attached"
+  | "detached"
+  | "within_document"
+  | "requested";
+
+/**
+ * Parse one frame lifecycle event payload by its declared protocol shape. The
+ * CDP event registry (`protocol/CdpEvents.ts`) is the only caller, so every
+ * subscriber reads these facts rather than the raw payload.
+ */
+export const cdpFrameEventPayloadFacts = (
+  kind: CdpFrameEventKind,
+  rawParams: unknown,
+): CdpFrameFacts => {
   const empty: CdpFrameFacts = {
     kind,
-    source: undefined,
     frameId: null,
     identityIssue: null,
     parentRelation: "not_applicable",
@@ -198,20 +196,18 @@ export const cdpFrameEventFacts = (event: CdpEvent): CdpFrameFacts => {
     loaderId: undefined,
     loaderIssue: null,
   };
-  if (kind === "not_applicable") return empty;
-  const params = recordValue(event.params);
+  const params = recordValue(rawParams);
   if (params === undefined)
     return {
       ...empty,
       identityIssue:
-        event.params === undefined ? "missing_params" : "invalid_params",
+        rawParams === undefined ? "missing_params" : "invalid_params",
     };
   if (kind === "navigated")
     return { ...cdpFrameRecordFacts(recordValue(params.frame)), kind };
   const frameId = nonEmptyString(params.frameId) ?? null;
   return {
     kind,
-    source: params,
     frameId,
     identityIssue: identityIssueFor(false, undefined, params.frameId),
     ...(kind === "attached"

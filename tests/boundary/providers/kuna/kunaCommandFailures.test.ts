@@ -2,6 +2,7 @@ import { expect, it as test, vi } from "vitest";
 
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { OwnerCancellation } from "../../../../src/domain/analysisErrorCore.js";
 import { ProcessOwnershipInspectionCancelled } from "../../../../src/process/ProcessInspectionCancellation.js";
 import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { KunaTargetCommands } from "../../../../src/kuna/KunaTargetCommands.js";
@@ -216,7 +217,7 @@ it("preserves the lifetime reason when workspace preparation is already cancelle
   }
 });
 
-it("does not invent a caller cause when closed without cancellation", async () => {
+it("reports REA's owner close, not an invented caller cause, when closed without cancellation", async () => {
   const { kuna, target, cacheRoot } = await session("rea-kuna-command-closed-");
   const installed = await inspectKunaInstallation({
     REA_KUNA_COMMAND: kuna,
@@ -233,7 +234,7 @@ it("does not invent a caller cause when closed without cancellation", async () =
   const preparation = await commands.prepare();
   if (preparation.ok) throw new Error("Expected closed preparation to cancel");
   expect(preparation.error._tag).toBe("AnalysisCancelledError");
-  expect(preparation.error.cause).toBeUndefined();
+  expect(preparation.error.cause).toBe(OwnerCancellation.ownerClosed);
   const result = await commands.run({
     installation: installed.value,
     operation: "list_procedures",
@@ -245,7 +246,7 @@ it("does not invent a caller cause when closed without cancellation", async () =
   });
   if (result.ok) throw new Error("Expected closed command to cancel");
   expect(result.error._tag).toBe("AnalysisCancelledError");
-  expect(result.error.cause).toBeUndefined();
+  expect(result.error.cause).toBe(OwnerCancellation.ownerClosed);
   expect(releaseRun).toHaveBeenCalledOnce();
   expect(await fakeKunaCalls(kuna)).toEqual(callsBefore);
   expect(await commands.close()).toEqual({ ok: true, value: null });

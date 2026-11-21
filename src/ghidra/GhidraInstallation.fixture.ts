@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { tmpdir } from "node:os";
 import { join, parse, relative } from "node:path";
 import { onTestFinished } from "vitest";
@@ -10,23 +11,34 @@ import type {
   GhidraJavaProbeFailure,
 } from "./GhidraJavaProbe.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
+import {
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+  SUPPORTED_GHIDRA_VERSION,
+} from "./GhidraReleasePolicy.js";
+
+/** Properties text for an install at the verified release and its declared JDK floor. */
+export const verifiedGhidraApplicationProperties = `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`;
+
+/** JDK observation that satisfies the verified install's declared minimum. */
+export const verifiedGhidraJavaObservation = (
+  home = "/jdk-25",
+): GhidraJavaObservation => ({
+  version: `${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}.0.1`,
+  major: SUPPORTED_GHIDRA_JAVA_MAJOR,
+  home,
+  bits: 64,
+  runtime: "jdk",
+  osArch: "amd64",
+  osName: "Linux",
+});
 
 /** Simulated valid installation for profile tests; never starts Ghidra or Java. */
 export const ghidraProfileInstallationHost: GhidraInstallationHost = {
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+  readText: () => verifiedGhidraApplicationProperties,
   executable: () => true,
-  probeJava: () =>
-    javaProbeOk<GhidraJavaObservation>({
-      version: "21.0.11",
-      major: 21,
-      home: "/jdk-21",
-      bits: 64,
-      runtime: "jdk",
-      osArch: "amd64",
-      osName: "Linux",
-    }),
+  probeJava: () => javaProbeOk(verifiedGhidraJavaObservation()),
 };
 
 /**
@@ -42,7 +54,7 @@ export const createSimulatedInstallDirectory = async (
   readonly dispose: () => Promise<void>;
 }> => {
   const root =
-    process.platform === "win32"
+    HOST_PLATFORM.platform === "win32"
       ? join(process.cwd(), "build")
       : await realpath(tmpdir());
   await mkdir(root, { recursive: true });
@@ -51,7 +63,7 @@ export const createSimulatedInstallDirectory = async (
   );
   return {
     path:
-      process.platform === "win32"
+      HOST_PLATFORM.platform === "win32"
         ? `/${relative(parse(owned).root, owned).replaceAll("\\", "/")}`
         : owned,
     dispose: () => removeTestWorkspace(owned),

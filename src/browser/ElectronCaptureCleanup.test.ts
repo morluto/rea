@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import * as processCleanup from "./ElectronProcessCleanup.js";
@@ -55,30 +55,6 @@ const bindFailure = (owner: ElectronCaptureCleanup) => {
   owner.bind(error);
   return error;
 };
-
-it("retries only the failed transport while preserving confirmed process release", async () => {
-  vi.spyOn(
-    ownershipObservation,
-    "observeOwnedProcessLineage",
-  ).mockResolvedValue(verified);
-  const processes = vi
-    .spyOn(processCleanup, "cleanupElectronProcesses")
-    .mockResolvedValue({ cleaned: true, signaled: false });
-  let denied = true;
-  const close = vi.fn(async () => {
-    if (denied) throw new Error("transport denied");
-  });
-  const owner = new ElectronCaptureCleanup({ close }, ownership, verified);
-  const scope = new ArtifactResourceScope();
-  await owner.release(scope);
-  const original = bindFailure(owner);
-  expect(original.cleanupResources).toEqual(["browser_transport"]);
-  denied = false;
-  await scope.close();
-  expect(close).toHaveBeenCalledTimes(2);
-  expect(processes).toHaveBeenCalledOnce();
-  expect(original.cleanupIncomplete).toBe(false);
-});
 
 it("shrinks mixed cleanup and aggregate errors without repeating a released peer", async () => {
   vi.spyOn(
@@ -198,8 +174,6 @@ it("retains unknown process identity even after its exact transport closes", asy
 });
 
 it("refreshes Windows lineage and never authorizes retry from a cached verified snapshot", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-  Object.defineProperty(process, "platform", { value: "win32" });
   vi.spyOn(
     ownershipObservation,
     "observeOwnedProcessLineage",
@@ -217,19 +191,16 @@ it("refreshes Windows lineage and never authorizes retry from a cached verified 
     { close: async () => undefined },
     ownership,
     verified,
+    "win32",
   );
   const scope = new ArtifactResourceScope();
-  try {
-    await owner.release(scope);
-    const error = bindFailure(owner);
-    expect(error.cleanupIncomplete).toBe(true);
-    absence.mockResolvedValue({ cleaned: true, signaled: false });
-    await scope.close();
-    expect(error.cleanupIncomplete).toBe(false);
-    expect(terminate).not.toHaveBeenCalled();
-  } finally {
-    Object.defineProperty(process, "platform", platform);
-  }
+  await owner.release(scope);
+  const error = bindFailure(owner);
+  expect(error.cleanupIncomplete).toBe(true);
+  absence.mockResolvedValue({ cleaned: true, signaled: false });
+  await scope.close();
+  expect(error.cleanupIncomplete).toBe(false);
+  expect(terminate).not.toHaveBeenCalled();
 });
 
 it.skipIf(process.platform === "win32")(

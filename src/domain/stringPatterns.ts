@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { declaredByPatterns } from "./schemaConstraints.js";
+
 /** Portable ASCII identifier starting with a letter. */
 export const IDENTIFIER_PATTERN = /^[A-Za-z][A-Za-z0-9._\x2d]*$/u;
 
@@ -54,22 +56,18 @@ export const isCanonicalBase64 = (value: string): boolean =>
   isPaddedBase64(value) &&
   !INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN.test(value);
 
-const paddedBase64SchemaRules = [
-  { pattern: BASE64_QUARTET_LENGTH_PATTERN.source },
-  { not: { pattern: INVALID_BASE64_CHARACTER_PATTERN.source } },
-  { not: { pattern: INVALID_BASE64_PADDING_PATTERN.source } },
-];
-
 /** Canonical padded base64 with zero pad bits; invalid bytes never enter enclosing range checks. */
-export const canonicalBase64Schema = z
-  .string()
-  .refine(isCanonicalBase64, {
-    message: "Expected canonical padded base64",
-    abort: true,
-  })
-  .meta({
-    allOf: [
-      ...paddedBase64SchemaRules,
-      { not: { pattern: INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN.source } },
+export const canonicalBase64Schema = declaredByPatterns(
+  z.string(),
+  isCanonicalBase64,
+  {
+    matches: [BASE64_QUARTET_LENGTH_PATTERN],
+    excludes: [
+      INVALID_BASE64_CHARACTER_PATTERN,
+      INVALID_BASE64_PADDING_PATTERN,
+      INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
     ],
-  });
+    relation: "exact",
+  },
+  { message: "Expected canonical padded base64", abort: true },
+);

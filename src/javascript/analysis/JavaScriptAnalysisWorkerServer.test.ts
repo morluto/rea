@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS,
   javaScriptWorkerAdmissionSchema,
@@ -23,7 +23,7 @@ const admission = (id: string) =>
   });
 
 const startServer = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-js-server-framing-"));
+  const root = await createTestTempDirectory("rea-js-server-framing-");
   const serverUrl = new URL(
     "./JavaScriptAnalysisWorkerServer.ts",
     import.meta.url,
@@ -83,13 +83,13 @@ const startServer = async () => {
         },
         package_type: "unknown",
         purpose: "analysis",
+        member_mutation_allowance: { alias_states: 524_288, source: "default" },
       });
     },
     close: async () => {
       if (child.exitCode === null && child.signalCode === null) child.kill();
       await closed;
       lines.close();
-      await rm(root, { recursive: true, force: true });
     },
   };
 };
@@ -139,48 +139,67 @@ it("consumes fragmented CRLF admission and coalesced next-job frames in order", 
   }
 });
 
-it("drains oversized checkpoint admission, reports output failure, and serves the next job", async () => {
-  const server = await startServer();
-  try {
-    await server.next();
-    const first = await server.request();
-    const second = await server.request();
-    server.child.stdin.write(frame(first));
-    expect(await server.next()).toMatchObject({ kind: "static", id: first.id });
-    server.child.stdin.write(
-      "x".repeat(JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS.protocolBytes),
-    );
-    server.child.stdin.write(
-      `x\n${frame(second)}${frame(admission(second.id))}`,
-    );
-    expect(await server.next()).toEqual({
-      kind: "failure",
-      id: first.id,
-      reason: "output",
-      resource: null,
-      limits: null,
-      message: expect.stringMatching(/admission frame.*missing or oversized/iu),
-    });
-    expect(await server.next()).toMatchObject({
-      kind: "static",
-      id: second.id,
-    });
-    expect(await server.next()).toMatchObject({
-      kind: "phase",
-      id: second.id,
-      phase: "transfer",
-    });
-    expect(await server.next()).toEqual({
-      kind: "complete",
-      id: second.id,
-      descriptor: null,
-    });
-    server.child.stdin.end();
-    expect((await server.closed)[0]).toBe(0);
-  } finally {
-    await server.close();
-  }
-});
+it.each([
+  ["oversized", /admission frame.*missing or oversized/iu],
+  ["malformed UTF-8", /admission frame.*not valid UTF-8/iu],
+] as const)(
+  "reports %s checkpoint admission and serves the next job",
+  async (kind, failure) => {
+    const server = await startServer();
+    try {
+      await server.next();
+      const first = await server.request();
+      const second = await server.request();
+      server.child.stdin.write(frame(first));
+      expect(await server.next()).toMatchObject({
+        kind: "static",
+        id: first.id,
+      });
+      if (kind === "oversized") {
+        server.child.stdin.write(
+          "x".repeat(JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS.protocolBytes + 1),
+        );
+      } else {
+        server.child.stdin.write(
+          Buffer.concat([
+            Buffer.from('{"id":"'),
+            Buffer.of(0xff),
+            Buffer.from(`",${JSON.stringify(admission(first.id)).slice(1)}`),
+          ]),
+        );
+      }
+      server.child.stdin.write(
+        `\n${frame(second)}${frame(admission(second.id))}`,
+      );
+      expect(await server.next()).toEqual({
+        kind: "failure",
+        id: first.id,
+        reason: "output",
+        resource: null,
+        limits: null,
+        message: expect.stringMatching(failure),
+      });
+      expect(await server.next()).toMatchObject({
+        kind: "static",
+        id: second.id,
+      });
+      expect(await server.next()).toMatchObject({
+        kind: "phase",
+        id: second.id,
+        phase: "transfer",
+      });
+      expect(await server.next()).toEqual({
+        kind: "complete",
+        id: second.id,
+        descriptor: null,
+      });
+      server.child.stdin.end();
+      expect((await server.closed)[0]).toBe(0);
+    } finally {
+      await server.close();
+    }
+  },
+);
 
 it("reports missing checkpoint admission as output failure at stdin EOF", async () => {
   const server = await startServer();
@@ -226,3 +245,25 @@ it.each(["lf", "eof", "open"] as const)(
     }
   },
 );
+
+it("rejects a valid-shaped initial request containing invalid UTF-8", async () => {
+  const server = await startServer();
+  try {
+    await server.next();
+    const request = await server.request();
+    const [before, after] = frame(request).split("app.mjs");
+    server.child.stdin.end(
+      Buffer.concat([
+        Buffer.from(before ?? ""),
+        Buffer.of(0xff),
+        Buffer.from(after ?? ""),
+      ]),
+    );
+    expect((await server.closed)[0]).not.toBe(0);
+    expect(server.stderr()).toContain(
+      "TypeError: JavaScript worker request is not valid UTF-8",
+    );
+  } finally {
+    await server.close();
+  }
+});

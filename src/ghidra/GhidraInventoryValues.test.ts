@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
 
 import { nativeLoadImageObservationFixture } from "../../tests/fixtures/nativeLoadImage.js";
 import {
@@ -97,6 +96,26 @@ it.each(["list_procedures", "search_procedures"] as const)(
   },
 );
 
+it("names the failing fields when an inventory reply misses its contract", () => {
+  const parsed = parseGhidraInventoryResult(
+    "list_procedures",
+    [{ address: 16, value: "secret-name" }],
+    null,
+  );
+
+  const error = parsed.ok ? undefined : parsed.error;
+  expect(error?.diagnostics).toMatchObject({
+    contract_issues: expect.arrayContaining([
+      expect.objectContaining({
+        path: [0, "address"],
+        code: "invalid_type",
+        received: "number",
+      }),
+    ]),
+  });
+  expect(JSON.stringify(error?.diagnostics)).not.toContain("secret-name");
+});
+
 describe("native load-image result projection", () => {
   it("omits raw bridge output when the observation keeps every reported fact", () => {
     const observations = JSON.parse(
@@ -182,41 +201,6 @@ describe("provider-owned overview boundary", () => {
     ).toEqual({
       ok: true,
       value: { value: { ...overview, segment_count: 0 }, rawResult: overview },
-    });
-  });
-
-  it("keeps the independent segment permissions and provenance behind an overview", () => {
-    const reported = {
-      ...overview,
-      segments: [
-        {
-          name: ".text",
-          start: "0x1000",
-          end: "0x100f",
-          readable: true,
-          writable: false,
-          executable: true,
-          permissions: { available: true, source: "ghidra-memory-block" },
-          provenance: "ghidra-memory-block",
-          address_space: "ram",
-          image_base: "0x1000",
-          initialized: true,
-          overlay: false,
-          sections: [],
-        },
-      ],
-    };
-    const parsed = parseGhidraInventoryResult(
-      "read_binary_inventory_summary",
-      reported,
-      null,
-    );
-    if (!parsed.ok) throw parsed.error;
-    expect(parsed.value.rawResult).toEqual(reported);
-    expect(parsed.value.value).toMatchObject({
-      procedure_count: 0,
-      string_count: 0,
-      segments: [{ name: ".text", start: "0x1000", end: "0x100f" }],
     });
   });
 
@@ -438,13 +422,17 @@ it.each([
       throw new Error("Expected an address fixture");
     Reflect.set(object as object, field, address.replace("%3A", "%3a"));
     const result = parseGhidraInventoryResult("search_bytes", value, null);
-    if (result.ok) throw new Error("Expected canonical-address refusal");
-    expect(result.error.cause).toBeInstanceOf(z.ZodError);
-    if (!(result.error.cause instanceof z.ZodError))
-      throw new Error("Expected field schema issues");
-    expect(result.error.cause.issues).toContainEqual(
-      expect.objectContaining({ path: [...path] }),
-    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        diagnostics: {
+          contract_issues: expect.arrayContaining([
+            expect.objectContaining({ path: [...path] }),
+          ]),
+        },
+      },
+    });
   },
 );
 

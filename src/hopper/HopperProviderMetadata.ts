@@ -1,4 +1,4 @@
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import type { OfficialToolName } from "../contracts/officialToolContracts.js";
 
 /** Public identity committed by every Hopper-backed observation. */

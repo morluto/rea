@@ -1,4 +1,4 @@
-import { parsePointerFixupsSteps } from "./AppleMachoFixups.js";
+import { parsePointerFixupsSteps } from "../domain/apple/appleMachoFixups.js";
 
 export const parsePointerFixups = (
   ...args: Parameters<typeof parsePointerFixupsSteps>

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type {
   CapabilityDescriptor,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { z } from "zod";
 import {
   analysisProviderCandidate,

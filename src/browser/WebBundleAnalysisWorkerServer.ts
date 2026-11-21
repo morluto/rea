@@ -1,3 +1,8 @@
+import { ellipsisExcerpt } from "../domain/excerpt.js";
+import {
+  javaScriptMemberMutationAllowanceFromField,
+  type JavaScriptMemberMutationAllowance,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { fitJavaScriptRouteSourceFacts } from "../domain/javascript/javascriptRouteResultBudget.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
@@ -7,9 +12,12 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { getHeapStatistics } from "node:v8";
 import { readBoundedControlLines } from "../process/BoundedControlLines.js";
-import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  withArtifactFileHandle,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
@@ -17,7 +25,6 @@ import {
   type WebBundleScriptAnalysis,
 } from "../domain/webBundleScriptAnalysis.js";
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   WEB_BUNDLE_WORKER_LIMITS as LIMITS,
   includedWebScriptSchema,
@@ -25,16 +32,23 @@ import {
   webBundleWorkerMessageSchema,
   type WebBundleWorkerMessage,
 } from "./WebBundleAnalysisWorkerProtocol.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { decodeLimit, isHostLimitFailure } from "../domain/parseFailure.js";
+import { isParseLimit } from "../domain/parseFailureAnalysisError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface WebBundleScriptAnalyzer {
   (
     script: IncludedScript,
-    precision?: JavaScriptSemanticPrecisionInput,
+    precision: JavaScriptSemanticPrecisionInput | undefined,
+    memberMutationAllowance: JavaScriptMemberMutationAllowance,
   ): WebBundleScriptAnalysis;
 }
 
 class WebBundleWorkerInputError extends Error {}
 class WebBundleWorkerOutputError extends Error {}
+const WEB_BUNDLE_RESULT_FORMAT = "web-bundle-worker-result";
 
 const send = async (input: WebBundleWorkerMessage): Promise<void> => {
   const value = webBundleWorkerMessageSchema.parse(input);
@@ -71,10 +85,13 @@ export const serveWebBundleAnalysisWorker = async (
     for (;;) {
       const next = await requests.next();
       if (next.done) break;
-      if (!next.value.ok)
+      if (!next.value.ok) {
+        if (next.value.error._tag === "ControlLineMalformedUtf8")
+          throw new TypeError("Web bundle worker request is not valid UTF-8");
         throw new RangeError(
           "Web bundle worker request exceeds its byte budget",
         );
+      }
       const raw: unknown = JSON.parse(next.value.value);
       const request = webBundleWorkerRequestSchema.parse(raw);
       const continueServing = await analyzeJob(
@@ -120,30 +137,39 @@ const analyzeJob = async (
     let script: IncludedScript;
     try {
       const decoded: unknown = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(source.bytes),
+        decodeStrictUtf8(source.bytes, "strip-signature"),
       );
       script = includedWebScriptSchema.parse(decoded);
     } catch (cause) {
       throw new WebBundleWorkerInputError(
-        `Web bundle worker source is not a valid included script: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Web bundle worker source is not a valid included script: ${errorMessage(cause)}`,
       );
     }
     await send({ kind: "phase", id: request.id, phase: "analyze" });
     let result: WebBundleScriptAnalysis;
     try {
       result = webBundleScriptAnalysisSchema.parse(
-        analyze(script, request.semantic_precision),
+        analyze(
+          script,
+          request.semantic_precision,
+          javaScriptMemberMutationAllowanceFromField(
+            request.member_mutation_allowance,
+          ),
+        ),
       );
     } catch (cause) {
+      if (cause instanceof AnalysisResourceConstraintError) throw cause;
       throw new WebBundleWorkerOutputError(
-        `Web bundle analyzer returned an invalid result: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Web bundle analyzer returned an invalid result: ${errorMessage(cause)}`,
       );
     }
-    if (result.status !== "analyzed")
+    // A refused script crosses with its partial facts; the parent states the
+    // refusal from the allowance it sent.
+    if (result.status !== "analyzed" && result.partial === undefined)
       throw new WebBundleWorkerOutputError(
         "Web bundle analyzer did not produce a completed per-script result",
       );
-    if (result.route_facts != null) {
+    if (result.status === "analyzed" && result.route_facts != null) {
       const { route_facts, ...existing } = result;
       const available =
         request.result_budget_bytes -
@@ -172,8 +198,14 @@ const analyzeJob = async (
           const chunk = Buffer.from(part);
           bytes += chunk.length;
           if (bytes > request.result_budget_bytes)
-            throw new RangeError(
+            throw decodeLimit(
+              WEB_BUNDLE_RESULT_FORMAT,
               "Web bundle worker result exceeds its admitted byte budget",
+              {
+                name: "result_budget_bytes",
+                maximum: request.result_budget_bytes,
+                required: bytes,
+              },
             );
           hash.update(chunk);
           let offset = 0;
@@ -199,13 +231,19 @@ const analyzeJob = async (
     });
     return true;
   } catch (cause: unknown) {
-    const resource = cause instanceof RangeError;
+    const refusal =
+      cause instanceof AnalysisResourceConstraintError ? cause : undefined;
+    const resource =
+      isHostLimitFailure(cause) ||
+      isParseLimit(cause, WEB_BUNDLE_RESULT_FORMAT) ||
+      refusal !== undefined;
     const input = cause instanceof WebBundleWorkerInputError;
     const fatalCleanupFailure =
       cause instanceof ArtifactReaderFailure &&
       cause.cleanupLeases !== undefined &&
       cause.cleanupLeases.length > 0;
-    const rawMessage = cause instanceof Error ? cause.message : String(cause);
+    // The parent owns resource-error formatting; send the canonical reason.
+    const rawMessage = refusal?.reason ?? errorMessage(cause);
     await send({
       kind: "failure",
       id: request.id,
@@ -217,8 +255,10 @@ const analyzeJob = async (
               cause instanceof TypeError
             ? "output"
             : "io",
-      message:
-        rawMessage.length > 2048 ? `${rawMessage.slice(0, 2048)}…` : rawMessage,
+      ...(refusal?.reportedLimits == null
+        ? {}
+        : { limits: { ...refusal.reportedLimits } }),
+      message: ellipsisExcerpt(rawMessage, 2048),
     });
     return !fatalCleanupFailure;
   }

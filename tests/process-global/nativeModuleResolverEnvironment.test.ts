@@ -10,53 +10,49 @@ afterEach(() => vi.unstubAllEnvs());
 
 // Playwright starts the actual selected executable, which records its environment
 // and exits before the browser handshake. This proves launch inheritance only.
-it.skipIf(process.platform === "win32").each([
-  { name: "missing", selected: {}, expected: "absent" },
-  {
-    name: "unset",
-    selected: { REA_MODULE_ENV_PROFILE: undefined },
-    expected: "absent",
-  },
-  { name: "empty", selected: { REA_MODULE_ENV_PROFILE: "" }, expected: "" },
-  {
-    name: "selected",
-    selected: { REA_MODULE_ENV_PROFILE: "selected-profile" },
-    expected: "selected-profile",
-  },
-])(
-  "preserves $name module-resolver settings in the real Playwright child",
-  async ({ selected, expected }) => {
+it.skipIf(process.platform === "win32")(
+  "preserves selected environment values in the real Playwright child",
+  async () => {
     const root = await createTestTempDirectory(
       "rea-module-resolver-environment-",
     );
-    const command = join(root, "browser"),
-      receipt = join(root, "receipt");
+    const command = join(root, "browser");
+    const receipt = join(root, "receipt");
     const quotedReceipt = `'${receipt.replaceAll("'", "'\\''")}'`;
+    const keys = [
+      "REA_MODULE_MISSING",
+      "REA_MODULE_UNSET",
+      "REA_MODULE_EMPTY",
+      "REA_MODULE_SELECTED",
+    ];
+    const fields = keys.map((key) => `"\${${key}-absent}"`).join(" ");
     await writeFile(
       command,
-      '#!/bin/sh\nprintf "%s\\n%s" "$$" "${REA_MODULE_ENV_PROFILE-absent}" > ' +
-        quotedReceipt +
-        "\nexit 0\n",
+      `#!/bin/sh\nprintf "%s\\n" "$$" ${fields} > ${quotedReceipt}\nexit 0\n`,
       { mode: 0o755 },
     );
-    const environment = { REA_BROWSER_EXECUTABLE: command, ...selected };
+
+    const environment: Record<string, string | undefined> = {
+      REA_BROWSER_EXECUTABLE: command,
+      REA_MODULE_UNSET: undefined,
+      REA_MODULE_EMPTY: "",
+      REA_MODULE_SELECTED: "selected-profile",
+    };
     const resolver = new NativeModuleResolver(environment);
     onTestFinished(() => resolver.close());
-    // Constructor selection is immutable even when the original caller map changes.
-    Object.assign(environment, {
-      REA_MODULE_ENV_PROFILE: "later-caller-profile",
-    });
-    vi.stubEnv("REA_MODULE_ENV_PROFILE", "late-ambient-profile");
+    for (const key of keys) {
+      environment[key] = "later-caller-profile";
+      vi.stubEnv(key, "late-ambient-profile");
+    }
     const result = await resolver.resolve({
       importerUrl: "https://app.test/main.js",
       importMap: null,
       specifiers: ["./dep.js"],
     });
     expect(result.ok).toBe(false);
-    const observed = await readFile(receipt, "utf8");
-    const separator = observed.indexOf("\n");
-    expect(observed.slice(separator + 1)).toBe(expected);
-    const pid = Number(observed.slice(0, separator));
+    const [rawPid, ...values] = (await readFile(receipt, "utf8")).split("\n");
+    expect(values).toEqual(["absent", "absent", "", "selected-profile", ""]);
+    const pid = Number(rawPid);
     expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
     expect(await observeProcessStartIdentity(pid)).toBeUndefined();
   },

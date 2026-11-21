@@ -1,1 +1,7 @@
+# A merge commit stages every file it brings in from the other branch; an
+# autofix here would rewrite that incoming code and put unrelated changes into
+# the merge. Conflict resolutions are still checked by the pre-push hook and CI.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+  exit 0
+fi
 npx --no-install lint-staged

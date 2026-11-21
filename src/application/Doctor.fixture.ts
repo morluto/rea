@@ -1,4 +1,4 @@
-import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../contracts/catalog/catalogIdentity.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { ok } from "../domain/result.js";
 import type { DoctorHost } from "./Doctor.js";

@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { z } from "zod";
 
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../contracts/analysisViewToolContracts.js";
+import { advertisedOutputJsonSchema } from "../../contracts/toolSchemaMetadata.js";
 
 import { describe, expect, it } from "vitest";
 
@@ -15,7 +15,7 @@ import { inspectAnalysisView } from "./AnalysisViewService.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
 import type { BrowserScenarioCapture } from "../../domain/browserScenarioCapture.js";
-import type { AnalysisViewRequest } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import { projectBrowserScenarioView } from "../../domain/analysisView/browserScenarioView.js";
 
 const tree = (text: string) => ({
@@ -94,7 +94,7 @@ it("summarizes every three-digit status bucket within the advertised output cont
     validateFormats: false,
     inlineRefs: false,
     code: { optimize: false },
-  }).compile(z.toJSONSchema(contract.outputSchema));
+  }).compile(advertisedOutputJsonSchema(contract));
   for (const [status, statusClass] of [
     [100, "1xx"],
     [200, "2xx"],
@@ -141,10 +141,9 @@ describe("browser scenario analysis views", () => {
     const summary = await view(capture, { kind: "summary" });
     expect(summary).toMatchObject({
       limitations: [
-        expect.stringMatching(/artifact identity.*unavailable/iu),
         expect.stringMatching(/platform.*architecture.*not observed/iu),
       ],
-      summary: { limitation_count: 2 },
+      summary: { limitation_count: 1 },
     });
   });
 

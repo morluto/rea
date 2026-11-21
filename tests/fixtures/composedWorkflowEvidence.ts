@@ -5,7 +5,7 @@ import { parseConfig } from "../../src/config/parseConfig.js";
 import {
   createAnalysisExecution,
   type AnalysisProvider,
-} from "../../src/application/AnalysisProvider.js";
+} from "../../src/ports/AnalysisProvider.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import type { Evidence } from "../../src/domain/evidence.js";

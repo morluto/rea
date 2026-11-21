@@ -1,7 +1,9 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
+import { OwnerCancellation } from "../../domain/analysisErrorCore.js";
 import { createEvidence } from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
@@ -11,7 +13,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
 import type { RecordUnknownInput } from "../../domain/residualUnknown.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
-import type { AnalysisProviderCandidate } from "../AnalysisProvider.js";
+import type { AnalysisProviderCandidate } from "../../ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
@@ -27,7 +29,7 @@ import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowled
 
 const observation = (label: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Lifecycle fixture", version: "1" },
     { operation: label, parameters: {}, result: { fixture: label } },
   );
@@ -644,7 +646,9 @@ it.each(
       const result = await late;
       if (result.ok) throw new Error("Expected shutdown admission refusal");
       expect(result.error._tag).toBe("AnalysisCancelledError");
-      expect(result.error.cause).toBe(aborted ? reason : undefined);
+      expect(result.error.cause).toBe(
+        aborted ? reason : OwnerCancellation.ownerClosed,
+      );
       expect(mutation).not.toHaveBeenCalled();
       expect(await earlier).toMatchObject({ ok: true, value: { ok: true } });
       expect(calls.filter((name) => name === "address_name")).toHaveLength(1);

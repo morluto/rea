@@ -5,6 +5,7 @@ import { err, ok } from "../domain/result.js";
 import { invalidRegexPatternError } from "../process/RegexMatcher.js";
 import { idaAddressSchema } from "./IdaProtocolValues.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Apply the named public contract and IDA's explicit-address boundary before startup. */
 export const parseIdaInput = (
@@ -66,11 +67,7 @@ export const parseIdaInput = (
       );
     } catch (cause: unknown) {
       return err(
-        invalidRegexPatternError(
-          operation,
-          cause instanceof Error ? cause.message : String(cause),
-          cause,
-        ),
+        invalidRegexPatternError(operation, errorMessage(cause), { cause }),
       );
     }
   }

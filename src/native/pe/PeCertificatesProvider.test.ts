@@ -50,25 +50,25 @@ const inspect = async (payload: Buffer) => {
 it.each([
   {
     name: "depth",
-    payload: () => encapsulated(40),
-    limits: { max_asn1_depth: 32 },
-    description: "32 nesting levels",
+    payload: () => encapsulated(72),
+    limits: { max_asn1_depth: 64 },
+    ceiling: { limit: 64, unit: "nesting levels per PKCS#7 payload" },
   },
   {
     name: "nodes",
     payload: () => repeatedCertificateSignedData(600),
     limits: { max_asn1_values: 16_384 },
-    description: "16384 values",
+    ceiling: { limit: 16_384, unit: "values per PKCS#7 payload" },
   },
   {
     name: "text",
     payload: () => repeatedCertificateSignedData(350),
     limits: { max_decoded_text_bytes: 65_536 },
-    description: "65536 bytes",
+    ceiling: { limit: 65_536, unit: "bytes per PKCS#7 payload" },
   },
 ])(
   "reports the fixed $name allowance with its own resource and recovery",
-  async ({ payload, limits, description }) => {
+  async ({ payload, limits, ceiling }) => {
     const result = await inspect(payload());
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected decoder refusal");
@@ -77,8 +77,10 @@ it.each([
       throw result.error;
     expect(result.error.reportedLimits).toEqual(limits);
     expect(result.error.retryable).toBe(false);
-    expect(result.error.fixedAllowance?.name).toContain(description);
-    expect(result.error.fixedAllowance?.name).toContain("no runtime override");
+    expect(result.error.fixedAllowance).toMatchObject({
+      kind: "parser",
+      ...ceiling,
+    });
   },
 );
 
@@ -95,15 +97,17 @@ it.each([
     name: "bytes",
     content: Buffer.from([0x2a, ...Array<number>(256).fill(0)]),
     limits: { max_oid_bytes: 256 },
+    ceiling: { limit: 256, unit: "bytes per OID" },
   },
   {
     name: "arc bytes",
     content: Buffer.from([0x2a, 0x81, ...Array<number>(31).fill(0x80), 0]),
     limits: { max_oid_arc_bytes: 32 },
+    ceiling: { limit: 32, unit: "bytes per base-128 arc" },
   },
 ])(
   "preserves the canonical OID $name allowance in a valid CMS algorithm",
-  async ({ content, limits }) => {
+  async ({ content, limits, ceiling }) => {
     const algorithm = tlv(0x06, content);
     const result = await inspect(
       Buffer.from(
@@ -127,6 +131,6 @@ it.each([
     expect(result.error.reportedLimits).toEqual(limits);
     expect(result.error.retryable).toBe(false);
     expect(result.error.fixedAllowance?.name).toContain("OBJECT IDENTIFIER");
-    expect(result.error.fixedAllowance?.name).toContain("no runtime override");
+    expect(result.error.fixedAllowance).toMatchObject(ceiling);
   },
 );

@@ -58,7 +58,7 @@ it("retains absent directories and artifact provenance", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "pe", architecture: "x86_64" },
+    subject: { identity: { format: "pe", architecture: "x86_64" } },
     normalized_result: report,
   });
 });

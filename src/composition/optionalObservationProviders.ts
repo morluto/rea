@@ -1,10 +1,11 @@
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type {
   OptionalObservationProviders,
   OptionalProviderLoadFailure,
   OptionalProviderLoadResult,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import {
   CDP_BROWSER_PROVIDER_IDENTITY,
   PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,
@@ -15,6 +16,7 @@ import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../inspector/providerIdentity.js
 import type { V8InspectorAdmission } from "../inspector/V8InspectorProvider.js";
 import type { WebBundleAnalysisAdmission } from "../browser/IsolatedWebBundleAnalyzer.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Precisely typed startup factories for the five existing observation ports. */
 export type OptionalObservationFactories = {
@@ -28,7 +30,10 @@ export const createOptionalObservationFactories = (
   selectedEnvironment: Readonly<Record<string, string | undefined>>,
   settings?: AnalysisSettingsReader,
 ): OptionalObservationFactories => {
-  const environment = snapshotEnvironment(selectedEnvironment);
+  const environment = snapshotEnvironment(
+    selectedEnvironment,
+    HOST_PLATFORM.platform,
+  );
   let runtimeAdmission: V8InspectorAdmission | undefined;
   let webBundleAdmission: WebBundleAnalysisAdmission | undefined;
   return {
@@ -37,7 +42,11 @@ export const createOptionalObservationFactories = (
       const { WebBundleAnalysisAdmission: Admission } =
         await import("../browser/IsolatedWebBundleAnalyzer.js");
       webBundleAdmission ??= new Admission();
-      return browser.createBrowserObservationProvider(webBundleAdmission);
+      return browser.createBrowserObservationProvider(
+        webBundleAdmission,
+        environment,
+        settings,
+      );
     },
     browserScenarioCapture: async () =>
       (await import("./browserScenario.js")).createBrowserScenarioProvider(
@@ -72,7 +81,7 @@ const loadPort = async <Port>(
   } catch (cause: unknown) {
     return err({
       providerId,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     });
   }
 };

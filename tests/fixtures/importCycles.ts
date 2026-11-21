@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { join, relative } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { readImportSpecifiers } from "../../scripts/lib/import-specifiers.mjs";
 
@@ -13,7 +14,12 @@ const productionFiles = (directory: string): string[] => {
   for (const name of readdirSync(directory)) {
     const path = join(directory, name);
     if (statSync(path).isDirectory()) files.push(...productionFiles(path));
-    else if (name.endsWith(".ts") && !name.includes(".test.")) files.push(path);
+    else if (
+      name.endsWith(".ts") &&
+      !/\.(?:test|spec)\.ts$/u.test(name) &&
+      !name.endsWith(".fixture.ts")
+    )
+      files.push(path);
   }
   return files;
 };
@@ -27,10 +33,9 @@ const importGraph = (root: string): Map<string, Set<string>> => {
     const source = readFileSync(join(root, file), "utf8");
     const edges = new Set<string>();
     for (const spec of relativeSpecifiers(source)) {
-      const resolved = resolve(dirname(join(root, file)), spec).replace(
-        /\.js$/,
-        ".ts",
-      );
+      const resolved = fileURLToPath(
+        new URL(spec, pathToFileURL(join(root, file))),
+      ).replace(/\.js$/, ".ts");
       const target = relative(root, resolved);
       if (files.has(target)) edges.add(target);
     }
@@ -73,7 +78,8 @@ const stronglyConnected = (
         onStack.delete(member);
         component.push(member);
       }
-      if (component.length > 1) components.push(component.sort());
+      if (component.length > 1 || graph.get(node)?.has(node) === true)
+        components.push(component.sort());
     }
   };
   for (const node of [...graph.keys()].sort()) {
