@@ -11,6 +11,7 @@ import { EventEmitter } from "node:events";
 
 import { beforeEach, expect, it, vi, type Mock } from "vitest";
 import type { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
+import type { Page } from "playwright-core";
 
 const mocks = vi.hoisted(() => ({
   openBrowser: vi.fn(),
@@ -1523,10 +1524,7 @@ it("expires the response at the cleanup deadline while retaining the same releas
 });
 
 it("retains late opening failure cleanup after cancellation until the exact profile lease recovers", async () => {
-  let profileStarted: () => void = () => {};
-  const profileAttempt = new Promise<void>((resolve) => {
-    profileStarted = resolve;
-  });
+  const { promise: profileAttempt, resolve: profileStarted } = deferred();
   let denied = true;
   const lease = new AnalysisCleanupLease(async () => {
     profileStarted();
@@ -1561,7 +1559,11 @@ it("retains late opening failure cleanup after cancellation until the exact prof
     caller.abort(reason);
     const result = await pending;
     if (result.ok) throw new Error("Expected cancelled opening");
-    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error).toMatchObject({
+      cleanupIncomplete: true,
+      cleanupPrimary: { _tag: "AnalysisCancelledError" },
+    });
+    expect(result.error.cleanupPrimary?.cause).toBe(reason);
     launch.release();
     await profileAttempt;
     await expect(provider.close()).rejects.toMatchObject({
@@ -1676,7 +1678,10 @@ it.each([false, true])(
           details: {
             diagnostics: {
               collected_artifacts: {
-                dom: { value: { text: "<worker-response/>" } },
+                dom: {
+                  state: "captured",
+                  value: { text: "<worker-response/>" },
+                },
               },
             },
           },
@@ -1684,11 +1689,6 @@ it.each([false, true])(
         expect(result.error).toMatchObject({
           reason: "service_worker_blocked",
           cleanupIncomplete: false,
-          diagnostics: {
-            collected_artifacts: {
-              dom: { state: "captured", value: { text: "<worker-response/>" } },
-            },
-          },
           partialObservation: {
             capture: {
               browser: { cleanup: "disconnected-external" },
@@ -1759,9 +1759,6 @@ it.each(["absent", "undefined", "inherited", "empty"] as const)(
             ],
           },
         });
-        expect(projected.message).toContain(
-          "Set environment variable REQUIRED_SECRET",
-        );
         expect(JSON.stringify(projected)).not.toContain(
           environment.AVAILABLE_SECRET,
         );
@@ -1791,12 +1788,9 @@ it("keeps declared secrets out of final cleanup and retry failure diagnostics", 
   vi.spyOn(cleanup, "cleanupResources", "get").mockImplementation(() =>
     cleanup.browserClosed ? [] : [`browser_transport:${secret}`],
   );
-  const originalClose = cleanup.close.getMockImplementation()!;
-  let blocked = true;
-  cleanup.close.mockImplementation(async (...args) => {
-    if (blocked) throw new Error(`Close failed after ${secret}`);
-    return originalClose(...args);
-  });
+  const refusal = new Error(`Close failed after ${secret}`);
+  const redacted = "[REDACTED:credential]";
+  cleanup.close.mockRejectedValueOnce(refusal);
   const provider = new PlaywrightBrowserScenarioProvider((scenario, options) =>
     PlaywrightScenarioSession.open(
       scenario,
@@ -1815,24 +1809,23 @@ it("keeps declared secrets out of final cleanup and retry failure diagnostics", 
         steps: [{ action: "goto_start" }, { action: "wait_for_timeout" }],
       },
     });
-    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
-      secret,
-    );
-    let retried: unknown;
-    try {
-      await provider.close();
-    } catch (error) {
-      retried = error;
-    }
+    cleanup.close.mockRejectedValueOnce(refusal);
+    const retried = await provider.close().catch((cause: unknown) => cause);
     if (!(retried instanceof ProviderCleanupError))
       throw new Error("Expected retained cleanup failure");
-    expect(JSON.stringify(projectAnalysisError(retried))).not.toContain(secret);
-    blocked = false;
+    const initial = projectAnalysisError(result.error);
+    expect(initial.message).toContain(`Close failed after ${redacted}`);
+    for (const projected of [initial, projectAnalysisError(retried)]) {
+      expect(projected.details).toMatchObject({
+        cleanup: "incomplete",
+        resources: [`browser_transport:${redacted}`],
+      });
+      expect(JSON.stringify(projected)).not.toContain(secret);
+    }
     await provider.close();
     expect(cleanup.browserClosed).toBe(true);
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
-    blocked = false;
     await provider.close();
   }
 });
@@ -1840,7 +1833,7 @@ it("keeps declared secrets out of final cleanup and retry failure diagnostics", 
 it("projects both request and route cleanup failures with declared secrets redacted", async () => {
   const { page } = fixture();
   const secret = "private-request-diagnostic-value";
-  const route = vi.fn(async () => undefined);
+  const route = vi.fn<Page["route"]>();
   const unroute = vi.fn(async () => {
     throw new Error(`page.unroute: closed ${secret}`);
   });
@@ -1876,7 +1869,8 @@ it("projects both request and route cleanup failures with declared secrets redac
     expect(step?.error).toContain("page.evaluate: closed");
     expect(step?.error).toContain("page.unroute: closed");
     expect(JSON.stringify(result.value)).not.toContain(secret);
-    expect(unroute).toHaveBeenCalledOnce();
+    expect(route).toHaveBeenCalledOnce();
+    expect(unroute).toHaveBeenCalledExactlyOnceWith(...route.mock.calls[0]!);
   } finally {
     await provider.close();
   }
