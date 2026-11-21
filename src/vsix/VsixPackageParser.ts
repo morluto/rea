@@ -78,6 +78,10 @@ export const VSIX_LIMITATIONS = {
     "extension/package.json contributes has an empty key; it is not listed in contributes.keys.",
   duplicatePath: (path: string): string =>
     `ZIP member ${JSON.stringify(path)} appears more than once; later copies were inventoried and not used as the unique manifest path.`,
+  caseOnlyPaths: (paths: readonly string[]): string =>
+    `ZIP members ${paths.map((path) => JSON.stringify(path)).join(", ")} differ only in case; each was inventoried as its own member.`,
+  manifestCaseOnlyMatch: (expected: string, member: string): string =>
+    `ZIP member ${JSON.stringify(member)} matches ${JSON.stringify(expected)} only when case is ignored; it was not used as the manifest, as a case-sensitive file system would not load it.`,
   traverses: (name: string): string =>
     `ZIP member ${JSON.stringify(name)} leaves the package root and was not extracted.`,
   memberOversize: (path: string, maximum: number): string =>
@@ -936,7 +940,10 @@ export const parseVsixPackage = async (
     limitations.push(...listing.limitations);
     const files: InventoriedMember[] = [];
     const contents: VsixPackage["contents"] = [];
+    // Members are counted by exact path; names that differ only in case are
+    // distinct members on a case-sensitive file system, not duplicates.
     const pathCounts = new Map<string, number>();
+    const caseVariants = new Map<string, Set<string>>();
     for (const entry of entries) {
       if (entry.directory) continue;
       if (!asFileEntry(entry)) continue;
@@ -949,8 +956,11 @@ export const parseVsixPackage = async (
         );
       const traverses = vsixPackagePathTraverses(sourceName);
       if (traverses) limitations.push(VSIX_LIMITATIONS.traverses(sourceName));
+      pathCounts.set(path, (pathCounts.get(path) ?? 0) + 1);
       const folded = path.toLowerCase();
-      pathCounts.set(folded, (pathCounts.get(folded) ?? 0) + 1);
+      const variants = caseVariants.get(folded) ?? new Set<string>();
+      variants.add(path);
+      caseVariants.set(folded, variants);
       const kind = vsixPackagePathKind(path);
       files.push({
         entry,
@@ -975,11 +985,20 @@ export const parseVsixPackage = async (
       .map(([path]) => path);
     for (const path of duplicatePaths)
       limitations.push(VSIX_LIMITATIONS.duplicatePath(path));
+    for (const variants of caseVariants.values())
+      if (variants.size > 1)
+        limitations.push(VSIX_LIMITATIONS.caseOnlyPaths([...variants]));
     const presentPaths = new Set(files.map((file) => file.path.toLowerCase()));
+    // A manifest is selected by its exact logical path. A member matching it
+    // only when case is ignored is reported, never parsed in its place.
     const uniqueByPath = (logical: string): InventoriedMember | undefined => {
-      const folded = logical.toLowerCase();
-      if ((pathCounts.get(folded) ?? 0) !== 1) return undefined;
-      return files.find((file) => file.path.toLowerCase() === folded);
+      if (!pathCounts.has(logical))
+        for (const member of caseVariants.get(logical.toLowerCase()) ?? [])
+          limitations.push(
+            VSIX_LIMITATIONS.manifestCaseOnlyMatch(logical, member),
+          );
+      if (pathCounts.get(logical) !== 1) return undefined;
+      return files.find((file) => file.path === logical);
     };
     const vsixMember = uniqueByPath("extension.vsixmanifest");
     const packageMember = uniqueByPath("extension/package.json");

@@ -1041,7 +1041,7 @@ it("keeps contributed command identifiers literal next to their activation event
   ]);
 });
 
-t("keeps declared API proposal names literal", async () => {
+it("keeps declared API proposal names literal", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({
       name: "hello",
@@ -1065,6 +1065,55 @@ t("keeps declared API proposal names literal", async () => {
     "terminalDataWriteEvent",
     "a,b",
   ]);
+});
+
+it("does not select a package.json whose path differs only in case", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: null,
+    extraMembers: { "extension/Package.json": defaultPackageJson },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.package_json).toBeNull();
+  expect(report.package_identity).toBeNull();
+  expect(report.duplicate_paths).toEqual([]);
+  expect(report.limitations).toContain(VSIX_LIMITATIONS.noPackageJson);
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.manifestCaseOnlyMatch(
+      "extension/package.json",
+      "extension/Package.json",
+    ),
+  );
+});
+
+it("selects the exact package.json beside a case-only variant", async () => {
+  const bytes = await vsixPackageFixture({
+    extraMembers: {
+      "extension/Package.json": JSON.stringify({
+        name: "impostor",
+        publisher: "other",
+        version: "9.9.9",
+      }),
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.package_json?.path).toBe("extension/package.json");
+  expect(report.package_identity?.name).toBe("hello");
+  expect(report.enabled_api_proposals).toEqual(["testObserver"]);
+  expect(report.duplicate_paths).toEqual([]);
+  expect(report.limitations).not.toContain(
+    VSIX_LIMITATIONS.duplicatePath("extension/package.json"),
+  );
+  expect(report.limitations).not.toContain(VSIX_LIMITATIONS.noPackageJson);
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.caseOnlyPaths([
+      "extension/package.json",
+      "extension/Package.json",
+    ]),
+  );
 });
 
 it("resolves dot segments in entry points under extension/", async () => {
