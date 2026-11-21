@@ -354,8 +354,9 @@ it.each(["legacy", "auto"] as const)(
   },
 );
 
-it("initializes through prompt retrieval or completion without an internal client", async () => {
+it("completes a prompt argument as the first operation", async () => {
   const f = await fixture();
+  expect(f.loads()).toBe(0);
   expect(
     (
       await f.client.complete({
@@ -364,24 +365,21 @@ it("initializes through prompt retrieval or completion without an internal clien
       })
     ).completion.values,
   ).toEqual(["Example"]);
-  expect(
-    (
-      await f.client.getPrompt({
-        name: "explain",
-        arguments: { document: "Example" },
-      })
-    ).messages[0]?.content,
-  ).toEqual({ type: "text", text: "Example" });
   expect(f.loads()).toBe(1);
 });
 
 it("retrieves a prompt as the first operation", async () => {
   const f = await fixture();
+  expect(f.loads()).toBe(0);
   const result = await f.client.getPrompt({
     name: "explain",
     arguments: { document: "Example" },
   });
   expect(result.messages).toHaveLength(1);
+  expect(result.messages[0]?.content).toEqual({
+    type: "text",
+    text: "Example",
+  });
   expect(f.loads()).toBe(1);
 });
 

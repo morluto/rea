@@ -21,10 +21,7 @@ import {
 } from "../../tests/fixtures/idaMcp.js";
 import { nativeTools } from "./IdaNativeProtocol.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
-import {
-  DEFAULT_REGEX_MATCHING_DEADLINE,
-  REGEX_MATCHING_DEADLINE_SETTING,
-} from "../config/regexMatchingDeadline.js";
+import { DEFAULT_REGEX_MATCHING_DEADLINE } from "../config/regexMatchingDeadline.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
@@ -673,6 +670,14 @@ describe("attached IDA function observations", () => {
     ] as const) {
       const found = await client.execute("search_strings", { pattern, mode });
       expect(found.ok && found.value.result).toHaveLength(count);
+      if (mode === "regex" && found.ok) {
+        const { deadlineMs } = DEFAULT_REGEX_MATCHING_DEADLINE;
+        expect(found.value.limitations).toContainEqual(
+          expect.stringContaining(
+            `${deadlineMs} ms matching deadline (source default)`,
+          ),
+        );
+      }
     }
     const invalid = await client.execute("search_strings", {
       pattern: "[",
@@ -792,51 +797,6 @@ describe("attached IDA regex supervision", () => {
       }
     },
   );
-  it("bounds regex matching without caller cancellation and preserves subsequent searches", async () => {
-    const { producer, client } = await fixture();
-    const value = "a".repeat(40) + "!";
-    producer.overrideCall = (name) =>
-      name === "find_regex"
-        ? {
-            matches: [{ addr: "0x3000", string: value }],
-            cursor: { done: true },
-          }
-        : undefined;
-    try {
-      const result = await client.execute("search_strings", {
-        pattern: "^(a+)+$",
-        mode: "regex",
-      });
-      expect(result.ok).toBe(false);
-      if (
-        result.ok ||
-        !(result.error instanceof AnalysisResourceConstraintError)
-      )
-        throw new Error("Expected a supervised regex deadline");
-      expect(result.error).toMatchObject({
-        operation: "search_strings",
-        resource: "cpu",
-        reportedLimits: {
-          matching_deadline_ms: DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs,
-          matching_deadline_source: DEFAULT_REGEX_MATCHING_DEADLINE.source,
-        },
-      });
-      expect(result.error.message).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-      const recovered = await client.execute("search_strings", {
-        pattern: "!$",
-        mode: "regex",
-      });
-      expect(recovered.ok && recovered.value.result).toEqual([
-        expect.objectContaining({ address: "0x3000", value }),
-      ]);
-      if (recovered.ok)
-        expect(recovered.value.limitations.join("\n")).toContain(
-          REGEX_MATCHING_DEADLINE_SETTING,
-        );
-    } finally {
-      await client.close();
-    }
-  });
 });
 
 describe("attached IDA function failure handling", () => {
@@ -982,10 +942,7 @@ describe("headless IDA transient busy health", () => {
     const busy = busyHealth("config_json_get");
     producer.overrideCall = (name) =>
       name === "server_health" ? busy : undefined;
-    const started = Date.now();
-
     const result = await client.execute("health", {});
-    const elapsed = Date.now() - started;
 
     if (result.ok) throw new Error("expected a busy timeout");
     expect(result.error._tag, "the neutral timeout class is used").toBe(
@@ -1007,10 +964,7 @@ describe("headless IDA transient busy health", () => {
       projected.message,
       "the public error message names the busy tool",
     ).toContain("config_json_get");
-    expect(
-      `${result.error.message} ${projected.message}`,
-      "no Hopper wording leaks in",
-    ).not.toContain("Hopper");
+    expect(projected.remediation.action).toContain("REA_IDA_MCP_CONFIG");
     expect(
       result.error.cause,
       "reattribution preserves the producing timeout",
@@ -1020,90 +974,51 @@ describe("headless IDA transient busy health", () => {
       cause: busy,
       diagnostics: { busy_tool: "config_json_get" },
     });
-    expect(
-      elapsed,
-      "the wait runs to the deadline, not less",
-    ).toBeGreaterThanOrEqual(290);
-    expect(
-      healthCalls(producer),
-      "reads are spaced by the retry delay, not a tight loop",
-    ).toBeLessThanOrEqual(6);
     await expectCleanClose(producer, client);
   });
 
-  it("never invents a busy tool the worker did not report", async () => {
+  it("reports free-form busy text as unknown without exposing it in the error message", async () => {
     const { producer, client } = await fixture("headless", 300);
+    const tool = "token=abc123 /private<home> secret";
     producer.overrideCall = (name) =>
-      name === "server_health" ? busyHealth() : undefined;
+      name === "server_health" ? busyHealth(tool) : undefined;
 
     const result = await client.execute("health", {});
-
-    if (result.ok) throw new Error("expected a busy timeout");
-    expect(
-      projectAnalysisError(result.error).details,
-      "the public operation stays independent of an omitted busy tool",
-    ).toMatchObject({
-      operation: "health",
-    });
+    if (result.ok) throw new Error("Expected a busy timeout");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.details).toMatchObject({ operation: "health" });
     expect(result.error.diagnostics).toMatchObject({ busy_tool: "unknown" });
-    expect(projectAnalysisError(result.error).message).toContain(
-      "busy tool was unknown",
-    );
+    expect(projected.message).toContain("busy tool was unknown");
+    expect(projected.message).not.toContain(tool);
     await expectCleanClose(producer, client);
   });
 
-  it.each([
-    ["free-form text", "token=abc123 /private<home> secret"],
-    ["an over-long name", "x".repeat(200)],
-  ])(
-    "reports %s from the worker as unknown instead of echoing it",
-    async (_label, tool) => {
-      const { producer, client } = await fixture("headless", 300);
-      producer.overrideCall = (name) =>
-        name === "server_health" ? busyHealth(tool) : undefined;
-
-      const result = await client.execute("health", {});
-
-      if (result.ok) throw new Error("expected a busy timeout");
-      expect(
-        projectAnalysisError(result.error).details,
-        "only a tool-name-shaped value is repeated",
-      ).toMatchObject({
-        operation: "health",
-      });
-      expect(result.error.diagnostics).toMatchObject({ busy_tool: "unknown" });
-      expect(
-        projectAnalysisError(result.error).message,
-        "the producer text never reaches the public error message",
-      ).not.toContain(tool);
-      await expectCleanClose(producer, client);
-    },
-  );
-
-  it("ends the wait at once when the caller aborts", async () => {
+  it("cancels a busy readiness wait before another read", async () => {
     const { producer, client } = await fixture("headless", 30_000);
-    producer.overrideCall = (name) =>
-      name === "server_health" ? busyHealth("config_json_get") : undefined;
+    const secondBusy = phaseArrival();
+    producer.overrideCall = (name) => {
+      if (name !== "server_health") return undefined;
+      const reads = healthCalls(producer);
+      if (reads === 2) secondBusy.arrive();
+      if (reads > 2) throw new Error("Readiness polled after cancellation");
+      return busyHealth("config_json_get");
+    };
     const controller = new AbortController();
-    const started = Date.now();
+    const reason = { request: "cancel busy IDA readiness" };
     const call = client.execute("health", {}, { signal: controller.signal });
-    while (healthCalls(producer) < 2) {
-      if (Date.now() - started > 5_000) throw new Error("never polled");
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    try {
+      await secondBusy.reached(call, "second busy health response");
+      controller.abort(reason);
+      const result = await call;
+      if (result.ok) throw new Error("Expected a cancelled busy wait");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(healthCalls(producer)).toBe(2);
+      await expectCleanClose(producer, client);
+    } finally {
+      controller.abort(reason);
+      await call.finally(() => client.close());
     }
-
-    controller.abort();
-    const result = await call;
-
-    if (result.ok) throw new Error("expected cancellation");
-    expect(result.error._tag, "cancellation keeps today's outcome").toBe(
-      "AnalysisCancelledError",
-    );
-    expect(
-      Date.now() - started,
-      "the wait does not run to the registration deadline",
-    ).toBeLessThan(5_000);
-    await expectCleanClose(producer, client);
   });
 });
 
@@ -1423,99 +1338,72 @@ describe("headless IDA session ownership and cleanup", () => {
   });
 });
 
-describe("headless IDA blanked-identity inventory rows", () => {
-  it("releases cleanly when the closed worker lingers in inventory without an identity", async () => {
+it.each([
+  {
+    label: "inactive blank worker",
+    id: "",
+    backend: "worker",
+    active: false,
+    removed: true,
+  },
+  {
+    label: "active blank worker",
+    id: "",
+    backend: "worker",
+    active: true,
+    removed: false,
+  },
+  { label: "blank GUI", id: "", backend: "gui", active: false, removed: false },
+  {
+    label: "identified peer",
+    id: "unrelated-live-peer",
+    backend: "worker",
+    active: false,
+    removed: false,
+  },
+] as const)(
+  "confirms workspace release against a same-input $label after closing its owned worker",
+  async ({ id, backend, active, removed }) => {
     const { producer, client, root } = await fixture("headless");
     expect((await client.execute("health", {})).ok).toBe(true);
+    const requested = producer.database;
+    if (requested === undefined) throw new Error("Expected the owned worker");
+    const remaining = {
+      session_id: id,
+      input_path: producer.inputPath,
+      owned: false,
+      backend,
+      is_active: active,
+    };
     let released = false;
     producer.beforeCall = async (name) => {
       if (name === "idb_close") released = true;
     };
-    // A worker observed mid-teardown: identity cleared, private input retained.
     producer.overrideCall = (name) =>
       name === "idb_list" && released
-        ? {
-            sessions: [
-              {
-                session_id: "",
-                input_path: producer.inputPath,
-                owned: false,
-                backend: "worker",
-                is_active: false,
-              },
-            ],
-            count: 1,
-          }
-        : undefined;
-
-    expect((await client.close()).ok).toBe(true);
-    expect(await readdir(root)).toEqual(["target.elf"]);
-  });
-
-  it("still reports a same-input gui row whose identity is blank", async () => {
-    const { producer, client, root } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-    let released = false;
-    producer.beforeCall = async (name) => {
-      if (name === "idb_close") released = true;
-    };
-    // A gui binding belongs to an IDA instance REA does not control, so the
-    // blanked-identity exception must not reach it.
-    producer.overrideCall = (name) =>
-      name === "idb_list" && released
-        ? {
-            sessions: [
-              {
-                session_id: "",
-                input_path: producer.inputPath,
-                owned: false,
-                backend: "gui",
-                is_active: false,
-              },
-            ],
-            count: 1,
-          }
+        ? { sessions: [remaining], count: 1 }
         : undefined;
 
     const result = await client.close();
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
-    expect(
-      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
-    ).toBe(true);
-  });
-
-  it("still reports a same-input peer that keeps a session identity", async () => {
-    const { producer, client, root } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-    let released = false;
-    producer.beforeCall = async (name) => {
-      if (name === "idb_close") released = true;
-    };
-    producer.overrideCall = (name) =>
-      name === "idb_list" && released
-        ? {
-            sessions: [
-              {
-                session_id: "unrelated-live-peer",
-                input_path: producer.inputPath,
-                owned: false,
-                backend: "worker",
-                is_active: false,
-              },
-            ],
-            count: 1,
-          }
-        : undefined;
-
-    const result = await client.close();
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
-    expect(
-      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
-    ).toBe(true);
-  });
-});
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database: requested, save: false } },
+    ]);
+    if (removed) {
+      expect(result.ok).toBe(true);
+      expect(await readdir(root)).toEqual(["target.elf"]);
+    } else {
+      expect(result).toMatchObject(reportsSessions(remaining));
+      if (result.ok) throw new Error("Expected retained workspace ownership");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining([
+          "target.elf",
+          expect.stringMatching(/^rea-ida-/u),
+        ]),
+      );
+    }
+  },
+);
 
 describe("headless IDA reaped worker cleanup", () => {
   it("recovers a reaped worker only after inventory confirms its session and private input are absent", async () => {

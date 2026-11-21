@@ -1,3 +1,4 @@
+import { strictEqual } from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 import { expect, it } from "vitest";
@@ -21,6 +22,8 @@ it("keeps advertised decimal bounds aligned across decimal-width transitions", (
     const validate = ajv.compile(z.toJSONSchema(field));
     const candidates = new Set([
       ...Array.from({ length: 1001 }, (_, index) => index),
+      9_999,
+      10_000,
       minimum - 1,
       minimum,
       minimum + 1,
@@ -30,14 +33,25 @@ it("keeps advertised decimal bounds aligned across decimal-width transitions", (
     ]);
     for (const value of candidates) {
       if (value < 0) continue;
+      const admitted = minimum <= value && value <= maximum;
       for (const token of [String(value), `000${value}`]) {
-        expect(validate(token), `${minimum}..${maximum}: ${token}`).toBe(
+        const context = `${minimum}..${maximum}: ${token}`;
+        strictEqual(validate(token), admitted, `Schema ${context}`);
+        strictEqual(
           field.safeParse(token).success,
+          admitted,
+          `Parser ${context}`,
         );
       }
     }
-    for (const token of ["", "1e2", "0x10", "+1", "1.0", "1\n", " 1"])
-      expect(validate(token), token).toBe(false);
+  }
+  // Keep every numeric spelling within the chosen range, so its syntax is
+  // what causes refusal.
+  const decimal = cliDecimalField(z.number().int().min(0).max(256));
+  const validate = ajv.compile(z.toJSONSchema(decimal));
+  for (const token of ["", "1e2", "0x10", "+1", "1.0", "1\n", " 1"]) {
+    expect(validate(token), token).toBe(false);
+    expect(decimal.safeParse(token).success, token).toBe(false);
   }
 });
 
@@ -68,11 +82,10 @@ it("retains exclusive bounds, wrappers, and parser-only refinements", () => {
 });
 
 it("keeps a positive floor when the domain has no ceiling", () => {
+  const ajv = new Ajv2020({ strict: false });
   for (const minimum of [1, 5, 10, 256]) {
     const field = cliDecimalField(z.number().min(minimum));
-    const validate = new Ajv2020({ strict: false }).compile(
-      z.toJSONSchema(field),
-    );
+    const validate = ajv.compile(z.toJSONSchema(field));
     for (const value of [
       minimum - 1,
       minimum,

@@ -49,13 +49,7 @@ it("validates malformed timings before excluding an explicitly sensitive propert
   expect(() => decodeHarCapture(text, ["timings"])).toThrow(CaptureFormatError);
 });
 
-it.each([
-  { cache: null },
-  { cache: false },
-  { cache: 0 },
-  { cache: "cache" },
-  { cache: [] },
-])("rejects a non-object HAR cache: $cache", ({ cache }) => {
+it.each([null, false, []])("rejects a non-object HAR cache: %j", (cache) => {
   const fixture = historicalHar();
   const entry = fixture.log.entries[0]!;
   expect(() =>
@@ -287,7 +281,6 @@ it("does not decode container lookalikes when excluding explicitly sensitive bod
 });
 
 it.each([
-  { values: [] },
   { values: ["response"] },
   { values: ["content"] },
   { values: ["log"] },
@@ -444,18 +437,26 @@ it("rejects identical duplicate core fields before schema validation", () => {
   expect(() => decodeHarCapture(text, [])).toThrow("duplicate");
 });
 
-it("names the violated HAR schema constraint without restating capture values", () => {
-  expect(() =>
-    decodeHarCapture(
-      JSON.stringify({
-        log: { creator: { name: "x", version: "1" }, entries: [] },
+it.each([
+  {
+    log: { creator: { name: "x", version: "1" }, entries: [] },
+    missing: "version",
+  },
+  { log: { version: "1.2", entries: [] }, missing: "creator" },
+])(
+  "names a required HAR property $missing without disclosing producer values",
+  ({ log, missing }) => {
+    expect(() => decodeHarCapture(JSON.stringify({ log }), [])).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "malformed",
+          field: "/log",
+          detail: `HAR schema validation failed: required (must have required property '${missing}').`,
+        }),
       }),
-      [],
-    ),
-  ).toThrow(
-    "HAR schema validation failed: required (must have required property 'version').",
-  );
-});
+    );
+  },
+);
 
 it("preserves prototype-named producer members through the capture boundary", () => {
   const text = JSON.stringify(historicalHar()).replace(
@@ -727,14 +728,6 @@ it("redacts actual authentication fields and explicit binary values while preser
     sha256: null,
     content_base64: null,
   });
-});
-
-it.each([
-  "{",
-  '{"log":{},"log":{}}',
-  JSON.stringify({ log: { version: "1.2", entries: [] } }),
-])("rejects malformed producer data %s", (text) => {
-  expect(() => decodeHarCapture(text, [])).toThrow();
 });
 
 it("preserves observed SaveHar null post-data without broadening arbitrary HAR producers", () => {

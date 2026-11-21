@@ -31,13 +31,15 @@ export function stableUpdateVersion(version, published) {
   return stable;
 }
 
-/** Allow propagation and a bounded number of consecutive gateway failures. */
+/** Retry confirmed absence and a bounded number of consecutive gateway failures. */
 export async function waitForNpmRelease(
   version,
   lookup = readNpmRelease,
   pause = setTimeout,
 ) {
-  const attempts = 120;
+  const windowMinutes = 75;
+  const intervalMs = 30_000;
+  const attempts = (windowMinutes * 60_000) / intervalMs + 1;
   let gatewayFailures = 0;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -53,10 +55,10 @@ export async function waitForNpmRelease(
       gatewayFailures += 1;
       if (gatewayFailures === 3 || attempt === attempts) throw error;
     }
-    if (attempt < attempts) await pause(15_000);
+    if (attempt < attempts) await pause(intervalMs);
   }
   throw new Error(
-    `rea-agents@${version} was not visible on npm after 120 attempts over 30 minutes`,
+    `rea-agents@${version} was not visible on npm after ${attempts} attempts over ${windowMinutes} minutes. Re-run the failed verification after the version becomes visible.`,
   );
 }
 

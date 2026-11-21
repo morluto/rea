@@ -98,7 +98,7 @@ it("distinguishes absence from failed or malformed registry responses", async ()
   ).rejects.toThrow();
 });
 
-it("waits for confirmed propagation absence and does not retry unclassified errors", async () => {
+it("waits only for confirmed propagation absence and does not retry errors", async () => {
   const published = await readNpmRelease("6.5.0", async () =>
     Response.json(metadata("6.5.0", "sha512-target", { latest: "6.5.0" })),
   );
@@ -114,7 +114,7 @@ it("waits for confirmed propagation absence and does not retry unclassified erro
     ),
   ).resolves.toEqual(published);
   expect(calls).toBe(2);
-  expect(pauses).toEqual([15_000]);
+  expect(pauses).toEqual([30_000]);
   let failures = 0;
   await expect(
     waitForNpmRelease(
@@ -129,6 +129,30 @@ it("waits for confirmed propagation absence and does not retry unclassified erro
     ),
   ).rejects.toThrow("unavailable");
   expect(failures).toBe(1);
+});
+
+it("covers the observed 55-minute publication delay with a finite retry budget", async () => {
+  const published = await readNpmRelease("6.5.0", async () =>
+    Response.json(metadata("6.5.0", "sha512-target", { latest: "6.5.0" })),
+  );
+  let waited = 0;
+  const pause = async (milliseconds: number) => {
+    waited += milliseconds;
+  };
+  await expect(
+    waitForNpmRelease(
+      "6.5.0",
+      async () => (waited < 55 * 60_000 ? { status: "absent" } : published),
+      pause,
+    ),
+  ).resolves.toEqual(published);
+  expect(waited).toBe(55 * 60_000);
+
+  waited = 0;
+  await expect(
+    waitForNpmRelease("6.5.0", async () => ({ status: "absent" }), pause),
+  ).rejects.toThrow("after 151 attempts over 75 minutes");
+  expect(waited).toBe(75 * 60_000);
 });
 
 it("retries transient npm HTTP failures before checking the published release", async () => {
@@ -150,7 +174,7 @@ it("retries transient npm HTTP failures before checking the published release", 
     }),
   ).resolves.toMatchObject({ status: "published", taggedVersion: version });
   expect(attempts).toBe(3);
-  expect(pauses).toEqual([15_000, 15_000]);
+  expect(pauses).toEqual([30_000, 30_000]);
 });
 
 it("resets the consecutive gateway failures after observing absence", async () => {
@@ -172,7 +196,7 @@ it("resets the consecutive gateway failures after observing absence", async () =
     }),
   ).resolves.toMatchObject({ status: "published", taggedVersion: version });
   expect(attempts).toBe(6);
-  expect(pauses).toEqual(Array(5).fill(15_000));
+  expect(pauses).toEqual(Array(5).fill(30_000));
 });
 
 it.each([

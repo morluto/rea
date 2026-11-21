@@ -133,7 +133,11 @@ jobs:
           BASE_SHA: ${{ steps.baseline.outputs.base || github.event.pull_request.base.sha }}
           BASELINE_REASON: ${{ steps.baseline.outputs.reason }}
           HEAD_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
-          CI_FULL: ${{ inputs.source_sha != '' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+          # Release Please must satisfy the existing required CI gate on the PR merge candidate.
+          CI_FULL: >-
+            ${{ inputs.source_sha != '' || contains(github.event.pull_request.labels.*.name, 'ci:full') ||
+            (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&
+            startsWith(github.event.pull_request.head.ref, format('release-please--branches--{0}--', github.event.pull_request.base.ref))) }}
           CI_SKIP_FULL: ${{ steps.qualification.outputs.run_full == 'false' }}
         run: node scripts/ci/plan.mjs
 
@@ -1055,6 +1059,7 @@ jobs:
           tests/boundary/mcp/absoluteLocalPathSchema.test.ts
           tests/boundary/mcp/toolSchemaValidity.test.ts
           tests/boundary/filesystem/safeOutputTree.test.ts
+          tests/boundary/filesystem/safeOutputTreePublication.test.ts
           tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts
           tests/boundary/filesystem/setupUnavailableProvider.test.ts
@@ -1145,6 +1150,10 @@ jobs:
       - run: npm ci
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
+      # Code changes already run this verifier through the required lint lane.
+      - name: Check documented numeric limits
+        if: needs.changes.outputs.code != 'true'
+        run: node scripts/verify/rea-numeric-limits.mjs
       - run: npm run docs:check
       - name: Verify published routes, source links and local anchors
         run: npm run verify:docs:routes
