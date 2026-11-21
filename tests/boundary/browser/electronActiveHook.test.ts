@@ -856,66 +856,58 @@ process.stdout.write(JSON.stringify({
   expect(hooked).toEqual(plain);
 });
 
-it("keeps a replacement registered by a removeListener observer during ipcMain removeAllListeners", async () => {
-  const root = await createTestTempDirectory("rea-electron-hook-ipc-replace-");
-  await writeElectronFixture(root);
-  const script = join(root, "ipc-replacement.cjs");
-  await writeFile(
-    script,
-    `const { ipcMain } = require("electron");
-const { EventEmitter } = require("node:events");
-const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
-const scenario = (emitter) => {
-  const log = [];
+it("keeps native bulk traversal when removal observers append or prepend listeners", async () => {
+  const result = await runIpcHookFixture(`const scenario = (emitter, mode) => {
+  const events = [];
   const names = new Map();
   const named = (name) => {
-    const listener = () => { log.push("call:" + name); };
+    const listener = () => { events.push("call:" + name); };
     names.set(listener, name);
     return listener;
   };
-  // A wrapper is labelled by the listener its .listener names.
   const label = (listener) =>
     names.get(listener) ??
     (names.has(listener.listener) ? "wrapper(" + names.get(listener.listener) + ")" : "unknown");
   const [a, b, c, replacement] = ["a", "b", "c", "replacement"].map(named);
-  let replaced = false;
+  let inserted = false;
   emitter.on("removeListener", (channel, listener) => {
-    if (channel !== "ch") return;
-    log.push("remove:" + label(listener));
-    if (replaced) return;
-    replaced = true;
-    emitter.on("ch", replacement);
+    if (channel !== mode) return;
+    events.push("remove:" + label(listener));
+    if (inserted) return;
+    inserted = true;
+    emitter[mode === "append" ? "on" : "prependListener"](mode, replacement);
   });
-  emitter.on("ch", a);
-  emitter.once("ch", b);
-  emitter.on("ch", c);
-  const returned = emitter.removeAllListeners("ch");
-  log.push("returns_emitter:" + (returned === emitter));
-  log.push("listeners:" + emitter.listeners("ch").map(label).join(","));
-  emitter.emit("ch", event);
+  emitter.on(mode, a);
+  emitter[mode === "append" ? "once" : "on"](mode, b);
+  emitter.on(mode, c);
+  events.push("returns_emitter:" + (emitter.removeAllListeners(mode) === emitter));
+  events.push("listeners:" + emitter.listeners(mode).map(label).join(","));
+  emitter.emit(mode, { sender: { id: 9 }, senderFrame: { routingId: 7 } });
   emitter.removeAllListeners();
-  log.push("cleared:" + emitter.listenerCount("ch") + ":" + emitter.listenerCount("removeListener"));
-  return log;
+  events.push("cleared:" + emitter.listenerCount(mode) + ":" + emitter.listenerCount("removeListener"));
+  return events;
 };
-const plain = scenario(new EventEmitter());
-const hooked = scenario(ipcMain);
+const rows = ["append", "prepend"].map(mode => ({
+  mode, plain: scenario(new EventEmitter(), mode), hooked: scenario(ipcMain, mode),
+}));
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-process.stdout.write(JSON.stringify({
-  plain,
-  hooked,
-  // The hooked removeListener observer records its own invocations.
-  invocations: snapshot.events.filter((item) => item.kind === "main-event-invocation" && item.channel === "ch").map((item) => item.channel),
-}) + "\\n");
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const { plain, hooked, invocations } = JSON.parse(execution.stdout) as {
-    plain: string[];
-    hooked: string[];
+console.log(JSON.stringify({ rows,
+  invocations: snapshot.events.filter(event =>
+    event.kind === "main-event-invocation" && event.channel !== "removeListener"
+  ).map(event => event.channel),
+}));
+`);
+  const { rows, invocations } = result as {
+    rows: { mode: string; plain: string[]; hooked: string[] }[];
     invocations: string[];
   };
-  expect(plain).toEqual([
+  expect(rows.map(({ mode }) => mode)).toEqual(["append", "prepend"]);
+  for (const { mode, plain, hooked } of rows) {
+    expect(hooked, mode).toEqual(plain);
+    expect(plain[0], mode).toBe("remove:c");
+    expect(plain.at(-1), mode).toBe("cleared:0:0");
+  }
+  expect(rows[0]?.plain).toEqual([
     "remove:c",
     "remove:wrapper(b)",
     "remove:a",
@@ -925,8 +917,7 @@ process.stdout.write(JSON.stringify({
     "remove:replacement",
     "cleared:0:0",
   ]);
-  expect(hooked).toEqual(plain);
-  expect(invocations).toEqual(["ch"]);
+  expect(invocations).toEqual(["append", "prepend"]);
 });
 
 it("does not infer hook dispatch from an application's listener metadata", async () => {
@@ -1843,51 +1834,6 @@ const scenario = async (emitter, observed) => {
     arity: 2,
     failure: null,
   });
-  expect(hooked).toEqual(plain);
-});
-
-it("keeps native removal traversal when an ipcMain observer prepends a listener", async () => {
-  const root = await createTestTempDirectory("rea-electron-hook-ipc-prepend-");
-  await writeElectronFixture(root);
-  const script = join(root, "ipc-prepend-during-removal.cjs");
-  await writeFile(
-    script,
-    `const { ipcMain } = require("electron");
-const { EventEmitter } = require("node:events");
-const scenario = (emitter) => {
-  const calls = [];
-  const removed = [];
-  const a = () => calls.push("a");
-  const b = () => calls.push("b");
-  const c = () => calls.push("c");
-  const replacement = () => calls.push("replacement");
-  const names = new Map([[a, "a"], [b, "b"], [c, "c"], [replacement, "replacement"]]);
-  let inserted = false;
-  emitter.on("removeListener", (channel, listener) => {
-    if (channel !== "ch") return;
-    removed.push(names.get(listener) ?? "unknown");
-    if (!inserted) {
-      inserted = true;
-      emitter.prependListener("ch", replacement);
-    }
-  });
-  emitter.on("ch", a);
-  emitter.on("ch", b);
-  emitter.on("ch", c);
-  emitter.removeAllListeners("ch");
-  const remaining = emitter.listeners("ch").map((listener) => names.get(listener));
-  emitter.emit("ch", { sender: { id: 9 } });
-  return { removed, remaining, calls };
-};
-process.stdout.write(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }) + "\\n");
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const { plain, hooked } = JSON.parse(execution.stdout) as {
-    plain: Record<string, unknown>;
-    hooked: Record<string, unknown>;
-  };
   expect(hooked).toEqual(plain);
 });
 
