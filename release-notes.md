@@ -199,6 +199,7 @@
 * **cutter:** isolate verifier platform checks ([#12939](https://github.com/morluto/rea/issues/12939)) ([50d6f37](https://github.com/morluto/rea/commit/50d6f37393ee74ede18aa6d68b884a914653a2a4))
 * **cutter:** keep session discovery proof at the public boundary ([#12824](https://github.com/morluto/rea/issues/12824)) ([43f884b](https://github.com/morluto/rea/commit/43f884bbfb0b2e374eb9658c9305bf2589bec17d))
 * **cutter:** remove injected discovery replay ([43f884b](https://github.com/morluto/rea/commit/43f884bbfb0b2e374eb9658c9305bf2589bec17d))
+* **cutter:** use account home for default bridge assertions ([#12728](https://github.com/morluto/rea/issues/12728)) ([44e8e72](https://github.com/morluto/rea/commit/44e8e72db12a3787b02b8216bb3a1dd69dd668e2))
 * **cutter:** use shared verifier deadlines ([#12943](https://github.com/morluto/rea/issues/12943)) ([bb48a7b](https://github.com/morluto/rea/commit/bb48a7b3f8af177d6849c1dfd496b76220a2a561))
 * **debugger:** consolidate runtime setting recovery coverage ([#13042](https://github.com/morluto/rea/issues/13042)) ([67f8094](https://github.com/morluto/rea/commit/67f8094efaa220b354f032d607b56f3126950bf2))
 * **debugger:** consolidate startup descriptor ownership checks ([#13028](https://github.com/morluto/rea/issues/13028)) ([fb873fe](https://github.com/morluto/rea/commit/fb873feaeb928c692ee074784846a9f41c1d3b79))
