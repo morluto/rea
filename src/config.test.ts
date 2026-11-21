@@ -176,6 +176,18 @@ describe("runtime configuration", () => {
       },
     ]);
   });
+  it("preserves a selected tools/list page budget for deferred startup", () => {
+    const selected = parseConfig({ REA_MCP_TOOLS_LIST_PAGE_BYTES: "524288" });
+    if (!selected.ok) throw selected.error;
+    expect(selected.value.mcpToolsListPageBudget).toMatchObject({
+      setting: "REA_MCP_TOOLS_LIST_PAGE_BYTES",
+      bytes: 524288,
+      source: "setting",
+    });
+    const empty = parseConfig({});
+    if (!empty.ok) throw empty.error;
+    expect(empty.value.mcpToolsListPageBudget).toBeUndefined();
+  });
   it("allows target-free startup and applies runtime defaults", () => {
     const empty = parseConfig({});
     expect(empty.ok).toBe(true);

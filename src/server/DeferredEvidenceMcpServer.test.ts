@@ -5,6 +5,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
 import { DeferredEvidenceMcpServer } from "./DeferredEvidenceMcpServer.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  parseMcpToolsListPageBudget,
+  type McpToolsListPageBudget,
+} from "../config/mcpToolsListPageBudget.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
 import {
@@ -79,6 +84,7 @@ const fixture = async (
     readonly invalidOutput?: boolean;
     readonly failAfterTool?: boolean;
     readonly maximumInputElements?: number;
+    readonly toolsListPageBudget?: McpToolsListPageBudget;
     readonly evidenceReferenceAlternative?: boolean;
     readonly progressive?: boolean;
     readonly unionOutput?: boolean;
@@ -154,7 +160,10 @@ const fixture = async (
         );
       });
     },
-    { maximumInputElements: options.maximumInputElements },
+    {
+      maximumInputElements: options.maximumInputElements,
+      toolsListPageBudget: options.toolsListPageBudget,
+    },
   );
   const client = new Client(
     { name: "deferred-fixture-client", version: "1" },
@@ -219,6 +228,18 @@ it("loads cold definitions without initializing analysis and preserves canonical
   expect(
     (await independent.client.listTools()).tools.map(({ name }) => name),
   ).toEqual(["discover_tools"]);
+});
+
+it("honors a selected tools/list page budget instead of the default", async () => {
+  const parsed = parseMcpToolsListPageBudget("524288");
+  if (!parsed.ok) throw parsed.error;
+  const selected = await fixture({ toolsListPageBudget: parsed.value });
+  expect(selected.server.toolsListPageBudget.bytes).toBe(524288);
+  expect(selected.server.toolsListPageBudget.source).toBe("setting");
+  const baseline = await fixture();
+  expect(baseline.server.toolsListPageBudget).toEqual(
+    DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  );
 });
 
 it("refuses excess input before loading a deferred runtime, then admits a valid call", async () => {

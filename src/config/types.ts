@@ -6,6 +6,7 @@ import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
 import type { GhidraLanguageOverride } from "./ghidraLanguageOverride.js";
 import type { McpToolCatalogProfile } from "./mcpToolCatalogProfile.js";
+import type { McpToolsListPageBudget } from "./mcpToolsListPageBudget.js";
 import type { BridgeMaxRequestBytes } from "./bridgeMaxRequestBytes.js";
 import type { BridgeMaxReplyBytes } from "./bridgeMaxReplyBytes.js";
 import type { RegexMatchingDeadline } from "./regexMatchingDeadline.js";
@@ -19,6 +20,8 @@ export interface AppConfig {
   readonly mcpToolFamilies?: readonly McpToolFamilies[number][];
   readonly mcpMaxResponseBytes?: number;
   readonly mcpMaxInputElements?: number;
+  /** Selected tools/list page budget; absent keeps the default page. */
+  readonly mcpToolsListPageBudget?: McpToolsListPageBudget;
   readonly mcpOutputSchemaProfile?: McpOutputSchemaProfile;
   readonly mcpToolCatalogProfile?: McpToolCatalogProfile;
   readonly analysisProvider: AnalysisProviderSelector;
