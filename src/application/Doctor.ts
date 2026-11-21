@@ -28,7 +28,10 @@ import {
   type NativeAnalysisConfigurationInspection,
 } from "../config/parseConfig.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
-import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import {
+  omitEnvironmentSettings,
+  snapshotEnvironment,
+} from "../process/snapshotEnvironment.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
@@ -666,11 +669,12 @@ export interface RetainedProviderRequestBudgetResolver {
     signal: AbortSignal,
   ): ReturnType<ProviderRequestBudgetResolver>;
   /** Environment settings this resolver may read; see the base contract. */
-  readonly budgetSettings?: ReadonlySet<string>;
+  readonly budgetSettings?: ProviderRequestBudgetResolver["budgetSettings"];
 }
 
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
+  readonly savedDefaults?: ReadonlySet<string> | undefined;
   readonly signal?: AbortSignal;
   readonly platform?: NodeJS.Platform;
   readonly architecture?: NodeJS.Architecture;
@@ -1011,7 +1015,10 @@ export const systemDoctorHost = (
             ? {}
             : {
                 providerSettings: registrationSpelledSettings(
-                  providerSettings,
+                  omitEnvironmentSettings(
+                    providerSettings,
+                    options.savedDefaults,
+                  ),
                   environment,
                 ),
               }),

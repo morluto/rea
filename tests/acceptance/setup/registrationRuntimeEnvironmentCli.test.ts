@@ -9,6 +9,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 import { Scalar, stringify } from "yaml";
+import { z } from "zod";
 
 import {
   effectiveClientServer,
@@ -787,6 +788,198 @@ cliTest(
         ]),
       },
     });
+  },
+);
+
+cliTest(
+  "Harness resolves only the home settings needed for its IDA budget",
+  async ({ cli }) => {
+    const cordis = join(home, ".dsh", "cordis.patch.yml");
+    await mkdir(dirname(cordis), { recursive: true });
+    const idaConfig = join(home, "ida.json");
+    await writeFile(
+      idaConfig,
+      JSON.stringify({
+        url: "http://127.0.0.1:12345/mcp",
+        protocol: "native",
+        timeoutMs: 900_000,
+      }),
+    );
+    const homeSetting = process.platform === "win32" ? "USERPROFILE" : "HOME";
+    const expression = `${homeSetting}: !!js process.env.${homeSetting}`;
+    const registration = (lookup: string = "") => `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: rea
+        args: [mcp]
+        env:
+          REA_ANALYSIS_PROVIDER: ida
+          ${expression}
+${lookup}`;
+    const run = (arguments_: string[]) =>
+      cli.run({
+        arguments: [
+          ...arguments_,
+          "--client",
+          "dsh",
+          "--skill=false",
+          "--json",
+        ],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          XDG_CONFIG_HOME: undefined,
+          DSH_HOME: dirname(cordis),
+          ...missingHopperAndGhidraEnvironment(home),
+        },
+        freshProcess: true,
+      });
+    const configRoot = join(home, "rea-settings");
+    const config = join(configRoot, "rea", "rea.json");
+    await mkdir(dirname(config), { recursive: true });
+    await writeFile(config, JSON.stringify({ REA_IDA_MCP_CONFIG: idaConfig }));
+    for (const setting of [
+      `REA_IDA_MCP_CONFIG: ${JSON.stringify(idaConfig)}`,
+      `XDG_CONFIG_HOME: ${JSON.stringify(configRoot)}`,
+    ]) {
+      await writeFile(cordis, registration(`          ${setting}\n`));
+      const setup = await run(["setup", "--yes"]);
+      expect(setup.exitCode, setup.stdout).toBe(0);
+      const configured = await readFile(cordis, "utf8");
+      expect(configured).toContain(expression);
+      expect(configured).toContain("toolCallTimeoutMs: 1020000");
+      const doctor = await run(["doctor"]);
+      expect(doctor.exitCode, doctor.stdout).toBe(0);
+      expect(doctor.json).toMatchObject({
+        identity: { registrations: [{ client: "dsh", state: "aligned" }] },
+      });
+    }
+
+    // With no explicit IDA file or config root, the saved lookup needs the home setting.
+    const unknown = registration();
+    await writeFile(cordis, unknown);
+    const blocked = await run(["doctor"]);
+    expect(blocked.exitCode).toBe(1);
+    expect(blocked.json).toMatchObject({
+      identity: {
+        registrations: [
+          {
+            client: "dsh",
+            state: "invalid",
+            remediation: expect.stringContaining("expression-backed settings"),
+          },
+        ],
+      },
+    });
+    const refused = await run(["setup", "--yes"]);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      remediation: expect.stringContaining(homeSetting),
+    });
+    expect(await readFile(cordis, "utf8")).toBe(unknown);
+  },
+);
+
+cliTest(
+  "setup budgets for saved IDA settings and gives the registered server its config locator",
+  async ({ cli, processes }) => {
+    const configHome = join(home, "selected-config");
+    const codexHome = join(home, ".codex");
+    const idaConfig = join(home, "ida.json");
+    const savedConfig = join(configHome, "rea", "rea.json");
+    await mkdir(dirname(savedConfig), { recursive: true });
+    await mkdir(codexHome, { recursive: true });
+    const saveIdaSetting = async (file: string, timeoutMs: number) => {
+      await writeFile(
+        file,
+        JSON.stringify({
+          url: "http://127.0.0.1:12345/mcp",
+          protocol: "native",
+          timeoutMs,
+        }),
+      );
+      await writeFile(
+        savedConfig,
+        JSON.stringify({ REA_IDA_MCP_CONFIG: file }),
+      );
+    };
+    await saveIdaSetting(idaConfig, 900_000);
+    const run = (arguments_: string[], configRoot: string | undefined) =>
+      cli.run({
+        arguments: [
+          ...arguments_,
+          "--client",
+          "codex",
+          "--skill=false",
+          "--json",
+        ],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          CODEX_HOME: codexHome,
+          XDG_CONFIG_HOME: configRoot,
+          ...missingHopperAndGhidraEnvironment(home),
+        },
+        freshProcess: true,
+      });
+    const setup = await run(["setup", "--yes"], configHome);
+    expect(setup.exitCode, setup.stdout).toBe(0);
+    const registration = effectiveClientServer(
+      parseClientConfiguration(
+        await readFile(join(codexHome, "config.toml"), "utf8"),
+        "toml",
+      ),
+      "rea",
+    );
+    expect.soft(registration).toMatchObject({
+      tool_timeout_sec: 1020,
+      env: { XDG_CONFIG_HOME: configHome },
+    });
+    const launcher = z
+      .object({
+        command: z.string(),
+        args: z.array(z.string()),
+        env: z.record(z.string(), z.string()),
+      })
+      .parse(registration);
+    expect(launcher.env).not.toHaveProperty("REA_IDA_MCP_CONFIG");
+
+    // Doctor can derive the new budget from the registered locator alone.
+    await saveIdaSetting(join(home, "replacement-ida.json"), 1_200_000);
+    const doctor = await run(["doctor"], undefined);
+    expect(doctor.exitCode, doctor.stdout).toBe(0);
+    expect(doctor.json).toMatchObject({
+      identity: {
+        registrations: [
+          expect.objectContaining({
+            client: "codex",
+            state: "aligned",
+            advisory: expect.stringContaining(
+              "tool_timeout_sec = 1320 seconds",
+            ),
+          }),
+        ],
+      },
+    });
+
+    // MCP rereads the file even when the client did not inherit setup's XDG.
+    await writeFile(savedConfig, "{");
+    const start = await processes.run(launcher.command, launcher.args, {
+      cwd: home,
+      env: {
+        HOME: home,
+        USERPROFILE: home,
+        PATH: process.env.PATH,
+        ...launcher.env,
+      },
+    });
+    expect(start.exitCode).toBe(1);
+    expect(start.stderr).toContain(savedConfig);
   },
 );
 

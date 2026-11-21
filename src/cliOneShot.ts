@@ -13,6 +13,8 @@ import {
   renderEmptyFilteredCliOutput,
   renderVersionReport,
 } from "./cliOutput.js";
+import { HOST_PLATFORM } from "./platform/HostPlatform.js";
+import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 import type { VersionReportHost } from "./domain/versionReport.js";
 
 /**
@@ -22,6 +24,7 @@ import type { VersionReportHost } from "./domain/versionReport.js";
  */
 export interface OneShotCliHost {
   readonly environment: NodeJS.ProcessEnv;
+  readonly persistentUserConfig?: true;
   readonly runtime: VersionReportHost;
   readonly stdoutIsTerminal: boolean;
   /** Destination for result documents the command streams itself. */
@@ -122,9 +125,41 @@ export const runOneShotCli = async (
     return;
   }
 
+  let environment = host.environment;
+  let savedDefaults: ReadonlySet<string> | undefined;
+  if (
+    host.persistentUserConfig === true &&
+    global !== undefined &&
+    global.command[0] !== "config" &&
+    !global.flags.has("--help") &&
+    !global.flags.has("-h") &&
+    !global.flags.has("--version") &&
+    !global.flags.has("-v")
+  ) {
+    const { loadUserConfiguration } = await import("./config/userConfig.js");
+    const configuration = await loadUserConfiguration(
+      snapshotEnvironment(environment, HOST_PLATFORM.platform),
+    );
+    if (!configuration.ok) {
+      const format = outputOptions.format;
+      if (format === "json" || format === "jsonl" || format === "yaml")
+        host.writeStdout(
+          renderCliOutputArgumentError({
+            format,
+            code: "CONFIGURATION_INVALID",
+            message: configuration.error.message,
+          }),
+        );
+      else host.writeStderr(`${configuration.error.message}\n`);
+      host.setExitCode(1);
+      return;
+    }
+    ({ environment, savedDefaults } = configuration.value);
+  }
+
   // Loaded only now: the documents above answer without the command catalog.
   const { loadCliRuntime } = await import("./cli/cliLoader.js");
-  const runtime = await loadCliRuntime(global, host.environment);
+  const runtime = await loadCliRuntime(global, environment, savedDefaults);
   host.ownCliResources(runtime.closeCliResources);
   const { createCliResultOutput, cliOutputCancellationStatus } =
     await import("./cli/cliResultOutput.js");
