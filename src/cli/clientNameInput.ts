@@ -39,7 +39,9 @@ const unknownClientMessage = (
   candidates: readonly string[],
 ): string | undefined => {
   if (typeof input !== "string") return undefined;
-  const suggestion = suggestCommand(normalizedClientName(input), candidates);
+  const key = normalizedClientName(input);
+  // An empty key is a prefix of every id, so ranking would name an arbitrary one.
+  const suggestion = key === "" ? undefined : suggestCommand(key, candidates);
   return suggestion === undefined
     ? `Unknown client '${input}'. Supported clients: ${candidates.join(", ")}.`
     : `Unknown client '${input}'. Did you mean '${suggestion}'?`;

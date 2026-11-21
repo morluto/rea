@@ -74,4 +74,17 @@ describe("client option schemas", () => {
       /^Unknown client 'zzzz'\. Supported clients: shared, claude_code, /u,
     );
   });
+
+  it.each(["", "   ", "\t"])(
+    "lists the supported clients instead of a suggestion for %j",
+    (input) => {
+      const [issue] = failure({ client: [input] });
+      expect(issue?.path).toEqual(["client", 0]);
+      expect(issue?.message).not.toContain("Did you mean");
+      expect(issue?.message).toMatch(/Supported clients: claude_code, /u);
+      const [skill] = failure({ skillClient: [input] });
+      expect(skill?.message).not.toContain("Did you mean");
+      expect(skill?.message).toMatch(/Supported clients: shared, /u);
+    },
+  );
 });
