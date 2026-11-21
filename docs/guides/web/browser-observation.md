@@ -99,9 +99,10 @@ evidence, and inventory coverage separate:
 Storage fingerprints decode supported CDP primitive/JSON values before hashing.
 Debugger descriptions, previews, and remote references do not represent storage
 content. Actual JSON properties with those names remain content. Reference-only
-objects, unsupported values, and opaque cookie partition identities remain
-incomplete. Previously exported fingerprints are not recomputed; recapture both
-sides when comparing captures produced across this decoder change.
+objects, unsupported values, and opaque or unreadable cookie partition
+identities remain incomplete. Previously exported fingerprints are not
+recomputed; recapture both sides when comparing captures produced across this
+decoder change.
 IndexedDB schema fingerprints carry `projection_version: 2` and include the
 observed database version and object-store definitions. A missing, malformed, or
 imprecise version leaves the schema fingerprint incomplete while retaining
