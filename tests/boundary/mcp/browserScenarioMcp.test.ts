@@ -354,6 +354,28 @@ describe("browser scenario MCP tool", () => {
   });
 });
 
+const openScenarioMcp = async (
+  provider: BrowserScenarioCapturePort,
+  name: string,
+) => {
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(ok(null)),
+  }));
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name, version: "1" },
+    serverOptions: {
+      browserScenarioCapture: provider,
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+      }),
+    },
+  });
+  return { client, session };
+};
+
 test("records a completed late-close cancellation as server Evidence", async () => {
   const provider: BrowserScenarioCapturePort = {
     identity: () => providerIdentity,
@@ -366,21 +388,10 @@ test("records a completed late-close cancellation as server Evidence", async () 
       );
     },
   };
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(ok(null)),
-  }));
-  const { client } = await createApplicationMcpHarness({
-    session,
-    clientIdentity: { name: "scenario-late-close", version: "1" },
-    serverOptions: {
-      browserScenarioCapture: provider,
-      availabilityPolicy: () => ({
-        processCaptureEnabled: false,
-        investigationInputRoots: 0,
-      }),
-    },
-  });
+  const { client, session } = await openScenarioMcp(
+    provider,
+    "scenario-late-close",
+  );
   const response = await client.callTool({
     name: "capture_browser_scenario",
     arguments: minimalScenario(),
@@ -411,23 +422,12 @@ test("records a completed late-close cancellation as server Evidence", async () 
   await expect(client.ping()).resolves.toEqual({});
 });
 
-test("delivers a retained summary and pages its exact steps and events", async () => {
+test("delivers a retained summary and pages its exact steps", async () => {
   const provider = new FakeBrowserScenarioProvider();
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(ok(null)),
-  }));
-  const { client } = await createApplicationMcpHarness({
-    session,
-    clientIdentity: { name: "scenario-summary", version: "1" },
-    serverOptions: {
-      browserScenarioCapture: provider,
-      availabilityPolicy: () => ({
-        processCaptureEnabled: false,
-        investigationInputRoots: 0,
-      }),
-    },
-  });
+  const { client, session } = await openScenarioMcp(
+    provider,
+    "scenario-summary",
+  );
   const tools = (await client.listTools()).tools;
   const advertised = tools.find(
     ({ name }) => name === "capture_browser_scenario",

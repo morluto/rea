@@ -106,6 +106,9 @@ cliTest(
       const evidence = parseEvidence(output.json);
       const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
       expect(capture.total_records).toBe(redirects.length);
+      expect(capture.records.map(({ ordinal }) => ordinal)).toEqual([
+        0, 1, 2, 3,
+      ]);
       for (const [
         ordinal,
         { retained, retainedRedirect },
@@ -121,18 +124,41 @@ cliTest(
             ],
           },
         });
-        if (ordinal < 2)
-          expect(record.redactions).not.toContainEqual({
-            pointer: "/response/headers/0/value",
-            reason: "transport-credential",
-          });
+        const redirectRedactions = record.redactions.filter(
+          ({ pointer }) =>
+            pointer === "/response/headers/0/value" ||
+            pointer === "/response/redirectURL",
+        );
+        expect(redirectRedactions).toEqual(
+          ordinal < 2
+            ? []
+            : [
+                {
+                  pointer: "/response/headers/0/value",
+                  reason: "transport-credential",
+                },
+                ...(format === "har"
+                  ? [
+                      {
+                        pointer: "/response/redirectURL",
+                        reason: "transport-credential",
+                      },
+                    ]
+                  : []),
+              ],
+        );
       }
-      expect(JSON.stringify(capture)).not.toMatch(/source-pass|redirect-pass/u);
+      expect(JSON.stringify(output.json)).not.toMatch(
+        /source-pass|redirect-pass/u,
+      );
       const reply = await call("inspect_web_network_capture", {
         capture_path: path,
         format,
       });
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      expect(JSON.stringify(reply.structuredContent)).not.toMatch(
+        /source-pass|redirect-pass/u,
+      );
       expect(parseEvidence(reply.structuredContent).evidence_id).toBe(
         evidence.evidence_id,
       );

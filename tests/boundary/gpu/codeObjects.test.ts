@@ -1240,6 +1240,16 @@ it.each(["section-names", "symbols"] as const)(
     );
   },
 );
+it.each(["add_one", "kérnel_日本"])(
+  "decodes UTF-8 CUBIN symbol name %s without a name limitation",
+  async (name) => {
+    const result = await inspect(cubinFixture({ name }));
+    if (!result.ok) throw result.error;
+    const [kernel] = result.value.kernels;
+    expect(kernel).toMatchObject({ name, symbol: name });
+    expect(kernel!.limitations.join(" ")).not.toContain("not valid UTF-8");
+  },
+);
 it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
   const bytes = cubinFixture();
   const symbolName = bytes.indexOf(Buffer.from("\0add_one\0"));
@@ -1247,7 +1257,11 @@ it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
   bytes[symbolName + 1] = 0xff;
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
-  expect(result.value.kernels[0]?.name).toBe("ÿdd_one");
+  const [kernel] = result.value.kernels;
+  expect(kernel?.name).toBe("ÿdd_one");
+  expect(kernel!.limitations).toContain(
+    `CUDA kernel symbol name is not valid UTF-8; name shows its bytes as Latin-1 (base64 ${Buffer.from("\xffdd_one", "latin1").toString("base64")})`,
+  );
 });
 
 it.each([9, 10])(

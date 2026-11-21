@@ -1,3 +1,4 @@
+import type { AnalysisDatabaseEngine } from "./analysisDatabase.js";
 import type { DolHeader } from "./gamecubeDol.js";
 import type { TargetFormatsOfKind } from "./targetFormats.js";
 
@@ -318,6 +319,8 @@ export type BinaryTarget =
       NonExecutableMetadata & {
         readonly kind: "database";
         readonly format: "analysis-database";
+        /** Engine identified at admission; null when the database is unidentified. */
+        readonly databaseEngine: AnalysisDatabaseEngine | null;
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {

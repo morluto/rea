@@ -307,14 +307,23 @@ through the public CLI and checks that only caller patches remain. `HOME` and
 `USERPROFILE` point to the disposable account. The native default
 `~/.agents/skills` search path discovers
 the installed skill without a `DSH_AGENTS_HOME` override. A separate Git root prevents inherited project skills from
-masking a missing installation. The default `call` mode checks skill loading,
+masking a missing installation. SIGINT and SIGTERM cancel the active owned
+command and run cleanup before reporting failure. The receipt records the
+interruption and the kept artifacts include any captured headless output.
+The default `call` mode checks skill loading,
 complete catalog discovery, the actual forwarded input schemas and regexes,
 and full JavaScript Evidence for a Unicode path. Use `-- chat` for ordinary
 chat with REA enabled, or `REA_VERIFY_RUNTIME_ROOT` for an installed package.
 The fixture uses Harness's custom OpenAI adapter and the one-million-token
 context capacity declared by its default DeepSeek Flash model; it does not
 establish live DeepSeek API or native Windows coverage. Receipts include
-request artifacts, result digests and owned-process lineage.
+request artifacts, result digests and owned-process lineage. `finalSeen`
+records the model fixture's answer, and `clientFinalSeen` records the exact
+answer in the terminal headless JSON event. A passing receipt also requires
+successful client termination, uninstall, and verifier cleanup.
+
+Passing native verifier receipts require verified lineage with no live
+descendants.
 
 The DSH acceptance journey also exercises public setup, approval, doctor,
 generated-launcher MCP startup and uninstall without an installed Harness.
