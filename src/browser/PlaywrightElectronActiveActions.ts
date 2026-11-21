@@ -89,9 +89,11 @@ export const runElectronActions = async (
 ): Promise<{
   readonly actions: ElectronActions;
   readonly cleanupError?: AnalysisError;
+  readonly actionCancellation?: AnalysisError;
 }> => {
   const actions: ElectronActions = [];
   let cleanupError: AnalysisError | undefined;
+  let actionCancellation: AnalysisError | undefined;
   let stoppedBy: ScenarioActionStop | undefined;
   for (const action of input.actions) {
     const actionStartedAt = performance.now();
@@ -115,7 +117,7 @@ export const runElectronActions = async (
     let actionError: string | null = null;
     try {
       if (options.signal?.aborted === true)
-        throw new BrowserObservationError(OPERATION, "cancelled");
+        throw cancelledBy(OPERATION, options.signal);
       selectedWindow =
         windowIndex === null
           ? undefined
@@ -156,11 +158,12 @@ export const runElectronActions = async (
         options,
       });
     } catch (cause: unknown) {
-      stoppedBy =
+      if (
         cause instanceof AnalysisCancelledError ||
         (cause instanceof AnalysisError && cause.userCategory === "cancelled")
-          ? "cancelled"
-          : "failed";
+      )
+        actionCancellation = cause;
+      stoppedBy = actionCancellation === undefined ? "failed" : "cancelled";
       actionError = describeValidationFailure(cause);
     }
     const actionRecord = {
@@ -189,7 +192,11 @@ export const runElectronActions = async (
       if (cleanupError !== undefined) stoppedBy = "failed";
     }
   }
-  return { actions, ...(cleanupError === undefined ? {} : { cleanupError }) };
+  return {
+    actions,
+    ...(cleanupError === undefined ? {} : { cleanupError }),
+    ...(actionCancellation === undefined ? {} : { actionCancellation }),
+  };
 };
 
 const ownActionWindow = (
@@ -353,8 +360,7 @@ const waitForWindow = async ({
   signal,
 }: WaitForWindowContext): Promise<Page> => {
   while (true) {
-    if (signal?.aborted === true)
-      throw new BrowserObservationError(OPERATION, "cancelled");
+    if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
     const window = application.windows()[windowIndex];
     if (window !== undefined) return window;
     await runWithExecutionLimits(

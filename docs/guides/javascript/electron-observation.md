@@ -204,7 +204,9 @@ never appears, or a `wait` without `window_index` in an app that opens no
 window, remains pending until cancelled. After cancellation, the final state
 read has 5 seconds before REA keeps the initial snapshot instead; the
 cancellation keeps the caller's reason and records that expiry in its
-diagnostics.
+diagnostics. When the caller interrupted an action and the final Inspector read
+fails, REA reports the cancellation with the initial snapshot, the action
+records, and the Inspector failure as a secondary diagnostic.
 The shell policy is owned by `blockedShellResults` in
 `scripts/electron-active-hook-boundaries.cjs`. Its synchronous blocks are:
 `showItemInFolder` returns `undefined` and `writeShortcutLink` returns `false`.
