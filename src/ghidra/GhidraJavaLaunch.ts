@@ -2,6 +2,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { dirname } from "node:path";
+import { resolveWindowsPathJava } from "./GhidraJavaPathResolution.js";
 import {
   type ArtifactResourceScope,
   ArtifactReaderFailure,
@@ -80,16 +81,46 @@ export const ghidraJavaLaunch = async (options: {
   const supportRoot = dirname(options.analyzeHeadlessPath);
   const installRoot = dirname(supportRoot);
   const selectedJavaHome = options.javaHome ?? options.environment.JAVA_HOME;
-  const command =
-    selectedJavaHome === undefined
-      ? options.platform === "win32"
-        ? "java.exe"
-        : "java"
-      : appendCallerPath(
-          selectedJavaHome,
-          `bin/${options.platform === "win32" ? "java.exe" : "java"}`,
-          options.platform,
-        );
+  // The Windows owned-process launcher requires absolute executable paths and
+  // does not resolve bare names against PATH. The documented remediation says
+  // a "JDK on PATH" is enough, so resolve the bare java command explicitly
+  // instead of handing "java.exe" to the launcher and failing with
+  // ERR_REA_WINDOWS_NATIVE (Win32 87).
+  const resolvePathCommand = (command: string): string | undefined => {
+    if (options.platform !== "win32") {
+      return command;
+    }
+    return resolveWindowsPathJava(options.environment);
+  };
+  const command = (() => {
+    if (selectedJavaHome !== undefined) {
+      return appendCallerPath(
+        selectedJavaHome,
+        `bin/${options.platform === "win32" ? "java.exe" : "java"}`,
+        options.platform,
+      );
+    }
+    const bare = options.platform === "win32" ? "java.exe" : "java";
+    if (options.platform === "win32") {
+      const resolved = resolvePathCommand(bare);
+      if (resolved !== undefined) return resolved;
+      // An already-aborted caller must observe its cancellation, not an
+      // admission failure that hides it.
+      if (options.signal?.aborted) return bare;
+      // Falling back to the bare name here would reproduce the original
+      // unactionable Win32 87 launcher failure; report the search outcome
+      // instead so the caller can extend Path or set JAVA_HOME.
+      const searched =
+        snapshotEnvironment(options.environment, "win32").PATH ?? "";
+      throw new GhidraAdmissionError("java_command_unresolved", {
+        check: "path",
+        ...(searched.length <= 1024
+          ? { path: searched }
+          : { path: searched.slice(0, 1024), path_truncated: 1 }),
+      });
+    }
+    return bare;
+  })();
   const isolatedProperties = [
     `-Duser.home=${options.homeRoot}`,
     `-Djava.io.tmpdir=${options.tempRoot}`,

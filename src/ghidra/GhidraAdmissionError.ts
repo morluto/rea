@@ -21,6 +21,7 @@ const GHIDRA_ADMISSION_CODES = [
   "raw_binary_dos",
   "invalid_environment_entry",
   "invalid_jvm_argument",
+  "java_command_unresolved",
   "unterminated_quote",
   "platform_override",
   "argument_files_exceed_bound",

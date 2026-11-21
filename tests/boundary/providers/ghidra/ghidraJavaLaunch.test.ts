@@ -1049,3 +1049,180 @@ it("does not infer helper cancellation from an arbitrary failure's display code"
     stderr: "err",
   });
 });
+
+describe("windows java resolution without JAVA_HOME", () => {
+  const makeJavaDir = async (label: string) => {
+    const root = await createTestTempDirectory(`rea-ghidra-${label}-`);
+    onTestFinished(() => undefined);
+    const javaDir = join(root, "jdk", "bin");
+    await mkdir(javaDir, { recursive: true });
+    await writeFile(join(javaDir, "java.exe"), "MZ dummy");
+    return { root, javaDir };
+  };
+
+  // The win32 platform option makes appendCallerPath join with backslashes, and
+  // windowsPathCandidates resolves PATH entries with win32 semantics (adding a
+  // drive letter to a host-absolute fixture path), so translate both back to
+  // the host's spelling before touching the real filesystem. Host fixture
+  // directories never contain literal backslashes or drive letters, and Windows
+  // accepts forward slashes, so the translation is safe on both.
+  const hostPath = (candidate: string) =>
+    process.platform === "win32"
+      ? candidate
+      : candidate.replace(/^[A-Za-z]:/u, "").replaceAll("\\", "/");
+  const inspectionHost = {
+    readText: (path: string) => readFile(hostPath(path), "utf8"),
+    executable: (path: string) =>
+      existsSync(hostPath(path)) && statSync(hostPath(path)).isFile(),
+    probeJava: async (command: string) => {
+      observedProbeCommands.push(command);
+      return javaProbeOk({
+        version: `${SUPPORTED_GHIDRA_JAVA_MAJOR}.0.1`,
+        major: SUPPORTED_GHIDRA_JAVA_MAJOR,
+        home: command,
+        bits: 64,
+        runtime: "jdk",
+        osArch: "amd64",
+        osName: "Windows 11",
+      } satisfies GhidraJavaObservation);
+    },
+  };
+
+  let observedProbeCommands: string[] = [];
+
+  const buildWin32Installation = async (root: string) => {
+    const intended = join(root, "ghidra");
+    for (const directory of [
+      "bin",
+      "support",
+      "Ghidra/Framework/Utility/lib",
+      "Ghidra/Features/Decompiler/os/win_x86_64",
+    ])
+      await mkdir(join(intended, directory), { recursive: true });
+    await writeFile(
+      join(intended, "Ghidra/application.properties"),
+      `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${SUPPORTED_GHIDRA_JAVA_MAJOR}\n`,
+    );
+    for (const file of [
+      "support/analyzeHeadless.bat",
+      "support/LaunchSupport.jar",
+      "Ghidra/Framework/Utility/lib/Utility.jar",
+      "Ghidra/Features/Decompiler/os/win_x86_64/decompile.exe",
+    ])
+      await writeFile(join(intended, file), "selected");
+    return intended;
+  };
+
+  it("resolves java.exe through installation inspection when only Path carries it", async () => {
+    observedProbeCommands = [];
+    const { root, javaDir } = await makeJavaDir("inspection-path");
+    const intended = await buildWin32Installation(root);
+    const resources = createInspectionResources();
+    onTestFinished(() => resources.close());
+    const inspected = await inspectGhidraInstallation(
+      {
+        installDir: intended,
+        // Quoted first entry exercises the unwrapping; the resolver must
+        // select it because it holds the only java.exe.
+        environment: { Path: `"${javaDir}"` },
+        platform: "win32",
+        architecture: "x64",
+        resourceOwner: resources.owner,
+      },
+      inspectionHost,
+    );
+    expect(observedProbeCommands.map(hostPath)).toEqual([
+      join(javaDir, "java.exe"),
+    ]);
+    expect(inspected.status).toBe("available");
+    if (inspected.status !== "available")
+      throw new Error("Expected selected installation");
+    expect(hostPath(inspected.javaCommand)).toBe(join(javaDir, "java.exe"));
+  });
+
+  it("keeps the bare probe command when java.exe is absent from Path", async () => {
+    observedProbeCommands = [];
+    const { root } = await makeJavaDir("inspection-missing");
+    const intended = await buildWin32Installation(root);
+    const resources = createInspectionResources();
+    onTestFinished(() => resources.close());
+    await inspectGhidraInstallation(
+      {
+        installDir: intended,
+        environment: { Path: String.raw`C:\nowhere` },
+        platform: "win32",
+        architecture: "x64",
+        resourceOwner: resources.owner,
+      },
+      {
+        ...inspectionHost,
+        executable: () => false,
+      },
+    );
+    expect(observedProbeCommands).toEqual(["java.exe"]);
+  });
+
+  it("resolves quoted and absolute entries in the shared resolver", async () => {
+    const { resolveWindowsPathJava } =
+      await import("../../../../src/ghidra/GhidraJavaPathResolution.js");
+    const { javaDir } = await makeJavaDir("resolver");
+    const resolved = resolveWindowsPathJava(
+      { Path: String.raw`C:\not-real;"${javaDir}"` },
+      inspectionHost.executable,
+    );
+    expect(resolved === undefined ? undefined : hostPath(resolved)).toBe(
+      join(javaDir, "java.exe"),
+    );
+    // Relative entries are never selected, matching the darwin policy.
+    const relative = resolveWindowsPathJava(
+      { Path: String.raw`relativejdk\bin` },
+      () => true,
+    );
+    expect(relative).toBeUndefined();
+    // Environment names match without case.
+    const fromLowercase = resolveWindowsPathJava(
+      { path: `${javaDir};` },
+      inspectionHost.executable,
+    );
+    expect(
+      fromLowercase === undefined ? undefined : hostPath(fromLowercase),
+    ).toBe(join(javaDir, "java.exe"));
+  });
+
+  it("rejects the launch with an actionable code instead of a bare fallback", async () => {
+    const { GhidraAdmissionError } =
+      await import("../../../../src/ghidra/GhidraAdmissionError.js");
+    const error = await ghidraJavaLaunch({
+      platform: "win32",
+      analyzeHeadlessPath: "C:ghidrasupportanalyzeHeadless.bat",
+      homeRoot: "C:home",
+      tempRoot: "C:\temp",
+      arguments: [],
+      environment: { Path: String.raw`C:\nowhere` },
+      onStderr: () => undefined,
+    }).then(
+      () => {
+        throw new Error("Expected ghidraJavaLaunch to reject");
+      },
+      (cause: unknown) => cause,
+    );
+    const admission = error as InstanceType<typeof GhidraAdmissionError>;
+    expect(error).toBeInstanceOf(GhidraAdmissionError);
+    expect(admission.code).toBe("java_command_unresolved");
+    expect(admission.detail).toMatchObject({
+      check: "path",
+      path: String.raw`C:\nowhere`,
+    });
+  });
+});
+
+it("keeps quoted PATH entries containing semicolons intact", async () => {
+  const { resolveWindowsPathJava } =
+    await import("../../../../src/ghidra/GhidraJavaPathResolution.js");
+  const quoted = String.raw`C:\Tools;Local\jdk\bin`;
+  const resolved = resolveWindowsPathJava(
+    { Path: String.raw`"${quoted}";C:\other\bin` },
+    (candidate) => candidate === String.raw`C:\Tools;Local\jdk\bin\java.exe`,
+  );
+  expect(resolved).toBe(String.raw`C:\Tools;Local\jdk\bin\java.exe`);
+});
