@@ -390,6 +390,7 @@
 * **web:** consolidate storage fingerprint comparison proofs ([#13084](https://github.com/morluto/rea/issues/13084)) ([251f863](https://github.com/morluto/rea/commit/251f863f30388f02017d0e34c790e529e8a7c183))
 * **web:** consolidate WebSocket payload comparison proofs ([#13086](https://github.com/morluto/rea/issues/13086)) ([ccfdd61](https://github.com/morluto/rea/commit/ccfdd6157282d3eaaeb7e6cfe9779bbe445b6ac9))
 * **web:** consolidate XHTML SVG namespace proofs ([#13105](https://github.com/morluto/rea/issues/13105)) ([c451857](https://github.com/morluto/rea/commit/c451857d380a809ba276b9c16f01865bd29494b0))
+* **web:** control scenario request deadline phases ([#13119](https://github.com/morluto/rea/issues/13119)) ([6ecafb5](https://github.com/morluto/rea/commit/6ecafb590e4c506ac932877580f07b60ed7d9e91))
 * **web:** eliminate wall-clock waits from storage cleanup checks ([#13114](https://github.com/morluto/rea/issues/13114)) ([f27aa1a](https://github.com/morluto/rea/commit/f27aa1ad900477cc3620b82c39621ad1b3080b09))
 * **web:** exercise real browser release during scenario cleanup ([#13113](https://github.com/morluto/rea/issues/13113)) ([3c4450a](https://github.com/morluto/rea/commit/3c4450ac7e81bbd82d7d2eff847c9b92476679ec))
 * **web:** isolate captured module artifact checks ([#13075](https://github.com/morluto/rea/issues/13075)) ([4304a66](https://github.com/morluto/rea/commit/4304a6697446f2342a7052b580306c521d944a73))
