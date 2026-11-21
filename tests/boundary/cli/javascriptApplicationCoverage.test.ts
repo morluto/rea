@@ -40,6 +40,56 @@ cliTest(
 
 for (const surface of ["CLI", "stdio MCP"] as const) {
   cliTest(
+    `counts proven Electron facts beside exhausted receiver selections through ${surface}`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-js-alias-coverage-");
+      await writeFixtureFiles(root, {
+        "main.cjs": `
+          (() => {
+            const table = {
+              1: module => { module.exports = require("electron"); },
+              2: (module, exports, load) => {
+                const electron = load(1);
+                new electron.BrowserWindow({ webPreferences: { sandbox: true } });
+                electron.ipcMain.handle("ready", () => 1);
+              }
+            };
+            const cache = {};
+            function load(id) {
+              const cached = cache[id];
+              if (cached) return cached.exports;
+              const module = cache[id] = { exports: {} };
+              table[id](module, module.exports, load);
+              return module.exports;
+            }
+            let receiver = {};
+            while (flag) receiver = receiver[key];
+            receiver[key] = 0;
+            load(2);
+          })();
+        `,
+      });
+      const application = await analyzeJavaScriptDirectory(surface, cli, root);
+
+      expect(application.summary).toMatchObject({
+        electron_semantics: "partial",
+        browser_windows: 1,
+        explicit_web_preferences: 1,
+        ipc: { operations: 1, main_handlers: 1 },
+      });
+      expect(application.graph.coverage).toMatchObject({
+        status: "partial",
+        limits: expect.arrayContaining([
+          expect.objectContaining({
+            name: "javascript_semantic_alias_selections",
+            value: 512,
+          }),
+        ]),
+      });
+    },
+  );
+
+  cliTest(
     `retains inherited loader uncertainty through ${surface}`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-js-inherited-loader-");
