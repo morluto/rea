@@ -49,6 +49,10 @@ describe("Electron identity through Webpack externals", () => {
     ["const key='45840';delete n.m[key];", 0],
     ["n.m[runtimeKey]=local;", 0],
     ["const key=45841;n.m[key]=local;", 1],
+    ["const key=flag?45841:'45842';n.m[key]=local;", 1],
+    ["const key=flag?45840:'45842';n.m[key]=local;", 0],
+    ["const key=flag?dynamicKey:'45842';n.m[key]=local;", 0],
+    ["const key=flag?'__proto__':'45842';n.m[key]=local;", 0],
   ] as const)(
     "preserves only unmodified external slots after %s",
     (write, expected) => {
