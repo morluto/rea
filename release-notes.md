@@ -421,6 +421,7 @@
 * **web:** consolidate transaction admission and omission checks ([#13127](https://github.com/morluto/rea/issues/13127)) ([c9a6f5d](https://github.com/morluto/rea/commit/c9a6f5dedc7766424e9d82d29a94d8ed39064fd9))
 * **web:** consolidate UI response observation lifecycle checks ([#13121](https://github.com/morluto/rea/issues/13121)) ([648d1f8](https://github.com/morluto/rea/commit/648d1f8f9d45822fbb729492a9519d12d4cf6fa6))
 * **web:** consolidate WebSocket payload comparison proofs ([#13086](https://github.com/morluto/rea/issues/13086)) ([ccfdd61](https://github.com/morluto/rea/commit/ccfdd6157282d3eaaeb7e6cfe9779bbe445b6ac9))
+* **web:** consolidate wide scenario reference admission ([#13163](https://github.com/morluto/rea/issues/13163)) ([03795d5](https://github.com/morluto/rea/commit/03795d55b3914a646a82d0e300836ce4c002b990))
 * **web:** consolidate XHTML SVG namespace proofs ([#13105](https://github.com/morluto/rea/issues/13105)) ([c451857](https://github.com/morluto/rea/commit/c451857d380a809ba276b9c16f01865bd29494b0))
 * **web:** control scenario request deadline phases ([#13119](https://github.com/morluto/rea/issues/13119)) ([6ecafb5](https://github.com/morluto/rea/commit/6ecafb590e4c506ac932877580f07b60ed7d9e91))
 * **web:** eliminate wall-clock waits from storage cleanup checks ([#13114](https://github.com/morluto/rea/issues/13114)) ([f27aa1a](https://github.com/morluto/rea/commit/f27aa1ad900477cc3620b82c39621ad1b3080b09))
