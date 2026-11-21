@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
+import { unsupportedLinuxHopperSetupRemediation } from "./LinuxHopper.js";
 import { setupInstallFailure } from "./SetupInstallFailure.js";
 
 describe("macOS Hopper setup failure projection", () => {
@@ -38,6 +39,26 @@ describe("macOS Hopper setup failure projection", () => {
     const unsupported = setupInstallFailure("unsupported_host");
     expect(unsupported.code).toBe("unsupported_host");
     expect(incompatible.remediation).not.toBe(unsupported.remediation);
+  });
+
+  it("names the detected Linux host when automated Hopper setup does not apply", () => {
+    const distribution = {
+      id: "bazzite",
+      versionId: "43",
+      packageFamily: "rpm",
+      architecture: "x64",
+      hopperSetupSupported: false,
+    } as const;
+    const result = setupInstallFailure("unsupported_host", {
+      platform: "linux",
+      distribution,
+    });
+    expect(result.code).toBe("unsupported_host");
+    expect(result.remediation).toBe(
+      unsupportedLinuxHopperSetupRemediation(distribution),
+    );
+    for (const fact of ["bazzite", "43", "rpm", "x64", "Ubuntu 24.04+"])
+      expect(result.remediation).toContain(fact);
   });
 });
 

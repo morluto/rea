@@ -11,6 +11,7 @@ import { discoverSetupState } from "./SetupPlan.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
 import {
   parseLinuxDistribution,
+  unsupportedLinuxHopperSetupRemediation,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import type { SetupProgressEvent } from "./SetupTypes.js";
@@ -573,8 +574,11 @@ describe("setup scoped readiness", () => {
     expect(result.status).toBe("needs_human");
     expect(host.hopperInstalls).toBe(0);
     expect(result.remediation).toBe(
-      "Automated Hopper setup requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy; configure an existing supported provider instead.",
+      unsupportedLinuxHopperSetupRemediation(host.distribution),
     );
+    expect(result.remediation).toContain("debian 13");
+    expect(result.remediation).toContain("deb packages");
+    expect(result.remediation).toContain("Ubuntu 24.04+");
   });
 
   it("configures BYO Ghidra on Linux outside Hopper's installer matrix", async () => {
@@ -623,8 +627,10 @@ const supportedUbuntu = {
   packageFamily: "deb",
   hopperSetupSupported: true,
 } as const;
-const unsupportedLinux =
-  "Automated Hopper setup requires an x86_64 host running Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy; configure an existing supported provider instead.";
+const ubuntuArm64 = parseLinuxDistribution(
+  'ID=ubuntu\nVERSION_ID="24.04"',
+  "arm64",
+);
 const unhealthyManualClientHost = (
   platform: NodeJS.Platform,
   facts: {
@@ -690,21 +696,18 @@ describe("setup Hopper install eligibility", () => {
       label: "an unsupported Linux distribution",
       platform: "linux",
       distribution: unsupportedDebian,
-      refusal: unsupportedLinux,
+      refusal: unsupportedLinuxHopperSetupRemediation(unsupportedDebian),
     },
     {
       label: "Ubuntu on arm64",
       platform: "linux",
-      distribution: parseLinuxDistribution(
-        'ID=ubuntu\nVERSION_ID="24.04"',
-        "arm64",
-      ),
-      refusal: unsupportedLinux,
+      distribution: ubuntuArm64,
+      refusal: unsupportedLinuxHopperSetupRemediation(ubuntuArm64),
     },
     {
       label: "an unidentified Linux distribution",
       platform: "linux",
-      refusal: unsupportedLinux,
+      refusal: unsupportedLinuxHopperSetupRemediation(undefined),
     },
   ] as const)(
     "neither offers nor accepts an unsupported Hopper installation on $label",
