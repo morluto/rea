@@ -23,37 +23,39 @@ class FakeCdp extends EventEmitter {
   readonly pendingNested: {
     readonly sessionId: string;
     readonly id: number;
+    readonly method: string;
+    readonly params?: unknown;
   }[] = [];
   detachCalls = 0;
 
   async send(method: string, params?: unknown): Promise<unknown> {
     this.calls.push({ method, params });
+    if (method === "Target.sendMessageToTarget") {
+      const { sessionId, message } = params as {
+        sessionId: string;
+        message: string;
+      };
+      const command = JSON.parse(message) as {
+        id: number;
+        method: string;
+        params?: unknown;
+      };
+      this.pendingNested.push({ sessionId, ...command });
+      if (this.autoReplyNested)
+        this.replyNested(sessionId, command.id, this.resultFor(command.method));
+    }
+    const result = this.resultFor(method);
     if (method === this.holdMethod) {
-      const response =
-        method === "Target.getTargetInfo"
-          ? { targetInfo: { targetId: "root-target" } }
-          : method === "Page.addScriptToEvaluateOnNewDocument"
-            ? { identifier: "late-script" }
-            : method === "Debugger.setBreakpointByUrl"
-              ? { breakpointId: "late-breakpoint" }
-              : method === "Storage.getStorageKey"
-                ? { storageKey: this.storageKey }
-                : {};
       return new Promise((resolve) => {
-        this.heldReply = () => resolve(response);
+        this.heldReply = () => resolve(result);
       });
     }
+    return result;
+  }
+
+  private resultFor(method: string): object {
     if (method === "Target.getTargetInfo")
       return { targetInfo: { targetId: "root-target" } };
-    if (method === "Target.sendMessageToTarget") {
-      const request = params as {
-        readonly sessionId: string;
-        readonly message: string;
-      };
-      const { id } = JSON.parse(request.message) as { readonly id: number };
-      this.pendingNested.push({ sessionId: request.sessionId, id });
-      if (this.autoReplyNested) this.replyNested(request.sessionId, id);
-    }
     if (method === "Debugger.setBreakpointByUrl")
       return { breakpointId: "breakpoint" };
     if (method === "Page.addScriptToEvaluateOnNewDocument")
@@ -90,13 +92,15 @@ class FakeCdp extends EventEmitter {
     this.resolveDetach = undefined;
   }
 
-  replyNested(sessionId: string, id: number): void {
-    queueMicrotask(() =>
-      this.emit("Target.receivedMessageFromTarget", {
-        sessionId,
-        message: JSON.stringify({ id, result: {} }),
-      }),
-    );
+  replyNested(sessionId: string, id: number, result = {}): void {
+    queueMicrotask(() => this.emitNested(sessionId, { id, result }));
+  }
+
+  emitNested(sessionId: string, message: object): void {
+    this.emit("Target.receivedMessageFromTarget", {
+      sessionId,
+      message: JSON.stringify(message),
+    });
   }
 }
 
@@ -173,6 +177,7 @@ const createInitializedStorage = async (
 const emitSeedPause = (
   cdp: FakeCdp,
   origin = "https://storage.example.test",
+  sessionId?: string,
 ): void => {
   const addScript = cdp.calls.find(
     ({ method }) => method === "Page.addScriptToEvaluateOnNewDocument",
@@ -181,7 +186,11 @@ const emitSeedPause = (
     throw new Error("Storage seed script is missing");
   const sourceUrl = (addScript.params as { readonly worldName: string })
     .worldName;
-  cdp.emit("Runtime.executionContextCreated", {
+  const emit = (method: string, params: object): void => {
+    if (sessionId === undefined) cdp.emit(method, params);
+    else cdp.emitNested(sessionId, { method, params });
+  };
+  emit("Runtime.executionContextCreated", {
     context: {
       id: 4,
       origin,
@@ -189,12 +198,12 @@ const emitSeedPause = (
       auxData: { frameId: "root-frame" },
     },
   });
-  cdp.emit("Debugger.scriptParsed", {
+  emit("Debugger.scriptParsed", {
     scriptId: "seed-script",
     executionContextId: 4,
     url: sourceUrl,
   });
-  cdp.emit("Debugger.paused", {
+  emit("Debugger.paused", {
     callFrames: [
       {
         callFrameId: "seed-frame",
@@ -204,44 +213,78 @@ const emitSeedPause = (
   });
 };
 
-it("seeds a browser storage area once before the document script resumes", async () => {
+it("seeds each local partition and each top-level session before resuming its script", async () => {
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);
-  const owner = await createInitializedStorage(contextApi, page);
-  expect(owner).toBeDefined();
+  const base = scenario();
+  const origin = "https://storage.example.test";
+  const sessionOnly = "https://session.example.test";
+  const input = browserScenarioSchema.parse({
+    ...base,
+    storage: {
+      ...base.storage,
+      session_storage: [
+        ...base.storage.session_storage,
+        ...base.storage.session_storage.map((seed) => ({
+          ...seed,
+          origin: sessionOnly,
+        })),
+      ],
+    },
+  });
+  const owner = await createInitializedStorage(contextApi, page, input);
+  if (owner === undefined) throw new Error("Expected storage owner");
+  const attach = (type: string, sessionId = type): void => {
+    cdp.emit("Target.attachedToTarget", {
+      sessionId,
+      targetInfo: { type, targetId: `${sessionId}-target` },
+    });
+  };
+  attach("iframe", "navigated-away-iframe");
+  await waitForCall(cdp, "Target.sendMessageToTarget");
+  cdp.emit("Target.detachedFromTarget", { sessionId: "navigated-away-iframe" });
+  await owner.settle();
+  cdp.autoReplyNested = true;
 
   cdp.emit("Debugger.paused", {
     callFrames: [
-      {
-        callFrameId: "caller-debugger-frame",
-        location: { scriptId: "caller-owned-script" },
-      },
+      { callFrameId: "caller-frame", location: { scriptId: "caller-script" } },
     ],
   });
-  await owner?.settle();
-  expect(
-    cdp.calls.some(({ method }) => method === "Debugger.evaluateOnCallFrame"),
-  ).toBe(false);
-  expect(cdp.calls.some(({ method }) => method === "Debugger.resume")).toBe(
-    false,
-  );
+  await owner.settle();
+  const rootWrites = () =>
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame");
+  const resumes = () =>
+    cdp.calls.filter(({ method }) => method === "Debugger.resume");
+  expect(rootWrites()).toEqual([]);
+  expect(resumes()).toEqual([]);
 
-  emitSeedPause(cdp);
-  await owner?.settle();
-  emitSeedPause(cdp);
-  await owner?.settle();
-
-  const evaluations = cdp.calls.filter(
-    ({ method }) => method === "Debugger.evaluateOnCallFrame",
-  );
-  expect(evaluations).toHaveLength(1);
-  expect(evaluations[0]?.params).toMatchObject({
-    callFrameId: "seed-frame",
-    expression: expect.stringContaining('"local-seed","local-value"'),
-  });
-  expect(evaluations[0]?.params).toMatchObject({
-    expression: expect.stringContaining('"session-seed","session-value"'),
-  });
+  for (const key of [
+    origin,
+    origin,
+    `${origin}/^0https://top-level.example`,
+    sessionOnly,
+  ]) {
+    cdp.storageKey = key;
+    emitSeedPause(cdp, key === sessionOnly ? sessionOnly : origin);
+    await owner.settle();
+  }
+  const local = '"local":[["local-seed","local-value"]]';
+  const session = '"session":[["session-seed","session-value"]]';
+  expect(rootWrites().map(({ params }) => params)).toMatchObject([
+    {
+      callFrameId: "seed-frame",
+      expression: expect.stringContaining(`${local},${session}`),
+    },
+    {
+      callFrameId: "seed-frame",
+      expression: expect.stringContaining(`${local},${session}`),
+    },
+    {
+      callFrameId: "seed-frame",
+      expression: expect.stringContaining(`"local":[],${session}`),
+    },
+  ]);
   expect(
     cdp.calls.findIndex(
       ({ method }) => method === "Debugger.evaluateOnCallFrame",
@@ -249,104 +292,109 @@ it("seeds a browser storage area once before the document script resumes", async
   ).toBeLessThan(
     cdp.calls.findIndex(({ method }) => method === "Debugger.resume"),
   );
-  await owner?.close();
-});
 
-it("seeds an empty isolated-world origin using the exact frame security origin", async () => {
-  const cdp = new FakeCdp();
-  cdp.frameTree = {
-    frame: { id: "other-frame", securityOrigin: "https://other.example.test" },
-    childFrames: [
-      {
-        frame: {
-          id: "root-frame",
-          url: "about:blank",
-          securityOrigin: "https://storage.example.test",
-        },
-      },
-    ],
-  };
-  const { page, contextApi } = fixture(cdp);
-  const owner = await createInitializedStorage(contextApi, page);
-  emitSeedPause(cdp, "");
-  await owner?.settle();
+  cdp.storageKey = origin;
+  for (const type of ["iframe", "page"]) {
+    attach(type);
+    await owner.settle();
+    emitSeedPause(cdp, origin, type);
+    await owner.settle();
+  }
   expect(
-    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
-  ).toHaveLength(1);
-  expect(
-    cdp.calls.findIndex(({ method }) => method === "Page.getFrameTree"),
-  ).toBeLessThan(
-    cdp.calls.findIndex(
+    cdp.pendingNested.filter(
       ({ method }) => method === "Debugger.evaluateOnCallFrame",
     ),
-  );
-  await owner?.close();
+  ).toMatchObject([
+    {
+      sessionId: "page",
+      params: { expression: expect.stringContaining(`"local":[],${session}`) },
+    },
+  ]);
+  await owner.close();
+  expect(cdp.detachCalls).toBe(1);
 });
 
 it.each([
   {
-    frame: {
-      id: "other-frame",
-      securityOrigin: "https://storage.example.test",
+    label: "inherited origin",
+    frameTree: {
+      frame: {
+        id: "other-frame",
+        securityOrigin: "https://other.example.test",
+      },
+      childFrames: [
+        {
+          frame: {
+            id: "root-frame",
+            url: "about:blank",
+            securityOrigin: "https://storage.example.test",
+          },
+        },
+      ],
     },
+    methods: [
+      "Page.getFrameTree",
+      "Storage.getStorageKey",
+      "Debugger.evaluateOnCallFrame",
+      "Debugger.resume",
+    ],
   },
-  { frame: { id: "root-frame", url: "https://storage.example.test/" } },
-  { frame: { id: "root-frame", securityOrigin: "" } },
-])(
-  "refuses unknown seed applicability instead of inferring origin from a URL",
-  async (frameTree) => {
-    const cdp = new FakeCdp();
-    cdp.frameTree = frameTree;
-    const { page, contextApi } = fixture(cdp);
-    const owner = await createInitializedStorage(contextApi, page);
-    emitSeedPause(cdp, "");
-    await expect(owner?.settle()).rejects.toMatchObject({
-      reason: "protocol_error",
-    });
-    expect(
-      cdp.calls.filter(
-        ({ method }) => method === "Debugger.evaluateOnCallFrame",
-      ),
-    ).toHaveLength(0);
-    expect(
-      cdp.calls.filter(({ method }) => method === "Debugger.resume"),
-    ).toHaveLength(1);
-    await owner?.close();
+  {
+    label: "unseeded origin",
+    origin: "https://unseeded.example.test",
+    methods: ["Debugger.resume"],
   },
-);
-
-it("preserves a malformed frame-tree reply in the projected storage failure", async () => {
+  ...[
+    {
+      label: "wrong frame",
+      frameTree: {
+        frame: {
+          id: "other-frame",
+          securityOrigin: "https://storage.example.test",
+        },
+      },
+    },
+    {
+      label: "URL alone",
+      frameTree: {
+        frame: { id: "root-frame", url: "https://storage.example.test/" },
+      },
+    },
+    {
+      label: "empty security origin",
+      frameTree: { frame: { id: "root-frame", securityOrigin: "" } },
+    },
+    {
+      label: "malformed tree",
+      frameTree: undefined,
+      message:
+        "CDP Page.getFrameTree returned a malformed result at /frameTree",
+    },
+  ].map((row) => ({
+    ...row,
+    fails: true,
+    methods: ["Page.getFrameTree", "Debugger.resume"],
+  })),
+])("resolves storage applicability for $label before resuming", async (row) => {
   const cdp = new FakeCdp();
-  cdp.frameTree = undefined;
+  if ("frameTree" in row) cdp.frameTree = row.frameTree;
   const { page, contextApi } = fixture(cdp);
   const owner = await createInitializedStorage(contextApi, page);
-  emitSeedPause(cdp, "");
-  try {
-    await owner?.settle();
-    throw new Error("Expected malformed frame-tree failure");
-  } catch (error) {
-    expect(error).toBeInstanceOf(BrowserObservationError);
-    if (!(error instanceof BrowserObservationError)) throw error;
-    expect(projectAnalysisError(error).message).toContain(
-      "CDP Page.getFrameTree returned a malformed result at /frameTree",
-    );
-  }
-  await owner?.close();
-});
-
-it("leaves a known unseeded frame origin unchanged", async () => {
-  const cdp = new FakeCdp();
-  const { page, contextApi } = fixture(cdp);
-  const owner = await createInitializedStorage(contextApi, page);
-  emitSeedPause(cdp, "https://unseeded.example.test");
-  await owner?.settle();
-  expect(cdp.calls.some(({ method }) => method === "Page.getFrameTree")).toBe(
-    false,
+  if (owner === undefined) throw new Error("Expected storage owner");
+  const beforePause = cdp.calls.length;
+  emitSeedPause(cdp, "origin" in row ? row.origin : "");
+  if ("fails" in row) {
+    const error = await owner.settle().catch((cause: unknown) => cause);
+    if (!(error instanceof BrowserObservationError))
+      throw new Error("Expected a storage protocol failure");
+    expect(error.reason).toBe("protocol_error");
+    if (row.message !== undefined)
+      expect(projectAnalysisError(error).message).toContain(row.message);
+  } else await owner.settle();
+  expect(cdp.calls.slice(beforePause).map(({ method }) => method)).toEqual(
+    row.methods,
   );
-  expect(
-    cdp.calls.some(({ method }) => method === "Debugger.evaluateOnCallFrame"),
-  ).toBe(false);
-  await owner?.close();
+  await owner.close();
 });
 
 it.each(["launch", "connect"] as const)(
@@ -390,33 +438,6 @@ it.each(["launch", "connect"] as const)(
     expect(page.listenerCount("popup")).toBe(0);
   },
 );
-
-it("seeds session storage once per namespace and StorageKey", async () => {
-  const cdp = new FakeCdp();
-  const { page, contextApi } = fixture(cdp);
-  const base = scenario();
-  const input = browserScenarioSchema.parse({
-    ...base,
-    storage: {
-      local_storage: [],
-      session_storage: base.storage.session_storage,
-    },
-  });
-  const owner = await createInitializedStorage(contextApi, page, input);
-
-  emitSeedPause(cdp);
-  await owner?.settle();
-  emitSeedPause(cdp);
-  await owner?.settle();
-  cdp.storageKey = "https://storage.example.test/^0https://top-level.example";
-  emitSeedPause(cdp);
-  await owner?.settle();
-
-  expect(
-    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
-  ).toHaveLength(2);
-  await owner?.close();
-});
 
 it("retries the owning CDP detach after a failed attempt", async () => {
   const cdp = new FakeCdp();
@@ -592,32 +613,6 @@ it("releases the CDP owner when an attached target reply remains pending", async
     targetInfo: { type: "iframe", targetId: "iframe-target" },
   });
   await waitForCall(cdp, "Target.sendMessageToTarget");
-  await owner?.close();
-  expect(cdp.detachCalls).toBe(1);
-});
-
-it("does not fail root storage capture when an OOPIF detaches during setup", async () => {
-  const cdp = new FakeCdp();
-  const { page, contextApi } = fixture(cdp);
-  const owner = await createInitializedStorage(contextApi, page);
-  expect(owner).toBeDefined();
-  cdp.emit("Target.attachedToTarget", {
-    sessionId: "navigated-away-iframe",
-    targetInfo: { type: "iframe", targetId: "iframe-target" },
-  });
-  await waitForCall(cdp, "Target.sendMessageToTarget");
-
-  cdp.emit("Target.detachedFromTarget", {
-    sessionId: "navigated-away-iframe",
-  });
-  await owner?.settle();
-
-  cdp.autoReplyNested = true;
-  emitSeedPause(cdp);
-  await owner?.settle();
-  expect(
-    cdp.calls.some(({ method }) => method === "Debugger.evaluateOnCallFrame"),
-  ).toBe(true);
   await owner?.close();
   expect(cdp.detachCalls).toBe(1);
 });
