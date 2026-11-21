@@ -36,6 +36,7 @@ const admitOptions = (
   return options.ok ? description.admit(options.value) : options;
 };
 const DECIMAL_TOKEN = /^[0-9]+$/u;
+const DECIMAL_NUMBER_TOKEN = /^[0-9]+(?:\.[0-9]+)?$/u;
 
 const cli = createCli({});
 const registered = new Map<string, CliCommandEntry["definition"]>();
@@ -159,8 +160,22 @@ const expectedAdmission = (
     if (typeof value !== "string") return admits(contractField, value);
     return value !== "" && admits(contractField, absoluteCallerPath(value));
   }
-  if (typeof value === "string" && isNumeric(contractField))
-    return DECIMAL_TOKEN.test(value) && admits(contractField, Number(value));
+  if (typeof value === "string" && isNumeric(contractField)) {
+    const schema = inputJsonSchema(contractField);
+    const branches = Array.isArray(schema.anyOf)
+      ? (schema.anyOf as Record<string, unknown>[])
+      : [schema];
+    const fractional = branches.some(
+      (branch) =>
+        branch.type === "number" &&
+        branch.const === undefined &&
+        branch.enum === undefined,
+    );
+    return (
+      (fractional ? DECIMAL_NUMBER_TOKEN : DECIMAL_TOKEN).test(value) &&
+      admits(contractField, Number(value))
+    );
+  }
   return admits(contractField, value);
 };
 
@@ -372,6 +387,7 @@ const ARGV_SATISFYING_RULES: Readonly<
   Record<string, Readonly<Record<string, unknown>>>
 > = {
   "annotate-native-function": { name: "renamed" },
+  "export-structured-raster-resources": { expectedSha256: "0".repeat(64) },
   "search-bytes": { pattern: "41 ??" },
   "cutter-command": { sessionId: "00000000-0000-4000-8000-000000000001" },
   "inspect-native-data-type": { type: "/struct" },
@@ -2019,5 +2035,152 @@ describe("Contract command field groups", () => {
         },
       }),
     ).toThrow("group_probe.path is a required group member");
+  });
+});
+
+describe("contract-owned numeric argv projections", () => {
+  const parameter = (field: z.ZodType) =>
+    describeContractCommand(
+      { name: "numeric_probe", inputSchema: z.object({ value: field }) },
+      { command: "numeric-probe", description: "Probe" },
+    ).parameters[0]!;
+  it("preserves numeric array omission, advertised defaults and each declared bound", () => {
+    const declared = z
+      .array(z.number().int().min(8).max(32))
+      .min(1)
+      .max(2)
+      .default([16]);
+    const field = parameter(declared);
+    expect(field.repeatable).toBe(true);
+    expect(field.schema.parse(undefined)).toBeUndefined();
+    expect(declared.parse(undefined)).toEqual([16]);
+    expect(z.toJSONSchema(field.schema).default).toEqual([16]);
+    expect(field.schema.parse(["8", "32"])).toEqual([8, 32]);
+    for (const rejected of [
+      [],
+      ["7"],
+      ["33"],
+      ["8", "16", "32"],
+      ["0x10"],
+      ["1e1"],
+      ["NaN"],
+    ])
+      expect(field.schema.safeParse(rejected).success).toBe(false);
+  });
+  it("keeps numeric literal-union choices canonical after token decoding", () => {
+    const declared = z
+      .array(z.union([z.literal(1), z.literal(2), z.literal(4)]))
+      .max(3)
+      .default([1, 2]);
+    const field = parameter(declared);
+    expect(field.schema.parse(undefined)).toBeUndefined();
+    expect(declared.parse(undefined)).toEqual([1, 2]);
+    expect(z.toJSONSchema(field.schema).default).toEqual([1, 2]);
+    expect(field.schema.parse(["1", "4"])).toEqual([1, 4]);
+    expect(field.schema.parse([1, 4])).toEqual([1, 4]);
+    for (const rejected of [
+      ["3"],
+      ["1.0"],
+      ["-1"],
+      ["0x2"],
+      ["1e0"],
+      ["1", "2", "4", "1"],
+    ])
+      expect(field.schema.safeParse(rejected).success).toBe(false);
+  });
+  it("admits bounded decimal fractions only for noninteger numeric contracts", () => {
+    const declared = z.number().min(0.5).max(1).default(0.9);
+    const field = parameter(declared);
+    expect(field.schema.parse(undefined)).toBeUndefined();
+    expect(declared.parse(undefined)).toBe(0.9);
+    expect(z.toJSONSchema(field.schema).default).toBe(0.9);
+    for (const value of ["0.5", "0.75", "1", "1.0"])
+      expect(field.schema.parse(value)).toBe(Number(value));
+    for (const value of [
+      "0.49",
+      "1.01",
+      "NaN",
+      "Infinity",
+      "0x1",
+      "1e0",
+      " 1",
+      "+1",
+      "-1",
+    ])
+      expect(field.schema.safeParse(value).success).toBe(false);
+    expect(
+      parameter(z.number().int().min(0)).schema.safeParse("1.5").success,
+    ).toBe(false);
+  });
+  it("preserves numeric array refinements through the declared owner", () => {
+    const field = parameter(
+      z
+        .array(z.number().int())
+        .refine((values) => new Set(values).size === values.length)
+        .optional(),
+    );
+    expect(field.schema.safeParse(["1", "1"]).success).toBe(false);
+    expect(field.schema.parse(["1", "2"])).toEqual([1, 2]);
+    expect(field.schema.parse(undefined)).toBeUndefined();
+  });
+});
+
+it("collects explicit numeric choices, preserves omitted options and advertises contract defaults", () => {
+  const described = describeContractCommand(
+    {
+      name: "array_probe",
+      inputSchema: z.object({
+        widths: z.array(z.number().int().min(8).max(64)).default([16]),
+        bits: z
+          .array(z.union([z.literal(1), z.literal(2), z.literal(4)]))
+          .default([1, 2]),
+        score: z.number().min(0).max(1).default(0.5),
+      }),
+    },
+    { command: "array-probe", description: "Probe" },
+  );
+  const options = z.object(
+    Object.fromEntries(described.parameters.map((p) => [p.key, p.schema])),
+  );
+  const actual = parseCliArgv(
+    [
+      "--widths",
+      "8",
+      "--widths",
+      "32",
+      "--bits",
+      "01",
+      "--bits",
+      "4",
+      "--score",
+      "0.75",
+    ],
+    { options },
+  );
+  expect(actual).toEqual({
+    ok: true,
+    value: {
+      args: {},
+      options: { widths: [8, 32], bits: [1, 4], score: 0.75 },
+    },
+  });
+  expect(parseCliArgv([], { options })).toEqual({
+    ok: true,
+    value: { args: {}, options: {} },
+  });
+  const schema = z.toJSONSchema(options.shape.bits!);
+  expect(schema.default).toEqual([1, 2]);
+  expect(schema.type).toBe("array");
+  expect(schema.items).toEqual({
+    anyOf: [
+      {
+        anyOf: [
+          { type: "number", const: 1 },
+          { type: "number", const: 2 },
+          { type: "number", const: 4 },
+        ],
+      },
+      { type: "string", pattern: "^0*(?:1|2|4)$" },
+    ],
   });
 });

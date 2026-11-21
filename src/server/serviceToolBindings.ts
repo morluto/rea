@@ -1,4 +1,8 @@
 import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { StructuredRasterExportService } from "../application/binaryDiagnostics/StructuredRasterExportService.js";
+import type { RawRasterDiscoveryService } from "../application/binaryDiagnostics/RawRasterDiscoveryService.js";
+import type { StructuredRasterDiscoveryService } from "../application/binaryDiagnostics/StructuredRasterDiscoveryService.js";
+import { appendStructuredRasterThumbnails } from "./indexThumbnailDelivery.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
@@ -469,6 +473,25 @@ type Bind<Service> = (
  * so a test exercises the same handler kind, admission and dependencies.
  */
 const SERVICE_TOOL_BINDINGS = {
+  structuredRasterExport: ((service) => ({
+    export_structured_raster_resources: {
+      admission: "sdk",
+      run: (input, options) => service.export(input, options),
+    },
+  })) satisfies Bind<StructuredRasterExportService>,
+  rawRaster: ((service) => ({
+    inspect_raw_raster_candidates: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<RawRasterDiscoveryService>,
+  structuredRaster: ((service) => ({
+    inspect_structured_raster_candidates: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+      presentResult: appendStructuredRasterThumbnails,
+    },
+  })) satisfies Bind<StructuredRasterDiscoveryService>,
   byteEntropy: ((service) => ({
     inspect_byte_entropy: {
       admission: "sdk",

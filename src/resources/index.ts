@@ -125,6 +125,7 @@ export {
   normalizeArtifactPath,
 } from "./ArtifactPaths.js";
 export { SafeOutputTree } from "./SafeOutputTree.js";
+export type { SafeOutputFile } from "./SafeOutputTree.js";
 export {
   SafeOutputTreeDestinationRefusal,
   outputDirectoryAdmissionRefusal,

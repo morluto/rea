@@ -1,3 +1,12 @@
+import { STRUCTURED_RASTER_EXPORT_TOOL_CONTRACT } from "./structuredRasterExportToolContract.js";
+import {
+  inspectStructuredRasterCandidatesRequestSchema,
+  structuredRasterCandidatesSchema,
+} from "../../domain/native/structuredRasterCandidates.js";
+import {
+  inspectRawRasterCandidatesRequestSchema,
+  rawRasterDiscoverySchema,
+} from "../../domain/native/rawRasterCandidates.js";
 import {
   inspectDevicetreeInputSchema,
   devicetreeSchema,
@@ -110,6 +119,7 @@ export const inspectByteEntropyRequestSchema =
 
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
+  STRUCTURED_RASTER_EXPORT_TOOL_CONTRACT,
   {
     name: "inspect_devicetree",
     availability: "standalone",
@@ -343,6 +353,43 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
           path: "/artifacts/bzImage",
           name: "CONFIG_SECURITY_SELINUX",
         },
+      },
+    ],
+  },
+  {
+    name: "inspect_structured_raster_candidates",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_structured_raster_candidates",
+      evidenceEffects,
+    ),
+    kind: "native-provider",
+    description:
+      "Find candidate raster descriptor tables under an explicit configurable grammar, not universal image detection. Choose flat bytes, caller logical/file segments, or the separately named fgs-records container grammar with footer size/CRC validation. No firmware ID or known resource address is used. Optional resource_family=record12-lut-registry locates a profile-declared pointer/count/LUT family, including palette slots and declared layouts, not arbitrary ABI inference. Its independent family_max_work budget is separate from generic scanning. Color previews require explicit theme/precision/alpha/sentinel/key policy; ambiguous registry identities require a selection. Reports inferred tables, format/bpp/offset-unit alternatives, coverage, logical offsets and bounded source mappings. Without an explicit family/color policy, palette/color/transparency/orientation remain unknown. Optional index-only thumbnails are artificial grayscale, not original colors. Numeric tables can pass. At most 128 MiB whole-file hashing, 16 MiB selected/materialized bytes, 4096 inferred resources; output defaults128 resources,4 thumbnails, shared256 mapping spans. Explicit truncation is not absence. Use raw heuristic discovery for unstructured smooth data; this operation requires compatible descriptor structure.",
+    inputSchema: inspectStructuredRasterCandidatesRequestSchema,
+    outputSchema: evidenceResultOf(structuredRasterCandidatesSchema),
+    examples: [
+      {
+        title: "Inspect configured descriptor tables",
+        input: { path: "/artifacts/firmware.bin", profile: "flat" },
+      },
+    ],
+  },
+  {
+    name: "inspect_raw_raster_candidates",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_raw_raster_candidates", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Rank unheadered raw raster hypotheses in a selected local byte range without signatures, extraction, target execution or external tools. Samples 2D continuity on an explicit offset/dimension/format grid. Returns inferred candidate layouts, scores (not probabilities), exact coverage and limitations. Structured non-image tables can pass; empty output is not absence. Width/height are sampled windows, not discovered image boundaries; channel order, orientation and alpha semantics remain unknown. Tight gray8/RGB888/RGBA8888 only, no indexed/padded/tiled/compressed formats. Whole file SHA-256 read capped at 128 MiB; selected range capped at 16 MiB. Use existing firmware region/entropy results to select a range, then review candidates with the raw raster preview workflow.",
+    inputSchema: inspectRawRasterCandidatesRequestSchema,
+    outputSchema: evidenceResultOf(rawRasterDiscoverySchema),
+    examples: [
+      {
+        title: "Rank raw image candidates in a firmware range",
+        input: { path: "/artifacts/firmware.bin", offset: 4096, length: 65536 },
       },
     ],
   },

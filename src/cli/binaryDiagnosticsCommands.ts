@@ -1,3 +1,5 @@
+import { registerRawRasterCommands } from "./rawRasterCommands.js";
+import { registerStructuredRasterCommands } from "./structuredRasterCommands.js";
 import {
   createByteEntropyService,
   createRecordedCrashService,
@@ -47,6 +49,8 @@ export const registerBinaryDiagnosticsCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
+  registerStructuredRasterCommands(cli, logger);
+  registerRawRasterCommands(cli, logger);
   registerContractCommand(
     cli,
     logger,

@@ -1,3 +1,8 @@
+import { StructuredRasterExportService } from "../application/binaryDiagnostics/StructuredRasterExportService.js";
+export const createStructuredRasterExportService = (
+  resources?: ArtifactResourceScope,
+): StructuredRasterExportService =>
+  new StructuredRasterExportService(undefined, resources);
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import { PeLoadConfigProvider } from "../native/pe/PeLoadConfigProvider.js";
@@ -37,6 +42,17 @@ import { KernelBuildConfigProvider } from "../native/elf/KernelBuildConfigProvid
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { NativeExportsProvider } from "../native/exports/NativeExportsProvider.js";
+
+import { StructuredRasterDiscoveryService } from "../application/binaryDiagnostics/StructuredRasterDiscoveryService.js";
+export const createStructuredRasterDiscoveryService = (
+  resources?: ArtifactResourceScope,
+): StructuredRasterDiscoveryService =>
+  new StructuredRasterDiscoveryService(undefined, resources);
+import { RawRasterDiscoveryService } from "../application/binaryDiagnostics/RawRasterDiscoveryService.js";
+export const createRawRasterDiscoveryService = (
+  resources?: ArtifactResourceScope,
+): RawRasterDiscoveryService =>
+  new RawRasterDiscoveryService(undefined, resources);
 
 import { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
 import { DevicetreeProvider } from "../firmware/devicetree/DevicetreeProvider.js";

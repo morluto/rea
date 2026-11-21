@@ -1,0 +1,106 @@
+name: Experimental raw raster
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "native/windows/**"
+      - "scripts/**"
+      - "tests/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".nvmrc"
+      - ".npmrc"
+      - "tsconfig*.json"
+      - "vitest.config.ts"
+      - "docs/specs/artifacts/raw-raster-preview/**"
+      - ".github/workflows/raw-raster.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "native/windows/**"
+      - "scripts/**"
+      - "tests/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".nvmrc"
+      - ".npmrc"
+      - "tsconfig*.json"
+      - "vitest.config.ts"
+      - "docs/specs/artifacts/raw-raster-preview/**"
+      - ".github/workflows/raw-raster.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raw-raster-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUSKY: "0"
+
+jobs:
+  windows-native-artifact:
+    name: Build matching Windows native controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      # The source checkout intentionally omits native/windows/build. Use the
+      # same Linux/MinGW lane as ci.yml, built from this run's exact checkout.
+      - name: Prepare cross compiler
+        run: |
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g' "$source"
+            fi
+          done
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+      - run: npm run build:windows-native
+      - run: npm run verify:windows-native:artifact
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: raw-raster-windows-native
+          path: native/windows/build/
+          if-no-files-found: error
+
+  raw-raster:
+    name: Raw raster (${{ matrix.os }})
+    needs: windows-native-artifact
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - if: runner.os == 'Windows'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: raw-raster-windows-native
+          path: native/windows/build/
+      - if: runner.os == 'Windows'
+        run: npm run verify:windows-native:artifact
+      # Node's .test.mjs harness is deliberately invoked explicitly: Vitest's
+      # canonical .test.ts discovery does not own these experiment tests.
+      # All inputs are synthetic temporary files, never private firmware.
+      - name: Verify decoder and file-to-PNG workflow
+        run: npm run test:raw-raster
+      - name: Verify raster discovery through public CLI and MCP
+        run: npm run test:focused -- tests/acceptance/rawRasterDiscoveryCli.test.ts tests/acceptance/structuredRasterDiscoveryCli.test.ts tests/boundary/mcp/rawRasterDiscoveryMcp.test.ts tests/boundary/mcp/structuredRasterDiscoveryMcp.test.ts tests/acceptance/structuredRasterExportCli.test.ts tests/boundary/mcp/structuredRasterExportMcp.test.ts tests/boundary/cli/cliContractCommandParity.test.ts tests/boundary/cli/cliCommandRegistry.test.ts tests/boundary/cli/cliDecimalArguments.test.ts tests/boundary/cli/utilityIntegerOptions.test.ts tests/boundary/process/windowsNativeArtifactVerifier.test.ts
+      - name: Verify raster source ownership, registry and rendering controls
+        run: npm run test:focused -- src/domain/rawRasterDiscovery.test.ts src/domain/rasterLogicalSegments.test.ts src/domain/structuredRasterDiscovery.test.ts src/domain/rasterRegistryFamily.test.ts src/domain/binaryReader.test.ts src/domain/native/structuredRasterInputValidation.test.ts src/domain/native/rasterRendering.test.ts src/domain/native/structuredRasterExport.test.ts src/application/binaryDiagnostics/RawRasterDiscoveryService.test.ts src/application/binaryDiagnostics/StructuredRasterDiscoveryService.test.ts src/application/binaryDiagnostics/SelectedRasterSnapshotReader.test.ts src/application/binaryDiagnostics/RasterResourceRendering.test.ts src/application/binaryDiagnostics/RasterResourceRenderingPolicies.test.ts src/application/binaryDiagnostics/RasterRenderingSelection.test.ts src/application/binaryDiagnostics/RasterExportPublication.test.ts src/application/binaryDiagnostics/StructuredRasterExportPlan.test.ts src/application/binaryDiagnostics/StructuredRasterExportAlternatives.test.ts src/application/binaryDiagnostics/StructuredRasterExportArtifacts.test.ts src/application/binaryDiagnostics/StructuredRasterInputValidation.test.ts src/application/binaryDiagnostics/StructuredRasterExportService.test.ts src/server/indexThumbnailDelivery.test.ts
+      - name: Verify architecture and committed advertised schema summaries
+        run: npm run verify:architecture-guards && npm run verify:advertised-schemas

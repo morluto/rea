@@ -363,7 +363,8 @@
     "licenses:generate": "node scripts/generate-third-party-inventory.mjs",
     "licenses:check": "node scripts/generate-third-party-inventory.mjs --check",
     "lint:typed": "node scripts/ci/static-check-report.mjs typed-lint",
-    "knip:production": "node scripts/ci/production-reachability-report.mjs"
+    "knip:production": "node scripts/ci/production-reachability-report.mjs",
+    "test:raw-raster": "npm run test:local -- src/domain/rasterCoverage.test.ts src/domain/rasterSampling.test.ts src/application/binaryDiagnostics/RasterPngContainer.test.ts src/domain/rawRaster.test.ts src/domain/rawRasterDiscovery.test.ts src/application/binaryDiagnostics/RawRasterDiscoveryService.test.ts src/domain/structuredRasterDiscovery.test.ts src/domain/rasterLogicalSegments.test.ts src/application/binaryDiagnostics/StructuredRasterDiscoveryService.test.ts src/application/binaryDiagnostics/IndexRasterThumbnail.test.ts src/server/indexThumbnailDelivery.test.ts && node --import tsx --test scripts/experiments/raw-raster-preview.test.mjs scripts/experiments/raw-raster-file.test.mjs scripts/experiments/raw-raster-cleanup.test.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

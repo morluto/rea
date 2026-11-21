@@ -1,3 +1,4 @@
+import { parseCliArgv } from "../../../src/cli/argvParser.js";
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
@@ -118,4 +119,108 @@ describe("REA's CLI command table", () => {
       { name: "capture_process_scenario", flags: {} },
     ]);
   });
+});
+
+it("records raster operations with their public option bindings", () => {
+  expect(entry("inspect-raw-raster-candidates").operations).toEqual([
+    {
+      name: "inspect_raw_raster_candidates",
+      flags: {
+        offset: "--offset",
+        length: "--length",
+        widths: "--widths",
+        heights: "--heights",
+        formats: "--formats",
+        offset_step: "--offset-step",
+        min_score: "--min-score",
+        max_hypotheses: "--max-hypotheses",
+        max_candidates: "--max-candidates",
+      },
+    },
+  ]);
+  expect(
+    entry("inspect-structured-raster-candidates").operations[0],
+  ).toMatchObject({
+    name: "inspect_structured_raster_candidates",
+    flags: {
+      grammar: "--grammar",
+      segments: "--segments",
+      min_consistency: "--min-consistency",
+      resource_offset: "--resource-offset",
+      max_previews: "--max-previews",
+    },
+  });
+});
+
+it("keeps repeated raster numeric options, fractional scores and JSON on the REA parser", () => {
+  const raw = parseCliArgv(
+    [
+      "firmware.bin",
+      "--widths",
+      "16",
+      "--widths",
+      "32",
+      "--heights",
+      "16",
+      "--formats",
+      "gray8",
+      "--min-score",
+      "0.75",
+    ],
+    entry("inspect-raw-raster-candidates").definition,
+  );
+  expect(raw).toMatchObject({
+    ok: true,
+    value: {
+      args: { path: "firmware.bin" },
+      options: {
+        widths: [16, 32],
+        heights: [16],
+        formats: ["gray8"],
+        minScore: 0.75,
+      },
+    },
+  });
+  const structured = parseCliArgv(
+    [
+      "firmware.bin",
+      "--bits-per-pixel",
+      "1",
+      "--bits-per-pixel",
+      "4",
+      "--offset-units",
+      "2",
+      "--min-consistency",
+      "0.95",
+      "--resource-offset",
+      "128",
+      "--segments",
+      '[{"logicalOffset":4096,"fileOffset":0,"length":512}]',
+    ],
+    entry("inspect-structured-raster-candidates").definition,
+  );
+  expect(structured).toMatchObject({
+    ok: true,
+    value: {
+      options: {
+        bitsPerPixel: [1, 4],
+        offsetUnits: [2],
+        minConsistency: 0.95,
+        resourceOffset: 128,
+        segments: [{ logicalOffset: 4096, fileOffset: 0, length: 512 }],
+      },
+    },
+  });
+  expect(
+    parseCliArgv(
+      ["firmware.bin", "--min-score", "1.1"],
+      entry("inspect-raw-raster-candidates").definition,
+    ).ok,
+  ).toBe(false);
+  expect(
+    parseCliArgv(
+      ["firmware.bin", "--segments", "not-json"],
+      entry("inspect-structured-raster-candidates").definition,
+    ).ok,
+  ).toBe(false);
 });

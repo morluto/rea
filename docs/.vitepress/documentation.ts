@@ -399,6 +399,16 @@ export const documentationSections = [
         route: "/firmware-analysis",
       },
       {
+        text: "Structured raster discovery and export",
+        source: "guides/firmware/structured-raster-discovery.md",
+        route: "/structured-raster-discovery",
+      },
+      {
+        text: "Experimental raw raster preview",
+        source: "guides/firmware/raw-raster-preview.md",
+        route: "/raw-raster-preview",
+      },
+      {
         text: "Android OTA update payloads",
         source: "guides/firmware/android-ota-payload.md",
         route: "/android-ota-payload",
