@@ -2244,3 +2244,18 @@ it.each([
     ).toEqual(expected);
   },
 );
+
+it.each([
+  "Object.__proto__=hook;",
+  "Object.setPrototypeOf(Object,hook);",
+  "Reflect.setPrototypeOf(Object,hook);",
+  "Object.__proto__=new Proxy(hook,{get(t,k){return Reflect.get(t,k)}});",
+  "Object.defineProperty(Object,Symbol.hasInstance,Object.getOwnPropertyDescriptor(hook,Symbol.hasInstance));",
+])("uses the instanceof hook visible at each comparison: %s", (install) => {
+  const source = `const hook={[Symbol.hasInstance](value){value.require=replacement;return true}};
+ Object.assign=(target,value)=>{};Object.assign({},module instanceof Object);require('fs').readFileSync('before');
+ ${install} Object.assign({},module instanceof Object);require('fs').readFileSync('after');`;
+  expect(
+    analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
+  ).toEqual(["before"]);
+});

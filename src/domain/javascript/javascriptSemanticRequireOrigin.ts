@@ -1,3 +1,4 @@
+import { intrinsicPrototypeMemberMayHaveChanged } from "./javascriptSemanticIntrinsicInstances.js";
 import {
   semanticCapturedSelectionsAfterPropertyRead,
   semanticProjectedSourceFactsAtRead,
@@ -1834,10 +1835,15 @@ const writesModuleRequire = (
     return node.operator === "in"
       ? isPrimitiveJavaScriptExpression(node.left)
       : isIntrinsicGlobalReference(node.right, state, "Object") &&
-          !ambientEffectAt(["global", "Object", "Symbol.hasInstance"], node) &&
-          !ambientEffectAt(
-            ["global", "Function", "prototype", "Symbol.hasInstance"],
+          ["Symbol.hasInstance", "__proto__"].every(
+            (key) => !ambientEffectAt(["global", "Object", key], node),
+          ) &&
+          !intrinsicPrototypeMemberMayHaveChanged(
+            state,
+            "Function",
+            "Symbol.hasInstance",
             node,
+            "value",
           );
   };
   const awaitMayAssimilate = (operand: t.Node, at: t.Node): boolean => {
