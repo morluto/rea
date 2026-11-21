@@ -2505,10 +2505,9 @@ Custom clients upgrading from 6.1 should follow the
 
 Run `npm run docs:generate` in a source checkout to generate the machine-readable
 catalog at `docs/public/product-catalog.json`. Run `npm run docs:build` and
-`npm run docs:preview` to serve it locally at `/rea/product-catalog.json`. A
-successful [CI documentation job](https://github.com/morluto/rea/blob/main/.github/workflows/ci.yml)
-uploads the catalog, packaged skill, and portable conformance projections in
-the `generated-docs` artifact. These copies describe the source revision that
+`npm run docs:preview` to serve it locally at `/rea/product-catalog.json`.
+`npm run docs:generate` produces the catalog, packaged skill, and portable
+conformance projections. These copies describe the source revision that
 generated them. For a running server, use `binary_session` for catalog identity
 and tool availability.
 

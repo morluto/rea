@@ -110,8 +110,7 @@ Human ownership and review remain required when CI or an automated reviewer
 reports success. Readiness requests maintainer review; it does not grant scope
 approval or permission to merge.
 
-Pull request titles must match the Conventional Commits check in
-[`.github/workflows/pr-title.yml`](.github/workflows/pr-title.yml):
+Pull request titles must match the Conventional Commits pattern:
 
 ```text
 /^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u

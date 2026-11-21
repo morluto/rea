@@ -392,6 +392,8 @@ def check_publisher(root):
     """Detect a second Pages action that could replace the website."""
     expected = root / ".github/workflows/website-pages.yml"
     workflows = root / ".github/workflows"
+    if not workflows.is_dir():
+        return []
     deploy_action = re.compile(
         r"^\s*-?\s*uses:\s*['\"]?actions/deploy-pages@", re.MULTILINE
     )

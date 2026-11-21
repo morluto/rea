@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { registryPublicationState } from "../../../.github/actions/publish-mcp/registry-state.mjs";
+import { registryPublicationState } from "../../../scripts/ci/registry-state.mjs";
 
 const server = {
   name: "io.github.fixture/rea",

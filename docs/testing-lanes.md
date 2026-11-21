@@ -581,7 +581,7 @@ and after only when it did. The decompiler effect on the original MIPS case
 was observed on the reporter's binary, not in this lane. The lane never
 executes the fixture and needs the [supported Ghidra and JDK installation](getting-started/installation.md#ghidra)
 with the native decompiler and a Linux C compiler. The
-change-selected [Ghidra bridge CI lane](https://github.com/morluto/rea/blob/main/.github/workflows/ghidra-bridge-sources.yml)
+change-selected Ghidra bridge CI lane
 runs it with its checksum-verified Ghidra distribution. Read-only sessions
 (Windows P0 and caller-owned existing projects) record the same limitation but
 mark nothing volatile; no real-provider lane covers them.

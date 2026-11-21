@@ -559,6 +559,10 @@ touched verifier uses these helpers.
 
 ## CodeQL production scope
 
+GitHub Actions is disabled in this repository, so these scans run only through
+CodeQL default setup, if enabled. The configuration and scan rules below apply
+when the production workflow is restored.
+
 [The production configuration](https://github.com/morluto/rea/blob/main/.github/codeql/production.yml) excludes
 `tests/`, `scripts/fixtures/`, `*.test.*`, `*.fixture.*`, `test_*.py`, and `*_test.py` inputs
 during extraction. It retains the default queries and the existing `local`
@@ -575,7 +579,7 @@ These exclusions do not change which behavioral tests CI executes. CodeQL's
 JavaScript/TypeScript, Python, and Actions lanes do not add shell, Java, or Swift
 analysis; their existing checks remain responsible for those languages.
 
-[The production workflow](https://github.com/morluto/rea/blob/main/.github/workflows/codeql.yml) is inactive until a
+The production workflow is inactive until a
 repository administrator disables CodeQL **default setup** and sets the Actions
 repository variable `REA_CODEQL_ADVANCED` to `true`. Disable default setup first:
 it rejects advanced CodeQL uploads. Then enable the variable and manually run

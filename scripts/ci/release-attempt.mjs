@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { valid } from "semver";
-import { registryPublicationState } from "../../.github/actions/publish-mcp/registry-state.mjs";
+import { registryPublicationState } from "./registry-state.mjs";
 import { readMergedReleasePullRequest } from "../lib/release-pull-request.mjs";
 import { readNpmRelease } from "./npm-release.mjs";
 
