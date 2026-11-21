@@ -165,6 +165,74 @@ async function initializeWebsite() {
     }
   }
 
+  function initializeInteractions() {
+    const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+    // Ambient cursor glow (pointer only)
+    let glow = null;
+    if (window.matchMedia("(pointer: fine)").matches) {
+      glow = document.createElement("div");
+      glow.id = "neu-cursor-glow";
+      if (motionQuery.matches) {
+        glow.hidden = true;
+      }
+      document.body.appendChild(glow);
+
+      let rafId = null;
+      let cx = -999,
+        cy = -999;
+      window.addEventListener(
+        "mousemove",
+        (e) => {
+          if (motionQuery.matches) return;
+          cx = e.clientX;
+          cy = e.clientY;
+          if (rafId !== null) return;
+          rafId = requestAnimationFrame(() => {
+            glow.style.setProperty("--cx", cx + "px");
+            glow.style.setProperty("--cy", cy + "px");
+            rafId = null;
+          });
+        },
+        { passive: true },
+      );
+    }
+
+    // Card hover 3D tilt
+    const cards = document.querySelectorAll(
+      ".home-case-card, .contributor-card, .home-workflow li",
+    );
+    const MAX_TILT = 3;
+    cards.forEach((card) => {
+      card.addEventListener("mousemove", (e) => {
+        if (motionQuery.matches) {
+          card.style.transform = "";
+          return;
+        }
+        const rect = card.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width - 0.5;
+        const y = (e.clientY - rect.top) / rect.height - 0.5;
+        card.style.transform = `translateY(-2px) rotateX(${(-y * MAX_TILT).toFixed(2)}deg) rotateY(${(x * MAX_TILT).toFixed(2)}deg)`;
+      });
+      card.addEventListener("mouseleave", () => {
+        card.style.transform = "";
+      });
+    });
+
+    motionQuery.addEventListener("change", (e) => {
+      if (glow !== null) {
+        glow.hidden = e.matches;
+      }
+      if (e.matches) {
+        cards.forEach((card) => {
+          card.style.transform = "";
+        });
+      }
+    });
+  }
+
+  initializeInteractions();
+
   return initializeGitHubStars();
 }
 
