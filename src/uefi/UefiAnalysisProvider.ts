@@ -111,9 +111,9 @@ interface DiscoveredUefiModule {
   readonly rawName: string;
   readonly cleanName: string;
   readonly phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
-  readonly typeName?: string;
-  readonly bytes?: Buffer;
-  readonly sourcePath?: string;
+  readonly typeName?: string | undefined;
+  readonly bytes?: Buffer | undefined;
+  readonly sourcePath?: string | undefined;
   readonly byteLength: number;
 }
 
@@ -200,7 +200,7 @@ export const buildUefiEntryPointScaffolding = (
   machineWidth: UefiMachineWidth = "64",
 ): UefiEntryPointScaffolding => {
   const safeName = sanitizeCComment(rawName);
-  const statusType = machineWidth === "32" ? "int32_t" : "int64_t";
+  const statusType = machineWidth === "32" ? "uint32_t" : "uint64_t";
   const normType = typeName?.toLowerCase();
   if (normType === "pei-core") {
     return {
@@ -1136,13 +1136,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         signal.throwIfAborted();
 
         // Reserve time to finalize completed modules and publish them before the deadline
+        const PUBLICATION_RESERVE_MS = 5_000;
         if (remainingTimeMs !== undefined && stagedModules.length > 0) {
           const timeLeft = remainingTimeMs();
-          const nextModuleReserve =
-            (request.input.include_disassembly === false ? 0 : 30_000) +
-            (ghidraBin !== null ? 45_000 : 0) +
-            5_000;
-          if (timeLeft <= nextModuleReserve) {
+          if (timeLeft <= PUBLICATION_RESERVE_MS) {
             effectiveLimitations.push(
               `Decompilation halted early to finalize and publish ${stagedModules.length} completed modules before operation deadline.`,
             );
@@ -1288,118 +1285,151 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 );
               }
             } else {
-              const maxAsmBuffer = Math.min(
-                MAX_DISASSEMBLY_MODULE_BYTES,
-                remainingAsmBytes,
-              );
-              let asmOutput: string | null = null;
-              let llvmErrorMsg: string | null = null;
-              let objdumpErrorMsg: string | null = null;
-              let llvmError: unknown;
-              let objdumpError: unknown;
-              try {
-                const { stdout } = await execFileOutput(
-                  "llvm-objdump",
-                  ["-d", "--no-show-raw-insn", tempEfiPath],
-                  {
-                    signal,
-                    stopSignal: "SIGTERM",
-                    timeout: 15_000,
-                    maxBuffer: maxAsmBuffer,
-                  },
+              const timeLeftForDisasm =
+                remainingTimeMs !== undefined
+                  ? remainingTimeMs() - PUBLICATION_RESERVE_MS
+                  : 15_000;
+              if (timeLeftForDisasm <= 0) {
+                disassemblyStatus = "omitted";
+                if (
+                  !effectiveLimitations.includes(
+                    "Disassembly omitted for remaining modules to preserve deadline for publication.",
+                  )
+                ) {
+                  effectiveLimitations.push(
+                    "Disassembly omitted for remaining modules to preserve deadline for publication.",
+                  );
+                }
+              } else {
+                const maxAsmBuffer = Math.min(
+                  MAX_DISASSEMBLY_MODULE_BYTES,
+                  remainingAsmBytes,
                 );
-                asmOutput = stdout;
-                asmGenerator = "llvm-objdump";
-                disassemblyEngineUsed = "llvm-objdump";
-              } catch (err: unknown) {
-                if (signal.aborted) signal.throwIfAborted();
-                if (isAbortOf(err, signal)) throw err;
-                llvmError = err;
-                llvmErrorMsg = errorMessage(err);
+                let asmOutput: string | null = null;
+                let llvmErrorMsg: string | null = null;
+                let objdumpErrorMsg: string | null = null;
+                let llvmError: unknown;
+                let objdumpError: unknown;
+                const disasmTimeout = Math.min(
+                  15_000,
+                  Math.max(500, timeLeftForDisasm),
+                );
                 try {
                   const { stdout } = await execFileOutput(
-                    "objdump",
-                    ["-d", tempEfiPath],
+                    "llvm-objdump",
+                    ["-d", "--no-show-raw-insn", tempEfiPath],
                     {
                       signal,
                       stopSignal: "SIGTERM",
-                      timeout: 15_000,
+                      timeout: disasmTimeout,
                       maxBuffer: maxAsmBuffer,
                     },
                   );
                   asmOutput = stdout;
-                  asmGenerator = "objdump";
-                  if (disassemblyEngineUsed === "none") {
-                    disassemblyEngineUsed = "objdump";
-                  }
-                } catch (err2: unknown) {
+                  asmGenerator = "llvm-objdump";
+                  disassemblyEngineUsed = "llvm-objdump";
+                } catch (err: unknown) {
                   if (signal.aborted) signal.throwIfAborted();
-                  if (isAbortOf(err2, signal)) throw err2;
-                  objdumpError = err2;
-                  objdumpErrorMsg = errorMessage(err2);
-                  asmOutput = null;
-                }
-              }
-              if (asmOutput !== null) {
-                const asmBytes = Buffer.from(asmOutput, "utf8");
-                if (
-                  totalStagedAsmBytes + asmBytes.length <=
-                  MAX_DISASSEMBLY_TOTAL_BYTES
-                ) {
-                  const asmName = `${boundedName}.asm`;
-                  asmRelPath = `${moduleRelDir}/${asmName}`;
-                  asmSha256 = sha256Hex(asmBytes);
-                  publicationEntries.push({
-                    relativePath: asmRelPath,
-                    bytes: asmBytes,
-                  });
-                  totalStagedAsmBytes += asmBytes.length;
-                  disassemblyStatus = "ok";
-                } else {
-                  disassemblyStatus = "omitted";
-                  if (
-                    !effectiveLimitations.includes(
-                      "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
-                    )
-                  ) {
-                    effectiveLimitations.push(
-                      "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                  if (isAbortOf(err, signal)) throw err;
+                  llvmError = err;
+                  llvmErrorMsg = errorMessage(err);
+                  const remainingForObjdump =
+                    remainingTimeMs !== undefined
+                      ? remainingTimeMs() - PUBLICATION_RESERVE_MS
+                      : 15_000;
+                  if (remainingForObjdump > 0) {
+                    const objdumpTimeout = Math.min(
+                      15_000,
+                      Math.max(500, remainingForObjdump),
                     );
+                    try {
+                      const { stdout } = await execFileOutput(
+                        "objdump",
+                        ["-d", tempEfiPath],
+                        {
+                          signal,
+                          stopSignal: "SIGTERM",
+                          timeout: objdumpTimeout,
+                          maxBuffer: maxAsmBuffer,
+                        },
+                      );
+                      asmOutput = stdout;
+                      asmGenerator = "objdump";
+                      if (disassemblyEngineUsed === "none") {
+                        disassemblyEngineUsed = "objdump";
+                      }
+                    } catch (err2: unknown) {
+                      if (signal.aborted) signal.throwIfAborted();
+                      if (isAbortOf(err2, signal)) throw err2;
+                      objdumpError = err2;
+                      objdumpErrorMsg = errorMessage(err2);
+                      asmOutput = null;
+                    }
+                  } else {
+                    asmOutput = null;
                   }
                 }
-              } else {
-                if (
-                  isBufferLimitExceeded(llvmError) ||
-                  isBufferLimitExceeded(objdumpError)
-                ) {
-                  disassemblyStatus = "omitted";
+                if (asmOutput !== null) {
+                  const asmBytes = Buffer.from(asmOutput, "utf8");
                   if (
-                    !effectiveLimitations.includes(
-                      "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
-                    )
+                    totalStagedAsmBytes + asmBytes.length <=
+                    MAX_DISASSEMBLY_TOTAL_BYTES
                   ) {
-                    effectiveLimitations.push(
-                      "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
-                    );
+                    const asmName = `${boundedName}.asm`;
+                    asmRelPath = `${moduleRelDir}/${asmName}`;
+                    asmSha256 = sha256Hex(asmBytes);
+                    publicationEntries.push({
+                      relativePath: asmRelPath,
+                      bytes: asmBytes,
+                    });
+                    totalStagedAsmBytes += asmBytes.length;
+                    disassemblyStatus = "ok";
+                  } else {
+                    disassemblyStatus = "omitted";
+                    if (
+                      !effectiveLimitations.includes(
+                        "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                      )
+                    ) {
+                      effectiveLimitations.push(
+                        "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                      );
+                    }
                   }
                 } else {
-                  disassemblyStatus = "failed";
                   if (
-                    recordedDisassemblyFailures <
-                    MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS
+                    isBufferLimitExceeded(llvmError) ||
+                    isBufferLimitExceeded(objdumpError)
                   ) {
-                    effectiveLimitations.push(
-                      `Disassembly for ${mod.rawName} failed: llvm-objdump (${sanitizeDiag(llvmErrorMsg)}), objdump (${sanitizeDiag(objdumpErrorMsg)})`,
-                    );
-                    recordedDisassemblyFailures++;
-                  } else if (
-                    !effectiveLimitations.includes(
-                      "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
-                    )
-                  ) {
-                    effectiveLimitations.push(
-                      "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
-                    );
+                    disassemblyStatus = "omitted";
+                    if (
+                      !effectiveLimitations.includes(
+                        "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                      )
+                    ) {
+                      effectiveLimitations.push(
+                        "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                      );
+                    }
+                  } else {
+                    disassemblyStatus = "failed";
+                    if (
+                      recordedDisassemblyFailures <
+                      MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS
+                    ) {
+                      effectiveLimitations.push(
+                        `Disassembly for ${mod.rawName} failed: llvm-objdump (${sanitizeDiag(llvmErrorMsg)}), objdump (${sanitizeDiag(objdumpErrorMsg)})`,
+                      );
+                      recordedDisassemblyFailures++;
+                    } else if (
+                      !effectiveLimitations.includes(
+                        "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
+                      )
+                    ) {
+                      effectiveLimitations.push(
+                        "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
+                      );
+                    }
                   }
                 }
               }
@@ -1414,6 +1444,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           if (ghidraBin !== null) {
             const remainingCBytes =
               MAX_DECOMPILE_TOTAL_BYTES - totalStagedCBytes;
+            const timeLeftForGhidra =
+              remainingTimeMs !== undefined
+                ? remainingTimeMs() - PUBLICATION_RESERVE_MS
+                : 45_000;
             if (remainingCBytes <= 0) {
               if (
                 !effectiveLimitations.includes(
@@ -1424,7 +1458,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
                 );
               }
+            } else if (timeLeftForGhidra <= 1_000) {
+              const ghidraSkipMsg = `Ghidra C decompilation for ${mod.rawName} omitted to preserve deadline for publication; generated entry point scaffolding instead.`;
+              if (!effectiveLimitations.includes(ghidraSkipMsg)) {
+                effectiveLimitations.push(ghidraSkipMsg);
+              }
             } else {
+              const ghidraTimeout = Math.min(
+                45_000,
+                Math.max(1_000, timeLeftForGhidra),
+              );
               ghidraOutC = join(
                 tempRoot.path,
                 `${cIdentifier}_${moduleSeq}_decompiled.c`,
@@ -1462,7 +1505,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 await execFileOutput(execCmd, execArgs, {
                   signal,
                   stopSignal: "SIGTERM",
-                  timeout: 45_000,
+                  timeout: ghidraTimeout,
                   maxBuffer: 10 * 1024 * 1024,
                 });
                 if (existsSync(ghidraOutC)) {
@@ -2182,18 +2225,33 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const dirHash = createHash("sha256");
     const discoveredModules: DiscoveredUefiModule[] = [];
 
-    for (const candidate of candidates) {
+    const MAX_PRELOAD_BYTES = 32 * 1024 * 1024;
+    let retainedPreloadBytes = 0;
+
+    for (let i = 0; i < candidates.length; i++) {
       checkpoint();
       signal.throwIfAborted();
+      const candidate = candidates[i]!;
       const content = await readFile(candidate.fullPath);
       const fileSha256 = sha256Hex(content);
       dirHash.update(compositeKey([candidate.normRelPath, fileSha256]) + "\n");
+
+      const isSelected = i < request.input.max_modules;
+      let retainedBytes: Buffer | undefined;
+      if (
+        isSelected &&
+        retainedPreloadBytes + content.byteLength <= MAX_PRELOAD_BYTES
+      ) {
+        retainedBytes = content;
+        retainedPreloadBytes += content.byteLength;
+      }
+
       discoveredModules.push({
         guid: candidate.guid,
         rawName: candidate.rawName,
         cleanName: candidate.cleanName,
         phase: candidate.phase,
-        bytes: content,
+        ...(retainedBytes !== undefined ? { bytes: retainedBytes } : {}),
         sourcePath: candidate.fullPath,
         byteLength: candidate.size,
       });

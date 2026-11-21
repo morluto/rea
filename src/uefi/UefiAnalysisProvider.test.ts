@@ -2955,7 +2955,7 @@ it("emits 32-bit or 64-bit EFI_STATUS and sanitized comments in scaffolding", ()
     undefined,
     "32",
   );
-  expect(scaffold32.typedefs).toContain("typedef int32_t EFI_STATUS;");
+  expect(scaffold32.typedefs).toContain("typedef uint32_t EFI_STATUS;");
   expect(scaffold32.functionDefinition).toContain("My* /Driver Malicious");
 
   const scaffold64 = buildUefiEntryPointScaffolding(
@@ -2966,7 +2966,7 @@ it("emits 32-bit or 64-bit EFI_STATUS and sanitized comments in scaffolding", ()
     "peim",
     "64",
   );
-  expect(scaffold64.typedefs).toContain("typedef int64_t EFI_STATUS;");
+  expect(scaffold64.typedefs).toContain("typedef uint64_t EFI_STATUS;");
 });
 
 it("allocates strictly injective directory paths for colliding names without GUID", async () => {
@@ -3202,4 +3202,34 @@ it("resolves packaged Ghidra script ReaDecompileToC.java from module URL at pack
     new URL("../../bridge/ghidra", import.meta.url),
   );
   expect(existsSync(join(bridgeDir, "ReaDecompileToC.java"))).toBe(true);
+});
+
+it("decompiles multiple modules under normal deadline budget without premature stopping", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-multi-module-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  // Create 3 valid PE modules
+  for (let i = 1; i <= 3; i++) {
+    const pe = createMinimalPeBuffer(0x8664, 1, 256);
+    pe.fill(i * 0x11, 140);
+    await writeFile(join(inDir, `Driver${i}.efi`), pe);
+  }
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(3);
+    // All 3 modules must be decompiled without hitting premature nextModuleReserve
+    expect(result.total_modules_decompiled).toBe(3);
+    expect(result.modules.length).toBe(3);
+  } finally {
+    await provider.close();
+  }
 });
