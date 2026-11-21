@@ -10,9 +10,8 @@ import { projectReferenceSourceImportError } from "../application/ReferenceSourc
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import {
   PERSISTED_SETTINGS,
-  unsetUserConfig,
   userConfigFilePath,
-  writeUserConfig,
+  updateUserConfig,
   type PersistedSetting,
 } from "../config/userConfig.js";
 import { parseConfig } from "../config/parseConfig.js";
@@ -552,22 +551,12 @@ const registerConfigCommand = (
             environment as Readonly<NodeJS.ProcessEnv>,
             process.platform,
           );
-          let saved: readonly string[] = [];
-          let removed: readonly string[] = [];
-          if (options.set.length > 0) {
-            await writeUserConfig(
-              environment as Readonly<NodeJS.ProcessEnv>,
-              settings,
-            );
-            saved = Object.keys(settings);
-          }
-          if (options.unset.length > 0) {
-            removed = await unsetUserConfig(
-              environment as Readonly<NodeJS.ProcessEnv>,
-              options.unset as readonly PersistedSetting[],
-            );
-          }
-          return { path, saved, removed };
+          const { removed } = await updateUserConfig(
+            environment as Readonly<NodeJS.ProcessEnv>,
+            settings,
+            options.unset as readonly PersistedSetting[],
+          );
+          return { path, saved: Object.keys(settings), removed };
         }
         return { settings: effectiveSettings() };
       }),

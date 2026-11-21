@@ -224,10 +224,34 @@ describe("writeUserConfig / unsetUserConfig", () => {
     );
     await unsetUserConfig({ HOME: root }, ["GHIDRA_INSTALL_DIR"], "darwin");
     const entries = await readdir(configDir);
-    expect(entries).toEqual(["rea.json"]);
+    expect(entries.sort()).toEqual(["rea.json", "rea.json.rea.backup"]);
+    expect(
+      JSON.parse(
+        await readFile(join(configDir, "rea.json.rea.backup"), "utf8"),
+      ),
+    ).toEqual({ GHIDRA_INSTALL_DIR: "/opt/ghidra" });
     expect(
       JSON.parse(await readFile(join(configDir, "rea.json"), "utf8")),
     ).toEqual({});
+  });
+  it("rejects a native-invalid value and a second writer without changing the current file", async () => {
+    const { writeUserConfig } = await import("../../src/config/userConfig.js");
+    const root = tempHome();
+    const environment = { HOME: root };
+    const path = userConfigFilePath(environment, "darwin");
+    await writeUserConfig(environment, { JAVA_HOME: "/original" }, "darwin");
+    const original = await readFile(path, "utf8");
+    await expect(
+      writeUserConfig(environment, { JAVA_HOME: "relative" }, "darwin"),
+    ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+    await mkdir(`${path}.lock`);
+    await expect(
+      writeUserConfig(environment, { JAVA_HOME: "/other" }, "darwin"),
+    ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+    expect(await readFile(path, "utf8")).toBe(original);
+    await expect(readFile(`${path}.rea.backup`, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });
 
