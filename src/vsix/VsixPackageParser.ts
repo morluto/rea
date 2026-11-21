@@ -1108,9 +1108,14 @@ export const parseVsixPackage = async (
                 file.path,
                 input.max_member_bytes,
               );
-        if (declared !== null && declared > allowance) {
+        // Once the package ceiling is spent, skip the read outright: a member
+        // declaring zero bytes would otherwise still start its decoder.
+        if (
+          (expansion.remaining === 0 && input.max_member_bytes > 0) ||
+          (declared !== null && declared > allowance)
+        ) {
           limitations.push(
-            declared > input.max_member_bytes
+            declared !== null && declared > input.max_member_bytes
               ? VSIX_LIMITATIONS.memberOversize(
                   file.path,
                   input.max_member_bytes,

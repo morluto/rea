@@ -393,6 +393,66 @@ it("charges members that inflate past an understated size to the package budget"
   }
 });
 
+it("skips zero-declared members once the package budget is spent", async () => {
+  // Each member declares zero bytes and inflates to its full 16 KiB
+  // allowance. After three members spend the 48 KiB package budget, later
+  // members must not start their decoders at all.
+  const names = Array.from(
+    { length: 6 },
+    (_, index) => `extension/dist/module-${String(index)}.wasm`,
+  );
+  const bytes = await vsixPackageFixture({
+    extraBinaryMembers: Object.fromEntries(names.map((name) => [name, WASM])),
+  });
+  const chunk = new Uint8Array(4 * 1024);
+  let decoded = 0;
+  const started: string[] = [];
+  const original = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      for await (const entry of original.call(this, options)) {
+        if (!entry.directory && names.includes(entry.filename)) {
+          const name = entry.filename;
+          entry.uncompressedSize = 0;
+          entry.getData = (async (writer: {
+            init?: (size?: number) => Promise<void>;
+            writeUint8Array: (array: Uint8Array) => Promise<void>;
+          }) => {
+            started.push(name);
+            await writer.init?.();
+            for (let index = 0; index < 16; index++) {
+              await writer.writeUint8Array(chunk);
+              decoded += chunk.length;
+            }
+            throw new Error("decoder overran its declared size");
+          }) as unknown as typeof entry.getData;
+        }
+        yield entry;
+      }
+      return true;
+    });
+  const maximum = 48 * 1024;
+  expansionBudget.override = maximum;
+  try {
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), {
+        ...defaults,
+        max_member_bytes: 16 * 1024,
+      }),
+    );
+    expect(started).toEqual(names.slice(0, 3));
+    expect(decoded).toBe(maximum);
+    for (const name of names.slice(3))
+      expect(report.limitations).toContain(
+        VSIX_LIMITATIONS.packageExpansionSpent(name, maximum),
+      );
+  } finally {
+    expansionBudget.override = undefined;
+    enumeration.mockRestore();
+  }
+});
+
 it("inventories a package with no vsixmanifest and leaves vsix identity unknown", async () => {
   const bytes = await vsixPackageMissingManifestFixture();
   const report = vsixPackageSchema.parse(
