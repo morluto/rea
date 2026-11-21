@@ -12,8 +12,8 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -22,6 +22,7 @@ const target: BinaryTarget = {
   path: "/fixture",
   kind: "database",
   format: "analysis-database",
+  databaseEngine: null,
   sha256: "0".repeat(64),
 };
 

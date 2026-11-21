@@ -39,11 +39,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         "console.log(JSON.stringify([a, b, c, d, first.length, rest.length, mixed.length]));",
       ].join("\n"),
     });
-    const control = await processes.run(
-      process.execPath,
-      [join(root, "entry.mts")],
-      { timeoutMs: 15_000 },
-    );
+    const control = await processes.run(process.execPath, [
+      join(root, "entry.mts"),
+    ]);
     expect(control.exitCode, control.stderr).toBe(0);
     expect(JSON.parse(control.stdout)).toEqual([
       7,

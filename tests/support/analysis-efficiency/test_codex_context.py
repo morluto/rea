@@ -81,7 +81,7 @@ class PcapGraderWorkflowTests(unittest.TestCase):
                    'retained_counts': {'http_request_uris': 3}}
         prefix = ['http://example.test/one', 'http://example.test/two']
         coverage = {'status': 'page', 'examined': 2, 'total': 3, 'next_offset': 2, 'exhausted': False}
-        subject = {'digest': {'sha256': capture['target']['sha256']}, 'local_path': capture['target']['path']}
+        subject = {'identity': {'sha256': capture['target']['sha256']}, 'local_path': capture['target']['path']}
         summary = {'evidence_id': summary_id, 'operation': 'inspect_analysis_view',
                    'subject': copy.deepcopy(subject), 'evidence_links': [parent],
                    'limitations': ['source', 'view'],
@@ -226,7 +226,7 @@ class PcapGraderWorkflowTests(unittest.TestCase):
         self.assertFalse(self.grade(answer, [receipt], reference, ['inspect_analysis_view'])['all_factual_checks_pass'])
         wrong_operation = copy.deepcopy(receipt);wrong_operation['operation'] = 'inspect_analysis_view'
         self.assertFalse(self.grade(answer, [wrong_operation], reference)['all_factual_checks_pass'])
-        for subject in [None, {'digest': {'sha256': 'e' * 64}, 'local_path': source['target']['path']}]:
+        for subject in [None, {'identity': {'sha256': 'e' * 64}, 'local_path': source['target']['path']}]:
             changed = copy.deepcopy(receipt);changed['subject'] = subject
             report = self.grade(answer, [changed], reference)
             self.assertTrue(report['factual_checks']['pcap_cited_capture'])
@@ -252,8 +252,8 @@ class PcapGraderWorkflowTests(unittest.TestCase):
     def test_cited_receipt_subjects_must_identify_the_reference_capture(self):
         for index in [0, 1]:
             for subject in [None, [], 'artifact', {}, {'digest': None},
-                            {'digest': {'sha256': 'e' * 64}, 'local_path': '/fixture/http.pcapng'},
-                            {'digest': {'sha256': 'd' * 64}, 'local_path': '/fixture/other.pcapng'}]:
+                            {'identity': {'sha256': 'e' * 64}, 'local_path': '/fixture/http.pcapng'},
+                            {'identity': {'sha256': 'd' * 64}, 'local_path': '/fixture/other.pcapng'}]:
                 with self.subTest(index=index, subject=subject):
                     answer, records, reference = self.fixture()
                     records[index]['subject'] = subject

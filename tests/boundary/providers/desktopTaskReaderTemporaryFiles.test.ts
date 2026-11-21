@@ -7,6 +7,7 @@ import { expect, it, vi } from "vitest";
 
 import { readerViewsOfBytes } from "../../../src/application/desktop/DesktopTaskReaders.js";
 import { runReaderHere } from "../../../src/desktop/TaskReaderProcess.js";
+import { prepareOwnedCommand } from "../../../src/process/OwnedCommand.js";
 
 import {
   readerAnswerView,
@@ -92,6 +93,9 @@ print("REA " + json.dumps({"received": received.decode(), "socket": address,
 it.skipIf(process.platform === "win32")(
   "keeps Unix sockets usable in the nested local-export scratch layout",
   async () => {
+    // The host's Darwin ownership helper lives for the test process. Prepare it
+    // before selecting the reader's temporary root whose cleanup we assert.
+    await prepareOwnedCommand();
     vi.stubEnv("TMPDIR", "/tmp");
     try {
       const root = await createTestTempDirectory("ipc-");

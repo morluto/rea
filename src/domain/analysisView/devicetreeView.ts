@@ -105,7 +105,7 @@ export const projectDevicetreeView = (
       kind: "summary" as const,
       view,
       summary: { ...context, summary: r.summary },
-      coverage: completeWithinViewCoverage(r.nodes.length, r.nodes.length),
+      coverage: completeWithinViewCoverage(r.nodes.length),
     });
   if (view.collection === "properties" && view.path === undefined)
     return invalid("A properties page requires an exact node path.");

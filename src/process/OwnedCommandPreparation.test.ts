@@ -1,6 +1,7 @@
 import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
@@ -12,6 +13,7 @@ import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const platform = Object.getOwnPropertyDescriptor(
   systemProcessOwnershipHost,
@@ -131,7 +133,7 @@ it("preserves exact cancelled preparation cleanup capabilities", async () => {
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const failure = new DarwinProcessOwnershipInspectionError(
@@ -262,6 +264,12 @@ it("cancels no-deadline preparation with the caller's exact opaque reason", asyn
       launcher: async (input) => {
         expect(input.signal).toBe(controller.signal);
         started.resolve();
+        if (input.signal?.aborted) {
+          emitted = new ProcessOwnershipInspectionCancelled(
+            input.signal.reason,
+          );
+          throw emitted;
+        }
         await new Promise<void>((_resolve, reject) =>
           input.signal?.addEventListener(
             "abort",
@@ -287,12 +295,21 @@ it("cancels no-deadline preparation with the caller's exact opaque reason", asyn
     preparationFailure: expect.any(ProcessOwnershipInspectionCancelled),
     snapshot: null,
   });
-  await started.promise;
-  controller.abort(reason);
-  await expected;
-  const failure = await observed;
-  if (!(failure instanceof OwnedCommandFailure)) throw failure;
-  expect(failure.preparationFailure).toBe(emitted);
-  expect(emitted?.reason).toBe(reason);
-  expect(emitted?.cause).toBe(reason);
+  try {
+    await awaitAcknowledgement(
+      started.promise,
+      observed,
+      "command preparation",
+    );
+    controller.abort(reason);
+    await expected;
+    const failure = await observed;
+    if (!(failure instanceof OwnedCommandFailure)) throw failure;
+    expect(failure.preparationFailure).toBe(emitted);
+    expect(emitted?.reason).toBe(reason);
+    expect(emitted?.cause).toBe(reason);
+  } finally {
+    controller.abort(reason);
+    await observed;
+  }
 });

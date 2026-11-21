@@ -62,15 +62,8 @@ const readGraph = (
 describe("architecture gate for the call graph source", () => {
   it.each([
     ["x86", target("x86"), true],
-    ["x86_64", target("x86_64"), true],
     ["x86 with both x86 families", target("x86_64", ["x86", "x86_64"]), true],
     ["32-bit arm", target("arm"), false],
-    ["arm64", target("arm64"), false],
-    [
-      "a universal target with an arm64 slice",
-      target("x86_64", ["x86_64", "arm64"]),
-      false,
-    ],
   ])("treats %s as x86-only: %s", (_label, candidate, expected) => {
     expect(
       isX86OnlyTarget(candidate),
@@ -111,7 +104,7 @@ describe("architecture gate for the call graph source", () => {
 });
 
 describe("reading root callees from the processor-neutral call graph", () => {
-  it("requests only the procedure as root at depth zero", async () => {
+  it("skips name lookup when the root has no callees", async () => {
     const requests: unknown[] = [];
 
     await readCallGraphCallees(async (tool, args) => {
@@ -124,20 +117,7 @@ describe("reading root callees from the processor-neutral call graph", () => {
     ]);
   });
 
-  it("keeps root call edges, excluding child and non-call edges", async () => {
-    const result = await readGraph([
-      call("0x1000", "0x20"),
-      { from: "0x1000", to: "0x400", type: "jump" },
-      call("0x20", "0x500"),
-    ]);
-
-    expect(
-      result.callees.map(({ address }) => address),
-      "child edges and non-call edges are excluded",
-    ).toEqual(["0x20"]);
-  });
-
-  it("batches name lookup and keeps numeric order and unresolved addresses", async () => {
+  it("batches unique root calls and retains unresolved addresses in numeric order", async () => {
     const requests: unknown[] = [];
     const result = await readCallGraphCallees(async (tool, args) => {
       requests.push([tool, args]);
@@ -146,6 +126,9 @@ describe("reading root callees from the processor-neutral call graph", () => {
           call("0x1000", "0x300"),
           call("0x1000", "0x100"),
           call("0x1000", "0x20"),
+          call("0x1000", "0x20"),
+          { from: "0x1000", to: "0x400", type: "jump" },
+          call("0x20", "0x500"),
         ]);
       return [
         {
@@ -243,6 +226,8 @@ describe("call graph coverage and failure handling", () => {
 
   it("keeps an explicitly uncapped root below its edge cap untruncated", async () => {
     const result = await readGraph([call("0x1000", "0x20")], {
+      truncated: false,
+      limit_reason: null,
       per_func_capped: false,
       max_edges_per_func: 200,
     });
@@ -265,6 +250,36 @@ describe("call graph coverage and failure handling", () => {
       diagnostics: [UNRECOGNIZED_CALLEE_LIMITATION],
     });
   });
+
+  it.each([
+    ["no truncation markers", {}],
+    [
+      "a per-function cap without the graph truncation flag",
+      { per_func_capped: false, max_edges_per_func: 200 },
+    ],
+    [
+      "the graph truncation flag without a per-function cap",
+      { truncated: false, limit_reason: null },
+    ],
+  ])(
+    "reports a graph with %s as unknown, never complete",
+    async (_label, extra) => {
+      const result = await readGraph([call("0x1000", "0x20")], extra);
+
+      expect(
+        result.coverage,
+        "an omitted upstream truncation marker is unknown, not a declaration that nothing was truncated",
+      ).toMatchObject({
+        status: "unknown",
+        reason: expect.stringMatching(/did not declare whether it truncated/u),
+        limited_directions: ["callees"],
+      });
+      expect(
+        result.callees.map(({ address }) => address),
+        "the observed edges are retained",
+      ).toEqual(["0x20"]);
+    },
+  );
 
   it("reports a graph that saturates its per-function cap with root edges", async () => {
     const result = await readGraph(

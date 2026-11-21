@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { LocalWebScriptArtifacts } from "./assets/LocalWebScriptArtifacts.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { WebArtifactCleanup } from "./WebArtifactCleanup.js";

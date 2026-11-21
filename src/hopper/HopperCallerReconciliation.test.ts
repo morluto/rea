@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { err, ok } from "../domain/result.js";
 import type { HopperClient } from "./HopperClient.js";
 import { reconcileHopperCallers } from "./HopperCallerReconciliation.js";
-import { AnalysisWorkScope } from "../application/AnalysisWorkScope.js";
+import { AnalysisWorkScope } from "../ports/AnalysisWorkScope.js";
 import {
   formatHopperCallerScanReason,
   HOPPER_CALLER_SCAN_RETENTION_BYTES,
@@ -75,7 +75,7 @@ const base = {
 };
 const referenceResult = {
   procedure: target,
-  direction: "incoming",
+  direction: "incoming" as const,
   reference_kinds_available: false,
   unresolved_calls: [],
   references: [],
@@ -94,7 +94,7 @@ it("builds one forward index for successive queries in a workflow", async () => 
     client,
     "procedure_callers",
     { procedure: "name" },
-    base,
+    ok(base),
     options,
     250,
   );
@@ -102,7 +102,7 @@ it("builds one forward index for successive queries in a workflow", async () => 
     client,
     "procedure_references",
     { procedure: "name", direction: "incoming" },
-    referenceResult,
+    ok(referenceResult),
     options,
     250,
   );
@@ -157,7 +157,7 @@ it("builds one forward index for successive queries in a workflow", async () => 
     client,
     "procedure_callers",
     { procedure: "name" },
-    base,
+    ok(base),
     options,
     250,
   );
@@ -198,7 +198,7 @@ it("links each compact call site to its owning caller address", async () => {
     { callTool } as unknown as HopperClient,
     "procedure_callers",
     { procedure: "name" },
-    base,
+    ok(base),
     undefined,
     250,
   );
@@ -237,7 +237,7 @@ it("merges paged call sites and pins the selected target", async () => {
     client,
     "procedure_references",
     { procedure: "name", direction: "incoming" },
-    referenceResult,
+    ok(referenceResult),
     undefined,
     250,
   );
@@ -267,7 +267,7 @@ it("does not reuse a previous scan", async () => {
     client,
     "procedure_callers",
     { procedure: "name" },
-    base,
+    ok(base),
     undefined,
     250,
   );
@@ -292,7 +292,7 @@ it("does not reuse a previous scan", async () => {
     client,
     "procedure_callers",
     { procedure: "name" },
-    base,
+    ok(base),
     undefined,
     250,
   );
@@ -309,7 +309,7 @@ it("stops between pages on cancellation", async () => {
     { callTool } as unknown as HopperClient,
     "procedure_callers",
     {},
-    base,
+    ok(base),
     { signal: controller.signal },
     250,
   );
@@ -350,7 +350,7 @@ it("preserves cancellation while reporting the last page", async () => {
     { callTool } as unknown as HopperClient,
     "procedure_callers",
     {},
-    base,
+    ok(base),
     { signal: controller.signal, progress },
     250,
   );
@@ -393,7 +393,7 @@ it("retains completed pages when a later scan page fails", async () => {
     { callTool } as unknown as HopperClient,
     "procedure_callers",
     {},
-    base,
+    ok(base),
     undefined,
     250,
   );
@@ -426,7 +426,7 @@ it("reports a changing inventory as incomplete", async () => {
     { callTool } as unknown as HopperClient,
     "procedure_callers",
     {},
-    base,
+    ok(base),
     undefined,
     250,
   );
@@ -452,7 +452,7 @@ it("retains original callers and reports a procedure that exceeds the page allow
     { callTool } as unknown as HopperClient,
     "procedure_callers",
     {},
-    { ...base, callers: ["0x1000"] },
+    ok({ ...base, callers: ["0x1000"] }),
     undefined,
     250,
   );
@@ -507,7 +507,7 @@ it("refuses expanded reference copies that exceed the retained scan budget", asy
     { callTool } as unknown as HopperClient,
     "procedure_references",
     { procedure: "name", direction: "incoming" },
-    referenceResult,
+    ok(referenceResult),
     undefined,
     250,
   );
@@ -541,7 +541,7 @@ it("reports truncated target instructions and native callers", async () => {
     { callTool } as unknown as HopperClient,
     "procedure_callers",
     {},
-    { ...base, instructions_complete: false, callers_complete: false },
+    ok({ ...base, instructions_complete: false, callers_complete: false }),
     undefined,
     250,
   );

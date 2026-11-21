@@ -1,7 +1,13 @@
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 import type { z } from "zod";
 
 import type { objcPropertySchema } from "../domain/native/objcSwiftMetadata.js";
-import { issue, type DecodeIssue } from "./AppleDispatchDecodeFacts.js";
+import {
+  issue,
+  type DecodeIssue,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type ObjcProperty = z.infer<typeof objcPropertySchema>;
 
@@ -119,7 +125,8 @@ export const readObjcPropertyList = (
   const entrySize = read.u32(list) & ~3;
   const count = read.u32(list + 4n);
   if (entrySize !== 16)
-    throw new TypeError(
+    throw unsupportedInput(
+      "macho",
       `Unsupported Objective-C property entry size ${entrySize}`,
     );
   for (let index = 0; index < count; index++) {
@@ -131,7 +138,8 @@ export const readObjcPropertyList = (
     const location = `0x${entry.toString(16)}`;
     try {
       const name = read.string(read.pointer(entry));
-      if (name.length === 0) throw new TypeError("the property name is empty");
+      if (name.length === 0)
+        throw malformedInput("macho", "the property name is empty");
       const decoded = decodePropertyAttributes(
         name,
         read.string(read.pointer(entry + 8n)),
@@ -144,9 +152,10 @@ export const readObjcPropertyList = (
           location,
         });
     } catch (cause: unknown) {
+      if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
       issues.push({
         code: "property_decode_failed",
-        message: `property ${String(index)} could not be decoded: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `property ${String(index)} could not be decoded: ${errorMessage(cause)}`,
         location,
       });
     }
@@ -186,11 +195,12 @@ export const readObjcPropertiesOf = (
       );
     return properties;
   } catch (cause: unknown) {
+    if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
     context.issues.push(
       issue(
         "objc_properties_categories",
         "property_decode_failed",
-        `${context.owner}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `${context.owner}: ${errorMessage(cause)}`,
         location,
       ),
     );

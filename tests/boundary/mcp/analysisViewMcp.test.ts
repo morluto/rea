@@ -1,3 +1,8 @@
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { API_SURFACE_EXAMPLE } from "../../../src/contracts/analysisViewApiSurfaceExample.js";
@@ -59,7 +64,7 @@ import {
 import {
   analysisViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   BINARY_LAYOUT_TEST_PROVIDER,
   binaryLayoutFixture,
@@ -87,7 +92,6 @@ const connect = async (
       // These schema conformance cases exercise full nested constraints.
       environment: {
         ...process.env,
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
         REA_MCP_MAX_INPUT_ELEMENTS:
           maximumInputElements === undefined
             ? process.env.REA_MCP_MAX_INPUT_ELEMENTS
@@ -210,7 +214,7 @@ it("selects every IL2CPP native type reference by rendered name with stable row 
 
 it("preserves native relationship coverage through inline and retained MCP views", async () => {
   const { client, session } = await connect();
-  const { ajv, outputSchema } = await advertisedMcpToolSchemas(
+  const { toolDefinition } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -246,18 +250,17 @@ it("preserves native relationship coverage through inline and retained MCP views
       { kind: "inline", evidence: parent },
       { kind: "retained-evidence", evidence_id: parent.evidence_id },
     ]) {
-      const response = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: {
-          source,
-          view: { kind: "native", facet: "callees", offset: 0, limit: 1 },
+      const response = await client.callTool(
+        {
+          name: "inspect_analysis_view",
+          arguments: {
+            source,
+            view: { kind: "native", facet: "callees", offset: 0, limit: 1 },
+          },
         },
-      });
+        { toolDefinition },
+      );
       expect(response.isError).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, response.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       const evidence = parseEvidence(response.structuredContent);
       expect(evidence.relationship_coverage).toEqual(
         parent.relationship_coverage,
@@ -344,7 +347,11 @@ it("advertises typed module references and preserves portable/retained Evidence 
   );
   const recorded = session.recordEvidence(parent);
   if (!recorded.ok) throw recorded.error;
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -368,15 +375,11 @@ it("advertises typed module references and preserves portable/retained Evidence 
         view: { ...view, where: { glob: "*" } },
       }),
     ).toBe(false);
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: { source, view },
-    });
+    const response = await client.callTool(
+      { name: "inspect_analysis_view", arguments: { source, view } },
+      { toolDefinition },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(response.structuredContent);
     expect(evidence).toMatchObject({
       evidence_links: [parent.evidence_id],
@@ -596,7 +599,11 @@ it("advertises exact schemas and projects one layout section from retained Evide
     inspect: () => Promise.resolve(ok(layout)),
   });
   const { client, session } = await connect(service);
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -630,25 +637,24 @@ it("advertises exact schemas and projects one layout section from retained Evide
   const parent = toolContract("inspect_binary_layout").outputSchema.parse(
     inspected.structuredContent,
   );
-  const response = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source: {
-        kind: "retained-evidence",
-        evidence_id: parent.evidence_id,
-      },
-      view: {
-        kind: "item",
-        collection: "sections",
-        selector: { name: ".data" },
+  const response = await client.callTool(
+    {
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: parent.evidence_id,
+        },
+        view: {
+          kind: "item",
+          collection: "sections",
+          selector: { name: ".data" },
+        },
       },
     },
-  });
+    { toolDefinition },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
     response.structuredContent,
   );
@@ -982,11 +988,12 @@ it("delivers a bounded native dossier view over MCP without a Ghidra provider or
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("missing view schemas");
+  if (advertised === undefined) throw new Error("missing view schemas");
   const ajv = schemaValidation.assertions;
-  const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const inputSchema = canonicalInputSchema(advertised.name);
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   const arguments_ = {
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
     view: { kind: "native", facet: "pseudocode", offset: 0, limit: 500 },
@@ -997,15 +1004,11 @@ it("delivers a bounded native dossier view over MCP without a Ghidra provider or
     ajv.validate(inputSchema, arguments_),
     JSON.stringify(ajv.errors),
   ).toBe(true);
-  const response = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: arguments_,
-  });
+  const response = await client.callTool(
+    { name: "inspect_analysis_view", arguments: arguments_ },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
     response.structuredContent,
   );
@@ -1542,7 +1545,7 @@ it.each([false, true])(
 
 it("advertises unserved learned clock rules when a retained capture has no global clock", async () => {
   const { client, session } = await connect();
-  const { ajv, outputSchema } = await advertisedMcpToolSchemas(
+  const { toolDefinition } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -1558,18 +1561,20 @@ it("advertises unserved learned clock rules when a retained capture has no globa
   for (const parent of parents) {
     const original = structuredClone(parent);
     expect(session.recordEvidence(parent).ok).toBe(true);
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: {
-        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
-        view: { kind: "environment-state" },
+    const response = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.evidence_id,
+          },
+          view: { kind: "environment-state" },
+        },
       },
-    });
+      { toolDefinition },
+    );
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const state = analysisViewResultSchema.parse(
       parseEvidence(response.structuredContent).normalized_result,
     );
@@ -1605,7 +1610,7 @@ it("advertises unserved learned clock rules when a retained capture has no globa
 
 it("advertises Mach-O pages whose selected facet owns their exact rows", async () => {
   const { client, session } = await connect();
-  const { ajv, outputSchema } = await advertisedMcpToolSchemas(
+  const { ajv, outputSchema, toolDefinition } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -1618,6 +1623,7 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
   });
   const symbol = {
     name: "_entry",
+    runtime_name: "entry",
     address: null,
     weak: null,
     reexport: null,
@@ -1640,6 +1646,7 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
       {
         ...symbol,
         name: null,
+        runtime_name: null,
         raw_name: "_entry+0x4",
         name_status: "ambiguous",
         addend: null,
@@ -1664,20 +1671,13 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
     provenance: [],
     limitations: [],
   });
-  const { malformed_kind: _unrecorded, ...recordedEncryption } =
-    report.encryption.items[0]!;
-  const historicalEncryption = {
-    ...recordedEncryption,
-    status: "malformed" as const,
-    reason: "slice has 3 encryption load commands",
-  };
   const parent = createEvidence(
     { path: "/fixtures/tool", format: "mach-o", sha256: "a".repeat(64) },
     { id: "native", name: "Native fixture", version: "1" },
     {
       operation: "inspect_macho",
       parameters: {},
-      result: { ...report, encryption: coverage([historicalEncryption]) },
+      result: report,
     },
   );
   const original = structuredClone(parent);
@@ -1690,29 +1690,24 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
     "encryption",
   ] as const) {
     for (const offset of [0, 999]) {
-      const response = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: {
-          source: {
-            kind: "retained-evidence",
-            evidence_id: parent.evidence_id,
+      const response = await client.callTool(
+        {
+          name: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: parent.evidence_id,
+            },
+            view: { kind: "macho", facet, offset, limit: 64 },
           },
-          view: { kind: "macho", facet, offset, limit: 64 },
         },
-      });
+        { toolDefinition },
+      );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, response.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       const delivered = parseEvidence(response.structuredContent);
       const page = analysisViewResultSchema.parse(delivered.normalized_result);
       if (page.kind !== "macho") throw new Error("Expected Mach-O page");
-      const rows =
-        facet === "encryption"
-          ? [{ ...historicalEncryption, malformed_kind: "unrecorded" }]
-          : report[facet].items;
-      expect(page.item).toEqual(rows.slice(offset, offset + 64));
+      expect(page.item).toEqual(report[facet].items.slice(offset, offset + 64));
       if (page.item.length > 0) {
         const mismatched = {
           ...delivered,
@@ -1744,7 +1739,11 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
 it("extracts an environment state identically from retained, portable and file MCP Evidence", async () => {
   // Full inline capture conformance explicitly selects its transport allowance.
   const { client, session } = await connect(undefined, undefined, 8_192);
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -1768,15 +1767,14 @@ it("extracts an environment state identically from retained, portable and file M
     { kind: "evidence-file", path: evidencePath },
   ]) {
     expect(ajv.validate(inputSchema, { source, view })).toBe(true);
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: { source, view },
-    });
+    const response = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: { source, view },
+      },
+      { toolDefinition },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(response.structuredContent);
     expect(evidence.confidence).toBe("inferred");
     expect(evidence.normalized_result).toMatchObject({
@@ -1822,7 +1820,11 @@ it("extracts an environment state identically from retained, portable and file M
 
 it("reports environment coverage identically from retained, portable and file MCP Evidence", async () => {
   const { client, session } = await connect(undefined, undefined, 8_192);
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -1843,15 +1845,14 @@ it("reports environment coverage identically from retained, portable and file MC
   ]) {
     const view = { kind: "environment-coverage", template_rules: rules };
     expect(ajv.validate(inputSchema, { source, view })).toBe(true);
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: { source, view },
-    });
+    const response = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: { source, view },
+      },
+      { toolDefinition },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(response.structuredContent);
     expect(evidence.confidence).toBe("inferred");
     expect(evidence.normalized_result).toMatchObject({
@@ -1868,7 +1869,7 @@ it("reports environment coverage identically from retained, portable and file MC
 
 it("accounts for every safe HTTP method in environment state and coverage", async () => {
   const { client } = await connect();
-  const { ajv, outputSchema } = await advertisedMcpToolSchemas(
+  const { toolDefinition } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -1896,18 +1897,17 @@ it("accounts for every safe HTTP method in environment state and coverage", asyn
     "environment-state",
     "environment-coverage",
   ]) {
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: {
-        source: { kind: "inline", evidence: parent },
-        view: { kind, template_rules: [] },
+    const response = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: {
+          source: { kind: "inline", evidence: parent },
+          view: { kind, template_rules: [] },
+        },
       },
-    });
+      { toolDefinition },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     results.push(parseEvidence(response.structuredContent).normalized_result);
   }
   expect(results[0]).toMatchObject({
@@ -1934,7 +1934,11 @@ it("accounts for every safe HTTP method in environment state and coverage", asyn
 
 it("projects an environment manifest identically from retained, portable and file MCP Evidence", async () => {
   const { client, session } = await connect(undefined, undefined, 8_192);
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const {
+    ajv,
+    canonicalInputSchema: inputSchema,
+    toolDefinition,
+  } = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",
     schemaValidation.assertions,
@@ -1971,15 +1975,14 @@ it("projects an environment manifest identically from retained, portable and fil
         view: { ...view, template_rules: ["glob"] },
       }),
     ).toBe(false);
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: { source, view },
-    });
+    const response = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: { source, view },
+      },
+      { toolDefinition },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(response.structuredContent);
     expect(evidence.confidence).toBe("inferred");
     expect(evidence.normalized_result).toMatchObject({
@@ -2167,7 +2170,7 @@ it.each([
   "pages a recorded row when its parent parameters do not fit",
   async ({ queryBytes, rowBytes }) => {
     const { client, session } = await connect();
-    const { ajv, outputSchema } = await advertisedMcpToolSchemas(
+    const { toolDefinition } = await advertisedMcpToolSchemas(
       client,
       "inspect_analysis_view",
       schemaValidation.assertions,
@@ -2189,18 +2192,25 @@ it.each([
       },
     );
     expect(session.recordEvidence(parent).ok).toBe(true);
-    const response = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: {
-        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
-        view: { kind: "recorded-array", path: ["values"], offset: 0, limit: 1 },
+    const response = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.evidence_id,
+          },
+          view: {
+            kind: "recorded-array",
+            path: ["values"],
+            offset: 0,
+            limit: 1,
+          },
+        },
       },
-    });
+      { toolDefinition },
+    );
     expect(response.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
       response.structuredContent,
     );

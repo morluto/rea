@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it("observes an authored factory returning a loader from another directory", () => {
   const source = resolve("factory-oracle-source/main.cjs");

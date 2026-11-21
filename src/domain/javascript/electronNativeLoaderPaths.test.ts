@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 describe("native addon type-only TypeScript imports", () => {
   it("ignores declaration-wide import type and export type from .node modules", () => {
@@ -85,9 +85,9 @@ it("does not claim a native re-export from a candidate wrapper with a proven fac
       specifier: "./addon.node",
     }),
   );
-  expect(
-    analysis.analysis_coverage?.semantics.unknown_findings,
-  ).toBeGreaterThan(0);
+  expect(analysis.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 
 describe("native addon loader provenance", () => {

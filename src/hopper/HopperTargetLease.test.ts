@@ -21,7 +21,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
-} from "../process/HopperLease.js";
+} from "./HopperLease.js";
 
 const directories: string[] = [];
 

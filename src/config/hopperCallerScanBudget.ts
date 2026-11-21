@@ -56,7 +56,7 @@ export const hopperCallerScanBudgetForMilliseconds = (
 const fixedAllowanceRecovery = `This release has no runtime override for the ${String(HOPPER_CALLER_PAGE_ALLOWANCE_BYTES)} byte instruction, native-caller, and page allowances or the ${String(HOPPER_CALLER_SCAN_RETENTION_BYTES)} byte retention budget. hopper.caller_scan_budget_ms does not raise them.`;
 
 /** Structured facts for the scan time budget. The sentence is display text. */
-export const hopperCallerScanLimit = (budget: HopperCallerScanBudget) =>
+const hopperCallerScanLimit = (budget: HopperCallerScanBudget) =>
   analysisSettingLimit(
     "hopper.caller_scan_budget_ms",
     budget.milliseconds,

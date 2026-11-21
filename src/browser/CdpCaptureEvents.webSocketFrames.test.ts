@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import { receiveCdpEvent } from "./CdpConnection.js";
 
 const origin = "https://example.test";
 
@@ -24,20 +25,24 @@ const captureFrame = (
   includePayload = true,
 ) => {
   const events = createEvents();
-  events.ingest({
-    method: "Network.webSocketCreated",
-    params: { requestId: "socket", url: "wss://example.test/live" },
-  });
-  events.ingest({
-    method: "Network.webSocketFrameReceived",
-    params: {
-      requestId: "socket",
-      response: {
-        ...(includeOpcode ? { opcode } : {}),
-        ...(includePayload ? { payloadData } : {}),
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.webSocketCreated",
+      params: { requestId: "socket", url: "wss://example.test/live" },
+    }),
+  );
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.webSocketFrameReceived",
+      params: {
+        requestId: "socket",
+        response: {
+          ...(includeOpcode ? { opcode } : {}),
+          ...(includePayload ? { payloadData } : {}),
+        },
       },
-    },
-  });
+    }),
+  );
   return {
     events,
     frame: events.webSocketConnectionsById.get("socket")?.events[0],

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -16,6 +17,7 @@ import { ANALYSIS_SNAPSHOT_TARGET } from "../../../src/domain/analysisSnapshot.f
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("exports and imports GameCube DOL Evidence without losing its subject identity", async () => {
   const root = await createTestTempDirectory("rea-dol-bundle-mcp-");
@@ -114,7 +116,7 @@ it("preserves BOM recovery through public bundle import", async () => {
 
 it("returns the complete session Evidence bundle in the tool result", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "observe", parameters: {}, result: { value: "seen" } },
   );
@@ -124,7 +126,10 @@ it("returns the complete session Evidence bundle in the tool result", async () =
   }));
   expect(session.recordEvidence(evidence).ok).toBe(true);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "inline-evidence-bundle", version: "1" });
+  const client = new Client(
+    { name: "inline-evidence-bundle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
 
@@ -260,7 +265,7 @@ const createBundleSourceSession = () => {
       result: { completed: true },
       authority: "controlled-replay",
     }),
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
@@ -317,8 +322,8 @@ const unsupportedBundleFields = (
   ["provider manifest", ["providers", 0, "future_field"]],
   ["record subject", ["records", evidenceIndex, "subject", "future_field"]],
   [
-    "subject digest",
-    ["records", evidenceIndex, "subject", "digest", "future_field"],
+    "subject identity",
+    ["records", evidenceIndex, "subject", "identity", "future_field"],
   ],
   ["artifact manifest", ["artifacts", 0, "future_field"]],
   [
@@ -349,7 +354,10 @@ const connectEvidenceMcp = async (
   session: ReturnType<typeof createTestBinarySession>,
 ) => {
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { RetainedRegularFileCleanupFailure } from "../RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../process/RegularFileRead.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 
 describe("desktopOperationFailure", () => {

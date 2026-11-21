@@ -59,6 +59,7 @@ export const passiveNetworkCapture = (paths: readonly string[] = ["/a"]) => {
         status: 200,
         mime_type: "text/html",
         encoded_data_length: 10,
+        redirects: [],
         initiator: { type: "parser", url: null, line: null, column: null },
         body_shapes: { status: "unavailable", request: null, response: null },
       })),
@@ -67,7 +68,11 @@ export const passiveNetworkCapture = (paths: readonly string[] = ["/a"]) => {
       prior_activity_available: false,
     },
     frames: [],
-    dom: { total_nodes: 0, nodes: [] },
+    dom: {
+      total_nodes: 0,
+      node_value_length_unit: "utf16-code-units",
+      nodes: [],
+    },
     accessibility: {
       total_nodes: 0,
       nodes: [],
@@ -100,6 +105,9 @@ export const passiveNetworkCapture = (paths: readonly string[] = ["/a"]) => {
       session_storage_keys: [],
       indexed_db_names: [],
       cache_names: [],
+      content_fingerprints: [],
+      fingerprint_algorithm: "sha256",
+      fingerprints_complete: false,
       values_redacted: true,
     },
     limitations: [

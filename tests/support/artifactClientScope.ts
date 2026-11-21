@@ -1,5 +1,5 @@
 import { onTestFinished } from "vitest";
-import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { ArtifactProvider } from "../../src/artifacts/ArtifactProvider.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 

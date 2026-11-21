@@ -72,8 +72,14 @@ it.each([
             })
           : await reader.load(input);
     if (result.ok) throw new Error("Expected acquisition failure");
+    const projected = projectAnalysisError(result.error);
+    if (variant === "source-mismatch")
+      expect(projected).toMatchObject({
+        category: "integrity_mismatch",
+        details: { integrity_check: "member-identity" },
+      });
     const observation = webArtifactAcquisitionSchema.parse(
-      projectAnalysisError(result.error).details?.partial_observation,
+      projected.details?.partial_observation,
     );
     expect(observation.files).toHaveLength(
       variant === "invalid-import-map"

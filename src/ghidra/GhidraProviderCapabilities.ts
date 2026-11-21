@@ -1,5 +1,5 @@
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
-import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../ports/AnalysisProvider.js";
 import {
   inspectWindowsNativeReadiness,
   type WindowsNativeReadiness,
@@ -8,6 +8,15 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
+import {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+} from "./GhidraAdmission.js";
+
+export {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+};
 
 /** Target architectures admitted by the Windows P0 native PE boundary. */
 export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
@@ -30,7 +39,7 @@ export const healthLimitations = Object.freeze([
 export const windowsP0Limitations = Object.freeze([
   "Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, DOS MZ images, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.",
   "The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.",
-  "Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.",
+  "Windows sessions require the matching packaged Windows x64 native addon, local NTFS/ReFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.",
 ]);
 
 export type GhidraSessionSource =
@@ -89,6 +98,30 @@ export const ghidraEmptyOutgoingReferencesLimitation =
 /** Attached to an empty outgoing-reference list of one instruction result. */
 export const ghidraEmptyInstructionOutgoingLimitation =
   "Ghidra's ReferenceManager returned no actionable outgoing references from this instruction in this session. An empty list reflects what this analysis resolved, not proof that the instruction references nothing. The instruction's own disassembly is an independent check for direct outgoing references (a direct operand naming a target with no recorded reference contradicts the empty result) before concluding there are none.";
+
+/** Seeds apply before a fresh import's auto-analysis; other sources refuse them. */
+const seedSessionRestriction: Readonly<Record<GhidraSessionSource, string>> = {
+  "fresh-import": "",
+  "existing-project":
+    " without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME, because seeds apply only to a fresh import",
+  "owned-checkpoint":
+    " without REA_GHIDRA_CHECKPOINT_DIR, because checkpoints do not admit seeds",
+};
+
+/**
+ * Declared-entry recovery for code that Ghidra auto-analysis did not reach.
+ * It names the seed mechanism without asserting that any address holds code.
+ */
+export const ghidraFunctionSeedRecovery = (
+  source: GhidraSessionSource,
+): string =>
+  `Code that auto-analysis did not reach, such as a handler entered only through a runtime-filled dispatch table, has no Ghidra function. To analyze it from a known entry address, declare that address as a \`function\` seed in REA_GHIDRA_SEED_FILE for a new REA process${seedSessionRestriction[source]}; that session's seed outcome limitation counts created and failed function seeds.`;
+
+/** Attached to a not_in_procedure result: absence from the function inventory is not proof of data. */
+export const ghidraNotInProcedureLimitation = (
+  source: GhidraSessionSource,
+): string =>
+  `Ghidra has no function at or containing this address in this session. This reflects the current function inventory, not proof that the address holds no code. ${ghidraFunctionSeedRecovery(source)}`;
 
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
@@ -271,14 +304,6 @@ export const checkpointCapabilities = (): readonly CapabilityDescriptor[] =>
     ...capability,
     limitations: limitationsFor(capability.operation, "owned-checkpoint"),
   }));
-
-/** The selected database mode is not part of Windows P0 authority. */
-export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
-  "An existing Ghidra project cannot be opened on the Windows launch path.";
-
-/** Windows P0 imports targets into ephemeral projects only. */
-export const EXISTING_PROJECT_WINDOWS_REMEDIATION =
-  "Unset REA_GHIDRA_PROJECT_PATH in the environment that starts REA to import targets into an ephemeral project, or open the existing project on a supported Linux or macOS host; restart REA after changing the environment.";
 
 /** Read-only project mode retains precise unavailable mutation capabilities. */
 export const existingProjectCapabilities = (

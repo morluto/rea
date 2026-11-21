@@ -82,11 +82,11 @@ npx rea-agents setup
 
 Налаштування підтримує Claude Code, Codex, Cursor, Gemini CLI, Grok Build та [інших агентів](../getting-started/installation.md#supported-agents). Конфігурацію провайдерів і ручну реєстрацію MCP описано в розділі [встановлення й налаштування](../getting-started/installation.md).
 
-MCP типово використовує компактні вхідні схеми. Для повного опису полів і вкладеної перевірки задайте `REA_MCP_INPUT_SCHEMA_PROFILE=full` у реєстрації MCP. Обидва профілі зберігають усі інструменти й однакову канонічну перевірку сервера; див. посібник контрактів MCP.
+MCP типово використовує компактні вхідні схеми. Вказівки, які компактна схема пропускає, йдуть після опису інструмента. Усі інструменти й канонічна перевірка сервера не змінюються; див. посібник контрактів MCP.
 
 Налаштування безпосередньо реєструє вибране середовище виконання та стартовий скрипт REA. Якщо ви використовуєте засіб запуску пакетів, збережіть його запис у кеші та середовище виконання; отримуйте пакет із довіреного каталогу поза цільовим проєктом. Див. посібник зі встановлення.
 
-Повні схеми виводу оголошуються за замовчуванням. Якщо клієнт обмежує `tools/list`, задайте `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` або `off` у реєстрації MCP. Перевірка сервера та структуровані результати залишаються повними. Див. розділ «Output schemas» у посібнику з контрактів MCP.
+За замовчуванням схеми виводу не включаються до `tools/list`: жоден API моделей їх не читає, а REA сам перевіряє кожен результат. Задайте `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` у реєстрації MCP, щоб оголошувати кожну схему виводу в межах 4096 байтів. За будь-якого налаштування перевірка сервера та структуровані результати залишаються повними. Див. розділ «Output schemas» у посібнику з контрактів MCP.
 
 ### Запитайте агента
 
@@ -165,6 +165,8 @@ REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26
 | Байт-код EVM                         | Селектори диспетчеризації, зміщення байтів, виведені припущення про аргументи та змінюваність стану               | Локальні необроблені байти або шістнадцяткове представлення у Linux x64; [посібник EVM без запуску](../guides/evm/evm-bytecode.md)                                |
 | Rust binaries                        | Embedded cargo-auditable dependency list                                                                          | [Rust binaries](../rust-binaries.md)                                                                                                                              |
 | ELF notes                            | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                   | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                      |
+| DWARF compile units                  | Compile-unit name, directory, producer, language, and dwo_name                                                    | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                            |
+| ELF dependencies                     | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                             | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                        |
 | Binary hardening                     | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                               | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                     |
 | Linux kernel modules                 | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                       | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                            |
 | Erlang BEAM                          | IFF chunks, atoms, exports, and tables                                                                            | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                 |
@@ -174,7 +176,7 @@ REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26
 | JavaScript / Electron                | Модулі, імпорти, карти вихідного коду, маршрути, IPC і зв'язки з нативними доповненнями                           | Node.js і npm; [аналіз застосунків](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                                 |
 | Сайти                                | Структура сторінки, скрипти, мережеві спостереження й запитані знімки екрана                                      | Браузер сімейства Chrome; [аналіз браузера](../guides/web/browser-observation.md)                                                                                 |
 | Збережені мережеві захоплення        | Запити, відповіді, доступні корисні дані та місця в джерелі                                                       | HAR / Fiddler Everywhere SAZ; mitmdump у Linux для захоплень у власному форматі mitmproxy; [посібник мережевих захоплень](../guides/web/web-network-captures.md)  |
-| Захоплення пакетів                   | Кінцеві точки, DNS, TLS SNI, розподіл протоколів та HTTP-запити                                                   | Надані викликаючою стороною tshark та capinfos; [підручник pcap](../guides/data/pcap-analysis.md)                                                                 |
+| Захоплення пакетів                   | Кінцеві точки, DNS, TLS SNI, розподіл протоколів та HTTP-запити                                                   | Надані викликаючою стороною tshark та capinfos (перевірено в Linux); [підручник pcap](../guides/data/pcap-analysis.md)                                            |
 | Збірки .NET                          | Метадані, інструкції CIL, оголошені нативні залежності й порівняння збірок                                        | Статична перевірка; [посібник керованого коду](../guides/managed/managed-code-analysis.md)                                                                        |
 | PyInstaller                          | CArchive, PYZ, Python bytecode                                                                                    | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                             |
 | Deno compile binaries                | Virtual files, entry point, recorded options, npm snapshot length                                                 | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                              |
@@ -194,6 +196,7 @@ REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26
 | Файли моделей                        | Метадані GGUF / safetensors, оголошення тензорів і обчислені підсумки                                             | Перевірка заголовків; повний хеш файлу за вибором; [GGUF / safetensors](../model-artifacts.md)                                                                    |
 | Метадані IL2CPP                      | Образи збірок Unity global-metadata.dat, імена типів/методів та діапазони індексів                                | Статичне декодування версій 24, 27, 29, 31, 39; Unity не потрібен                                                                                                 |
 | Godot PCK                            | Інвентар і видобування, оригінальні заголовки/каталоги та ідентичність вибраного вмісту                           | Статичні формати 2, 3, 4; Godot не потрібен                                                                                                                       |
+| Пакети NuGet                         | Ідентичність пакета, групи залежностей, ліцензія, репозиторій і вміст ZIP                                         | Вбудована статична перевірка .nupkg; [Пакети NuGet](../guides/managed/nuget-nupkg.md)                                                                             |
 | Артефакти WASM                       | Валідація, секції, точні WAT-форми імпорту/експорту та декодований WAT                                            | Надає користувач WABT 1.0.42; `inspect_wasm_artifact`                                                                                                             |
 | Підписи APK                          | Підписувачі v1/v2/v3/v3.1, відбитки сертифікатів, ротація ключів і внутрішня узгодженість хешів                   | Вбудований статичний аналіз; `inspect_apk_signature`                                                                                                              |
 
@@ -359,7 +362,6 @@ npx rea-agents@latest setup
 - [CLI та Evidence](../getting-started/cli.md): команди, вибір провайдера, знімки, імпорт/експорт і статуси завершення.
 - [Контракти MCP](../reference/mcp-contracts.md) і [промпти агентів](../getting-started/mcp-prompts.md): результати інструментів, сеанси й керовані дослідження.
 - [Каталог інструментів](../reference/mcp-contracts.md#generated-catalog): створюваний під час збірки перелік інструментів, провайдерів і команд CLI.
-- [План розвитку](../development/roadmap.md): заплановані роботи й відстеження можливостей.
 
 Повідомляйте про вразливості згідно з [SECURITY.md](../../SECURITY.md).
 
@@ -391,7 +393,7 @@ applicable licenses.
 
 Будемо раді вашій допомозі з REA! [Відкрийте issue](https://github.com/morluto/rea/issues), щоб повідомити про помилку чи запропонувати функцію, або [надішліть pull request](https://github.com/morluto/rea/pulls) з поліпшеннями коду чи документації.
 
-Налаштування середовища розробки й перевірки описано в [CONTRIBUTING.md](../../CONTRIBUTING.md), шляхи верифікації — у [посібнику тестування](../development/testing.md), а структуру проєкту — на [схемі архітектури](../architecture/architecture.mermaid).
+Налаштування середовища розробки й перевірки описано в [CONTRIBUTING.md](../../CONTRIBUTING.md), шляхи верифікації — у [посібнику тестування](../development/testing.md).
 
 ## Ліцензія
 

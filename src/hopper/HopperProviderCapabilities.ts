@@ -11,7 +11,7 @@ import {
   type RegexWorkerHeapRequest,
 } from "../config/regexWorkerHeapRequest.js";
 import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
-import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../ports/AnalysisProvider.js";
 
 const MUTATING_OPERATIONS = new Set<string>([
   "set_address_name",

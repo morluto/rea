@@ -10,10 +10,10 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { AGENTENV_BRIDGE_SOURCES } from "./AgentEnvBridgeSources.js";
 
-const CLEANUP = fileURLToPath(
-  new URL("../../bridge/agentenv/solve_cleanup.py", import.meta.url),
-);
+const CLEANUP = fileURLToPath(AGENTENV_BRIDGE_SOURCES.solveCleanup);
 const resultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }),
   z.object({ ok: z.literal(false), error: z.string() }),
@@ -122,7 +122,7 @@ export class SolveSandboxRoot {
     } catch (error: unknown) {
       return {
         status: "incomplete",
-        reason: error instanceof Error ? error.message : String(error),
+        reason: errorMessage(error),
       };
     }
   }

@@ -53,7 +53,6 @@ export const ghidraDolSectionFile = (header: DolHeader): string =>
 export const ghidraDolProfileParameters = (
   header: DolHeader,
 ): Readonly<Record<string, JsonValue>> => ({
-  dol_import: "binary-loader-sections-v2",
   dol_sections: header.sections.map((section) => ({
     kind: section.kind,
     index: section.index,

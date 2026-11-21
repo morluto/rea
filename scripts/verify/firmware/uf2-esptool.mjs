@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createVerifierCommands } from "../../lib/verify-commands.mjs";
-import { withVerifierWorkspace } from "../../lib/verifier-workspace.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 // Optional verification tool only; the UF2 reader starts no tool.
 const python = process.env.REA_ESPTOOL_PYTHON ?? "python3";
@@ -14,7 +16,10 @@ const options = { maxBuffer: 16 * 1024 * 1024, timeout: 120_000 };
 /** Every tool runs as an owned process tree that close() stops. */
 const commands = await createVerifierCommands();
 
-let workspace;
+// The verifier's commands may use files under the workspace until they close.
+const fixture = await VerifierFixture.open({ prefix: "rea-uf2-esptool-" });
+fixture.releaseAfter(() => commands.close());
+const workspace = fixture.path;
 const path = (name) => join(workspace, name);
 
 /** Deterministic input bytes; lengths include one that is not word-aligned. */
@@ -267,7 +272,6 @@ const verify = async () => {
   const versionText = await tool(["version"]);
   const version = /\bv?(\d+)\.(\d+)\.(\d+)\b/u.exec(versionText);
   assert.ok(version, `Unrecognized esptool version: ${versionText}`);
-  workspace = await mkdtemp(join(tmpdir(), "rea-uf2-esptool-"));
   await produce(Number(version[1]) >= 5);
   const report = { esptool: version[0], cases: [] };
   for (const entry of CASES)
@@ -277,4 +281,4 @@ const verify = async () => {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 };
 
-await withVerifierWorkspace(verify, commands, () => workspace);
+await withVerifierFixture(fixture, verify);

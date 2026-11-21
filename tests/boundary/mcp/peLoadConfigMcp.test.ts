@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -39,7 +40,7 @@ mcpTest(
           name: "inspect_pe_load_config",
           arguments: { path },
         },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const evidence = toolContract(
@@ -58,17 +59,43 @@ mcpTest(
           PE_LOAD_CONFIG_FIXTURE.dynamicRelocSection,
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+      for (const range of [
+        [0x2180, 0x2280],
+        [0x2200, 0x2300],
+      ] as const) {
+        const padded = peLoadConfigImage({
+          zeroFillCallback: true,
+          rawDataRange: range,
+        });
+        await writeFile(path, padded);
+        const reply = await client.callTool(
+          { name: "inspect_pe_load_config", arguments: { path } },
+          { toolDefinition: withCanonicalOutputSchema(definition) },
+        );
+        expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+        const retained = toolContract(
+          "inspect_pe_load_config",
+        ).outputSchema.parse(reply.structuredContent);
+        expect(retained.normalized_result.tls).toMatchObject({
+          raw_data_size: 256,
+          raw_data_file_offset: null,
+          raw_data_section: ".text",
+        });
+        expect(retained.normalized_result.load_config?.guard_flags?.raw).toBe(
+          0x500,
+        );
+        expect(Buffer.compare(await readFile(path), padded)).toBe(0);
+      }
       const bad = await client.callTool(
         {
           name: "inspect_pe_load_config",
           arguments: { path: "relative.exe" },
         },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(bad.isError).toBe(true);
     } finally {
       await session.close();
     }
   },
-  60_000,
 );

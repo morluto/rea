@@ -115,7 +115,7 @@ describe("external DEX method-reference projection", () => {
     });
   });
 
-  it("counts complete positions and preserves historical aggregate omission", async () => {
+  it("counts complete positions and refuses results without the aggregate or target definition", async () => {
     const result = androidResultSchemas.trace_android_references.parse(
       await analyze(),
     );
@@ -125,10 +125,16 @@ describe("external DEX method-reference projection", () => {
       unknown_using_nodes: 0,
       recorded_sites: 2,
     });
-    const { direct_invokes_coverage: _coverage, ...historical } = result;
-    expect(
-      androidResultSchemas.trace_android_references.parse(historical),
-    ).not.toHaveProperty("direct_invokes_coverage");
+    for (const field of [
+      "direct_invokes_coverage",
+      "target_definition",
+    ] as const) {
+      const { [field]: _omitted, ...unrecorded } = result;
+      expect(
+        androidResultSchemas.trace_android_references.safeParse(unrecorded)
+          .error?.issues,
+      ).toEqual([expect.objectContaining({ path: [field] })]);
+    }
   });
 
   it("lists exact observed DEX descriptors when an external overload is ambiguous", async () => {

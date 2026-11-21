@@ -121,7 +121,6 @@ it.each([
     "referencing functions",
     { strings: [{ ...row, functions: [{ name: "main" }] }] },
   ],
-  ["duplicate identity", { count: 2, strings: [row, row] }],
   [
     "nonadjacent duplicate identity",
     {

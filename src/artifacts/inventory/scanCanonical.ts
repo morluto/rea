@@ -6,6 +6,7 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   InesArtifactReader,
+  inesInventoryLimitation,
   type InesRegionScan,
 } from "../InesArtifactReader.js";
 
@@ -19,8 +20,11 @@ import {
   ArtifactReaderFailure,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
-import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
+  type ArtifactResourceOwner,
+  hashStableRootArtifact,
+  hashStableRootArtifactHandle,
+  hostExecutableMarking,
+} from "../../resources/index.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -43,12 +47,7 @@ import {
   artifactManifestId,
 } from "../../domain/artifactIdentity.js";
 import { classifyAndHashRootForInventory } from "./classify.js";
-import { hostExecutableMarking } from "../hostExecutableMarking.js";
 import type { HashResult } from "../ArtifactHash.js";
-import {
-  hashStableRootArtifact,
-  hashStableRootArtifactHandle,
-} from "./hashStableRootArtifact.js";
 import { createReader, inventoryCoverage } from "./reader.js";
 import {
   scanReader,
@@ -56,6 +55,7 @@ import {
 } from "./scanReader.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import type { ArtifactContainerIntegrityPair } from "../../domain/artifactIntegrity.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export interface TransferredArtifactInventorySource {
   readonly owner: ArtifactResourceOwner;
@@ -145,6 +145,7 @@ const scanCanonical = async (
       options.asarHeaderAdmission,
       selectedPath,
       options.readerLimits,
+      options.integrity,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };
@@ -243,7 +244,7 @@ const scanCanonical = async (
           cause.reason,
           rootFailure === undefined
             ? cause.message
-            : `${cause.message}; root observations could not be revalidated: ${rootFailure instanceof Error ? rootFailure.message : String(rootFailure)}`,
+            : `${cause.message}; root observations could not be revalidated: ${errorMessage(rootFailure)}`,
           {
             cause:
               rootFailure === undefined
@@ -255,7 +256,7 @@ const scanCanonical = async (
                   ),
             cleanup: cause.cleanup,
             cleanupLeases: cause.cleanupLeases,
-            userMessage: cause.userMessage,
+            ...cause.primaryFacts(),
             ...(retained === undefined
               ? {}
               : {
@@ -526,6 +527,7 @@ const buildInventorySnapshot = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Missing iNES reconstruction scan",
+        { integrityCheck: "inventory-node" },
       );
     ines = await reader.verifyReconstruction(
       rootDigest.sha256,
@@ -553,6 +555,7 @@ const buildInventorySnapshot = async (
     coverage,
     limitations: buildLimitations(
       [
+        ...(ines === undefined ? [] : [inesInventoryLimitation(ines.header)]),
         ...traversal.limitations,
         ...relationshipLimitations,
         ...(input.recognitionLimitations ?? []),
@@ -619,6 +622,7 @@ const verifyRootDigest = async (
     throw new ArtifactReaderFailure(
       "integrity",
       "Root artifact changed during inventory",
+      { integrityCheck: "container-identity" },
     );
 };
 

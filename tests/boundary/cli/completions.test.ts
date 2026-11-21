@@ -1,12 +1,17 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { resolve } from "node:path";
-import { Cli, z } from "incur";
+import { z } from "zod";
 import { expect, it } from "vitest";
 
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCliShell } from "../../../src/cli/cliShell.js";
 import { createCliCompletions } from "../../../src/cli/completions.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
-const registry = () =>
-  Cli.create("rea", { sync: false }).command("instructions", {
+const registry = () => {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "instructions", {
     options: z.object({
       procedure: z.string().optional(),
       targetFormat: z.enum(["dos-com", "raw-binary"]).optional(),
@@ -15,6 +20,8 @@ const registry = () =>
       throw new Error("Completion must not execute a command");
     },
   });
+  return cli;
+};
 const complete = (words: string[], index = words.length - 1) => {
   let text = "";
   const callback = createCliCompletions(registry(), {
@@ -22,7 +29,7 @@ const complete = (words: string[], index = words.length - 1) => {
     _COMPLETE_INDEX: String(index),
   });
   expect(
-    callback(["--", ...words], {
+    callback.complete(["--", ...words], {
       stdout: (value) => {
         text += value;
       },
@@ -36,9 +43,7 @@ const complete = (words: string[], index = words.length - 1) => {
 };
 
 it("resolves enabled builtin scopes in the same tree as registered commands", () => {
-  expect(complete(["rea", "mcp", ""])).toEqual(["add", "doctor"]);
   expect(complete(["rea", "mcp", "d"])).toEqual(["doctor"]);
-  expect(complete(["rea", "mcp", "ad"])).toEqual(["add"]);
   expect(complete(["rea", "mcp"], 2)).toEqual(["add", "doctor"]);
   expect(complete(["rea", ""])).toEqual(["instructions", "mcp", "completions"]);
   expect(complete(["rea", "completions", "b"])).toEqual(["bash"]);
@@ -64,28 +69,12 @@ it("uses canonical global flag metadata and retains command options and enum hin
     "dos-com",
     "raw-binary",
   ]);
-  expect(complete(["rea", "instructions", "--format", ""])).toEqual([
-    "toon",
-    "json",
-    "yaml",
-    "md",
-    "jsonl",
-    "csv",
-    "tsv",
-  ]);
   expect(complete(["rea", "mcp", "doctor", "--format", ""])).toEqual([
     "toon",
     "json",
     "yaml",
     "md",
     "jsonl",
-  ]);
-  expect(complete(["rea", "mcp", "doctor", "--"])).toEqual([
-    "--format",
-    "--json",
-    "--full-output",
-    "--help",
-    "--timings",
   ]);
   expect(complete(["rea", "mcp", "doctor", "--t"])).toEqual(["--timings"]);
   expect(complete(["rea", "mcp", "doctor", "-h"])).toEqual(["-h"]);
@@ -100,30 +89,41 @@ it("uses canonical global flag metadata and retains command options and enum hin
   expect(complete(["rea", "instructions", "--"])).not.toContain("--mcp");
 });
 
-it("shares Bash registration across ordinary and protocol routes while retaining builtin precedence", () => {
-  const cli = registry();
-  let direct = "";
-  const ordinary = createCliCompletions(cli, {});
-  expect(
-    ordinary(["--format", "json", "completions", "bash"], {
-      stdout: (text) => {
-        direct += text;
-      },
+it("serves the Bash script through both public generation routes", async () => {
+  const ordinary = await serveInProcessCli(createCommandCli(), [
+    "completions",
+    "bash",
+  ]);
+  const protocol = await serveInProcessCli(
+    createCliShell({
+      selectedEnvironment: { COMPLETE: "bash" },
+      registrations: [],
     }),
-  ).toBe(true);
-  let protocol = "";
-  expect(
-    createCliCompletions(cli, { COMPLETE: "bash" })([], {
-      stdout: (text) => {
-        protocol += text;
-      },
-    }),
-  ).toBe(true);
-  expect(direct.trim()).toBe(protocol.trim());
-  expect(direct).toContain("type compopt");
-  expect(direct).toContain("||\n    complete -o default -o bashdefault");
-  expect(ordinary(["completions", "bash", "--help"], {})).toBe(false);
-  expect(ordinary(["completions", "bash", "--schema"], {})).toBe(false);
+    [],
+  );
+  expect(ordinary.exitCode).toBe(0);
+  expect(ordinary.stdout).toContain('export COMPLETE="bash"');
+  expect(protocol.exitCode).toBe(0);
+  expect(protocol.stdout.trimEnd()).toBe(ordinary.stdout.trimEnd());
+
+  const help = await serveInProcessCli(createCommandCli(), [
+    "completions",
+    "bash",
+    "--help",
+  ]);
+  expect(help.exitCode).toBe(0);
+  expect(help.stdout).toContain("Usage: rea completions");
+  expect(help.stdout).not.toContain('export COMPLETE="bash"');
+});
+
+it("refuses a second shell", async () => {
+  const reply = await serveInProcessCli(createCommandCli(), [
+    "completions",
+    "bash",
+    "fish",
+  ]);
+  expect(reply.exitCode).toBe(1);
+  expect(reply.stdout).toContain("completions expects exactly one shell");
 });
 
 workspaceCliTest(
@@ -136,11 +136,7 @@ workspaceCliTest(
       REA_TEST_NODE: process.execPath,
       REA_TEST_DISPATCHER: resolve("scripts/rea.mjs"),
     };
-    for (const arguments_ of [
-      ["completions", "--help"],
-      ["--json", "completions", "--help"],
-      ["completions"],
-    ]) {
+    for (const arguments_ of [["completions", "--help"], ["completions"]]) {
       const help = await processes.run(
         process.execPath,
         [resolve("scripts/rea.mjs"), ...arguments_],

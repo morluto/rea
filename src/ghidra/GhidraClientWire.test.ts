@@ -1,10 +1,15 @@
 import type { Socket } from "node:net";
 
+import {
+  DEFAULT_BRIDGE_MAX_REPLY,
+  type BridgeMaxReplyBytes,
+} from "../config/bridgeMaxReplyBytes.js";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ok, type Result } from "../domain/result.js";
 import { PendingOperations } from "../process/PendingOperations.js";
@@ -32,8 +37,12 @@ type WireHarness = {
   readonly wire: GhidraWire;
 };
 
-const harness = (ceiling: BridgeMaxRequestBytes): WireHarness => {
+const harness = (
+  ceiling: BridgeMaxRequestBytes,
+  replyCeiling: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY,
+): WireHarness => {
   const writes: string[] = [];
+  let nextId = 0;
   const socket = {
     destroyed: false,
     write: (payload: string, callback?: (cause?: Error | null) => void) => {
@@ -52,14 +61,107 @@ const harness = (ceiling: BridgeMaxRequestBytes): WireHarness => {
     wire: new GhidraWire({
       getSocket: () => socket,
       getToken: () => "b".repeat(64),
-      nextId: () => 1,
+      nextId: () => (nextId += 1),
       pending,
       logger: pino({ level: "silent" }),
       failure,
       bridgeMaxRequestBytes: ceiling,
+      bridgeMaxReplyBytes: replyCeiling,
     }),
   };
 };
+
+it("keeps the written reply ceiling until another admitted request writes", async () => {
+  let maximum = 8 * 1024 * 1024;
+  const { wire, pending, writes } = harness(limit(512), {
+    get maximumBytes() {
+      return maximum;
+    },
+    source: "runtime",
+  });
+  const queuedCeiling: BridgeMaxReplyBytes = {
+    maximumBytes: 3 * 1024 * 1024,
+    source: "setting",
+  };
+  expect(wire.replyLimit()).toEqual(DEFAULT_BRIDGE_MAX_REPLY);
+  const requests = [wire.request("ping", {}, {})];
+  try {
+    maximum = 4 * 1024 * 1024;
+    const written = { maximumBytes: 8 * 1024 * 1024, source: "runtime" };
+    expect(wire.replyLimit()).toEqual(written);
+    expect(pending.settle(1, ok("first"))).toBe(true);
+    expect(await requests[0]).toEqual(ok("first"));
+
+    const refused = wire.request(
+      "list_strings",
+      { pattern: "x".repeat(1024) },
+      {
+        limits: {
+          requestLimit: limit(512),
+          replyLimit: { maximumBytes: 1, source: "runtime" },
+        },
+      },
+    );
+    requests.push(refused);
+    expect(writes).toHaveLength(1);
+    expect(pending.size).toBe(0);
+    expect(await refused).toMatchObject({
+      ok: false,
+      error: { kind: "admission" },
+    });
+    expect(wire.replyLimit()).toEqual(written);
+
+    requests.push(
+      wire.request(
+        "ping",
+        {},
+        {
+          limits: { requestLimit: limit(512), replyLimit: queuedCeiling },
+        },
+      ),
+    );
+    expect(writes).toHaveLength(2);
+    expect(wire.replyLimit()).toEqual(queuedCeiling);
+    expect(pending.settle(3, ok("second"))).toBe(true);
+    expect(await requests[2]).toEqual(ok("second"));
+    expect(pending.size).toBe(0);
+  } finally {
+    pending.failAll(() => ok(null));
+    await Promise.all(requests);
+  }
+});
+
+describe("GhidraWire ceiling admission", () => {
+  it.each([
+    ["request", "REA_BRIDGE_MAX_REQUEST_BYTES"],
+    ["reply", "REA_BRIDGE_MAX_REPLY_BYTES"],
+  ] as const)(
+    "returns a %s seed refused after startup as an admission failure",
+    async (which, setting) => {
+      // A malformed seed is refused by the runtime view once the override
+      // that covered it at startup is reset.
+      const refusal = new ConfigurationError(`${setting} is invalid`, {
+        settings: [{ setting, constraint: "a positive decimal integer" }],
+      });
+      const refused = {
+        get maximumBytes(): number {
+          throw refusal;
+        },
+        source: "setting" as const,
+      };
+      const { writes, pending, wire } =
+        which === "request" ? harness(refused) : harness(limit(8192), refused);
+
+      const result = await wire.request("ping", {}, {});
+
+      if (result.ok) throw new Error("Expected a configuration refusal");
+      expect(result.error.kind).toBe("admission");
+      expect(result.error.cause).toBe(refusal);
+      expect(writes).toEqual([]);
+      expect(pending.size).toBe(0);
+    },
+  );
+});
 
 describe("GhidraWire request ceiling", () => {
   it("refuses escaped oversized input before encoding, pending registration or write", async () => {
@@ -80,8 +182,6 @@ describe("GhidraWire request ceiling", () => {
       const refused = await wire.request("search_strings", params, {});
       if (refused.ok) throw new Error("Expected a request ceiling refusal");
       expect(refused.error.message).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-      expect(refused.error.message).toContain("8192");
-      expect(refused.error.message).toContain("Ghidra request exceeds");
       const constraint = refused.error.cause;
       if (!(constraint instanceof AnalysisResourceConstraintError))
         throw new Error("Expected the typed transport constraint");
@@ -125,9 +225,7 @@ describe("GhidraWire request ceiling", () => {
       if (admitted) {
         if (!result.ok) throw result.error;
         expect(result.value).toBe("ok");
-        expect(writes.length).toBe(1);
-        expect(Buffer.byteLength(writes[0] ?? "")).toBe(payloadBytes + 1);
-        expect(writes[0] === encoded + "\n").toBe(true);
+        expect(writes).toEqual([encoded + "\n"]);
       } else {
         if (result.ok) throw new Error("Expected a request ceiling refusal");
         expect(result.error.cause).toBeInstanceOf(

@@ -1,6 +1,15 @@
 import { expect, it } from "vitest";
+import { fixedAllowanceOptions } from "../../../src/domain/fixedAllowanceRemediation.js";
 import { inspectPacketFieldsInputSchema } from "../../../src/domain/captures/packetFields.js";
-import { parseFieldDiscovery } from "../../../src/captures/parseFieldDiscovery.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../../src/domain/parseFailureAnalysisError.js";
+import {
+  FIELD_GLOSSARY_FORMAT,
+  FIELD_RECORD_BUDGET,
+  parseFieldDiscovery,
+} from "../../../src/captures/parseFieldDiscovery.js";
 
 it("keeps duplicate registrations and source ordinals instead of overwriting abbreviations", () => {
   const text =
@@ -53,12 +62,35 @@ it("rejects damaged records even outside the selected page", () => {
 it("bounds explicit full-result expansion while allowing a page from the same large glossary", () => {
   const text = "P\t" + "Long name ".repeat(30) + "\tabbr\n";
   const glossary = text.repeat(6000);
-  expect(() =>
+  let thrown: unknown;
+  try {
     parseFieldDiscovery(
       glossary,
       inspectPacketFieldsInputSchema.parse({ limit: null }),
+    );
+  } catch (cause) {
+    thrown = cause;
+  }
+  expect(isParseLimit(thrown, FIELD_GLOSSARY_FORMAT)).toBe(true);
+  if (!isParseLimit(thrown, FIELD_GLOSSARY_FORMAT))
+    throw new Error("Expected glossary parse limit");
+  expect(
+    parseLimitConstraint(
+      "inspect_packet_fields",
+      "memory",
+      thrown,
+      fixedAllowanceOptions(
+        "The packet-field discovery record allowance",
+        "capture",
+      ),
     ),
-  ).toThrow("representation budget");
+  ).toMatchObject({
+    reason: expect.stringContaining("representation budget"),
+    reportedLimits: {
+      boundary: "record_budget_bytes",
+      maximum: FIELD_RECORD_BUDGET,
+    },
+  });
   const result = parseFieldDiscovery(
     glossary,
     inspectPacketFieldsInputSchema.parse({ offset: 5999, limit: 1 }),

@@ -8,6 +8,9 @@ import { err, ok, type Result } from "../domain/result.js";
 // this floor against the pinned SDK's actual default receive-buffer size.
 export const MINIMUM_RESPONSE_BYTES = 10 * 1024 * 1024;
 
+/** `z.int().safe()` refuses a receive buffer that is not an exact integer. */
+export const MAXIMUM_RESPONSE_BYTES = Number.MAX_SAFE_INTEGER;
+
 /**
  * Facts for a completed or failed MCP result that exceeded the stdio receive
  * budget. The effective value is the configured receive buffer, including the
@@ -37,7 +40,7 @@ export const mcpResponseBudgetSchema = z
   .string()
   .regex(/^[1-9]\d*$/u)
   .transform(Number)
-  .pipe(z.int().safe().min(MINIMUM_RESPONSE_BYTES));
+  .pipe(z.int().safe().min(MINIMUM_RESPONSE_BYTES).max(MAXIMUM_RESPONSE_BYTES));
 
 const budgetConstraint = `REA_MCP_MAX_RESPONSE_BYTES must be a decimal safe integer at least ${String(MINIMUM_RESPONSE_BYTES)} bytes, the default stdio receive-buffer size.`;
 

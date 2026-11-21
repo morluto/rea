@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { EventEmitter } from "node:events";
 import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import pino from "pino";
@@ -17,8 +18,11 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { phaseGate, settledCause } from "../../support/lifecycleHarness.js";
+import { waitFor } from "../../support/testWait.js";
 import {
   createBinarySessionTargets,
+  createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 
@@ -200,13 +204,16 @@ it("reports a typed binary cleanup failure and retains the client for retry", as
   expect((await session.close()).ok).toBe(true);
 });
 
-it("retries only failed cleanup owners after concurrent shutdown requests", async () => {
-  const requests: Array<() => void> = [];
+it("joins stdin and signal shutdown, retaining investigation history until retry succeeds", async () => {
+  const stdin = new EventEmitter();
+  const signals = new EventEmitter();
+  const transport = phaseGate();
   const logs: string[] = [];
-  const exitCodes: number[] = [];
+  const exitCode = createDeferred<number>();
   let unregisterCount = 0;
   let handleCalls = 0;
   let androidCalls = 0;
+  let optionalCalls = 0;
   let sessionCalls = 0;
   const dependencies: RuntimeDependencies = {
     env: {},
@@ -214,10 +221,11 @@ it("retries only failed cleanup owners after concurrent shutdown requests", asyn
       throw new Error("unused fixture transport");
     },
     writeStderr: () => undefined,
-    setExitCode: (code) => exitCodes.push(code),
+    setExitCode: exitCode.resolve,
     registerShutdown: (request) => {
-      requests.push(request);
+      const unregister = registerProcessShutdown(request, { signals, stdin });
       return () => {
+        unregister();
         unregisterCount += 1;
       };
     },
@@ -243,7 +251,7 @@ it("retries only failed cleanup owners after concurrent shutdown requests", asyn
   expect(
     session.recordEvidence(
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           id: "fixture",
           name: "Shutdown fixture",
@@ -275,12 +283,15 @@ it("retries only failed cleanup owners after concurrent shutdown requests", asyn
     handle: {
       close: async () => {
         handleCalls += 1;
-        if (handleCalls === 1) throw new Error("first handle close failed");
+        if (handleCalls === 1) await transport.hold();
       },
     },
     closeAndroid: async () => {
       androidCalls += 1;
       if (androidCalls === 1) throw new Error("first Android close failed");
+    },
+    closeOptionalProviders: async () => {
+      optionalCalls += 1;
     },
     session,
     dependencies,
@@ -290,118 +301,57 @@ it("retries only failed cleanup owners after concurrent shutdown requests", asyn
     ),
   });
 
-  const first = lifecycle.shutdown();
-  const concurrent = lifecycle.shutdown();
-  requests[0]?.();
-  await expect(first).rejects.toBeInstanceOf(AggregateError);
-  await expect(concurrent).rejects.toBeInstanceOf(AggregateError);
-  await expect(first).rejects.toMatchObject({
-    errors: [
+  try {
+    expect(stdin.emit("end")).toBe(true);
+    await transport.reached(exitCode.promise, "transport cleanup");
+    expect(signals.emit("SIGTERM")).toBe(true);
+    const first = settledCause(lifecycle.shutdown());
+    const concurrent = settledCause(lifecycle.shutdown());
+    transport.reject(new Error("first handle close failed"));
+    const failure = await first;
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(await concurrent).toBe(failure);
+    const causes = [
       { message: "first handle close failed" },
       { message: "first Android close failed" },
-    ],
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-  expect(exitCodes).toEqual([1]);
-  expect(logs.map((line) => JSON.parse(line))).toContainEqual(
-    expect.objectContaining({
-      msg: "MCP shutdown rejected",
-      failure_cause: expect.objectContaining({
-        errors: [
-          expect.objectContaining({ message: "first handle close failed" }),
-          expect.objectContaining({ message: "first Android close failed" }),
-        ],
-      }),
-    }),
-  );
-  expect([handleCalls, androidCalls, sessionCalls, unregisterCount]).toEqual([
-    1, 1, 1, 0,
-  ]);
-  // Engine cleanup succeeded, but the transport and Android owners failed.
-  // Investigation history remains available until their exact retries settle.
-  expect(session.activeTarget()).toBeUndefined();
-  expect(session.exportEvidenceBundle()).toEqual(retained);
-  expect(session.listUnknowns()).toEqual([unknown.value]);
+    ];
+    expect(failure).toMatchObject({ errors: causes });
+    expect(await exitCode.promise).toBe(1);
+    const rejectionLog = logs
+      .map((line) => JSON.parse(line))
+      .find((log) => log.msg === "MCP shutdown rejected");
+    expect(rejectionLog).toMatchObject({ failure_cause: { errors: causes } });
+    expect([
+      handleCalls,
+      androidCalls,
+      optionalCalls,
+      sessionCalls,
+      unregisterCount,
+    ]).toEqual([1, 1, 1, 1, 0]);
+    expect(session.activeTarget()).toBeUndefined();
+    expect(session.exportEvidenceBundle()).toEqual(retained);
+    expect(session.listUnknowns()).toEqual([unknown.value]);
 
-  await lifecycle.shutdown();
-  expect([handleCalls, androidCalls, sessionCalls, unregisterCount]).toEqual([
-    2, 2, 1, 1,
-  ]);
-  expect(session.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
-  expect(session.listUnknowns()).toEqual([]);
-  await lifecycle.shutdown();
-  expect([handleCalls, androidCalls, sessionCalls, unregisterCount]).toEqual([
-    2, 2, 1, 1,
-  ]);
-});
-
-it("retries failed MCP cleanup owners on a repeated signal and unregisters after success", async () => {
-  const signals = new EventEmitter();
-  const stdin = new EventEmitter();
-  const exitCodes: number[] = [];
-  let handleCalls = 0;
-  let androidCalls = 0;
-  let sessionCalls = 0;
-  let unregisterCalls = 0;
-  const dependencies: RuntimeDependencies = {
-    env: {},
-    serve: () => {
-      throw new Error("unused fixture transport");
-    },
-    writeStderr: () => undefined,
-    setExitCode: (code) => exitCodes.push(code),
-    registerShutdown: (handler) => {
-      const unregister = registerProcessShutdown(handler, { signals, stdin });
-      return () => {
-        unregisterCalls += 1;
-        unregister();
-      };
-    },
-  };
-  const session = createTestBinarySession(() => ({
-    execute: async () => observed(null),
-    close: async () => {
-      sessionCalls += 1;
-      return ok(null);
-    },
-  }));
-  const [target] = await createBinarySessionTargets();
-  if (target === undefined) throw new Error("Missing fixture target");
-  expect((await session.open(target)).ok).toBe(true);
-  createShutdown({
-    handle: {
-      close: async () => {
-        handleCalls += 1;
-        if (handleCalls === 1) throw new Error("first handle close failed");
-      },
-    },
-    closeAndroid: async () => {
-      androidCalls += 1;
-      if (androidCalls === 1) throw new Error("first Android close failed");
-    },
-    session,
-    dependencies,
-    serverLogger: pino({ enabled: false }),
-  });
-
-  signals.emit("SIGTERM");
-  await new Promise((resolve) => setImmediate(resolve));
-  expect([handleCalls, androidCalls, sessionCalls, unregisterCalls]).toEqual([
-    1, 1, 1, 0,
-  ]);
-  expect(exitCodes).toEqual([1]);
-
-  signals.emit("SIGTERM");
-  await new Promise((resolve) => setImmediate(resolve));
-  expect([handleCalls, androidCalls, sessionCalls, unregisterCalls]).toEqual([
-    2, 2, 1, 1,
-  ]);
-
-  signals.emit("SIGTERM");
-  await new Promise((resolve) => setImmediate(resolve));
-  expect([handleCalls, androidCalls, sessionCalls, unregisterCalls]).toEqual([
-    2, 2, 1, 1,
-  ]);
+    expect(signals.emit("SIGTERM")).toBe(true);
+    await waitFor(() => expect(unregisterCount).toBe(1));
+    expect(signals.emit("SIGINT")).toBe(false);
+    expect(signals.emit("SIGTERM")).toBe(false);
+    expect(stdin.emit("end")).toBe(false);
+    expect(stdin.emit("close")).toBe(false);
+    await lifecycle.shutdown();
+    expect([
+      handleCalls,
+      androidCalls,
+      optionalCalls,
+      sessionCalls,
+      unregisterCount,
+    ]).toEqual([2, 2, 1, 1, 1]);
+    expect(session.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
+    expect(session.listUnknowns()).toEqual([]);
+  } finally {
+    transport.release();
+    await settledCause(lifecycle.shutdown());
+  }
 });
 
 const idleShutdownDependencies = (): RuntimeDependencies => ({
@@ -471,7 +421,7 @@ it("does not leave a provider running when a target open is queued behind shutdo
     },
   });
   expect(session.activeTarget()).toBeUndefined();
-  expect(session.activeBundleResourceRoot()).toBeUndefined();
+  expect(await session.status()).toMatchObject({ open: false });
   expect(created).toBe(closed);
 });
 

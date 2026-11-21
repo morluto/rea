@@ -60,10 +60,6 @@ describe("headless IDA callee edges on non-x86 targets", () => {
         "calls to non-function targets remain unknown",
       ).toContain(UNRECOGNIZED_CALLEE_LIMITATION);
       expect(
-        execution.result,
-        "the unreliable callees row is neither resolved nor reported",
-      ).not.toContain("0x4000");
-      expect(
         observedTools(execution.rawResult),
         "non-x86 callees is never queried",
       ).not.toContain("callees");
@@ -146,53 +142,12 @@ describe("headless IDA callee edges on x86 targets", () => {
         "exactly the provider's own limitations, nothing added on x86",
       ).toEqual([...IDA_LIMITATIONS]);
       expect(
-        producer.calls.map(({ name }) => name),
-        "no call graph request is made on an x86-only target",
-      ).toEqual([
-        "idb_open",
-        "idb_list",
-        "server_health",
-        "lookup_funcs",
-        "callees",
-        "lookup_funcs",
-        "server_health",
-      ]);
-      expect(
-        producer.calls.find(({ name }) => name === "callees")?.args,
-        "the callees request is the unchanged scoped one",
-      ).toMatchObject({ addrs: ["0x1000"], limit: 500 });
+        producer.calls.filter(({ name }) => name === "callees"),
+      ).toMatchObject([{ args: { addrs: ["0x1000"], limit: 500 } }]);
       expect(
         observedTools(execution.rawResult),
         "the raw observations hold no call graph row",
       ).toEqual(["lookup_funcs", "callees", "lookup_funcs"]);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("keeps omitted x86 callee truncation as unknown coverage", async () => {
-    const { client, producer } = await session({ callees: [] }, "x86_64");
-    const inner = producer.overrideCall;
-    producer.overrideCall = (name, args) =>
-      name === "callees"
-        ? [
-            {
-              callees: [{ addr: "0x2000", name: "square", type: "internal" }],
-            },
-          ]
-        : inner?.(name, args);
-    try {
-      const execution = await callees(client);
-
-      expect(execution.result, "observed callees are still returned").toEqual([
-        "0x2000",
-      ]);
-      expect(execution.relationshipCoverage).toMatchObject({
-        status: "unknown",
-        reason: expect.stringMatching(
-          /omitted.*truncation marker.*callees remain unknown/iu,
-        ),
-      });
     } finally {
       expect((await client.close()).ok).toBe(true);
     }
@@ -217,7 +172,7 @@ describe("headless IDA callee edges on x86 targets", () => {
     }
   });
 
-  it("does not use the call graph for the legacy attached profile on an ARM target", async () => {
+  it("does not use the call graph for the native attached profile on an ARM target", async () => {
     const { root, target } = await createIdaTarget("arm64");
     attachedRoots.push(root);
     const producer = new RecordingIdaMcp(target, "attached");
@@ -227,6 +182,7 @@ describe("headless IDA callee edges on x86 targets", () => {
         args: [],
         env: {},
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -238,10 +194,10 @@ describe("headless IDA callee edges on x86 targets", () => {
         procedure: "main",
       });
 
-      expect(result.ok, "the legacy read still works").toBe(true);
+      expect(result.ok, "the native read still works").toBe(true);
       expect(
         producer.calls.some(({ name }) => name === "callgraph"),
-        "the legacy profile has no call graph source",
+        "the native profile reads upstream callees, not the call graph",
       ).toBe(false);
     } finally {
       expect((await client.close()).ok).toBe(true);

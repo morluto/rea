@@ -1,7 +1,5 @@
-import {
-  projectAnalysisView,
-  type AnalysisViewResult,
-} from "../../src/domain/analysisView/analysisView.js";
+import { projectAnalysisView } from "../../src/domain/analysisView/analysisView.js";
+import type { AnalysisViewResult } from "../../src/domain/analysisView/analysisViewResult.js";
 import type { TemplateRule } from "../../src/domain/analysisView/environmentManifestRules.js";
 import type { Evidence } from "../../src/domain/evidence.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";

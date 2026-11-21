@@ -9,10 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  readGhidraExecutableHeader,
-  GHIDRA_EXECUTABLE_HEADER_BYTES,
-} from "../../../src/ghidra/GhidraExecutableHeader.js";
+import { readGhidraExecutableHeader } from "../../../src/ghidra/GhidraExecutableHeader.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -41,10 +38,13 @@ it.each([0, 23, 8192])(
   async (length) => {
     const root = await createTestTempDirectory("rea-header-prefix-");
     const path = join(root, "decompile");
-    const bytes = Buffer.alloc(length, 0x42);
+    const bytes = Buffer.from(
+      Array.from({ length }, (_, index) => index % 251),
+    );
     await writeFile(path, bytes);
     let bytesRead = 0;
-    controls.file = (file) => {
+    controls.file = (file, opened) => {
+      if (opened !== path) return;
       const read = file.read.bind(file);
       vi.spyOn(file, "read").mockImplementation(async (options) => {
         const result = await read({
@@ -57,18 +57,18 @@ it.each([0, 23, 8192])(
     };
     const resources = createInspectionResources();
     try {
-      expect(
-        await readGhidraExecutableHeader(path, {
-          resourceOwner: resources.owner,
-        }),
-      ).toEqual({
-        ok: true,
-        value: {
-          bytes: bytes.subarray(0, GHIDRA_EXECUTABLE_HEADER_BYTES),
-          size: length,
-        },
+      const result = await readGhidraExecutableHeader(path, {
+        resourceOwner: resources.owner,
       });
-      expect(bytesRead).toBe(Math.min(length, GHIDRA_EXECUTABLE_HEADER_BYTES));
+      if (!result.ok) throw result.error;
+      const examined = Math.min(length, 4096);
+      expect(result.value.size).toBe(length);
+      expect(result.value.bytes).toHaveLength(examined);
+      expect(
+        result.value.bytes.findIndex((value, index) => value !== bytes[index]),
+        "first mismatched prefix offset",
+      ).toBe(-1);
+      expect(bytesRead).toBe(examined);
     } finally {
       await resources.close();
     }
@@ -105,8 +105,9 @@ it.each(["replace", "grow", "shrink", "disappear"] as const)(
     const path = join(root, "decompile"),
       replacement = join(root, "replacement");
     await writeFile(path, "original");
-    await writeFile(replacement, "original");
-    controls.file = (file) => {
+    if (change === "replace") await writeFile(replacement, "original");
+    controls.file = (file, opened) => {
+      if (opened !== path) return;
       const read = file.read.bind(file);
       vi.spyOn(file, "read").mockImplementationOnce(
         async (...args: Parameters<typeof file.read>) => {

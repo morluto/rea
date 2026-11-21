@@ -14,7 +14,7 @@ import {
 import { emptyElectronPageCoverage } from "../../domain/javascript/electronPageInspection.fixture.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok } from "../../domain/result.js";
-import type { ElectronObservationPort } from "./ElectronObservationPort.js";
+import type { ElectronObservationPort } from "../../ports/javascript/ElectronObservationPort.js";
 import {
   inspectElectronPage,
   listElectronTargets,

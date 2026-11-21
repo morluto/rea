@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   protobufCaptureDescriptor,
@@ -24,7 +24,7 @@ import {
   inspectWebNetworkCaptureInputSchema,
 } from "../../../src/domain/webNetworkCapture.js";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
@@ -209,15 +209,24 @@ captureTest(
       repeated[index + 1] = 1;
     }
     await writeFile(capacityPath, protobufHar(protobufFrame(repeated)));
+    const replyBudget = 8 * 1024 * 1024;
     const capacity = await call("inspect_web_network_capture", {
       capture_path: capacityPath,
       format: "har",
+      max_reply_bytes: replyBudget,
       record_ordinals: [0],
       sensitive_values: ["unrelated fixture exclusion"],
     });
     const capacityError = parseMcpToolError(capacity).error;
-    expect(capacityError.code).toBe("resource_constraint");
-    expect(capacityError.retryable).toBe(false);
+    expect(capacityError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "capacity",
+        reported_limits: { maximum_encoded_capture_bytes: replyBudget },
+      },
+      remediation: { action: expect.stringContaining("max_reply_bytes") },
+    });
     const capacitySource = retainedCaptureDetailsSchema.parse(
       capacityError.details,
     ).partial_observation;
@@ -649,9 +658,10 @@ captureTest.for(
         "--json",
       ],
     };
-    const response = await (name === "valid"
-      ? cli.run(options)
-      : runFileCli(cli, options));
+    const response = await cli.run({
+      ...options,
+      freshProcess: name === "valid",
+    });
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
     const report = webNetworkCaptureSchema.parse(evidence.normalized_result);

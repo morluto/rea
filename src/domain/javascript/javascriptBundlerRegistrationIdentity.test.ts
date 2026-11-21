@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const registration = (runtime: string, callback: string, chunk = 1) =>
   "(globalThis." +
