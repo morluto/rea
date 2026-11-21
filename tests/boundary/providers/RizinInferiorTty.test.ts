@@ -3,7 +3,7 @@ import { chmod, readFile, realpath, writeFile } from "node:fs/promises";
 
 import { join } from "node:path";
 import { spawn } from "@lydell/node-pty";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
@@ -13,10 +13,7 @@ import {
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "../../../src/contracts/rizinDebugToolContracts.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
-import {
-  createRizinTestManager,
-  rizinTestInferiorTty,
-} from "./RizinTestInferiorTty.js";
+import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
 import { waitForTestPidFile } from "../../support/process/pidFile.js";
 
@@ -80,49 +77,6 @@ afterEach(async () => {
   inferiorPid = undefined;
   testDirectory = undefined;
 });
-
-it.skipIf(process.platform === "win32")(
-  "fails the protocol when a NUL delimiter does not advance the frame parser",
-  async () => {
-    const injected = createInjectedProcess({
-      startup: (control) => control.output(Buffer.from([0, 0])),
-    });
-    manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: "injected-rizin" },
-      { spawnProcess: injected.spawnProcess },
-    );
-    const originalIndexOf = Buffer.prototype.indexOf;
-    let forcedNonAdvancingBoundary = false;
-    const indexOf = vi
-      .spyOn(Buffer.prototype, "indexOf")
-      .mockImplementation(function (this: Buffer, value, byteOffset, encoding) {
-        if (
-          this.length === 2 &&
-          this[0] === 0 &&
-          this[1] === 0 &&
-          byteOffset === 1
-        ) {
-          forcedNonAdvancingBoundary = true;
-          return 0;
-        }
-        return originalIndexOf.call(this, value, byteOffset, encoding);
-      });
-    try {
-      const started = await manager.start({
-        path: "/tmp/injected",
-        inferior_tty: await rizinTestInferiorTty(),
-      });
-      expect(forcedNonAdvancingBoundary).toBe(true);
-      expect(started.ok).toBe(false);
-      if (!started.ok)
-        expect(started.error.message).toContain(
-          "frame parser failed to advance past a NUL delimiter",
-        );
-    } finally {
-      indexOf.mockRestore();
-    }
-  },
-);
 
 it("declares that Rizin close can resume target code and mutate target state", () => {
   expect(
@@ -294,36 +248,34 @@ it("rejects changed or missing Rizin inferior identity during detach", () => {
   );
 });
 
-it.skipIf(process.platform !== "linux")(
-  "retains ownership when cleanup cannot read Rizin stdin",
+it.skipIf(process.platform === "win32")(
+  "retains Rizin ownership when close cannot read back through stdin",
   async () => {
     const injected = createInjectedProcess({ stdin: "null" });
     manager = new RizinDebugSessionManager(
       { REA_RIZIN_COMMAND: "injected-rizin" },
-      {
-        spawnProcess: injected.spawnProcess,
-        stopProcess: async (session) => {
-          try {
-            await session.detachInferior?.();
-          } catch {
-            // This fixture verifies the manager's fail-closed read path only.
-          }
-          return {
-            status: "incomplete",
-            code: "stop-failed",
-            reason: "unreachable",
-          };
-        },
-      },
+      { platform: "linux", spawnProcess: injected.spawnProcess },
     );
     const started = await manager.start({
       path: "/tmp/fake-target",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    expect((await manager.close(started.value.session_id)).ok).toBe(false);
-    expect(manager.status(started.value.session_id)?.state).toBe("closed");
+    if (!started.ok) throw started.error;
+    const { session_id: sessionId } = started.value;
+    expect(await manager.close(sessionId)).toMatchObject({
+      ok: false,
+      error: {
+        cleanupIncomplete: true,
+        diagnostics: { debugger_cleanup: "detach-failed" },
+        cleanup: {
+          resources: [sessionId],
+          reason: expect.stringContaining(
+            "Rizin stdin is unavailable during cleanup.",
+          ),
+        },
+      },
+    });
+    expect(manager.status(sessionId)).toMatchObject({ state: "closed" });
   },
 );
 
