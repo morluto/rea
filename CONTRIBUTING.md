@@ -306,9 +306,13 @@ build.
 
 Follow the [Windows native build guide](native/windows/README.md#build) before
 running those workflows from source. The artifact build requires Linux,
-MinGW-w64, and `tar`; the build script does not run on Windows. See that guide
-for the build and artifact-verification commands and the separate real Windows
-verification prerequisites. Keep the generated addon and manifest uncommitted.
+MinGW-w64, and `tar`; the build script does not run on Windows. Checkouts
+without a cross-compilation environment can instead
+[restore the artifact](native/windows/README.md#restore-the-artifact-in-a-source-checkout)
+from the published `rea-agents` release tarball matching `package.json`. See
+that guide for the build, extraction, and artifact-verification commands and
+the separate real Windows verification prerequisites. Keep the generated addon
+and manifest uncommitted.
 
 The general source suite (`npm run test:fast`, `npm run test:changed`, and
 `npm run test:local`) runs on Linux in CI, and Windows CI runs a curated lane.
