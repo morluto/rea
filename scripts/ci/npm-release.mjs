@@ -35,6 +35,7 @@ export async function waitForNpmRelease(
   version,
   lookup = readNpmRelease,
   pause = setTimeout,
+  onAbsent = () => {},
 ) {
   const windowMinutes = 75;
   const intervalMs = 30_000;
@@ -42,6 +43,7 @@ export async function waitForNpmRelease(
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const published = await lookup(version);
     if (published.status === "published") return published;
+    onAbsent(attempt, attempts);
     if (attempt < attempts) await pause(intervalMs);
   }
   throw new Error(
@@ -60,7 +62,18 @@ async function main() {
     throw new Error(
       "Usage: node scripts/ci/npm-release.mjs verify <qualified-tarball> <version>",
     );
-  const published = await waitForNpmRelease(version);
+  const published = await waitForNpmRelease(
+    version,
+    undefined,
+    undefined,
+    (attempt, total) => {
+      if (attempt === 1 || attempt % 4 === 0) {
+        process.stderr.write(
+          `npm registry has not returned rea-agents@${version} (lookup ${attempt}/${total}).\n`,
+        );
+      }
+    },
+  );
   await requireMatchingNpmRelease(tarball, version, published);
   if (process.env.GITHUB_STEP_SUMMARY !== undefined) {
     await appendFile(

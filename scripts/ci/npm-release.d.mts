@@ -12,4 +12,5 @@ export function waitForNpmRelease(
   version: string,
   lookup?: (version: string) => Promise<NpmReleaseState>,
   pause?: (milliseconds: number) => Promise<unknown>,
+  onAbsent?: (attempt: number, total: number) => void,
 ): Promise<Extract<NpmReleaseState, { status: "published" }>>;
