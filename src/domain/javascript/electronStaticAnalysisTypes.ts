@@ -54,6 +54,11 @@ export type ElectronBrowserWindowFinding = ElectronBrowserWindowPreload & {
     ElectronWindowConstructor,
     "BrowserWindow"
   >;
+  /** Returned popup options, not an observed popup allocation or runtime parent. */
+  readonly window_open_handler?: {
+    readonly opener_location: JavaScriptSourceRange;
+    readonly registration_location: JavaScriptSourceRange;
+  };
   readonly options_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences: readonly ElectronWebPreference[];
