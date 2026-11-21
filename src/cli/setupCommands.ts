@@ -2,6 +2,7 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { z } from "zod";
 
+import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
 import type { DoctorScope } from "../application/Doctor.js";
 import {
   DESKTOP_BUILD_PROVIDER_ID,
@@ -43,16 +44,22 @@ export const registerSetupCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): void => {
-  registerSetupCommand(cli, logger, environment);
-  registerDoctorCommand(cli, logger, environment);
-  registerMaintenanceCommands(cli, logger, environment);
+  registerSetupCommand(cli, logger, environment, savedDefaults);
+  registerDoctorCommand(cli, logger, environment, savedDefaults);
+  registerMaintenanceCommands(
+    cli,
+    logger,
+    omitEnvironmentSettings(environment, savedDefaults),
+  );
 };
 
 const registerSetupCommand = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): void => {
   registerCliCommand(cli, CLI_COMMANDS.setup, {
     description: "Configure agent integrations and optional analysis providers",
@@ -129,7 +136,12 @@ const registerSetupCommand = (
           logger,
           CLI_COMMANDS.setup,
           () =>
-            runSetupCommand({ options, formatExplicit }, environment, signal),
+            runSetupCommand(
+              { options, formatExplicit },
+              environment,
+              signal,
+              savedDefaults,
+            ),
           isSetupFailure,
         ),
       ),
@@ -140,6 +152,7 @@ const registerDoctorCommand = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): void => {
   registerCliCommand(cli, CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
@@ -172,7 +185,12 @@ const registerDoctorCommand = (
             ]);
           return runDoctorOwned(
             options.target,
-            createSystemDoctorHost(environment, signal),
+            createSystemDoctorHost(
+              environment,
+              signal,
+              HOST_PLATFORM,
+              savedDefaults,
+            ),
             doctorScope(options),
           );
         }),
@@ -274,6 +292,7 @@ const runSetupCommand = async (
   },
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
+  savedDefaults: ReadonlySet<string> | undefined,
 ) => {
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
@@ -287,8 +306,15 @@ const runSetupCommand = async (
   const result = await runSetup(
     { ...setupRunOptions(input, interactive, hasExplicitScope), signal },
     systemSetupHost(
-      createSystemDoctorHost(environment, signal, HOST_PLATFORM, "user"),
+      createSystemDoctorHost(
+        environment,
+        signal,
+        HOST_PLATFORM,
+        savedDefaults,
+        "user",
+      ),
       environment,
+      savedDefaults,
     ),
     interactive
       ? (actions, context) =>

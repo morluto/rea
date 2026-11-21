@@ -92,6 +92,84 @@ describe("nullable redirect resource types", () => {
   });
 });
 
+describe("HTTP response and redirect facts", () => {
+  it("compares known status, media type and bytes while preserving unknown fields", () => {
+    const before = redirectCapture("Document");
+    const retimed = structuredClone(before);
+    retimed.network.requests[0]!.redirects[0]!.request_timestamp = 10;
+    retimed.network.requests[0]!.redirects[0]!.redirect_event_timestamp = 20;
+    expect(compare(before, retimed)).toMatchObject({ status: "unchanged" });
+    const unknown = { status: "unknown", total_changes: 0, changes: [] };
+    const modified = {
+      status: "changed",
+      total_changes: 1,
+      changes: [{ change: "modified" }],
+    };
+    for (const [field, value] of [
+      ["status", 307],
+      ["mime_type", "application/xml"],
+      ["encoded_data_length", 101],
+    ] as const) {
+      for (const hop of [false, true]) {
+        const update = (next: typeof value | null) => {
+          const edited = structuredClone(before);
+          const request = edited.network.requests[0]!;
+          Object.assign(hop ? request.redirects[0]! : request, {
+            [field]: next,
+          });
+          return edited;
+        };
+        const missing = update(null);
+        for (const [left, right] of [
+          [before, missing],
+          [missing, before],
+          [missing, missing],
+        ] as const)
+          expect(compare(left, right)).toMatchObject(unknown);
+        expect(compare(before, update(value))).toMatchObject(modified);
+      }
+    }
+    before.network.requests[0]!.redirects[0]!.status = null;
+    const changed = structuredClone(before);
+    changed.network.requests[0]!.status = 204;
+    expect(compare(before, changed)).toMatchObject(modified);
+  });
+
+  it("compares repeated responses by correlated facts rather than request IDs or order", () => {
+    const before = unselectBodyShapes(passiveNetworkCapture(["/a", "/a"]));
+    const second = before.network.requests[1]!;
+    second.status = 201;
+    second.encoded_data_length = 20;
+    const reversed = structuredClone(before);
+    reversed.network.requests.reverse();
+    reversed.network.requests[0]!.request_id = "different-1";
+    reversed.network.requests[1]!.request_id = "different-2";
+    expect(compare(before, reversed)).toMatchObject({ status: "unchanged" });
+
+    const swapped = structuredClone(reversed);
+    swapped.network.requests[0]!.encoded_data_length = 10;
+    swapped.network.requests[1]!.encoded_data_length = 20;
+    const modified = {
+      status: "changed",
+      total_changes: 1,
+      changes: [{ change: "modified" }],
+    };
+    expect(compare(before, swapped)).toMatchObject(modified);
+
+    const unknown = { status: "unknown", total_changes: 0, changes: [] };
+    second.encoded_data_length = null;
+    expect(compare(before, swapped)).toMatchObject(unknown);
+    second.encoded_data_length = 20;
+    second.status = null;
+    second.mime_type = null;
+    swapped.network.requests[0]!.encoded_data_length = 30;
+    expect(compare(before, swapped)).toMatchObject(modified);
+    before.completeness.attach_limited_sections.push("network_requests");
+    swapped.completeness.attach_limited_sections.push("network_requests");
+    expect(compare(before, swapped)).toMatchObject(unknown);
+  });
+});
+
 describe("passive network inventory changes", () => {
   it.each(["websocket_connections", "websocket_frames"] as const)(
     "does not infer duplicate WebSocket inventory changes from dropped %s",
@@ -162,45 +240,6 @@ describe("passive network inventory changes", () => {
         status: "changed",
         total_changes: 1,
         changes: [{ change: "modified" }],
-      });
-    },
-  );
-
-  it.each(["unavailable", "partial", "truncated"] as const)(
-    "retains complete request additions/removals with %s selected shapes",
-    (coverage) => {
-      const before = passiveNetworkCapture(["/a"]);
-      const after = passiveNetworkCapture(["/a", "/b"]);
-      for (const capture of [before, after]) {
-        if (coverage === "truncated")
-          capture.completeness.truncated_sections.push("json_body_shapes");
-        else capture.completeness.unavailable_sections.push("json_body_shapes");
-        for (const request of capture.network.requests) {
-          const shape = {
-            root_type: "object" as const,
-            node_count: 1,
-            max_depth_observed: 0,
-            properties: [],
-          };
-          if (coverage !== "unavailable") request.body_shapes.request = shape;
-          if (coverage === "truncated") request.body_shapes.response = shape;
-          request.body_shapes.status =
-            coverage === "truncated" ? "included" : coverage;
-        }
-      }
-      for (const [left, right, change] of [
-        [before, after, "added"],
-        [after, before, "removed"],
-      ] as const)
-        expect(compare(left, right)).toEqual({
-          status: "changed",
-          total_changes: 1,
-          changes: [{ identity: expect.stringMatching(/^net_/u), change }],
-          reason: null,
-        });
-      expect(compare(after, after)).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
       });
     },
   );
@@ -304,6 +343,62 @@ describe("unknown WebSocket opcode evidence", () => {
 });
 
 describe("passive network coverage uncertainty", () => {
+  it.each(["unavailable", "partial", "truncated"] as const)(
+    "retains complete request additions/removals with %s selected shapes",
+    (coverage) => {
+      const before = passiveNetworkCapture(["/a"]);
+      const after = passiveNetworkCapture(["/a", "/b"]);
+      const shape = {
+        root_type: "object" as const,
+        node_count: 1,
+        max_depth_observed: 0,
+        properties: [],
+      };
+      for (const capture of [before, after]) {
+        if (coverage === "truncated")
+          capture.completeness.truncated_sections.push("json_body_shapes");
+        else capture.completeness.unavailable_sections.push("json_body_shapes");
+        for (const request of capture.network.requests) {
+          if (coverage !== "unavailable") request.body_shapes.request = shape;
+          if (coverage === "truncated") request.body_shapes.response = shape;
+          request.body_shapes.status =
+            coverage === "truncated" ? "included" : coverage;
+        }
+      }
+      for (const [left, right, change] of [
+        [before, after, "added"],
+        [after, before, "removed"],
+      ] as const)
+        expect(compare(left, right)).toEqual({
+          status: "changed",
+          total_changes: 1,
+          changes: [{ identity: expect.stringMatching(/^net_/u), change }],
+          reason: null,
+        });
+      expect(compare(after, after)).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+      });
+      const complete = passiveNetworkCapture(["/a"]);
+      complete.network.requests[0]!.body_shapes = {
+        status: "included",
+        request: shape,
+        response: shape,
+      };
+      expect(compare(complete, before)).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+        changes: [],
+      });
+      before.network.requests[0]!.status = 503;
+      expect(compare(complete, before)).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+        changes: [{ change: "modified" }],
+      });
+    },
+  );
+
   it.each([
     "attach_limited_sections",
     "unavailable_sections",

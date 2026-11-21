@@ -13,7 +13,7 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
 import { CordisExpression, DshCordisYaml } from "./DshCordisYaml.js";
-import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
+import { mergeRegistrationEnvironment } from "./UserConfigurationLocation.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 export const DSH_ENTRY_ID = "rea-mcp";
@@ -224,6 +224,7 @@ export class DshCordisDocument {
   ): Result<
     {
       readonly values: Readonly<Record<string, string>>;
+      readonly sourceValues: Readonly<Record<string, unknown>>;
       readonly configuration: Environment;
       readonly unresolvedSettings: ReadonlySet<string>;
     },
@@ -263,9 +264,12 @@ export class DshCordisDocument {
       );
     const literals: Record<string, string> = Object.create(null);
     const unresolvedSettings = new Set<string>();
-    for (const [key, value] of Object.entries(
-      mergeEnvironmentOverrides<unknown>(raw ?? {}, overrides, platform),
-    )) {
+    const { values: sourceValues } = mergeRegistrationEnvironment(
+      raw ?? {},
+      overrides,
+      platform,
+    );
+    for (const [key, value] of Object.entries(sourceValues)) {
       if (value instanceof CordisExpression) {
         unresolvedSettings.add(key);
         continue;
@@ -291,7 +295,7 @@ export class DshCordisDocument {
       platform,
     );
     return validated.ok
-      ? ok({ values: literals, ...validated.value })
+      ? ok({ values: literals, sourceValues, ...validated.value })
       : validated;
   }
 
@@ -305,11 +309,7 @@ export class DshCordisDocument {
       return err(this.#editabilityError);
     const environment = this.environment(overrides, "effective", platform);
     if (!environment.ok) return environment;
-    const env = mergeEnvironmentOverrides<unknown>(
-      isPatchRecord(this.config?.env) ? this.config.env : {},
-      overrides,
-      platform,
-    );
+    const env = environment.value.sourceValues;
     const desired = { ...this.config, ...dshClientRegistrationEntry(command) };
     delete desired.env;
     if (Object.keys(env).length > 0) desired.env = env;

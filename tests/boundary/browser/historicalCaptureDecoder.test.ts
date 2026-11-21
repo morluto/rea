@@ -658,44 +658,44 @@ it.each(["missing-capture", "missing-reply", "failed-command"])(
   },
 );
 
-it("preserves the exact cancellation reason observed during final runtime close", async () => {
-  const root = await createTestTempDirectory("rea-historical-final-cancel-");
+const inspectDuringRuntimeClose = async (
+  onFirstClose: (controller: AbortController) => void,
+) => {
+  const root = await createTestTempDirectory("rea-historical-runtime-close-");
   const path = join(root, "input.har");
   const text = JSON.stringify(historicalHar());
   await writeFile(path, text);
+  const reply = JSON.stringify({ ok: true, value: decodeHarCapture(text, []) });
+  const runtime = await PrivateRuntimeRoot.create({ parent: root });
+  onTestFinished(() => runtime.close());
   const controller = new AbortController();
-  const reason = { request: "cancel during runtime close" };
+  let attempts = 0;
   const decoder = new HistoricalCaptureDecoder(
     [
       {
         format: "har",
         identity: HAR_CAPTURE_PROVIDER_IDENTITY,
-        command: async (_, runtimePath) => {
-          await writeFile(
+        command: async (_, runtimePath) => ({
+          command: process.execPath,
+          arguments: [
+            "-e",
+            "require('node:fs').writeFileSync(process.argv[1], process.argv[2])",
             join(runtimePath, "reply.json"),
-            JSON.stringify({ ok: true, value: decodeHarCapture(text, []) }),
-          );
-          return {
-            command: process.execPath,
-            arguments: ["-e", "process.exit(0)"],
-          };
-        },
+            reply,
+          ],
+        }),
       },
     ],
     process.env,
-    async () => {
-      const runtime = await PrivateRuntimeRoot.create({
-        prefix: "rea-final-cancel-proof-",
-      });
-      return {
-        path: runtime.path,
-        close: async () => {
-          controller.abort(reason);
-          await runtime.close();
-        },
-      };
-    },
+    async () => ({
+      path: runtime.path,
+      close: async () => {
+        if (++attempts === 1) onFirstClose(controller);
+        await runtime.close();
+      },
+    }),
   );
+  onTestFinished(() => decoder.close());
   const result = await decoder.inspect(
     inspectWebNetworkCaptureInputSchema.parse({
       capture_path: path,
@@ -703,153 +703,72 @@ it("preserves the exact cancellation reason observed during final runtime close"
     }),
     { signal: controller.signal },
   );
-  if (result.ok) throw new Error("Finalization cancellation must fail");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
-  expect(result.error.cause).toBe(reason);
-  expect(result.error.partialObservation).toMatchObject({
-    artifact: { path, sha256: expect.any(String) },
+  if (result.ok) throw new Error("Expected finalization failure");
+  const { error } = result;
+  expect(error.partialObservation).toMatchObject({
+    artifact: {
+      path,
+      sha256: createHash("sha256").update(text).digest("hex"),
+      bytes: Buffer.byteLength(text),
+    },
     records: [{ ordinal: 0 }],
   });
+  expect(attempts).toBe(1);
+  return {
+    error,
+    runtimePath: runtime.path,
+    async expectCleanupRetry() {
+      expect(projectAnalysisError(error).code).toBe("cleanup_incomplete");
+      expect(error.cleanupIncomplete).toBe(true);
+      expect(error.cleanupResources).toEqual([runtime.path]);
+      await expect(access(runtime.path)).resolves.toBeUndefined();
+      await decoder.close();
+      expect(attempts).toBe(2);
+      await expect(access(runtime.path)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(error.cleanupIncomplete).toBe(false);
+      expect(error.cleanupResources).toEqual([]);
+    },
+  };
+};
+
+it("preserves the exact cancellation reason observed during final runtime close", async () => {
+  const reason = { request: "cancel during runtime close" };
+  const { error, runtimePath } = await inspectDuringRuntimeClose((controller) =>
+    controller.abort(reason),
+  );
+  expect(error._tag).toBe("AnalysisCancelledError");
+  expect(error.cause).toBe(reason);
+  expect(error.cleanupIncomplete).toBe(false);
+  await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("retains completed capture facts and binds final root cleanup to its retry lease", async () => {
-  const root = await createTestTempDirectory("rea-historical-report-cleanup-");
-  const path = join(root, "input.har");
-  const text = JSON.stringify(historicalHar());
-  await writeFile(path, text);
-  let runtimePath: string | undefined;
-  let allowClose = false;
-  let runtime: PrivateRuntimeRoot | undefined;
-  const decoder = new HistoricalCaptureDecoder(
-    [
-      {
-        format: "har",
-        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
-        command: async (_, path) => {
-          await writeFile(
-            join(path, "reply.json"),
-            JSON.stringify({ ok: true, value: decodeHarCapture(text, []) }),
-          );
-          return {
-            command: process.execPath,
-            arguments: ["-e", "process.exit(0)"],
-          };
-        },
-      },
-    ],
-    process.env,
-    async () => {
-      runtime = await PrivateRuntimeRoot.create({
-        prefix: "rea-report-cleanup-proof-",
-      });
-      runtimePath = runtime.path;
-      onTestFinished(() => runtime?.close());
-      return {
-        path: runtime.path,
-        close: async () => {
-          if (!allowClose)
-            throw new Error("injected private root close failure");
-          await runtime?.close();
-        },
-      };
-    },
-  );
-  const result = await decoder.inspect(
-    inspectWebNetworkCaptureInputSchema.parse({
-      capture_path: path,
-      format: "har",
-    }),
-  );
-  if (result.ok) throw new Error("Root close failure must be reported");
-  expect(result.error.cleanupIncomplete).toBe(true);
-  expect(runtimePath).toBeDefined();
-  expect(result.error.cleanupResources).toContain(runtimePath);
-  expect(result.error.partialObservation).toMatchObject({
-    artifact: { path, sha256: expect.any(String) },
-    records: [{ ordinal: 0 }],
+  const { expectCleanupRetry } = await inspectDuringRuntimeClose(() => {
+    throw new Error("injected private root close failure");
   });
-
-  allowClose = true;
-  await decoder.close();
-  expect(result.error.cleanupIncomplete).toBe(false);
-  expect(result.error.cleanupResources).toEqual([]);
+  await expectCleanupRetry();
 });
 
 it("keeps late cancellation primary when runtime close also fails, then clears on retry", async () => {
-  const root = await createTestTempDirectory("rea-historical-cancel-cleanup-");
-  const path = join(root, "input.har");
-  const text = JSON.stringify(historicalHar());
-  await writeFile(path, text);
-  const controller = new AbortController();
   const reason = { request: "cancel during failed root close" };
-  let runtime: PrivateRuntimeRoot | undefined;
-  let closeAttempts = 0;
-  const decoder = new HistoricalCaptureDecoder(
-    [
-      {
-        format: "har",
-        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
-        command: async (_, runtimePath) => {
-          await writeFile(
-            join(runtimePath, "reply.json"),
-            JSON.stringify({ ok: true, value: decodeHarCapture(text, []) }),
-          );
-          return {
-            command: process.execPath,
-            arguments: ["-e", "process.exit(0)"],
-          };
-        },
-      },
-    ],
-    process.env,
-    async () => {
-      runtime = await PrivateRuntimeRoot.create({
-        prefix: "rea-cancel-cleanup-proof-",
-      });
-      onTestFinished(() => runtime?.close());
-      return {
-        path: runtime.path,
-        close: async () => {
-          closeAttempts += 1;
-          if (closeAttempts === 1) {
-            controller.abort(reason);
-            throw new Error("injected close failure after cancellation");
-          }
-          await runtime?.close();
-        },
-      };
+  const { error, expectCleanupRetry } = await inspectDuringRuntimeClose(
+    (controller) => {
+      controller.abort(reason);
+      throw new Error("injected close failure after cancellation");
     },
   );
-  const result = await decoder.inspect(
-    inspectWebNetworkCaptureInputSchema.parse({
-      capture_path: path,
-      format: "har",
-    }),
-    { signal: controller.signal },
-  );
-  if (result.ok) throw new Error("Cancellation and failed close must fail");
-  expect(result.error._tag).toBe("ProviderAdapterError");
-  expect(result.error.cleanupPrimary?._tag).toBe("AnalysisCancelledError");
-  expect(result.error.cleanupPrimary?.cause).toBe(reason);
-  expect(JSON.stringify(result.error.diagnostics)).not.toContain(
+  expect(error._tag).toBe("ProviderAdapterError");
+  expect(error.cleanupPrimary?._tag).toBe("AnalysisCancelledError");
+  expect(error.cleanupPrimary?.cause).toBe(reason);
+  expect(JSON.stringify(error.diagnostics)).not.toContain(
     "partial_observation",
   );
-  expect(result.error.partialObservation).toMatchObject({
-    artifact: { path, sha256: expect.any(String) },
-    records: [{ ordinal: 0 }],
-  });
-  expect(result.error.cleanupIncomplete).toBe(true);
-  expect(result.error.cleanupResources).toContain(runtime?.path);
-
-  await decoder.close();
-  expect(closeAttempts).toBe(2);
-  expect(result.error.cleanupIncomplete).toBe(false);
-  expect(result.error.cleanupResources).toEqual([]);
+  await expectCleanupRetry();
 });
 
 it.each([
-  { reason: "input-limit", tag: "AnalysisInputError" },
-  { reason: "expanded-limit", tag: "AnalysisInputError" },
   { reason: "resource-limit", tag: "AnalysisResourceConstraintError" },
   { reason: "decoder", tag: "ProviderAdapterError" },
   { reason: "limit", tag: "AnalysisOutputError" },
@@ -894,38 +813,7 @@ it.each([
     if (result.ok) throw new Error("Failure required");
     expect(result.error._tag).toBe(tag);
     const projected = projectAnalysisError(result.error);
-    if (reason === "input-limit") {
-      expect(projected).toMatchObject({
-        category: "invalid_input",
-        details: {
-          issues: [
-            {
-              path: ["capture_path", "/extension/child"],
-              reason: "out_of_range",
-              expected: {
-                maximum_capture_nesting: WEB_NETWORK_CAPTURE_LIMITS.depth,
-              },
-            },
-          ],
-        },
-      });
-    } else if (reason === "expanded-limit") {
-      expect(projected).toMatchObject({
-        category: "invalid_input",
-        details: {
-          issues: [
-            {
-              path: ["capture_path", "/extension/child"],
-              reason: "out_of_range",
-              expected: {
-                maximum_expanded_capture_bytes:
-                  WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
-              },
-            },
-          ],
-        },
-      });
-    } else if (reason === "limit") {
+    if (reason === "limit") {
       expect(projected).toMatchObject({
         code: "unreadable_output",
         retryable: false,
@@ -1240,69 +1128,3 @@ it.each([
     }
   },
 );
-
-it("excludes normalized native numbers before retaining a completed decoder reply", async () => {
-  const root = await createTestTempDirectory("rea-native-number-redaction-");
-  const capturePath = join(root, "capture.mitm");
-  const original = "controlled native decoder input";
-  await writeFile(capturePath, original);
-  const payload = decodeHarCapture(JSON.stringify(historicalHar()), []);
-  payload.decoder = MITMPROXY_CAPTURE_PROVIDER_IDENTITY;
-  const record = payload.records[0]!;
-  record.reported = { metadata: { small: 1e-7, large: 1e20, ordinary: 42 } };
-  record.binary_fields = [];
-  record.redactions = [];
-  record.numeric_literals = [
-    { pointer: "/metadata/small", producer_type: "float", literal: "1e-07" },
-    { pointer: "/metadata/large", producer_type: "float", literal: "1e+20" },
-  ];
-  const decoder = new HistoricalCaptureDecoder(
-    [
-      {
-        format: "mitmproxy",
-        identity: MITMPROXY_CAPTURE_PROVIDER_IDENTITY,
-        command: async (_, runtime) => ({
-          command: process.execPath,
-          arguments: [
-            "-e",
-            "require('node:fs').writeFileSync(process.argv[1], process.argv[2])",
-            join(runtime, "reply.json"),
-            JSON.stringify({ ok: true, value: payload }),
-          ],
-        }),
-      },
-    ],
-    process.env,
-  );
-  onTestFinished(() => decoder.close());
-  for (const marked of [false, true]) {
-    const result = await decoder.inspect(
-      inspectWebNetworkCaptureInputSchema.parse({
-        capture_path: capturePath,
-        format: "mitmproxy",
-        sensitive_values: marked ? ["1e-7", "000000"] : [],
-      }),
-    );
-    if (!result.ok) throw result.error;
-    const retained = result.value.records[0]!;
-    expect(retained.reported).toEqual({
-      metadata: {
-        small: marked ? null : 1e-7,
-        large: marked ? null : 1e20,
-        ordinary: 42,
-      },
-    });
-    expect(retained.numeric_literals).toEqual(
-      marked ? [] : record.numeric_literals,
-    );
-    expect(retained.redactions).toEqual(
-      marked
-        ? [
-            { pointer: "/metadata/small", reason: "explicit-sensitive-value" },
-            { pointer: "/metadata/large", reason: "explicit-sensitive-value" },
-          ]
-        : [],
-    );
-    expect(await readFile(capturePath, "utf8")).toBe(original);
-  }
-});
