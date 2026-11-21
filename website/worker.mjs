@@ -47,12 +47,12 @@ function advertiseMarkdown(response, path) {
 }
 
 /**
- * Answer with HTML when the Markdown route is absent.
+ * Answer the original request when Markdown is unavailable.
  *
- * Reevaluate HTML only when probing removed conditional or range headers.
+ * Fetch the original request again only when probing removed conditional or range headers.
  * Otherwise the existing response already answers the caller's request.
  */
-const htmlFallback = async (original, request, probeChanged, env) => {
+const assetFallback = async (original, request, probeChanged, env) => {
   if (!probeChanged) return original;
   await original.body?.cancel();
   return env.ASSETS.fetch(request);
@@ -60,6 +60,13 @@ const htmlFallback = async (original, request, probeChanged, env) => {
 
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
+    if (
+      !["GET", "HEAD"].includes(request.method) ||
+      (!url.pathname.endsWith("/") && !url.pathname.endsWith(".html"))
+    )
+      return env.ASSETS.fetch(request);
+
     const useMarkdown = prefersMarkdown(request.headers.get("Accept"));
     // HTML validators describe a different representation. Probe the route first,
     // then let the asset service evaluate validators/ranges against the Markdown.
@@ -81,14 +88,10 @@ export default {
     const original = await env.ASSETS.fetch(probe);
     if (
       ![200, 206, 304].includes(original.status) ||
-      !["GET", "HEAD"].includes(request.method) ||
       !original.headers.get("Content-Type")?.startsWith("text/html")
     )
-      return original;
+      return assetFallback(original, request, probeChanged, env);
 
-    const url = new URL(request.url);
-    if (!url.pathname.endsWith("/") && !url.pathname.endsWith(".html"))
-      return original;
     const markdown = new URL(url);
     markdown.pathname = url.pathname.endsWith("/")
       ? `${url.pathname}index.md`
@@ -100,7 +103,7 @@ export default {
     );
     if (!candidate.ok && ![304, 412, 416].includes(candidate.status)) {
       await candidate.body?.cancel();
-      return htmlFallback(original, request, probeChanged, env);
+      return assetFallback(original, request, probeChanged, env);
     }
     const response = new Response(
       useMarkdown ? candidate.body : original.body,
