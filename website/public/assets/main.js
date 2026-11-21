@@ -116,8 +116,15 @@ async function initializeWebsite() {
     const link = document.querySelector(".back-to-top");
     if (link === null) return;
 
+    // Show the link while the reader scrolls back up, so it does not sit over
+    // the text being read on the way down.
+    let lastY = window.scrollY;
     const updateVisibility = () => {
-      link.hidden = window.scrollY < 400;
+      const y = window.scrollY;
+      const scrollingDown = y > lastY;
+      if (Math.abs(y - lastY) > 4) lastY = y;
+      if (link === document.activeElement) return;
+      link.hidden = y < 400 || scrollingDown;
     };
     window.addEventListener("scroll", updateVisibility, { passive: true });
     updateVisibility();
@@ -156,7 +163,10 @@ async function initializeWebsite() {
         document.documentElement.lang,
       ).format(stars);
       const label = t("REA on GitHub ({count})", { count: formatted });
-      count.textContent = formatted;
+      count.textContent = new Intl.NumberFormat(document.documentElement.lang, {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      }).format(stars);
       count.hidden = false;
       link.setAttribute("aria-label", label);
       link.setAttribute("title", label);

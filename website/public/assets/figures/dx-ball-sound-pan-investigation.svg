@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1774" height="887" viewBox="0 0 1774 887" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1774" height="580" viewBox="0 200 1774 580" role="img" aria-labelledby="title desc">
   <title id="title">DX-Ball sound-pan investigation</title>
   <desc id="desc">REA provides the instruction, caller and byte-read evidence for one DX-Ball function. A stack input is multiplied by 1.5625, offset by 500, scaled, and converted to an integer. Maintained C is checked in 3,205 original-x86 cases and a separate 63-byte compiler replay.</desc>
   <defs>
@@ -15,9 +15,8 @@ svg{background-color:#181825}
 [fill="#ffffff"]{fill:#181825}
 }
 </style>
-  <rect width="1774" height="887" fill="#ffffff"/>
-  <g font-family="Arial, Helvetica, sans-serif" fill="#20252b">
-    <text x="40" y="166" font-size="63" font-weight="700">DX-Ball sound-pan investigation</text>
+  <rect y="200" width="1774" height="580" fill="#ffffff"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif" fill="#20252b">
     <g fill="none" stroke="#6c7e8b" stroke-width="3">
       <rect x="40" y="293" width="237" height="131"/>
       <rect x="315" y="232" width="1006" height="215"/>
