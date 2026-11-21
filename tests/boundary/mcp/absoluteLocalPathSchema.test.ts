@@ -86,6 +86,7 @@ const standaloneAnalysisCases = (
     { name: "inspect_elf_dependencies", input: {} },
     { name: "inspect_electron_fuses", input: {} },
     { name: "inspect_packet_capture", input: { fields: ["ip.addr"] } },
+    { name: "inspect_perf_data", input: {} },
     {
       name: "decode_signal_recording",
       input: { decoders: "uart:rx=RX:baudrate=9600" },
@@ -348,6 +349,7 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
         "inspect_analysis_view.source.path",
         "capture_browser_scenario.browser.executable_path",
         "capture_electron_scenario.application_root",
+        "inspect_perf_data.path",
       ]),
     );
     expect(firmwareCalls).toEqual([]);

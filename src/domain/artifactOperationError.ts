@@ -85,6 +85,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_devicetree"
       | "inspect_ntfs_journal"
       | "inspect_api_contract"
+      | "inspect_perf_data"
       | "inspect_playwright_trace"
       | "inspect_kernel_module"
       | "inspect_elf_dependencies"
