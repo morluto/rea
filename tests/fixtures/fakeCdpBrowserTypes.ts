@@ -74,6 +74,8 @@ export interface FakeOptions {
   readonly malformedEventShapeOnMethod?: string;
   readonly closeOnMethod?: string;
   readonly hangOnMethod?: string;
+  /** Hold selected replies until the test sends an explicit wire response. */
+  readonly hangOnCommand?: (command: FakeCdpCommand) => boolean;
   readonly unsupportedMethods?: readonly string[];
   readonly transitionalFrameReads?: number;
   readonly attachedFrameUrl?: string;

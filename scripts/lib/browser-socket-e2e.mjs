@@ -8,6 +8,7 @@ import {
 } from "../../dist/domain/browserObservation.js";
 import { compareWebCapturesInputSchema } from "../../dist/domain/webCaptureDiffSchemas.js";
 import { artifactCliEvidence } from "./artifact-e2e.mjs";
+import { assertStableCaptureScripts } from "./browser-verifier-assertions.mjs";
 
 /** Verify browser-socket discovery and inspection against HTTP discovery. */
 export async function verifyBrowserSocketTransport({
@@ -92,7 +93,11 @@ export async function verifyBrowserSocketTransport({
   );
   if (!compared.ok) throw compared.error;
   assert.equal(compared.value.dimensions.dom_structure.status, "unchanged");
-  assert.equal(compared.value.dimensions.scripts.status, "unchanged");
+  assertStableCaptureScripts(
+    throughHttpInspection.value,
+    evidence.normalized_result,
+    compared.value.dimensions.scripts,
+  );
   return {
     targets: throughSocket.targets.length,
     revision: throughSocket.browser.revision,

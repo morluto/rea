@@ -197,10 +197,11 @@ it.each([
       parseEvidence(comparison.structuredContent).normalized_result,
     );
     expect(diff.dimensions.scripts).toMatchObject({
-      status:
+      status: "unknown",
+      reason:
         missing > 0 || race.allowed === false || race.deleteFirst
-          ? "unknown"
-          : "unchanged",
+          ? expect.stringContaining("Script inventory, source-map declarations")
+          : expect.stringContaining("Worker script inventory was incomplete"),
       total_changes: 0,
       changes: [],
     });

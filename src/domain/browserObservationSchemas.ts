@@ -96,8 +96,16 @@ const browserResourceSchema = z.object({
   mime_type: z.string(),
   content_size: z.number().min(0).nullable(),
 });
+const browserResponseSourceSchema = z
+  .object({
+    service_worker: z.boolean().nullable(),
+    disk_cache: z.boolean().nullable(),
+    service_worker_response_source: z.string().nullable(),
+  })
+  .optional();
 const browserNetworkRequestSchema = z.object({
   request_id: z.string(),
+  response_source: browserResponseSourceSchema,
   url: z.string(),
   origin: z.string().nullable(),
   method: z.string(),
@@ -115,6 +123,7 @@ const browserNetworkRequestSchema = z.object({
       mime_type: z.string().nullable(),
       encoded_data_length: z.number().min(0).nullable(),
       request_timestamp: z.number().nullable(),
+      response_source: browserResponseSourceSchema,
       redirect_event_timestamp: z.number().nullable(),
     }),
   ),
@@ -174,15 +183,6 @@ const browserWebSocketConnectionSchema = z.object({
   request_id: z.string(),
   url: z.string(),
   events: z.array(browserWebSocketFrameSchema),
-});
-const browserWorkerSchema = z.object({
-  target_id: z.string(),
-  type: z.string(),
-  url: z.string(),
-  origin: z.string().nullable(),
-  attached: z.boolean(),
-  opener_target_id: z.string().nullable(),
-  parent_frame_id: z.string().nullable(),
 });
 const browserCspSourceSchema = z.object({
   kind: z.enum([
@@ -255,6 +255,70 @@ const browserSafeMetadataSchema = z.object({
   agent_hints: z.array(browserAgentHintSchema),
   excluded_dom_urls: z.int().min(0),
   headers_allowlisted: z.literal(true),
+});
+
+const browserWorkerSchema = z.object({
+  target_id: z.string(),
+  type: z.string(),
+  url: z.string(),
+  origin: z.string().nullable(),
+  attached: z.boolean(),
+  opener_target_id: z.string().nullable(),
+  parent_frame_id: z.string().nullable(),
+  observation: z
+    .object({
+      ownership: z.enum(["page_related", "service_worker_client", "unknown"]),
+      selected_explicitly: z.boolean(),
+      page_target_id: z.string().nullable(),
+      lifecycle: z.array(
+        z.object({
+          event: z.enum(["attached", "detached", "version"]),
+          observed_at: z.iso.datetime(),
+          running_status: z.string().nullable(),
+          version_status: z.string().nullable(),
+          controls_page: z.boolean().nullable(),
+        }),
+      ),
+      execution_contexts: z.array(
+        z.object({
+          id: z.number().int(),
+          unique_id: z.string().nullable(),
+          origin: z.string().nullable(),
+        }),
+      ),
+      scripts: z.array(
+        z.object({
+          script_id: z.string().min(1),
+          length: z
+            .number()
+            .int()
+            .nonnegative()
+            .nullable()
+            .optional()
+            .describe(
+              "Producer-reported script length; null when unavailable, omitted in legacy captures.",
+            ),
+          is_module: z.boolean().nullable(),
+          language: z.string().nullable(),
+          source_map_url: z.string().nullable(),
+          execution_context_id: z.number().int().nullable(),
+          url: z.string(),
+          cdp_hash: z.string().nullable(),
+          source: cdpScriptSourceSchema,
+        }),
+      ),
+      network_requests: z.array(browserNetworkRequestSchema),
+      metadata: browserSafeMetadataSchema
+        .pick({ responses: true, agent_hints: true, headers_allowlisted: true })
+        .optional(),
+      console_events: z.array(browserConsoleEventSchema).optional(),
+      websocket_connections: z
+        .array(browserWebSocketConnectionSchema)
+        .optional(),
+      completeness: browserCompletenessSchema,
+      limitations: z.array(z.string()),
+    })
+    .optional(),
 });
 
 /** Provider-neutral normalized result for one passive web-page observation. */

@@ -1,3 +1,4 @@
+import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
@@ -1965,6 +1966,28 @@ it.each(
           },
         },
       });
+      if (!cleanupFails) {
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          code: "cancelled",
+          category: "cancelled",
+          details: {
+            partial_observation: { kind: "browser-scenario-observation" },
+          },
+        });
+        const partial = result.error.partialObservation;
+        const capture = browserScenarioCaptureSchema.parse(
+          partial !== undefined &&
+            "kind" in partial &&
+            partial.kind === "browser-scenario-observation"
+            ? partial.capture
+            : undefined,
+        );
+        expect(capture.completeness.status).toBe("incomplete");
+        expect(capture.steps.map(({ step_id }) => step_id)).toEqual([
+          "scenario_start",
+          ...input.actions.map(({ step_id }) => step_id),
+        ]);
+      }
       expect(waitForTimeout).toHaveBeenCalledOnce();
       expect(content).toHaveBeenCalledOnce();
       expect(cleanup.close).toHaveBeenCalledOnce();

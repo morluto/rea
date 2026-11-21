@@ -870,6 +870,11 @@ it("retains redirect hops only while their requests remain in scope", async () =
           encoded_data_length: 23,
           request_timestamp: 7,
           redirect_event_timestamp: 8,
+          response_source: {
+            service_worker: null,
+            disk_cache: null,
+            service_worker_response_source: null,
+          },
         },
         {
           url: `${origin}/intermediate`,
@@ -881,6 +886,11 @@ it("retains redirect hops only while their requests remain in scope", async () =
           encoded_data_length: 27,
           request_timestamp: 8,
           redirect_event_timestamp: 9,
+          response_source: {
+            service_worker: null,
+            disk_cache: null,
+            service_worker_response_source: null,
+          },
         },
       ],
     }),

@@ -121,6 +121,15 @@ cliTest(
       { section: "workers", reason: "unattributed_target", count: 2 },
     ]);
     expect(JSON.stringify(evidence)).not.toContain("withheld-");
+    for (const worker of inspection.workers)
+      expect(worker.observation).toBeUndefined();
+    expect(
+      browser.commands.some(
+        (command) =>
+          command.method === "Target.attachToTarget" &&
+          command.params.targetId !== "allowed-page",
+      ),
+    ).toBe(false);
     expect(
       browser.commands.some(
         ({ method }) => method === "Target.detachFromTarget",

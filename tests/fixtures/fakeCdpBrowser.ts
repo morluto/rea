@@ -7,6 +7,7 @@ import {
 import type { Duplex } from "node:stream";
 
 import { WebSocket, WebSocketServer } from "ws";
+import type { CdpEvent } from "../../src/browser/CdpConnection.js";
 
 import { emitEvents } from "./fakeCdpBrowserEvents.js";
 import { resultFor, versionTargetId } from "./fakeCdpBrowserResults.js";
@@ -29,7 +30,7 @@ export const startFakeCdpBrowser = async (
     cookie: string | undefined;
     referer: string | undefined;
   }[] = [];
-  const sockets = new Set<WebSocket>();
+  const sockets = new Map<WebSocket, SocketSessionState>();
   // Upgrades a handshake gate holds; close() destroys them.
   const heldUpgrades = new Set<Duplex>();
   let openedConnections = 0;
@@ -77,9 +78,10 @@ export const startFakeCdpBrowser = async (
     const sessionState: SocketSessionState = {
       nextSessionNumber: 1,
       attachedSessions: new Set(),
+      autoAttachedSessions: new Set(),
     };
     openedConnections += 1;
-    sockets.add(socket);
+    sockets.set(socket, sessionState);
     socket.on("close", () => sockets.delete(socket));
     socket.on("message", (raw) => {
       const command = parseCommand(raw.toString());
@@ -137,18 +139,19 @@ export const startFakeCdpBrowser = async (
     activeConnectionCount: () => sockets.size,
     openedConnectionCount: () => openedConnections,
     emitRawMessage(message) {
-      for (const socket of sockets) socket.send(message);
+      for (const socket of sockets.keys()) socket.send(message);
     },
     emitEvent(event) {
-      for (const socket of sockets) socket.send(JSON.stringify(event));
+      for (const [socket, state] of sockets)
+        sendSessionEvent(socket, event, state);
     },
     closeActiveConnections() {
-      for (const socket of sockets) socket.close();
+      for (const socket of sockets.keys()) socket.close();
     },
     httpRequests,
     async close() {
       for (const socket of heldUpgrades) socket.destroy();
-      for (const socket of sockets) socket.terminate();
+      for (const socket of sockets.keys()) socket.terminate();
       await new Promise<void>((resolve) => webSockets.close(() => resolve()));
       await new Promise<void>((resolve, reject) =>
         http.close((error) =>
@@ -252,6 +255,7 @@ const sendCommandReply = (
 interface SocketSessionState {
   nextSessionNumber: number;
   readonly attachedSessions: Set<string>;
+  readonly autoAttachedSessions: Set<string>;
 }
 
 const sessionNotFoundError = {
@@ -270,7 +274,7 @@ const handleSimulatedWireFault = (
   const commandError = options.commandError?.(command);
   if (commandError !== undefined) {
     if (options.eventsBeforeReply?.includes(command.method) === true)
-      sendCommandEvents(socket, command, port, options);
+      sendCommandEvents(socket, command, port, options, sessionState);
     sendCommandReply(socket, command, { error: commandError });
     if (options.closeAfterMethod === command.method)
       setImmediate(() => socket.close());
@@ -280,7 +284,11 @@ const handleSimulatedWireFault = (
     socket.close();
     return true;
   }
-  if (options.hangOnMethod === command.method) return true;
+  if (
+    options.hangOnMethod === command.method ||
+    options.hangOnCommand?.(command)
+  )
+    return true;
   if (options.malformedMessageOnMethod === command.method) {
     socket.send("{not-json");
     return true;
@@ -344,6 +352,7 @@ const replyToCommand = (
       sendCommandReply(socket, command, { error: sessionNotFoundError });
       return;
     }
+    sessionState.autoAttachedSessions.delete(sessionId);
   }
   const result =
     customResult ??
@@ -379,7 +388,7 @@ const replyToCommand = (
   const eventsFirst =
     options.eventsBeforeReply?.includes(command.method) === true;
   if (!eventsFirst) reply();
-  sendCommandEvents(socket, command, port, options);
+  sendCommandEvents(socket, command, port, options, sessionState);
   if (eventsFirst) reply();
   if (options.closeAfterMethod === command.method)
     setImmediate(() => socket.close());
@@ -390,13 +399,45 @@ const sendCommandEvents = (
   command: FakeCdpCommand,
   port: number,
   options: FakeOptions,
+  state: SocketSessionState,
 ): void => {
   const customEvents = options.commandEvents?.(
     command,
     `http://127.0.0.1:${String(port)}`,
   );
   if (customEvents === undefined) emitEvents(socket, command, port, options);
-  else for (const event of customEvents) socket.send(JSON.stringify(event));
+  else for (const event of customEvents) sendSessionEvent(socket, event, state);
+};
+
+const sendSessionEvent = (
+  socket: WebSocket,
+  event: CdpEvent,
+  state: SocketSessionState,
+): void => {
+  const { method, params } = event;
+  if (
+    params !== null &&
+    typeof params === "object" &&
+    "sessionId" in params &&
+    typeof params.sessionId === "string" &&
+    params.sessionId.length > 0
+  ) {
+    // The command fixture owns explicit sessions and their scripted replies.
+    // Auto-attached children instead acquire and release their route through events.
+    if (
+      method === "Target.attachedToTarget" &&
+      !state.attachedSessions.has(params.sessionId)
+    ) {
+      state.autoAttachedSessions.add(params.sessionId);
+      state.attachedSessions.add(params.sessionId);
+    }
+    if (
+      method === "Target.detachedFromTarget" &&
+      state.autoAttachedSessions.delete(params.sessionId)
+    )
+      state.attachedSessions.delete(params.sessionId);
+  }
+  socket.send(JSON.stringify(event));
 };
 
 const serveSourceMap = (

@@ -1,3 +1,4 @@
+import { parseCdpWorkerTarget } from "../CdpWorkerTarget.js";
 import type { CDPSession } from "playwright-core";
 import { z } from "zod";
 
@@ -156,6 +157,8 @@ const targetAttached = z.unknown().transform((params) => {
     sessionId: cdpStringValue(record?.sessionId),
     targetId: cdpStringValue(targetInfo?.targetId),
     targetType: cdpStringValue(targetInfo?.type),
+    worker: parseCdpWorkerTarget(targetInfo),
+    url: cdpStringValue(targetInfo?.url),
   };
 });
 
@@ -235,6 +238,9 @@ const CDP_EVENT_PAYLOADS = {
   "Network.loadingFailed": z.unknown().transform(readCdpLoadingFailed),
   "Network.webSocketCreated": z.unknown().transform(readCdpWebSocketCreated),
   "Network.webSocketFrameSent": z.unknown().transform(readCdpWebSocketFrame),
+  "ServiceWorker.workerVersionUpdated": z
+    .unknown()
+    .transform((value) => admitRecords(recordValue(value)?.versions)),
   "Target.attachedToTarget": targetAttached,
   "Target.detachedFromTarget": targetDetached,
   "Page.lifecycleEvent": lifecycleEvent,

@@ -283,6 +283,36 @@ describe("runtime disconnect ownership", () => {
 
 describe("runtime cleanup failure ordering", () => {
   it.each([
+    ["Target.detachFromTarget", "Session with given id not found.", true],
+    ["Profiler.disable", "Session with given id not found.", false],
+    ["Target.detachFromTarget", "Session could not be released", false],
+  ] as const)(
+    "reports cleanup accurately when %s returns %s",
+    async (cleanupMethod, message, confirmed) => {
+      const browser = await startRuntimeBrowser({
+        commandError: ({ method }) =>
+          method === cleanupMethod ? { code: -32_001, message } : undefined,
+      });
+      onTestFinished(() => browser.close());
+      const result = await new CdpWebRuntimeProvider().observeExecution(
+        observeWebExecutionInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          target_id: "allowed-page",
+          observation_ms: 1,
+        }),
+        { signal: AbortSignal.timeout(2_000) },
+      );
+      expect(
+        browser.commands.some(({ method }) => method === cleanupMethod),
+      ).toBe(true);
+      expect(result.ok).toBe(confirmed);
+      if (!result.ok)
+        expect(projectAnalysisError(result.error).code).toBe(
+          "cleanup_incomplete",
+        );
+    },
+  );
+  it.each([
     ["Profiler.takePreciseCoverage", "Coverage sample failed"],
     ["Profiler.stopPreciseCoverage", "Coverage stop failed"],
   ] as const)(

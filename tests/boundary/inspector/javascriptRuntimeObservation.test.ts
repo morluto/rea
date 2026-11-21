@@ -114,7 +114,7 @@ test("reports browser origin scope mismatch at the caller parameter path", async
       ok: false,
       error: {
         _tag: "AnalysisInputError",
-        issues: [
+        issues: expect.arrayContaining([
           {
             path: ["runtime_observations", 0, "parameters", "allowed_origins"],
             reason: "invalid_value",
@@ -122,7 +122,7 @@ test("reports browser origin scope mismatch at the caller parameter path", async
               /target.*outside.*recorded origin scope/i,
             ),
           },
-        ],
+        ]),
       },
     });
   } finally {

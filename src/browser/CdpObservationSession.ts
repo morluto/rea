@@ -127,12 +127,13 @@ export const observeCdpSession = async (
     capture.assertPreArmBufferWithinLimit();
     capture.arm(armTimestamp);
     capture.assertRequestOwnershipWithinLimit();
-    await context.connection.send(
-      "Page.setLifecycleEventsEnabled",
-      { enabled: true },
-      context.sessionId,
-      context.signal,
-    );
+    if (!capture.stopped)
+      await context.connection.send(
+        "Page.setLifecycleEventsEnabled",
+        { enabled: true },
+        context.sessionId,
+        context.signal,
+      );
     if (!capture.stopped)
       await context.progress?.report({
         phase: "browser_observation",

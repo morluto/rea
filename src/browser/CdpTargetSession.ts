@@ -373,12 +373,18 @@ export const closeCdpTargetSession = async (
   signal?: AbortSignal,
   owner?: CdpTargetSessionOwner,
   reuseBrowserSocket = false,
+  childCleanupConfirmed = true,
 ): Promise<void> => {
   if (owner !== undefined) {
     if (reuseBrowserSocket) {
-      await owner.releaseBrowserSocket(targetSession.connection, () =>
-        cleanupCdpTargetCommands(targetSession, enabledDomains, signal),
-      );
+      await owner.releaseBrowserSocket(targetSession.connection, async () => {
+        const pageDetached = await cleanupCdpTargetCommands(
+          targetSession,
+          enabledDomains,
+          signal,
+        );
+        return pageDetached && childCleanupConfirmed;
+      });
       return;
     }
     await owner.finish(targetSession.connection, async () => {

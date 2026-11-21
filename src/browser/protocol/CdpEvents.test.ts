@@ -245,6 +245,8 @@ describe("registered Target, lifecycle and WebMCP event payloads", () => {
       sessionId: "child",
       targetId: "frame-1",
       targetType: "iframe",
+      worker: { ok: true, value: { kind: "non_worker" } },
+      url: undefined,
     });
   });
 
