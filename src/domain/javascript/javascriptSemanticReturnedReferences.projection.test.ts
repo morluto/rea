@@ -280,3 +280,35 @@ it.each([
     expect(names()).toEqual(["after", "before"]);
   },
 );
+
+it("classifies each binding's ambient dependencies once per returned walk", () => {
+  const count = 48;
+  const { parsed, state } = indexed(
+    "function output(){return value;}" +
+      "const callback=" +
+      "flag ? output : ".repeat(count) +
+      "output;callback();",
+  );
+  const [read] = callReads(parsed.program, "callback");
+  const binding = [...state.bindingsById.values()].find(
+    ({ name }) => name === "output",
+  );
+  const initializer = binding?.initializers[0];
+  if (read === undefined || initializer === undefined)
+    throw new Error("Expected callable and initializer");
+  let dependencyChecks = 0;
+  Object.defineProperty(initializer, "iterationSources", {
+    get: () => {
+      dependencyChecks += 1;
+      return undefined;
+    },
+  });
+  const result = createSemanticReturnedReferences(state)(read);
+  expect(result.references).toEqual([
+    { node: returnedExpression(parsed.program, "output"), projection: [] },
+  ]);
+  // Each source read still selects its initializer. The extra dependency
+  // check describes the binding once, irrespective of the number of reads.
+  expect(dependencyChecks).toBeGreaterThanOrEqual(count);
+  expect(dependencyChecks).toBeLessThan(count + 8);
+});
