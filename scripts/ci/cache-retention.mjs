@@ -140,15 +140,17 @@ export function selectPrefixDeletions(
       throw new Error(
         `Refusing to evaluate a cache outside ${prefix}: ${entry.key}`,
       );
-  // A newer snapshot on a different ref is unavailable to this ref.
-  const newestByRef = new Map();
+  // A cache restore requires its version as well as a visible ref.
+  // Preserve fallbacks for jobs using either version during a transition.
+  const newestByRestoreScope = new Map();
   for (const entry of entries.toSorted(byNewest)) {
-    const newest = newestByRef.get(entry.ref) ?? [];
+    const scope = `${entry.ref}\n${entry.version}`;
+    const newest = newestByRestoreScope.get(scope) ?? [];
     if (newest.length >= keepGenerations) continue;
     newest.push(entry.id);
-    newestByRef.set(entry.ref, newest);
+    newestByRestoreScope.set(scope, newest);
   }
-  const protectedIds = new Set([...newestByRef.values()].flat());
+  const protectedIds = new Set([...newestByRestoreScope.values()].flat());
   if (keepKey !== undefined)
     for (const entry of entries)
       if (entry.key === keepKey) protectedIds.add(entry.id);
