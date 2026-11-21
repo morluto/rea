@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const entrypoint = fileURLToPath(
   new URL("../../../scripts/rea.mjs", import.meta.url),
@@ -312,7 +313,7 @@ it("reads actual upstream HAR packages in an owned process and retains selected 
   });
 });
 
-it("keeps malformed JSON separate from absent external mitmproxy capability", async () => {
+it("keeps malformed JSON, unsupported HAR versions and missing external capability distinct", async () => {
   const root = await createTestTempDirectory("rea-history-errors-");
   const path = join(root, "capture.har");
   await writeFile(path, "{malformed-private-json");
@@ -322,6 +323,43 @@ it("keeps malformed JSON separate from absent external mitmproxy capability", as
     category: "invalid_input",
   });
   expect(malformed.stdout).not.toContain("malformed-private-json");
+  const fixture = historicalHar();
+  fixture.log.version = "1.1";
+  await writeFile(path, JSON.stringify(fixture));
+  const unsupported = await cli(path, "har");
+  expect(unsupported.ok, unsupported.stdout).toBe(false);
+  const refusal = {
+    code: "capability_unavailable",
+    category: "unsupported_provider",
+    message: expect.stringContaining("HAR 1.2"),
+    remediation: { action: expect.stringContaining("capture format") },
+    details: { diagnostics: { pointer: "/log/version" } },
+  };
+  expect(JSON.parse(unsupported.stdout)).toMatchObject(refusal);
+  const { call } = await connectLocalToolsMcp();
+  const request = { capture_path: path, format: "har" };
+  const unsupportedMcp = await call("inspect_web_network_capture", request);
+  expect(parseMcpToolError(unsupportedMcp).error).toMatchObject(refusal);
+  const marked = await call("inspect_web_network_capture", {
+    ...request,
+    sensitive_values: ["HAR 1.2", "/log/version"],
+  });
+  expect(parseMcpToolError(marked).error.code).toBe(refusal.code);
+  expect(JSON.stringify(marked)).not.toMatch(/HAR 1\.2|\/log\/version/u);
+
+  const supportedPath = join(root, "supported.har");
+  await writeFile(supportedPath, JSON.stringify(historicalHar()));
+  const recovered = await call("inspect_web_network_capture", {
+    ...request,
+    capture_path: supportedPath,
+  });
+  expect(recovered.isError).not.toBe(true);
+  expect(
+    parseEvidence(recovered.structuredContent).normalized_result,
+  ).toMatchObject({
+    artifact: { path: supportedPath },
+    total_records: 1,
+  });
   const missing = await cli(path, "mitmproxy");
   expect(missing.ok).toBe(false);
   expect(JSON.parse(missing.stdout)).toMatchObject({

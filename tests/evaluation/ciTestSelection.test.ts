@@ -65,6 +65,27 @@ it("follows test and verifier imports and directory scans, not production import
   ]);
 });
 
+it("selects a registry guard when a named test changes or moves", () => {
+  const registered =
+    "tests/boundary/providers/sampleRegistryProviderCatalog.test.ts";
+  const moved = "tests/boundary/providers/sampleRegistryMoved.test.ts";
+  const guard = "tests/evaluation/sampleRegistryGuard.test.ts";
+  const sources = {
+    "tests/support/lifecycleRegistry.ts": `export const paths = ["${registered}"];`,
+    "tests/support/lifecycleCoverage.ts":
+      'export { paths } from "./lifecycleRegistry.js";',
+    [guard]: 'import "../support/lifecycleCoverage.js";',
+    "tests/boundary/providers/sampleRegistryUnrelated.test.ts": "",
+  };
+  expect(
+    selectedFiles(plan([registered], { ...sources, [registered]: "" })),
+  ).toEqual([registered, guard]);
+  expect(selectedFiles(plan([registered], sources))).toEqual([guard]);
+  expect(
+    selectedFiles(plan([registered, moved], { ...sources, [moved]: "" })),
+  ).toEqual([moved, guard]);
+});
+
 it("selects a leaf adapter's tests by its name and directory across test projects", () => {
   const sources = {
     "src/jeb/JebMcpDeadline.ts": "",

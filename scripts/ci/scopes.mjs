@@ -244,6 +244,7 @@ const PATH_SCOPES = {
     "tests/process-global/runnerCancellation.test.ts",
     "tests/process-global/windowsOwnedCommand.test.ts",
     "tests/process-global/curatedWindowsLane.test.ts",
+    "src/desktop/AgentEnvBridgeSources.ts",
     "src/ghidra/GhidraBridgeSources.ts",
     "native/windows/**",
     "src/process/capture/FilesystemSnapshot.ts",
@@ -304,6 +305,7 @@ const PATH_SCOPES = {
     // Live advertisement, independent of the POSIX-generated catalog.
     "tests/boundary/mcp/toolSchemaValidity.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
+    "tests/boundary/filesystem/safeOutputTreePublication.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
     "tests/boundary/filesystem/setupUnavailableProvider.test.ts",

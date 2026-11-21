@@ -11,6 +11,7 @@ import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { completedAbortReclassificationCount } from "./completed-abort-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
@@ -635,7 +636,7 @@ checkCounted(
   "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
   "completed-abort-reclassification",
   files,
-  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  completedAbortReclassificationCount,
   ["src/providers/runOwned.ts"],
 );
 

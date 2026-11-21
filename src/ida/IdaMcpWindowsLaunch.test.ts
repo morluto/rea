@@ -3,22 +3,20 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { createIdaMcpConnection } from "./IdaMcpConnection.js";
 import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import type { OwnedMcpLauncher } from "../process/OwnedMcpStdioTransport.js";
-import { waitFor } from "../../tests/support/testWait.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 // The real PATH/PATHEXT lookup runs; only the Windows file system is simulated.
 const files = vi.hoisted(() => ({
   present: new Set<string>(),
-  /** Paths whose stat never settles, like an unreachable network directory. */
-  stalled: new Set<string>(),
+  heldStats: new Map<string, () => Promise<{ isFile(): boolean }>>(),
   /** Paths the caller may not inspect. */
   denied: new Set<string>(),
-  statted: [] as string[],
 }));
 vi.mock("node:fs/promises", async (original) => ({
   ...(await original<typeof import("node:fs/promises")>()),
   stat: async (path: string) => {
-    files.statted.push(path);
-    if (files.stalled.has(path)) return new Promise<never>(() => undefined);
+    const held = files.heldStats.get(path);
+    if (held !== undefined) return held();
     if (files.present.has(path)) return { isFile: () => true };
     if (files.denied.has(path))
       throw Object.assign(new Error("denied"), { code: "EACCES" });
@@ -27,9 +25,8 @@ vi.mock("node:fs/promises", async (original) => ({
 }));
 beforeEach(() => {
   files.present.clear();
-  files.stalled.clear();
+  files.heldStats.clear();
   files.denied.clear();
-  files.statted.length = 0;
 });
 
 const observeLaunch = async (
@@ -139,82 +136,63 @@ it("snapshots the child's environment with the injected platform's name semantic
   ]);
 });
 
-it("closes while a Windows command lookup is stalled on an unreachable PATH directory", async () => {
-  files.stalled.add("\\\\offline\\tools\\ida-mcp.EXE");
-  const launches: unknown[] = [];
-  const connection = createIdaMcpConnection(
-    {
-      command: "ida-mcp",
-      args: [],
-      env: {},
-      protocol: "native",
-      mode: "attached",
-      timeoutMs: 5000,
-    },
-    {
-      SYSTEMROOT: "C:\\Windows",
-      PATH: "\\\\offline\\tools",
-      PATHEXT: ".EXE",
-    },
-    {
-      platform: "win32",
-      launcher: async (options) => {
-        launches.push(options);
-        throw new Error("launch observed");
+it.each(["close", "registration timeout"] as const)(
+  "settles a stalled Windows command lookup on %s before the filesystem returns",
+  async (trigger) => {
+    const lookup = phaseGate<void, { isFile(): boolean }>();
+    // A drive path would be launchable once stat returns.
+    files.heldStats.set("C:\\offline\\tools\\ida-mcp.EXE", lookup.hold);
+    const launcher = vi
+      .fn<OwnedMcpLauncher>()
+      .mockRejectedValue(new Error("unexpected launch"));
+    const connection = createIdaMcpConnection(
+      {
+        command: "ida-mcp",
+        args: [],
+        env: {},
+        protocol: "native",
+        mode: "attached",
+        timeoutMs: 50,
       },
-    },
-  );
-  const connecting = connection.connect().then(
-    () => undefined,
-    (cause: unknown) => cause,
-  );
-  await waitFor(() =>
-    expect(files.statted).toContain("\\\\offline\\tools\\ida-mcp.EXE"),
-  );
-  // Closing ends the lookup instead of waiting on the stalled directory.
-  await connection.close();
-  await expect(connecting).resolves.toBeDefined();
-  expect(launches).toEqual([]);
-});
-
-it("ends a stalled Windows command lookup at the registration timeout", async () => {
-  files.stalled.add("\\\\offline\\tools\\ida-mcp.EXE");
-  const launches: unknown[] = [];
-  const connection = createIdaMcpConnection(
-    {
-      command: "ida-mcp",
-      args: [],
-      env: {},
-      protocol: "native",
-      mode: "attached",
-      timeoutMs: 50,
-    },
-    {
-      SYSTEMROOT: "C:\\Windows",
-      PATH: "\\\\offline\\tools",
-      PATHEXT: ".EXE",
-    },
-    {
-      platform: "win32",
-      launcher: async (options) => {
-        launches.push(options);
-        throw new Error("launch observed");
-      },
-    },
-  );
-  try {
-    const failure: unknown = await connection.connect().then(
-      () => undefined,
-      (cause: unknown) => cause,
+      { PATH: "C:\\offline\\tools", PATHEXT: ".EXE" },
+      { platform: "win32", launcher },
     );
-    expect(failure).toBeInstanceOf(AnalysisTimeoutError);
-    expect(failure).toMatchObject({
-      operation: "ida_mcp_connect",
-      timeoutMs: 50,
-      diagnostics: { phase: "windows_path_lookup" },
-    });
-    expect(launches).toEqual([]);
-  } finally {
-    await connection.close();
-  }
-});
+    const refused = vi.fn<(cause: unknown) => void>();
+    const closed = vi.fn<() => void>();
+    vi.useFakeTimers();
+    const connecting = connection.connect().catch(refused);
+    let closing: Promise<void> | undefined;
+    try {
+      await lookup.reached(connecting, "Windows command lookup");
+      if (trigger === "close") {
+        closing = connection.close().then(closed);
+        // Observe any rejection here while preserving it for the awaited cleanup.
+        void closing.catch(() => undefined);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(closed).toHaveBeenCalledOnce();
+        expect(refused).toHaveBeenCalledExactlyOnceWith(expect.any(Error));
+      } else {
+        await vi.advanceTimersByTimeAsync(49);
+        expect(refused).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(refused).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            constructor: AnalysisTimeoutError,
+            operation: "ida_mcp_connect",
+            timeoutMs: 50,
+            diagnostics: { phase: "windows_path_lookup" },
+          }),
+        );
+      }
+    } finally {
+      lookup.release({ isFile: () => true });
+      try {
+        await connecting;
+        await (closing ?? connection.close());
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+    expect(launcher).not.toHaveBeenCalled();
+  },
+);

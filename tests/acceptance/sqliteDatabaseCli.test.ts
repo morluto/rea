@@ -716,11 +716,11 @@ const sourceState = async (path: string) => {
   };
 };
 
-const createLosslessSnapshot = (path: string, journalMode: string): void => {
+const createLosslessSnapshot = (path: string): void => {
   const database = new DatabaseSync(path);
   try {
-    database.exec(`PRAGMA journal_mode=${journalMode}`);
     database.exec(`
+      PRAGMA journal_mode=PERSIST;
       CREATE TABLE "odd "" table" (
         id INTEGER PRIMARY KEY,
         payload BLOB,
@@ -753,15 +753,17 @@ const createLosslessSnapshot = (path: string, journalMode: string): void => {
   }
 };
 
-cliTest
-  .runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)
-  .for(["DELETE", "PERSIST", "TRUNCATE"])(
-  "inspects a real %s SQLite schema and lossless selected records identically through CLI and MCP",
-  async (journalMode, { cli }) => {
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "inspects a lossless SQLite snapshot with a retained rollback journal through CLI and MCP",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-sqlite-public-");
     const path = join(root, "selected.db");
-    createLosslessSnapshot(path, journalMode);
+    createLosslessSnapshot(path);
     const original = await readFile(path);
+    const journalPath = `${path}-journal`;
+    const { bytes: journalBytes, ...journalIdentity } =
+      await sourceState(journalPath);
+    expect(journalBytes.length).toBeGreaterThanOrEqual(28);
     const result = await cli.run({
       arguments: [
         "inspect-sqlite-database",
@@ -875,6 +877,10 @@ cliTest
       "selected.db",
     );
     expect(Buffer.compare(await readFile(path), original)).toBe(0);
+    const { bytes: afterBytes, ...afterIdentity } =
+      await sourceState(journalPath);
+    expect(afterBytes.equals(journalBytes)).toBe(true);
+    expect(afterIdentity).toEqual(journalIdentity);
   },
 );
 

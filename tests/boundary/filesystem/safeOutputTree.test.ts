@@ -405,28 +405,6 @@ describe("safe artifact output tree", () => {
     },
   );
 
-  it("publishes files while building and preserves them after sealing", async () => {
-    const parent = await createTestTempDirectory("rea-safe-output-");
-    const output = join(parent, "published");
-    const tree = await SafeOutputTree.create(output);
-    const bytes = Buffer.from("visible before seal");
-    const digest = createHash("sha256").update(bytes).digest("hex");
-
-    await tree.write("file.txt", Readable.from(bytes), {
-      sha256: digest,
-      bytes: bytes.byteLength,
-    });
-    expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-      "visible before seal",
-    );
-
-    await tree.commit();
-    expect(await tree.rollback()).toEqual({ status: "not-required" });
-    expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-      "visible before seal",
-    );
-  });
-
   it("returns detached cleanup reports", async () => {
     const parent = await createTestTempDirectory("rea-safe-output-");
     const tree = await SafeOutputTree.create(join(parent, "published"));
@@ -446,23 +424,6 @@ describe("safe artifact output tree", () => {
       }),
     ).rejects.toBeInstanceOf(ArtifactReaderFailure);
     await expect(tree.commit()).rejects.toBeInstanceOf(ArtifactReaderFailure);
-  });
-
-  it("publishes without POSIX-only directory chmod or fsync on Windows", async () => {
-    const parent = await createTestTempDirectory("rea-safe-output-");
-    const output = join(parent, "published");
-    const tree = await SafeOutputTree.create(output, "win32");
-    const bytes = Buffer.from("windows output");
-    const digest = createHash("sha256").update(bytes).digest("hex");
-
-    await tree.write("nested/file.txt", Readable.from(bytes), {
-      sha256: digest,
-      bytes: bytes.byteLength,
-    });
-    await tree.commit();
-    expect(await readFile(join(output, "nested", "file.txt"), "utf8")).toBe(
-      "windows output",
-    );
   });
 });
 

@@ -19,6 +19,7 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
+  isQualifiedCallerPath,
 } from "../filesystem/callerPath.js";
 import {
   absoluteClientRoot,
@@ -58,8 +59,12 @@ export interface SetupClient {
   readonly configPath: string;
   /** User configuration files in increasing precedence, including the write target. */
   readonly configPaths?: readonly string[];
+  /** User-selected OpenCode files can also occur in the native project walk. */
+  readonly openCodeUserOverridePaths?: readonly string[];
   /** Read-only configuration the client merges over every file layer. */
   readonly inlineConfiguration?: ClientInlineConfiguration;
+  /** The selected Pi profile's persisted project-trust inputs. */
+  readonly piSettings?: PiProjectSettings;
   /** Read-only Gemini scopes and trust inputs; never setup write targets. */
   readonly geminiSettings?: {
     readonly systemPath: string;
@@ -140,6 +145,11 @@ export interface SetupClient {
     | "goose"
     | "kilo"
     | "unsupported";
+}
+
+interface PiProjectSettings {
+  readonly trustPath: string;
+  readonly settingsPath: string;
 }
 
 interface ClientPathFailure extends ClientRootFailure {
@@ -248,6 +258,7 @@ interface ClientDefinitionBase {
   readonly geminiSettings?: (
     context: ClientPathContext,
   ) => NonNullable<SetupClient["geminiSettings"]>;
+  readonly piSettings?: (context: ClientPathContext) => PiProjectSettings;
   /** Junie's location inputs, from the context and its resolved home. */
   readonly junieSettings?: (
     context: ClientPathContext,
@@ -546,6 +557,47 @@ const piAgentDirectory = ({
   return directory;
 };
 
+const piProjectSettings = (context: ClientPathContext): PiProjectSettings => {
+  const paths = context.platform === "win32" ? win32 : posix;
+  const agentDirectory = piAgentDirectory(context);
+  return {
+    trustPath: paths.join(agentDirectory, "trust.json"),
+    settingsPath: paths.join(agentDirectory, "settings.json"),
+  };
+};
+
+/** Native cwd-relative candidates in load order. This provides no write authority. */
+export const clientProjectConfigurationPaths = (
+  client: Pick<SetupClient, "format">,
+  projectDirectory: string,
+  platform: NodeJS.Platform,
+): readonly string[] => {
+  if (!isQualifiedCallerPath(projectDirectory, platform)) return [];
+  const paths = platform === "win32" ? win32 : posix;
+  if (client.format === "pi")
+    return [paths.join(projectDirectory, ".pi", "mcp.json")];
+  if (client.format !== "opencode") return [];
+  const directories: string[] = [];
+  let current = projectDirectory;
+  for (;;) {
+    directories.push(current);
+    const parent = paths.dirname(current);
+    if (current === parent) break;
+    current = parent;
+  }
+  directories.reverse();
+  const names = ["opencode.json", "opencode.jsonc"];
+  // OpenCode loads all direct files before visiting any nested .opencode directory.
+  return [
+    ...directories.flatMap((directory) =>
+      names.map((name) => paths.join(directory, name)),
+    ),
+    ...directories.flatMap((directory) =>
+      names.map((name) => paths.join(directory, ".opencode", name)),
+    ),
+  ];
+};
+
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
   env.COPILOT_HOME || join(home, ".copilot");
 
@@ -567,43 +619,50 @@ const opencodeDirectory = (context: ClientPathContext): string =>
   openCodeOverrideDirectory(context.env) ??
   join(xdgConfigHomeOrDefault(context), "opencode");
 
+const openCodeExplicitConfigPath = ({
+  env,
+}: ClientPathContext): string | undefined =>
+  env.OPENCODE_CONFIG ? resolve(env.OPENCODE_CONFIG) : undefined;
+
+const openCodeDirectoryConfigPaths = (directory: string): readonly string[] => [
+  resolve(directory, "opencode.json"),
+  resolve(directory, "opencode.jsonc"),
+];
+
+const openCodeUserOverridePaths = (
+  context: ClientPathContext,
+): readonly string[] => {
+  const file = openCodeExplicitConfigPath(context);
+  const directory = openCodeOverrideDirectory(context.env);
+  return [
+    ...(file === undefined ? [] : [file]),
+    ...(directory === undefined ? [] : openCodeDirectoryConfigPaths(directory)),
+  ];
+};
+
 /** OpenCode loads global JSON before JSONC, then explicit file and directory overrides. */
 const openCodeConfigurationPaths = (
   context: ClientPathContext,
 ): readonly string[] => {
   const directory = join(xdgConfigHomeOrDefault(context), "opencode");
-  const overrideDirectory = openCodeOverrideDirectory(context.env);
   const paths = [
-    join(directory, "config.json"),
-    join(directory, "opencode.json"),
-    join(directory, "opencode.jsonc"),
-    ...(context.env.OPENCODE_CONFIG ? [context.env.OPENCODE_CONFIG] : []),
-    ...(overrideDirectory !== undefined
-      ? [
-          join(overrideDirectory, "opencode.json"),
-          join(overrideDirectory, "opencode.jsonc"),
-        ]
-      : []),
+    resolve(directory, "config.json"),
+    ...openCodeDirectoryConfigPaths(directory),
+    ...openCodeUserOverridePaths(context),
   ];
-  const resolved = paths.map((path) => resolve(path));
-  return resolved.filter((path, index) => resolved.lastIndexOf(path) === index);
+  return paths;
 };
 
 const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
   // The selected directory is loaded after an explicit file by OpenCode V1.
   const overrideDirectory = openCodeOverrideDirectory(context.env);
+  const explicitPath = openCodeExplicitConfigPath(context);
   const candidates =
     overrideDirectory !== undefined
-      ? [
-          join(overrideDirectory, "opencode.json"),
-          join(overrideDirectory, "opencode.jsonc"),
-        ].map((path) => resolve(path))
-      : context.env.OPENCODE_CONFIG
-        ? [resolve(context.env.OPENCODE_CONFIG)]
-        : [
-            join(opencodeDirectory(context), "opencode.json"),
-            join(opencodeDirectory(context), "opencode.jsonc"),
-          ].map((path) => resolve(path));
+      ? openCodeDirectoryConfigPaths(overrideDirectory)
+      : explicitPath !== undefined
+        ? [explicitPath]
+        : openCodeDirectoryConfigPaths(opencodeDirectory(context));
   return (
     [...candidates].reverse().find((path) => {
       try {
@@ -620,8 +679,7 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
     resolve(
       overrideDirectory !== undefined
         ? join(overrideDirectory, "opencode.json")
-        : context.env.OPENCODE_CONFIG ||
-            join(opencodeDirectory(context), "opencode.json"),
+        : (explicitPath ?? join(opencodeDirectory(context), "opencode.json")),
     )
   );
 };
@@ -1545,6 +1603,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
         "mcp.json",
       ),
     markerPath: piAgentDirectory,
+    piSettings: piProjectSettings,
     format: "pi",
   }),
   defineClient({
@@ -2066,14 +2125,24 @@ export const supportedClients = (
             : { msixPackage: location.error.msixPackage }),
         };
       const { configPath, markerPath, msixPackage } = location.value;
+      const userOverridePaths =
+        definition.format === "opencode"
+          ? openCodeUserOverridePaths(context)
+          : [];
       return {
         name: definition.name,
         registrationProfile: definition.registrationProfile,
         displayName: definition.displayName,
         configPath,
+        ...(userOverridePaths.length === 0
+          ? {}
+          : { openCodeUserOverridePaths: userOverridePaths }),
         ...(definition.geminiSettings === undefined
           ? {}
           : { geminiSettings: definition.geminiSettings(context) }),
+        ...(definition.piSettings === undefined
+          ? {}
+          : { piSettings: definition.piSettings(context) }),
         ...(definition.junieSettings === undefined
           ? {}
           : {
