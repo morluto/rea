@@ -143,6 +143,7 @@ import {
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraFunctionSeedRecovery,
+  ghidraNotInListingLimitation,
   ghidraNotInProcedureLimitation,
   windowsP0Limitations,
   limitationsFor,
@@ -343,6 +344,22 @@ const containingProcedureAbsenceCaveat = (
     !resolution.value.found &&
     resolution.value.reason === "not_in_procedure"
     ? [ghidraNotInProcedureLimitation(source)]
+    : [];
+};
+
+/**
+ * Caveat for an instruction query in mapped memory that Ghidra's listing does
+ * not cover: no decode was attempted, so code there remains possible.
+ */
+const instructionListingAbsenceCaveat = (
+  operation: GhidraFunctionOperation,
+  normalized: JsonValue,
+  source: GhidraSessionSource,
+): readonly string[] => {
+  if (operation !== "inspect_native_instruction") return [];
+  const record = referenceObservationRecord(normalized);
+  return record?.status === "not-in-listing"
+    ? [ghidraNotInListingLimitation(source)]
     : [];
 };
 
@@ -1139,7 +1156,14 @@ export const createGhidraProviderClient = (input: {
       let { value: normalized, ...observation } = result.value;
       let executionMetadata: GhidraExecutionMetadata = observation;
       const absenceCaveats = isGhidraFunctionOperation(operation)
-        ? emptyReferenceCaveat(operation, normalized)
+        ? [
+            ...emptyReferenceCaveat(operation, normalized),
+            ...instructionListingAbsenceCaveat(
+              operation,
+              normalized,
+              projection.source,
+            ),
+          ]
         : containingProcedureAbsenceCaveat(
             operation,
             normalized,
