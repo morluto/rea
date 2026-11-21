@@ -44,12 +44,12 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
 
-/** REA-owned metadata boundary for the unmodified jadx-headless-mcp 0.7.1 JAR. */
+/** REA-owned metadata boundary for the unmodified pinned jadx-headless-mcp JAR. */
 class ReaJadxBridge {
   // REA reads this identity from this source (JadxRelease.ts), so it is typed
   // once. Change BRIDGE_VERSION with any protocol change REA must not mix.
   static final String BRIDGE_NAME = "rea-jadx-bridge";
-  static final String BRIDGE_VERSION = "11";
+  static final String BRIDGE_VERSION = "12";
   private static final Gson JSON = new Gson();
   private final SessionHolder holder;
   private JadxSession indexedSession;
@@ -1079,6 +1079,20 @@ class ReaJadxBridge {
     return json(result);
   }
 
+  /** Shared input guidance for the bridge's exact-selection tools. */
+  private static final kotlinx.serialization.json.JsonObject CLASS_NAME_PROPERTY =
+      property("string", "Exact class name.");
+  private static final kotlinx.serialization.json.JsonObject METHOD_NAME_PROPERTY =
+      property("string", "Method name inside the selected class.");
+  private static final kotlinx.serialization.json.JsonObject OVERLOAD_INDEX_PROPERTY =
+      property("integer", "0-based index when the name is overloaded; omit for the single overload.");
+
+  private static kotlinx.serialization.json.JsonObject property(String type, String description) {
+    return new kotlinx.serialization.json.JsonObject(Map.of(
+        "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive(type),
+        "description", kotlinx.serialization.json.JsonElementKt.JsonPrimitive(description)));
+  }
+
   private static void registerBridgeTool(Server server, ReaJadxBridge bridge, String name,
       ToolSchema schema, String description) {
     Tool tool = new Tool(name, schema, description, null, null, null, null, null, null);
@@ -1112,9 +1126,11 @@ class ReaJadxBridge {
     server.removeTool("load_apk");
     server.addTool(loadTool, (connection, request, continuation) ->
         bridge.load(request.getArguments(), defaults, continuation));
-    Set<String> consumed = Set.of("load_apk",
+    List<String> reimplementedTools = List.of(
         "list_classes", "get_class_summary", "get_method_body",
         "get_xrefs_to_class", "get_xrefs_to_method");
+    Set<String> consumed = new HashSet<>(reimplementedTools);
+    consumed.add("load_apk");
     for (String name : new ArrayList<>(server.getTools().keySet()))
       if (!consumed.contains(name)) server.removeTool(name);
     Tool diagnostics = new Tool("rea_jvm_status",
@@ -1133,39 +1149,55 @@ class ReaJadxBridge {
       registerBridgeTool(server, bridge, name,
           new ToolSchema(null, new kotlinx.serialization.json.JsonObject(Map.of()), List.of(), null), description);
     }
-    for (String name : List.of("list_classes", "get_class_summary",
-        "get_method_body", "get_xrefs_to_class", "get_xrefs_to_method")) {
-      Tool tool = server.getTools().get(name).getTool();
+    // REA owns these input schemas: it pages inventories and selects overloads
+    // itself, so the pinned engine's shape cannot describe what it accepts.
+    for (String name : reimplementedTools) {
       server.removeTool(name);
-      List<String> fields = switch (name) {
-        case "list_classes" -> List.of("offset", "limit");
-        case "get_method_body" -> List.of("class_name", "method_name", "overload_index");
-        case "get_xrefs_to_method" -> List.of("class_name", "method_name", "overload_index");
-        default -> List.of("class_name");
-      };
       Map<String, kotlinx.serialization.json.JsonElement> properties = new LinkedHashMap<>();
-      for (String field : fields) properties.put(field, tool.getInputSchema().getProperties().get(field));
-      if (name.equals("list_classes")) properties.put("query",
-          new kotlinx.serialization.json.JsonObject(Map.of(
-              "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))));
-      if (name.equals("get_class_summary")) properties.put("dex_static_values",
-          new kotlinx.serialization.json.JsonObject(Map.of(
-              "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
-      if (name.equals("get_class_summary") || name.equals("get_xrefs_to_method"))
-        properties.put("reference_target", new kotlinx.serialization.json.JsonObject(Map.of(
-            "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
-      if (name.equals("get_class_summary")) properties.put("method_name",
-          new kotlinx.serialization.json.JsonObject(Map.of(
-              "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))));
+      List<String> required;
+      switch (name) {
+        case "list_classes" -> {
+          properties.put("offset", property("integer", "Inventory position to start listing from."));
+          properties.put("limit", property("integer", "Maximum matching class names to return."));
+          properties.put("query", property("string", "Case-sensitive substring matched against top-level class names; omit or leave empty to inventory every name."));
+          required = List.of();
+        }
+        case "get_class_summary" -> {
+          properties.put("class_name", CLASS_NAME_PROPERTY);
+          properties.put("method_name", property("string", "Method whose referenced prototypes are returned; only read when reference_target selects a class outside the APK."));
+          properties.put("reference_target", property("boolean", "Return referenced prototypes for a class outside the APK instead of parsed members."));
+          properties.put("dex_static_values", property("boolean", "Include encoded static final field values."));
+          required = List.of("class_name");
+        }
+        case "get_method_body" -> {
+          properties.put("class_name", CLASS_NAME_PROPERTY);
+          properties.put("method_name", METHOD_NAME_PROPERTY);
+          properties.put("overload_index", OVERLOAD_INDEX_PROPERTY);
+          required = List.of("class_name", "method_name");
+        }
+        case "get_xrefs_to_class" -> {
+          properties.put("class_name", CLASS_NAME_PROPERTY);
+          required = List.of("class_name");
+        }
+        case "get_xrefs_to_method" -> {
+          properties.put("class_name", CLASS_NAME_PROPERTY);
+          properties.put("method_name", METHOD_NAME_PROPERTY);
+          properties.put("overload_index", OVERLOAD_INDEX_PROPERTY);
+          properties.put("reference_target", property("boolean", "Return referenced prototypes for a class outside the APK instead of resolved cross-references."));
+          required = List.of("class_name", "method_name");
+        }
+        default -> throw new IllegalStateException("Unhandled reimplemented tool: " + name);
+      }
       String description = switch (name) {
         case "list_classes" -> "Pages of case-sensitive matching top-level class names; offset and next_offset are inventory positions, limit bounds matching rows. Omitted or empty query inventories all names.";
         case "get_class_summary" -> "Parsed member metadata for one exact class name; no source generation. Set dex_static_values to include encoded static final field values.";
         case "get_method_body" -> "Source for an exact class and stable same-name overload index; static initializers use smali to preserve folded field initialization.";
-        default -> "Complete static using-node inventory for an exact class or selected method overload; one node may contain multiple invoke instructions, and source lines are unresolved.";
+        case "get_xrefs_to_class", "get_xrefs_to_method" -> "Complete static using-node inventory for an exact class or selected method overload; one node may contain multiple invoke instructions, and source lines are unresolved.";
+        default -> throw new IllegalStateException("Unhandled reimplemented tool: " + name);
       };
       registerBridgeTool(server, bridge, name,
           new ToolSchema(null, new kotlinx.serialization.json.JsonObject(properties),
-              tool.getInputSchema().getRequired(), null), description);
+              required, null), description);
     }
     CountDownLatch done = new CountDownLatch(1);
     server.onClose(() -> { done.countDown(); return Unit.INSTANCE; });

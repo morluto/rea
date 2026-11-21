@@ -15,6 +15,7 @@ import { verifyAndroidCliCancellation } from "./cli-cancellation.mjs";
 import { verifyAndroidMetadata } from "./metadata.mjs";
 import { verifyAndroidClassSearch } from "./class-search.mjs";
 import { verifyAndroidFailureRecovery } from "./failure-recovery.mjs";
+import { verifyAndroidBridgeCatalog } from "./bridge-catalog.mjs";
 import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
 import { HOST_PLATFORM } from "../../../dist/platform/HostPlatform.js";
 import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
@@ -56,6 +57,10 @@ const entrypoint =
   process.env.REA_ANDROID_ENTRYPOINT ?? resolve(repository, "scripts/rea.mjs");
 const environment = { ...process.env, REA_JADX_MCP_JAR: resolve(jar) };
 const path = resolve(apk);
+const bridge = resolve(
+  dirname(entrypoint),
+  "../bridge/android/ReaJadxBridge.java",
+);
 await verifyAndroidMetadata({
   java,
   jar: resolve(jar),
@@ -65,7 +70,14 @@ await verifyAndroidMetadata({
   jvmArguments,
   entrypoint,
   environment,
-  bridge: resolve(dirname(entrypoint), "../bridge/android/ReaJadxBridge.java"),
+  bridge,
+});
+await verifyAndroidBridgeCatalog({
+  java,
+  jar: resolve(jar),
+  bridge,
+  repository,
+  jvmArguments,
 });
 const tasks = [
   {
