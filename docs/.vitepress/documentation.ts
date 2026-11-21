@@ -548,6 +548,11 @@ export const documentationSections = [
         source: "guides/data/pcap-analysis.md",
         route: "/pcap-analysis",
       },
+      {
+        text: "Offline Windows event logs",
+        source: "guides/data/evtx-archives.md",
+        route: "/evtx-archives",
+      },
     ],
   },
   {

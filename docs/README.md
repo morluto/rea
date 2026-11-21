@@ -144,6 +144,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [SQLite database snapshots](guides/data/sqlite-databases.md)
 - [Recorded packet capture inspection](guides/data/packet-captures.md)
 - [Packet capture summaries](guides/data/pcap-analysis.md)
+- [Offline Windows event logs](guides/data/evtx-archives.md)
 
 ## Process capture and instrumentation
 

@@ -123,6 +123,7 @@ import { traceApplicationFeatureEvidence } from "../application/javascript/JavaS
 import { traceJavaScriptSemanticsEvidence } from "../application/javascript/JavaScriptSemanticTraceService.js";
 import { compareStaticAndObservedEndpointsEvidence } from "../application/javascript/StaticObservedEndpointComparisonService.js";
 import { inspectNtfsJournalEvidence } from "../application/ntfs/NtfsJournalService.js";
+import { inspectEvtxArchiveEvidence } from "../application/evtxArchive/EvtxArchiveService.js";
 import { evaluateReconstructionCoverage } from "../application/ReconstructionCoverageService.js";
 import { exportEnvironmentBundleTool } from "../application/environment/environmentBundleTool.js";
 import { PlaywrightTraceService } from "../application/playwrightTrace/PlaywrightTraceService.js";
@@ -1116,6 +1117,17 @@ const SERVICE_TOOL_BINDINGS = {
           inspectionExecution(
             await inspectNtfsJournalEvidence(input, resources, signal),
           ),
+      },
+      inspect_evtx_archive: {
+        admission: "application",
+        summary: async (input, options) => {
+          const inspected = await inspectEvtxArchiveEvidence(
+            input,
+            resources,
+            options,
+          );
+          return inspected.ok ? ok(inspected.value.evidence) : inspected;
+        },
       },
       inspect_playwright_trace: {
         admission: "sdk",

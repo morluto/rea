@@ -1,3 +1,4 @@
+import { evtxArchiveSummarySchema } from "./evtxArchiveView.js";
 import {
   webSourceLocationViewRequestSchema,
   webSourceLocationContextSchema,
@@ -415,6 +416,7 @@ const viewResultBase = {
     "trace_native_values",
     "match_native_functions",
     "procedure_references",
+    "inspect_evtx_archive",
   ]),
   parent_digest: digestSchema,
   view_digest: digestSchema,
@@ -563,6 +565,12 @@ export const nativeExportsSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_native_exports"),
   summary: nativeExportsSummarySchema,
+});
+
+export const evtxArchiveSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_evtx_archive"),
+  summary: evtxArchiveSummarySchema,
 });
 
 export const devicetreeSummaryViewResultSchema = z.strictObject({
@@ -1408,6 +1416,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
+    evtxArchiveSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     elfDependenciesSummaryViewResultSchema,
