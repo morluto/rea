@@ -24,7 +24,12 @@ import {
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 
-type Shape = "array" | "unknown";
+type Shape = "array" | "function" | "unknown";
+
+const functionSyntax = (node: t.Node): boolean =>
+  t.isFunctionDeclaration(node) ||
+  t.isFunctionExpression(node) ||
+  t.isArrowFunctionExpression(node);
 
 /** Bounded argument-shape queries shared by call-signature owners. */
 export type JavaScriptExpressionShapeResolver = ReturnType<
@@ -72,6 +77,7 @@ export const createSemanticExpressionShapeResolver = (
       if (seen.has(node)) return "unknown";
       seen.add(node);
       if (t.isArrayExpression(node)) return "array";
+      if (functionSyntax(node)) return "function";
       if (!t.isIdentifier(node)) return "unknown";
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined || binding.referenceInitializers.length > 0)
@@ -104,6 +110,7 @@ export const createSemanticExpressionShapeResolver = (
   };
   return {
     isArray: (node: t.Node) => shape(node) === "array",
+    isFunction: (node: t.Node) => shape(node) === "function",
     isNullish: (input: t.Node) => {
       const { node } = unwrapJavaScriptExpression(input);
       return (

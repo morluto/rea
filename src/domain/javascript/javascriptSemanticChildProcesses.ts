@@ -30,6 +30,7 @@ import {
   isUnshadowedGlobal,
   semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
+import { isIntrinsicGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
@@ -177,7 +178,12 @@ const immutableSpawn = (
     projectedResultBindings: candidate.projectedResultBindings,
     command,
     argvCount: args.argvCount,
-    environmentSupplied: environmentSupplied(args.readOption, context, state),
+    environmentSupplied: environmentSupplied(
+      candidate,
+      args.readOption,
+      context,
+      state,
+    ),
     stdioMode: stdioMode(args, candidate.method, context),
     resolution: command === null ? "partial" : "complete",
   };
@@ -467,20 +473,44 @@ const spawnArguments = (
  * through instead of supplying one.
  */
 const environmentSupplied = (
+  candidate: SpawnCandidate,
   readOption: ChildSpawnArguments["readOption"],
   context: ChildSpawnContext,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
+): boolean | null => {
+  // The second-argument callback overload discards the options argument.
+  // execFile's third-argument callback is different: Node still spreads its
+  // own enumerable properties as options, including a possible env property.
+  const [first, second] = candidate.node.arguments;
+  if (
+    (candidate.method === "exec" || candidate.method === "execFile") &&
+    first !== undefined &&
+    !t.isSpreadElement(first) &&
+    second !== undefined &&
+    !t.isSpreadElement(second) &&
+    context.isFunction(second)
+  )
+    return false;
   const lookup = readOption("env");
-  if (lookup.status !== "explicit") return false;
+  if (lookup.status !== "explicit")
+    return lookup.status === "missing" ? false : null;
   const value = unwrapJavaScriptExpression(lookup.value).node;
   if (context.isNullish(value)) return false;
+  // An unmodified intrinsic Object constructed with no arguments always
+  // produces a fresh truthy object. Other constructors can return an unknown
+  // object, and Object(input) can preserve an unknown host object.
+  if (
+    t.isNewExpression(value) &&
+    value.arguments.length === 0 &&
+    isIntrinsicGlobalReference(value.callee, state, "Object", value)
+  )
+    return true;
   if (
     t.isIdentifier(value, { name: "NaN" }) &&
     isUnshadowedGlobal(value, state, "NaN")
   )
     return false;
-  return staticJavaScriptTruthiness(value) !== false;
+  return staticJavaScriptTruthiness(value) ?? null;
 };
 
 /**
