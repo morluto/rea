@@ -344,6 +344,7 @@
 * **v8:** consolidate relative CLI and source-byte checks ([#12867](https://github.com/morluto/rea/issues/12867)) ([aa16513](https://github.com/morluto/rea/commit/aa1651311d27a4a0a224d00f427eaee9c4fd1387))
 * **wasm:** consolidate WABT and glue parser checks ([c11e73b](https://github.com/morluto/rea/commit/c11e73bd642cee0e12f0dfd7826d412dd9332506))
 * **wasm:** consolidate WABT output and glue scanner checks ([#12822](https://github.com/morluto/rea/issues/12822)) ([c11e73b](https://github.com/morluto/rea/commit/c11e73bd642cee0e12f0dfd7826d412dd9332506))
+* **web:** consolidate artifact cleanup ownership proofs ([#13077](https://github.com/morluto/rea/issues/13077)) ([82224d9](https://github.com/morluto/rea/commit/82224d9f6ccd845a87ff9ff45643c560e4c625f5))
 * **web:** consolidate interrupted module resolution evidence ([#13072](https://github.com/morluto/rea/issues/13072)) ([f63915d](https://github.com/morluto/rea/commit/f63915d6f2bc55328bd3e38a337079b127d8113d))
 * **web:** consolidate module context and resolver evidence checks ([#13071](https://github.com/morluto/rea/issues/13071)) ([56a0617](https://github.com/morluto/rea/commit/56a0617f518432f14ba981c8c55f1b920f857f5e))
 * **web:** consolidate module syntax and capture identity fixtures ([#13073](https://github.com/morluto/rea/issues/13073)) ([8322b55](https://github.com/morluto/rea/commit/8322b555523ed83aa895af5e4ff666023ca511fc))
