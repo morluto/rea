@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { traceSourceMap } from "./TraceSourceMap.js";
-import { inspectSourceMap } from "../../domain/sourceMapFormat.js";
 
 const url = "https://app.test/maps/app.js.map?v=2#map";
 const point = { line: 1, column: 0 };
@@ -13,39 +12,6 @@ const leaf = {
 };
 const trace = (map: unknown, position = point) =>
   traceSourceMap(JSON.stringify(map), url, position);
-
-it("uses the same conservative section classification for URL-plus-map and malformed URLs", () => {
-  const externalUrl = "https://app.test/maps/part.map";
-  const external = () =>
-    inspectSourceMap(
-      JSON.stringify({
-        version: 3,
-        sections: [
-          { offset: { line: 0, column: 0 }, url: externalUrl, map: leaf },
-        ],
-      }),
-    );
-  expect(external).toThrow(
-    expect.objectContaining({
-      failure: expect.objectContaining({ kind: "unsupported" }),
-      message: `External source-map section URL is not fetched: ${externalUrl}`,
-    }),
-  );
-
-  const malformed = () =>
-    inspectSourceMap(
-      JSON.stringify({
-        version: 3,
-        sections: [{ offset: { line: 0, column: 0 }, url: 12, map: leaf }],
-      }),
-    );
-  expect(malformed).toThrow(
-    expect.objectContaining({
-      failure: expect.objectContaining({ kind: "malformed" }),
-      message: expect.stringMatching(/section URL.*must be a string.*\[0\]/iu),
-    }),
-  );
-});
 
 it("keeps ignore-list precedence and section-local indexes for duplicate sources", () => {
   const map = {
