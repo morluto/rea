@@ -565,91 +565,85 @@ it.each([
   },
 );
 
-describe("malformed CDP network request metadata", () => {
-  it("omits requests with missing required metadata and reports the malformed events", async () => {
-    const browser = await startFakeCdpBrowser({
-      commandEvents(command, origin) {
-        if (command.method !== "Network.enable") return undefined;
-        const session =
-          command.sessionId === undefined
-            ? {}
-            : { sessionId: command.sessionId };
-        return [
-          {
-            ...session,
-            method: "Network.requestWillBeSent",
-            params: {
-              requestId: "valid",
-              request: { url: `${origin}/valid`, method: "GET" },
-              initiator: { type: "future-protocol-type" },
-            },
+it("keeps malformed requests and empty identities out of the passive inventory", async () => {
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Network.enable"],
+    commandEvents(command, origin) {
+      if (command.method !== "Network.enable") return undefined;
+      const request = (
+        requestId: string,
+        request: unknown,
+        initiator: unknown,
+      ) => ({
+        sessionId: command.sessionId,
+        method: "Network.requestWillBeSent",
+        params: { requestId, request, initiator },
+      });
+      const script = { type: "script" };
+      const emptyUrl = `${origin}/empty-id`;
+      return [
+        request(
+          "valid",
+          { url: `${origin}/valid`, method: "GET" },
+          { type: "future-protocol-type" },
+        ),
+        request("missing-method", { url: `${origin}/missing-method` }, script),
+        request(
+          "empty-method",
+          { url: `${origin}/empty-method`, method: "" },
+          script,
+        ),
+        request(
+          "missing-initiator-type",
+          { url: `${origin}/missing-initiator-type`, method: "POST" },
+          {},
+        ),
+        request("missing-request", null, script),
+        request("", { url: emptyUrl, method: "GET" }, script),
+        {
+          sessionId: command.sessionId,
+          method: "Network.responseReceived",
+          params: {
+            requestId: "",
+            response: { url: emptyUrl, status: 200, mimeType: "text/html" },
           },
-          {
-            ...session,
-            method: "Network.requestWillBeSent",
-            params: {
-              requestId: "missing-method",
-              request: { url: `${origin}/missing-method` },
-              initiator: { type: "script" },
-            },
-          },
-          {
-            ...session,
-            method: "Network.requestWillBeSent",
-            params: {
-              requestId: "empty-method",
-              request: { url: `${origin}/empty-method`, method: "" },
-              initiator: { type: "script" },
-            },
-          },
-          {
-            ...session,
-            method: "Network.requestWillBeSent",
-            params: {
-              requestId: "missing-initiator-type",
-              request: {
-                url: `${origin}/missing-initiator-type`,
-                method: "POST",
-              },
-              initiator: {},
-            },
-          },
-          {
-            ...session,
-            method: "Network.requestWillBeSent",
-            params: {
-              requestId: "missing-request",
-              request: null,
-              initiator: { type: "script" },
-            },
-          },
-        ];
-      },
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.network.requests).toEqual([
-      expect.objectContaining({
-        request_id: "valid",
-        method: "GET",
-        initiator: expect.objectContaining({ type: "future-protocol-type" }),
-      }),
-    ]);
-    expect(result.value.completeness.excluded).toContainEqual({
-      section: "network_requests",
-      reason: "invalid_protocol_value",
-      count: 4,
-    });
+        },
+        {
+          sessionId: command.sessionId,
+          method: "Network.loadingFinished",
+          params: { requestId: "", encodedDataLength: 42 },
+        },
+      ];
+    },
   });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.network.requests).toEqual([
+    expect.objectContaining({
+      request_id: "valid",
+      url: `${browser.allowedOrigin}/valid`,
+      method: "GET",
+      status: null,
+      encoded_data_length: null,
+      initiator: expect.objectContaining({ type: "future-protocol-type" }),
+    }),
+  ]);
+  expect(result.value.metadata.responses).toEqual([]);
+  expect(
+    result.value.completeness.excluded.filter(
+      ({ section }) => section === "network_requests",
+    ),
+  ).toEqual([
+    { section: "network_requests", reason: "invalid_protocol_value", count: 6 },
+  ]);
 });
 
 describe("malformed reused CDP request IDs", () => {
@@ -897,155 +891,87 @@ describe("CDP network length metadata", () => {
   });
 });
 
-describe("same-origin redirect chains", () => {
-  it("retains same-origin redirect hops on the one final request", async () => {
-    const browser = await startFakeCdpBrowser({ redirectWithinOrigin: true });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.network.requests).toHaveLength(1);
-    expect(result.value.network.requests[0]).toMatchObject({
-      request_id: "request-1",
-      url: `${browser.allowedOrigin}/redirected?token=final-secret`,
-      status: 200,
-      redirects: [
-        {
-          url: `${browser.allowedOrigin}/api?token=network-secret`,
-          response_url: `${browser.allowedOrigin}/api?token=network-secret`,
-          method: "POST",
-          resource_type: "Fetch",
-          status: 301,
-          mime_type: "text/plain",
-          encoded_data_length: 23,
-          request_timestamp: 7,
-          redirect_event_timestamp: 8,
-        },
-        {
-          url: `${browser.allowedOrigin}/intermediate`,
-          response_url: `${browser.allowedOrigin}/intermediate`,
-          method: "GET",
-          resource_type: "Fetch",
-          status: 302,
-          mime_type: "text/plain",
-          encoded_data_length: 27,
-          request_timestamp: 8,
-          redirect_event_timestamp: 9,
-        },
-      ],
-    });
-    expect(JSON.stringify(result.value.network.requests)).not.toContain(
-      "redirect-header-secret",
-    );
-    expect(result.value.completeness.excluded).not.toContainEqual({
-      section: "network_requests",
-      reason: "invalid_protocol_value",
-      count: expect.any(Number),
-    });
-  });
-});
-
-describe("redirect origin policy", () => {
-  it("drops network evidence when a request redirects outside the approved origin", async () => {
-    const browser = await startFakeCdpBrowser({
-      redirectToDisallowedOrigin: true,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.network.requests).toEqual([]);
-  });
-
-  it("does not retain excluded prior-hop data when a redirect returns in scope", async () => {
-    const browser = await startFakeCdpBrowser({
-      redirectFromDisallowedOrigin: true,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.network.requests).toHaveLength(1);
-    expect(result.value.network.requests[0]).toMatchObject({
-      url: `${browser.allowedOrigin}/returned`,
-      redirects: [],
-    });
-    const output = JSON.stringify(result.value.network.requests);
-    expect(output).not.toContain("private.example.test");
-    expect(output).not.toContain("redirect-header-secret");
-    expect(output).not.toContain("redirect-body-secret");
-    expect(result.value.completeness.policy_filtered_sections).toContain(
-      "network_requests",
-    );
-    expect(result.value.completeness.status).toBe("policy_filtered");
-    expect(result.value.completeness.unavailable_sections).not.toContain(
-      "network_requests",
-    );
-    expect(result.value.completeness.excluded).not.toContainEqual({
-      section: "network_requests",
-      reason: "invalid_protocol_value",
-      count: expect.any(Number),
-    });
-  });
-});
-
-it("does not persist or join an empty passive request identity", async () => {
-  const browser = await startFakeCdpBrowser({
-    commandEvents(command, origin) {
-      if (command.method !== "Network.enable") return undefined;
-      return [
-        {
-          sessionId: command.sessionId,
-          method: "Network.requestWillBeSent",
-          params: {
-            requestId: "",
-            frameId: "frame-main",
-            type: "Document",
-            request: { url: `${origin}/empty-id`, method: "GET" },
-            initiator: { type: "parser" },
-          },
-        },
-        {
-          sessionId: command.sessionId,
-          method: "Network.responseReceived",
-          params: {
-            requestId: "",
-            response: {
-              url: `${origin}/empty-id`,
-              status: 200,
-              mimeType: "text/html",
-              headers: {},
-            },
-          },
-        },
-        {
-          sessionId: command.sessionId,
-          method: "Network.loadingFinished",
-          params: { requestId: "", encodedDataLength: 42 },
-        },
-      ];
+const scopedRedirectEvents: NonNullable<FakeOptions["commandEvents"]> = (
+  command,
+  origin,
+) => {
+  if (command.method !== "Network.enable") return undefined;
+  const request = (
+    requestId: string,
+    url: string,
+    method: string,
+    timestamp: number,
+    redirectResponse?: Record<string, unknown>,
+  ) => ({
+    sessionId: command.sessionId,
+    method: "Network.requestWillBeSent",
+    params: {
+      requestId,
+      type: "Fetch",
+      request: { url, method },
+      initiator: { type: "other" },
+      timestamp,
+      ...(redirectResponse === undefined ? {} : { redirectResponse }),
     },
+  });
+  const response = (requestId: string, url: string) => ({
+    sessionId: command.sessionId,
+    method: "Network.responseReceived",
+    params: {
+      requestId,
+      response: { url, status: 200, mimeType: "text/plain" },
+    },
+  });
+  const original = `${origin}/api?token=network-secret`;
+  const intermediate = `${origin}/intermediate`;
+  const finalUrl = `${origin}/redirected?token=final-secret`;
+  return [
+    request("inside", original, "POST", 7),
+    request("inside", intermediate, "GET", 8, {
+      url: original,
+      status: 301,
+      mimeType: "text/plain",
+      encodedDataLength: 23,
+      headers: { "X-Private": "redirect-header-secret" },
+    }),
+    request("inside", finalUrl, "GET", 9, {
+      url: intermediate,
+      status: 302,
+      mimeType: "text/plain",
+      encodedDataLength: 27,
+    }),
+    response("inside", finalUrl),
+    request("outbound", `${origin}/leaving`, "POST", 10),
+    // The continuation alone must retire the prior row. A terminal
+    // response could independently discard it and hide that failure.
+    request("outbound", "https://private.example.test/redirected", "GET", 11, {
+      url: `${origin}/leaving`,
+      status: 302,
+      mimeType: "text/plain",
+      encodedDataLength: 23,
+    }),
+    request(
+      "returning",
+      "https://private.example.test/start?token=initial-url-secret",
+      "POST",
+      12,
+    ),
+    request("returning", `${origin}/returned`, "GET", 13, {
+      url: "https://private.example.test/outside?token=redirect-url-secret",
+      status: 302,
+      mimeType: "text/plain",
+      encodedDataLength: 31,
+      headers: { "X-Private": "redirect-header-secret" },
+      postData: "redirect-body-secret",
+    }),
+    response("returning", `${origin}/returned`),
+  ];
+};
+
+it("retains redirect hops only while their requests remain in scope", async () => {
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Network.enable"],
+    commandEvents: scopedRedirectEvents,
   });
   trackBrowser(browser);
   const result = await new CdpBrowserProvider().inspectPage(
@@ -1056,17 +982,81 @@ it("does not persist or join an empty passive request identity", async () => {
       observation_ms: 0,
     }),
   );
+
   if (!result.ok) throw result.error;
-  expect(result.value.network.requests).not.toContainEqual(
-    expect.objectContaining({ request_id: "" }),
-  );
-  expect(result.value.metadata.responses).not.toContainEqual(
-    expect.objectContaining({ request_id: "" }),
-  );
-  expect(result.value.completeness.excluded).toContainEqual(
+  const origin = browser.allowedOrigin;
+  const redirected = `${origin}/redirected?token=final-secret`;
+  const returned = `${origin}/returned`;
+  expect(result.value.network.requests).toEqual([
     expect.objectContaining({
-      section: "network_requests",
-      reason: "invalid_protocol_value",
+      request_id: "inside",
+      url: redirected,
+      status: 200,
+      redirects: [
+        {
+          url: `${origin}/api?token=network-secret`,
+          response_url: `${origin}/api?token=network-secret`,
+          method: "POST",
+          resource_type: "Fetch",
+          status: 301,
+          mime_type: "text/plain",
+          encoded_data_length: 23,
+          request_timestamp: 7,
+          redirect_event_timestamp: 8,
+        },
+        {
+          url: `${origin}/intermediate`,
+          response_url: `${origin}/intermediate`,
+          method: "GET",
+          resource_type: "Fetch",
+          status: 302,
+          mime_type: "text/plain",
+          encoded_data_length: 27,
+          request_timestamp: 8,
+          redirect_event_timestamp: 9,
+        },
+      ],
     }),
+    expect.objectContaining({
+      request_id: "returning",
+      url: returned,
+      status: 200,
+      redirects: [],
+    }),
+  ]);
+  expect(
+    result.value.metadata.responses.map(({ request_id, url }) => [
+      request_id,
+      url,
+    ]),
+  ).toEqual([
+    ["inside", redirected],
+    ["returning", returned],
+  ]);
+  const output = JSON.stringify({
+    requests: result.value.network.requests,
+    responses: result.value.metadata.responses,
+  });
+  for (const excluded of [
+    "private.example.test",
+    "redirect-header-secret",
+    "redirect-body-secret",
+  ])
+    expect(output).not.toContain(excluded);
+  expect(result.value.completeness).toMatchObject({
+    status: "policy_filtered",
+  });
+  expect(result.value.completeness.policy_filtered_sections).toContain(
+    "network_requests",
   );
+  expect(result.value.completeness.unavailable_sections).not.toContain(
+    "network_requests",
+  );
+  expect(
+    result.value.completeness.excluded.filter(
+      ({ section }) => section === "network_requests",
+    ),
+  ).toEqual([
+    { section: "network_requests", reason: "disallowed_origin", count: 3 },
+  ]);
 });
