@@ -536,7 +536,8 @@ const stdioMode = (
   const value = unwrapJavaScriptExpression(lookup.value).node;
   if (context.isNullish(value))
     return unsetStdioMode(readOption, method, context);
-  if (t.isStringLiteral(value)) return value.value;
+  const literal = readExactJavaScriptLiteral(value);
+  if (literal.found && typeof literal.value === "string") return literal.value;
   if (t.isArrayExpression(value)) return "array";
   // fork ignores any other known stdio value and falls back to `silent`.
   if (method === "fork" && staticJavaScriptTruthiness(value) !== undefined)
@@ -957,7 +958,11 @@ const unsetStdioMode = (
   if (silent.status !== "explicit") return "dynamic";
   const value = unwrapJavaScriptExpression(silent.value).node;
   if (context.isNullish(value)) return "default";
-  const truthy = staticJavaScriptTruthiness(value);
+  const literal = readExactJavaScriptLiteral(value);
+  const truthy =
+    literal.found && typeof literal.value === "string"
+      ? literal.value.length > 0
+      : staticJavaScriptTruthiness(value);
   if (truthy === undefined) return "dynamic";
   return truthy ? "pipe" : "default";
 };
