@@ -2,7 +2,7 @@
 
 Tracks #4092 under #4027 and the decision in #4091. This verifies an existing
 tool's data projection, without a code-mode host or SDK. [Machine-readable
-results](javascript-module-references-2026-10-15.json) pin the base revision,
+results](https://github.com/morluto/rea/blob/main/docs/verification/javascript-module-references-2026-10-15.json) pin the base revision,
 executed source hashes, samples, tokenizer and resource observations.
 
 ## Real application and question

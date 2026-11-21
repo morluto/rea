@@ -1,7 +1,7 @@
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 
-import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../../../src/ports/BrowserScenarioCapturePort.js";
 import { createBrowserObservationProvider } from "../../../src/composition/browserObservation.js";
 import { createElectronObservationProvider } from "../../../src/composition/electronObservation.js";
 import { silentLogger } from "../../../src/logger.js";

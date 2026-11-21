@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import * as t from "@babel/types";
 import { runtimeFunctionParameters } from "./javascriptAstValues.js";
 
@@ -19,6 +17,7 @@ import type {
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 interface SemanticFingerprintCollectionInput {
   readonly state: JavaScriptSemanticAnalysisState;
@@ -83,10 +82,25 @@ export function* collectJavaScriptSemanticFingerprintsSteps(
     const networkEffects = networkEffectsByOwner.get(callable.callableId) ?? [];
     const resourceEffects =
       resourceEffectsByOwner.get(callable.callableId) ?? [];
+    const conditionalBuiltinEffects =
+      timerEffects.some(
+        ({ builtinAuthority }) => builtinAuthority === "candidate",
+      ) ||
+      childProcessEffects.some(
+        ({ builtinAuthority }) => builtinAuthority === "candidate",
+      ) ||
+      networkEffects.some(
+        ({ builtinAuthority }) => builtinAuthority === "candidate",
+      ) ||
+      resourceEffects.some(
+        ({ builtinAuthority }) => builtinAuthority === "candidate",
+      );
     fingerprints.push({
       callableId: callable.callableId,
       status:
-        parserPartial || callable.returnCoverage.status !== "complete"
+        parserPartial ||
+        conditionalBuiltinEffects ||
+        callable.returnCoverage.status !== "complete"
           ? "partial"
           : "complete",
       components: {
@@ -120,6 +134,11 @@ export function* collectJavaScriptSemanticFingerprintsSteps(
         "The fingerprint is a static candidate and does not prove behavioral equivalence.",
         ...(parserPartial
           ? ["Incomplete semantic recovery makes this fingerprint partial."]
+          : []),
+        ...(conditionalBuiltinEffects
+          ? [
+              "A built-in effect has conditional loader or mutation identity, so its fingerprint contribution is partial.",
+            ]
           : []),
       ],
     });
@@ -291,4 +310,4 @@ const isAsyncCallable = (node: t.Node): boolean =>
   t.isFunction(node) && node.async;
 
 const digest = (value: readonly string[]): string =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  sha256Hex(JSON.stringify(value));

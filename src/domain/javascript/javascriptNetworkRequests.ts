@@ -1,25 +1,36 @@
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
-import {
-  semanticStaticPropertyName,
-  unwrapJavaScriptExpression,
-} from "./javascriptAstValues.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
-import {
-  resolveSemanticBindingState,
-  semanticStableInitializer,
-  type JavaScriptBindingIndex,
-  type JavaScriptSemanticAnalysisState,
+import type {
+  JavaScriptBindingIndex,
+  JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import * as t from "@babel/types";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
+import { isIntrinsicInstanceMethodCall } from "./javascriptSemanticIntrinsicInstances.js";
+import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 
-export const isFetchCall = (
+const isFetchCall = (
   node: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
 ): boolean =>
   (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
   isUnmodifiedGlobalReference(node.callee, bindings, "fetch");
+
+/** Read a proven Fetch Request input's source literal without constructing it. */
+export const literalFetchRequestConstructorUrl = (
+  call: t.Node,
+  input: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  const target = unwrapJavaScriptExpression(input).node;
+  if (
+    t.isNewExpression(target) &&
+    isFetchCall(call, bindings) &&
+    isUnmodifiedGlobalReference(target.callee, bindings, "Request")
+  )
+    return stringValue(target.arguments[0]);
+  return undefined;
+};
 
 /** Browser request identity requires an intact intrinsic, not a method spelling. */
 export const isBrowserNetworkRequest = (
@@ -39,69 +50,15 @@ export const isBrowserNetworkRequest = (
 const isXhrOpenRequest = (
   node: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
-  index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
-): boolean | undefined => {
-  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-    return false;
-  const callee = unwrapJavaScriptExpression(node.callee).node;
-  if (
-    (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) ||
-    semanticStaticPropertyName(callee.property, callee.computed) !== "open"
-  )
-    return false;
-  if (
-    ["XMLHttpRequest", "Object"].some((owner) =>
-      ["open", "__proto__"].some(
-        (member) =>
-          bindings.ambientWrites.covers([
-            "global",
-            owner,
-            "prototype",
-            member,
-          ]) ||
-          bindings.ambientEscapes.covers([
-            "global",
-            owner,
-            "prototype",
-            member,
-          ]),
-      ),
-    )
-  )
-    return false;
-  let receiver = unwrapJavaScriptExpression(callee.object).node;
-  const seen = new Set<string>();
-  while (t.isIdentifier(receiver)) {
-    if (
-      index !== undefined &&
-      (index.referenceMayHaveChangedAt(node, receiver, ["open"]) ||
-        index.referenceMayHaveChangedAt(node, receiver, ["__proto__"]))
-    )
-      return false;
-    const binding = resolveSemanticBindingState(
-      bindings,
-      receiver,
-      receiver.name,
-    );
-    if (binding === undefined || seen.has(binding.bindingId)) return false;
-    seen.add(binding.bindingId);
-    const initializer = semanticStableInitializer(binding, bindings);
-    if (
-      initializer === undefined ||
-      initializer.projection.length !== 0 ||
-      !semanticBindingAtRead(binding, receiver, bindings).hasDefiniteInitializer
-    )
-      return false;
-    receiver = unwrapJavaScriptExpression(initializer.node).node;
-  }
-  if (
-    !t.isNewExpression(receiver) ||
-    !isUnmodifiedGlobalReference(receiver.callee, bindings, "XMLHttpRequest") ||
-    semanticOpaqueGlobalMayHaveChanged(callee, bindings)
-  )
-    return false;
-  return index === undefined && seen.size > 0 ? undefined : true;
-};
+  index?: Pick<JavaScriptBindingIndex, "mayObserve">,
+): boolean | undefined =>
+  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+  isIntrinsicInstanceMethodCall(
+    node,
+    bindings,
+    { constructor: "XMLHttpRequest", methods: ["open"] },
+    index,
+  );
 
 /** Resolve once through the shared mutation index when lexical proof needs it. */
 export const createXhrOpenRequestQuery =

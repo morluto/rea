@@ -70,6 +70,15 @@ them. They do not prove source addition/removal. `source_coverage` explicitly ke
 inventory completeness unknown and separately counts known byte fingerprints and
 resolved correspondence. Provider limitations remain accessible.
 
+`source_coverage.status` is scoped by `scope: "provider-observed-inputs"`.
+`complete-within-inputs` means every supplied inventory row was paired: no
+`only_left`, `only_right` or `unresolved` rows remain. It does not say the
+inventories cover either binary; `left_inventory_completeness` and
+`right_inventory_completeness` stay `unknown`, so a function missing from both
+inventories is outside this result. `partial` means at least one supplied row
+remains unpaired (`only_left`/`only_right`) or unresolved (repeated candidates
+that cannot be paired uniquely).
+
 Default `detail: "summary"` retains complete matching Evidence in MCP and returns
 counts, both identities and coverage. Query its `parent_evidence_id`:
 
@@ -95,7 +104,8 @@ counts, both identities and coverage. Query its `parent_evidence_id`:
 counts. Large member lists are omitted by default; select `left`/`right` columns
 explicitly or page individual `functions`. Batch `match_ids`/`function_ids`, exact function `names`, state
 and side filters intersect. Mandatory identities and provenance survive column
-selection. Page coverage covers selected retained facts. Function identity binds
+selection. Default function rows include member limitations; an explicit `fields`
+selection can omit them. Page coverage covers selected retained facts. Function identity binds
 inventory Evidence and the owning inventory’s `source_index`, preserving same-address alternatives.
 One validation, lazy member index and bounded recent filter are retained per
 immutable parent; no live target state is cached.

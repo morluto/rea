@@ -5,18 +5,17 @@ import {
   MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
   inspectErlangBeamInputSchema,
 } from "../domain/erlang/beam.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   erlangBeamChunksFixture,
-  erlangBeamDeclaredRowsFixture,
+  erlangBeamRowsFixture,
   erlangBeamFixture,
   erlangBeamLegacyAtomsFixture,
-  erlangBeamManyAtomsFixture,
   erlangBeamOtp29Fixture,
 } from "./Beam.fixture.js";
-import { BeamCapacityFailure, parseErlangBeam } from "./BeamParser.js";
+import { parseErlangBeam } from "./BeamParser.js";
 import { BeamProvider } from "./BeamProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 const defaults = inspectErlangBeamInputSchema.parse({
   path: "/artifacts/app.beam",
@@ -57,6 +56,22 @@ it("selects the last table and Code payload for every repeated chunk name", () =
   repeated.writeUInt32BE(repeated.length - 8, 4);
   const report = parse(repeated);
   const control = parse(original);
+  expect(control.module).toBe("selected");
+  expect(control.atoms?.map(({ name }) => name)).toEqual([
+    "selected",
+    "module_info",
+    "start",
+    "erlang",
+    "get_module_info",
+  ]);
+  expect(control.exports).toHaveLength(3);
+  expect(control.imports).toHaveLength(1);
+  expect(control.lambdas).toHaveLength(1);
+  expect(control.code).toMatchObject({
+    opcode_max: 169,
+    labels: 4,
+    functions: 2,
+  });
   expect(report.atoms).toEqual(control.atoms);
   expect(report.exports).toEqual(control.exports);
   expect(report.imports).toEqual(control.imports);
@@ -235,6 +250,34 @@ it("fails a FOR1 form that is not BEAM", () => {
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
 });
 
+it("discloses bytes that trail the declared FOR1 form", () => {
+  const valid = erlangBeamFixture("trailing_probe");
+  const clean = parse(valid);
+  expect(clean.coverage.status).toBe("complete");
+  expect(clean.coverage.trailing_bytes).toBe(0);
+
+  // Append foreign bytes past the declared form; a conformant file ends there.
+  const trailing = Buffer.concat([valid, Buffer.from("APPENDEDOVERLAY!")]);
+  const report = parse(trailing);
+  expect(report.form.location.bytes).toBe(valid.length);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.coverage.trailing_bytes).toBe(16);
+  // The surplus bytes are not misread as a chunk; examined facts are unchanged.
+  expect(report.chunks).toEqual(clean.chunks);
+  expect(report.coverage.examined_chunks).toBe(clean.coverage.examined_chunks);
+  expect(report.limitations).toEqual([
+    ...clean.limitations,
+    `The declared FOR1 form ends at offset ${String(valid.length)}; 16 trailing bytes were not examined.`,
+  ]);
+
+  const single = parse(Buffer.concat([valid, Buffer.from("!")]));
+  expect(single.coverage.status).toBe("partial");
+  expect(single.coverage.trailing_bytes).toBe(1);
+  expect(single.limitations.at(-1)).toBe(
+    `The declared FOR1 form ends at offset ${String(valid.length)}; 1 trailing byte was not examined.`,
+  );
+});
+
 it("rejects a short remainder inside the BEAM form", () => {
   const bytes = Buffer.alloc(16);
   bytes.write("FOR1");
@@ -251,12 +294,27 @@ it("rejects an AtU8 atom name that is not UTF-8", () => {
   ).toThrow(/BEAM atom name is not valid UTF-8/);
 });
 
-it("keeps a latin1 atom byte unchanged", () => {
+it("uses a one-byte length and preserves Latin-1 bytes in legacy Atom", () => {
   const report = parse(
-    erlangBeamChunksFixture([["Atom", Buffer.from([0, 0, 0, 1, 1, 0xff])]]),
+    erlangBeamChunksFixture([
+      ["Atom", Buffer.from([0, 0, 0, 1, 2, 0x61, 0xff])],
+    ]),
   );
-  expect(report.atom_encoding).toBe("latin1");
-  expect(report.module).toBe("ÿ");
+  expect(report).toMatchObject({
+    atom_encoding: "latin1",
+    module: "aÿ",
+    atoms: [{ index: 1, name: "aÿ" }],
+    coverage: { status: "complete" },
+  });
+});
+
+it.each([
+  ["a negative count", [0xff, 0xff, 0xff, 0xff, 0x20, 0x61, 0x62]],
+  ["a compact length", [0, 0, 0, 1, 0x20, 0x61, 0x62]],
+])("rejects %s in legacy Atom", (_name, payload) => {
+  expect(() =>
+    parse(erlangBeamChunksFixture([["Atom", Buffer.from(payload)]])),
+  ).toThrow(expect.objectContaining({ reason: "format" }));
 });
 
 it("rejects combined table rows before allocating them", () => {
@@ -264,7 +322,7 @@ it("rejects combined table rows before allocating them", () => {
   const overflow = MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS - below * 2 + 1;
   expect(() =>
     parse(
-      erlangBeamDeclaredRowsFixture([
+      erlangBeamRowsFixture([
         ["ExpT", below],
         ["ImpT", below],
         ["FunT", overflow],
@@ -272,15 +330,32 @@ it("rejects combined table rows before allocating them", () => {
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "limit",
-      boundary: "capacity",
-      message: expect.stringContaining("row budget"),
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: {
+          name: "max_table_rows",
+          maximum: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+          required: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1,
+        },
+      }),
     }),
   );
+  const complete = Buffer.alloc(
+    4 + (MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1) * 12,
+  );
+  complete.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1);
+  expect(() =>
+    parse(
+      erlangBeamChunksFixture([
+        ["ExpT", complete],
+        ["ImpT", Buffer.alloc(1)],
+      ]),
+    ),
+  ).toThrow(/import table is truncated/);
   const count = Buffer.alloc(4);
   count.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1);
   expect(() => parse(erlangBeamChunksFixture([["ExpT", count]]))).toThrow(
-    /row budget/,
+    /truncated/,
   );
   count.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS);
   expect(() => parse(erlangBeamChunksFixture([["ExpT", count]]))).toThrow(
@@ -288,17 +363,54 @@ it("rejects combined table rows before allocating them", () => {
   );
 });
 
-it("fails when the atom budget is exhausted", () => {
-  const bytes = erlangBeamManyAtomsFixture(3);
+it.each([
+  ["legacy Atom", "Atom", [0, 0, 0, 2], [1, 2]],
+  ["classic AtU8", "AtU8", [0, 0, 0, 2], [1, 2]],
+  ["compact AtU8", "AtU8", [0xff, 0xff, 0xff, 0xfe], [0x10, 0x20]],
+] as const)(
+  "checks only the admitted atom lengths in %s",
+  (_name, chunk, count, [validLength, invalidLength]) => {
+    const fixture = (firstLength: number, lastByte: number) =>
+      erlangBeamChunksFixture([
+        [chunk, Buffer.from([...count, firstLength, 0x61, lastByte])],
+      ]);
+    const input = { ...defaults, max_atoms: 1 };
+    const valid = fixture(validLength, 0);
+    expect(parse(valid).atoms).toEqual([
+      { index: 1, name: "a" },
+      { index: 2, name: "" },
+    ]);
+    for (const bytes of [valid, fixture(validLength, validLength)]) {
+      // The second name is complete or truncated, beyond the admitted prefix.
+      expect(() => parse(bytes, input)).toThrow(
+        expect.objectContaining({
+          failure: expect.objectContaining({
+            kind: "limit",
+            format: "beam",
+            limit: { name: "max_atoms", maximum: 1, required: 2 },
+          }),
+        }),
+      );
+    }
+    // The first name would consume the second entry's required length byte.
+    expect(() => parse(fixture(invalidLength, 0x62), input)).toThrow(
+      expect.objectContaining({ reason: "format" }),
+    );
+  },
+);
+
+it("retains the exhausted chunk allowance", () => {
   expect(() =>
-    parse(
-      bytes,
-      inspectErlangBeamInputSchema.parse({
-        path: defaults.path,
-        max_atoms: 1,
+    parse(erlangBeamFixture(), { ...defaults, max_chunks: 1 }),
+  ).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "beam",
+        limit: { name: "max_chunks", maximum: 1 },
       }),
-    ),
-  ).toThrow(ArtifactReaderFailure);
+    }),
+  );
 });
 
 it("does not infer a BEAM budget from diagnostic prose", async () => {
@@ -327,67 +439,27 @@ it("does not infer a BEAM budget from diagnostic prose", async () => {
 });
 
 it.each([
-  {
-    resource: "atoms",
-    bytes: erlangBeamManyAtomsFixture(3),
-    settings: { max_atoms: 1 },
-    maximum: 1,
-    remediation: "Raise max_atoms above 1",
-  },
-  {
-    resource: "chunks",
-    bytes: erlangBeamFixture(),
-    settings: { max_chunks: 1 },
-    maximum: 1,
-    remediation: "Raise max_chunks above 1",
-  },
-  {
-    resource: "table-rows",
-    bytes: erlangBeamDeclaredRowsFixture([
-      ["ExpT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
-    ]),
-    settings: {},
-    maximum: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
-    remediation: `${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row ceiling`,
-  },
-])(
-  "retains the producing $resource allowance when diagnostic wording changes",
-  async ({ resource, bytes, settings, maximum, remediation }) => {
-    const input = inspectErlangBeamInputSchema.parse({
-      path: defaults.path,
-      ...settings,
+  ["Atom", Buffer.from([0, 0, 0, 1, 1, 0x61])],
+  ["AtU8", Buffer.from([0, 0, 0, 1, 1, 0x61])],
+  ["AtU8", Buffer.from([0xff, 0xff, 0xff, 0xff, 0x10, 0x61])],
+  ["ExpT", Buffer.alloc(4)],
+  ["ImpT", Buffer.alloc(4)],
+  ["FunT", Buffer.alloc(4)],
+] as const)(
+  "reports unexamined bytes inside a selected %s table",
+  (name, payload) => {
+    const control = parse(erlangBeamChunksFixture([[name, payload]]));
+    const extended = Buffer.concat([payload, Buffer.from([0x61])]);
+    const report = parse(erlangBeamChunksFixture([[name, extended]]));
+    expect(control.coverage.status).toBe("complete");
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      trailing_bytes: 0,
     });
-    let cause: unknown;
-    try {
-      parse(bytes, input);
-    } catch (failure) {
-      cause = failure;
-    }
-    expect(cause).toBeInstanceOf(BeamCapacityFailure);
-    if (!(cause instanceof BeamCapacityFailure))
-      throw new Error("Missing named parser allowance");
-    expect(cause).toMatchObject({
-      resource,
-      maximum,
-      reason: "limit",
-      boundary: "capacity",
-    });
-    cause.message = "BEAM parser allowance exhausted.";
-    const provider = new BeamProvider();
-    const injection = vi
-      .spyOn(ArtifactResourceScope.prototype, "run")
-      .mockRejectedValueOnce(cause);
-    try {
-      const result = await provider.inspect(input);
-      if (result.ok) throw new Error("Expected named capacity failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisResourceConstraintError",
-        retryable: false,
-        remediationAction: expect.stringContaining(remediation),
-      });
-    } finally {
-      injection.mockRestore();
-      await provider.close();
-    }
+    expect(report.limitations).toContain(
+      `The selected ${name} table has 1 trailing byte that was not examined.`,
+    );
+    for (const field of ["atoms", "exports", "imports", "lambdas"] as const)
+      expect(report[field]).toEqual(control[field]);
   },
 );

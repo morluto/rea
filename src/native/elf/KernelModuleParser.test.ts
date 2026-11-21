@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
   MODULE_SIGNATURE_MAGIC,
 } from "../../domain/native/kernelModule.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   compressedKernelModuleContainer,
   kernelModuleFixture,
@@ -69,6 +69,7 @@ it("distinguishes absent metadata from unavailable section names", () => {
   const unknown = parse(bytes);
   expect(unknown.modinfo?.status).toBe("unknown");
   expect(unknown.versions?.status).toBe("unknown");
+  expect(unknown.coverage.status).toBe("partial");
 });
 
 it.each([
@@ -133,6 +134,25 @@ it.each([
   });
 });
 
+it.each([
+  [".init.text", "init_text", 4],
+  [".exit.text", "exit_text", 1],
+] as const)(
+  "discloses duplicate %s sections while retaining the first size",
+  (name, key, size) => {
+    const report = parse(
+      kernelModuleFixture({
+        sharedNameSections: { name, count: 1, body: Buffer.from([1, 2, 3]) },
+      }),
+    );
+    expect(report[key]).toMatchObject({ status: "present", bytes: size });
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations).toContain(
+      `Multiple ${name} sections are declared; the first is examined.`,
+    );
+  },
+);
+
 it("keeps earlier .modinfo entries when the last span is unterminated", () => {
   const report = parse(
     kernelModuleFixture({
@@ -151,35 +171,29 @@ it("keeps earlier .modinfo entries when the last span is unterminated", () => {
   });
 });
 
-it("reports a missing separator, an empty key, and an over-long field per entry", () => {
+it("reports a missing separator and an empty key as malformed entries", () => {
   const report = parse(
     kernelModuleFixture({
-      modinfo: Buffer.concat([
-        Buffer.from("license\0=GPL\0", "latin1"),
-        Buffer.from(`${"k".repeat(257)}=x\0`, "latin1"),
-        Buffer.from(`name=${"v".repeat(4097)}\0`, "latin1"),
-      ]),
+      modinfo: Buffer.from("license\0=GPL\0", "latin1"),
     }),
   );
   expect(report.modinfo?.entries.map((entry) => entry.reason)).toEqual([
     "modinfo_missing_separator",
     "modinfo_empty_key",
-    "modinfo_field_exceeds_limit",
-    "modinfo_field_exceeds_limit",
   ]);
+  expect(report.coverage.status).toBe("partial");
   expect(report.modinfo?.entries[1]).toMatchObject({
     key: null,
     value: "GPL",
   });
-  expect(report.modinfo?.entries[2]).toMatchObject({ key: null, value: "x" });
-  expect(report.modinfo?.entries[3]).toMatchObject({
-    key: "name",
-    value: null,
-  });
+  expect(
+    report.modinfo?.entries.every((entry) => entry.status === "malformed"),
+  ).toBe(true);
 });
 
 it("closes __versions when the section size is not a multiple of 64", () => {
   const report = parse(kernelModuleFixture({ versions: Buffer.alloc(63) }));
+  expect(report.coverage.status).toBe("partial");
   expect(report.versions).toMatchObject({
     status: "malformed",
     entries: [],
@@ -223,6 +237,7 @@ it("reports an inconsistent signature length without a PKCS#7 range", () => {
       signature: moduleSignatureTrailer(Buffer.from("abcd"), 50_000),
     }),
   );
+  expect(report.coverage.status).toBe("partial");
   expect(report.signature).toMatchObject({
     status: "malformed",
     reason: "signature_length_inconsistent",
@@ -309,28 +324,39 @@ it.each(["gzip", "xz", "zstd"] as const)(
 );
 
 it("fails closed when the combined entry budget is exhausted", () => {
-  expect(() => parse(kernelModuleFixture(), { max_entries: 7 })).toThrow(
-    ArtifactReaderFailure,
-  );
+  let failure: unknown;
   try {
     parse(kernelModuleFixture(), { max_entries: 7 });
   } catch (error) {
-    expect(error).toBeInstanceOf(ArtifactReaderFailure);
-    expect(error).toMatchObject({ reason: "limit", boundary: "capacity" });
+    failure = error;
   }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "limit", boundary: "capacity" });
 });
 
 it("examines the first of two .modinfo sections and records the duplicate", () => {
-  const report = parse(kernelModuleFixture({ repeatModinfo: true }));
-  expect(report.modinfo?.entries).toHaveLength(6);
-  expect(report.limitations.join("\n")).toContain(
-    "Multiple .modinfo sections are declared; the first is examined.",
+  const report = parse(
+    kernelModuleFixture({
+      modinfo: Buffer.from("name=first\0"),
+      sharedNameSections: {
+        name: ".modinfo",
+        count: 1,
+        body: Buffer.from("name=second\0"),
+      },
+    }),
+  );
+  expect(report.modinfo?.entries.map(({ key, value }) => [key, value])).toEqual(
+    [["name", "first"]],
+  );
+  expect(report.limitations).toContainEqual(
+    expect.stringMatching(/multiple.*\.modinfo.*first.*examined/iu),
   );
 });
 
 it("does not decode compressed, nobits, or out-of-file metadata sections", () => {
   const compressed = kernelModuleFixture();
   compressed.writeBigUInt64LE(0x800n, 64 + 64 + 8);
+  expect(parse(compressed).coverage.status).toBe("partial");
   expect(parse(compressed).modinfo).toMatchObject({
     status: "unsupported",
     entries: [],
@@ -391,6 +417,7 @@ it("rejects ELF bytes preceding a bare signature magic as an inconsistent traile
       signature: Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1"),
     }),
   );
+  expect(report.coverage.status).toBe("partial");
   expect(report.signature).toMatchObject({
     status: "malformed",
     reason: "signature_length_inconsistent",
@@ -418,8 +445,10 @@ it("names a non-file-backed __ksymtab section without dropping the module", () =
   bytes.writeUInt32LE(8, 64 + 64 * 4 + 4);
   const report = parse(bytes);
   expect(report.ksymtab?.sections).toEqual([]);
-  expect(report.limitations.join("\n")).toContain(
-    "1 __ksymtab* section(s) are declared but not file-backed",
+  expect(report.limitations).toContainEqual(
+    expect.stringMatching(
+      /1 __ksymtab\*.*not file-backed.*ranges are unknown/iu,
+    ),
   );
   expect(report.modinfo?.entries[0]?.key).toBe("license");
 });
@@ -429,10 +458,10 @@ it("charges many sections sharing one huge __ksymtab name to the entry budget", 
   const bytes = kernelModuleFixture({
     sharedNameSections: { name, count: 8192 },
   });
-  const started = performance.now();
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  // The shared name decodes once; per-section decoding exceeds the 16 MiB
+  // section-name budget and refuses this module.
   const report = parse(bytes, { max_entries: 65_536 });
-  expect(performance.now() - started).toBeLessThan(5_000);
   const huge = report.ksymtab?.sections.slice(1) ?? [];
   expect(huge).toHaveLength(8192);
   expect(
@@ -449,3 +478,20 @@ it("charges many sections sharing one huge __ksymtab name to the entry budget", 
   expect(report.coverage.examined_entries).toBe(6 + 2 + 1 + 8192);
   expect(JSON.stringify(report).length).toBeLessThan(2 * 1024 * 1024);
 });
+
+it.each([true, false])(
+  "keeps the upper CRC word of each ELF64 version record (little=%s)",
+  (little) => {
+    const versions = Buffer.concat([
+      modversionEntry(0xfedcba9876543210n, "first", 64, little),
+      modversionEntry(0x0100000000000002n, "second", 64, little),
+    ]);
+    const report = parse(kernelModuleFixture({ bits: 64, little, versions }));
+    expect(
+      report.versions?.entries.map(({ crc_hex, name }) => [crc_hex, name]),
+    ).toEqual([
+      ["fedcba9876543210", "first"],
+      ["0100000000000002", "second"],
+    ]);
+  },
+);

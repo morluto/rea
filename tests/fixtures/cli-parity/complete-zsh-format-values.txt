@@ -1,0 +1,12 @@
+$ COMPLETE=zsh rea -- rea inspect-byte-entropy --format ""
+exit: 0
+--- stdout
+toon
+json
+yaml
+md
+jsonl
+csv
+tsv<end>
+--- stderr
+<end>

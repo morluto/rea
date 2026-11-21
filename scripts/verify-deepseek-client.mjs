@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -9,6 +8,7 @@ import { parse as parseYaml } from "yaml";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
@@ -19,9 +19,37 @@ import {
   findClientResult,
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+
+const expectedFinal = "REA_CLIENT_COMPATIBILITY_OK";
+
+// The headless --json producer emits newline-delimited events and ends
+// the projection with exactly one final event carrying the full answer.
+function hasExpectedHeadlessFinal(stdout) {
+  let start = 0;
+  while (start < stdout.length) {
+    const end = stdout.indexOf("\n", start);
+    if (end === -1) return false;
+    let event;
+    try {
+      event = JSON.parse(stdout.slice(start, end));
+    } catch {
+      return false;
+    }
+    if (typeof event?.type !== "string") return false;
+    if (event.type === "final")
+      return end + 1 === stdout.length && event.text === expectedFinal;
+    start = end + 1;
+  }
+  return false;
+}
 
 const mode = process.argv[2] ?? "call";
 assert(["chat", "call"].includes(mode), "Select chat or call.");
@@ -34,7 +62,9 @@ const { assertClientSchemaPatterns } = await importVerifierSource(
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_DEEPSEEK_COMMAND ?? "dsh";
-const lab = await mkdtemp(join(tmpdir(), "rea-deepseek-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-deepseek-client-",
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
@@ -59,11 +89,13 @@ let skillLoaded = false;
 let expectedSkillBody;
 let evidenceSeen = false;
 let finalSeen = false;
+let clientFinalSeen = false;
 let artifactDigest;
 let mainRequests = 0;
 const lifecycle = [];
 const patterns = new Set();
-const commands = await createVerifierCommands();
+const commandOwner = await createVerifierCommands();
+const commands = bindVerifierCommandInterruption(commandOwner);
 await withVerifierCleanup(async () => {
   await withVerifierCleanup(async () => {
     await Promise.all([
@@ -215,7 +247,7 @@ await withVerifierCleanup(async () => {
         }
         if (mode === "chat" || evidenceSeen) {
           finalSeen = true;
-          return { role: "assistant", content: "REA_CLIENT_COMPATIBILITY_OK" };
+          return { role: "assistant", content: expectedFinal };
         }
         const call = (name, args) => ({
           role: "assistant",
@@ -329,33 +361,47 @@ await withVerifierCleanup(async () => {
     );
     assert.equal(doctor.healthy, true);
     lifecycle.push("doctor");
-    const result = await saveVerifierCommandOutput(
-      () =>
-        commands.exec(
-          command,
-          [
-            "--profile",
-            "headless",
-            "--json",
-            mode === "chat"
-              ? "Say hello briefly."
-              : `Use REA to analyze ${target}.`,
-          ],
-          {
-            env: environment,
-            cwd: workspace,
-            timeout: 120_000,
-            stdin: "closed-pipe",
-            maxBuffer: 10 * 1024 * 1024,
-          },
-        ),
+    await saveVerifierCommandOutput(
+      async () => {
+        const result = await commands
+          .exec(
+            command,
+            [
+              "--profile",
+              "headless",
+              "--json",
+              mode === "chat"
+                ? "Say hello briefly."
+                : `Use REA to analyze ${target}.`,
+            ],
+            {
+              env: environment,
+              cwd: workspace,
+              timeout: 120_000,
+              stdin: "closed-pipe",
+              maxBuffer: 10 * 1024 * 1024,
+            },
+          )
+          .catch((cause) => {
+            const stdout = cause?.snapshot?.stdout;
+            if (stdout !== undefined && stdout.bytes === stdout.observedBytes)
+              clientFinalSeen = hasExpectedHeadlessFinal(stdout.text);
+            throw cause;
+          });
+        clientFinalSeen = hasExpectedHeadlessFinal(result.stdout);
+        return result;
+      },
       {
         stdout: join(lab, "client.stdout"),
         stderr: join(lab, "client.stderr"),
       },
     );
     assert.equal(fixture.failure, undefined);
-    assert(finalSeen && result.stdout.includes("REA_CLIENT_COMPATIBILITY_OK"));
+    assert(finalSeen, "The loopback model did not supply the expected answer");
+    assert(
+      clientFinalSeen,
+      "Harness did not emit the expected terminal final event",
+    );
     if (mode === "call") assert(evidenceSeen && skillLoaded);
     lifecycle.push(mode === "call" ? "native-tool-invocation" : "native-chat");
     const uninstall = await runRea(["uninstall"], "uninstall");
@@ -372,20 +418,24 @@ await withVerifierCleanup(async () => {
     assert.equal(await pathExists(skillPath), false);
     lifecycle.push("uninstall");
   }, [
-    () => commands.close(),
+    () => commandOwner.close(),
     async () => {
       await fixture?.close();
     },
   ]);
+  commands.throwIfInterrupted();
   passed = true;
 }, [
   async () => {
+    const completed = await completeVerifierRun(verifier);
+    const reason = commands.finish();
     const receipt = {
       client: "deepseek-harness",
       clientVersion,
       mode,
       lifecycle,
-      passed,
+      passed: passed && reason === undefined,
+      interruption: reason?.message,
       artifacts: lab,
       runtimeRoot,
       host: {
@@ -405,18 +455,32 @@ await withVerifierCleanup(async () => {
       evidenceSeen,
       artifactDigest,
       finalSeen,
+      clientFinalSeen,
       requests: fixture?.requests,
       fixtureFailure: fixture?.failure,
-      verifier: await completeVerifierRun(verifier),
+      verifier: completed,
     };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    const publishReceipt = () =>
+      withVerifierCleanup(
+        () =>
+          writeFile(
+            join(lab, "receipt.json"),
+            JSON.stringify(receipt, null, 2),
+          ),
+        [() => console.log(JSON.stringify(receipt))],
+      );
+    await withVerifierCleanup(() => {
+      if (!receipt.passed) return;
+      try {
+        assertVerifierCleanupComplete(receipt.verifier.process_lineage);
+      } catch (cause) {
+        receipt.passed = false;
+        throw cause;
+      }
+    }, [publishReceipt]);
+  },
+  () => {
+    const reason = commands.finish();
+    if (passed && reason !== undefined) throw reason;
   },
 ]);

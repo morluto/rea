@@ -9,7 +9,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { buildUImage, buildMultiPayload } from "../../fixtures/uimage.js";
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "retains uImage physical facts and unknown text through compiled MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-uimage-mcp-");
@@ -93,5 +93,4 @@ it.each(["full", "compact"] as const)(
         await rm(outputRoot, { recursive: true, force: true });
     }
   },
-  60_000,
 );

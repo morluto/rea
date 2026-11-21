@@ -1,19 +1,20 @@
 import { expect, it, vi } from "vitest";
 import * as t from "@babel/types";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
 import { JavaScriptSymbolicBindings } from "./javascriptSymbolicBindings.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import {
   symbolicTruth,
   symbolicVariants,
   type SymbolicValue,
 } from "./javascriptSymbolicValues.js";
 
-const resolverFor = (source: string) => {
+const resolverFor = (source: string, indexMemberMutationFacts?: () => void) => {
   const parsed = parseJavaScriptSource(source);
   if (parsed === null) throw new Error("symbolic source fixture did not parse");
   const state = completeSemanticSteps(
@@ -21,7 +22,12 @@ const resolverFor = (source: string) => {
   );
   return {
     parsed,
-    resolver: new JavaScriptSymbolicBindings(state, parsed.program),
+    resolver: new JavaScriptSymbolicBindings(
+      state,
+      parsed.program,
+      undefined,
+      indexMemberMutationFacts,
+    ),
   };
 };
 
@@ -32,8 +38,9 @@ const inspectFixture = (
     resolver: JavaScriptSymbolicBindings,
     node: t.CallExpression,
   ) => SymbolicValue = (resolver, node) => resolver.evaluate(node.arguments[0]),
+  indexMemberMutationFacts?: () => void,
 ) => {
-  const { parsed, resolver } = resolverFor(source);
+  const { parsed, resolver } = resolverFor(source, indexMemberMutationFacts);
   const values: SymbolicValue[] = [];
   traverseJavaScriptAst(parsed.program, {
     enter: (node) => {
@@ -48,6 +55,26 @@ const inspectFixture = (
   return { parsed, resolver, values };
 };
 
+it("requests member-mutation facts only for a late initializer proof", () => {
+  const indexMemberMutationFacts = vi.fn();
+  inspectFixture(
+    `function run() { inspect(format("value")); }
+    var format = value => value;
+    run();`,
+    undefined,
+    indexMemberMutationFacts,
+  );
+  expect(indexMemberMutationFacts).toHaveBeenCalledOnce();
+
+  indexMemberMutationFacts.mockClear();
+  inspectFixture(
+    `const value = "ready"; inspect(value);`,
+    undefined,
+    indexMemberMutationFacts,
+  );
+  expect(indexMemberMutationFacts).not.toHaveBeenCalled();
+});
+
 const inspectedValues = (source: string): SymbolicValue[] =>
   inspectFixture(source).values;
 
@@ -58,6 +85,54 @@ const inspectOne = (source: string): SymbolicValue => {
   if (value === undefined) throw new Error("inspect call result missing");
   return value;
 };
+
+it("bounds a late loader proof across 15,000 aliases", () => {
+  const aliases = Array.from({ length: 15_000 }, (_, index) =>
+    index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
+  ).join("\n");
+  const { resolver, values } = inspectFixture(`
+    function run() { inspect(load); }
+    ${aliases}
+    var load = a14999;
+  `);
+
+  expect(values).toEqual([expect.objectContaining({ kind: "unknown" })]);
+  expect(resolver.unresolvedLoader).toBe(true);
+  expect(resolver.truncated).toBe(true);
+});
+
+it("bounds a late loader proof across 15,000 expression nodes", () => {
+  // Build the accepted AST directly so this tests the resolver's depth bound
+  // independently of the source parser's own stack capacity.
+  let initializer: t.Expression = t.identifier("value0");
+  for (let index = 1; index < 15_000; index += 1)
+    initializer = t.binaryExpression(
+      "+",
+      initializer,
+      t.identifier(`value${index}`),
+    );
+  const read = t.identifier("load");
+  const program = t.program([
+    t.functionDeclaration(
+      t.identifier("run"),
+      [],
+      t.blockStatement([
+        t.expressionStatement(
+          t.callExpression(t.identifier("inspect"), [read]),
+        ),
+      ]),
+    ),
+    t.variableDeclaration("var", [
+      t.variableDeclarator(t.identifier("load"), initializer),
+    ]),
+  ]);
+  const state = completeSemanticSteps(indexJavaScriptBindingsSteps(program));
+  const resolver = new JavaScriptSymbolicBindings(state, program);
+
+  expect(resolver.evaluate(read)).toMatchObject({ kind: "unknown" });
+  expect(resolver.unresolvedLoader).toBe(true);
+  expect(resolver.truncated).toBe(true);
+});
 
 it("substitutes numeric modules, named exports and captured wrapper arguments", () => {
   const { resolver, values } = inspectFixture(`(() => {
@@ -82,6 +157,7 @@ it("substitutes numeric modules, named exports and captured wrapper arguments", 
   const env = resolver.bind(fn, []);
   expect(resolver.evaluate(fn.node.body.callee, env)).toEqual({
     kind: "external",
+    loaderAuthority: "candidate",
     path: ["electron", "ipcRenderer", "send"],
   });
   expect(resolver.arguments(fn.node.body, env)[0]).toEqual({
@@ -127,7 +203,11 @@ it("checks block lexical initializers against their containing function call", (
       );
     },
   });
-  expect(resolved).toEqual({ kind: "external", path: ["electron"] });
+  expect(resolved).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it("keeps same-factory reads before initialization unresolved", () => {
@@ -236,8 +316,16 @@ it("keeps function declarations hoisted and checks closures at invocation", () =
     inspect(localRead());
   `);
   expect(inspected[0]).toMatchObject({ kind: "function" });
-  expect(inspected[1]).toEqual({ kind: "external", path: ["electron"] });
-  expect(inspected[2]).toEqual({ kind: "external", path: ["electron"] });
+  expect(inspected[1]).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
+  expect(inspected[2]).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it("keeps a synchronous cross-function callback before initialization unresolved", () => {
@@ -288,7 +376,11 @@ it("uses completed activation provenance for a returned closure", () => {
       const value = require("electron");
       return () => value;
     }`);
-  expect(result).toEqual({ kind: "external", path: ["electron"] });
+  expect(result).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it("does not treat statements after a returned closure as initialized", () => {
@@ -898,7 +990,11 @@ it.each([
     })();`);
     expect(value.kind).toBe(kind);
     if (kind === "external")
-      expect(value).toEqual({ kind: "external", path: ["electron"] });
+      expect(value).toEqual({
+        kind: "external",
+        loaderAuthority: "candidate",
+        path: ["electron"],
+      });
   },
 );
 
@@ -910,7 +1006,11 @@ it("reads a literal prototype only from its actual prototype setter", () => {
     inspectOne(
       'inspect(({__proto__:require("electron"),ordinary:1}).__proto__);',
     ),
-  ).toEqual({ kind: "external", path: ["electron"] });
+  ).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it.each(["local", "outer"])(
@@ -1030,4 +1130,115 @@ it("keeps repeated cached queries within an independent depth budget", () => {
   );
   expect(values).toHaveLength(1);
   expect(resolver.truncated).toBe(false);
+});
+
+it("retains each external selection guard once across deep member reads", () => {
+  const { parsed, resolver } = resolverFor("if (guard) {};");
+  const condition = { node: parsed.program.body[0]!, positive: true as const };
+  let value: SymbolicValue = {
+    kind: "external",
+    path: ["electron"],
+    loaderAuthority: "candidate",
+    conditions: [condition],
+  };
+  for (let index = 0; index < 32; index++) {
+    value = resolver.property(value, `member${index}`);
+  }
+  expect(value).toMatchObject({
+    kind: "external",
+    loaderAuthority: "candidate",
+    conditions: [condition],
+  });
+  expect(resolver.truncated).toBe(false);
+});
+
+it.each([
+  [
+    "module property after replacement",
+    'module.exports={api:null};module.exports.api=require("electron");',
+    { kind: "external", loaderAuthority: "candidate", path: ["electron"] },
+  ],
+  [
+    "module property overwritten after replacement",
+    'module.exports={api:require("electron")};module.exports.api=null;',
+    { kind: "literal", value: null },
+  ],
+  [
+    "detached exports property",
+    'module.exports={api:null};exports.api=require("electron");',
+    { kind: "literal", value: null },
+  ],
+  [
+    "rebound exports parameter",
+    'module.exports={api:null};exports={api:require("electron")};',
+    { kind: "literal", value: null },
+  ],
+  [
+    "identity-preserving module write",
+    'module.exports=module.exports;exports.api=require("electron");',
+    { kind: "external", loaderAuthority: "candidate", path: ["electron"] },
+  ],
+  [
+    "identity-preserving original exports write",
+    'module.exports=exports;exports.api=require("electron");',
+    { kind: "external", loaderAuthority: "candidate", path: ["electron"] },
+  ],
+  [
+    "reconnected exports parameter",
+    'module.exports={api:null};exports=module.exports;exports.api=require("electron");',
+    { kind: "external", loaderAuthority: "candidate", path: ["electron"] },
+  ],
+  [
+    "rebound module parameter",
+    'module={exports:{}};module.exports.api=require("electron");',
+    { kind: "unknown", reason: "ambiguous export writes" },
+  ],
+] as const)("retains namespace write order for %s", (_name, body, expected) => {
+  const value = inspectOne(`(() => {
+    const modules={
+      1(module,exports){${body}},
+      2(module,exports,load){inspect(load(1).api);}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(2);
+  })();`);
+  expect(value).toEqual(expected);
+});
+
+it("lists members added to the public module object after its replacement", () => {
+  const { resolver, values } = inspectFixture(`(() => {
+    const modules={
+      1(module,exports){module.exports={first:1};module.exports.later=2;exports.detached=3;},
+      2(module,exports,load){inspect(load(1));}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(2);
+  })();`);
+  expect(values).toHaveLength(1);
+  expect(resolver.members(values[0]!)).toEqual(["first", "later"]);
+});
+
+it("derives bridge paths from the latest public module member writes", () => {
+  const result = analyzeJavaScriptStaticSource(`(() => {
+    const modules={
+      1(module,exports){
+        const e=require("electron");
+        module.exports={action:()=>e.ipcRenderer.send("stale")};
+        module.exports.action=()=>e.ipcRenderer.send("current");
+        exports.detached=()=>e.ipcRenderer.send("detached");
+      },
+      2(module,exports,load){
+        const api=load(1);
+        require("electron").contextBridge.exposeInMainWorld("desktop",api);
+      }
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(2);
+  })();`);
+  expect(
+    result.electron.call_paths?.map(({ entry, channel }) => ({
+      entry,
+      channel,
+    })),
+  ).toEqual([{ entry: "desktop.action", channel: "current" }]);
 });

@@ -3,6 +3,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { validationIssueOptions } from "../../domain/evidenceValidation.js";
 import {
   PROCESS_COMPARISON_DIMENSIONS,
   type ProcessCaptureComparison,
@@ -16,6 +17,7 @@ import type { RecordUnknownInput } from "../../domain/residualUnknown.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   parseProcessCaptureEvidence,
+  wrongWorkflowIssueFacts,
   type ProcessCaptureEvidenceFailure,
 } from "./ProcessEvidence.js";
 import {
@@ -34,7 +36,6 @@ export const compareProcessEvidence = (
   lookup?: EvidenceLookup,
   options: {
     readonly signal?: AbortSignal;
-    readonly now?: () => number;
   } = {},
 ): Result<ProcessComparisonExecution, AnalysisError> => {
   const selected = resolveEvidenceRequest(
@@ -57,7 +58,6 @@ export const compareProcessEvidence = (
     ...(request.trace_spec === undefined
       ? {}
       : { traceSpecification: request.trace_spec }),
-    ...(options.now === undefined ? {} : { now: options.now }),
   });
 };
 
@@ -112,6 +112,8 @@ export const readProcessComparisonSource = (
       return err(
         new EvidenceIntegrityError(`${side} Evidence failed validation`, {
           cause: failure.cause,
+          side,
+          ...validationIssueOptions(failure.cause, []),
           userMessage: `The ${side} Evidence failed validation (${describeValidationFailure(failure.cause)}). Supply unmodified capture Evidence from capture_process_scenario.`,
         }),
       );
@@ -122,31 +124,42 @@ export const readProcessComparisonSource = (
             path: [side],
             reason: "invalid_value",
             message: `Expected process capture Evidence (operation ${failure.expected.operation}, predicate ${failure.expected.predicate}); the ${side} Evidence has operation ${failure.actual.operation} and predicate ${failure.actual.predicate}.`,
+            ...wrongWorkflowIssueFacts(failure),
           },
         ]),
       );
     case "unsupported-provider":
-      return err(
-        new AnalysisInputError(operation, undefined, [
-          {
-            path: [side, "provider"],
-            reason: "invalid_value",
-            message: `The ${side} Evidence provider ${failure.provider.id} v${failure.provider.version} (${failure.provider.name}) is not the current or supported legacy ${PROCESS_PROVIDER.id} v${PROCESS_PROVIDER.version} process capture provider.`,
-          },
-        ]),
-      );
+      return err(unsupportedProcessCaptureProvider(side, failure));
     case "invalid-capture":
       return err(
         new EvidenceIntegrityError(
           `${side} process capture failed validation`,
           {
             cause: failure.cause,
+            side,
+            ...validationIssueOptions(failure.cause, ["normalized_result"]),
             userMessage: `The ${side} Evidence has an invalid process capture result (${describeValidationFailure(failure.cause)}). Recreate the capture with capture_process_scenario.`,
           },
         ),
       );
   }
 };
+
+/** Report the same provider admission failure at both public adapters. */
+export const unsupportedProcessCaptureProvider = (
+  side: "left" | "right",
+  failure: Extract<
+    ProcessCaptureEvidenceFailure,
+    { kind: "unsupported-provider" }
+  >,
+): AnalysisInputError =>
+  new AnalysisInputError("compare_process_captures", undefined, [
+    {
+      path: [side, "provider"],
+      reason: "invalid_value",
+      message: `The ${side} Evidence provider ${failure.provider.id} v${failure.provider.version} (${failure.provider.name}) is not the current or supported legacy ${PROCESS_PROVIDER.id} v${PROCESS_PROVIDER.version} process capture provider.`,
+    },
+  ]);
 
 const comparisonUnknownInput = (
   parsed: {

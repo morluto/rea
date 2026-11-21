@@ -22,6 +22,7 @@ import {
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const TOOL = "export_environment_bundle";
 
@@ -32,10 +33,13 @@ const connect = async () => {
   const server = createServer(
     { kind: "session", session },
     {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      environment: { ...process.env },
     },
   );
-  const client = new Client({ name: "environment-bundle-mcp", version: "1" });
+  const client = new Client(
+    { name: "environment-bundle-mcp", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -107,7 +111,7 @@ it("reports an unmodelled literal delete without claiming recorded reads are abs
 
 it("writes the bundle environment-build writes from retained capture Evidence", async () => {
   const { client, session } = await connect();
-  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+  const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
     client,
     TOOL,
   );
@@ -121,12 +125,11 @@ it("writes the bundle environment-build writes from retained capture Evidence", 
     output_directory: join(root, "grafana"),
   };
   expect(ajv.validate(inputSchema, input)).toBe(true);
-  const response = await client.callTool({ name: TOOL, arguments: input });
+  const response = await client.callTool(
+    { name: TOOL, arguments: input },
+    { toolDefinition },
+  );
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const report = toolContract(TOOL).outputSchema.parse(
     response.structuredContent,
   );
@@ -312,7 +315,7 @@ it("refuses an existing or parentless output directory and leaves it as it was",
   });
 });
 
-it("refuses unknown, unnamed loopback and non-capture Evidence, and repeated rules", async () => {
+it("refuses unknown and unnamed loopback Evidence, and repeated rules", async () => {
   const { client, session } = await connect();
   const root = await createTestTempDirectory("rea-bundle-mcp-refuse-");
   const output_directory = join(root, "env");

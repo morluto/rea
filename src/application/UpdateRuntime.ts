@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { realpath, stat } from "node:fs/promises";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -6,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { lt, valid } from "semver";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import {
@@ -19,6 +20,7 @@ import {
 } from "./Update.js";
 import { planIntegrationMaintenance } from "./UpdateMaintenance.js";
 import { UpdateCommandRunner } from "./UpdateCommandRunner.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** npm filesystem queries used to identify the installation being updated. */
 export interface NpmInstallationHost {
@@ -144,7 +146,7 @@ const INVALID_NPM_RELEASE_METADATA =
   "Invalid npm release metadata: expected a version string or a single-element version array.";
 
 /** bun info arguments for dist-tags.latest; Bun resolves its configured registry. */
-export const BUN_LATEST_VERSION_COMMAND: readonly string[] = [
+const BUN_LATEST_VERSION_COMMAND: readonly string[] = [
   "bun",
   "info",
   PRODUCT_IDENTITY.packageName,
@@ -153,7 +155,7 @@ export const BUN_LATEST_VERSION_COMMAND: readonly string[] = [
 ];
 
 /** npm view arguments for dist-tags.latest, scoped to the owning prefix when known. */
-export const npmLatestVersionCommand = (
+const npmLatestVersionCommand = (
   installation: NpmInstallation | undefined,
 ): readonly string[] => [
   "npm",
@@ -171,11 +173,9 @@ export const npmLatestVersionCommand = (
  * Read one latest version from `npm view --json`.
  * npm 11 emits a JSON string. npm 12 emits that string as a one-element array.
  */
-export const parseNpmLatestVersion = (
-  metadata: string,
-): Result<string, string> => {
+const parseNpmLatestVersion = (metadata: string): Result<string, string> => {
   const decoded = safeParseJson(metadata);
-  if (!decoded.ok) return err(decoded.error);
+  if (!decoded.ok) return decoded;
   const version = readNpmLatestVersion(decoded.value);
   return version === undefined
     ? err(INVALID_NPM_RELEASE_METADATA)
@@ -193,7 +193,7 @@ const nonemptyVersion = (value: string): string | undefined =>
   value.length === 0 ? undefined : value;
 
 /** Classify `npm view` or `bun info` output as a version or a lookup failure. */
-export const npmReleaseLookup = (
+const npmReleaseLookup = (
   response: Result<string, string>,
 ): Result<string, ReleaseLookupFailure> => {
   if (!response.ok) return err({ kind: "unavailable", detail: response.error });
@@ -241,6 +241,7 @@ export const systemUpdateHost = (
   packageRoot = fileURLToPath(new URL("../..", import.meta.url)),
   home: string | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): UpdateHost => {
   const resources = new ArtifactResourceScope();
   const commands = new UpdateCommandRunner();
@@ -253,7 +254,7 @@ export const systemUpdateHost = (
     installation: async () =>
       (await detectBunInstallation(
         packageRoot,
-        bunGlobalDirectory(environment, process.platform),
+        bunGlobalDirectory(environment, platform),
         { canonicalPath: realpath, isFile },
       )) ??
       detectNpmInstallation(packageRoot, {
@@ -323,14 +324,14 @@ export const systemUpdateHost = (
     },
     planMaintenance: (installation) =>
       planIntegrationMaintenance(
-        home ?? homeDirectoryFromEnvironment(environment, process.platform),
+        home ?? homeDirectoryFromEnvironment(environment, platform),
         join(installation.packageRoot, "scripts", "rea.mjs"),
         environment,
         async (command) => {
           const result = await commands.runProbe(command, environment);
           return result.ok ? result : err(result.error.detail);
         },
-        resources,
+        { platform, resources },
       ),
     close: async () => {
       const results = await Promise.allSettled([
@@ -338,13 +339,7 @@ export const systemUpdateHost = (
         resources.close(),
       ]);
       const failures = results.flatMap((result) =>
-        result.status === "rejected"
-          ? [
-              result.reason instanceof Error
-                ? result.reason.message
-                : String(result.reason),
-            ]
-          : [],
+        result.status === "rejected" ? [errorMessage(result.reason)] : [],
       );
       return failures.length === 0
         ? undefined

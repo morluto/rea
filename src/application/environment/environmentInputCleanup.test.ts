@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 
 import { writeEnvironmentServeFiles } from "../../../tests/fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperation.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { readEnvironmentExportInputs } from "./environmentExport.js";
 

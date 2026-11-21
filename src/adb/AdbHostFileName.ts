@@ -21,7 +21,7 @@ const WINDOWS_RESERVED_BASENAME =
  */
 export const adbHostFileName = (
   devicePath: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): AdbHostFileNameResult => {
   if (devicePath === "" || devicePath.endsWith("/"))
     return { ok: false, reason: "empty_file_name" };

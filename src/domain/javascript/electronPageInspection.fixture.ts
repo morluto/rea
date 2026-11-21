@@ -26,7 +26,11 @@ export const emptyElectronPageCoverage = (observationMs = 0) => ({
     },
   }),
   frames: [],
-  dom: { total_nodes: 0, nodes: [] },
+  dom: {
+    total_nodes: 0,
+    node_value_length_unit: "utf8-bytes" as const,
+    nodes: [],
+  },
   scripts: { total: 0, items: [] },
   resources: [],
   workers: [],

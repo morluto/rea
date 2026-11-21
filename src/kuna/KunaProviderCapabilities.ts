@@ -6,7 +6,7 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
   ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
@@ -28,6 +28,9 @@ export const KUNA_STRING_LIMITATION =
 
 export const KUNA_XREF_LIMITATION =
   "Kuna's static reference walk unifies forwarding aliases and omits references internal to that alias class. REA keeps only exact-address incoming edges; an empty result does not prove no reference exists.";
+
+export const KUNA_VALUE_FLOW_UNAVAILABLE =
+  "REA's Kuna provider does not report native def-use observations.";
 
 /** Whether an operation is one Kuna answers. */
 export const isKunaOperation = (
@@ -104,6 +107,20 @@ export const kunaCapabilities = (
   KUNA_OPERATIONS.map((operation) => ({
     provider: KUNA_PROVIDER_IDENTITY,
     operation,
+    ...(operation === "analyze_function"
+      ? {
+          nativeValueFlow: {
+            status: "unavailable" as const,
+            reason: KUNA_VALUE_FLOW_UNAVAILABLE,
+          },
+        }
+      : {}),
+    ...(operation === "procedure_pseudo_code"
+      ? {
+          independentDecompile: true as const,
+          callDestinationDecompile: true as const,
+        }
+      : {}),
     ...(availability.status === "available"
       ? ({ available: true, reason: null } as const)
       : ({

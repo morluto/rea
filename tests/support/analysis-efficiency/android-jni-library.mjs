@@ -45,52 +45,57 @@ async function verify(expected, variant) {
   for (const row of facts.exports)
     assert.equal(row.address, expected.exports[row.name].address);
   const rows = facts.tables.flatMap((table) => table.entries);
-  if (variant === "aps2") {
-    assert.equal(facts.coverage.tables_status, "unknown");
-    assert.equal(rows.length, 0);
-    assert.ok(facts.unknowns.some((unknown) => unknown.includes("APS2")));
-  } else
-    for (const row of expected.tables) {
-      const actual = rows.find(
-        (candidate) => candidate.slots[0]?.address === row.slots[0]?.address,
-      );
-      assert.ok(
-        actual,
-        `missing ${expected.path} ${row.name} at ${row.slots[0]?.address}`,
-      );
-      assert.equal(actual.name, row.name);
-      assert.equal(actual.descriptor, row.descriptor);
-      assert.equal(actual.function_address, row.function_address);
-      const code =
-        expected.machine === 40
-          ? BigInt(row.function_address) & ~1n
-          : BigInt(row.function_address);
-      assert.equal(actual.code_address, `0x${code.toString(16)}`);
-      const load = expected.loads.find(
-        (load) =>
-          load.type === 1 &&
-          (load.flags & 1) !== 0 &&
-          code >= BigInt(load.address) &&
-          code < BigInt(load.address + load.file_bytes),
-      );
-      assert.ok(load, "independent executable segment must cover the function");
+  for (const row of expected.tables) {
+    const actual = rows.find(
+      (candidate) => candidate.slots[0]?.address === row.slots[0]?.address,
+    );
+    assert.ok(
+      actual,
+      `missing ${expected.path} ${row.name} at ${row.slots[0]?.address}`,
+    );
+    assert.equal(actual.name, row.name);
+    assert.equal(actual.descriptor, row.descriptor);
+    assert.equal(actual.function_address, row.function_address);
+    const code =
+      expected.machine === 40
+        ? BigInt(row.function_address) & ~1n
+        : BigInt(row.function_address);
+    assert.equal(actual.code_address, `0x${code.toString(16)}`);
+    const load = expected.loads.find(
+      (load) =>
+        load.type === 1 &&
+        (load.flags & 1) !== 0 &&
+        code >= BigInt(load.address) &&
+        code < BigInt(load.address + load.file_bytes),
+    );
+    assert.ok(load, "independent executable segment must cover the function");
+    assert.equal(
+      actual.function_file_offset,
+      Number(code - BigInt(load.address) + BigInt(load.offset)),
+    );
+    for (const [index, slot] of row.slots.entries()) {
+      assert.equal(actual.slots[index]?.address, slot.address);
       assert.equal(
-        actual.function_file_offset,
-        Number(code - BigInt(load.address) + BigInt(load.offset)),
+        actual.slots[index]?.file_offset,
+        Number(BigInt(slot.file_offset)),
       );
-      for (const [index, slot] of row.slots.entries()) {
-        assert.equal(actual.slots[index]?.address, slot.address);
-        assert.equal(
-          actual.slots[index]?.file_offset,
-          Number(BigInt(slot.file_offset)),
+      assert.equal(actual.slots[index]?.value, slot.resolved_word);
+      assert.equal(
+        actual.slots[index]?.relocation?.encoding,
+        slot.logical_encoding ?? slot.encoding.toLowerCase(),
+      );
+      if (slot.packing !== undefined) {
+        assert.deepEqual(
+          actual.slots[index]?.relocation?.packing,
+          slot.packing,
         );
-        assert.equal(actual.slots[index]?.value, slot.resolved_word);
         assert.equal(
-          actual.slots[index]?.relocation?.encoding,
-          slot.encoding.toLowerCase(),
+          actual.slots[index]?.relocation?.record_file_offset,
+          slot.record_file_offset,
         );
       }
     }
+  }
   receipts.push({
     path: expected.path,
     sha256: expected.sha256,
@@ -98,7 +103,7 @@ async function verify(expected, variant) {
     elapsed_ms: elapsed,
     exports: facts.exports.length,
     entries: rows.length,
-    verified_entries: variant === "aps2" ? 0 : expected.tables.length,
+    verified_entries: expected.tables.length,
     coverage: facts.coverage,
     unknowns: facts.unknowns,
   });
@@ -118,12 +123,12 @@ if (Object.hasOwn(oracle, "conscrypt")) {
 const fingerprints = {};
 for (const relative of [
   ".",
-  "../metadata/ElfPointerRelocations",
-  "../exports/NativeExportParser",
-  "../metadata/ElfImage",
-  "../metadata/NativeSectionDirectory",
-  "../../domain/elfRelocation",
-  "../../domain/elfDynamicEntry",
+  "../native/elfPointerRelocations",
+  "../native/nativeExportParser",
+  "../native/elfImage",
+  "../native/nativeSectionDirectory",
+  "../elfRelocation",
+  "../elfDynamicEntry",
 ]) {
   const path =
     relative === "."

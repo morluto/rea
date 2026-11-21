@@ -96,7 +96,9 @@ const runtimeResult = (
     case "DOM.querySelector":
       return { nodeId: command.params.selector === "#missing" ? 0 : 2 };
     case "DOM.describeNode":
-      return { node: { backendNodeId: 22 } };
+      return {
+        node: { backendNodeId: 22, nodeType: 1, nodeName: "BUTTON" },
+      };
     case "DOM.resolveNode":
       return { object: { objectId: "selected-node-object" } };
     case "DOMDebugger.getEventListeners":

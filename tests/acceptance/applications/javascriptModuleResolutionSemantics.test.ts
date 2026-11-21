@@ -10,6 +10,12 @@ import {
 } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
+const declarationFallbacks = [
+  ["./dep.js", "dep.d.ts"],
+  ["./cfg.mjs", "cfg.d.mts"],
+  ["./legacy.cjs", "legacy.d.cts"],
+] as const;
+
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "preserves module classification and explicit source identities through %s",
   async (surface, { cli }) => {
@@ -55,11 +61,15 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ]
         .map((specifier) => `require(${JSON.stringify(specifier)});`)
         .join("\n"),
-      "fallback.cts": 'require("./only.js");',
+      "fallback.cts": declarationFallbacks
+        .map(([specifier]) => `require(${JSON.stringify(specifier)});`)
+        .join("\n"),
+      "fallback.mts": declarationFallbacks
+        .map(([specifier]) => `import ${JSON.stringify(specifier)};`)
+        .join("\n"),
       "dep.d.ts": "export declare const value: number;",
       "cfg.d.mts": "export declare const value: number;",
       "legacy.d.cts": "export declare const value: number;",
-      "only.d.ts": "export declare const value: number;",
       "dep.mjs": 'throw new Error("must never load");',
       "local.file.mjs": 'throw new Error("must never load");',
       "node_modules/dep.mjs": 'throw new Error("must never load");',
@@ -125,17 +135,26 @@ console.log(JSON.stringify({
       for (const edge of matches)
         expect(edge.properties.resolved_path).toBeNull();
     }
-    for (const suffix of ["dep.d.ts", "cfg.d.mts", "legacy.d.cts"]) {
-      const matches = edges(`./${suffix}`);
-      expect(matches.length, suffix).toBeGreaterThan(0);
+    for (const [specifier, declaration] of declarationFallbacks) {
+      const matches = edges(`./${declaration}`);
+      expect(matches.length, declaration).toBeGreaterThan(0);
       for (const edge of matches)
         expect(edge.properties).toMatchObject({
           resolution_status: "resolved",
-          resolved_path: suffix,
+          resolved_path: declaration,
         });
+      const fallbacks = edges(specifier).map(({ properties }) => properties);
+      for (const moduleKind of ["import", "require"])
+        expect(fallbacks, specifier).toContainEqual(
+          expect.objectContaining({
+            module_link_kind: moduleKind,
+            resolution_status: "unavailable",
+            resolved_path: null,
+            candidate_path: declaration,
+          }),
+        );
     }
     for (const [specifier, status] of [
-      ["./only.js", "unavailable"],
       ["./absent.mjs", "not-found"],
       ["mapped/missing", "not-found"],
       ["mapped/invalid", "rejected"],
@@ -148,5 +167,43 @@ console.log(JSON.stringify({
           resolved_path: null,
         });
     }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "selects import exports for uppercase loader suffixes through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-uppercase-import-");
+    await writeFixtureFiles(root, {
+      "uppercase.CJS": 'import "dual-condition";',
+      "uppercase.CTS": 'import "dual-condition";',
+      "node_modules/dual-condition/package.json": JSON.stringify({
+        exports: { import: "./import.mjs", require: "./require.cjs" },
+      }),
+      "node_modules/dual-condition/import.mjs": "export default 1;",
+      "node_modules/dual-condition/require.cjs": "module.exports = 2;",
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    const imports = result.graph.edges.filter(
+      (edge) =>
+        edge.relation === "imports" &&
+        edge.properties.specifier === "dual-condition",
+    );
+    for (const source of ["uppercase.CJS", "uppercase.CTS"])
+      expect(
+        imports.some(
+          ({ evidence }) =>
+            evidence.location.available &&
+            evidence.location.value.kind === "source-range" &&
+            evidence.location.value.source === source,
+        ),
+        source,
+      ).toBe(true);
+    for (const edge of imports)
+      expect(edge.properties).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "node_modules/dual-condition/import.mjs",
+      });
   },
 );

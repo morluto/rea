@@ -1,10 +1,10 @@
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
-} from "../domain/hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
 import type { ProviderProcessDiagnostic } from "../process/ProviderProcess.js";
 import { parseLinuxPrivateDisplayDiagnostic } from "./LinuxPrivateDisplayDiagnostic.js";
-import type { HopperLauncherOutcome } from "../domain/hopperErrors.js";
+import type { HopperLauncherOutcome } from "./HopperErrors.js";
 
 /** Recognize launcher stderr signatures only with complete, empty stdout. */
 const hasCompleteLauncherOutput = (outcome: HopperLauncherOutcome): boolean =>

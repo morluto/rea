@@ -4,7 +4,7 @@ import {
   SdkErrorCode,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import type { Result } from "../domain/result.js";
@@ -12,6 +12,7 @@ import {
   McpHttpUtf8Error,
   validateMcpHttpResponse,
 } from "../providers/Utf8McpResponse.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Physical SDK failure captured before any subsequent resource cleanup. */
 export class JebMcpPhysicalFailure extends Error {
@@ -156,11 +157,7 @@ export class JebMcpConnectionOwner {
       "jeb",
       this.cleanupResources,
       {
-        reason: failures
-          .map((cause) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        reason: failures.map((cause) => errorMessage(cause)).join("; "),
       },
       {
         operation: "close_jeb_connection",
