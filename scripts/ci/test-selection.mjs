@@ -133,12 +133,14 @@ const isProse = (path) =>
     !DOCS_CODE.test(path) &&
     !path.endsWith("/package.json")) ||
   path.startsWith("licenses/");
-const isNonModuleFixture = (path) =>
+const isTraceableFixture = (path) =>
   path.startsWith("tests/fixtures/") &&
-  !isModule(path) &&
+  !isTest(path) &&
   !isProse(path) &&
   !isCheckerInput(path) &&
   explicitTestOwners(path).length === 0;
+const isNonModuleFixture = (path) =>
+  isTraceableFixture(path) && !isModule(path);
 /** Why a changed path cannot be traced to tests, if it cannot. */
 const untracedInput = (path) =>
   !isTest(path) && SHARED_BOUNDARY.test(path)
@@ -247,10 +249,9 @@ export function traceAffectedTests({ files, snapshot }) {
   const names = (test, paths) =>
     paths.some((path) => (sources.get(test) ?? "").includes(path));
 
-  // A changed non-module fixture under tests/fixtures/ that no test reaches
-  // via URL/import or path literal (for example, a directory-scanned asset)
-  // fails closed to the complete suite.
-  for (const fixture of changedNonModuleFixtures) {
+  // A fixture without a traced import or literal path may be loaded through
+  // a computed locator. Other selected files do not establish fixture coverage.
+  for (const fixture of files.filter(isTraceableFixture)) {
     const reached = throughHelpers([fixture]);
     const paths = [fixture, ...[...reached].filter(isNamedTarget)];
     if (

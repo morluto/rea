@@ -443,6 +443,30 @@ it("does not credit a fixture test as coverage for an unrelated shared script", 
   });
 });
 
+it("does not let an unrelated changed test mask an untraced fixture module", async () => {
+  const { directory } = await fixture();
+  const implementation = "tests/fixtures/dynamic/provider.ts";
+  const consumer = "tests/boundary/filesystem/dynamicFixture.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [consumer],
+    "await import(`../../fixtures/dynamic/${fixtureName}.js`);\n",
+  );
+  const base = await change(directory, [implementation, unrelated]);
+  const head = await change(
+    directory,
+    [implementation, unrelated],
+    "changed\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: `Input is not traced to tests: ${implementation}`,
+    },
+  });
+});
+
 it("selects the tests a pull request affects and runs everything when it cannot decide", async () => {
   const { directory } = await fixture();
   // The entrypoint's output file is not part of the change.
