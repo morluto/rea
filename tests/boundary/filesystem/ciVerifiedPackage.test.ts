@@ -255,6 +255,8 @@ import { readFile } from "node:fs/promises";
 import { prepareNpmPublication } from "./prepare-npm-publication.mjs";
 const state = JSON.parse(await readFile("registry-state.json", "utf8"));
 await prepareNpmPublication(async (url) => {
+  if (url === "https://registry.npmjs.org/rea-agents/" + Object.keys(state.body.versions)[0] && state.status === 404)
+    return new Response(null, { status: 404 });
   if (url !== "https://registry.npmjs.org/rea-agents") throw new Error("Unexpected registry origin");
   return Response.json(state.body, { status: state.status });
 });
