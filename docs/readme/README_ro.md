@@ -315,6 +315,10 @@ Raportează vulnerabilitățile conform [SECURITY.md](../../SECURITY.md).
 Mulțumim tuturor celor care folosesc REA, raportează erori, propun funcționalități,
 testează versiuni și contribuie cu remedieri.
 
+<a href="https://rea.tools/ro/contributors/">
+  <img src="https://contrib.rocks/image?repo=morluto/rea&amp;max=500&amp;columns=30" alt="Colaboratorii REA" />
+</a>
+
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date&amp;theme=dark&amp;legend=top-left" />
