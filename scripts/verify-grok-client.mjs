@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import Ajv2020 from "ajv/dist/2020.js";
+import { GrokCatalogDiscovery } from "./verify/clients/grok-catalog.mjs";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
@@ -54,14 +54,9 @@ let diagnosticsRequested = false;
 let diagnosticsVerified = false;
 let lastTool;
 let catalogChecked = false;
+const catalog = new GrokCatalogDiscovery(expectedNames);
+let catalogQuery;
 let catalogSize = null;
-// The native keyword search limit is uint8. Keep each query through partial
-// replies, then query missing canonical names and verify the complete union.
-const searchLimit = 255;
-const discovered = new Map();
-const searchedQueries = new Set();
-const discoveryPages = [];
-let pendingQuery = "rea";
 let schemasChecked = 0;
 let analysisRequested = false;
 let evidenceSeen = false;
@@ -114,10 +109,6 @@ await withVerifierCleanup(async () => {
             `export function extra${index}() { return { index: ${index}, tag: "GROK_LARGE_FIXTURE" }; }`,
         ).join("\n"),
     );
-    const schemaValidator = new Ajv2020({
-      strict: false,
-      validateFormats: false,
-    });
     const shellQuote = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
     const containsText = (value, text) => {
       if (typeof value === "string") return value.includes(text);
@@ -255,55 +246,22 @@ await withVerifierCleanup(async () => {
             );
             diagnosticsVerified = true;
           }
-          if (discovery?.status !== "ready")
-            return call("search_tool", {
-              query: pendingQuery,
-              limit: searchLimit,
-            });
-          discoveryPages.push({ query: pendingQuery, response: discovery });
-          searchedQueries.add(pendingQuery);
-          for (const tool of discovery.results
-            .filter((result) => result.server === "rea")
-            .flatMap((result) => result.tools)) {
-            const previous = discovered.get(tool.tool_name);
-            if (previous !== undefined)
-              assert.deepEqual(
-                previous.input_schema,
-                tool.input_schema,
-                `${tool.tool_name}: native input schema changed between queries`,
-              );
-            discovered.set(tool.tool_name, tool);
+          if (discovery?.status !== "ready") {
+            catalogQuery ??= "rea";
+            return call("search_tool", { query: catalogQuery, limit: 255 });
           }
-          const missing = expectedNames.filter((name) => !discovered.has(name));
-          const nextQuery = missing.find((name) => !searchedQueries.has(name));
-          if (nextQuery !== undefined) {
-            pendingQuery = nextQuery;
-            return call("search_tool", {
-              query: pendingQuery,
-              limit: searchLimit,
-            });
-          }
-          const inventory = [...discovered.values()];
-          catalogSize = inventory.length;
-          assert.deepEqual(
-            inventory.map((tool) => tool.tool_name).sort(),
-            expectedNames,
-            "Native search_tool must discover the complete REA catalog",
-          );
-          for (const tool of inventory) {
-            assert(
-              tool.input_schema,
-              `${tool.tool_name}: missing input schema`,
-            );
-            assert(
-              schemaValidator.validateSchema(tool.input_schema),
-              `${tool.tool_name}: invalid advertised schema: ${JSON.stringify(schemaValidator.errors)}`,
-            );
-            schemasChecked++;
+          const missing = catalog.accept(discovery, catalogQuery);
+          catalogSize = catalog.size;
+          schemasChecked = catalog.size;
+          if (missing !== undefined) {
+            // Native search_tool's uint8 limit caps one query, not the catalog.
+            // Query only uncovered names; never infer completeness from a page.
+            catalogQuery = missing;
+            return call("search_tool", { query: catalogQuery, limit: 255 });
           }
           await writeFile(
             join(lab, "native-discovery.json"),
-            JSON.stringify(discoveryPages),
+            JSON.stringify(catalog.pages),
           );
           catalogChecked = true;
           analysisRequested = true;
@@ -554,10 +512,10 @@ enabled = false
       discovery:
         "native GROK_HOME, isolated additional skill directory, disabled foreign compatibility sources; default OS-home skill discovery and Windows unverified",
       interface:
-        "default native search_tool/use_tool with bounded keyword queries checked against the complete catalog; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
+        "default native search_tool/use_tool with accumulated explicit inventory queries and missing-name follow-ups; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
       catalogChecked,
       catalogSize,
-      discoveryQueries: discoveryPages.map((page) => page.query),
+      discoveryQueries: catalog.queries,
       schemasChecked,
       skillLoaded,
       diagnosticsRequested,

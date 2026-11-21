@@ -72,6 +72,19 @@ it.skipIf(process.platform === "win32")(
         const client = provider.createClient(target.value, profile.value.profile);
         try {
           const result = await client.execute('list_documents', {});
+          // Package verification exercises these enhanced fixture replies on
+          // macOS. Validate them through the production bridge boundary here
+          // too, so stricter reply contracts cannot silently strand that lane.
+          for (const [operation, input] of [
+            ['list_segments', {}],
+            ['list_procedures', {}],
+            ['list_strings', {}],
+            ['analyze_function', { procedure: '0x1000' }],
+            ['xrefs', { address: '0x1000' }],
+          ]) {
+            const reply = await client.execute(operation, input);
+            if (!reply.ok) throw reply.error;
+          }
           results.push({ selected, availability, profile: true, executed: result.ok, marker });
         } finally {
           const closed = await client.close();

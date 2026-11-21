@@ -24,7 +24,7 @@ import {
   RIZIN_COMMAND_REPAIR,
   RIZIN_PROVIDER_IDENTITY,
 } from "../rizin/RizinProviderIdentity.js";
-import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecutable.js";
+import { resolveWindowsProviderExecutable } from "../process/WindowsProviderExecutable.js";
 
 export const createReverseEngineeringCommandPort = (
   environment: Readonly<NodeJS.ProcessEnv>,

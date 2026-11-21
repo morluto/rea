@@ -62,6 +62,7 @@ import type { JadxLauncher } from "./JadxMcpTransport.js";
 
 import { JadxSession } from "./JadxSession.js";
 import { captureJadxFailure } from "./JadxFailure.js";
+import { awaitPredecessor } from "../domain/awaitPredecessor.js";
 import {
   JADX_BRIDGE_SOURCE_URL,
   jadxBridgeIdentity,
@@ -76,17 +77,7 @@ const waitForTurn = (
   predecessor: Promise<void>,
   request: AndroidRequest,
   signal?: AbortSignal,
-): Promise<void> =>
-  new Promise((resolve, reject) => {
-    const abort = () =>
-      reject(cancelledBy(request.operation, carriedReason(signal?.reason)));
-    signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted === true) abort();
-    void predecessor.then(() => {
-      signal?.removeEventListener("abort", abort);
-      resolve();
-    });
-  });
+): Promise<void> => awaitPredecessor(predecessor, request.operation, signal);
 
 const androidTargetChanged = (
   operation: string,

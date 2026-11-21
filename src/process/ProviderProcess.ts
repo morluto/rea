@@ -14,7 +14,10 @@ import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
 
-import { WindowsOwnedProcess } from "../windows/WindowsOwnedProcess.js";
+import {
+  WindowsOwnedProcess,
+  isWindowsExecutableLaunchFailure,
+} from "../windows/WindowsOwnedProcess.js";
 
 import {
   ProcessOutputTokenScanner,
@@ -73,6 +76,12 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly sweepTokenOwnedProcesses?: boolean;
   /** Cancels native ownership preparation before provider process creation. */
   readonly signal?: AbortSignal;
+  /**
+   * Synchronous launch-boundary observation; must not throw. Preparation does
+   * not emit an event. `attempting` means execution may begin; `not_started`
+   * follows only when the launcher proves that process creation failed.
+   */
+  readonly onLaunchState?: (state: "attempting" | "not_started") => void;
 }
 
 /** Spawned process paired with the identity proof required for group cleanup. */
@@ -358,19 +367,29 @@ export const spawnOwnedProviderProcess = async (
     platform,
   );
   if (platform === "win32" && HOST_PLATFORM.platform === "win32") {
-    const child = new WindowsOwnedProcess(
-      options.command,
-      options.arguments,
-      options.cwd,
-      environment,
-      options.windowsVerbatimArguments ?? false,
-      {
-        protocolStdin: options.stdin === "pipe",
-        ...(options.memoryLimitBytes === undefined
-          ? {}
-          : { memoryLimitBytes: options.memoryLimitBytes }),
-      },
-    );
+    // A native constructor failure can occur after execution begins. Retain
+    // the attempted state unless the native boundary supplies no-start proof.
+    options.onLaunchState?.("attempting");
+    let child: WindowsOwnedProcess;
+    try {
+      child = new WindowsOwnedProcess(
+        options.command,
+        options.arguments,
+        options.cwd,
+        environment,
+        options.windowsVerbatimArguments ?? false,
+        {
+          protocolStdin: options.stdin === "pipe",
+          ...(options.memoryLimitBytes === undefined
+            ? {}
+            : { memoryLimitBytes: options.memoryLimitBytes }),
+        },
+      );
+    } catch (cause) {
+      if (isWindowsExecutableLaunchFailure(cause))
+        options.onLaunchState?.("not_started");
+      throw cause;
+    }
     return {
       process: child,
       ownership: {
@@ -385,6 +404,7 @@ export const spawnOwnedProviderProcess = async (
   if (options.memoryLimitBytes !== undefined)
     throw new ProcessAdmissionError("memory_limit_unsupported");
   let child: ChildProcess;
+  options.onLaunchState?.("attempting");
   try {
     child = spawn(options.command, [...options.arguments], {
       shell: false,
@@ -395,10 +415,13 @@ export const spawnOwnedProviderProcess = async (
       env: environment,
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     });
+    await waitForSpawn(child);
   } catch (cause: unknown) {
+    // A pre-spawn error proves no execution; later failures belong to the
+    // supervisor. Preserve that fact alongside the exact executable diagnostic.
+    options.onLaunchState?.("not_started");
     throw nameSpawnedExecutable(cause, options.command);
   }
-  await waitForSpawn(child);
   const pid = child.pid;
   if (pid === undefined)
     throw new ProcessAdmissionError("launcher_pid_missing");

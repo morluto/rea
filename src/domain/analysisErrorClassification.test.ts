@@ -5,8 +5,45 @@ import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import { BinaryTargetError } from "./configurationErrors.js";
 import { EvidenceFileError } from "./evidenceErrors.js";
+import {
+  capacityConstraint,
+  fixedCeilingConstraint,
+} from "./analysisErrorCore.js";
 
 const catalogue = analysisErrorCatalogue();
+it("keeps occupied capacity recovery distinct from a fixed transport ceiling", () => {
+  const capacity = capacityConstraint("inspect_adb_ui", "runner occupied", {
+    remediationAction:
+      "Let the admitted request settle, then inspect current state.",
+    diagnostics: { runner_instance: "selected-runner" },
+  });
+  expect(capacity).toMatchObject({
+    resource: "capacity",
+    reportedLimits: null,
+    diagnostics: { runner_instance: "selected-runner" },
+  });
+  expect(capacity.fixedAllowance).toBeUndefined();
+  expect(projectAnalysisError(capacity)).toMatchObject({
+    code: "resource_constraint",
+    retryable: true,
+  });
+  const ceiling = fixedCeilingConstraint(
+    "inspect_adb_ui",
+    "transport",
+    "request too large",
+    {
+      name: "ADB UI request",
+      kind: "bytes",
+      limit: 16384,
+      unit: "bytes",
+    },
+  );
+  expect(ceiling.fixedAllowance).toMatchObject({ limit: 16384, unit: "bytes" });
+  expect(projectAnalysisError(ceiling)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+  });
+});
 const entry = (tag: string, discriminant: string) =>
   catalogue.find((row) => row.tag === tag && row.discriminant === discriminant);
 

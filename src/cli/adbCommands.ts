@@ -5,6 +5,7 @@ import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisSe
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { ADB_TOOL_CONTRACTS } from "../contracts/adb/adbToolContracts.js";
+import { ADB_UI_TOOL_CONTRACTS } from "../contracts/adb/adbUiToolContracts.js";
 import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import {
   activityExtraCliEntrySchema,
@@ -21,8 +22,11 @@ import {
 import {
   analyzeWithService,
   registerContractCommand,
+  registerContractDocumentCommand,
   type EvidenceInspectionService,
 } from "./contractCommand.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
 type AdbContract<Name extends AdbOperation> = Extract<
   (typeof ADB_TOOL_CONTRACTS)[number],
@@ -43,10 +47,16 @@ const serialFirst = <const Rest extends readonly string[]>(...rest: Rest) =>
  * Path fields keep their established kebab-case keys.
  */
 const ADB_COMMANDS: {
-  readonly [Name in Exclude<AdbOperation, "start_adb_activity">]: readonly [
-    command: string,
-    projection: AdbProjection<Name>,
-  ];
+  readonly [
+    Name in Exclude<
+      AdbOperation,
+      | "start_adb_activity"
+      | "inspect_adb_ui"
+      | "find_adb_ui_elements"
+      | "wait_for_adb_ui"
+      | "perform_adb_ui_action"
+    >
+  ]: readonly [command: string, projection: AdbProjection<Name>];
 } = {
   inspect_adb_client: [
     cliCommandFor("inspect_adb_client"),
@@ -252,6 +262,25 @@ export const registerAdbCommands = (
   ),
 ): void => {
   const service = new AdbDeviceAnalysisService(provider);
+  for (const contract of ADB_UI_TOOL_CONTRACTS)
+    registerContractDocumentCommand(
+      cli,
+      logger,
+      contract,
+      {
+        description: contract.description,
+        document:
+          "Inline JSON or input file containing the selected device, package and UI request",
+      },
+      (input, { signal, operation }) =>
+        finishAnalysisCommand(
+          () => service.execute(contract.name, input, { signal }),
+          provider,
+          "adb",
+          operation,
+          signal,
+        ).then(projectCliAnalysisResult),
+    );
   const run = (operation: AdbOperation) => (): EvidenceInspectionService => ({
     inspect: (input, { signal }) =>
       service.execute(operation, input, { signal }),
@@ -263,7 +292,7 @@ export const registerAdbCommands = (
     registerContractCommand(
       cli,
       logger,
-      contractNamed(ADB_TOOL_CONTRACTS, name as AdbOperation),
+      contractNamed(ADB_TOOL_CONTRACTS, name as keyof typeof ADB_COMMANDS),
       { command, ...projection } as never,
       analyzeWithService(run(name as AdbOperation), "adb"),
     );

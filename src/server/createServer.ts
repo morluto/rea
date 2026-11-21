@@ -170,6 +170,16 @@ export const createServer = (
     options,
     platform: host.platform,
     arch: host.architecture,
+    ...(session === undefined
+      ? {}
+      : {
+          onLateAdbUiEvidence: (
+            evidence: Parameters<typeof session.recordEvidence>[0],
+          ) => {
+            const recorded = session.recordEvidence(evidence);
+            if (!recorded.ok) throw recorded.error;
+          },
+        }),
   });
   const {
     evmInterface,

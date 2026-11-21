@@ -160,6 +160,20 @@ export const fixedCeilingConstraint = (
     fixedAllowance: ceiling,
   });
 
+/** Report occupied or exhausted capacity with its producer's actionable recovery. */
+export const capacityConstraint = (
+  operation: string,
+  reason: string,
+  options: AnalysisErrorOptions & ResourceConstraintRecovery,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    operation,
+    "capacity",
+    reason,
+    null,
+    options,
+  );
+
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
   error: AnalysisResourceConstraintError,

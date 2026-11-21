@@ -5,6 +5,7 @@ import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.j
 import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
+import type { ADB_TOOL_CONTRACTS } from "../contracts/adb/adbToolContracts.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
@@ -774,33 +775,42 @@ const SERVICE_TOOL_BINDINGS = {
       "list_jeb_units",
       "decompile_jeb_item",
     ])) satisfies Bind<JebAnalysisService>,
-  adbDeviceAnalysis: ((service) =>
-    contractServiceBindings(service, [
-      "inspect_adb_client",
-      "list_adb_devices",
-      "inspect_adb_device",
-      "list_adb_packages",
-      "pull_adb_package",
-      "read_adb_logcat",
-      "inspect_adb_package",
-      "pull_adb_file",
-      "push_adb_file",
-      "capture_adb_screen",
-      "list_adb_processes",
-      "list_adb_directory",
-      "list_adb_features",
-      "list_adb_services",
-      "inspect_adb_display",
-      "inspect_adb_window",
-      "read_adb_setting",
-      "collect_adb_bugreport",
-      "resolve_adb_packages",
-      "install_adb_package",
-      "uninstall_adb_package",
-      "start_adb_app",
-      "start_adb_activity",
-      "stop_adb_app",
-    ])) satisfies Bind<AdbDeviceAnalysisService>,
+  adbDeviceAnalysis: ((service) => ({
+    ...contractServiceBindings<(typeof ADB_TOOL_CONTRACTS)[number]["name"]>(
+      service,
+      [
+        "inspect_adb_client",
+        "list_adb_devices",
+        "inspect_adb_device",
+        "list_adb_packages",
+        "pull_adb_package",
+        "read_adb_logcat",
+        "inspect_adb_package",
+        "pull_adb_file",
+        "push_adb_file",
+        "capture_adb_screen",
+        "list_adb_processes",
+        "list_adb_directory",
+        "list_adb_features",
+        "list_adb_services",
+        "inspect_adb_display",
+        "inspect_adb_window",
+        "read_adb_setting",
+        "collect_adb_bugreport",
+        "resolve_adb_packages",
+        "install_adb_package",
+        "uninstall_adb_package",
+        "start_adb_app",
+        "start_adb_activity",
+        "stop_adb_app",
+      ],
+    ),
+    ...contractServiceBindings<(typeof ADB_TOOL_CONTRACTS)[number]["name"]>(
+      service,
+      ["inspect_adb_ui", "find_adb_ui_elements", "wait_for_adb_ui"],
+      "application",
+    ),
+  })) satisfies Bind<AdbDeviceAnalysisService>,
   webModuleTrace: ((service) => ({
     trace_web_module_imports: {
       admission: "application",

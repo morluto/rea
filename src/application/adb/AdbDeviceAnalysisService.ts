@@ -13,8 +13,10 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { jsonObjectSchema, jsonValueSchema } from "../../domain/jsonValue.js";
 import { executeProviderOperation } from "../ProviderOperationExecution.js";
+import { adbEvidenceParameters } from "../../domain/adb/adbEvidenceParameters.js";
+import { isAdbUiOperation } from "../../domain/adb/adbUiAnalysis.js";
 
 /** Shared CLI/MCP admission, execution, and Evidence composition for ADB. */
 export class AdbDeviceAnalysisService {
@@ -30,7 +32,15 @@ export class AdbDeviceAnalysisService {
       operation,
       input,
       options,
-      adbRequestSchema,
+      adbRequestSchema.transform((request) => {
+        // Only the effective input goes on the runner wire. Retain a separate
+        // immutable-by-ownership snapshot of the admitted caller document.
+        if (!isAdbUiOperation(request.operation)) return request;
+        const callerInput = jsonObjectSchema.safeParse(input);
+        return callerInput.success
+          ? { ...request, callerInput: callerInput.data }
+          : request;
+      }),
       {
         execute: async (request, options) => {
           const result = await this.provider.execute(request, options);
@@ -48,6 +58,10 @@ export class AdbDeviceAnalysisService {
         },
       },
       "observed",
+      {
+        parameters: (request, execution) =>
+          adbEvidenceParameters(request, execution.result),
+      },
     );
   }
 }

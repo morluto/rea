@@ -32,6 +32,8 @@ const limitedPollSchema = pollSchema.extend({
   peakJobMemoryBytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
 
+/** Bound on waiting for an in-flight native write before the job is released. */
+const INPUT_SETTLE_MS = 5_000;
 /**
  * The outcome of stopping one Job Object tree: settled (and whether this call
  * signalled it), or the reason it did not settle. It is the subset of
@@ -245,6 +247,10 @@ export class WindowsOwnedProcess extends EventEmitter {
   #memoryLimitReached = false;
   #peakJobMemoryBytes: number | undefined;
   #outputIncomplete = false;
+  /** Native input write that has not reported its delivery yet. */
+  #pendingWrite: Promise<void> | undefined;
+  /** One release owns the wait for an in-flight input delivery. */
+  #inputSettling = false;
 
   constructor(
     command: string,
@@ -317,12 +323,23 @@ export class WindowsOwnedProcess extends EventEmitter {
     this.stdin = protocolStdin
       ? new Writable({
           write: (chunk: unknown, _encoding, callback) => {
-            void this.#writeInput(chunk).then(
-              () => callback(),
-              (cause: unknown) =>
+            const write = this.#writeInput(chunk);
+            // The native write is the delivery proof; the job may exit before
+            // it reports, so it stays owned until it answers.
+            this.#pendingWrite = write;
+            void write.then(
+              () => {
+                if (this.#pendingWrite === write)
+                  this.#pendingWrite = undefined;
+                callback();
+              },
+              (cause: unknown) => {
+                if (this.#pendingWrite === write)
+                  this.#pendingWrite = undefined;
                 callback(
                   cause instanceof Error ? cause : new Error(String(cause)),
-                ),
+                );
+              },
             );
           },
           final: (callback) => {
@@ -471,6 +488,7 @@ export class WindowsOwnedProcess extends EventEmitter {
   #schedule(delay = 25): void {
     if (
       this.#closed ||
+      this.#inputSettling ||
       this.#timer !== undefined ||
       this.#blockedOutput.size > 0
     )
@@ -519,10 +537,7 @@ export class WindowsOwnedProcess extends EventEmitter {
       try {
         this.#release();
       } catch (cause: unknown) {
-        const failure =
-          cause instanceof Error ? cause : new Error(String(cause));
-        this.#failure = failure.message;
-        if (this.listenerCount("error") > 0) this.emit("error", failure);
+        this.#reportLifecycleFailure(cause);
       }
       return;
     }
@@ -559,20 +574,22 @@ export class WindowsOwnedProcess extends EventEmitter {
         this.#release();
       } else this.#schedule(idle ? 25 : 0);
     } catch (cause: unknown) {
-      const failure = cause instanceof Error ? cause : new Error(String(cause));
-      const repeated = this.#failure !== undefined;
-      this.#failure = failure.message;
-      // Native lifecycle failures belong to the error/cleanup channels, never
-      // the captured stderr observation produced by the child itself. A run of
-      // consecutive failures is reported once.
-      if (!repeated && this.listenerCount("error") > 0)
-        this.emit("error", failure);
-      // Poll failures keep the job for another observation. Without one, a
-      // single failed poll would stop output and exit delivery for the rest of
-      // the process lifetime. A process_close failure leaves #releasePending so
-      // cleanup retries that close alone.
+      this.#reportLifecycleFailure(cause);
       this.#schedule(POLL_RETRY_MS);
     }
+  }
+
+  /** Report a native lifecycle failure on the error and cleanup channels. */
+  #reportLifecycleFailure(cause: unknown): void {
+    const failure = cause instanceof Error ? cause : new Error(String(cause));
+    const repeated = this.#failure !== undefined;
+    this.#failure = failure.message;
+    // Native lifecycle failures belong to the error/cleanup channels, never
+    // the captured stderr observation produced by the child itself.
+    if (!repeated && this.listenerCount("error") > 0)
+      this.emit("error", failure);
+    // Poll failures retain the job for observation. Once stream teardown has
+    // finished, a failed native close retains only that close for retry.
   }
 
   #writeOutput(stream: PassThrough, bytes: Buffer): void {
@@ -594,11 +611,46 @@ export class WindowsOwnedProcess extends EventEmitter {
   }
 
   #release(): void {
+    if (this.#closed || this.#inputSettling) return;
+    if (this.#timer !== undefined) clearTimeout(this.#timer);
+    this.#timer = undefined;
+    this.#clearBlockedWake();
+    // A native write that is still in flight may already have delivered the
+    // bytes. It reports before the stream is torn down, so a delivered input
+    // is never reported as a failed write.
+    const pending = this.#pendingWrite;
+    if (this.#releasePending || pending === undefined) {
+      this.#releaseStreams();
+      return;
+    }
+    this.#inputSettling = true;
+    const settled = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, INPUT_SETTLE_MS);
+      timer.unref?.();
+    });
+    void Promise.race([settled, deadline]).then(() => {
+      if (timer !== undefined) clearTimeout(timer);
+      this.#inputSettling = false;
+      try {
+        this.#releaseStreams();
+      } catch (cause: unknown) {
+        // The deferred release reports through the same error and cleanup
+        // channels as the synchronous one; a native close failure must never
+        // escape as an unhandled rejection.
+        this.#reportLifecycleFailure(cause);
+      }
+    });
+  }
+
+  /** End the local streams and release the native handle exactly once. */
+  #releaseStreams(): void {
     if (this.#closed) return;
     if (!this.#releasePending) {
-      if (this.#timer !== undefined) clearTimeout(this.#timer);
-      this.#timer = undefined;
-      this.#clearBlockedWake();
       this.stdin?.destroy();
       if (!this.stdout.destroyed) this.stdout.end();
       if (!this.stderr.destroyed) this.stderr.end();

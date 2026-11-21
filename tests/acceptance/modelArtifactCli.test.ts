@@ -532,9 +532,8 @@ cliTest(
     const offsetFailure = parseMcpToolError(
       await call("inspect_model_artifact", { path }),
     );
-    // The raw extent is outside this empty file, and that check runs before
-    // the offset is converted to a host number.
-    expect(offsetFailure.error).toMatchObject({
+    // Physical malformed-extent validation precedes host-number conversion.
+    const invalidExtent = {
       code: "invalid_request",
       category: "invalid_input",
       details: {
@@ -547,7 +546,14 @@ cliTest(
           },
         ],
       },
+    };
+    expect(offsetFailure.error).toMatchObject(invalidExtent);
+    expect(offsetFailure.error.details).not.toHaveProperty("reported_limits");
+    const rejected = await cli.run({
+      arguments: ["inspect-model-artifact", path, "--json"],
     });
+    expect(rejected.exitCode, rejected.stderr).toBe(1);
+    expect(rejected.json).toMatchObject(invalidExtent);
   },
 );
 

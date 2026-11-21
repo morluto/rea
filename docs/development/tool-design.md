@@ -602,6 +602,17 @@ through the producing owner and affected CLI/MCP consumers.
 
 ## Implement and evaluate
 
+The shared input presenter projects tool inputs into the portable advertised
+dialect without a per-contract opt-in. It omits unsupported format annotations,
+oversized string bounds, unreferenced defaults and redundant 2020-12 metadata;
+canonical parsing still enforces constraints and supplies defaults. The same
+reference-aware widening owner handles negation and conditional dependencies.
+Authored examples remain in the contract and tests, rather than an unsupported
+wire keyword.
+Verify actual SDK advertisements and admission in both input profiles, and run
+packaged MCP verification. Compatibility baselines may shrink, never grow to
+admit a new tool's unsupported constructs.
+
 Put provider wire-protocol parsing in adapters and shared CLI/MCP workflows in
 the application layer.
 

@@ -167,44 +167,56 @@ it("inspects the adb client without contacting the server", async () => {
   expect(result.contacted_adb_server).toBe(false);
 });
 
-it("joins an admitted availability probe before close and refuses later probes", async () => {
-  const { binary, root } = await writeAdbStub(
-    (directory) => `if [ "$1" = "version" ]; then
+it.each(["availability", "public-client"] as const)(
+  "joins an admitted %s local probe before close and refuses later probes",
+  async (kind) => {
+    const { binary, root } = await writeAdbStub(
+      (directory) => `if [ "$1" = "version" ]; then
   : > '${directory}/started'
   while [ ! -f '${directory}/release' ]; do /bin/sleep 0.05; done
   ${VERSION_BLOCK}
 fi`,
-  );
-  const provider = providerOver(binary);
-  const inspection = provider.inspectAvailability();
-  let closing: Promise<void> | undefined;
-  try {
-    await awaitAcknowledgement(
-      waitFor(async () =>
-        expect(await lstat(join(root, "started"))).toBeDefined(),
-      ),
-      inspection,
-      "ADB version probe",
     );
-    let closed = false;
-    closing = provider.close().then(() => {
-      closed = true;
-    });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(closed).toBe(false);
-    await writeFile(join(root, "release"), "");
-    expect((await inspection).status).toBe("available");
-    await closing;
-    await expect(provider.inspectAvailability()).rejects.toMatchObject({
-      _tag: "AnalysisCancelledError",
-      cause: OwnerCancellation.ownerClosed,
-    });
-  } finally {
-    await writeFile(join(root, "release"), "");
-    await Promise.allSettled([inspection, closing]);
-    await provider.close();
-  }
-});
+    const provider = providerOver(binary);
+    const inspect = async () => {
+      if (kind === "availability") return provider.inspectAvailability();
+      const result = await provider.execute({
+        operation: "inspect_adb_client",
+        input: {},
+      });
+      if (!result.ok) throw result.error;
+      return { status: "available" };
+    };
+    const inspection = inspect();
+    let closing: Promise<void> | undefined;
+    try {
+      await awaitAcknowledgement(
+        waitFor(async () =>
+          expect(await lstat(join(root, "started"))).toBeDefined(),
+        ),
+        inspection,
+        "ADB version probe",
+      );
+      let closed = false;
+      closing = provider.close().then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      await writeFile(join(root, "release"), "");
+      expect((await inspection).status).toBe("available");
+      await closing;
+      await expect(inspect()).rejects.toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: OwnerCancellation.ownerClosed,
+      });
+    } finally {
+      await writeFile(join(root, "release"), "");
+      await Promise.allSettled([inspection, closing]);
+      await provider.close();
+    }
+  },
+);
 
 it("fails closed when adb exits successfully without a recognized version", async () => {
   const stdout = `unexpected adb output ${"x".repeat(700)}\n`;

@@ -5,6 +5,7 @@ import type { AnySchema } from "ajv";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
+import { adbInputSchemas } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import {
   CLI_COMMANDS,
   cliCommandFor,
@@ -62,6 +63,18 @@ const documents: readonly {
   /** Fields the CLI resolves against the working directory before parsing. */
   readonly callerPaths?: readonly (readonly string[])[];
 }[] = [
+  {
+    command: cliCommandFor("inspect_adb_ui"),
+    schema: frame(adbInputSchemas.inspect_adb_ui),
+  },
+  {
+    command: cliCommandFor("find_adb_ui_elements"),
+    schema: frame(adbInputSchemas.find_adb_ui_elements),
+  },
+  {
+    command: cliCommandFor("wait_for_adb_ui"),
+    schema: frame(adbInputSchemas.wait_for_adb_ui),
+  },
   {
     command: cliCommandFor("trace_application_feature"),
     schema: frame(traceApplicationFeatureRequestSchema),
@@ -302,6 +315,41 @@ it("advertises the parsed document for every JSON-input command", async () => {
   }
 });
 
+it.each([
+  { command: cliCommandFor("inspect_adb_ui"), extra: {} },
+  {
+    command: cliCommandFor("find_adb_ui_elements"),
+    extra: { selector: { text: { value: "Continue" } } },
+  },
+  {
+    command: cliCommandFor("wait_for_adb_ui"),
+    extra: { selector: {}, condition: "present" },
+  },
+])(
+  "advertises canonical UI document validation for $command",
+  async ({ command, extra }) => {
+    const served = await serve([command, "--schema", "--json"]);
+    expect(served.exitCode, served.stdout).toBe(0);
+    const input = advertisedInput(served.stdout);
+    const validate = new Ajv2020({
+      strict: false,
+      validateFormats: false,
+    }).compile(input.contentSchema as AnySchema);
+    const accepted = {
+      serial: "emulator-5554",
+      package: "com.example.app",
+      ...extra,
+    };
+    expect(validate(accepted), JSON.stringify(validate.errors)).toBe(true);
+    for (const rejected of [
+      { ...accepted, serial: "two words" },
+      { ...accepted, timeout_ms: 30001 },
+      { ...accepted, unknown: true },
+      { ...accepted, package: "" },
+    ])
+      expect(validate(rejected)).toBe(false);
+  },
+);
 it("advertises caller paths as local spellings the CLI resolves, not URLs", async () => {
   const input = advertisedInput(
     (

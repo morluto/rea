@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="REA UI Automator" android:allowBackup="false" />
+    <instrumentation android:name=".ReaUiRunner"
+        android:targetPackage="dev.rea.uiautomator"
+        android:functionalTest="true" android:handleProfiling="false" />
+</manifest>
