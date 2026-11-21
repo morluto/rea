@@ -1508,46 +1508,59 @@ describe("typed unavailability without dispatching", () => {
     expect(clients[0]?.closed).toBe(1);
     expect(clients[1]?.closed).toBe(1);
   });
-
-  it("cancels a composed admission queued behind open without invoking it", async () => {
-    const [first] = await createBinarySessionTargets();
-    const health = createDeferred<ReturnType<typeof ok>>();
-    const session = createTestBinarySession(
-      () => new ControllableAnalysisClient(health.promise),
-    );
-    const opening = session.open(first);
-    const controller = new AbortController();
-    let invoked = false;
-    const admitted = session.withAdmittedAnalysis(
-      "binary_overview",
-      controller.signal,
-      async () => {
-        invoked = true;
-        return null;
-      },
-    );
-    const reason = { request: "cancel queued composed admission" };
-    controller.abort(reason);
-    try {
-      const result = await admitted;
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "AnalysisCancelledError",
-          operation: "binary_overview",
-        },
-      });
-      if (result.ok) throw new Error("Expected queued admission cancellation");
-      expect(result.error.cause).toBe(reason);
-      expect(invoked).toBe(false);
-    } finally {
-      health.resolve(ok(null));
-      const opened = await opening;
-      await session.close();
-      expect(opened.ok).toBe(true);
-    }
-  });
 });
+
+it.each(["direct", "composed"] as const)(
+  "cancels a %s call before a blocked target transition completes",
+  async (entry) => {
+    const [first, second] = await createBinarySessionTargets();
+    const invoke = vi.fn(async () => ok(null));
+    const session = createTestBinarySession(() => ({
+      execute: (operation) =>
+        operation === "health" ? Promise.resolve(ok(null)) : invoke(),
+      close: async () => resultOk(null),
+    }));
+    const refusedSnapshot = new ProviderAdapterError("fixture", "open_binary");
+    const loading = createDeferred<void>();
+    const release = createDeferred<void>();
+    expect((await session.open(first)).ok).toBe(true);
+    const opening = session.open(second, {
+      loadSnapshot: async () => {
+        loading.resolve();
+        await release.promise;
+        return err(refusedSnapshot);
+      },
+    });
+    onTestFinished(async () => {
+      release.resolve();
+      await opening.finally(() => session.close());
+    });
+    await awaitAcknowledgement(loading.promise, opening, "snapshot load");
+    const controller = new AbortController();
+    const reason = { request: "cancel queued call" };
+    const call =
+      entry === "direct"
+        ? session.execute("binary_overview", {}, { signal: controller.signal })
+        : session.withAdmittedAnalysis(
+            "binary_overview",
+            controller.signal,
+            invoke,
+          );
+    controller.abort(reason);
+    await awaitAcknowledgement(call, opening, "queued cancellation");
+    const result = await call;
+    if (result.ok) throw new Error("Expected queued cancellation");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "binary_overview",
+    });
+    expect(result.error.cause).toBe(reason);
+    expect(invoke).not.toHaveBeenCalled();
+    release.resolve();
+    expect(await opening).toHaveProperty("error", refusedSnapshot);
+    expect(session.activeTarget()?.path).toBe(first);
+  },
+);
 
 describe("active client replacement", () => {
   it("replaces the active client when a canonical path changes contents", async () => {
@@ -1769,29 +1782,6 @@ describe("cancellation during profile resolution", () => {
 });
 
 describe("cancellation during client transitions", () => {
-  it("cancels a call while it waits for a transition", async () => {
-    const [first] = await createBinarySessionTargets();
-    const health = createDeferred<ReturnType<typeof ok>>();
-    const session = createTestBinarySession(
-      () => new ControllableAnalysisClient(health.promise),
-    );
-    const opening = session.open(first);
-    const controller = new AbortController();
-    const call = session.execute(
-      "binary_overview",
-      {},
-      {
-        signal: controller.signal,
-      },
-    );
-    controller.abort();
-    const result = await call;
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
-    health.resolve(ok(null));
-    await opening;
-  });
-
   it("closes a failed candidate and reopens the previous target", async () => {
     const [first, second] = await createBinarySessionTargets();
     const clients: ControllableAnalysisClient[] = [];
