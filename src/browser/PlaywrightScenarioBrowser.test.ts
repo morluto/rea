@@ -498,6 +498,7 @@ const attachedBrowserFixture = (
     readonly isTargetClosed?: () => boolean;
     readonly isBrowserConnected?: () => boolean;
   } = {},
+  commandTimeoutMs?: number,
 ) => {
   const discoverySession = {
     send: vi.fn(async () => ({ targetInfo: { targetId: "page-1" } })),
@@ -539,6 +540,9 @@ const attachedBrowserFixture = (
     },
     start_url: { url: "https://example.test" },
     actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+    ...(commandTimeoutMs === undefined
+      ? {}
+      : { command_timeout_ms: commandTimeoutMs }),
   });
   return {
     browser,
@@ -711,133 +715,176 @@ it.each(["locale", "focus"] as const)(
   },
 );
 
-it("does not clear an attached environment override it failed to acquire", async () => {
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        method === "Emulation.setLocaleOverride" &&
-        (parameters as { locale?: string }).locale === "en-US"
-      )
-        throw new Error("caller already owns locale");
-    },
-  });
-
-  await expect(fixture.open()).rejects.toThrow("caller already owns locale");
-  expect(fixture.environmentSession.send).not.toHaveBeenCalledWith(
-    "Emulation.setLocaleOverride",
-    { locale: "" },
-  );
-  expect(fixture.environmentSession.send).toHaveBeenCalledWith(
-    "Emulation.clearDeviceMetricsOverride",
-    undefined,
-  );
-  expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
-  expect(fixture.browser.close).toHaveBeenCalledOnce();
-});
-
-it("restores an attached environment override whose success reply is malformed", async () => {
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        method === "Emulation.setLocaleOverride" &&
-        (parameters as { locale?: string }).locale === "en-US"
-      )
+it.each(["rejected", "malformed acknowledgement"] as const)(
+  "restores only acquired overrides when locale application returns %s",
+  async (outcome) => {
+    const localeFailure = new Error("caller already owns locale");
+    const fixture = attachedBrowserFixture({
+      send: async (method, parameters) => {
+        if (
+          method !== "Emulation.setLocaleOverride" ||
+          (parameters as { locale?: string }).locale !== "en-US"
+        )
+          return;
+        if (outcome === "rejected") throw localeFailure;
         return "applied";
-      return undefined;
-    },
-  });
-
-  await expect(fixture.open()).rejects.toMatchObject({
-    reason: "protocol_error",
-  });
-  expect(fixture.environmentSession.send).toHaveBeenCalledWith(
-    "Emulation.setLocaleOverride",
-    { locale: "" },
-  );
-  expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
-});
-
-it("waits for a cancelled environment mutation before restoring it", async () => {
-  const localeMutation = phaseGate();
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        method === "Emulation.setLocaleOverride" &&
-        (parameters as { locale?: string }).locale === "en-US"
-      ) {
-        await localeMutation.hold();
-      }
-    },
-  });
-  const controller = new AbortController();
-  const opening = fixture.open(controller.signal);
-  try {
-    await localeMutation.reached(opening, "locale mutation");
-    const cancelled = expect(opening).rejects.toMatchObject({
-      _tag: "AnalysisCancelledError",
+      },
     });
-    controller.abort();
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(fixture.environmentSession.send).not.toHaveBeenCalledWith(
-      "Emulation.setLocaleOverride",
-      { locale: "" },
+    const result = await fixture.open().then(
+      (opened) => ({ opened }),
+      (failure: unknown) => ({ failure }),
     );
-
-    localeMutation.release();
-    await cancelled;
-    expect(fixture.environmentSession.send).toHaveBeenCalledWith(
-      "Emulation.setLocaleOverride",
-      { locale: "" },
+    if ("opened" in result) {
+      await result.opened.cleanup.close();
+      throw new Error("Expected locale acquisition failure");
+    }
+    const { failure } = result;
+    if (outcome === "rejected") expect(failure).toBe(localeFailure);
+    else expect(failure).toMatchObject({ reason: "protocol_error" });
+    expect(
+      vi.mocked(fixture.environmentSession.send).mock.calls.slice(2),
+    ).toEqual(
+      outcome === "rejected"
+        ? [["Emulation.clearDeviceMetricsOverride", undefined]]
+        : [
+            ["Emulation.setLocaleOverride", { locale: "" }],
+            ["Emulation.clearDeviceMetricsOverride", undefined],
+          ],
     );
     expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
     expect(fixture.browser.close).toHaveBeenCalledOnce();
-  } finally {
-    controller.abort();
-    localeMutation.release();
-    const opened = await opening.catch(() => undefined);
-    await opened?.cleanup.close();
-  }
-});
+  },
+);
 
-it("releases cleanup ownership when the attached target is destroyed", async () => {
-  let targetClosed = false;
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        targetClosed &&
-        method === "Emulation.setTimezoneOverride" &&
-        (parameters as { timezoneId?: string }).timezoneId === ""
-      )
-        throw new Error("Target closed");
-    },
-    isTargetClosed: () => targetClosed,
-  });
-  const opened = await fixture.open();
-  targetClosed = true;
+it.each([
+  {
+    mutation: "locale",
+    method: "Emulation.setLocaleOverride",
+    stop: "cancellation",
+  },
+  { mutation: "media", method: "Emulation.setEmulatedMedia", stop: "deadline" },
+  {
+    mutation: "focus",
+    method: "Emulation.setFocusEmulationEnabled",
+    stop: "deadline",
+  },
+] as const)(
+  "joins a pending $mutation acknowledgement after $stop before restoring it",
+  async ({ mutation, method, stop }) => {
+    const pending = phaseGate();
+    const progress: string[] = [];
+    const restoreOrHold = async (reset: boolean) => {
+      if (reset) progress.push("restored");
+      else {
+        await pending.hold();
+        progress.push("acknowledged");
+      }
+    };
+    const fixture = attachedBrowserFixture(
+      {
+        send: async (command, parameters) => {
+          if (command !== method) return;
+          const options = parameters as { locale?: string; enabled?: boolean };
+          await restoreOrHold(
+            options.locale === "" || options.enabled === false,
+          );
+        },
+        emulateMedia: async (options) => {
+          if (mutation === "media")
+            await restoreOrHold(options?.colorScheme === null);
+        },
+        detach: async () => {
+          progress.push("detached");
+        },
+        closeBrowser: async () => {
+          progress.push("disconnected");
+        },
+      },
+      40,
+    );
+    vi.useFakeTimers();
+    const caller = new AbortController();
+    const reason = new Error("cancel while applying locale");
+    const observed = vi.fn();
+    const opening = fixture.open(caller.signal);
+    void opening.then(observed, observed);
+    try {
+      await pending.reached(opening, method);
+      if (stop === "cancellation") caller.abort(reason);
+      await vi.advanceTimersByTimeAsync(stop === "deadline" ? 40 : 0);
+      expect(observed).not.toHaveBeenCalled();
+      expect(progress).toEqual([]);
 
-  await opened.cleanup.close();
-  expect(fixture.browser.close).toHaveBeenCalledOnce();
-});
+      pending.release();
+      const failure = await opening.catch((cause: unknown) => cause);
+      if (stop === "deadline")
+        expect(failure).toMatchObject({
+          reason: "timeout",
+          diagnostics: { phase: "command", command_timeout_ms: 40, method },
+        });
+      else {
+        expect(failure).toBeInstanceOf(AnalysisCancelledError);
+        expect(failure).toHaveProperty("cause", reason);
+      }
+      expect(progress).toEqual([
+        "acknowledged",
+        "restored",
+        "detached",
+        "disconnected",
+      ]);
+      const commands = vi
+        .mocked(fixture.environmentSession.send)
+        .mock.calls.map(([name]) => name);
+      expect(
+        commands.filter(
+          (name) => name === "Emulation.clearDeviceMetricsOverride",
+        ),
+      ).toHaveLength(mutation === "media" ? 0 : 1);
+      if (mutation === "locale")
+        expect(commands).not.toContain("Emulation.setTimezoneOverride");
+    } finally {
+      caller.abort(reason);
+      pending.release();
+      try {
+        const opened = await opening.catch(() => undefined);
+        await opened?.cleanup.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  },
+);
 
-it("releases cleanup ownership when the attached browser disconnects", async () => {
-  let connected = true;
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        !connected &&
-        method === "Emulation.setTimezoneOverride" &&
-        (parameters as { timezoneId?: string }).timezoneId === ""
-      )
-        throw new Error("Browser disconnected");
-    },
-    isBrowserConnected: () => connected,
-  });
-  const opened = await fixture.open();
-  connected = false;
-
-  await opened.cleanup.close();
-  expect(fixture.browser.close).not.toHaveBeenCalled();
-});
+it.each(["target destroyed", "browser disconnected"] as const)(
+  "releases attached ownership once the %s",
+  async (loss) => {
+    let lost = false;
+    const fixture = attachedBrowserFixture({
+      send: async (method, parameters) => {
+        if (
+          lost &&
+          method === "Emulation.setTimezoneOverride" &&
+          (parameters as { timezoneId?: string }).timezoneId === ""
+        )
+          throw new Error(loss);
+      },
+      isTargetClosed: () => lost && loss === "target destroyed",
+      isBrowserConnected: () => !lost || loss !== "browser disconnected",
+    });
+    const opened = await fixture.open();
+    try {
+      lost = true;
+      await opened.cleanup.close();
+      expect(opened.cleanup.cleanupResources).toEqual([]);
+      expect(fixture.browser.close).toHaveBeenCalledTimes(
+        loss === "target destroyed" ? 1 : 0,
+      );
+    } finally {
+      lost = false;
+      await opened.cleanup.close();
+    }
+  },
+);
 
 it("cancels same-target queued connection before acquiring a browser", async () => {
   const makeScenario = (targetId: string) =>
@@ -1440,100 +1487,6 @@ it("closes a browser that connects after its deadline without waiting to report 
     }
   }
 });
-
-it.each(["media", "focus"] as const)(
-  "restores a late %s mutation after its deadline",
-  async (mutation) => {
-    let restored = false;
-    const scenario = browserScenarioSchema.parse({
-      browser: {
-        mode: "connect",
-        cdp_endpoint: "http://127.0.0.1:9222",
-        target_id: "late-environment-target",
-      },
-      start_url: { url: "https://example.test" },
-      environment: { service_workers: "allow" },
-      command_timeout_ms: 40,
-      actions: scenarioActions,
-    });
-    const discoverySession = {
-      send: vi.fn(async () => ({
-        targetInfo: { targetId: "late-environment-target" },
-      })),
-      detach: vi.fn(async () => undefined),
-    } as unknown as CDPSession;
-    const environmentSession = {
-      send: vi.fn(
-        async (method: string, parameters?: { enabled?: boolean }) => {
-          if (method !== "Emulation.setFocusEmulationEnabled") return {};
-          if (parameters?.enabled === false) {
-            if (mutation === "focus") restored = true;
-          } else if (mutation === "focus")
-            await new Promise((resolve) => setTimeout(resolve, 80));
-          return {};
-        },
-      ),
-      detach: vi.fn(async () => undefined),
-    } as unknown as CDPSession;
-    const page = {
-      emulateMedia: vi.fn(async (options: { colorScheme?: string | null }) => {
-        if (options.colorScheme === null) {
-          if (mutation === "media") restored = true;
-          return;
-        }
-        if (mutation === "media")
-          await new Promise((resolve) => setTimeout(resolve, 80));
-      }),
-      isClosed: vi.fn(() => false),
-    } as unknown as Page;
-    const context = {
-      pages: () => [page],
-      newCDPSession: vi
-        .fn()
-        .mockResolvedValueOnce(discoverySession)
-        .mockResolvedValueOnce(environmentSession),
-    } as unknown as BrowserContext;
-    const browser = {
-      close: vi.fn(async () => undefined),
-      contexts: () => [context],
-      isConnected: vi.fn(() => true),
-      version: () => "late-environment",
-    };
-    await expect(
-      openPlaywrightScenarioBrowser(
-        scenario,
-        {},
-        {
-          launcher: {
-            connectOverCDP: async () => browser,
-            launchPersistentContext: async () => {
-              throw new Error("Unexpected launch");
-            },
-          },
-        },
-      ),
-    ).rejects.toMatchObject({
-      reason: "timeout",
-      userMessage: expect.stringContaining(
-        mutation === "media"
-          ? "Emulation.setEmulatedMedia"
-          : "Emulation.setFocusEmulationEnabled",
-      ),
-    });
-    expect(restored).toBe(true);
-    if (mutation === "media")
-      expect(environmentSession.send).not.toHaveBeenCalledWith(
-        "Emulation.clearDeviceMetricsOverride",
-        undefined,
-      );
-    else
-      expect(environmentSession.send).toHaveBeenCalledWith(
-        "Emulation.clearDeviceMetricsOverride",
-        undefined,
-      );
-    expect(browser.close).toHaveBeenCalledOnce();
-  },
-);
 
 it.each([
   new Error("Timeout unrelated launch diagnostic"),
