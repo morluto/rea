@@ -1,5 +1,12 @@
 import { verifyPublishedPackageIntegrity } from "./qualified-package-envelope.mjs";
 
+export class NpmRegistryResponseError extends Error {
+  constructor(status) {
+    super(`npm registry lookup failed: HTTP ${status}`);
+    this.status = status;
+  }
+}
+
 /** Parse fresh registry state using the channel already owned by qualification. */
 export async function readQualifiedNpmRelease(version, tag, request = fetch) {
   if (!["latest", "next"].includes(tag))
@@ -12,8 +19,7 @@ export async function readQualifiedNpmRelease(version, tag, request = fetch) {
     signal: AbortSignal.timeout(30_000),
   });
   if (response.status === 404) return { status: "absent" };
-  if (!response.ok)
-    throw new Error(`npm registry lookup failed: HTTP ${response.status}`);
+  if (!response.ok) throw new NpmRegistryResponseError(response.status);
   const metadata = requireRecord(await response.json());
   if (metadata.name !== "rea-agents")
     throw new Error("Unexpected npm package name");

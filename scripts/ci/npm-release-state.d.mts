@@ -1,3 +1,8 @@
+export class NpmRegistryResponseError extends Error {
+  readonly status: number;
+  constructor(status: number);
+}
+
 export type NpmReleaseState =
   | { status: "absent" }
   | {

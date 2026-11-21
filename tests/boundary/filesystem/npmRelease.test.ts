@@ -155,6 +155,72 @@ it("covers the observed 55-minute publication delay with a finite retry budget",
   expect(waited).toBe(75 * 60_000);
 });
 
+it("retries transient npm HTTP failures before checking the published release", async () => {
+  const version = "6.5.0";
+  const statuses = [502, 504];
+  let attempts = 0;
+  const pauses: number[] = [];
+  const lookup = () =>
+    readNpmRelease(version, async () => {
+      attempts++;
+      const status = statuses.shift();
+      return status === undefined
+        ? Response.json(metadata(version, "sha512-target", { latest: version }))
+        : new Response(null, { status });
+    });
+  await expect(
+    waitForNpmRelease(version, lookup, async (milliseconds) => {
+      pauses.push(milliseconds);
+    }),
+  ).resolves.toMatchObject({ status: "published", taggedVersion: version });
+  expect(attempts).toBe(3);
+  expect(pauses).toEqual([30_000, 30_000]);
+});
+
+it("resets the consecutive gateway failures after observing absence", async () => {
+  const version = "6.5.0";
+  const statuses = [503, 503, 404, 503, 503];
+  let attempts = 0;
+  const pauses: number[] = [];
+  const lookup = () =>
+    readNpmRelease(version, async () => {
+      attempts++;
+      const status = statuses.shift();
+      return status === undefined
+        ? Response.json(metadata(version, "sha512-target", { latest: version }))
+        : new Response(null, { status });
+    });
+  await expect(
+    waitForNpmRelease(version, lookup, async (milliseconds) => {
+      pauses.push(milliseconds);
+    }),
+  ).resolves.toMatchObject({ status: "published", taggedVersion: version });
+  expect(attempts).toBe(6);
+  expect(pauses).toEqual(Array(5).fill(30_000));
+});
+
+it.each([
+  [503, 3],
+  [403, 1],
+])(
+  "bounds npm HTTP %i lookup failures to %i attempts",
+  async (status, expectedAttempts) => {
+    let attempts = 0;
+    await expect(
+      waitForNpmRelease(
+        "6.5.0",
+        (version) =>
+          readNpmRelease(version, async () => {
+            attempts++;
+            return new Response(null, { status });
+          }),
+        async () => {},
+      ),
+    ).rejects.toThrow(`HTTP ${status}`);
+    expect(attempts).toBe(expectedAttempts);
+  },
+);
+
 it.each([
   {
     name: "array versions",

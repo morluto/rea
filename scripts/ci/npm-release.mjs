@@ -5,6 +5,7 @@ import { setTimeout } from "node:timers/promises";
 import { prerelease, valid } from "semver";
 import { releaseNpmTag } from "../release-npm-tag.mjs";
 import {
+  NpmRegistryResponseError,
   readQualifiedNpmRelease,
   requireMatchingNpmRelease,
 } from "./npm-release-state.mjs";
@@ -30,7 +31,7 @@ export function stableUpdateVersion(version, published) {
   return stable;
 }
 
-/** Retry only confirmed absence during the existing registry propagation window. */
+/** Retry confirmed absence and a bounded number of consecutive gateway failures. */
 export async function waitForNpmRelease(
   version,
   lookup = readNpmRelease,
@@ -39,9 +40,21 @@ export async function waitForNpmRelease(
   const windowMinutes = 75;
   const intervalMs = 30_000;
   const attempts = (windowMinutes * 60_000) / intervalMs + 1;
+  let gatewayFailures = 0;
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    const published = await lookup(version);
-    if (published.status === "published") return published;
+    try {
+      const published = await lookup(version);
+      if (published.status === "published") return published;
+      gatewayFailures = 0;
+    } catch (error) {
+      if (
+        !(error instanceof NpmRegistryResponseError) ||
+        ![502, 503, 504].includes(error.status)
+      )
+        throw error;
+      gatewayFailures += 1;
+      if (gatewayFailures === 3 || attempt === attempts) throw error;
+    }
     if (attempt < attempts) await pause(intervalMs);
   }
   throw new Error(
