@@ -5,7 +5,7 @@ import { PROPOSED_ADB_UI_ACTION_CONTRACT } from "../../src/contracts/adb/adbUiTo
 import { createLogger } from "../../src/logger.js";
 import { createEvidenceToolHandler } from "../../src/server/contractToolHandler.js";
 import type { EvidenceMcpServer } from "../../src/server/EvidenceMcpServer.js";
-import { toolRegistrationOptions } from "../../src/server/toolRegistrationOptions.js";
+import { applicationToolRegistrationOptions } from "../../src/server/toolRegistrationOptions.js";
 
 /** Explicit test-only binding, never part of normal server composition. */
 export const registerAdbUiExperiment = (
@@ -17,7 +17,7 @@ export const registerAdbUiExperiment = (
   const service = new AdbDeviceAnalysisService(provider);
   server.registerTool(
     contract.name,
-    toolRegistrationOptions(contract),
+    applicationToolRegistrationOptions(contract),
     createEvidenceToolHandler(
       server,
       (input, options) => service.execute(contract.name, input, options),

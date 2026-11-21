@@ -11,7 +11,12 @@ import {
   adbPackageNameSchema as packageNameSchema,
   adbSerialSchema as deviceSerialSchema,
 } from "./adbIdentity.js";
-import { adbUiInputSchemas, adbUiResultSchemas } from "./adbUiAnalysis.js";
+import {
+  adbUiInputSchemas,
+  adbUiResultSchemas,
+  type AdbUiOperation,
+  type AdbUiRequest,
+} from "./adbUiAnalysis.js";
 import type { EvidenceAuthority } from "../evidence.js";
 
 /**
@@ -425,12 +430,14 @@ export const adbInputSchemas = {
 /** Supported ADB-backed operations. */
 export type AdbOperation = keyof typeof adbInputSchemas;
 /** Validated ADB requests carry their selected operation. */
-export type AdbRequest = {
-  [Name in AdbOperation]: {
-    operation: Name;
-    input: z.infer<(typeof adbInputSchemas)[Name]>;
-  };
-}[AdbOperation];
+export type AdbRequest =
+  | AdbUiRequest
+  | {
+      [Name in Exclude<AdbOperation, AdbUiOperation>]: {
+        operation: Name;
+        input: z.infer<(typeof adbInputSchemas)[Name]>;
+      };
+    }[Exclude<AdbOperation, AdbUiOperation>];
 
 /** Validate operation and input together so their types remain correlated. */
 export const adbRequestSchema = z.discriminatedUnion("operation", [

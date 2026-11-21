@@ -88,7 +88,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = __dirname;
 const args = process.argv.slice(2);
-if(args.length === 1 && args[0] === 'start-server') process.exit(0);
+if(args.length === 1 && args[0] === 'start-server') {
+  const mode=JSON.parse(fs.readFileSync(path.join(root,'mode.json'),'utf8'));
+  if(mode.start_server_refusal) { console.error('fixture start-server refused'); process.exit(1); }
+  fs.writeFileSync(path.join(root,'server-started'),'started');
+  process.exit(0);
+}
 if(args[0] === 'version') {
   console.log('Android Debug Bridge version 1.0.41\\nVersion 34.0.5-ui-fixture\\nInstalled as ' + __filename);
   process.exit(0);
@@ -123,6 +128,7 @@ const reply = result => {
 };
 const jobFile = id => path.join(root, 'job-' + id + '.json');
 if (request.operation === 'ping') {
+  if(mode.require_server_start && !fs.existsSync(path.join(root,'server-started'))) throw new Error('UI ping preceded explicit server startup');
   if(mode.kind === 'unavailable') console.log('Broadcast completed: result=0');
   else {
     reply({runner,socket_path:'files/rea-ui-${instance}.sock'});
@@ -813,10 +819,21 @@ it.each(completionRecoveryCases)(
     if (name !== "later cleanup") {
       expect(error.message).toContain(reason);
       expect(error.message).not.toContain("may have completed");
-      if (!cleanupIncomplete)
+      if (!cleanupIncomplete) {
         expect(error.remediation.action).toContain(
           "restart the operator-owned UI runner",
         );
+        expect(error).toMatchObject({
+          retryable: false,
+          details: {
+            refusal: {
+              kind: "fixed_ceiling",
+              limit: 65_536,
+              unit: "UTF-16 code units",
+            },
+          },
+        });
+      }
     }
     await setMode({});
     const fresh = await harness.client.callTool({
@@ -867,8 +884,8 @@ function holdClientDiscovery() {
   };
 }
 
-it("projects a real subprocess reply through the named UI contract and preserves Unicode", async () => {
-  const { service } = await fixture();
+it("starts the shared server before UI ping and records choices without runner defaults", async () => {
+  const { service, workspace } = await fixture({ require_server_start: true });
   const outcome = await service.execute("find_adb_ui_elements", {
     ...scope,
     selector: { text: { value: "Hello 世界" } },
@@ -880,8 +897,59 @@ it("projects a real subprocess reply through the named UI contract and preserves
   expect(evidence.authority).toBe("controlled-replay");
   expect(evidence.normalized_result.matches[0]?.text).toBe("Hello 世界");
   expect(evidence.normalized_result.runner.instance_id).toBe(instance);
-  expect(evidence.parameters).toMatchObject({
+  expect(evidence.parameters).toEqual({
+    ...scope,
+    selector: { text: { value: "Hello 世界" } },
+  });
+  expect(
+    JSON.parse(await readFile(workspace.path("received-input.json"), "utf8")),
+  ).toMatchObject({
+    display_id: 0,
+    max_nodes: 500,
+    timeout_ms: 10_000,
     selector: { text: { value: "Hello 世界", match: "exact" } },
+  });
+});
+
+it("does not contact the UI runner when shared server startup fails", async () => {
+  const { service, workspace } = await fixture({ start_server_refusal: true });
+  const result = await service.execute("inspect_adb_ui", scope);
+  if (result.ok) throw new Error("Expected shared-server startup refusal");
+  expect(result.error.diagnostics).toMatchObject({ adb_step: "start-server" });
+  await expect(readFile(workspace.path("calls"), "utf8")).rejects.toMatchObject(
+    {
+      code: "ENOENT",
+    },
+  );
+});
+
+it("projects the runner deadline and names the next-call timeout control through MCP", async () => {
+  const { provider } = await fixture({
+    unsupported_kind: "timeout",
+    unsupported_reason: "Fixture runner deadline elapsed",
+  });
+  const harness = await createApplicationMcpHarness({
+    serverOptions: { adbDeviceAnalysis: provider },
+  });
+  onTestFinished(() => harness.close());
+  const reply = await harness.client.callTool({
+    name: "inspect_adb_ui",
+    arguments: { ...scope, timeout_ms: 321 },
+  });
+  expect(parseMcpToolError(reply).error).toMatchObject({
+    code: "provider_timeout",
+    remediation: { action: expect.stringContaining("timeout_ms") },
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "timeout_ms",
+        effective_value: 321,
+        minimum: 1,
+        maximum: 30_000,
+        default_value: 10_000,
+        unit: "ms",
+      },
+    },
   });
 });
 
@@ -1857,8 +1925,10 @@ it("retains late UI Evidence through the default server capability composition",
   expect(record).toHaveBeenCalledOnce();
   expect(parseEvidence(record.mock.calls[0]?.[0])).toMatchObject({
     operation: "inspect_adb_ui",
+    parameters: scope,
     normalized_result: { serial: scope.serial },
   });
+  expect(parseEvidence(record.mock.calls[0]?.[0]).parameters).toEqual(scope);
 });
 
 it("records a terminal observation recovered after the original response", async () => {

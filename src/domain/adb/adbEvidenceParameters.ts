@@ -7,17 +7,22 @@ export const adbEvidenceParameters = (
   request: AdbRequest,
   result: JsonValue,
 ) => {
+  const parameters =
+    ("callerInput" in request ? request.callerInput : undefined) ??
+    jsonObjectSchema.parse(request.input);
   if (
     request.operation !== "perform_adb_ui_action" ||
     request.input.action.kind !== "set_text"
   )
-    return jsonObjectSchema.parse(request.input);
+    return parameters;
   const selected = isRecord(result) ? result.selected_element : null;
   const password = isRecord(selected) && selected.password === true;
-  if (!request.input.action.sensitive && !password)
-    return jsonObjectSchema.parse(request.input);
+  if (!request.input.action.sensitive && !password) return parameters;
   return jsonObjectSchema.parse({
-    ...request.input,
-    action: { ...request.input.action, text: "[redacted]" },
+    ...parameters,
+    action: {
+      ...(isRecord(parameters.action) ? parameters.action : {}),
+      text: "[redacted]",
+    },
   });
 };

@@ -775,8 +775,8 @@ const SERVICE_TOOL_BINDINGS = {
       "list_jeb_units",
       "decompile_jeb_item",
     ])) satisfies Bind<JebAnalysisService>,
-  adbDeviceAnalysis: ((service) =>
-    contractServiceBindings<(typeof ADB_TOOL_CONTRACTS)[number]["name"]>(
+  adbDeviceAnalysis: ((service) => ({
+    ...contractServiceBindings<(typeof ADB_TOOL_CONTRACTS)[number]["name"]>(
       service,
       [
         "inspect_adb_client",
@@ -795,9 +795,6 @@ const SERVICE_TOOL_BINDINGS = {
         "list_adb_services",
         "inspect_adb_display",
         "inspect_adb_window",
-        "inspect_adb_ui",
-        "find_adb_ui_elements",
-        "wait_for_adb_ui",
         "read_adb_setting",
         "collect_adb_bugreport",
         "resolve_adb_packages",
@@ -807,7 +804,13 @@ const SERVICE_TOOL_BINDINGS = {
         "start_adb_activity",
         "stop_adb_app",
       ],
-    )) satisfies Bind<AdbDeviceAnalysisService>,
+    ),
+    ...contractServiceBindings<(typeof ADB_TOOL_CONTRACTS)[number]["name"]>(
+      service,
+      ["inspect_adb_ui", "find_adb_ui_elements", "wait_for_adb_ui"],
+      "application",
+    ),
+  })) satisfies Bind<AdbDeviceAnalysisService>,
   webModuleTrace: ((service) => ({
     trace_web_module_imports: {
       admission: "application",

@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { knownCoverageStatusSchema } from "../coverage.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import type { JsonValue } from "../jsonValue.js";
 import {
   adbClientIdentitySchema,
   adbPackageNameSchema,
@@ -36,6 +38,19 @@ export const adbUiSelectorSchema = z.strictObject({
   visible: z.boolean().optional(),
 });
 
+const UI_TIMEOUT = { minimum: 1, maximum: 30_000, default_value: 10_000 };
+
+export const adbUiTimeoutLimit = (
+  effective_value: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "timeout_ms",
+  applies_at: "next_call",
+  unit: "ms",
+  effective_value,
+  ...UI_TIMEOUT,
+});
+
 const scope = {
   serial: adbSerialSchema,
   package: adbPackageNameSchema.describe(
@@ -53,9 +68,9 @@ const scope = {
   timeout_ms: z
     .number()
     .int()
-    .min(1)
-    .max(30000)
-    .default(10000)
+    .min(UI_TIMEOUT.minimum)
+    .max(UI_TIMEOUT.maximum)
+    .default(UI_TIMEOUT.default_value)
     .describe(
       "Runner operation deadline; host setup and cleanup have separate budgets",
     ),
@@ -143,8 +158,14 @@ export type AdbUiRequest = {
   [Name in AdbUiOperation]: {
     operation: Name;
     input: z.infer<(typeof adbUiInputSchemas)[Name]>;
+    /** Caller-selected fields, before defaults were applied. Never sent to the runner. */
+    callerInput?: Readonly<Record<string, JsonValue>>;
   };
 }[AdbUiOperation];
+
+export const isAdbUiOperation = (
+  operation: string,
+): operation is AdbUiOperation => Object.hasOwn(adbUiInputSchemas, operation);
 
 const bounds = z.strictObject({
   left: coordinate,

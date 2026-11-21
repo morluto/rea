@@ -33,6 +33,7 @@ import {
 import {
   adbUiObservationSchemas,
   adbUiRunnerIdentitySchema,
+  adbUiTimeoutLimit,
   type adbUiNodeSchema,
   type adbUiSnapshotHeaderSchema,
   type AdbUiRequest,
@@ -71,6 +72,28 @@ const RESPONSE_BYTES = 256 * 1024;
 const CAPTURE_BYTES = 1024 * 1024;
 const CLEANUP_MS = 5000;
 const PROTOCOL = 2;
+// Protocol v2's runner retains at most this many UTF-16 code units until exit.
+const SENSITIVE_STORE_ALLOWANCE = {
+  name: "The UI runner sensitive-text store",
+  kind: "count",
+  limit: 65_536,
+  unit: "UTF-16 code units",
+  narrowing:
+    "After outstanding work settles, restart the operator-owned UI runner before adding more sensitive values. Actions that do not add sensitive values remain available.",
+} as const;
+
+const uiTimeout = (request: AdbUiRequest, cause?: unknown) => {
+  const limit = adbUiTimeoutLimit(request.input.timeout_ms);
+  return new AnalysisTimeoutError(request.operation, limit.effective_value, {
+    cause,
+    limit,
+    remediationAction:
+      (limit.effective_value < limit.maximum
+        ? `Increase timeout_ms on the next call, up to ${limit.maximum} ms.`
+        : `timeout_ms is already at its maximum of ${limit.maximum} ms; narrow the UI request.`) +
+      " Inspect current UI state before deciding whether to replay an action.",
+  });
+};
 const REQUEST_ALLOWANCE = fixedAllowanceOptions(
   "UI private request protocol",
   "bytes",
@@ -1152,11 +1175,7 @@ export class AdbUiRunner {
           }
         } catch (cause) {
           if (deadline.aborted && !signal?.aborted)
-            throw new AnalysisTimeoutError(
-              request.operation,
-              request.input.timeout_ms,
-              { cause },
-            );
+            throw uiTimeout(request, cause);
           throw cause;
         }
       }
@@ -1472,19 +1491,19 @@ export class AdbUiRunner {
     signal?: AbortSignal,
   ): AnalysisError {
     if (failure.kind === "sensitive_capacity")
-      return capacityConstraint(request.operation, failure.reason, {
-        remediationAction:
-          "After outstanding work settles, restart the operator-owned UI runner before adding more sensitive values. Actions that do not add sensitive values remain available.",
-        diagnostics: {
-          runner_failure: failure.kind,
-          runner_instance: owned.runner.instance_id,
-        },
-      });
-    if (failure.kind === "timeout")
-      return new AnalysisTimeoutError(
+      return fixedCeilingConstraint(
         request.operation,
-        request.input.timeout_ms,
+        "capacity",
+        failure.reason,
+        SENSITIVE_STORE_ALLOWANCE,
+        {
+          diagnostics: {
+            runner_failure: failure.kind,
+            runner_instance: owned.runner.instance_id,
+          },
+        },
       );
+    if (failure.kind === "timeout") return uiTimeout(request);
     if (failure.kind === "cancelled")
       return cancelledBy(
         request.operation,

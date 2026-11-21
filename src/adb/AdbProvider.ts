@@ -36,7 +36,11 @@ import {
   type AnalysisExecution,
 } from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
-import { ADB_DEVICE_OBSERVATION_AUTHORITY } from "../domain/adb/adbDeviceAnalysis.js";
+import {
+  ADB_DEVICE_OBSERVATION_AUTHORITY,
+  adbDisplayPartialObservationSchema,
+  adbResultSchemas,
+} from "../domain/adb/adbDeviceAnalysis.js";
 import type {
   AdbDisplayNumericIssues,
   AdbDisplayPartialObservation,
@@ -52,10 +56,6 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../resources/index.js";
-import {
-  adbDisplayPartialObservationSchema,
-  adbResultSchemas,
-} from "../domain/adb/adbDeviceAnalysis.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
@@ -1485,7 +1485,9 @@ export class AdbProvider {
       case "inspect_adb_ui":
       case "find_adb_ui_elements":
       case "wait_for_adb_ui":
-      case "perform_adb_ui_action":
+      case "perform_adb_ui_action": {
+        const started = await selection.startServer?.();
+        if (started !== undefined && !started.ok) return started;
         return this.#ui.execute(
           request,
           selection.binary,
@@ -1493,6 +1495,7 @@ export class AdbProvider {
           provider,
           signal,
         );
+      }
       case "inspect_adb_client":
         return inspectAdbClientOperation(context);
       case "list_adb_devices":

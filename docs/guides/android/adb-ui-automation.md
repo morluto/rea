@@ -174,8 +174,14 @@ application state is left as-is.
   predicates involving redacted text report partial query coverage. A wait cannot
   claim absence from incomplete or hidden matching facts.
 - Runtime observations use `controlled-replay` Evidence authority and preserve
-  the caller-selected device, scope and runner-reported identity. No association
-  with a local APK's bytes is established by an equal package name.
+  the caller-selected device, scope and runner-reported identity. Evidence
+  parameters retain only supplied fields; omitted defaults still apply at
+  execution. No association with a local APK's bytes is established by an equal
+  package name.
+- `timeout_ms` sets the runner's operation deadline (1–30,000 ms, default
+  10,000 ms). A timeout names the effective limit and next-call recovery. Host
+  setup, transport and cleanup have separate budgets. Inspect the current UI
+  state before deciding whether to replay an action after a timeout.
 - A password-marked node keeps both of its textual fields out of the
   observation: the runner redacts the text and the content description together,
   reports both as redacted, and reports a search over a redacted field as
@@ -191,9 +197,10 @@ application state is left as-is.
   envelope does not establish whether input occurred: the outcome remains unknown
   and replay stays blocked until a matching fresh inspection. This also applies
   when cleanup recovers the envelope or its forget acknowledgement is lost.
-  A definitive sensitive-value storage refusal has its own `sensitive_capacity`
-  kind and leaves other permitted actions available. An operator restarts the
-  runner after outstanding work settles to admit additional sensitive values.
+  A definitive `sensitive_capacity` refusal reports the fixed 65,536 UTF-16
+  code-unit ceiling and is not retryable against the same full runner.
+  Other permitted actions remain available. An operator restarts the runner
+  after outstanding work settles to admit additional sensitive values.
   Missing results keep the existing `capacity` kind so older hosts retain replay
   protection. Older runners' ambiguous terminal `capacity` replies also retain
   the unknown-outcome gate.

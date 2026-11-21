@@ -7,7 +7,7 @@ import { createAdbDeviceAnalysisProvider } from "../../dist/composition/adb.js";
 import { AdbDeviceAnalysisService } from "../../dist/application/adb/AdbDeviceAnalysisService.js";
 import { PROPOSED_ADB_UI_ACTION_CONTRACT } from "../../dist/contracts/adb/adbUiToolContracts.js";
 import { createEvidenceToolHandler } from "../../dist/server/contractToolHandler.js";
-import { toolRegistrationOptions } from "../../dist/server/toolRegistrationOptions.js";
+import { applicationToolRegistrationOptions } from "../../dist/server/toolRegistrationOptions.js";
 import { createLogger } from "../../dist/logger.js";
 
 process.exitCode = await run({
@@ -39,7 +39,7 @@ process.exitCode = await run({
     const service = new AdbDeviceAnalysisService(provider);
     server.registerTool(
       contract.name,
-      toolRegistrationOptions(contract),
+      applicationToolRegistrationOptions(contract),
       createEvidenceToolHandler(
         server,
         (input, executionOptions) =>
