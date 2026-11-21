@@ -682,7 +682,7 @@ supports `detail: "summary"` on its first call to retain the complete source
 without returning the body inline; see [native investigation](../guides/native/native-investigation.md).
 
 Configure [Hopper or Ghidra](installation.md#hopper), the
-[IDA adapter](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) before analyzing a
+[IDA adapter](../providers/ida-provider.md), [Binary Ninja](../providers/binary-ninja.md), or [Kuna](../kuna-provider.md) before analyzing a
 native target. Substitute
 your target, search text and function name or address in these examples:
 
@@ -756,12 +756,11 @@ invalid existing registration; they do not establish target support. `target`
 entries record a refused kind, format, architecture, or role. An availability-only
 message describes the recorded rejections without claiming that every provider
 is unconfigured or that target support is known.
-For Hopper, Ghidra, IDA, JADX, and Kuna, run
-`rea doctor --provider ID --json` to diagnose the selected engine;
-`--provider desktop_build` checks the desktop application build host instead of
-an analysis engine. Other adapters,
-such as `pwntools-elf`, report their configuration requirements directly and are
-not accepted by `doctor --provider`. See
+For Hopper, Ghidra, IDA, Binary Ninja, JADX, and Kuna, run
+`rea doctor --provider ID --json` to diagnose the selected engine.
+Use `rea doctor --provider desktop_build` to check the desktop application build
+host. Other adapters, such as `pwntools-elf`, report their configuration
+requirements directly and are not accepted by `doctor --provider`. See
 [task readiness](installation.md#check-readiness-for-your-task) and
 [provider selection](../reference/mcp-contracts.md#identity-and-discovery).
 

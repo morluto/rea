@@ -6,6 +6,7 @@ export const DOCTOR_PROVIDER_IDS = [
   "hopper",
   "ghidra",
   "ida",
+  "binary-ninja",
   "jadx",
   "kuna",
   DESKTOP_BUILD_PROVIDER_ID,

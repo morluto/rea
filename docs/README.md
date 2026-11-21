@@ -162,6 +162,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Windows Ghidra P0](providers/windows-ghidra-p0.md)
 - [Headerless raw-binary analysis with Ghidra](providers/raw-binary.md)
 - [IDA provider](providers/ida-provider.md)
+- [Binary Ninja provider](providers/binary-ninja.md)
 - [JEB instrumentation and analysis](providers/jeb-analysis.md)
 - [GameCube DOL analysis through Ghidra](ghidra-dol.md)
 - [PowerPC ELF analysis through Ghidra](ghidra-ppc.md)

@@ -790,23 +790,117 @@ cliTest(
   },
 );
 
-for (const [client, provider] of [
-  ["codex", "ida"],
-  ["kimi", "ida"],
-  ["kimi", "auto"],
+cliTest(
+  "Codex setup replaces the stored Binary Ninja registration with an explicit path",
+  async ({ cli }) => {
+    const codexHome = join(home, "codex");
+    await mkdir(codexHome, { recursive: true });
+    const previous = join(home, "previous-binary-ninja.json");
+    const replacement = join(home, "replacement-binary-ninja.json");
+    await Promise.all([
+      writeFile(
+        previous,
+        JSON.stringify({
+          url: "http://127.0.0.1:12345/mcp",
+          timeoutMs: 1_800_001,
+        }),
+      ),
+      writeFile(
+        replacement,
+        JSON.stringify({
+          url: "http://127.0.0.1:12346/mcp",
+          timeoutMs: 2_400_001,
+        }),
+      ),
+    ]);
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      CODEX_HOME: codexHome,
+      ...missingHopperAndGhidraEnvironment(home),
+    };
+    const setup = (registration: string) =>
+      cli.run({
+        arguments: [
+          "setup",
+          "--client",
+          "codex",
+          "--skill=false",
+          "--yes",
+          "--json",
+        ],
+        cwd: home,
+        environment: {
+          ...environment,
+          REA_ANALYSIS_PROVIDER: "binary-ninja",
+          REA_BINARY_NINJA_MCP_CONFIG: registration,
+        },
+      });
+    const readRegistration = async () =>
+      effectiveClientServer(
+        parseClientConfiguration(
+          await readFile(join(codexHome, "config.toml"), "utf8"),
+          "toml",
+        ),
+        "rea",
+      );
+    const original = await setup(previous);
+    expect(original.exitCode, original.stdout).toBe(0);
+    expect(await readRegistration()).toMatchObject({
+      tool_timeout_sec: 1921,
+      env: { REA_BINARY_NINJA_MCP_CONFIG: previous },
+    });
+
+    const updated = await setup(replacement);
+    expect(updated.exitCode, updated.stdout).toBe(0);
+    expect(await readRegistration()).toMatchObject({
+      tool_timeout_sec: 1921,
+      env: { REA_BINARY_NINJA_MCP_CONFIG: replacement },
+    });
+    const doctor = await cli.run({
+      arguments: ["doctor", "--client", "codex", "--json"],
+      cwd: home,
+      environment,
+    });
+    expect(doctor.exitCode, doctor.stdout).toBe(0);
+    expect(doctor.json).toMatchObject({
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({
+            client: "codex",
+            advisory: expect.stringContaining(
+              "tool_timeout_sec = 2521 seconds",
+            ),
+          }),
+        ]),
+      },
+    });
+  },
+);
+
+for (const [client, provider, engine] of [
+  ["codex", "ida", "ida"],
+  ["kimi", "ida", "ida"],
+  ["kimi", "auto", "ida"],
+  ["codex", "binary-ninja", "binary-ninja"],
+  ["kimi", "binary-ninja", "binary-ninja"],
+  ["codex", "auto", "binary-ninja"],
+  ["kimi", "auto", "binary-ninja"],
 ] as const)
   cliTest(
-    `public ${client} setup and doctor use the effective IDA registration request budget with ${provider} selection`,
+    `public ${client} setup and doctor use the effective ${engine} registration request budget with ${provider} selection`,
     async ({ cli }) => {
       const clientHome = join(home, client);
       await mkdir(clientHome, { recursive: true });
-      const idaConfig = join(home, "ida.json");
+      const registrationConfig = join(home, `${engine}.json`);
+      const setting =
+        engine === "ida" ? "REA_IDA_MCP_CONFIG" : "REA_BINARY_NINJA_MCP_CONFIG";
       const writeRegistration = (timeoutMs: number) =>
         writeFile(
-          idaConfig,
+          registrationConfig,
           JSON.stringify({
             url: "http://127.0.0.1:12345/mcp",
-            protocol: "native",
+            ...(engine === "ida" ? { protocol: "native" } : {}),
             headers: { Authorization: "Bearer fixture-credential" },
             timeoutMs,
           }),
@@ -834,7 +928,7 @@ for (const [client, provider] of [
         environment: {
           ...environment,
           REA_ANALYSIS_PROVIDER: provider,
-          REA_IDA_MCP_CONFIG: idaConfig,
+          [setting]: registrationConfig,
         },
       });
       expect(configured.exitCode, configured.stdout).toBe(0);
@@ -852,7 +946,7 @@ for (const [client, provider] of [
         ...(client === "codex"
           ? { tool_timeout_sec: 1921 }
           : { toolTimeoutMs: 1_920_001 }),
-        env: { REA_ANALYSIS_PROVIDER: provider, REA_IDA_MCP_CONFIG: idaConfig },
+        env: { REA_ANALYSIS_PROVIDER: provider, [setting]: registrationConfig },
       });
       expect(text).not.toContain("fixture-credential");
       const run = (arguments_: readonly string[]) =>
@@ -862,7 +956,7 @@ for (const [client, provider] of [
       expect(JSON.stringify(healthy.json)).not.toContain('"advisory"');
 
       // Only the stored client's provider path identifies this changed budget;
-      // the doctor/setup process has no IDA configuration in its environment.
+      // the doctor/setup process has no provider configuration in its environment.
       await writeRegistration(2_400_001);
       const doctor = await run(["doctor", "--client", client, "--json"]);
       expect(doctor.exitCode, doctor.stdout).toBe(0);
@@ -892,7 +986,7 @@ for (const [client, provider] of [
       await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
         code: "ENOENT",
       });
-      if (provider === "ida") {
+      if (provider !== "auto") {
         await writeRegistration(0);
         const invalidDoctor = await run([
           "doctor",
@@ -907,14 +1001,14 @@ for (const [client, provider] of [
               expect.objectContaining({
                 client,
                 state: "invalid",
-                remediation: expect.stringContaining("REA_IDA_MCP_CONFIG"),
+                remediation: expect.stringContaining(setting),
               }),
             ]),
           },
         });
         const invalidSetup = await run(setupArguments);
         expect(invalidSetup.exitCode).toBe(1);
-        expect(invalidSetup.stdout).toContain("REA_IDA_MCP_CONFIG");
+        expect(invalidSetup.stdout).toContain(setting);
         expect(await readFile(config, "utf8")).toBe(text);
         await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
           code: "ENOENT",

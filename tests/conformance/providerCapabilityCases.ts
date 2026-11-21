@@ -40,6 +40,10 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   },
   binaryHardening: { cases: ["tests/acceptance/binaryHardeningCli.test.ts"] },
   binaryLayout: { cases: ["tests/boundary/mcp/binaryDiagnosticsMcp.test.ts"] },
+  binaryNinja: {
+    exempt:
+      "The public analysis workflow needs a running Binary Ninja GUI with the target open and analyzed. scripts/verify-real-binary-ninja.mjs exercises that workflow, and the automated provider tests use a recording MCP connection.",
+  },
   browserObservation: {
     cases: ["tests/acceptance/browser/observationDurationCli.test.ts"],
   },

@@ -53,6 +53,7 @@ export const UNIT_LAYERS = Object.freeze(
       "apkSignature",
       "apktool",
       "artifacts",
+      "binaryNinja",
       "browser",
       "captures",
       "cutter",
@@ -308,6 +309,12 @@ export const ENTRY_FILES = Object.freeze(
         "HopperProvider.ts",
         "HopperProviderMetadata.ts",
         "LinuxPrivateDisplayProbe.ts",
+      ],
+      binaryNinja: [
+        "BinaryNinjaConfiguration.ts",
+        "BinaryNinjaDoctor.ts",
+        "BinaryNinjaProvider.ts",
+        "BinaryNinjaProviderCapabilities.ts",
       ],
       ida: [
         "IdaConfiguration.ts",
