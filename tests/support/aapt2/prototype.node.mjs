@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   withCommands,
@@ -92,6 +92,9 @@ for (const kind of ["cancelled", "cleanup-completed", "cleanup-failed"])
   });
 
 const script = fileURLToPath(new URL("./verify.mjs", import.meta.url));
+// The development source loader can emit a Node warning before the receipt.
+const terminalReceipt = (stderr) =>
+  JSON.parse(stderr.trimEnd().split("\n").at(-1));
 for (const diagnostics of [true, false]) {
   test(`cleanup reports exclude inherited environment and live owners (diagnostics: ${diagnostics})`, () => {
     const retainedValue = "UNRELATED_AMBIENT_VALUE=must-not-be-persisted";
@@ -245,6 +248,11 @@ else { console.error('Unmodeled command');process.exitCode=97; }
       );
       assert.equal(receipt.outcome, "failed");
       assert.equal(receipt.commands.at(-1).arguments[0], "b");
+      assert.deepEqual(receipt.retained_command_resources, []);
+      if (process.platform !== "win32") {
+        assert.equal(receipt.verifier_run.process_lineage.status, "verified");
+        assert.deepEqual(receipt.verifier_run.process_lineage.descendants, []);
+      }
       assert.deepEqual(receipt.decoded_before, [
         {
           path: "settings.ini",
@@ -375,7 +383,7 @@ else if (args.length === 5 && args[0] === 'compile' && args[1] === '--dir' && ar
           (error) => {
             assert.equal(error.reason, "process");
             assert.equal(error.snapshot.exitCode, 1);
-            terminalFailure = JSON.parse(error.snapshot.stderr.text);
+            terminalFailure = terminalReceipt(error.snapshot.stderr.text);
             return true;
           },
         );
@@ -506,7 +514,7 @@ else if (args[0] === 'compile') {
         (error) => {
           assert.equal(error.reason, "process");
           assert.equal(error.snapshot.exitCode, 1);
-          const failure = JSON.parse(error.snapshot.stderr.text);
+          const failure = terminalReceipt(error.snapshot.stderr.text);
           assert.equal(failure.receipt_published, false);
           assert.equal(failure.receipt_path, join(output, "receipt.json"));
           assert.equal(failure.failure.name, "AggregateError");
@@ -630,6 +638,10 @@ test(
         await readFile(join(output, "receipt.json"), "utf8"),
       );
       assert.equal(receipt.existing_decode_cli_mcp_parity, true);
+      if (process.platform !== "win32") {
+        assert.equal(receipt.verifier_run.process_lineage.status, "verified");
+        assert.deepEqual(receipt.verifier_run.process_lineage.descendants, []);
+      }
       assert.equal(receipt.malformed_resource_refused, true);
       assert.equal(receipt.missing_framework_refused, true);
       assert.equal(receipt.outcome, "completed");
@@ -642,7 +654,7 @@ test(
       );
       assert.equal(
         build.arguments[build.arguments.indexOf("--aapt") + 1],
-        aapt2,
+        resolve(aapt2),
       );
       assert.match(receipt.rebuilt.sha256, /^[a-f0-9]{64}$/u);
     } finally {

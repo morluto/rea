@@ -13,6 +13,10 @@ rebuild CLI/MCP contracts are registered or included in the package allowlist.
 
 ## Run
 
+Use the development Node version pinned in `.nvmrc`. The standalone verifier
+uses the shared source-loaded command owner, not the installed CLI's Node
+compatibility range.
+
 ```sh
 npm ci
 npm run build:cached
@@ -47,15 +51,12 @@ or Node's inspection of live cleanup capabilities.
   close capabilities. Available source, framework, artifact and command facts
   survive later failures. A failed receipt write preserves the original failure
   rather than replacing it with the publication error.
-- The command scope seals new admission when its callback finishes and joins
-  accepted asynchronous preparation before cleanup. `SIGINT`/`SIGTERM` handlers
-  remain installed through final cleanup, including repeated signals. Cleanup
-  uses its own physical stop boundary rather than the cancelled caller signal.
-  The first cancellation reason and independent primary/cleanup failures remain
-  distinguishable; only unresolved owners are retried. Settled command failures
-  remain owned even if the callback continues with later successful work or
-  throws its own independent error. Successful diagnostics are not retained by
-  that failure ledger; expected nonzero exits use explicit `acceptNonZeroExit`.
+- The shared verifier command owner supervises each tool and the MCP server,
+  sweeps token-owned processes, and retains unresolved cleanup resources.
+  `SIGINT`/`SIGTERM` handlers stay installed through finalization, so cancellation
+  cannot skip cleanup. The receipt records final process lineage; POSIX success
+  requires verified lineage with no surviving descendants. Windows relies on
+  the shared owner's native job cleanup, not a POSIX lineage claim.
 - SDK AAPT2 may print its version on stderr. Receipts retain the channel of each
   recognized version declaration; an unrecognized or conflicting declaration
   leaves the selected version unknown (`null`). Raw command diagnostics remain
@@ -65,9 +66,11 @@ or Node's inspection of live cleanup capabilities.
   (`--use-aapt2 --aapt`) or [3.x protocol](https://apktool.org/docs/cli-parameters/)
   (`--aapt`, without the removed `--use-aapt2`). Unknown, pre-2.7 and future major
   versions are refused before compilation rather than assigned guessed flags.
-- MCP connection and calls receive cancellation. Both client and transport close
-  are attempted without discarding an earlier verification failure. Successful
-  parity and negative-input observations survive a later finalization failure.
+- MCP connection and calls receive cancellation. The parity check first
+  verifies that the MCP server advertises the decode tool exactly once. Client
+  close and owned transport cleanup preserve earlier verification failures.
+  Successful parity and negative-input observations survive a later
+  finalization failure.
 
 The tests include real OS signals during a controlled retained-owner finalizer,
 in addition to cancellation of an actual owned child. Controlled cleanup outcomes

@@ -22,68 +22,94 @@ const cleanupRecord = (result, options) => ({
       }),
 });
 
-/** Preserve full receipt diagnostics while projecting terminal failures without expanded output. */
-export const failureRecord = (
-  cause,
-  { diagnostics = true, seen = new Set() } = {},
-) => {
-  if (!(cause instanceof Error)) return { message: String(cause) };
-  const record = { name: cause.name, message: cause.message };
-  if (seen.has(cause)) return { ...record, already_recorded: true };
-  seen.add(cause);
-  if (cause instanceof OwnedCommandFailure) {
-    // Never serialize a live cleanup capability or the ambient child environment.
-    Object.assign(record, {
-      reason: cause.reason,
-      snapshot:
-        diagnostics || cause.snapshot === null
-          ? cause.snapshot
+/**
+ * Preserve receipt diagnostics without serializing live owners. Use the error
+ * types from the same module graph as the command owner (source or built).
+ */
+export const createFailureRecorder = ({
+  commandFailure = OwnedCommandFailure,
+  darwinFailure = DarwinProcessOwnershipInspectionError,
+} = {}) => {
+  const recordFailure = (
+    cause,
+    { diagnostics = true, seen = new Set() } = {},
+  ) => {
+    if (!(cause instanceof Error)) return { message: String(cause) };
+    const record = { name: cause.name, message: cause.message };
+    if (seen.has(cause)) return { ...record, already_recorded: true };
+    seen.add(cause);
+    if (cause instanceof commandFailure) {
+      // Never serialize a live cleanup capability or the ambient child environment.
+      Object.assign(record, {
+        reason: cause.reason,
+        snapshot:
+          diagnostics || cause.snapshot === null
+            ? cause.snapshot
+            : {
+                exitCode: cause.snapshot.exitCode,
+                signal: cause.snapshot.signal,
+              },
+        collection_failure: cause.collectionFailure,
+        cleanup_failure: cause.cleanupFailure,
+        ...(cause.cancellation === undefined
+          ? {}
           : {
-              exitCode: cause.snapshot.exitCode,
-              signal: cause.snapshot.signal,
-            },
-      collection_failure: cause.collectionFailure,
-      cleanup_failure: cause.cleanupFailure,
-      ...(cause.cancellation === undefined
-        ? {}
-        : {
-            cancellation: {
-              reason: failureRecord(cause.cancellation.reason, {
-                diagnostics,
-                seen,
-              }),
-            },
-          }),
-      ...(cause.cleanupResult === undefined
-        ? {}
-        : { cleanup_result: cause.cleanupResult }),
-      resources: cause.resources,
-    });
-  }
-  if (cause instanceof ExperimentCommandCleanupFailure)
-    record.cleanup_result = cleanupRecord(cause.result, { diagnostics, seen });
-  if (cause instanceof DarwinProcessOwnershipInspectionError) {
-    if (diagnostics) {
-      record.compiler_outcome = cause.compilerOutcome;
-      record.captured_output = cause.capturedOutput;
-    } else if (cause.compilerOutcome !== undefined) {
-      const { stderr: _stderr, ...facts } = cause.compilerOutcome;
-      record.compiler_outcome = { ...facts, stderr_omitted: true };
+              cancellation: {
+                reason: recordFailure(cause.cancellation.reason, {
+                  diagnostics,
+                  seen,
+                }),
+              },
+            }),
+        ...(cause.cleanupResult === undefined
+          ? {}
+          : { cleanup_result: cause.cleanupResult }),
+        resources: cause.resources,
+      });
     }
-    if (cause.cleanupFailure !== undefined)
-      record.cleanup_failure = projectAnalysisError(cause.cleanupFailure);
-    if (cause.cancellation !== undefined)
-      record.cancellation = {
-        reason: failureRecord(cause.cancellation.reason, { diagnostics, seen }),
-      };
-  }
-  if ("code" in cause && ["string", "number"].includes(typeof cause.code))
-    record.code = cause.code;
-  if (cause instanceof AggregateError)
-    record.errors = cause.errors.map((error) =>
-      failureRecord(error, { diagnostics, seen }),
-    );
-  if (cause.cause !== undefined)
-    record.cause = failureRecord(cause.cause, { diagnostics, seen });
-  return record;
+    if (cause instanceof ExperimentCommandCleanupFailure)
+      record.cleanup_result = cleanupRecord(cause.result, {
+        diagnostics,
+        seen,
+      });
+    if (cause.name === "VerifierCommandExitError") {
+      const { exitCode, signal } = cause.snapshot;
+      record.message = `Command exited with code ${cause.code}`;
+      record.reason = "process";
+      record.snapshot = diagnostics ? cause.snapshot : { exitCode, signal };
+      record.collection_failure = false;
+      record.cleanup_failure = null;
+      record.resources = [];
+    }
+    if (cause instanceof darwinFailure) {
+      if (diagnostics) {
+        record.compiler_outcome = cause.compilerOutcome;
+        record.captured_output = cause.capturedOutput;
+      } else if (cause.compilerOutcome !== undefined) {
+        const { stderr: _stderr, ...facts } = cause.compilerOutcome;
+        record.compiler_outcome = { ...facts, stderr_omitted: true };
+      }
+      if (cause.cleanupFailure !== undefined)
+        record.cleanup_failure = projectAnalysisError(cause.cleanupFailure);
+      if (cause.cancellation !== undefined)
+        record.cancellation = {
+          reason: recordFailure(cause.cancellation.reason, {
+            diagnostics,
+            seen,
+          }),
+        };
+    }
+    if ("code" in cause && ["string", "number"].includes(typeof cause.code))
+      record.code = cause.code;
+    if (cause instanceof AggregateError)
+      record.errors = cause.errors.map((error) =>
+        recordFailure(error, { diagnostics, seen }),
+      );
+    if (cause.cause !== undefined)
+      record.cause = recordFailure(cause.cause, { diagnostics, seen });
+    return record;
+  };
+  return recordFailure;
 };
+
+export const failureRecord = createFailureRecorder();

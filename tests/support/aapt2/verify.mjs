@@ -3,14 +3,23 @@ import { cp, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { major } from "semver";
 import { parseApktoolVersionOutput } from "../../../dist/apktool/ApktoolConfiguration.js";
 import { toolContract } from "../../../dist/contracts/toolContracts.js";
 import { ArtifactResourceScope } from "../../../dist/resources/index.js";
-import { withCommands } from "../command-scope.mjs";
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
+import { createOwnedMcpStdioTransport } from "../../../scripts/lib/owned-mcp-stdio.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { bindVerifierCommandInterruption } from "../../../scripts/lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "../../../scripts/lib/verifier-run.mjs";
+import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { importVerifierSource } from "../../../scripts/lib/verifier-source-loader.mjs";
 import { createIdentityRecorder } from "./identities.mjs";
-import { failureRecord } from "./failure-record.mjs";
+import { createFailureRecorder } from "./failure-record.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -42,296 +51,317 @@ const receipt = {
   signing: "not_performed",
   commands,
 };
+const run = createVerifierRun({ inheritProcessRunId: true });
 const env = {
   ...process.env,
   REA_APKTOOL_COMMAND: resolve(values.apktool),
   JAVA_TOOL_OPTIONS: "-Xmx512m",
 };
-await withCommands(async (run, signal) => {
+const verify = async (owner, interruption) => {
+  const { signal } = interruption;
   const { identity, tree } = createIdentityRecorder(files, signal);
-  let failed = false;
-  let primary;
-  try {
-    receipt.source = [];
-    const before = await tree(fixture, receipt.source);
-    await identity(receipt.framework.path, (value) =>
-      Object.assign(receipt.framework, value),
-    );
-    const selectedFramework = receipt.framework;
-    const command = async (binary, args, options = {}) => {
-      const started = performance.now();
+  receipt.source = [];
+  const before = await tree(fixture, receipt.source);
+  await identity(receipt.framework.path, (value) =>
+    Object.assign(receipt.framework, value),
+  );
+  const selectedFramework = receipt.framework;
+  const command = async (binary, args, options = {}) => {
+    const started = performance.now();
+    try {
+      let result;
       try {
-        const result = await run(binary, args, {
-          environment: env,
-          timeoutMs: 120_000,
-          maxBytes: 4 * 1024 * 1024,
-          ...options,
-        });
-        commands.push({
-          binary,
-          arguments: args,
-          outcome: "completed",
-          elapsed_ms: performance.now() - started,
-          ...result,
-        });
-        return result;
+        result = {
+          ...(await interruption.exec(binary, args, {
+            env,
+            timeout: 120_000,
+            diagnosticBytes: 4 * 1024 * 1024,
+          })),
+          code: 0,
+        };
       } catch (cause) {
-        commands.push({
-          binary,
-          arguments: args,
-          outcome: "failed",
-          elapsed_ms: performance.now() - started,
-          error: failureRecord(cause),
-        });
-        throw cause;
+        if (
+          !options.acceptNonZeroExit ||
+          cause?.name !== "VerifierCommandExitError"
+        )
+          throw cause;
+        result = {
+          stdout: cause.snapshot.stdout.text,
+          stderr: cause.snapshot.stderr.text,
+          code: cause.code,
+        };
       }
-    };
-    const aapt2 = resolve(values.aapt2);
-    const apktool = resolve(values.apktool);
-    const version = await command(aapt2, ["version"]);
-    const observations = ["stdout", "stderr"].flatMap((channel) =>
-      [
-        ...version[channel].matchAll(
-          /^Android Asset Packaging Tool \(aapt\) ([^\r\n]+)$/gmu,
-        ),
-      ]
-        .map((match) => ({ channel, version: match[1].trim() }))
-        .filter((entry) => entry.version.length > 0),
-    );
-    receipt.version_observations = observations;
-    receipt.version =
-      new Set(observations.map((entry) => entry.version)).size === 1
-        ? observations[0].version
-        : null;
-    const apktoolVersion = parseApktoolVersionOutput(
-      (await command(apktool, ["--version"])).stdout,
-      process.platform,
-    );
-    receipt.apktool_identity = apktoolVersion;
-    receipt.apktool_version = apktoolVersion.version;
-    const family =
-      apktoolVersion.version === null ? null : major(apktoolVersion.version);
-    receipt.apktool_build_family =
-      apktoolVersion.supportsDocumentedVersion && [2, 3].includes(family)
-        ? family
-        : null;
-    assert.notEqual(
-      receipt.apktool_build_family,
-      null,
-      "Fixture rebuild requires a recognized Apktool 2.7+ or 3.x version; no build protocol was selected",
-    );
-    const source = join(output, "source");
-    await cp(fixture, source, {
-      recursive: true,
-      errorOnExist: true,
-      force: false,
-    });
-    const compiled = join(output, "compiled.zip");
-    const apk = join(output, "linked.apk");
+      commands.push({
+        binary,
+        arguments: args,
+        outcome: "completed",
+        elapsed_ms: performance.now() - started,
+        ...result,
+      });
+      return result;
+    } catch (cause) {
+      commands.push({
+        binary,
+        arguments: args,
+        outcome: "failed",
+        elapsed_ms: performance.now() - started,
+        error: failureRecord(cause),
+      });
+      throw cause;
+    }
+  };
+  const aapt2 = resolve(values.aapt2);
+  const apktool = resolve(values.apktool);
+  const version = await command(aapt2, ["version"]);
+  const observations = ["stdout", "stderr"].flatMap((channel) =>
+    [
+      ...version[channel].matchAll(
+        /^Android Asset Packaging Tool \(aapt\) ([^\r\n]+)$/gmu,
+      ),
+    ]
+      .map((match) => ({ channel, version: match[1].trim() }))
+      .filter((entry) => entry.version.length > 0),
+  );
+  receipt.version_observations = observations;
+  receipt.version =
+    new Set(observations.map((entry) => entry.version)).size === 1
+      ? observations[0].version
+      : null;
+  const apktoolVersion = parseApktoolVersionOutput(
+    (await command(apktool, ["--version"])).stdout,
+    process.platform,
+  );
+  receipt.apktool_identity = apktoolVersion;
+  receipt.apktool_version = apktoolVersion.version;
+  const family =
+    apktoolVersion.version === null ? null : major(apktoolVersion.version);
+  receipt.apktool_build_family =
+    apktoolVersion.supportsDocumentedVersion && [2, 3].includes(family)
+      ? family
+      : null;
+  assert.notEqual(
+    receipt.apktool_build_family,
+    null,
+    "Fixture rebuild requires a recognized Apktool 2.7+ or 3.x version; no build protocol was selected",
+  );
+  const source = join(output, "source");
+  await cp(fixture, source, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+  });
+  const compiled = join(output, "compiled.zip");
+  const apk = join(output, "linked.apk");
+  await command(aapt2, [
+    "compile",
+    "--dir",
+    join(source, "res"),
+    "-o",
+    compiled,
+  ]);
+  await command(aapt2, [
+    "link",
+    "-I",
+    selectedFramework.path,
+    "--manifest",
+    join(source, "AndroidManifest.xml"),
+    "-o",
+    apk,
+    compiled,
+  ]);
+  const linked = await identity(apk, (value) => {
+    receipt.linked = value;
+  });
+  const dumps = {};
+  receipt.dumps = dumps;
+  for (const kind of ["badging", "resources", "strings", "configurations"])
+    dumps[kind] = (await command(aapt2, ["dump", kind, apk])).stdout;
+  dumps.xmltree = (
     await command(aapt2, [
-      "compile",
-      "--dir",
-      join(source, "res"),
-      "-o",
-      compiled,
-    ]);
-    await command(aapt2, [
+      "dump",
+      "xmltree",
+      "--file",
+      "res/layout/main.xml",
+      apk,
+    ])
+  ).stdout;
+  assert.match(
+    dumps.badging,
+    /package: name='com\.rea\.aapt2\.probe'.*versionCode='7'.*versionName='1\.2\.3'/u,
+  );
+  assert.match(dumps.resources, /string\/greeting/u);
+  assert.match(dumps.strings, /Hello & welcome/u);
+  assert.match(dumps.strings, /Hallo & willkommen/u);
+  assert.match(dumps.xmltree, /TextView/u);
+  const decoded = join(output, "decoded");
+  const frames = join(output, "framework-cache");
+  await command(apktool, ["d", "--no-src", "-p", frames, "-o", decoded, apk]);
+  receipt.decoded_before = [];
+  const decodedBefore = await tree(decoded, receipt.decoded_before);
+  const rebuildSource = join(output, "rebuild-source");
+  await cp(decoded, rebuildSource, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+  });
+  const rebuilt = join(output, "rebuilt.apk");
+  await command(apktool, [
+    "b",
+    ...(family === 2 ? ["--use-aapt2"] : []),
+    "--aapt",
+    aapt2,
+    "-p",
+    frames,
+    "-o",
+    rebuilt,
+    rebuildSource,
+  ]);
+  const rebuiltIdentity = await identity(rebuilt, (value) => {
+    receipt.rebuilt = value;
+  });
+  const rebuiltStrings = (await command(aapt2, ["dump", "strings", rebuilt]))
+    .stdout;
+  assert.match(rebuiltStrings, /Hello & welcome/u);
+  assert.match(rebuiltStrings, /Hallo & willkommen/u);
+  const badDirectory = join(output, "bad-res", "values");
+  await mkdir(badDirectory, { recursive: true });
+  const bad = join(badDirectory, "strings.xml");
+  await writeFile(bad, '<resources><string name="broken">');
+  const invalid = await command(
+    aapt2,
+    ["compile", bad, "-o", join(output, "invalid.zip")],
+    { acceptNonZeroExit: true },
+  );
+  assert.notEqual(invalid.code, 0);
+  receipt.malformed_resource_refused = true;
+  const missing = await command(
+    aapt2,
+    [
       "link",
       "-I",
-      selectedFramework.path,
+      join(output, "absent.jar"),
       "--manifest",
       join(source, "AndroidManifest.xml"),
       "-o",
-      apk,
+      join(output, "missing.apk"),
       compiled,
-    ]);
-    const linked = await identity(apk, (value) => {
-      receipt.linked = value;
-    });
-    const dumps = {};
-    receipt.dumps = dumps;
-    for (const kind of ["badging", "resources", "strings", "configurations"])
-      dumps[kind] = (await command(aapt2, ["dump", kind, apk])).stdout;
-    dumps.xmltree = (
-      await command(aapt2, [
-        "dump",
-        "xmltree",
-        "--file",
-        "res/layout/main.xml",
-        apk,
-      ])
-    ).stdout;
-    assert.match(
-      dumps.badging,
-      /package: name='com\.rea\.aapt2\.probe'.*versionCode='7'.*versionName='1\.2\.3'/u,
+    ],
+    { acceptNonZeroExit: true },
+  );
+  assert.notEqual(missing.code, 0);
+  receipt.missing_framework_refused = true;
+  const cli = await command(process.execPath, [
+    resolve("scripts/rea.mjs"),
+    "decode-android-resources",
+    apk,
+    "--json",
+  ]);
+  const cliEvidence = toolContract(
+    "decode_android_resources",
+  ).outputSchema.parse(JSON.parse(cli.stdout));
+  const transport = await createOwnedMcpStdioTransport({
+    command: process.execPath,
+    arguments: [resolve("scripts/rea.mjs"), "mcp"],
+    hostEnvironment: env,
+    cwd: process.cwd(),
+    expectedCommand: null,
+    sweepTokenOwnedProcesses: true,
+    signal,
+  });
+  owner.adopt(transport, "AAPT2 artifact MCP process");
+  const client = new Client({ name: "aapt2-scope-probe", version: "1" });
+  await withVerifierCleanup(async () => {
+    await interruption.untilInterrupted(
+      client.connect(transport, { timeout: 120_000, signal }),
     );
-    assert.match(dumps.resources, /string\/greeting/u);
-    assert.match(dumps.strings, /Hello & welcome/u);
-    assert.match(dumps.strings, /Hallo & willkommen/u);
-    assert.match(dumps.xmltree, /TextView/u);
-    const decoded = join(output, "decoded");
-    const frames = join(output, "framework-cache");
-    await command(apktool, ["d", "--no-src", "-p", frames, "-o", decoded, apk]);
-    receipt.decoded_before = [];
-    const decodedBefore = await tree(decoded, receipt.decoded_before);
-    const rebuildSource = join(output, "rebuild-source");
-    await cp(decoded, rebuildSource, {
-      recursive: true,
-      errorOnExist: true,
-      force: false,
-    });
-    const rebuilt = join(output, "rebuilt.apk");
-    await command(apktool, [
-      "b",
-      ...(family === 2 ? ["--use-aapt2"] : []),
-      "--aapt",
-      aapt2,
-      "-p",
-      frames,
-      "-o",
-      rebuilt,
-      rebuildSource,
-    ]);
-    const rebuiltIdentity = await identity(rebuilt, (value) => {
-      receipt.rebuilt = value;
-    });
-    const rebuiltStrings = (await command(aapt2, ["dump", "strings", rebuilt]))
-      .stdout;
-    assert.match(rebuiltStrings, /Hello & welcome/u);
-    assert.match(rebuiltStrings, /Hallo & willkommen/u);
-    const badDirectory = join(output, "bad-res", "values");
-    await mkdir(badDirectory, { recursive: true });
-    const bad = join(badDirectory, "strings.xml");
-    await writeFile(bad, '<resources><string name="broken">');
-    const invalid = await command(
-      aapt2,
-      ["compile", bad, "-o", join(output, "invalid.zip")],
-      { acceptNonZeroExit: true },
-    );
-    assert.notEqual(invalid.code, 0);
-    receipt.malformed_resource_refused = true;
-    const missing = await command(
-      aapt2,
-      [
-        "link",
-        "-I",
-        join(output, "absent.jar"),
-        "--manifest",
-        join(source, "AndroidManifest.xml"),
-        "-o",
-        join(output, "missing.apk"),
-        compiled,
-      ],
-      { acceptNonZeroExit: true },
-    );
-    assert.notEqual(missing.code, 0);
-    receipt.missing_framework_refused = true;
-    const cli = await command(process.execPath, [
-      resolve("scripts/rea.mjs"),
-      "decode-android-resources",
-      apk,
-      "--json",
-    ]);
-    const cliEvidence = toolContract(
-      "decode_android_resources",
-    ).outputSchema.parse(JSON.parse(cli.stdout));
-    const client = new Client({ name: "aapt2-scope-probe", version: "1" });
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      env: Object.fromEntries(
-        Object.entries(env).filter(([, value]) => typeof value === "string"),
-      ),
-      stderr: "pipe",
-    });
-    transport.stderr?.resume();
-    let mcpFailed = false;
-    let mcpPrimary;
-    try {
-      await client.connect(transport, { timeout: 120_000, signal });
-      const reply = await client.callTool(
+    const reply = await interruption.untilInterrupted(
+      artifactMcpCall(
+        client,
         { name: "decode_android_resources", arguments: { path: apk } },
         { timeout: 120_000, signal },
-      );
-      assert.notEqual(reply.isError, true, JSON.stringify(reply));
-      const text = reply.content.find((part) => part.type === "text")?.text;
-      const mcp = toolContract("decode_android_resources").outputSchema.parse(
-        reply.structuredContent ?? JSON.parse(text),
-      );
-      assert.deepEqual(mcp.normalized_result, cliEvidence.normalized_result);
-      assert.deepEqual(mcp.subject, cliEvidence.subject);
-      receipt.existing_decode_cli_mcp_parity = true;
-    } catch (cause) {
-      mcpFailed = true;
-      mcpPrimary = cause;
-    }
-    const mcpCleanup = [];
-    for (const close of [() => client.close(), () => transport.close()]) {
-      try {
-        await close();
-      } catch (cause) {
-        mcpCleanup.push(cause);
-      }
-    }
-    if (mcpCleanup.length > 0)
-      throw new AggregateError(
-        [...(mcpFailed ? [mcpPrimary] : []), ...mcpCleanup],
-        "MCP verification cleanup failed",
-        { cause: mcpPrimary },
-      );
-    if (mcpFailed) throw mcpPrimary;
-    receipt.source_after = [];
-    assert.deepEqual(await tree(fixture, receipt.source_after), before);
-    receipt.decoded_after = [];
-    assert.deepEqual(await tree(decoded, receipt.decoded_after), decodedBefore);
-    assert.deepEqual(
-      await identity(apk, (value) => {
-        receipt.linked_after = value;
-      }),
-      linked,
+      ),
     );
-    assert.deepEqual(
-      await identity(rebuilt, (value) => {
-        receipt.rebuilt_after = value;
-      }),
-      rebuiltIdentity,
+    assert.notEqual(reply.isError, true, JSON.stringify(reply));
+    const text = reply.content.find((part) => part.type === "text")?.text;
+    const mcp = toolContract("decode_android_resources").outputSchema.parse(
+      reply.structuredContent ?? JSON.parse(text),
     );
-    assert.deepEqual(
-      await identity(selectedFramework.path, (value) => {
-        receipt.framework_after = value;
-      }),
-      {
-        bytes: selectedFramework.bytes,
-        sha256: selectedFramework.sha256,
-      },
-    );
-    Object.assign(receipt, {
-      tokens: "unmeasured",
-      process_family_peak: "unmeasured",
-    });
-  } catch (cause) {
-    failed = true;
-    primary = cause;
-  }
-  try {
-    await files.close();
-  } catch (cleanup) {
-    if (failed)
-      throw new AggregateError(
-        [primary, cleanup],
-        "Verification and file cleanup failed",
-        { cause: primary },
-      );
-    throw cleanup;
-  }
-  if (failed) throw primary;
-})
+    assert.deepEqual(mcp.normalized_result, cliEvidence.normalized_result);
+    assert.deepEqual(mcp.subject, cliEvidence.subject);
+    receipt.existing_decode_cli_mcp_parity = true;
+  }, [() => client.close()]);
+  receipt.source_after = [];
+  assert.deepEqual(await tree(fixture, receipt.source_after), before);
+  receipt.decoded_after = [];
+  assert.deepEqual(await tree(decoded, receipt.decoded_after), decodedBefore);
+  assert.deepEqual(
+    await identity(apk, (value) => {
+      receipt.linked_after = value;
+    }),
+    linked,
+  );
+  assert.deepEqual(
+    await identity(rebuilt, (value) => {
+      receipt.rebuilt_after = value;
+    }),
+    rebuiltIdentity,
+  );
+  assert.deepEqual(
+    await identity(selectedFramework.path, (value) => {
+      receipt.framework_after = value;
+    }),
+    {
+      bytes: selectedFramework.bytes,
+      sha256: selectedFramework.sha256,
+    },
+  );
+  Object.assign(receipt, {
+    tokens: "unmeasured",
+    process_family_peak: "unmeasured",
+  });
+};
+let owner;
+let failureRecord = createFailureRecorder();
+const interruption = bindVerifierCommandInterruption({
+  exec: (...args) => owner.exec(...args),
+});
+await withVerifierCleanup(async () => {
+  owner = await createVerifierCommands();
+  const [{ OwnedCommandFailure }, { DarwinProcessOwnershipInspectionError }] =
+    await Promise.all([
+      importVerifierSource(
+        "../../../src/process/OwnedCommand.ts",
+        import.meta.url,
+      ),
+      importVerifierSource(
+        "../../../src/process/DarwinProcessRunTokenReader.ts",
+        import.meta.url,
+      ),
+    ]);
+  failureRecord = createFailureRecorder({
+    commandFailure: OwnedCommandFailure,
+    darwinFailure: DarwinProcessOwnershipInspectionError,
+  });
+  await verify(owner, interruption);
+}, [
+  () => owner?.close(),
+  () => files.close(),
+  async () => {
+    receipt.verifier_run = await completeVerifierRun(run);
+    // The shared owner already verifies the native Job Object on Windows.
+    if (process.platform !== "win32")
+      assertVerifierCleanupComplete(receipt.verifier_run.process_lineage);
+  },
+  () => interruption.throwIfInterrupted(),
+])
   .then(async () => {
+    interruption.throwIfInterrupted();
     receipt.outcome = "completed";
     await writeFile(
       join(output, "receipt.json"),
       JSON.stringify(receipt, null, 2),
     );
+    interruption.throwIfInterrupted();
     console.log(
       "AAPT2 prototype: inspection, compile/link, caller-selected Apktool rebuild, negative inputs and existing decode CLI/MCP parity passed",
     );
@@ -340,6 +370,7 @@ await withCommands(async (run, signal) => {
     receipt.outcome = "failed";
     receipt.failure = failureRecord(cause);
     receipt.retained_file_resources = files.cleanupResources;
+    receipt.retained_command_resources = owner?.cleanupResources ?? [];
     let published = false;
     try {
       await writeFile(
@@ -366,4 +397,5 @@ await withCommands(async (run, signal) => {
       }) + "\n",
     );
     process.exitCode = 1;
-  });
+  })
+  .finally(() => interruption.finish());
