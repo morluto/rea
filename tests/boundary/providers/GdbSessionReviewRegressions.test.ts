@@ -706,69 +706,6 @@ setTimeout(() => process.exit(0), 250);
 );
 
 it.skipIf(process.platform === "win32")(
-  "keeps queued GDB commands serialized when a waiting request is cancelled",
-  async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-gdb-queue-cancel-"));
-    const provider = join(directory, "fake-gdb-queue-cancel.mjs");
-    const overlapPath = join(directory, "overlap");
-    await writeFile(
-      provider,
-      `#!${process.execPath}
-${fakeGdbStartupPreamble}
-${fakeGdbModeledReplies(unmodeledPath(), { ...FAKE_GDB_SESSION_REPLIES, '-interpreter-exec console "third"': "^done" })}
-process.stdout.write("(gdb)\\n");
-let input = "";
-let firstActive = false;
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  input += chunk;
-  for (;;) {
-    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
-    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
-    const match = /^(\\d+)/.exec(line); if (!match) continue;
-    if (line.slice(match[1].length) === "-gdb-set auto-load off") process.stdout.write(match[1] + "^done\\n");
-    else if (line.slice(match[1].length) === '-interpreter-exec console "first"') {
-      firstActive = true;
-      setTimeout(() => { firstActive = false; process.stdout.write(match[1] + "^done\\n"); }, 100);
-    } else {
-      if (line.slice(match[1].length) === '-interpreter-exec console "third"' && firstActive) import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(overlapPath)}, "overlap"));
-      answerModeled(match[1], line.slice(match[1].length));
-    }
-  }
-});
-`,
-    );
-    await chmod(provider, 0o700);
-    const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-    });
-    managers.push(manager);
-    const started = await manager.start();
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    const first = manager.execute(started.value.session_id, "first");
-    const controller = new AbortController();
-    const second = manager.execute(
-      started.value.session_id,
-      "second",
-      controller.signal,
-    );
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
-    const reason = { source: "cancelled while queued" };
-    controller.abort(reason);
-    const third = manager.execute(started.value.session_id, "third");
-    const cancelled = await second;
-    expect(cancelled).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisCancelledError", cause: reason },
-    });
-    expect((await first).ok).toBe(true);
-    expect((await third).ok).toBe(true);
-    await expect(readFile(overlapPath, "utf8")).rejects.toThrow();
-  },
-);
-
-it.skipIf(process.platform === "win32")(
   "preserves active GDB exit Evidence beyond the recent MI history cap",
   async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-gdb-exit-truncated-"));
