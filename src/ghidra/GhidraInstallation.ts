@@ -980,9 +980,24 @@ const nativeDecompilerCheck = ({
     remediation:
       compatibility?.status === "incompatible"
         ? compatibility.remediation
-        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent. REA does not build or install native tools.`,
+        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent.${nativeDecompilerBuildHint(platform, architecture)} REA does not build or install native tools.`,
   });
 };
+
+/**
+ * Where to get a decompiler that official release archives omit. Ghidra's
+ * official archives ship no macOS decompiler, and may ship none for Linux
+ * arm64; the archive's decompiler source builds it.
+ */
+const nativeDecompilerBuildHint = (
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+): string =>
+  platform === "darwin" && (architecture === "x64" || architecture === "arm64")
+    ? ` Official Ghidra release archives include no macOS decompiler; build it from the archive's decompiler source as described in docs/getting-started/installation.md#${architecture === "arm64" ? "macos-arm64-native-decompiler" : "missing-macos-native-decompiler"}.`
+    : platform === "linux" && architecture === "arm64"
+      ? " Official Ghidra release archives may not include a Linux arm64 decompiler; build Ghidra's native components for this host as described in docs/getting-started/installation.md#ghidra."
+      : "";
 
 /**
  * Whether a JVM os.name value selects the host platform's native OS directory.
