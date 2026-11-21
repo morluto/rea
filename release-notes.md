@@ -14,6 +14,7 @@
 
 ### Bug Fixes
 
+* **artifacts:** keep a ZIP inventory when one member uses an unsupported compression method ([#13026](https://github.com/morluto/rea/issues/13026)) ([f548a62](https://github.com/morluto/rea/commit/f548a62a4f0c6f98f9624f529d6998305139117d))
 * **asar:** preserve lazy listing configuration errors ([#12854](https://github.com/morluto/rea/issues/12854)) ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
 * **asar:** preserve typed inventory configuration errors ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
@@ -397,6 +398,7 @@
 * **web:** consolidate CDP command settlement checks ([#13110](https://github.com/morluto/rea/issues/13110)) ([80b980e](https://github.com/morluto/rea/commit/80b980e5f43102aa1985727a2535a510cd85d2e5))
 * **web:** consolidate CDP context retention proofs ([#13090](https://github.com/morluto/rea/issues/13090)) ([cc24a0b](https://github.com/morluto/rea/commit/cc24a0b4c0416f4643967398f8c7dfb6a298de8f))
 * **web:** consolidate CDP discovery and HTTP response contracts ([#13173](https://github.com/morluto/rea/issues/13173)) ([b95bd81](https://github.com/morluto/rea/commit/b95bd814a7126f7aca445f0ad7efdbbee788bd9e))
+* **web:** consolidate CDP document selection cases ([#13183](https://github.com/morluto/rea/issues/13183)) ([ce61cca](https://github.com/morluto/rea/commit/ce61cca68a6ecf9d11f3d348c2e2fc7126be46c4))
 * **web:** consolidate CDP frame and session identity checks ([#13174](https://github.com/morluto/rea/issues/13174)) ([48a2ad5](https://github.com/morluto/rea/commit/48a2ad5e0b64f4bce322584a24150b1b79ccdcbb))
 * **web:** consolidate CDP handshake and transport cleanup checks ([#13177](https://github.com/morluto/rea/issues/13177)) ([10e1a5a](https://github.com/morluto/rea/commit/10e1a5ab25773749be49756548ae41e9c63ecc90))
 * **web:** consolidate CDP policy and metadata proofs ([#13102](https://github.com/morluto/rea/issues/13102)) ([de6e5ff](https://github.com/morluto/rea/commit/de6e5ff9e0bb5cbc9255dfdf025924ad0d2ea50a))
