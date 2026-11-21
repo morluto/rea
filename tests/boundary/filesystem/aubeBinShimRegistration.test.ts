@@ -84,6 +84,31 @@ const bindAubeShimNode = async (
   );
 };
 
+// Earlier saved wrappers have fixed bytes so the compatibility check uses
+// what is already in client files rather than regenerating today's command.
+const oldAubeRegistration = (
+  shim: string,
+  runtime: string,
+  binding: "sibling" | "saved" = "sibling",
+): readonly string[] => [
+  "/bin/sh",
+  "-c",
+  [
+    'dirname() { if [ -x /usr/bin/dirname ]; then /usr/bin/dirname "$@"; else /bin/dirname "$@"; fi; }',
+    'readlink() { if [ -x /usr/bin/readlink ]; then /usr/bin/readlink "$@"; else /bin/readlink "$@"; fi; }',
+    'rea_node="$1"',
+    "shift",
+    binding === "sibling"
+      ? 'rea_exec() { if [ "$1" = node ]; then shift; command exec "$rea_node" "$@"; fi; command exec "$@"; }'
+      : 'rea_exec() { shift; command exec "$rea_node" "$@"; }',
+    "alias exec=rea_exec",
+    '. "$0"',
+  ].join("\n"),
+  shim,
+  runtime,
+  "mcp",
+];
+
 const registerCommand = (
   entrypointPath: string,
   environment: NodeJS.ProcessEnv = {},
@@ -286,7 +311,7 @@ it.skipIf(process.platform === "win32")(
       join(home, "installs", "rea"),
       "6.7.0",
     );
-    const legacy = registerCommand(entrypoint);
+    const legacy = oldAubeRegistration(shim, process.execPath);
     await rm(join(dirname(shim), "node"));
     await bindAubeShimNode(shim, "6.7.0", process.execPath);
     expect(launchFromClient(legacy)).toBe("6.7.0");
@@ -397,11 +422,14 @@ it
   },
 );
 
-it
-  .skipIf(process.platform === "win32")
-  .each(["unbound", "host-bound"] as const)(
-  "keeps an independent Node alias after runtime removal with %s Aube binding",
-  async (binding) => {
+it.skipIf(process.platform === "win32").each([
+  ["unbound", "unbound"],
+  ["host-bound", "host-bound"],
+  ["unbound", "host-bound"],
+  ["host-bound", "unbound"],
+] as const)(
+  "keeps an independent Node alias when the Aube binding goes from %s to %s",
+  async (beforeBinding, afterBinding) => {
     const home = await createTestTempDirectory("rea-aube-node-upgrade-");
     const { entrypoint, shim } = await installWithMise(
       join(home, "installs", "rea"),
@@ -423,7 +451,7 @@ it
     await symlink(oldRuntime, sibling);
     await symlink(sibling, join(dependentBin, "node"));
     await symlink(oldRuntime, fallback);
-    if (binding === "host-bound")
+    if (beforeBinding === "host-bound")
       await bindAubeShimNode(shim, "6.7.0", oldRuntime);
     await writeFile(entrypoint, "console.log(process.execPath);\n");
 
@@ -453,6 +481,11 @@ it
     await rm(sibling);
     expect(launchFromClient(command)).toBe(oldRuntime);
 
+    if (beforeBinding !== afterBinding) {
+      if (afterBinding === "host-bound")
+        await bindAubeShimNode(shim, "6.7.0", oldRuntime);
+      else await writeFile(shim, aubeShim(storeTarget("6.7.0")));
+    }
     await rm(fallback);
     await symlink(process.execPath, fallback);
     await rm(oldVersion, { recursive: true });
@@ -460,6 +493,28 @@ it
     expect(registerCommand(entrypoint, { PATH: stableBin })).toEqual(command);
     await registerWithClaudeCode(home, command);
     expect(await claudeCodeState(home, entrypoint)).toBe("aligned");
+
+    if (beforeBinding === "unbound" && afterBinding === "host-bound") {
+      const legacy = oldAubeRegistration(shim, fallback);
+      await registerWithClaudeCode(home, legacy);
+      expect(classifyClientRegistrationCommand(legacy, entrypoint)).toBe(
+        "owned",
+      );
+      expect(await claudeCodeState(home, entrypoint)).toBe("stale");
+    }
+
+    if (beforeBinding === "host-bound" && afterBinding === "unbound") {
+      const legacy = oldAubeRegistration(shim, fallback, "saved");
+      await registerWithClaudeCode(home, legacy);
+      expect(launchFromClient(legacy)).toBe(process.execPath);
+      expect(await claudeCodeState(home, entrypoint)).toBe("aligned");
+
+      await symlink(process.execPath, sibling);
+      await rm(fallback);
+      expect(launchFromClient(command)).toBe(process.execPath);
+      await symlink(process.execPath, fallback);
+      await rm(sibling);
+    }
 
     // A previously saved alias through the sibling still identifies REA,
     // but doctor should recommend a refresh before that sibling is removed.

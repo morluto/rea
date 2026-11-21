@@ -117,11 +117,7 @@ export const managedClientLauncher = (
   );
   return fallbackRuntime === undefined
     ? undefined
-    : {
-        shim: launcher.shim,
-        fallbackRuntime,
-        nodeBinding: launcher.nodeBinding,
-      };
+    : { shim: launcher.shim, fallbackRuntime };
 };
 
 /** Restrictions on the automatically selected launcher shared by setup and mcp add. */
@@ -527,12 +523,7 @@ const inspectDirectRegistrationCommand = (
     const shim =
       HOST_PLATFORM.platform === "win32"
         ? undefined
-        : inspectAubeShim(
-            managed.shim,
-            process.execPath,
-            managed.fallbackRuntime,
-            managed.nodeBinding,
-          );
+        : inspectAubeShim(managed.shim, process.execPath, managed);
     return {
       launch: "managed_shim",
       identity:
@@ -542,7 +533,7 @@ const inspectDirectRegistrationCommand = (
       entrypoint: shim?.target,
       independentFallback:
         shim !== undefined &&
-        shim.fallbackApplies &&
+        shim.durableWrapper &&
         entrypointIdentity(managed.fallbackRuntime, process.execPath) ===
           "owned" &&
         !launcherPathWalksThrough(
