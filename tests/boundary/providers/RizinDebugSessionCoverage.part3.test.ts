@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
@@ -232,6 +233,62 @@ it.skipIf(process.platform === "win32")(
       expect(started.error.message).toMatch(
         /terminated without a verified inferior detach.*resynchroniz/iu,
       );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps the unknown target state when cancelled startup has an unavailable detach",
+  async () => {
+    const reason = { stage: "startup protocol failure" };
+    const controller = new AbortController();
+    const injected = createInjectedProcess({
+      startup: (control) => {
+        control.output(Buffer.from([0]));
+        // Both land after the startup frame, so cancellation takes
+        // precedence over a protocol error that is already set.
+        setImmediate(() => {
+          control.stdinError();
+          controller.abort(reason);
+        });
+      },
+    });
+    const manager = createManager(
+      { REA_RIZIN_COMMAND: "injected-rizin" },
+      {
+        spawnProcess: injected.spawnProcess,
+        // The fake no-inferior stop never declares detach unavailable.
+        stopProcess: stopOwnedDebuggerProcess,
+      },
+    );
+
+    const started = await manager.start(
+      { path: "/tmp/injected", inferior_tty: await rizinTestInferiorTty() },
+      controller.signal,
+    );
+
+    expect(started.ok).toBe(false);
+    if (started.ok) return;
+    expect(started.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(started.error.cause).toBe(reason);
+    expect(started.error.cleanupIncomplete).toBe(false);
+    // The registry rebinds the caller's reason over the provider's
+    // cancellation, so read the retained failure as a caller receives it.
+    expect(projectAnalysisError(started.error)).toMatchObject({
+      code: "cancelled",
+      details: {
+        secondary_failures: [
+          {
+            code: "capability_unavailable",
+            details: {
+              reason: expect.stringMatching(
+                /terminated without a verified inferior detach.*resynchroniz/iu,
+              ),
+              diagnostics: { session_stop: "input-stream-failure" },
+            },
+          },
+        ],
+      },
+    });
   },
 );
 

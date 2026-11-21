@@ -763,11 +763,27 @@ export class RizinDebugSessionManager {
       const capturedOutput = this.#startupCapturedOutput(session);
       if (stopped.status !== "incomplete") this.#sessions.remove(session);
       let primary: AnalysisError;
-      if (cancellation !== undefined)
+      if (cancellation !== undefined) {
         primary = cancelledBy("start_rizin_debug_session", cancellation, {
           capturedOutput,
         });
-      else if (protocolFailure !== undefined)
+        // Cancellation stays the reported reason. The session is removed
+        // after the stop, so this is the caller's only record that the
+        // target may still be running.
+        if (stopped.status === "stopped_inferior_unknown")
+          primary.retainSecondaryFailure(
+            new AnalysisCapabilityUnavailableError(
+              "rizin",
+              "start_rizin_debug_session",
+              protocolFailure === undefined
+                ? RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION
+                : `${protocolFailure.reason} ${RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION}`,
+              protocolFailure === undefined
+                ? undefined
+                : { diagnostics: { session_stop: protocolFailure.code } },
+            ),
+          );
+      } else if (protocolFailure !== undefined)
         primary = new AnalysisCapabilityUnavailableError(
           "rizin",
           "start_rizin_debug_session",
@@ -1559,7 +1575,7 @@ export class RizinDebugSessionManager {
         // cleanup terminate the process, and it leaves inferior state unknown.
         return {
           status: "unavailable",
-          reason: `Rizin did not resynchronize cleanup within ${String(CLEANUP_SYNCHRONIZATION_PROBE_TIMEOUT_MS)} ms: ${cause instanceof Error ? cause.message : String(cause)}`,
+          reason: `Rizin did not resynchronize cleanup within ${String(CLEANUP_SYNCHRONIZATION_PROBE_TIMEOUT_MS)} ms: ${errorMessage(cause)}`,
         };
       }
     }

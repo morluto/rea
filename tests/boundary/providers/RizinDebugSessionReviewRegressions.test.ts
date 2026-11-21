@@ -712,7 +712,9 @@ setInterval(() => {}, 1000);
 it.skipIf(process.platform !== "linux")(
   "terminates the owned Rizin process when close starts shortly before a command deadline",
   async () => {
-    directory = await createTestTempDirectory("rea-rizin-close-before-timeout-");
+    directory = await createTestTempDirectory(
+      "rea-rizin-close-before-timeout-",
+    );
     const provider = join(directory, "fake-rizin-close-before-timeout.mjs");
     const pidPath = join(directory, "pid");
     await writeFile(
