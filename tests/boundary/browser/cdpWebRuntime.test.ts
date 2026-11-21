@@ -33,8 +33,9 @@ const fixture = async (options: FakeOptions = {}) => {
 };
 
 describe("native runtime producer boundary", () => {
-  it("binds complete producer stacks by script ID and ignores foreign sessions without URL guessing", async () => {
+  it("preserves requests with a reused ID, joining only selected-session producer stacks", async () => {
     const { browser, provider, execution } = await fixture();
+    const redirectedUrl = `${browser.endpoint}/redirected?caller-value=retained`;
     const params = {
       requestId: "selected-request",
       frameId: "runtime-main",
@@ -89,23 +90,41 @@ describe("native runtime producer boundary", () => {
               params,
               sessionId: "session-1",
             });
+            browser.emitEvent({
+              method: "Network.requestWillBeSent",
+              params: {
+                ...params,
+                timestamp: 13,
+                request: { url: redirectedUrl, method: "GET" },
+              },
+              sessionId: "session-1",
+            });
           },
         },
       },
     );
     if (!result.ok) throw result.error;
-    expect(result.value.requests).toHaveLength(1);
-    expect(result.value.requests[0]?.reported_initiator).toEqual(
-      params.initiator,
-    );
-    expect(result.value.requests[0]?.callsites).toMatchObject([
-      { script_id: "script-b", source_association: "script_id" },
-      { script_id: "unknown-script", source_association: "unknown" },
+    const expected = {
+      request_id: "selected-request",
+      callsites: [
+        { script_id: "script-b", source_association: "script_id" },
+        { script_id: "unknown-script", source_association: "unknown" },
+      ],
+      async_parent_ids: [{ id: "async-parent", debugger_id: "other-debugger" }],
+      causal_attribution: "unknown",
+    };
+    expect(result.value.requests).toMatchObject([
+      {
+        ...expected,
+        url: params.request.url,
+        timestamp_seconds: 12.5,
+        method: "POST",
+      },
+      { ...expected, url: redirectedUrl, timestamp_seconds: 13, method: "GET" },
     ]);
-    expect(result.value.requests[0]?.async_parent_ids).toEqual([
-      { id: "async-parent", debugger_id: "other-debugger" },
-    ]);
-    expect(result.value.requests[0]?.causal_attribution).toBe("unknown");
+    expect(
+      result.value.requests.map(({ reported_initiator }) => reported_initiator),
+    ).toEqual([params.initiator, params.initiator]);
   });
 });
 
