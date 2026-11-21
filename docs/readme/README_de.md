@@ -273,7 +273,7 @@ Melde Sicherheitslücken gemäß [SECURITY.md](../../SECURITY.md).
 Danke an alle, die REA nutzen, Fehler melden, Funktionswünsche äußern, Builds testen und Fehlerbehebungen beitragen.
 
 <a href="https://rea.tools/de/contributors/">
-  <img src="https://contrib.rocks/image?repo=morluto/rea&amp;max=500&amp;columns=30" alt="Mitwirkende an REA" />
+  <img src="../../website/public/contributors/avatars.png" alt="Mitwirkende an REA" />
 </a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">

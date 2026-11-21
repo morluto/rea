@@ -274,7 +274,7 @@ Signalez les vulnérabilités via [SECURITY.md](../../SECURITY.md).
 Merci à toutes les personnes qui utilisent REA, signalent des bugs, proposent des fonctionnalités, testent les builds et contribuent des correctifs.
 
 <a href="https://rea.tools/fr/contributors/">
-  <img src="https://contrib.rocks/image?repo=morluto/rea&amp;max=500&amp;columns=30" alt="Personnes ayant contribué à REA" />
+  <img src="../../website/public/contributors/avatars.png" alt="Personnes ayant contribué à REA" />
 </a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">

@@ -316,7 +316,7 @@ Mulțumim tuturor celor care folosesc REA, raportează erori, propun funcțional
 testează versiuni și contribuie cu remedieri.
 
 <a href="https://rea.tools/ro/contributors/">
-  <img src="https://contrib.rocks/image?repo=morluto/rea&amp;max=500&amp;columns=30" alt="Colaboratorii REA" />
+  <img src="../../website/public/contributors/avatars.png" alt="Colaboratorii REA" />
 </a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
