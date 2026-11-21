@@ -49,6 +49,7 @@ import {
   UefiAnalysisProvider,
   buildUefiEntryPointScaffolding,
   detectPeTeMachineWidth,
+  phaseFromFfsTypeName,
   sanitizeCComment,
 } from "./UefiAnalysisProvider.js";
 import {
@@ -3743,13 +3744,14 @@ it("injects isolated JVM home and tmpdir properties for Ghidra execution", async
       decompileRequest(inDir, outDir, { include_disassembly: false }),
     );
     expect(ghidraArgsCaptured).toBeDefined();
-    expect(ghidraArgsCaptured).toContain("-vmargs");
+    expect(ghidraArgsCaptured).not.toContain("-vmargs");
     expect(ghidraArgsCaptured?.some((a) => a.startsWith("-Duser.home="))).toBe(
-      true,
+      false,
     );
     expect(
       ghidraArgsCaptured?.some((a) => a.startsWith("-Djava.io.tmpdir=")),
-    ).toBe(true);
+    ).toBe(false);
+    expect(ghidraArgsCaptured).toContain("-deleteProject");
     expect(ghidraEnvCaptured?.JDK_JAVA_OPTIONS).toMatch(
       /-Duser\.home=".*" -Djava\.io\.tmpdir=".*"/,
     );
@@ -4731,4 +4733,177 @@ it("escapes table delimiters in displayed module names in README index", async (
   expect(tableRows.length).toBe(1);
   const pipesCount = (tableRows[0]!.match(/(?<!\\)\|/g) || []).length;
   expect(pipesCount).toBe(8);
+});
+
+it("classifies modules by FFS type name and preserves phase filters for unannotated manifest types", async () => {
+  expect(phaseFromFfsTypeName("security-core")).toBe("SEC");
+  expect(phaseFromFfsTypeName("peim")).toBe("PEI");
+  expect(phaseFromFfsTypeName("combined-peim-driver")).toBe("PEI");
+  expect(phaseFromFfsTypeName("smm-core")).toBe("SMM");
+  expect(phaseFromFfsTypeName("application")).toBe("APP");
+  expect(phaseFromFfsTypeName("dxe-core")).toBe("DXE");
+  expect(phaseFromFfsTypeName("driver")).toBe("DXE");
+  expect(phaseFromFfsTypeName("unknown-type")).toBeUndefined();
+  expect(phaseFromFfsTypeName(undefined)).toBeUndefined();
+
+  const directory = await createTestTempDirectory("rea-uefi-ffs-type-phase-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "core.efi"), createMinimalPeBuffer());
+
+  const manifest = {
+    modules: [{ payload_file: "core.efi", type: "dxe-core" }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir, {
+        filter_phase: "dxe",
+        include_disassembly: false,
+      }),
+    ),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(result.total_modules_found).toBe(1);
+  expect(result.modules[0]?.phase).toBe("DXE");
+  expect(result.phases.dxe).toBe(1);
+});
+
+it("preserves explicitly null manifest GUIDs without falling back to filename UUID sniffing", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-null-guid-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  const uuidFilename = "11112222-3333-4444-5555-666677778888_mod.efi";
+  await writeFile(join(inDir, uuidFilename), createMinimalPeBuffer());
+
+  const manifest = {
+    modules: [{ payload_file: uuidFilename, guid: null, name: "NullGuidMod" }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    ),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(result.modules[0]?.guid).toBeNull();
+});
+
+it("threads complete and partial coverage fact into decompile results", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-coverage-fact-");
+  const inDir = join(directory, "in");
+  const outDir1 = join(directory, "out1");
+  const outDir2 = join(directory, "out2");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  const execComplete = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir1, { include_disassembly: false }),
+    ),
+  );
+  const resComplete = execComplete.value.result as UefiDecompileResult;
+  expect(resComplete.coverage).toBe("complete");
+
+  const execPartial = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir2, {
+        max_modules: 1,
+        include_disassembly: false,
+      }),
+    ),
+  );
+  const resPartial = execPartial.value.result as UefiDecompileResult;
+  expect(resPartial.coverage).toBe("partial");
+  expect(resPartial.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("Decompilation capped at 1 of 2"),
+    ]),
+  );
+});
+
+it("bounds module names in header comments and fallback scaffolding without amplifying buffers", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-header-bound-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "huge.efi"), createMinimalPeBuffer());
+
+  const hugeName = "A".repeat(5000);
+  const manifest = {
+    modules: [{ payload_file: "huge.efi", name: hugeName }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    ),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  const headerPath = result.modules[0]!.header_file!;
+  const cPath = result.modules[0]!.c_file!;
+  const headerContent = await readFile(headerPath, "utf8");
+  const cContent = await readFile(cPath, "utf8");
+
+  expect(headerContent).toContain("UEFI Module Header: AAAAAAAA");
+  expect(headerContent).toContain("…");
+  expect(headerContent.length).toBeLessThan(4096);
+  expect(cContent.length).toBeLessThan(4096);
+});
+
+it("sanitizes target module names in README limitations to prevent markdown forging", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-readme-forge-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "malicious.efi"), createMinimalPeBuffer());
+
+  const maliciousName = "Malicious\n## Injected Heading\n| Injected | Table |";
+  const manifest = {
+    modules: [{ payload_file: "malicious.efi", name: maliciousName }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const origEnv = process.env.REA_OBJDUMP_COMMAND;
+  process.env.REA_OBJDUMP_COMMAND = "/nonexistent/path/to/objdump";
+  const provider = new UefiAnalysisProvider();
+  try {
+    await provider.execute(
+      decompileRequest(inDir, outDir, {
+        include_disassembly: true,
+      }),
+    );
+
+    const readme = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readme).not.toContain("\n## Injected Heading");
+    expect(readme).not.toContain("\n| Injected | Table |");
+  } finally {
+    if (origEnv !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origEnv;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+  }
 });

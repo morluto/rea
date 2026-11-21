@@ -229,6 +229,19 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
   return "unknown";
 };
 
+export const phaseFromFfsTypeName = (
+  typeName?: string,
+): "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" | undefined => {
+  if (!typeName) return undefined;
+  const norm = typeName.toLowerCase().trim();
+  if (norm === "security-core") return "SEC";
+  if (norm.includes("pei")) return "PEI";
+  if (norm.includes("smm") || norm.includes("mm-")) return "SMM";
+  if (norm === "application") return "APP";
+  if (norm === "driver" || norm === "dxe-core") return "DXE";
+  return undefined;
+};
+
 export const buildUefiEntryPointScaffolding = (
   identifier: string,
   rawName: string,
@@ -1112,10 +1125,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     format: "file" | "directory" = "file",
     remainingTimeMs?: () => number,
     reader?: DirectoryArtifactReader | undefined,
+    coverage: "complete" | "partial" = "complete",
   ): Promise<AnalysisExecution> {
     const input = request.input;
     const modulesToProcess = discoveredModules.slice(0, input.max_modules);
 
+    let isCoveragePartial =
+      coverage === "partial" || discoveredModules.length > input.max_modules;
     const effectiveLimitations = [...limitations];
     if (discoveredModules.length > input.max_modules) {
       effectiveLimitations.push(
@@ -1336,11 +1352,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           machineWidth,
         );
 
-        const safeRawName = sanitizeCComment(mod.rawName);
+        const safeRawName = sanitizeCComment(ellipsisExcerpt(mod.rawName, 256));
         const safeTypeName = mod.typeName
-          ? sanitizeCComment(mod.typeName)
+          ? sanitizeCComment(ellipsisExcerpt(mod.typeName, 256))
           : null;
-        const safeGuid = mod.guid ? sanitizeCComment(mod.guid) : null;
+        const safeGuid = mod.guid
+          ? sanitizeCComment(ellipsisExcerpt(mod.guid, 256))
+          : null;
+        const safeLimitationModName = formatMarkdownCodeSpan(
+          ellipsisExcerpt(mod.rawName.replace(/[\r\n]+/g, " "), 128),
+        );
 
         const headerName = `${boundedName}.h`;
         const headerRelPath = `${moduleRelDir}/${headerName}`;
@@ -1381,6 +1402,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         ].join("\n");
         const headerBytes = Buffer.from(headerContent, "utf8");
         const headerSha256 = sha256Hex(headerBytes);
+        totalStagedCBytes += headerBytes.length;
         publicationEntries.push({
           relativePath: headerRelPath,
           bytes: headerBytes,
@@ -1534,8 +1556,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     isBufferLimitExceeded(objdumpError)
                   ) {
                     disassemblyStatus = "omitted";
+                    isCoveragePartial = true;
                     if (maxAsmBuffer < remainingAsmBytes) {
-                      const perModLimit = `Disassembly output for ${mod.rawName} exceeded 2 MiB module budget; omitted disassembly.`;
+                      const perModLimit = `Disassembly output for ${safeLimitationModName} exceeded 2 MiB module budget; omitted disassembly.`;
                       if (!effectiveLimitations.includes(perModLimit)) {
                         effectiveLimitations.push(perModLimit);
                       }
@@ -1555,7 +1578,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS
                     ) {
                       effectiveLimitations.push(
-                        `Disassembly for ${mod.rawName} failed: llvm-objdump (${sanitizeDiag(llvmErrorMsg)}), objdump (${sanitizeDiag(objdumpErrorMsg)})`,
+                        `Disassembly for ${safeLimitationModName} failed: llvm-objdump (${sanitizeDiag(llvmErrorMsg)}), objdump (${sanitizeDiag(objdumpErrorMsg)})`,
                       );
                       recordedDisassemblyFailures++;
                     } else if (
@@ -1586,6 +1609,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 ? Math.floor(remainingTimeMs() - PUBLICATION_RESERVE_MS)
                 : 45_000;
             if (remainingCBytes <= 0) {
+              isCoveragePartial = true;
               if (
                 !effectiveLimitations.includes(
                   "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
@@ -1596,7 +1620,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 );
               }
             } else if (timeLeftForGhidra <= 1_000) {
-              const ghidraSkipMsg = `Ghidra C decompilation for ${mod.rawName} omitted to preserve deadline for publication; generated entry point scaffolding instead.`;
+              isCoveragePartial = true;
+              const ghidraSkipMsg = `Ghidra C decompilation for ${safeLimitationModName} omitted to preserve deadline for publication; generated entry point scaffolding instead.`;
               if (!effectiveLimitations.includes(ghidraSkipMsg)) {
                 effectiveLimitations.push(ghidraSkipMsg);
               }
@@ -1653,9 +1678,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   ghidraOutC,
                   String(Math.min(MAX_DECOMPILE_MODULE_BYTES, remainingCBytes)),
                   "-deleteProject",
-                  "-vmargs",
-                  `-Duser.home=${ghidraHome}`,
-                  `-Djava.io.tmpdir=${ghidraTemp}`,
                 ];
                 let execCmd = ghidraBin;
                 let execArgs = ghidraArgs;
@@ -1681,6 +1703,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 if (existsSync(ghidraOutC)) {
                   const cStat = await stat(ghidraOutC);
                   if (cStat.size > remainingCBytes) {
+                    isCoveragePartial = true;
                     if (
                       !effectiveLimitations.includes(
                         "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
@@ -1691,7 +1714,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       );
                     }
                   } else if (cStat.size > MAX_DECOMPILE_MODULE_BYTES) {
-                    const perModuleLimit = `Decompiled C output for ${mod.rawName} exceeded 4 MiB module budget (${cStat.size} bytes); generated entry point scaffolding instead.`;
+                    isCoveragePartial = true;
+                    const perModuleLimit = `Decompiled C output for ${safeLimitationModName} exceeded 4 MiB module budget (${cStat.size} bytes); generated entry point scaffolding instead.`;
                     if (!effectiveLimitations.includes(perModuleLimit)) {
                       effectiveLimitations.push(perModuleLimit);
                     }
@@ -1714,7 +1738,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                           "/* WARNING: Failed to decompile function",
                         )
                       ) {
-                        const incompleteMsg = `Ghidra C decompilation for ${mod.rawName} was incomplete; one or more functions failed to decompile.`;
+                        const incompleteMsg = `Ghidra C decompilation for ${safeLimitationModName} was incomplete; one or more functions failed to decompile.`;
                         if (!effectiveLimitations.includes(incompleteMsg)) {
                           effectiveLimitations.push(incompleteMsg);
                         }
@@ -1724,13 +1748,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                         "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
                       )
                     ) {
+                      isCoveragePartial = true;
                       effectiveLimitations.push(
                         "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
                       );
                     }
                   }
                 } else {
-                  const noOutputMsg = `Ghidra C decompilation for ${mod.rawName} failed: decompilation script produced no output.`;
+                  const noOutputMsg = `Ghidra C decompilation for ${safeLimitationModName} failed: decompilation script produced no output.`;
                   if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
                     effectiveLimitations.push(noOutputMsg);
                     recordedGhidraFailures++;
@@ -1753,12 +1778,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     errDetail,
                   );
                 if (budgetMatch) {
+                  isCoveragePartial = true;
                   const limitBytes = Number(budgetMatch[1]);
                   const limitLabel =
                     limitBytes < MAX_DECOMPILE_MODULE_BYTES
                       ? "64 MiB aggregate staging budget"
                       : "4 MiB per-module limit";
-                  const limitMsg = `Decompiled C output for ${mod.rawName} stopped after reaching ${limitLabel}; recovered with reconstructed entry scaffolding.`;
+                  const limitMsg = `Decompiled C output for ${safeLimitationModName} stopped after reaching ${limitLabel}; recovered with reconstructed entry scaffolding.`;
                   if (!effectiveLimitations.includes(limitMsg)) {
                     effectiveLimitations.push(limitMsg);
                   }
@@ -1766,7 +1792,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS
                 ) {
                   effectiveLimitations.push(
-                    `Ghidra C decompilation for ${mod.rawName} failed: ${errDetail}`,
+                    `Ghidra C decompilation for ${safeLimitationModName} failed: ${errDetail}`,
                   );
                   recordedGhidraFailures++;
                 } else if (
@@ -1798,6 +1824,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               scaffold.functionDefinition,
               "",
             ].join("\n");
+            totalStagedCBytes += Buffer.byteLength(cContent, "utf8");
           }
           const cBytes = Buffer.from(cContent, "utf8");
           const cSha256 = sha256Hex(cBytes);
@@ -1884,7 +1911,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         `- **APP** (UEFI Applications): ${phaseCounts.app}`,
         `- **MISC**: ${phaseCounts.misc}`,
         ...(effectiveLimitations.length > 0
-          ? ["", "## Limitations", ...effectiveLimitations.map((l) => `- ${l}`)]
+          ? [
+              "",
+              "## Limitations",
+              ...effectiveLimitations.map(
+                (l) => `- ${l.replace(/[\r\n]+/g, " ")}`,
+              ),
+            ]
           : []),
         "",
         "## Modules Index",
@@ -2008,6 +2041,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             },
             image_sha256: imageSha256,
             output_directory: outputRoot,
+            coverage: isCoveragePartial ? "partial" : "complete",
             total_modules_found: discoveredModules.length,
             total_modules_decompiled: stagedModules.length,
             phases: phaseCounts,
@@ -2182,21 +2216,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 file.ui_string ?? `Module_${file.guid.slice(0, 8)}`;
               const cleanName = rawName.replace(/[^a-zA-Z0-9_-]/g, "_");
 
-              let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
-              if (file.type_name === "security-core") phase = "SEC";
-              else if (file.type_name.includes("pei")) phase = "PEI";
-              else if (
-                file.type_name.includes("smm") ||
-                file.type_name.includes("mm-")
-              )
-                phase = "SMM";
-              else if (file.type_name === "application") phase = "APP";
-              else if (
-                file.type_name === "driver" ||
-                file.type_name === "dxe-core"
-              )
-                phase = "DXE";
-              else phase = "MISC";
+              const phase = phaseFromFfsTypeName(file.type_name) ?? "MISC";
 
               const requested = request.input.filter_phase.toLowerCase();
               const isCombinedPeimDriver =
@@ -2242,6 +2262,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       checkpoint,
       "file",
       remainingTimeMs,
+      undefined,
+      scan.coverage,
     );
   }
 
@@ -2658,11 +2680,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           phase = "DXE";
         } else if (segments.some((s) => s === "misc")) {
           phase = "MISC";
+        } else {
+          const typePhase = phaseFromFfsTypeName(fromManifest?.type);
+          if (typePhase !== undefined) {
+            phase = typePhase;
+          }
         }
 
         let guid: string | null = null;
-        if (fromManifest?.guid) {
-          guid = fromManifest.guid.toLowerCase();
+        if (
+          fromManifest !== undefined &&
+          "guid" in fromManifest &&
+          fromManifest.guid !== undefined
+        ) {
+          guid = fromManifest.guid ? fromManifest.guid.toLowerCase() : null;
         } else {
           const nameMatch = entryName.match(embeddedGuidRegex);
           if (nameMatch && nameMatch[1]) {
@@ -2781,6 +2812,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         });
       }
 
+      const dirCoverage: "complete" | "partial" =
+        limitations.length > 0 ? "partial" : "complete";
+
       const publishedExecution = await this.#stageAndPublishModules(
         request,
         dirSha256,
@@ -2791,6 +2825,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         "directory",
         remainingTimeMs,
         reader,
+        dirCoverage,
       );
       publishedResult = publishedExecution.result as UefiDecompileResult;
       return publishedExecution;

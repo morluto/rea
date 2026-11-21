@@ -548,6 +548,7 @@ export const uefiResultSchemas = {
     parser: parserSchema,
     image_sha256: digestSchema,
     output_directory: z.string(),
+    coverage: knownCoverageStatusSchema,
     total_modules_found: bytes,
     total_modules_decompiled: bytes,
     phases: z.strictObject({
