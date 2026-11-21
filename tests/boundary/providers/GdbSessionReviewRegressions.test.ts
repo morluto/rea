@@ -5,7 +5,6 @@ import {
   fakeGdbModeledReplies,
   fakeGdbStartupPreamble,
 } from "./gdbTestHelpers.js";
-import { readFileSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
@@ -20,6 +19,8 @@ import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { waitForTestPidFile } from "../../support/process/pidFile.js";
+import { processHasStopped } from "../../support/process/observePosixProcess.js";
+import { testWaitDeadline } from "../../support/testWait.js";
 
 // These tests launch controlled fake providers; Linux admission is injected so
 // lifecycle semantics remain testable on hosts that correctly reject GDB.
@@ -40,33 +41,6 @@ const unmodeledPath = (): string => {
   if (directory === undefined) throw new Error("test directory is not set");
   return join(directory, "unmodeled");
 };
-
-const expectOwnedProcessExited = async (pid: number): Promise<void> => {
-  expect(Number.isSafeInteger(pid)).toBe(true);
-  expect(pid).toBeGreaterThan(0);
-  await expect
-    .poll(() => {
-      try {
-        if (process.platform === "linux") {
-          const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-          const state = stat.slice(
-            stat.lastIndexOf(")") + 2,
-            stat.lastIndexOf(")") + 3,
-          );
-          if (state === "Z") return false;
-        }
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    })
-    .toBe(false);
-};
-
-it("rejects an empty PID before observing process exit", async () => {
-  await expect(expectOwnedProcessExited(Number(""))).rejects.toThrow();
-});
 
 it.each([
   ["win32", "Job Object"],
@@ -504,7 +478,7 @@ process.stdin.resume();
     managers.push(manager);
 
     const starting = manager.start();
-    const pid = await waitForTestPidFile(pidPath, 1_000);
+    const pid = await waitForTestPidFile(pidPath, testWaitDeadline());
 
     let closeSettled = false;
     const closing = manager.closeAll().then(() => {
@@ -524,7 +498,7 @@ process.stdin.resume();
     if (started.ok) throw new Error("GDB unexpectedly started");
     expect(started.error._tag).toBe("AnalysisCancelledError");
     expect(await readFile(signalPath, "utf8")).toBe("SIGTERM");
-    await expectOwnedProcessExited(pid);
+    await expect.poll(() => processHasStopped(pid)).toBe(true);
     expect(manager.status("unknown-session")).toBeUndefined();
     await expect(manager.start()).resolves.toMatchObject({
       ok: false,
@@ -652,9 +626,11 @@ process.stdin.on("data", (chunk) => {
     // Only the fixture knows this provider has no real inferior. Stop it after
     // asserting the production cleanup uncertainty instead of racing an exit timer.
     await fixtureOwner.cleanup(managers, async () => {});
-    await expectOwnedProcessExited(
-      await waitForTestPidFile(join(directory, "pid"), 1_000),
+    const pid = await waitForTestPidFile(
+      join(directory, "pid"),
+      testWaitDeadline(),
     );
+    await expect.poll(() => processHasStopped(pid)).toBe(true);
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
@@ -793,10 +769,14 @@ process.stdin.on("data", (chunk) => {
 );
 
 it.skipIf(process.platform === "win32")(
-  "marks GDB exit-fallback output truncated when MI history was bounded",
+  "preserves active GDB exit Evidence beyond the recent MI history cap",
   async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-gdb-exit-truncated-"));
     const provider = join(directory, "fake-gdb-exit-truncated.mjs");
+    const records = Array.from(
+      { length: 300 },
+      (_, index) => `=thread-created,id="${index}"`,
+    );
     await writeFile(
       provider,
       `#!${process.execPath}
@@ -811,10 +791,7 @@ process.stdin.on("data", (chunk) => {
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line); if (!match) continue;
     if (line.includes("auto-load off")) process.stdout.write(match[1] + "^done\\n");
-    else {
-      process.stdout.write(Array.from({ length: 300 }, (_, index) => "=thread-created,id=\\"" + index + "\\"\\n").join(""));
-      process.exit(0);
-    }
+    else process.stdout.write(${JSON.stringify(records.join("\n") + "\n")}, () => process.exit(0));
   }
 });
 `,
@@ -833,35 +810,23 @@ process.stdin.on("data", (chunk) => {
       "info threads",
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.partialObservation).toMatchObject({
+    if (result.ok) throw new Error("expected GDB to exit with partial output");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(evidenceSchema.parse(result.error.partialObservation)).toMatchObject(
+      {
         normalized_result: {
           process_exit_observed: true,
           output_truncated: false,
           completion_status: "unknown",
-          records: expect.arrayContaining([
-            expect.stringContaining("thread-created"),
-          ]),
+          records,
         },
-      });
-      const parsedEvidence = evidenceSchema.safeParse(
-        result.error.partialObservation,
-      );
-      expect(parsedEvidence.success).toBe(true);
-      if (parsedEvidence.success) {
-        const rawResult = parsedEvidence.data.raw_result;
-        expect(rawResult).toMatchObject({ records: expect.any(Array) });
-        if (
-          typeof rawResult === "object" &&
-          rawResult !== null &&
-          !Array.isArray(rawResult) &&
-          "records" in rawResult
-        )
-          expect(rawResult.records).toHaveLength(300);
-      }
-    }
+        raw_result: { records },
+      },
+    );
+    expect(manager.status(started.value.session_id)).toMatchObject({
+      recent_mi_records: records.slice(-256),
+      recent_mi_records_truncated: true,
+    });
   },
 );
 
@@ -1116,7 +1081,8 @@ setInterval(() => {}, 1000);
             child.kill("SIGKILL");
         }
         await ownedProcessExit;
-        await expectOwnedProcessExited(ownedLaunch.process.pid!);
+        const pid = ownedLaunch.ownership.leaderPid;
+        await expect.poll(() => processHasStopped(pid)).toBe(true);
       }
       const retried = await manager.retryCleanupFailures();
       expect(retried.ok).toBe(false);
