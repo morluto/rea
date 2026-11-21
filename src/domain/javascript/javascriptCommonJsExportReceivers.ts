@@ -147,6 +147,7 @@ const isCommonJsExportReference = (
   state: JavaScriptSemanticAnalysisState,
   name: string,
 ): boolean => {
+  node = unwrapJavaScriptExpression(node).node;
   const context = javaScriptRuntimeContext(state.program);
   if (context === "module") return false;
   if (isUnshadowedGlobal(node, state, name)) return true;
@@ -169,16 +170,21 @@ const isCommonJsExportReference = (
 const isCommonJsModuleExports = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-  isCommonJsExportReference(node.object, state, "module") &&
-  semanticStaticPropertyKey(node.property, node.computed) === "exports";
+): boolean => {
+  node = unwrapJavaScriptExpression(node).node;
+  return (
+    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+    isCommonJsExportReference(node.object, state, "module") &&
+    semanticStaticPropertyKey(node.property, node.computed) === "exports"
+  );
+};
 
 /** One syntax owner for CJS export names and their receiver identities. */
 export const commonJsExportName = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): string | undefined => {
+  node = unwrapJavaScriptExpression(node).node;
   if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
     return undefined;
   const key = semanticStaticPropertyKey(node.property, node.computed);
@@ -481,10 +487,10 @@ export function* indexCommonJsExportReceiversSteps(
           commonJsExportName(node.left, state) !== undefined &&
           !isCommonJsModuleExports(node.left, state)
         ) {
+          const left = unwrapJavaScriptExpression(node.left).node;
           const receiver =
-            t.isMemberExpression(node.left) ||
-            t.isOptionalMemberExpression(node.left)
-              ? node.left.object
+            t.isMemberExpression(left) || t.isOptionalMemberExpression(left)
+              ? left.object
               : null;
           captures.set(
             node,
@@ -553,16 +559,17 @@ export function* indexCommonJsExportReceiversSteps(
           t.isUpdateExpression(node) ||
           t.isUnaryExpression(node, { operator: "delete" })
         ) {
+          const argument = unwrapJavaScriptExpression(node.argument).node;
           if (t.isUnaryExpression(node, { operator: "delete" })) {
-            const name = commonJsExportName(node.argument, state);
+            const name = commonJsExportName(argument, state);
             if (
               name !== undefined &&
-              !isCommonJsModuleExports(node.argument, state) &&
-              (t.isMemberExpression(node.argument) ||
-                t.isOptionalMemberExpression(node.argument))
+              !isCommonJsModuleExports(argument, state) &&
+              (t.isMemberExpression(argument) ||
+                t.isOptionalMemberExpression(argument))
             ) {
               const receiver = isCommonJsExportReference(
-                node.argument.object,
+                argument.object,
                 state,
                 "exports",
               )
@@ -576,7 +583,7 @@ export function* indexCommonJsExportReceiversSteps(
               deletions.set(receiver, fields);
             }
           }
-          write(node.argument, null, mode);
+          write(argument, null, mode);
         } else if (isCommonJsExportReference(node, state, "exports")) {
           values.set(node, exportsIdentity);
         } else if (isCommonJsModuleExports(node, state)) {
