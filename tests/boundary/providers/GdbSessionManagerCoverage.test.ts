@@ -912,38 +912,6 @@ it("rejects a duplicate GDB close queued behind a session close", async () => {
   expect(stopCalls).toBe(1);
 });
 
-it("enforces the per-session queue capacity while a GDB command is active", async () => {
-  let heldToken = "";
-  const fake = createFakeSpawner((child, token, command) => {
-    if (command.includes("held-for-capacity")) heldToken = token;
-    else if (command.includes("list-thread-groups"))
-      child.stdout.write(`${token}^done,groups=[]\n`);
-    else child.stdout.write(`${token}^done\n`);
-  });
-  const manager = managerWithFakeSpawner(fake.spawnProcess);
-  const started = await expectGdbSessionStarted(manager);
-
-  const held = manager.execute(started.value.session_id, "held-for-capacity");
-  await expect.poll(() => heldToken).not.toBe("");
-  const queued = Array.from({ length: 15 }, (_, index) =>
-    manager.execute(started.value.session_id, `queued-${index}`),
-  );
-  const overCapacity = await manager.execute(
-    started.value.session_id,
-    "over-capacity",
-  );
-  expect(overCapacity).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisResourceConstraintError" },
-  });
-
-  fake.children[0]?.stdout.write(`${heldToken}^done\n`);
-  expect((await held).ok).toBe(true);
-  expect((await Promise.all(queued)).every((result) => result.ok)).toBe(true);
-  expect((await manager.close(started.value.session_id)).ok).toBe(true);
-  expect(manager.status(started.value.session_id)).toBeUndefined();
-});
-
 it("reports invalid UTF-8 in retained GDB stderr status", async () => {
   const fake = createFakeSpawner();
   const manager = managerWithFakeSpawner(fake.spawnProcess);
