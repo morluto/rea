@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   WebSourceLocationArtifacts,
   WebSourceMapPort,
-} from "../../src/application/WebSourceLocationPorts.js";
+} from "../../src/ports/WebSourceLocationPorts.js";
 import { webModuleArtifactsFixture } from "./webModuleTrace.js";
 import { traceSourceMap } from "../../src/javascript/sourceMaps/TraceSourceMap.js";
 import { ok } from "../../src/domain/result.js";

@@ -1,4 +1,4 @@
-import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
 import { PlaywrightBrowserScenarioProvider } from "../browser/PlaywrightBrowserScenarioProvider.js";
 import { PlaywrightScenarioSession } from "../browser/PlaywrightScenarioSession.js";
 

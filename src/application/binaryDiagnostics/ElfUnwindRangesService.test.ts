@@ -89,7 +89,7 @@ it("records an absent unwind table for the selected ELF", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
   });
   expect(result.value.locations).toEqual([
@@ -324,7 +324,7 @@ it("reports a header capped by max_ranges as an incomplete Result", async () => 
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     eh_frame_hdr: { status: "incomplete", fde_count: 3, table_entries: 2 },
-    coverage: { status: "incomplete", eh_frame_hdr_agreement: "unavailable" },
+    coverage: { status: "partial", eh_frame_hdr_agreement: "unavailable" },
   });
 });
 

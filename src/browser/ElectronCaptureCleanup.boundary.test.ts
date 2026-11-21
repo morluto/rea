@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   spawnOwnedProviderProcess,
@@ -49,7 +49,9 @@ it.skipIf(process.platform === "win32")(
         transport: { kind: "failed" },
         processes: { kind: "released" },
       });
-      expect(await supervisor.waitForExit(1000)).toBe(true);
+      await expect
+        .poll(() => spawned.process.exitCode ?? spawned.process.signalCode)
+        .not.toBeNull();
       const error = new ProviderCleanupError(
         "rea-playwright-electron-active",
         owner.pendingResources,

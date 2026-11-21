@@ -1,5 +1,4 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
@@ -12,6 +11,7 @@ import { buildUnityFs } from "../../tests/fixtures/unityfs.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const fixture = async (bytes: Buffer): Promise<string> => {
   const path = join(
@@ -153,6 +153,46 @@ describe("UnityFS declared container bounds", () => {
       await reader.close();
     }
   });
+  it.each([false, true])(
+    "validates the encoded block range before its decoded budget (footer: %s)",
+    async (blocksInfoAtEnd) => {
+      const bytes = buildUnityFs([{ path: "data", data: "abc" }], {
+        blocksInfoAtEnd,
+        blocksInfoCompression: 0,
+        blockCompression: 2,
+      });
+      const tableOffset = blocksInfoAtEnd
+        ? bytes.length - bytes.readUInt32BE(40)
+        : 64;
+      // Keep the produced encoded bytes, then declare a decoded size that
+      // exceeds the decoder allowance.
+      bytes.writeUInt32BE(64 * 1024 * 1024 + 1, tableOffset + 20);
+      const control = new UnityFsArtifactReader(await fixture(bytes));
+      try {
+        await expect(entries(control)).rejects.toMatchObject({
+          reason: "limit",
+          boundary: "memory",
+        });
+      } finally {
+        await control.close();
+      }
+
+      // The encoded declaration now exceeds the whole carrier, so it cannot
+      // describe a block even though the same decoded limit still applies.
+      bytes.writeUInt32BE(bytes.length, tableOffset + 24);
+      const invalid = new UnityFsArtifactReader(await fixture(bytes));
+      try {
+        await expect(entries(invalid)).rejects.toMatchObject({
+          reason: "format",
+          message: expect.stringContaining(
+            "declared data area exceeds the bundle extent",
+          ),
+        });
+      } finally {
+        await invalid.close();
+      }
+    },
+  );
 });
 
 describe("UnityFS allocation and malformed-input boundaries", () => {
@@ -204,7 +244,9 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const tableSize = 20 + 300_000 * 10 + 4;
     bytes.writeUInt32BE(tableSize, 40);
     bytes.writeUInt32BE(tableSize, 44);
-    const file = Buffer.alloc(64 + tableSize);
+    // Keep the padded data area start inside the carrier so only the row
+    // representation budget can reject this table.
+    const file = Buffer.alloc(64 + Math.ceil(tableSize / 16) * 16);
     bytes.subarray(0, 64).copy(file);
     file.writeBigUInt64BE(BigInt(file.length), 32);
     file.writeUInt32BE(300_000, 64 + 16);

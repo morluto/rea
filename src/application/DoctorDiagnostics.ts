@@ -1,16 +1,18 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
+import { hopperLauncherDiscovery } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
-import { isDesktopBuildCheck } from "./DoctorProviderIds.js";
+import { isDesktopBuildCheck } from "../domain/doctorProviderIds.js";
+import type { DoctorHost } from "./Doctor.js";
 import type {
   DoctorCheck,
-  DoctorHost,
   DoctorProviderInspection,
-} from "./Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
+import { settleConcurrent } from "./settleConcurrent.js";
 
 /** Ordered environment diagnostics consumed by the Doctor report assembler. */
 export interface DoctorDiagnostics {
@@ -26,25 +28,40 @@ export const collectDoctorDiagnostics = async (
   clients: readonly string[] = [],
 ): Promise<DoctorDiagnostics> => {
   const checks: DoctorCheck[] = [nodeCheck(host)];
-  checks.push(await hostCheck(host));
+  const [
+    resolvedHostCheck,
+    hopperOutcome,
+    providerInspections,
+    ilspyCheck,
+    targetCheck,
+  ] = await settleConcurrent([
+    hostCheck(host),
+    (async () => {
+      const hopperPath = await findHopper(host);
+      const [hopperVersionCheck, hopperDemoCheck] = await settleConcurrent([
+        optionalHopperVersionCheck(host, hopperPath),
+        optionalHopperDemoCheck(host, hopperPath),
+      ]);
+      return { hopperPath, hopperVersionCheck, hopperDemoCheck };
+    })(),
+    Promise.resolve(host.providerInspections?.(clients ?? [])),
+    optionalIlspyCheck(host),
+    optionalTargetCheck(target, host),
+  ]);
+  checks.push(resolvedHostCheck);
 
-  const hopperPath = await findHopper(host);
+  const { hopperPath, hopperVersionCheck, hopperDemoCheck } = hopperOutcome;
   checks.push(hopperCheck(host, hopperPath));
   const hopperTimeoutCheck = optionalHopperStartupTimeoutCheck(host);
   if (hopperTimeoutCheck !== undefined) checks.push(hopperTimeoutCheck);
   checks.push(...runtimeConfigurationChecks(host));
-  const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 
-  const providerInspections = await host.providerInspections?.(clients ?? []);
   if (providerInspections !== undefined)
     checks.push(...providerInspections.flatMap(providerDoctorChecks));
 
-  const ilspyCheck = await optionalIlspyCheck(host);
   if (ilspyCheck !== undefined) checks.push(ilspyCheck);
-  const hopperDemoCheck = await optionalHopperDemoCheck(host, hopperPath);
   if (hopperDemoCheck !== undefined) checks.push(hopperDemoCheck);
-  const targetCheck = await optionalTargetCheck(target, host);
   if (targetCheck !== undefined) checks.push(targetCheck);
 
   return {
@@ -222,8 +239,7 @@ const optionalHopperStartupTimeoutCheck = (
       : `REA_HOPPER_STARTUP_TIMEOUT_MS: ${parsed.error.settings.map(({ constraint }) => constraint).join("; ")}`,
     {
       classification: "config_drift",
-      remediation:
-        "Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to 2147483647 milliseconds.",
+      remediation: `Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds.`,
     },
   );
 };

@@ -42,7 +42,7 @@ describe("artifact archive inventory", () => {
     expect(cliEvidence).toMatchObject({
       operation: "inventory_artifact",
       provider: { id: "rea-artifact-graph" },
-      subject: { format: "apk" },
+      subject: { identity: { format: "apk" } },
     });
     const inspectionEvidence = parseEvidence(
       await runProviderAnalysis(zipPath, "inspect_artifact", {}).then(

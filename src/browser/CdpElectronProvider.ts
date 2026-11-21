@@ -6,8 +6,8 @@ import {
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
 import {
   electronPageInspectionSchema,
   electronTargetListSchema,
@@ -18,7 +18,7 @@ import {
 } from "../domain/javascript/electronObservation.js";
 import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -42,12 +42,16 @@ import {
 
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
 } from "./CdpTargetSessionOwner.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 /** Passive Electron provider for local file pages exposed by loopback CDP. */
 export class CdpElectronProvider implements ElectronObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
@@ -101,15 +105,12 @@ export class CdpElectronProvider implements ElectronObservationPort {
       const typed = mapped.filter(
         (failure): failure is AnalysisError => failure instanceof AnalysisError,
       );
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         CDP_ELECTRON_PROVIDER_IDENTITY.id,
-        typed.flatMap((failure) => failure.cleanupResources),
-        { reason: "Electron transport and file cleanup remain incomplete" },
-        {
-          operation: "inspect_electron_page",
-          cause: new AggregateError(mapped),
-        },
-      ).bindCleanupDependencies(typed);
+        typed,
+        "Electron transport and file cleanup remain incomplete",
+        { operation: "inspect_electron_page", causes: mapped },
+      );
     }
   }
 
@@ -238,8 +239,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
       if (fileFailure !== undefined) return err(fileFailure);
       return err(
         options.signal?.aborted === true
-          ? new AnalysisCancelledError("list_electron_targets", {
-              cause: options.signal.reason,
+          ? cancelledBy("list_electron_targets", options.signal, {
               diagnostics: {
                 completed_prefix: completedPrefix,
               },
@@ -325,8 +325,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
                   CDP_ELECTRON_PROVIDER_IDENTITY.id,
                   [input.target_id],
                   {
-                    reason:
-                      cause instanceof Error ? cause.message : String(cause),
+                    reason: errorMessage(cause),
                   },
                   { operation: "inspect_electron_page", cause },
                 );
@@ -334,8 +333,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
     }
     const finalCancellation =
       result.ok && options.signal?.aborted === true
-        ? new AnalysisCancelledError("inspect_electron_page", {
-            cause: options.signal.reason,
+        ? cancelledBy("inspect_electron_page", options.signal, {
             partialObservation: {
               kind: "electron-page-observation",
               inspection: result.value,
@@ -453,8 +451,7 @@ const throwIfElectronOperationCancelled = (
   signal: AbortSignal | undefined,
   operation: "list_electron_targets" | "inspect_electron_page",
 ): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(operation, signal);
 };
 
 const providerError = (

@@ -20,12 +20,14 @@ describe("resolveAdbBinary", () => {
   it.skipIf(process.platform === "win32")(
     "falls back to POSIX PATH resolution without the environment key",
     async () => {
-      expect(await resolveAdbBinary({})).toEqual({
+      expect(await resolveAdbBinary({}, "linux")).toEqual({
         binary: "adb",
         pathSource: "path",
         environment: {},
       });
-      expect(await resolveAdbBinary({ [ADB_BINARY_ENV]: "  " })).toEqual({
+      expect(
+        await resolveAdbBinary({ [ADB_BINARY_ENV]: "  " }, "linux"),
+      ).toEqual({
         binary: "adb",
         pathSource: "path",
         environment: { [ADB_BINARY_ENV]: "  " },
@@ -41,7 +43,11 @@ describe("resolveAdbBinary", () => {
 
   it("rejects a relative environment path explicitly", async () => {
     await expect(
-      resolveAdbBinary({ [ADB_BINARY_ENV]: "tools/adb" }),
+      resolveAdbBinary({ [ADB_BINARY_ENV]: "tools/adb" }, "linux"),
+    ).rejects.toThrow(/must be an absolute path/u);
+    // Rooted on the current drive, so it names a different file per drive.
+    await expect(
+      resolveAdbBinary({ [ADB_BINARY_ENV]: "\\tools\\adb.exe" }, "win32"),
     ).rejects.toThrow(/must be an absolute path/u);
   });
 });

@@ -14,7 +14,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { verifiedGhidraApplicationProperties } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { readGhidraInstallationProperties } from "../../../src/ghidra/GhidraInstallationProperties.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -39,7 +41,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const properties = "application.version=12.1.4\napplication.java.min=21\n";
+const properties = verifiedGhidraApplicationProperties;
 
 it("preserves a descriptor read failure instead of reporting absent metadata", async () => {
   const root = await createTestTempDirectory(
@@ -139,8 +141,10 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
   await writeFile(path, properties);
   await truncate(path, MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES + 1);
   let reads = 0;
+  const admitted: FileHandle[] = [];
   controls.file = (handle, opened) => {
     if (opened === path) {
+      admitted.push(handle);
       const read = handle.read.bind(handle);
       vi.spyOn(handle, "read").mockImplementation(
         (...args: Parameters<typeof handle.read>) => {
@@ -173,18 +177,20 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
     expect(projectAnalysisError(failure)).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      remediation: {
-        action: expect.stringContaining(
-          "Ghidra installation-properties read allowance of 1048576 bytes (this release has no runtime override)",
-        ),
+      details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "input",
+          limit: MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES,
+          unit: "bytes",
+        },
       },
     });
-    expect(projectAnalysisError(failure).remediation.action).toContain(
-      "Increasing an evidence-reply file-size allowance does not admit this input",
-    );
     expect(reads).toBe(0);
+    expect(admitted.map(({ fd }) => fd)).toEqual([-1]);
   } finally {
     await resources.close();
+    for (const handle of admitted) if (handle.fd !== -1) await handle.close();
   }
 });
 
@@ -272,7 +278,7 @@ it.each(["read", "capacity", "completed"] as const)(
           diagnostics: {
             completed_properties: {
               bytes: Buffer.byteLength(properties),
-              properties: { providerVersion: "12.1.4" },
+              properties: { providerVersion: SUPPORTED_GHIDRA_VERSION },
             },
           },
         });
@@ -303,7 +309,7 @@ it.each(["replace", "grow", "shrink", "disappear"] as const)(
     const path = join(root, "application.properties");
     const replacement = join(root, "replacement");
     await writeFile(path, properties);
-    await writeFile(replacement, properties);
+    if (change === "replace") await writeFile(replacement, properties);
     controls.file = (handle, opened) => {
       if (opened !== path) return;
       controls.file = undefined;

@@ -9,6 +9,7 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import { liveProcesses } from "./ProcessOwnershipProcessTree.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Structured native token availability, distinct from failed reads and caller cancellation. */
 export class ProcessRunTokenReadError extends Error {
@@ -22,9 +23,6 @@ export class ProcessRunTokenReadError extends Error {
     this.name = "ProcessRunTokenReadError";
   }
 }
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Only a variable observed on this process supplies its run token. */
 export const processRunIdFromEnvironment = (

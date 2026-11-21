@@ -84,11 +84,11 @@ npx rea-agents setup
 
 Υποστηρίζονται τα Claude Code, Codex, Cursor, Gemini CLI, Grok Build και [άλλοι agents](../getting-started/installation.md#supported-agents). Για τη ρύθμιση των παρόχων ανάλυσης και τη μη αυτόματη καταχώριση MCP, δες τον οδηγό [εγκατάστασης και ρύθμισης](../getting-started/installation.md).
 
-Το MCP χρησιμοποιεί συμπαγή σχήματα εισόδου από προεπιλογή. Για πλήρεις οδηγίες πεδίων και ένθετης επικύρωσης, όρισε `REA_MCP_INPUT_SCHEMA_PROFILE=full` στην καταχώριση MCP. Και τα δύο προφίλ διατηρούν όλα τα εργαλεία και την ίδια κανονική επικύρωση διακομιστή· δες τον οδηγό συμβολαίων MCP.
+Το MCP χρησιμοποιεί συμπαγή σχήματα εισόδου από προεπιλογή. Οι οδηγίες που παραλείπει ένα συμπαγές σχήμα ακολουθούν την περιγραφή του εργαλείου. Όλα τα εργαλεία και η κανονική επικύρωση διακομιστή παραμένουν ίδια· δες τον οδηγό συμβολαίων MCP.
 
 Η εγκατάσταση καταχωρίζει απευθείας τον επιλεγμένο runtime και το αρχικό script του REA. Αν χρησιμοποιείς package runner, διατήρησε την καταχώριση cache και τον runtime· απόκτησε το πακέτο από έμπιστο κατάλογο έξω από το έργο-στόχο. Δες τον οδηγό εγκατάστασης.
 
-Τα πλήρη σχήματα εξόδου ανακοινώνονται από προεπιλογή. Αν ο client περιορίζει το `tools/list`, όρισε `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ή `off` στην καταχώριση MCP. Η επικύρωση του διακομιστή και τα δομημένα αποτελέσματα παραμένουν πλήρη. Δες το «Output schemas» στον οδηγό συμβάσεων MCP.
+Τα σχήματα εξόδου παραλείπονται από το `tools/list` από προεπιλογή: κανένα API μοντέλου δεν τα διαβάζει και το REA επικυρώνει μόνο του κάθε αποτέλεσμα. Όρισε `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` στην καταχώριση MCP για να ανακοινώνεται κάθε σχήμα εξόδου έως 4096 byte. Η επικύρωση του διακομιστή και τα δομημένα αποτελέσματα παραμένουν πλήρη σε κάθε ρύθμιση. Δες το «Output schemas» στον οδηγό συμβάσεων MCP.
 
 ### Ζήτησε από τον agent σου
 
@@ -160,15 +160,18 @@ npx rea-agents@latest setup
 | Δυαδικά αρχεία με κώδικα μηχανής       | Ψευδοκώδικα, κώδικα assembly, συμβολοσειρές, σύμβολα, κλήσεις και αναφορές                                                  | Hopper, Ghidra, IDA ή Kuna· [ανάλυση κώδικα μηχανής](../guides/native/native-investigation.md)                                                                |
 | Δομή ELF χωρίς εκτέλεση                | Ενότητες, τμήματα, αρχικά σύμβολα/εγγραφές μετεγκατάστασης και ενδείξεις πιθανών μέτρων προστασίας από στατική ανάλυση      | pwntools που παρέχει ο χρήστης σε Linux x64· [διαγνωστικά δυαδικών αρχείων](../guides/native/binary-diagnostics.md)                                           |
 | Δυαδικά αρχεία Go                      | Ενσωματωμένη έκδοση μεταγλωττιστή, modules, αντικαταστάσεις και ρυθμίσεις μεταγλώττισης                                     | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· δεν απαιτείται εγκατάσταση του Go                                                                            |
-| Δυαδικά αρχεία Rust                    | Ενσωματωμένα ονόματα, εκδόσεις, πηγές και σχέσεις εξάρτησης των crates από το cargo-auditable                               | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· [δυαδικά αρχεία Rust](../rust-binaries.md)                                                                   |
+| Δυαδικά αρχεία Rust                    | Ενσωματωμένα ονόματα, εκδόσεις, πηγές και σχέσεις εξάρτησης των crates από το cargo-auditable                               | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O/WebAssembly· [δυαδικά αρχεία Rust](../rust-binaries.md)                                                       |
 | PE certificates                        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
 | PE imports                             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
 | Windows shortcuts                      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                     |
 | ELF notes                              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                  |
+| DWARF compile units                    | Compile-unit name, directory, producer, language, and dwo_name                                                              | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                        |
+| ELF dependencies                       | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                                       | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                    |
 | Binary hardening                       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                 |
 | Apple IPS crashes                      | .ips metadata, threads, images, registers and crash classes                                                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                 |
 | Linux kernel modules                   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                        |
 | Erlang BEAM                            | IFF chunks, atoms, exports, and tables                                                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                             |
+| Πακέτα NuGet                           | Ταυτότητα πακέτου, ομάδες εξαρτήσεων, άδεια, αποθετήριο και περιεχόμενα ZIP                                                 | Ενσωματωμένος στατικός έλεγχος .nupkg· [Πακέτα NuGet](../guides/managed/nuget-nupkg.md)                                                                       |
 | Αρχείο WASM                            | Έλεγχο εγκυρότητας, ενότητες, ακριβείς μορφές εισαγωγών/εξαγωγών σε WAT και αποκωδικοποιημένο WAT                           | WABT 1.0.42 που παρέχει ο χρήστης· `inspect_wasm_artifact`                                                                                                    |
 | Bytecode EVM                           | Selectors επιλογής συνάρτησης, μετατοπίσεις σε bytes, εκτιμώμενα ορίσματα και δυνατότητα μεταβολής της κατάστασης           | Τοπική είσοδος σε ακατέργαστα bytes ή δεκαεξαδική μορφή σε Linux x64· [οδηγός EVM χωρίς εκτέλεση](../guides/evm/evm-bytecode.md)                              |
 | Βάσεις δεδομένων SQLite                | Πίνακες, στήλες, ευρετήρια, όψεις, triggers και επιλεγμένες γραμμές κανονικών πινάκων                                       | Τοπικό στιγμιότυπο βάσης δεδομένων/WAL· Node.js 24.x >=24.15 ή 26+ με εγγενή όρια SQLite                                                                      |
@@ -361,7 +364,6 @@ npx rea-agents@latest setup
 - [CLI και Evidence](../getting-started/cli.md): εντολές, επιλογή παρόχου, στιγμιότυπα, εισαγωγή/εξαγωγή και κωδικοί εξόδου.
 - [Προδιαγραφές MCP](../reference/mcp-contracts.md) και [prompts για agents](../getting-started/mcp-prompts.md): αποτελέσματα εργαλείων, συνεδρίες και καθοδηγούμενες διερευνήσεις.
 - [Κατάλογος εργαλείων](../reference/mcp-contracts.md#generated-catalog): αυτόματα παραγόμενος κατάλογος εργαλείων, παρόχων και εντολών CLI.
-- [Οδικός χάρτης](../development/roadmap.md): προγραμματισμένες εργασίες και παρακολούθηση της ανάπτυξης δυνατοτήτων.
 
 Ανάφερε ευπάθειες ακολουθώντας το [SECURITY.md](../../SECURITY.md).
 
@@ -391,7 +393,7 @@ npx rea-agents@latest setup
 
 Θα χαρούμε να βοηθήσεις στο REA! [Άνοιξε ένα issue](https://github.com/morluto/rea/issues) για να αναφέρεις ένα σφάλμα ή να προτείνεις μια λειτουργία, ή [στείλε ένα pull request](https://github.com/morluto/rea/pulls) για να βελτιώσεις τον κώδικα ή την τεκμηρίωση.
 
-Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../development/testing.md) για τις διαδικασίες επαλήθευσης και τον [χάρτη αρχιτεκτονικής](../architecture/architecture.mermaid) για τη δομή του έργου.
+Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../development/testing.md) για τις διαδικασίες επαλήθευσης.
 
 ## Άδεια χρήσης
 

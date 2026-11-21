@@ -8,8 +8,8 @@ import {
   spawnOwnedProviderProcess,
 } from "../../dist/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../dist/process/ProcessOwnership.js";
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { discoverCdpEndpoint } from "../../dist/browser/CdpEndpoint.js";
 import { BrowserObservationError } from "../../dist/domain/browserObservationError.js";

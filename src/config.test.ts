@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { launchAnalysisSetting } from "./config/analysisSettings.js";
 import { runtimeAnalysisConfig } from "./config/runtimeAnalysisSettings.js";
 import { runWithAnalysisOperationSnapshot } from "./domain/analysisOperationSnapshot.js";
+import { DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS } from "./domain/analysisResourceLimits.js";
 import { ConfigurationError } from "./domain/configurationErrors.js";
 import {
-  defaultHopperLauncherPath,
   inspectNativeAnalysisConfiguration,
   parseConfig,
 } from "./config/parseConfig.js";
@@ -24,8 +24,21 @@ it("still rejects a NUL in an unresolved expression", () => {
   if (!result.ok) expect(JSON.stringify(result.error)).not.toContain("private");
 });
 
+it("refuses an unsafe ASAR listing launch value at registration", () => {
+  const setting = "REA_ASAR_MAX_LISTING_BYTES";
+  const environment = { [setting]: "9007199254740992" };
+  expect(
+    launchAnalysisSetting("asar.max_listing_bytes", environment),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ConfigurationError",
+      settings: [expect.objectContaining({ setting })],
+    },
+  });
+});
+
 it.each([
-  ["asar.max_listing_bytes", "REA_ASAR_MAX_LISTING_BYTES", "9007199254740992"],
   [
     "ghidra.value_flow_max_operations",
     "REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS",
@@ -54,7 +67,6 @@ it.each([
     );
     const live = runtimeAnalysisConfig(parsed.value);
     const read = (): unknown => {
-      if (id === "asar.max_listing_bytes") return live;
       if (id === "ghidra.value_flow_max_operations")
         return live.ghidraValueFlowMaxOperations;
       if (id === "ghidra.value_flow_max_inputs_per_operation")
@@ -63,8 +75,7 @@ it.each([
         return live.ghidraValueFlowMaxEdges;
       return live.ghidraDecompileMaxPayloadMiB;
     };
-    if (id !== "asar.max_listing_bytes")
-      expect(read).toThrow(ConfigurationError);
+    expect(read).toThrow(ConfigurationError);
   },
 );
 
@@ -421,7 +432,7 @@ describe("configuration failure diagnostics", () => {
         ok: true,
         value: {
           hopperStartupTimeoutMs: Number(value),
-          ghidraStartupTimeoutMs: 330_000,
+          ghidraStartupTimeoutMs: DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
         },
       });
     },
@@ -594,63 +605,7 @@ describe("JEB MCP timeout configuration", () => {
   );
 });
 
-describe("default Linux Hopper launcher", () => {
-  const home = "/fixture/home";
-  const withExecutables =
-    (paths: readonly string[]) =>
-    (path: string): boolean =>
-      paths.includes(path);
-
-  it.each([["/opt/hopper-v4/bin/hopper"], ["/usr/bin/hopper"]])(
-    "selects an existing system launcher %s",
-    (path) => {
-      expect(
-        defaultHopperLauncherPath("linux", home, withExecutables([path])),
-      ).toBe(path);
-    },
-  );
-
-  it("prefers REA-managed and user-local launchers over system paths", () => {
-    expect(
-      defaultHopperLauncherPath(
-        "linux",
-        home,
-        withExecutables([
-          "/opt/hopper/bin/Hopper",
-          "/opt/hopper-v4/bin/hopper",
-          "/usr/bin/hopper",
-        ]),
-      ),
-    ).toBe("/opt/hopper/bin/Hopper");
-    expect(
-      defaultHopperLauncherPath(
-        "linux",
-        home,
-        withExecutables([
-          `${home}/.local/share/rea/hopper/bin/Hopper`,
-          "/usr/bin/hopper",
-        ]),
-      ),
-    ).toBe(`${home}/.local/share/rea/hopper/bin/Hopper`);
-  });
-});
-
-describe("default macOS Hopper launcher", () => {
-  it("selects the system path before the installer user path", () => {
-    const home = "/fixture/home";
-    const system =
-      "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
-    const user =
-      "/fixture/home/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
-    const executable = (path: string): boolean =>
-      path === system || path === user;
-
-    expect(defaultHopperLauncherPath("darwin", home, executable)).toBe(system);
-    expect(
-      defaultHopperLauncherPath("darwin", home, (path) => path === user),
-    ).toBe(user);
-  });
-
+describe("Hopper launcher configuration", () => {
   it("keeps an explicit launcher path unchanged", () => {
     const configured = "/custom/../Hopper launcher";
     const parsed = parseConfig({ HOPPER_LAUNCHER_PATH: configured });
@@ -658,6 +613,12 @@ describe("default macOS Hopper launcher", () => {
       ok: true,
       value: { hopperLauncherPath: configured },
     });
+  });
+
+  it("leaves an unset launcher to the Hopper provider's discovery", () => {
+    const parsed = parseConfig({});
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.hopperLauncherPath).toBeUndefined();
   });
 });
 

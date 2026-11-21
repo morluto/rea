@@ -1,6 +1,6 @@
 import { insideArtifact } from "./artifactRange.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ElfUnwindRangesPort } from "./ElfUnwindRangesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ElfUnwindRangesPort } from "../../ports/binaryDiagnostics/ElfUnwindRangesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -137,14 +137,13 @@ const frameOk = (report: ElfUnwindRanges): boolean => {
       report.coverage.total_ranges !== 0
     )
       return false;
-    if (frame.status === "unknown")
-      return report.coverage.status === "incomplete";
+    if (frame.status === "unknown") return report.coverage.status === "partial";
     return has(report, FRAME_ABSENT);
   }
   if (frame.status === "present")
     return frame.source !== null && frame.location !== null;
   return (
-    report.coverage.status === "incomplete" &&
+    report.coverage.status === "partial" &&
     (frame.location === null || frame.source !== null)
   );
 };
@@ -178,7 +177,7 @@ const headerOk = (report: ElfUnwindRanges, maxRanges: number): boolean => {
   }
   if (header.status === "incomplete")
     return (
-      report.coverage.status === "incomplete" &&
+      report.coverage.status === "partial" &&
       report.coverage.eh_frame_hdr_agreement === "unavailable" &&
       (header.fde_count === null || header.table_entries <= header.fde_count)
     );
@@ -222,9 +221,7 @@ const debugOk = (report: ElfUnwindRanges): boolean => {
     return debug.location !== null && has(report, DEBUG_PRESENT);
   if (debug.location !== null) return false;
   if (debug.status === "incomplete")
-    return (
-      report.coverage.status === "incomplete" && has(report, DEBUG_OUTSIDE)
-    );
+    return report.coverage.status === "partial" && has(report, DEBUG_OUTSIDE);
   return has(report, debug.status === "absent" ? DEBUG_ABSENT : DEBUG_UNKNOWN);
 };
 

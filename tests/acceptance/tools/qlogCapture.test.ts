@@ -1,26 +1,116 @@
 import { execFile } from "node:child_process";
-import { writeFile, truncate, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { writeFile, truncate, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { expect, it as runtimeTest } from "vitest";
+import { afterAll, expect, it as runtimeTest } from "vitest";
 import {
   CAPTURE_DECODER_HAS_MEMORY_BOUND as hasMemoryBound,
   CAPTURE_RUNTIME_SUPPORTED as runtimeSupported,
 } from "../../fixtures/captureDecoderLimits.js";
-import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   webNetworkCaptureSchema,
   WEB_NETWORK_CAPTURE_LIMITS,
 } from "../../../src/domain/webNetworkCapture.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import {
+  connectLocalToolsMcp,
+  lazyLocalToolsMcp,
+} from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createCliCommandSession } from "../../support/cli/cliCommandSession.js";
+import {
+  cliProcessEnvironment,
+  definedCliEnvironment,
+} from "../../support/cli/cliFixture.js";
+import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
 
 const execute = promisify(execFile);
 const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
 const cli = fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url));
+const sharedMcp = lazyLocalToolsMcp();
+const cliSession = createCliCommandSession();
+afterAll(() => cliSession.close());
+const cliSessionEnvironment = definedCliEnvironment(
+  cliProcessEnvironment(undefined),
+);
+const runSharedCli = (arguments_: readonly string[]) =>
+  cliSession.run({
+    arguments: arguments_,
+    cwd: process.cwd(),
+    environment: cliSessionEnvironment,
+  });
+it("preserves aioquic recovery packet-number spaces and their source records", async () => {
+  const source = await readFile(
+    new URL("../../fixtures/qlog-packet-spaces/recovery.qlog", import.meta.url),
+  );
+  const root = await createTestTempDirectory("rea-qlog-number-spaces-");
+  const path = join(root, "recovery.qlog");
+  await writeFile(path, source);
+  const ordinals = [1, 5, 9, 13, 17, 21, 25];
+  const { call } = await sharedMcp();
+  const response = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "qlog",
+    record_ordinals: ordinals,
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  const capture = webNetworkCaptureSchema.parse(
+    parseEvidence(response.structuredContent).normalized_result,
+  );
+  if (capture.format !== "qlog") throw new Error("qlog format required");
+  expect(capture.artifact.sha256).toBe(
+    createHash("sha256").update(source).digest("hex"),
+  );
+  expect(capture.records.map((record) => record.ordinal)).toEqual(ordinals);
+  expect(capture.records.map((record) => record.location)).toEqual(
+    [
+      "/traces/0/events/1",
+      "/traces/0/events/5",
+      "/traces/0/events/9",
+      "/traces/0/events/13",
+      "/traces/1/events/1",
+      "/traces/1/events/5",
+      "/traces/1/events/9",
+    ].map((pointer) => ({ kind: "json-pointer", pointer })),
+  );
+  expect(
+    capture.qlog.traces.map((trace) => ({
+      vantage: trace.vantage_point,
+      odcid: trace.odcid,
+      losses: trace.loss_declarations.map((loss) => [
+        loss.record_ordinal,
+        loss.packet_number,
+        loss.packet_type,
+        loss.packet_number_space,
+      ]),
+    })),
+  ).toEqual([
+    {
+      vantage: "client",
+      odcid: "01020304",
+      losses: [
+        [1, { state: "reported", value: "7" }, "initial", "initial"],
+        [5, { state: "reported", value: "7" }, "handshake", "handshake"],
+        [9, { state: "reported", value: "7" }, "0RTT", "application"],
+        [13, { state: "reported", value: "8" }, "1RTT", "application"],
+      ],
+    },
+    {
+      vantage: "server",
+      odcid: "01020304",
+      losses: [
+        [17, { state: "reported", value: "7" }, "initial", "initial"],
+        [21, { state: "reported", value: "7" }, "handshake", "handshake"],
+        [25, { state: "reported", value: "7" }, "1RTT", "application"],
+      ],
+    },
+  ]);
+});
+
 const event = {
   name: "transport:packet_sent",
   time: 1791819895000.25,
@@ -76,7 +166,7 @@ it("does not classify hidden custom event data as incomplete transport facts", a
       },
     ]),
   );
-  const { call } = await connectLocalToolsMcp();
+  const { call } = await sharedMcp();
   for (const sensitive of [[], ["data"]]) {
     const response = await call("inspect_web_network_capture", {
       capture_path: path,
@@ -85,15 +175,15 @@ it("does not classify hidden custom event data as incomplete transport facts", a
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const mcp = parseEvidence(response.structuredContent);
-    const cliResult = await execute(process.execPath, [
-      cli,
+    const cliResult = await runSharedCli([
       "inspect-web-network-capture",
       path,
       "qlog",
       ...sensitive.flatMap((value) => ["--sensitive-value", value]),
       "--json",
     ]);
-    const cliEvidence = parseEvidence(JSON.parse(cliResult.stdout));
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+    const cliEvidence = parseEvidence(cliResult.json);
     expect(cliEvidence.normalized_result).toEqual(mcp.normalized_result);
     const capture = webNetworkCaptureSchema.parse(mcp.normalized_result);
     if (capture.format !== "qlog") throw new Error("qlog format required");
@@ -191,7 +281,7 @@ it("pages original trace-scoped facts after source deletion without conflating s
     ],
   });
   await writeFile(path, JSON.stringify(source));
-  const { call } = await connectLocalToolsMcp();
+  const { call } = await sharedMcp();
   const response = await call("inspect_web_network_capture", {
     capture_path: path,
     format: "qlog",
@@ -283,13 +373,13 @@ it("pages original trace-scoped facts after source deletion without conflating s
     portablePath,
     JSON.stringify({ source: { kind: "inline", evidence: parent }, view }),
   );
-  const cliResult = await execute(process.execPath, [
-    cli,
+  const cliResult = await runSharedCli([
     "inspect-analysis-view",
     portablePath,
     "--json",
   ]);
-  expect(parseEvidence(JSON.parse(cliResult.stdout)).normalized_result).toEqual(
+  expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+  expect(parseEvidence(cliResult.json).normalized_result).toEqual(
     contribution.normalized_result,
   );
   for (const invalid of [
@@ -311,7 +401,7 @@ it("pages original trace-scoped facts after source deletion without conflating s
 runtimeTest.runIf(!hasMemoryBound && runtimeSupported)(
   "refuses qlog when this runtime cannot enforce a decoder memory bound",
   async () => {
-    const { call } = await connectLocalToolsMcp();
+    const { call } = await sharedMcp();
     const root = await createTestTempDirectory("rea-qlog-unbounded-");
     const path = join(root, "input.qlog");
     await writeFile(path, qlog([event]));
@@ -340,13 +430,12 @@ it("runs built CLI and real stdio SDK with exact evidence parity, selection, ret
       },
     ]),
   );
-  const { call, client } = await connectLocalToolsMcp();
+  const { call, client } = await sharedMcp();
   const input = { capture_path: path, format: "qlog", record_ordinals: [1, 0] };
   const response = await call("inspect_web_network_capture", input);
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   const mcp = parseEvidence(response.structuredContent);
-  const result = await execute(process.execPath, [
-    cli,
+  const result = await runSharedCli([
     "inspect-web-network-capture",
     path,
     "qlog",
@@ -356,7 +445,8 @@ it("runs built CLI and real stdio SDK with exact evidence parity, selection, ret
     "0",
     "--json",
   ]);
-  const cliEvidence = parseEvidence(JSON.parse(result.stdout));
+  expect(result.exitCode, result.stderr).toBe(0);
+  const cliEvidence = parseEvidence(result.json);
   expect(cliEvidence.evidence_id).toBe(mcp.evidence_id);
   expect(cliEvidence.normalized_result).toEqual(mcp.normalized_result);
   expect(mcp.analysis_profile?.parameters).toMatchObject({
@@ -422,7 +512,7 @@ it("runs built CLI and real stdio SDK with exact evidence parity, selection, ret
 it("fails whole-capture validation before selection and survives malformed, unsupported and oversized qlog", async () => {
   const root = await createTestTempDirectory("rea-qlog-errors-");
   const path = join(root, "input.qlog");
-  const { call, client } = await connectLocalToolsMcp();
+  const { call, client } = await sharedMcp();
   for (const [text, expected] of [
     [
       qlog([event, { ...event, time: "invalid" }]),
@@ -492,25 +582,19 @@ it("fails whole-capture validation before selection and survives malformed, unsu
         }),
       ),
     ).toMatchObject({ error: expected });
-    const failed: unknown = await execute(process.execPath, [
-      cli,
+    const failed = await runSharedCli([
       "inspect-web-network-capture",
       path,
       "qlog",
       "--json",
-    ]).catch((cause: unknown) => cause);
-    expect(failed).toMatchObject({
-      code: 1,
-      stdout: expect.any(String),
-    });
-    if (
-      typeof failed !== "object" ||
-      failed === null ||
-      !("stdout" in failed) ||
-      typeof failed.stdout !== "string"
-    )
-      throw new Error("CLI failure omitted JSON output");
-    expect(JSON.parse(failed.stdout)).toMatchObject(expected);
+    ]);
+    expect(failed.exitCode, failed.stdout + failed.stderr).toBe(1);
+    // The CLI names the capture by its argument, otherwise as MCP does.
+    expect(
+      issuesByContractField(JSON.parse(failed.stdout), {
+        capturePath: "capture_path",
+      }),
+    ).toMatchObject(expected);
   }
   await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
   expect(

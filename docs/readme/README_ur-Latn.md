@@ -92,16 +92,15 @@ Setup Claude Code, Codex, Cursor, Gemini CLI, Grok Build aur
 configuration aur manual MCP registration ke liye
 [installation aur setup](../getting-started/installation.md) dekhein.
 
-Context overhead kam rakhne ke liye MCP default mein compact input schemas use
-karta hai. Agar tamam advertised fields ki guidance aur nested validation details
-chahiye hon to apni MCP registration mein `REA_MCP_INPUT_SCHEMA_PROFILE=full`
-set karein. Dono profiles mein tamam tools aur canonical server validation
-maujood rehte hain. MCP contracts guide ka "Compact input schema profile"
+Context overhead kam rakhne ke liye MCP compact input schemas advertise karta
+hai; jo guidance compact schema chhor deta hai woh tool description ke baad aati
+hai. Tamam tools aur canonical server validation baghair tabdeeli ke maujood
+rehte hain. MCP contracts guide ka "Compact input schema profile"
 section dekhein.
 
 Setup chuna hua runtime aur REA entry script seedha register karta hai. Package runner use karne par uski cache entry aur runtime barqarar rakhein; package target project se bahar kisi bharosemand directory se hasil karein. Installation guide dekhein.
 
-Mukammal output schemas default mein advertise hote hain. Agar client `tools/list` ko limit karta hai to MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ya `off` set karein. Server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
+Default mein output schemas `tools/list` se nikal diye jate hain: koi model API inhein nahin parhti, aur REA har result ko khud validate karta hai. Har output schema ko 4096 bytes ki had mein advertise karne ke liye MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` set karein. Har setting mein server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
 
 ### Apne agent se kahein
 
@@ -205,9 +204,12 @@ Mazeed tools aur host support target par depend karte hain:
 | PE imports              | Import aur delay-load DLL names, ordinals, IAT RVAs aur pefile import hash                        | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
 | Windows shortcuts       | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                      | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
 | ELF notes               | PT_NOTE/SHT_NOTE owners, types, GNU build-id aur ABI-tag fields                                   | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
+| DWARF compile units     | Compile-unit name, directory, producer, language, and dwo_name                                    | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                           |
+| ELF dependencies        | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                             | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                       |
 | Binary hardening        | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                               | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
 | Linux kernel modules    | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                       | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
 | Erlang BEAM             | IFF chunks, atoms, exports, imports, lambdas aur Code header                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                |
+| NuGet packages          | Package identity, dependency groups, license, repository aur ZIP contents                         | Built-in static .nupkg inspection; [NuGet packages](../guides/managed/nuget-nupkg.md)                                                                            |
 | WASM artifact           | Validation, sections, exact import/export WAT forms aur decoded WAT                               | Aapka diya hua WABT 1.0.42; `inspect_wasm_artifact`                                                                                                              |
 | EVM bytecode            | Dispatch selectors, byte offsets, inferred arguments aur mutability                               | Linux x64 par local raw/hex carrier; [offline EVM guide](../guides/evm/evm-bytecode.md)                                                                          |
 | SQLite databases        | Tables, columns, indexes, views, triggers aur selected ordinary-table rows                        | Local database/WAL snapshot; native SQLite limits ke saath Node.js 24.x >=24.15 ya 26+                                                                           |
@@ -441,7 +443,6 @@ Exact options, prerequisites aur result contracts ke liye:
 - [CLI aur Evidence](../getting-started/cli.md): commands, provider selection, snapshots, import/export aur exit statuses.
 - [MCP contracts](../reference/mcp-contracts.md) aur [agent prompts](../getting-started/mcp-prompts.md): tool results, sessions aur guided investigations.
 - [Tool catalog](../reference/mcp-contracts.md#generated-catalog): tools, providers aur CLI commands ki generated inventory.
-- [Roadmap](../development/roadmap.md): planned work aur capability trackers.
 
 Security vulnerabilities [SECURITY.md](../../SECURITY.md) ke zariye report karein.
 
@@ -479,8 +480,7 @@ karne ke liye [issue kholein](https://github.com/morluto/rea/issues), ya code au
 docs behtar karne ke liye [pull request bhejein](https://github.com/morluto/rea/pulls).
 
 Development setup aur checks ke liye [CONTRIBUTING.md](../../CONTRIBUTING.md),
-verification lanes ke liye [testing](../development/testing.md) aur project structure ke
-liye [architecture map](../architecture/architecture.mermaid) dekhein.
+verification lanes ke liye [testing](../development/testing.md) dekhein.
 
 ## License
 

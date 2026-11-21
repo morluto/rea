@@ -1,8 +1,9 @@
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { PlaywrightBrowserScenarioProvider } from "./PlaywrightBrowserScenarioProvider.js";
@@ -40,12 +41,16 @@ vi.mock("./CdpTargetSession.js", () => ({
     _limits: unknown,
     owner: import("./CdpTargetSessionOwner.js").CdpTargetSessionOwner,
   ) => {
+    // Admit fake events as CdpConnection does: subscribers read `registered`.
+    const { fakeCdpEvents } =
+      await import("../../tests/fixtures/fakeCdpEvents.js");
+    const events = fakeCdpEvents();
+    mocks.policyEvent = events.emit;
     const connection = {
       send: mocks.policySend,
-      onEvent: (listener: typeof mocks.policyEvent) => {
-        mocks.policyEvent = listener;
-        return () => undefined;
-      },
+      onEvent: events.onEvent,
+      onProtocolFailure: () => () => undefined,
+      onDisconnect: () => () => undefined,
       close: mocks.policyTransportClose,
       beginCleanupGrace: mocks.policyBeginCleanupGrace,
     } as unknown as import("./CdpConnection.js").CdpConnection;
@@ -120,7 +125,9 @@ vi.mock("./PlaywrightScenarioEvents.js", () => ({
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PlaywrightScenarioSession } from "./PlaywrightScenarioSession.js";
+import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const scenario = browserScenarioSchema.parse({
   browser: { mode: "launch", executable_path: process.execPath },
@@ -1053,6 +1060,53 @@ it("restores an owned policy script after later setup fails", async () => {
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
+it("retires a child policy session that CDP reports gone during restoration", async () => {
+  const { cleanup } = fixture();
+  const session = await PlaywrightScenarioSession.open(
+    connectedScenario("block"),
+    {},
+    {},
+  );
+  mocks.policyEvent?.({
+    method: "Target.attachedToTarget",
+    params: { sessionId: "child-session", targetInfo: { type: "iframe" } },
+    sessionId: "policy-session",
+  });
+  await waitFor(() =>
+    expect(mocks.policySend).toHaveBeenCalledWith(
+      "Page.addScriptToEvaluateOnNewDocument",
+      expect.anything(),
+      "child-session",
+    ),
+  );
+  // The child detached without a delivered notice (for example while event
+  // delivery is stopped by a listener failure); CDP rejects its session.
+  mocks.policySend.mockImplementation(
+    async (method: string, _params: unknown, target: string) => {
+      if (target === "child-session")
+        throw new CdpCommandRejection(
+          "capture_browser_scenario",
+          method,
+          -32_001,
+          "Session with given id not found.",
+        );
+      return policyResponse(method);
+    },
+  );
+
+  await expect(session.close()).resolves.toBe("disconnected-external");
+  expect(mocks.policySend).toHaveBeenCalledWith(
+    "Page.removeScriptToEvaluateOnNewDocument",
+    { identifier: "owned-policy-script" },
+    "policy-session",
+  );
+  expect(mocks.policySend).toHaveBeenCalledWith("Target.detachFromTarget", {
+    sessionId: "policy-session",
+  });
+  expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
+  expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
 it("retains an owned script identifier after rejected removal", async () => {
   const { cleanup } = fixture();
   const attached = connectedScenario("block");
@@ -1173,6 +1227,39 @@ it("retains a detached policy connection until the main realm is restored", asyn
   ).toHaveLength(1);
   expect(mocks.policyTransportClose).toHaveBeenCalledTimes(1);
   expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
+// The policy owner records its lost connection when CDP reports it; the next
+// step must report that before acting, since its documents would be
+// unprotected.
+it("refuses the next step after the policy session detaches", async () => {
+  const { page } = fixture();
+  const attached = browserScenarioSchema.parse({
+    ...connectedScenario("block"),
+    actions: [
+      {
+        step_id: "navigate",
+        action: "goto",
+        destination: { url: "https://other.example.test/" },
+        wait_until: "load",
+      },
+    ],
+  });
+  const session = await PlaywrightScenarioSession.open(attached, {}, {});
+  const [action] = attached.actions;
+  if (action === undefined) throw new Error("Expected a scenario action");
+  const navigations = page.goto.mock.calls.length;
+  mocks.policyEvent?.({
+    method: "Target.detachedFromTarget",
+    params: { sessionId: "policy-session" },
+  });
+
+  await expect(session.perform(action)).rejects.toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "target_session_detached",
+  });
+  expect(page.goto).toHaveBeenCalledTimes(navigations);
+  await session.close().catch(() => undefined);
 });
 
 it("finishes initialization cleanup independently of request cancellation", async () => {
@@ -1304,7 +1391,7 @@ it("can retry cleanup of a browser that opened after request cancellation", asyn
   controller.abort();
   await cancelled;
   resolveOpening?.(lateOpened);
-  await vi.waitFor(() => expect(closeBrowser).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(closeBrowser).toHaveBeenCalledTimes(1));
   expect(retained).toHaveLength(1);
   await expect(retained[0]?.release()).resolves.toBeUndefined();
   expect(closeBrowser).toHaveBeenCalledTimes(2);
@@ -1576,10 +1663,6 @@ it("keeps the session's exact cleanup lease pending after response timeout until
 });
 
 it("retains late opening failure cleanup after cancellation until the exact profile lease recovers", async () => {
-  let finishOpening: () => void = () => {};
-  const terminal = new Promise<void>((resolve) => {
-    finishOpening = resolve;
-  });
   let profileStarted: () => void = () => {};
   const profileAttempt = new Promise<void>((resolve) => {
     profileStarted = resolve;
@@ -1593,18 +1676,14 @@ it("retains late opening failure cleanup after cancellation until the exact prof
     reason: "late opening profile cleanup",
   });
   new AnalysisCleanupLeaseGroup(failure, [lease]);
-  let launchStarted: () => void = () => {};
-  const started = new Promise<void>((resolve) => {
-    launchStarted = resolve;
-  });
+  const launch = phaseGate();
   mocks.openBrowser.mockImplementation(
     async (
       _scenario: unknown,
       _env: unknown,
       options: { retainCleanup?: (lease: AnalysisCleanupLease) => void },
     ) => {
-      launchStarted();
-      await terminal;
+      await launch.hold();
       options.retainCleanup?.(lease);
       throw failure;
     },
@@ -1618,12 +1697,12 @@ it("retains late opening failure cleanup after cancellation until the exact prof
     const pending = provider.captureScenario(scenario, {
       signal: caller.signal,
     });
-    await awaitAcknowledgement(started, pending, "browser launch start");
+    await launch.reached(pending, "browser launch start");
     caller.abort(reason);
     const result = await pending;
     if (result.ok) throw new Error("Expected cancelled opening");
     expect(result.error.cleanupIncomplete).toBe(true);
-    finishOpening();
+    launch.release();
     await profileAttempt;
     await expect(provider.close()).rejects.toMatchObject({
       cleanupIncomplete: true,
@@ -1642,7 +1721,7 @@ it("retains late opening failure cleanup after cancellation until the exact prof
   } finally {
     caller.abort(reason);
     denied = false;
-    finishOpening();
+    launch.release();
     await provider.close();
   }
 });

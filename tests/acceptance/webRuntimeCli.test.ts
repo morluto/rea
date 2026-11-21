@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import type { Socket } from "node:net";
 import { fileURLToPath } from "node:url";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { promisify } from "node:util";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -64,23 +65,31 @@ it("advertises the canonical observation duration bounds through the compiled CL
     [entrypoint, "observe-web-execution", "--schema", "--json"],
     { env: environment(), timeout: 20_000 },
   );
-  expect(JSON.parse(stdout)).toMatchObject({
-    options: {
-      properties: {
-        observationMs: {
-          default: 10_000,
-          anyOf: [
-            {
-              type: "integer",
-              minimum: 1,
-              maximum: 2_147_483_647,
-            },
-            { type: "string", pattern: "^[0-9]+$" },
-          ],
-        },
+  const observationMs = (
+    JSON.parse(stdout) as {
+      options: {
+        properties: Record<string, Parameters<Ajv2020["compile"]>[0]>;
+      };
+    }
+  ).options.properties.observationMs;
+  if (observationMs === undefined)
+    throw new Error("observe-web-execution advertises no observationMs");
+  expect(observationMs).toMatchObject({
+    default: 10_000,
+    anyOf: [
+      {
+        type: "integer",
+        minimum: 1,
+        maximum: 2_147_483_647,
       },
-    },
+      { type: "string" },
+    ],
   });
+  const validate = new Ajv2020({ strict: false }).compile(observationMs);
+  for (const token of ["1", "010000", "2147483647"])
+    expect(validate(token), token).toBe(true);
+  for (const token of ["0", "2147483648", "0x10"])
+    expect(validate(token), token).toBe(false);
 });
 
 it("runs the compiled public listener command through its default native CDP composition", async () => {

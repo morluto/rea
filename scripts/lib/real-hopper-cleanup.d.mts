@@ -1,6 +1,10 @@
-/** Observe concrete Hopper runtime resources for a before/after cleanup check. */
+/** Observe possible Hopper resources, including entries with unresolved ownership. */
 export function snapshotHopperRuntime(
   parent: string,
   targetLeaseDirectory: string,
-  ownedProcessIds?: ReadonlySet<number>,
-): Promise<Set<string>>;
+  expectedRunId?: string,
+): Promise<{
+  readonly paths: Set<string>;
+  readonly confirmedSessions: Set<string>;
+  readonly unresolvedSessions: Set<string>;
+}>;

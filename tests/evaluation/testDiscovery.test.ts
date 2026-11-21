@@ -4,69 +4,47 @@ import { describe, expect, it } from "vitest";
 import { compareTestDiscovery } from "../../scripts/lib/test-discovery.mjs";
 
 const root = resolve("test-discovery-fixture");
-const first = "src/domain/sample.test.ts";
-const second = "src/new-provider/sample.test.ts";
+const domainTest = "src/domain/sample.test.ts";
 
 describe("test discovery migration guard", () => {
-  it("accepts absolute discovered paths without changing their project ownership", () => {
+  it("keeps missing, unexpected, overlapping and wrong-project results distinct", () => {
+    const missing = "src/new-provider/sample.test.ts";
+    const extra = "tests/untracked.test.ts";
+    const duplicate = "src/domain/overlap.test.ts";
+    const misplaced = "src/domain/misplaced.test.ts";
+
     expect(
       compareTestDiscovery(
-        [first],
-        [{ file: resolve(root, first), projectName: "domain" }],
+        [domainTest, missing, duplicate, misplaced],
+        [
+          { file: resolve(root, domainTest), projectName: "domain" },
+          { file: misplaced, projectName: "cli-boundary" },
+          { file: duplicate, projectName: "domain" },
+          { file: duplicate, projectName: "adapters" },
+          { file: extra, projectName: "adapters" },
+        ],
         root,
       ),
     ).toEqual({
-      missing: [],
-      unexpected: [],
-      duplicates: [],
-      wrongProjects: [],
-      discovered: 1,
-    });
-  });
-
-  it("reports a discovered test in the wrong project", () => {
-    expect(
-      compareTestDiscovery(
-        [first],
-        [{ file: first, projectName: "cli-boundary" }],
-        root,
-      ).wrongProjects,
-    ).toEqual([{ file: first, expected: "domain", actual: "cli-boundary" }]);
-  });
-
-  it("reports a new provider test omitted by the current project globs", () => {
-    expect(
-      compareTestDiscovery(
-        [first, second],
-        [{ file: first, projectName: "domain" }],
-        root,
-      ).missing,
-    ).toEqual([second]);
-  });
-
-  it("reports overlapping project discovery and unexpected files separately", () => {
-    const report = compareTestDiscovery(
-      [first],
-      [
-        { file: first, projectName: "domain" },
-        { file: first, projectName: "adapters" },
-        { file: second, projectName: "adapters" },
+      missing: [missing],
+      unexpected: [extra],
+      duplicates: [{ file: duplicate, projects: ["adapters", "domain"] }],
+      wrongProjects: [
+        { file: misplaced, expected: "domain", actual: "cli-boundary" },
       ],
-      root,
-    );
-    expect(report.duplicates).toEqual([
-      { file: first, projects: ["adapters", "domain"] },
-    ]);
-    expect(report.unexpected).toEqual([second]);
+      discovered: 4,
+    });
   });
 
   it.each([
     null,
     {},
     [{ file: "", projectName: "domain" }],
-    [{ file: first }],
-    [{ file: first, projectName: null }],
+    [{ file: domainTest }],
+    [{ file: domainTest, projectName: null }],
   ])("rejects malformed producer output: %j", (input) => {
-    expect(() => compareTestDiscovery([first], input, root)).toThrow(TypeError);
+    expect(() => compareTestDiscovery([domainTest], input, root)).toThrow(
+      TypeError,
+    );
   });
 });

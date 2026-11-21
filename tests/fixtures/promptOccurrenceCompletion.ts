@@ -17,6 +17,7 @@ import { parseArtifactInventoryEvidence } from "../../src/domain/artifactInvento
 import { compareUnicodeCodePoints } from "../../src/domain/unicodeCodePointOrder.js";
 import { createEvidence } from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
 
 // Run on Node's main-thread stack, like the stdio MCP server. No real ZIP or
 // provider is involved: these are authenticated, synthetic inventory facts.
@@ -127,10 +128,13 @@ const session = new BinarySession(
 const retained = session.recordEvidence(evidence);
 if (!retained.ok) throw retained.error;
 const server = createServer({ kind: "session", session }, { environment: {} });
-const client = new Client({
-  name: "occurrence-completion-control",
-  version: "1",
-});
+const client = new Client(
+  {
+    name: "occurrence-completion-control",
+    version: "1",
+  },
+  { jsonSchemaValidator: createMcpSchemaValidation() },
+);
 const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 try {
   await server.connect(serverTransport);

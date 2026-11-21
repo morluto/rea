@@ -1,15 +1,13 @@
-import { cdpFrameRecordFacts } from "./CdpFrameIdentity.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
+import type { CdpFrameTree, CdpResourceTree } from "./protocol/CdpFrameTree.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import {
   allowedSanitizedUrl,
-  admitRecords,
   numberValue,
-  resourceContentSize,
   recordValue,
   recordsValue,
-  requiredRecord,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -40,7 +38,7 @@ export type CapturedResource = Omit<
 
 /** Normalize allowed frames and retain the enclosing tree's root identity. */
 export const captureFrames = (
-  result: unknown,
+  tree: CdpFrameTree,
   allowedOrigins: ReadonlySet<string>,
   maximum?: number,
   completeness?: CdpCaptureCompleteness,
@@ -48,20 +46,14 @@ export const captureFrames = (
   readonly items: WebPageInspection["frames"];
   readonly root: WebPageInspection["frames"][number] | undefined;
 } => {
-  const root = recordValue(recordValue(result)?.frameTree);
-  if (root === undefined) {
-    completeness?.exclude("frames", "invalid_protocol_value");
-    return { items: [], root: undefined };
-  }
+  if (tree.omittedFrames)
+    completeness?.exclude("frames", "invalid_protocol_value", null);
   const items: WebPageInspection["frames"] = [];
   let rootFrame: WebPageInspection["frames"][number] | undefined;
-  for (const tree of walkFrameTrees(root, (omittedCount) =>
-    completeness?.exclude("frames", "invalid_protocol_value", omittedCount),
-  )) {
-    const frame = recordValue(tree.frame);
-    const identity = cdpFrameRecordFacts(frame);
+  for (const node of tree.frames) {
+    const identity = node.facts;
     const frameId = identity.frameId;
-    const observation = observeCdpFrameUrl(frame);
+    const observation = node.url;
     const scopeUrl =
       observation.kind === "missing" ? undefined : observation.scopeUrl;
     const facts = classifyCdpFrameUrl(observation, allowedOrigins);
@@ -80,10 +72,11 @@ export const captureFrames = (
       continue;
     }
     if (maximum !== undefined && items.length >= maximum) continue;
+    const isRoot = node === tree.root;
     // Only the enclosing tree's root may legitimately omit parent evidence.
     if (
       identity.parentIssue !== null ||
-      (tree !== root && identity.parentRelation === "root")
+      (!isRoot && identity.parentRelation === "root")
     )
       completeness?.exclude("frames", "invalid_protocol_value");
     const captured = {
@@ -93,8 +86,7 @@ export const captureFrames = (
       origin: facts.origin,
     };
     items.push(captured);
-    if (tree === root && identity.parentRelation === "root")
-      rootFrame = captured;
+    if (isRoot && identity.parentRelation === "root") rootFrame = captured;
   }
   return { items, root: rootFrame };
 };
@@ -126,11 +118,6 @@ export const observeCdpFrameUrl = (
   };
 };
 
-export const observeMainFrameUrl = (result: unknown): CdpFrameUrlObservation =>
-  observeCdpFrameUrl(
-    recordValue(recordValue(requiredRecord(result).frameTree)?.frame),
-  );
-
 /** Policy and readable identity are independent facts, including on malformed frames. */
 export const classifyCdpFrameUrl = (
   observation: CdpFrameUrlObservation,
@@ -159,55 +146,38 @@ export const classifyCdpFrameUrl = (
   };
 };
 
-/** Read the complete identity only when the protocol established it. */
-export const cdpFrameUrl = (
-  frame: UnknownRecord | undefined,
-): string | undefined => {
-  const observed = observeCdpFrameUrl(frame);
-  return observed.kind === "observed" ? observed.url : undefined;
-};
-
-export const mainFrameUrl = (result: unknown): string | undefined => {
-  const observed = observeMainFrameUrl(result);
-  return observed.kind === "observed" ? observed.url : undefined;
-};
-
 /** Normalize every allowed resource. */
 export const captureResources = (
-  result: unknown,
+  tree: CdpResourceTree,
   allowedOrigins: ReadonlySet<string>,
   completeness?: CdpCaptureCompleteness,
 ): {
   readonly items: readonly CapturedResource[];
 } => {
-  const root = recordValue(recordValue(result)?.frameTree);
-  if (root === undefined) {
-    completeness?.exclude("resources", "invalid_protocol_value");
-    return { items: [] };
-  }
+  if (tree.omittedResources)
+    completeness?.exclude("resources", "invalid_protocol_value", null);
+  if (tree.malformedResources > 0)
+    completeness?.exclude(
+      "resources",
+      "invalid_protocol_value",
+      tree.malformedResources,
+    );
   const items: CapturedResource[] = [];
-  for (const resource of frameTreeResources(root, (count) =>
-    completeness?.exclude("resources", "invalid_protocol_value", count),
-  )) {
+  for (const resource of tree.resources) {
     const url = allowedSanitizedUrl(resource.url, allowedOrigins);
     if (url === undefined || url.origin === null) {
-      completeness?.exclude(
-        "resources",
-        exclusionReasonForUrl(cdpStringValue(resource.url)),
-      );
+      completeness?.exclude("resources", exclusionReasonForUrl(resource.url));
       continue;
     }
-    const type = cdpStringValue(resource.type);
-    const mimeType = cdpStringValue(resource.mimeType);
+    const { type, mimeType, contentSize } = resource;
     if (type === undefined || type.length === 0 || mimeType === undefined) {
       completeness?.exclude("resources", "invalid_protocol_value");
       continue;
     }
-    const contentSize = resourceContentSize(resource.contentSize);
     if (!contentSize.ok)
       completeness?.exclude("resources", "invalid_protocol_value");
     items.push({
-      rawUrl: cdpStringValue(resource.url) ?? "",
+      rawUrl: resource.url ?? "",
       url: url.url,
       origin: url.origin,
       type,
@@ -216,54 +186,6 @@ export const captureResources = (
     });
   }
   return { items };
-};
-
-/**
- * Yield resource records from every frame of a resource tree. A missing or
- * non-array `resources` list, or a non-record entry, is reported as invalid
- * rather than read as an empty frame.
- */
-export const frameTreeResources = function* (
-  root: UnknownRecord,
-  onInvalid: (count: number | null) => void,
-): Generator<UnknownRecord> {
-  for (const tree of walkFrameTrees(root, onInvalid)) {
-    if (!Array.isArray(tree.resources)) {
-      onInvalid(null);
-      continue;
-    }
-    for (const entry of tree.resources) {
-      const resource = recordValue(entry);
-      if (resource === undefined) onInvalid(1);
-      else yield resource;
-    }
-  }
-};
-
-export const walkFrameTrees = function* (
-  root: UnknownRecord,
-  onMalformedChild?: (omittedCount: number | null) => void,
-): Generator<UnknownRecord> {
-  const pending = [root];
-  while (pending.length > 0) {
-    const tree = pending.pop();
-    if (tree === undefined) return;
-    const rawChildren = tree.childFrames;
-    if (rawChildren !== undefined && !Array.isArray(rawChildren))
-      onMalformedChild?.(null);
-    const children = Array.isArray(rawChildren)
-      ? rawChildren.flatMap((child) => {
-          const parsed = recordValue(child);
-          if (parsed === undefined) onMalformedChild?.(null);
-          return parsed === undefined ? [] : [parsed];
-        })
-      : [];
-    for (let index = children.length - 1; index >= 0; index -= 1) {
-      const child = children[index];
-      if (child !== undefined) pending.push(child);
-    }
-    yield tree;
-  }
 };
 
 interface DomMetadataCapture {
@@ -279,6 +201,17 @@ export interface DomCapture extends DomMetadataCapture {
   readonly nodes: WebPageInspection["dom"]["nodes"];
 }
 
+/** The DOM section of a snapshot whose reply was malformed: nothing was admitted. */
+export const emptyDomCapture: DomCapture = {
+  total: 0,
+  nodeValueLengthUnit: "utf16-code-units",
+  nodes: [],
+  urls: [],
+  agentHints: [],
+  excludedUrls: 0,
+  unresolvedSvgNodes: 0,
+};
+
 // Bound retained projections and outstanding CDP reads independently of page size.
 // Eight leaves room for the session's other cancellation listeners.
 const DOM_METADATA_BATCH_SIZE = 8;
@@ -291,7 +224,7 @@ interface PendingDomMetadata {
 
 /** Project one snapshot, requesting bounded batches of SVG identity facts. */
 export function* captureDom(
-  result: unknown,
+  root: CdpCommandResult<"DOMSnapshot.captureSnapshot">,
   allowedOrigins: ReadonlySet<string>,
   input: InspectWebPageInput,
   completeness?: CdpCaptureCompleteness,
@@ -300,18 +233,13 @@ export function* captureDom(
   DomCapture,
   readonly (boolean | undefined)[]
 > {
-  const root = requiredRecord(result);
-  const strings = Array.isArray(root.strings)
-    ? root.strings.map(cdpStringValue)
-    : [];
+  const strings = root.strings.map(cdpStringValue);
   const nodes: WebPageInspection["dom"]["nodes"] = [];
   const urls: WebPageInspection["metadata"]["dom_urls"] = [];
   const agentHints: WebPageInspection["metadata"]["agent_hints"] = [];
   let excludedUrls = 0;
   let total = 0;
   let unresolvedSvgNodes = 0;
-  if (!Array.isArray(root.strings))
-    excludeDocumentEvidence(completeness, "invalid_protocol_value", null);
   for (const document of snapshotDocuments(root.documents, (count) =>
     excludeDocumentEvidence(completeness, "invalid_protocol_value", count),
   )) {
@@ -431,7 +359,7 @@ export function* captureDom(
 }
 
 /** Skipped document facts also make their derived URL and hint inventory incomplete. */
-const excludeDocumentEvidence = (
+export const excludeDocumentEvidence = (
   completeness: CdpCaptureCompleteness | undefined,
   reason: BrowserExclusionReason,
   count: number | null = 1,
@@ -440,24 +368,16 @@ const excludeDocumentEvidence = (
   completeness?.exclude("metadata", reason, count);
 };
 
-/**
- * Read DOMSnapshot documents. A snapshot always describes at least one
- * document, so a missing or empty list is invalid rather than an empty DOM.
- */
+/** Admit DOMSnapshot documents one by one, counting each unusable entry. */
 export const snapshotDocuments = (
-  value: unknown,
-  onInvalid: (count: number | null) => void,
-): readonly UnknownRecord[] => {
-  if (!Array.isArray(value) || value.length === 0) {
-    onInvalid(null);
-    return [];
-  }
-  return value.flatMap((item) => {
+  values: CdpCommandResult<"DOMSnapshot.captureSnapshot">["documents"],
+  onInvalid: (count: number) => void,
+): readonly UnknownRecord[] =>
+  values.flatMap((item) => {
     const document = recordValue(item);
     if (document === undefined) onInvalid(1);
     return document === undefined ? [] : [document];
   });
-};
 
 function* captureDomMetadata(
   pending: readonly PendingDomMetadata[],
@@ -505,7 +425,7 @@ function* captureDomMetadata(
 }
 
 export const captureAccessibility = (
-  results: readonly unknown[],
+  results: readonly CdpCommandResult<"Accessibility.getFullAXTree">[],
   options: {
     readonly includeText: boolean;
     readonly unavailable?: boolean;
@@ -517,16 +437,7 @@ export const captureAccessibility = (
   readonly textCapture: WebPageInspection["accessibility"]["text_capture"];
   readonly hasUnobservedChildren: boolean;
 } => {
-  const all = results.flatMap((result) => {
-    const inventory = admitRecords(requiredRecord(result).nodes);
-    if (inventory === undefined) {
-      options.completeness?.exclude(
-        "accessibility",
-        "invalid_protocol_value",
-        null,
-      );
-      return [];
-    }
+  const all = results.flatMap(({ nodes: inventory }) => {
     const nodes: {
       readonly nodeId: string;
       readonly parentId: string | null;

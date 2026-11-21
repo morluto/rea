@@ -1,0 +1,14 @@
+{
+  "schemas": {
+    "input compact": "fb22413ed630198e",
+    "output compact": "ec7acbbccb1d199b"
+  },
+  "patterns": {
+    "input": [
+      "^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    ],
+    "output": [
+      "^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    ]
+  }
+}

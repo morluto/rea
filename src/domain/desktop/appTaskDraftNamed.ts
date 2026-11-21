@@ -49,13 +49,9 @@ import {
   valueFormat,
   type CheckTree,
 } from "./appTaskDraftTree.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Pointers without a listed descendant: a container listed with its members is suggested through them. */
 export const innermost = (pointers: readonly string[]): readonly string[] =>
@@ -658,7 +654,7 @@ export const namedDraft = (
     edited
       ? clean
       : options.document
-        ? flaggable.slice(0, MAX_FLAGGED)
+        ? flaggable.slice(0, MAX_FLAGGED) // generation-cap: suggested checks of flagged values
         : flaggable
   ).slice(0, options.limit.suggestions);
   const listed = [...change.added, ...change.changed, ...change.removed];
@@ -687,6 +683,7 @@ export const namedDraft = (
           ),
         ),
       ]
+        // generation-cap: suggested guards
         .slice(0, MAX_GUARDS)
         .concat(counts.guards)
     : [];

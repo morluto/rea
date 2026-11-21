@@ -219,34 +219,40 @@ export const nestedRecordChecks = (
       item !== element && isXmlElement(item) && item.name === element.name,
   );
   if (likes.length === 0) return [];
-  return recordListsOf(element)
-    .flatMap(({ steps, records }) => {
-      const cousins = cousinsOf(likes, steps, records[0]?.name ?? "");
-      return records.flatMap((record) => {
-        const key = recordKey(record, records, cousins, context.chars);
-        if (key === undefined) return [];
-        const at = [pointer, ...steps, "children", key.segment].join("/");
-        return checkedKeys(record, [...records, ...cousins], key.key)
-          .filter((name) => {
-            const value = record.attributes[name];
-            return (
-              typeof value === "string" &&
-              checkFits(
-                context,
-                `${at}/attributes/${escapeJsonPointerToken(name)}`,
-                value,
-              )
-            );
-          })
-          .slice(0, MAX_PER_RECORD)
-          .flatMap((name) => {
-            const field = `${at}/attributes/${escapeJsonPointerToken(name)}`;
-            const value = record.attributes[name];
-            return context.named(field) && typeof value === "string"
-              ? [valueEqualsCheck(context.file, field, value)]
-              : [];
-          });
-      });
-    })
-    .slice(0, MAX_NESTED_CHECKS);
+  return (
+    recordListsOf(element)
+      .flatMap(({ steps, records }) => {
+        const cousins = cousinsOf(likes, steps, records[0]?.name ?? "");
+        return records.flatMap((record) => {
+          const key = recordKey(record, records, cousins, context.chars);
+          if (key === undefined) return [];
+          const at = [pointer, ...steps, "children", key.segment].join("/");
+          return (
+            checkedKeys(record, [...records, ...cousins], key.key)
+              .filter((name) => {
+                const value = record.attributes[name];
+                return (
+                  typeof value === "string" &&
+                  checkFits(
+                    context,
+                    `${at}/attributes/${escapeJsonPointerToken(name)}`,
+                    value,
+                  )
+                );
+              })
+              // generation-cap: suggested checks per nested record
+              .slice(0, MAX_PER_RECORD)
+              .flatMap((name) => {
+                const field = `${at}/attributes/${escapeJsonPointerToken(name)}`;
+                const value = record.attributes[name];
+                return context.named(field) && typeof value === "string"
+                  ? [valueEqualsCheck(context.file, field, value)]
+                  : [];
+              })
+          );
+        });
+      })
+      // generation-cap: suggested nested checks
+      .slice(0, MAX_NESTED_CHECKS)
+  );
 };

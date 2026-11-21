@@ -8,10 +8,11 @@ import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.j
 import { nativeCallObservationInputSchema } from "../../../../src/domain/native/nativeCallObservation.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../../src/domain/result.js";
-import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
+import { NativeCommandFailure } from "../../../../src/providers/NativeCommandRunner.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import * as processBoundary from "../../../../src/process/ProviderProcess.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 const tool = {
   invocationPath: "/usr/bin/true",
@@ -34,7 +35,7 @@ const preparation = (cancellation?: { readonly reason: unknown }) => {
     { reason: "controlled root deletion failure" },
   );
   const close = vi.fn(async () => {
-    marker.resolveCleanup();
+    releaseOwnedCleanup(marker);
   });
   const failure = new DarwinProcessOwnershipInspectionError(
     "controlled compiler failure",
@@ -168,6 +169,11 @@ it("retries the tracer-owned resolver supervisor before another trace", async ()
     expect(stop).toHaveBeenCalledTimes(2);
 
     failStop = false;
+    // The supervisor's own stop completes the marker and the returned error
+    // before the tracer retries anything.
+    expect((await supervisor.stop()).status).not.toBe("incomplete");
+    expect(marker.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(false);
     const released = await tracer.close();
     expect(released.ok).toBe(true);
     expect(marker.cleanupIncomplete).toBe(false);

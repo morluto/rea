@@ -907,6 +907,40 @@ it("does not publish a next offset the row-offset rule would refuse", async () =
   });
 });
 
+it("pages by a declared rowid alias when all standard names are shadowed", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE keyed("item id" INTEGER PRIMARY KEY, "RoWiD" TEXT,
+      "_rowid_" TEXT, "OID" TEXT, label TEXT);
+    INSERT INTO keyed("item id", label) VALUES (20, 'later'), (4, 'first');
+  `);
+  const input = {
+    path,
+    table: "keyed",
+    schema_scope: "inventory" as const,
+    columns: ["label"],
+    row_limit: 1,
+  };
+  const first = inspectSqliteDatabaseSnapshot(path, input);
+  expect(first.rows).toMatchObject({
+    order: "rowid",
+    columns: ["label"],
+    values: [[{ type: "text", value: "first" }]],
+    truncated: true,
+    next_row_offset: 1,
+  });
+  const next = inspectSqliteDatabaseSnapshot(path, {
+    ...input,
+    row_offset: 1,
+  });
+  expect(next.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 1,
+    values: [[{ type: "text", value: "later" }]],
+    truncated: false,
+    next_row_offset: null,
+  });
+});
+
 it("discovers a WITHOUT ROWID primary key the inventory projection omits", async () => {
   const path = await createDatabase(`
     CREATE TABLE keyed(k INTEGER, label TEXT, PRIMARY KEY(k)) WITHOUT ROWID;
@@ -931,32 +965,34 @@ it("discovers a WITHOUT ROWID primary key the inventory projection omits", async
   ).toEqual([["a"]]);
 });
 
-it("refuses a row offset when the table shadows rowid and declares no primary key", async () => {
-  const path = await createDatabase(
-    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
-     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
-  );
-  expect(
-    inspectSqliteDatabaseSnapshot(path, { path, table: "shadowed" }).rows,
-  ).toMatchObject({
-    order: "unspecified",
-    row_offset: 0,
-    next_row_offset: null,
-  });
-  expect(() =>
-    inspectSqliteDatabaseSnapshot(path, {
-      path,
-      table: "shadowed",
-      row_offset: 1,
-    }),
-  ).toThrow(
-    expect.objectContaining({
-      // The refusal is about the caller's offset, not the selected table.
-      reason: "row-offset",
-      message: expect.stringContaining("row_offset"),
-    }),
-  );
-});
+it.each(["", ", key INTEGER PRIMARY KEY DESC", ", key INT PRIMARY KEY"])(
+  "refuses a row offset for shadowed built-in names without a declared rowid alias (%s)",
+  async (keyDeclaration) => {
+    const path = await createDatabase(
+      `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT${keyDeclaration});
+       INSERT INTO shadowed(rowid, _rowid_, oid) VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+    );
+    expect(
+      inspectSqliteDatabaseSnapshot(path, { path, table: "shadowed" }).rows,
+    ).toMatchObject({
+      order: "unspecified",
+      row_offset: 0,
+      next_row_offset: null,
+    });
+    expect(() =>
+      inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "shadowed",
+        row_offset: 1,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        reason: "row-offset",
+        message: expect.stringContaining("row_offset"),
+      }),
+    );
+  },
+);
 
 nativeTest.skipIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "rejects a runtime without native limits before querying the snapshot",

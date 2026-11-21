@@ -1,19 +1,39 @@
 import {
   access,
   mkdir,
-  mkdtemp,
+  readdir,
   readFile,
+  realpath,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { userInfo } from "node:os";
 import { parse } from "yaml";
-import { expect, onTestFinished } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { removeTestWorkspace } from "../../support/workspace/workspaceFixture.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let sharedHome = "";
+
+beforeAll(async () => {
+  sharedHome = (await createTestWorkspace("rea-hermes-suite-")).root;
+});
+
+beforeEach(async () => {
+  for (const entry of await readdir(sharedHome))
+    await rm(join(sharedHome, entry), { recursive: true, force: true });
+});
+
+afterAll(async () => {
+  if (sharedHome !== "") await removeTestWorkspace(sharedHome);
+});
 
 for (const [version, keyStyle] of [
   ["1.1", "quoted"],
@@ -23,7 +43,7 @@ for (const [version, keyStyle] of [
   cliTest(
     `Hermes setup preserves string environment values under YAML ${version} with ${keyStyle} keys`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-yaml-strings-");
+      const home = sharedHome;
       const profile = join(home, "hermes");
       const config = join(profile, "config.yaml");
       const environment = {
@@ -61,7 +81,6 @@ for (const [version, keyStyle] of [
           arguments: arguments_,
           cwd: home,
           environment: { USERPROFILE: home, HERMES_HOME: profile },
-          timeoutMs: 20_000,
         });
       const setup = [
         "setup",
@@ -114,7 +133,7 @@ for (const [version, keyStyle] of [
 cliTest(
   "Hermes setup preserves an existing tool allowlist and client-owned policy",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-hermes-tool-policy-");
+    const home = sharedHome;
     const profile = join(home, "hermes");
     const config = join(profile, "config.yaml");
     const original = [
@@ -141,7 +160,6 @@ cliTest(
         arguments: arguments_,
         cwd: home,
         environment: { USERPROFILE: home, HERMES_HOME: profile },
-        timeoutMs: 20_000,
       });
     const setup = ["setup", "--client", "hermes", "--skill=false", "--json"];
     const preview = await run([...setup, "--dry-run"]);
@@ -206,7 +224,7 @@ cliTest(
 cliTest(
   "Hermes setup, doctor and uninstall use the expanded profile and its personal skill",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-hermes-cli-");
+    const home = sharedHome;
     const profile = join(home, "profile");
     const config = join(profile, "config.yaml");
     const skill = join(profile, "skills/reverse-engineer-anything/SKILL.md");
@@ -223,7 +241,6 @@ cliTest(
           REA_CLIENT_PROFILE_HOME: home,
           HERMES_HOME: " ${REA_CLIENT_PROFILE_HOME}/profile ",
         },
-        timeoutMs: 20_000,
       });
     const planned = await run([
       "setup",
@@ -298,7 +315,7 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
   cliTest(
     `Hermes ${selection} sticky-profile selection preserves the root configuration`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-sticky-");
+      const home = sharedHome;
       const suffix = selection === "suffix" ? "-dev" : "";
       const native =
         process.platform === "win32"
@@ -333,7 +350,6 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
                   ? root
                   : undefined,
           },
-          timeoutMs: 20_000,
         });
       const plan = await run([
         "setup",
@@ -425,7 +441,7 @@ for (const selection of [
   cliTest(
     `Hermes nested homes use the native profile root: ${selection}`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-nested-");
+      const home = sharedHome;
       const native =
         process.platform === "win32"
           ? join(home, "AppData", "Local", "hermes")
@@ -468,7 +484,6 @@ for (const selection of [
           LOCALAPPDATA: join(home, "AppData", "Local"),
           HERMES_HOME: root,
         },
-        timeoutMs: 20_000,
       });
       if (selection === "missing") {
         expect(plan.exitCode).toBe(1);
@@ -536,9 +551,7 @@ for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
   cliTest(
     `Hermes preview resolves existing ancestors for missing and existing overrides: ${layout}`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-hermes-missing-override-",
-      );
+      const home = sharedHome;
       const native =
         process.platform === "win32"
           ? join(home, "AppData", "Local", "hermes")
@@ -573,7 +586,6 @@ for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
             LOCALAPPDATA: join(home, "AppData", "Local"),
             HERMES_HOME: root,
           },
-          timeoutMs: 20_000,
         });
         expect(plan.exitCode, plan.stdout).toBe(0);
         expect(plan.json).toMatchObject({
@@ -627,7 +639,7 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
   cliTest(
     `Hermes rejects unusable sticky profile ${name} without writing a fallback home`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-invalid-profile-");
+      const home = sharedHome;
       const root = join(home, "hermes root");
       await mkdir(root);
       await writeFile(join(root, "active_profile"), name);
@@ -650,7 +662,6 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
           arguments: args,
           cwd: home,
           environment: { USERPROFILE: home, HERMES_HOME: root },
-          timeoutMs: 20_000,
         });
       const rejected = await run([
         "setup",
@@ -680,7 +691,9 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
           registrations: expect.arrayContaining([
             expect.objectContaining({
               client: "hermes",
-              state: "invalid",
+              state: "unknown",
+              command: [],
+              command_identity: "unknown",
               remediation: expect.stringContaining("Hermes profile"),
             }),
           ]),
@@ -701,13 +714,24 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
 cliTest.skipIf(process.platform === "win32")(
   "Hermes named-user home aligns setup, doctor, skill and uninstall despite an isolated HOME",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-hermes-named-caller-");
     const account = userInfo();
-    const profile = await mkdtemp(join(account.homedir, ".rea-hermes-named-"));
-    onTestFinished(() => removeTestWorkspace(profile));
-    const override = `~${account.username}//${relative(account.homedir, profile)}`;
-    const config = join(profile, "config.yaml");
-    const skill = join(profile, "skills/reverse-engineer-anything/SKILL.md");
+    const accountHome = await realpath(account.homedir);
+    // Keep the unexpanded tilde path inside the fixture even after its ".." segments.
+    const home = join(sharedHome, relative("/", accountHome));
+    await mkdir(home, { recursive: true });
+    const temporary = await createTestTempDirectory(
+      "rea-hermes-named-profile-",
+    );
+    const suffix = relative(accountHome, temporary);
+    // Exercise the real named-account lookup without requiring a writable
+    // account home. Resolve parent traversal from its physical directory while
+    // keeping the named home's expanded spelling, including parent segments.
+    const profile = `${account.homedir.replace(/\/+$/u, "")}/${suffix}`;
+    const override = `~${account.username}//${suffix}`;
+    const literalProfile = join(home, override);
+    expect(literalProfile).not.toBe(temporary);
+    const config = `${profile}/config.yaml`;
+    const skill = `${profile}/skills/reverse-engineer-anything/SKILL.md`;
     const original =
       "# owned fixture\nmodel: custom\nmcp_servers:\n  other:\n    command: other-server\n";
     await writeFile(config, original);
@@ -720,7 +744,6 @@ cliTest.skipIf(process.platform === "win32")(
           HERMES_HOME: "$REA_HERMES_PROFILE",
           REA_HERMES_PROFILE: override,
         },
-        timeoutMs: 20_000,
       });
     const planned = await run([
       "setup",
@@ -735,7 +758,7 @@ cliTest.skipIf(process.platform === "win32")(
       plannedActions: expect.arrayContaining([
         expect.objectContaining({ target: config }),
         expect.objectContaining({
-          target: join(profile, "skills/reverse-engineer-anything"),
+          target: `${profile}/skills/reverse-engineer-anything`,
         }),
       ]),
     });
@@ -767,7 +790,7 @@ cliTest.skipIf(process.platform === "win32")(
     expect((await run(["uninstall", "--json"])).exitCode).toBe(0);
     expect(parse(await readFile(config, "utf8"))).toEqual(parse(original));
     await expect(access(skill)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(access(join(home, override))).rejects.toMatchObject({
+    await expect(access(literalProfile)).rejects.toMatchObject({
       code: "ENOENT",
     });
   },
@@ -776,14 +799,13 @@ cliTest.skipIf(process.platform === "win32")(
 cliTest(
   "Hermes unresolved named home refuses setup before writes and remains diagnostic in doctor",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-hermes-named-refusal-");
+    const home = sharedHome;
     const override = `~${userInfo().username}-other/profile`;
     const run = (arguments_: readonly string[]) =>
       cli.run({
         arguments: arguments_,
         cwd: home,
         environment: { USERPROFILE: home, HERMES_HOME: override },
-        timeoutMs: 20_000,
       });
     const setup = await run(["setup", "--client", "hermes", "--yes", "--json"]);
     expect(setup.exitCode).not.toBe(0);
@@ -806,11 +828,20 @@ cliTest(
         registrations: expect.arrayContaining([
           expect.objectContaining({
             client: "hermes",
-            state: "invalid",
+            state: "unknown",
+            command: [],
+            command_identity: "unknown",
             remediation: expect.stringContaining("absolute HERMES_HOME"),
           }),
         ]),
       },
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "registration:hermes",
+          ok: false,
+          classification: "unknown",
+        }),
+      ]),
     });
     await expect(access(join(home, override))).rejects.toMatchObject({
       code: "ENOENT",

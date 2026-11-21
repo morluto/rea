@@ -5,7 +5,7 @@ import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { FULL_CATALOG_IDENTITY } from "../../dist/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../dist/contracts/catalog/catalogIdentity.js";
 import { verifyCompleteToolCatalog } from "./verify-package-core.mjs";
 
 /** Install the selected archive or registry specifier with an owned ten-minute deadline. */
@@ -16,11 +16,9 @@ export async function installCanaryPackage(
   commands,
 ) {
   const prefix = join(workspace, "installed");
-  await commands.exec(
-    "npm",
+  await commands.installWithoutScripts(
+    "install",
     [
-      "install",
-      "--ignore-scripts",
       "--no-save",
       "--no-package-lock",
       "--no-audit",
@@ -82,7 +80,7 @@ export async function verifyInstalledCanaryPackage(
       const toolNames = await verifyCompleteToolCatalog(client);
       return {
         mcpTools: toolNames.length,
-        canonicalMcpTools: FULL_CATALOG_IDENTITY.counts.mcp_tools,
+        canonicalMcpTools: DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
       };
     } catch (cause) {
       throw new Error(`Installed package MCP verification failed: ${stderr}`, {
