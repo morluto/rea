@@ -208,6 +208,7 @@
 * **binary:** throw the cause when restoration setup fails ([89fe8dc](https://github.com/morluto/rea/commit/89fe8dcf4e704e56187653b8c23fbd3eb5d00a92))
 * **browser:** catch permissive decoding of malformed wire payloads ([#12792](https://github.com/morluto/rea/issues/12792)) ([fc5ba54](https://github.com/morluto/rea/commit/fc5ba5473be501fd9fce2d094a2d8aa6c41c69f5))
 * **browser:** catch permissive response body decoding ([fc5ba54](https://github.com/morluto/rea/commit/fc5ba5473be501fd9fce2d094a2d8aa6c41c69f5))
+* **browser:** consolidate local artifact provenance checks ([#13221](https://github.com/morluto/rea/issues/13221)) ([e94eb2c](https://github.com/morluto/rea/commit/e94eb2cb6447897fbffb8024415c54bb55449f2e))
 * **browser:** consolidate native module lifecycle checks ([#13224](https://github.com/morluto/rea/issues/13224)) ([de0418c](https://github.com/morluto/rea/commit/de0418c1f456496749d495eefbf1ef8d417c5f6b))
 * **browser:** consolidate source-map and deadline contracts ([#13220](https://github.com/morluto/rea/issues/13220)) ([7b3fb89](https://github.com/morluto/rea/commit/7b3fb897c0868c198b7c92b1a413c0535240ea8d))
 * **browser:** consolidate worker framing and cleanup checks ([#12885](https://github.com/morluto/rea/issues/12885)) ([87940b1](https://github.com/morluto/rea/commit/87940b192c486551c194fb06b5bf468854d5404e))
