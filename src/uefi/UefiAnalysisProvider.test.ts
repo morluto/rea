@@ -2246,6 +2246,74 @@ it("omits disassembly and records limitation when staging disassembly exceeds re
   }
 });
 
+it("recognizes MISC directory segments and filters them correctly", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-misc-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  const miscDir = join(inDir, "MISC", "extra_pkg");
+  await mkdirFs(miscDir, { recursive: true });
+
+  const mzHeader = Buffer.alloc(128, 0);
+  mzHeader[0] = 0x4d;
+  mzHeader[1] = 0x5a;
+  await writeFile(join(miscDir, "payload.efi"), mzHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(inDir, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.phases.misc).toBe(1);
+    expect(result.phases.dxe).toBe(0);
+    expect(result.modules[0]?.phase).toBe("MISC");
+
+    // Also verify that filter_phase: "dxe" excludes it
+    const dxeOut = join(directory, "output-dxe");
+    const filtered = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, dxeOut, { filter_phase: "dxe" }),
+      ),
+    );
+    const filteredResult = filtered.value.result as UefiDecompileResult;
+    expect(filteredResult.total_modules_found).toBe(0);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("recovers GUID and module name from directory hierarchy <guid>_<name>/<name>.efi and manifest", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-guid-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  const testGuid = "11223344-5566-7788-99aa-bbccddeeff00";
+  const modDir = join(inDir, "DXE", `${testGuid}_SpecialDriver`);
+  await mkdirFs(modDir, { recursive: true });
+
+  const mzHeader = Buffer.alloc(128, 0);
+  mzHeader[0] = 0x4d;
+  mzHeader[1] = 0x5a;
+  await writeFile(join(modDir, "SpecialDriver.efi"), mzHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(inDir, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.modules[0]?.guid).toBe(testGuid);
+    expect(result.modules[0]?.name).toBe("SpecialDriver");
+  } finally {
+    await provider.close();
+  }
+});
+
 it.each([
   { erase: 0xff as const, dirty: 0x00 },
   { erase: 0x00 as const, dirty: 0xff },

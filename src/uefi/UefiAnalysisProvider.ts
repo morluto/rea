@@ -8,8 +8,13 @@ import { existsSync } from "node:fs";
 import { open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { inflate } from "node:zlib";
 import { promisify } from "node:util";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  inspectGhidraInstallation,
+  type GhidraInstallationInspection,
+} from "../ghidra/GhidraInstallation.js";
+import { admitGhidraInstallation } from "../ghidra/GhidraAdmission.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { isAbortOf } from "../process/SignalAbort.js";
@@ -235,41 +240,41 @@ export const buildUefiEntryPointScaffolding = (
   };
 };
 
-const resolveGhidraHeadless = (): string | null => {
-  const isWindows = HOST_PLATFORM.platform === "win32";
-  const headlessName = isWindows ? "analyzeHeadless.bat" : "analyzeHeadless";
-  const ghidraRunName = isWindows ? "ghidraRun.bat" : "ghidraRun";
-
-  const envDir = process.env.GHIDRA_INSTALL_DIR;
-  if (typeof envDir === "string" && envDir.length > 0) {
-    const candidate = join(envDir, "support", headlessName);
-    if (existsSync(candidate)) return candidate;
+const isBufferLimitExceeded = (err: unknown): boolean => {
+  if (err instanceof RangeError && err.message.includes("maxBuffer")) {
+    return true;
   }
+  const code = (err as { code?: unknown })?.code;
+  return code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+};
 
-  const pathEnv = process.env.PATH ?? "";
-  const pathDirs = pathEnv
-    .split(isWindows ? ";" : ":")
-    .filter((p) => p.length > 0);
-  for (const dir of pathDirs) {
-    const directHeadless = join(dir, headlessName);
-    if (existsSync(directHeadless)) return directHeadless;
-
-    const subHeadless = join(dir, "support", headlessName);
-    if (existsSync(subHeadless)) return subHeadless;
-
-    const ghidraRun = join(dir, ghidraRunName);
-    if (existsSync(ghidraRun)) {
-      const fromGhidraRun = join(dir, "support", headlessName);
-      if (existsSync(fromGhidraRun)) return fromGhidraRun;
+const resolveGhidraHeadless = async (
+  signal?: AbortSignal,
+): Promise<string | null> => {
+  try {
+    const inspection: GhidraInstallationInspection =
+      await inspectGhidraInstallation({
+        environment: process.env,
+        resourceOwner: "uefi-decompilation",
+        platform: HOST_PLATFORM.platform,
+        architecture: HOST_PLATFORM.arch,
+        ...(signal === undefined ? {} : { signal }),
+        ...(process.env.GHIDRA_INSTALL_DIR === undefined
+          ? {}
+          : { installDir: process.env.GHIDRA_INSTALL_DIR }),
+        ...(process.env.JAVA_HOME === undefined
+          ? {}
+          : { javaHome: process.env.JAVA_HOME }),
+      });
+    const admission = admitGhidraInstallation(inspection, {
+      existingProject: false,
+    });
+    if (admission.admitted) {
+      return admission.installation.analyzeHeadlessPath;
     }
+  } catch {
+    // If inspection fails or throws, treat as unavailable
   }
-
-  const systemCandidates = ["/opt/ghidra", "/usr/share/ghidra"];
-  for (const root of systemCandidates) {
-    const candidate = join(root, "support", headlessName);
-    if (existsSync(candidate)) return candidate;
-  }
-
   return null;
 };
 
@@ -476,6 +481,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       if (performance.now() >= deadline) expire();
       controller.signal.throwIfAborted();
     };
+    const remainingTimeMs = (): number =>
+      Math.max(0, deadline - performance.now());
     try {
       return {
         ok: true,
@@ -483,6 +490,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           request,
           controller.signal,
           checkpoint,
+          remainingTimeMs,
         ),
       };
     } catch (cause: unknown) {
@@ -503,6 +511,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     request: UefiRequest,
     signal: AbortSignal,
     checkpoint: () => void,
+    remainingTimeMs?: () => number,
   ): Promise<AnalysisExecution> {
     const finishObservation = (value: AnalysisExecution): AnalysisExecution => {
       try {
@@ -529,7 +538,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         // Continue to regular file artifact read
       }
       if (isDirectory && request.operation === "decompile_uefi_firmware") {
-        return await this.#decompileDirectory(request, signal, checkpoint);
+        return await this.#decompileDirectory(
+          request,
+          signal,
+          checkpoint,
+          remainingTimeMs,
+        );
       }
       const snapshot = await readStableArtifact(
         request.input.path,
@@ -588,6 +602,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           scan,
           signal,
           checkpoint,
+          remainingTimeMs,
         );
       }
       return finishObservation(this.#inspect(request, snapshot.sha256, scan));
@@ -946,6 +961,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     signal: AbortSignal,
     checkpoint: () => void,
     format: "file" | "directory" = "file",
+    remainingTimeMs?: () => number,
   ): Promise<AnalysisExecution> {
     const input = request.input;
     const modulesToProcess = discoveredModules.slice(0, input.max_modules);
@@ -961,7 +977,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       prefix: "rea-uefi-decompile-",
     });
 
-    const ghidraBin = resolveGhidraHeadless();
+    const ghidraBin = await resolveGhidraHeadless(signal);
 
     const MAX_DISASSEMBLY_MODULE_BYTES = 2 * 1024 * 1024;
     const MAX_DISASSEMBLY_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -1014,6 +1030,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       for (const mod of modulesToProcess) {
         checkpoint();
         signal.throwIfAborted();
+
+        // Reserve time to finalize completed modules and publish them before the deadline
+        if (remainingTimeMs !== undefined) {
+          const timeLeft = remainingTimeMs();
+          const reserveTime = ghidraBin !== null ? 8_000 : 3_000;
+          if (timeLeft <= reserveTime) {
+            if (stagedModules.length > 0) {
+              effectiveLimitations.push(
+                `Decompilation halted early to finalize and publish ${stagedModules.length} completed modules before operation deadline.`,
+              );
+              break;
+            }
+          }
+        }
 
         const modBytes =
           mod.bytes ??
@@ -1145,6 +1175,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               let asmOutput: string | null = null;
               let llvmErrorMsg: string | null = null;
               let objdumpErrorMsg: string | null = null;
+              let llvmError: unknown;
+              let objdumpError: unknown;
               try {
                 const { stdout } = await execFileOutput(
                   "llvm-objdump",
@@ -1159,10 +1191,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 asmOutput = stdout;
                 asmGenerator = "llvm-objdump";
                 disassemblyEngineUsed = "llvm-objdump";
-              } catch (llvmError: unknown) {
+              } catch (err: unknown) {
                 if (signal.aborted) signal.throwIfAborted();
-                if (isAbortOf(llvmError, signal)) throw llvmError;
-                llvmErrorMsg = errorMessage(llvmError);
+                if (isAbortOf(err, signal)) throw err;
+                llvmError = err;
+                llvmErrorMsg = errorMessage(err);
                 try {
                   const { stdout } = await execFileOutput(
                     "objdump",
@@ -1179,10 +1212,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   if (disassemblyEngineUsed === "none") {
                     disassemblyEngineUsed = "objdump";
                   }
-                } catch (objdumpError: unknown) {
+                } catch (err2: unknown) {
                   if (signal.aborted) signal.throwIfAborted();
-                  if (isAbortOf(objdumpError, signal)) throw objdumpError;
-                  objdumpErrorMsg = errorMessage(objdumpError);
+                  if (isAbortOf(err2, signal)) throw err2;
+                  objdumpError = err2;
+                  objdumpErrorMsg = errorMessage(err2);
                   asmOutput = null;
                 }
               }
@@ -1214,28 +1248,44 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   }
                 }
               } else {
-                disassemblyStatus = "failed";
-                const sanitizeDiag = (msg: string | null): string => {
-                  if (msg === null) return "unknown";
-                  const line = msg.replace(/[\r\n\t]+/g, " ").trim();
-                  return ellipsisExcerpt(line, 120);
-                };
                 if (
-                  recordedDisassemblyFailures <
-                  MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS
+                  isBufferLimitExceeded(llvmError) ||
+                  isBufferLimitExceeded(objdumpError)
                 ) {
-                  effectiveLimitations.push(
-                    `Disassembly for ${mod.rawName} failed: llvm-objdump (${sanitizeDiag(llvmErrorMsg)}), objdump (${sanitizeDiag(objdumpErrorMsg)})`,
-                  );
-                  recordedDisassemblyFailures++;
-                } else if (
-                  !effectiveLimitations.includes(
-                    "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
-                  )
-                ) {
-                  effectiveLimitations.push(
-                    "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
-                  );
+                  disassemblyStatus = "omitted";
+                  if (
+                    !effectiveLimitations.includes(
+                      "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                    )
+                  ) {
+                    effectiveLimitations.push(
+                      "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                    );
+                  }
+                } else {
+                  disassemblyStatus = "failed";
+                  const sanitizeDiag = (msg: string | null): string => {
+                    if (msg === null) return "unknown";
+                    const line = msg.replace(/[\r\n\t]+/g, " ").trim();
+                    return ellipsisExcerpt(line, 120);
+                  };
+                  if (
+                    recordedDisassemblyFailures <
+                    MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS
+                  ) {
+                    effectiveLimitations.push(
+                      `Disassembly for ${mod.rawName} failed: llvm-objdump (${sanitizeDiag(llvmErrorMsg)}), objdump (${sanitizeDiag(objdumpErrorMsg)})`,
+                    );
+                    recordedDisassemblyFailures++;
+                  } else if (
+                    !effectiveLimitations.includes(
+                      "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
+                    )
+                  ) {
+                    effectiveLimitations.push(
+                      "Additional disassembly failure diagnostics omitted after reaching diagnostics budget.",
+                    );
+                  }
                 }
               }
             }
@@ -1617,6 +1667,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     scan: UefiImageScanSummary,
     signal: AbortSignal,
     checkpoint: () => void,
+    remainingTimeMs?: () => number,
   ): Promise<AnalysisExecution> {
     const discoveredModules: DiscoveredUefiModule[] = [];
     const seenSections = new Set<string>();
@@ -1691,6 +1742,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       signal,
       checkpoint,
       "file",
+      remainingTimeMs,
     );
   }
 
@@ -1698,6 +1750,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     request: Extract<UefiRequest, { operation: "decompile_uefi_firmware" }>,
     signal: AbortSignal,
     checkpoint: () => void,
+    remainingTimeMs?: () => number,
   ): Promise<AnalysisExecution> {
     const input = request.input;
     const dirEntries = await readdir(input.path, {
@@ -1706,6 +1759,31 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     });
     const guidRegex =
       /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
+    const manifestModulesByRelPath = new Map<
+      string,
+      { guid?: string | null; name?: string; phase?: string }
+    >();
+    try {
+      const manifestPath = join(input.path, "firmware_manifest.json");
+      if (existsSync(manifestPath)) {
+        const manifestRaw = await readFile(manifestPath, "utf8");
+        const parsed = JSON.parse(manifestRaw);
+        if (Array.isArray(parsed?.modules)) {
+          for (const m of parsed.modules) {
+            if (typeof m?.payload_file === "string") {
+              const norm = m.payload_file
+                .split(/[/\\]+/)
+                .join("/")
+                .toLowerCase();
+              manifestModulesByRelPath.set(norm, m);
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore unreadable manifest
+    }
 
     interface CandidateModule {
       readonly fullPath: string;
@@ -1767,12 +1845,30 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const relPath = relative(input.path, fullPath);
       const normRelPath = relPath.split(/[/\\]+/).join("/");
       const segments = normRelPath.toLowerCase().split("/");
+      const fromManifest = manifestModulesByRelPath.get(
+        normRelPath.toLowerCase(),
+      );
+
       let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
-      if (segments.some((s) => s === "sec")) phase = "SEC";
-      else if (segments.some((s) => s === "pei" || s === "peim")) phase = "PEI";
-      else if (segments.some((s) => s === "smm")) phase = "SMM";
-      else if (segments.some((s) => s === "app" || s === "application"))
+      const manifestPhase = fromManifest?.phase?.toUpperCase();
+      if (
+        manifestPhase &&
+        ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"].includes(manifestPhase)
+      ) {
+        phase = manifestPhase as "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
+      } else if (segments.some((s) => s === "sec")) {
+        phase = "SEC";
+      } else if (segments.some((s) => s === "pei" || s === "peim")) {
+        phase = "PEI";
+      } else if (segments.some((s) => s === "smm")) {
+        phase = "SMM";
+      } else if (segments.some((s) => s === "app" || s === "application")) {
         phase = "APP";
+      } else if (segments.some((s) => s === "misc")) {
+        phase = "MISC";
+      } else if (segments.some((s) => s === "dxe")) {
+        phase = "DXE";
+      }
 
       if (
         input.filter_phase !== "all" &&
@@ -1781,10 +1877,37 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         continue;
       }
 
-      const guidMatch = entry.name.match(guidRegex);
-      const guid =
-        guidMatch && guidMatch[1] ? guidMatch[1].toLowerCase() : null;
-      const rawName = entry.name.replace(/\.(pe|efi|bin|te)$/i, "");
+      let guid: string | null = null;
+      if (fromManifest?.guid) {
+        guid = fromManifest.guid.toLowerCase();
+      } else {
+        const nameMatch = entry.name.match(guidRegex);
+        if (nameMatch && nameMatch[1]) {
+          guid = nameMatch[1].toLowerCase();
+        } else {
+          const pathMatch = normRelPath.match(guidRegex);
+          if (pathMatch && pathMatch[1]) {
+            guid = pathMatch[1].toLowerCase();
+          }
+        }
+      }
+
+      let rawName = entry.name.replace(/\.(pe|efi|bin|te)$/i, "");
+      if (
+        typeof fromManifest?.name === "string" &&
+        fromManifest.name.length > 0
+      ) {
+        rawName = fromManifest.name;
+      } else if (guid) {
+        const parentBase = basename(parent);
+        const prefix = `${guid}_`;
+        if (parentBase.toLowerCase().startsWith(prefix)) {
+          const candidateName = parentBase.slice(prefix.length);
+          if (candidateName.length > 0) {
+            rawName = candidateName;
+          }
+        }
+      }
       const cleanName = rawName.replace(/[^a-zA-Z0-9_-]/g, "_");
 
       candidates.push({
@@ -1836,6 +1959,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       signal,
       checkpoint,
       "directory",
+      remainingTimeMs,
     );
   }
 
