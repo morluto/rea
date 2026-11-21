@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { X11WindowObserver } from "./X11WindowObserver.js";
 
 it.skipIf(process.platform === "win32").each([false, true])(

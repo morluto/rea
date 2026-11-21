@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { ReaderCommandResult } from "../domain/desktop/appTaskReaders.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 
 /** The most a reader runner prints, its one answer line, plus room for what Python says when it fails. */
@@ -33,10 +34,11 @@ export const runReaderHere = async (
     },
     signal === undefined ? {} : { signal },
   );
+  const { exit_code, stdout, stderr } = capturedProviderOutput(snapshot);
   return {
-    exit_code: snapshot.exitCode ?? null,
-    stdout: snapshot.stdout.text,
-    stderr: snapshot.stderr.text,
+    exit_code: exit_code ?? null,
+    stdout,
+    stderr,
     timed_out: false,
   };
 };

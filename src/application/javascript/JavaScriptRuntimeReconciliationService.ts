@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { resolve } from "node:path";
 import type { z } from "zod";
 import {

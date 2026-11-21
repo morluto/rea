@@ -199,7 +199,7 @@ export const projectApiContractView = (
         sha256: context.artifact.sha256,
       },
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const selected = selectRows(parsed.value, view);
   return ok({

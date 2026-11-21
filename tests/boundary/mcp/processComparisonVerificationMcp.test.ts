@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -19,7 +20,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 it("rejects an inconsistent imported process comparison while retaining its Evidence", async () => {
   const dimension = "terminal" as const;
   const source = (side: string) =>
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: { side },
@@ -41,22 +42,26 @@ it("rejects an inconsistent imported process comparison while retaining its Evid
   );
   expect(nativeResult.status).toBe("unchanged");
   const comparison = (status: "unchanged" | "contradiction") =>
-    createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-comparison",
-      operation: "compare_process_captures",
-      parameters: {
-        left_evidence_id: left.evidence_id,
-        right_evidence_id: right.evidence_id,
+    createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      PROCESS_PROVIDER,
+      {
+        predicateType: "rea.process-comparison",
+        operation: "compare_process_captures",
+        parameters: {
+          left_evidence_id: left.evidence_id,
+          right_evidence_id: right.evidence_id,
+        },
+        result: {
+          ...nativeResult,
+          [dimension]: "contradiction",
+          status,
+        },
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: [left.evidence_id, right.evidence_id],
       },
-      result: {
-        ...nativeResult,
-        [dimension]: "contradiction",
-        status,
-      },
-      confidence: "derived",
-      authority: "analyst-inference",
-      evidenceLinks: [left.evidence_id, right.evidence_id],
-    });
+    );
   const inconsistent = comparison("unchanged");
   const consistent = comparison("contradiction");
   const root = await createTestTempDirectory("rea-process-verification-");
@@ -101,11 +106,7 @@ it("rejects an inconsistent imported process comparison while retaining its Evid
     const rejected = await verify(inconsistent.evidence_id, selected);
     expect(parseMcpToolError(rejected).error).toMatchObject({
       code: "evidence_integrity_mismatch",
-      details: {
-        reason: expect.stringContaining(
-          "Process comparison status contradicts its dimensions",
-        ),
-      },
+      details: { constraint: "status-matches-dimensions" },
     });
     const failed = await verify(consistent.evidence_id, selected);
     expect(failed.isError).not.toBe(true);
@@ -170,7 +171,7 @@ it("keeps omitted rendered observations unknown through trace comparison and imp
     ],
   });
   const source = (side: string) =>
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: { side },

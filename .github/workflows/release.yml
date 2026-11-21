@@ -86,6 +86,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -93,6 +94,10 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+
+      - name: Cache npm package downloads
+        if: steps.editorial.outputs.frozen != 'true'
+        uses: ./.github/actions/npm-cache
 
       - name: Install proposal controller dependencies
         if: steps.editorial.outputs.frozen != 'true'
@@ -106,18 +111,15 @@ jobs:
         run: node scripts/release-proposal.mjs --target-branch main --source-sha "$SOURCE_SHA"
 
   merged-release:
-    name: Release reviewed main merge
+    name: Validate reviewed main merge
     if: >-
       github.event_name == 'pull_request' && github.event.pull_request.merged == true &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'release-please--branches--main--')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      sha: ${{ steps.release.outputs.sha }}
+      contents: read
+      pull-requests: read
     steps:
       - name: Check out reviewed release merge
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -144,39 +146,6 @@ jobs:
           node scripts/verify-release-checkpoint.mjs \
             --phase publish --release-branch main --source-sha "$SOURCE_SHA"
 
-      - name: Validate finalized notes before release creation
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_PR: ${{ github.event.pull_request.number }}
-          SOURCE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-        run: |
-          node scripts/release-notes.mjs publication --repository "$GH_REPO" \
-            --source "$SOURCE_SHA" --pr "$RELEASE_PR"
-
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
-        id: release
-        with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          target-branch: main
-          skip-github-release: false
-          skip-github-pull-request: true
-
-      - name: Bind publication to the reviewed merge
-        env:
-          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
-          RELEASE_SHA: ${{ steps.release.outputs.sha }}
-          SOURCE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-        run: |
-          if [[ "${RELEASE_CREATED}" != true ]]; then
-            echo "Release Please did not create a release for the reviewed merge. Check its pending label and release metadata; for a partial publication, re-run failed jobs in the original run." >&2
-            exit 1
-          fi
-          if [[ "${RELEASE_SHA}" != "${SOURCE_SHA}" ]]; then
-            echo "The tagged release differs from the reviewed merge; refusing mismatched publication provenance. The GitHub release already exists; do not create another release as a retry." >&2
-            exit 1
-          fi
-
   release-please:
     name: Release Please
     if: github.event_name == 'workflow_dispatch'
@@ -184,9 +153,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      sha: ${{ steps.release.outputs.sha }}
     steps:
       - name: Validate release selection
         shell: bash
@@ -266,16 +232,6 @@ jobs:
           --phase "$RELEASE_PHASE" --release-branch "$RELEASE_BRANCH"
           --source-sha "$SOURCE_SHA"
 
-      - name: Validate manual finalized notes before release creation
-        if: inputs.phase == 'publish'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          SOURCE_SHA: ${{ steps.branch.outputs.sha }}
-        run: |
-          node scripts/release-notes.mjs publication --repository "$GH_REPO" \
-            --source "$SOURCE_SHA"
-
       - name: Prepare checkpoint release proposal
         if: inputs.phase == 'prepare'
         id: proposal
@@ -286,32 +242,6 @@ jobs:
           RELEASE_BRANCH: ${{ inputs.release_branch }}
           SOURCE_SHA: ${{ steps.branch.outputs.sha }}
         run: node scripts/release-proposal.mjs --target-branch "$RELEASE_BRANCH" --source-sha "$SOURCE_SHA"
-
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
-        if: inputs.phase == 'publish'
-        id: release
-        with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          target-branch: ${{ inputs.release_branch }}
-          skip-github-release: false
-          skip-github-pull-request: true
-
-      - name: Require a merged release PR for publication
-        if: inputs.phase == 'publish' && steps.release.outputs.release_created != 'true'
-        run: |
-          echo "No new release was created. Merge the reviewed release PR into its frozen branch before publishing. For a partial publication, re-run failed jobs in the original run." >&2
-          exit 1
-
-      - name: Bind publication to the dispatched checkpoint
-        if: inputs.phase == 'publish' && steps.release.outputs.release_created == 'true'
-        shell: bash
-        env:
-          RELEASE_SHA: ${{ steps.release.outputs.sha }}
-        run: |
-          if [[ "${RELEASE_SHA}" != "${GITHUB_SHA}" ]]; then
-            echo "The tagged release SHA differs from the dispatched checkpoint; refusing to publish mismatched source provenance. The GitHub release already exists; do not dispatch publish again." >&2
-            exit 1
-          fi
 
       - name: Check out release pull request
         if: inputs.phase == 'prepare' && steps.proposal.outputs.prs_created == 'true'
@@ -355,8 +285,8 @@ jobs:
     needs: [merged-release, release-please]
     if: >-
       always() && !cancelled() &&
-      ((needs.merged-release.result == 'success' && needs.merged-release.outputs.release_created == 'true') ||
-      (needs.release-please.result == 'success' && inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true'))
+      (needs.merged-release.result == 'success' ||
+      (needs.release-please.result == 'success' && inputs.phase == 'publish'))
     permissions:
       contents: read
       actions: read
@@ -364,7 +294,7 @@ jobs:
     secrets:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     with:
-      source_sha: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
+      source_sha: ${{ github.sha }}
       remote_cache_write: true
 
   rehearsal:
@@ -372,7 +302,7 @@ jobs:
     env:
       TURBO_TOKEN: ""
       TURBO_CACHE: local:rw
-    needs: [merged-release, release-please, qualification]
+    needs: qualification
     if: >-
       always() && !cancelled() && needs.qualification.result == 'success'
     runs-on: ubuntu-latest
@@ -383,7 +313,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -398,12 +328,56 @@ jobs:
           VERIFIED_PACKAGE_VERSION: ${{ steps.package.outputs.version }}
         run: node scripts/verify-release-artifact.mjs "$VERIFIED_PACKAGE_TARBALL" "$VERIFIED_PACKAGE_VERSION"
 
-  publish:
-    name: Publish to npm
-    needs: [merged-release, release-please, qualification, rehearsal]
+  authorize-npm:
+    name: Authorize qualified npm publication
+    needs: [qualification, rehearsal]
     if: >-
       always() && !cancelled() &&
       needs.qualification.result == 'success' && needs.rehearsal.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Check out qualified release revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - run: npm ci
+
+      - name: Verify package and registry metadata versions before publication
+        run: npm run mcp-registry:check
+
+      - name: Validate finalized notes before release creation
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_PR: ${{ github.event.pull_request.number }}
+        run: |
+          args=(--repository "$GH_REPO" --source "$GITHUB_SHA")
+          if [[ -n "$RELEASE_PR" ]]; then
+            args+=(--pr "$RELEASE_PR")
+          fi
+          node scripts/release-notes.mjs publication "${args[@]}"
+
+      - name: Claim the candidate before writing to npm
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+        run: node scripts/ci/release-attempt.mjs publish
+
+  publish:
+    name: Publish to npm
+    needs: authorize-npm
+    if: ${{ always() && !cancelled() && needs.authorize-npm.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       TURBO_TOKEN: ""
@@ -414,7 +388,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -439,7 +413,7 @@ jobs:
 
   verify-npm:
     name: Verify published npm package
-    needs: [merged-release, release-please, publish]
+    needs: publish
     if: >-
       always() && !cancelled() && needs.publish.result == 'success'
     runs-on: ubuntu-latest
@@ -452,7 +426,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -471,16 +445,77 @@ jobs:
           VERIFIED_PACKAGE_VERSION: ${{ steps.package.outputs.version }}
         run: node scripts/verify-published-package.mjs "$VERIFIED_PACKAGE_VERSION"
 
+  tag-release:
+    name: Create qualified GitHub release
+    needs: verify-npm
+    if: ${{ always() && !cancelled() && needs.verify-npm.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out qualified release revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - run: npm ci
+
+      - name: Check for a previously completed GitHub release
+        id: github
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+        run: node scripts/ci/release-attempt.mjs inspect-github >> "$GITHUB_OUTPUT"
+
+      - name: Validate finalized notes before release creation
+        if: steps.github.outputs.published == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_PR: ${{ github.event.pull_request.number }}
+        run: |
+          args=(--repository "$GH_REPO" --source "$GITHUB_SHA")
+          if [[ -n "$RELEASE_PR" ]]; then
+            args+=(--pr "$RELEASE_PR")
+          fi
+          node scripts/release-notes.mjs publication "${args[@]}"
+
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        id: release
+        if: steps.github.outputs.published == 'false'
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: ${{ inputs.release_branch || 'main' }}
+          skip-github-release: false
+          skip-github-pull-request: true
+
+      - name: Bind publication to the qualified revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          if [[ "${RELEASE_CREATED}" == true && "${RELEASE_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "The tagged release differs from the qualified revision; refusing mismatched publication provenance." >&2
+            exit 1
+          fi
+          node scripts/ci/release-attempt.mjs verify-github
+
   publish-mcp:
     name: Publish to MCP Registry
     env:
       TURBO_TOKEN: ""
       TURBO_CACHE: local:rw
-    needs: [merged-release, release-please, verify-npm]
-    if: >-
-      always() && !cancelled() && needs.verify-npm.result == 'success' &&
-      ((needs.merged-release.result == 'success' && needs.merged-release.outputs.release_created == 'true') ||
-      (needs.release-please.result == 'success' && inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true'))
+    needs: tag-release
+    if: ${{ always() && !cancelled() && needs.tag-release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -488,7 +523,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Verify package and registry metadata versions

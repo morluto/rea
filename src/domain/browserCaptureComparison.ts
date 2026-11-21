@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { browserScenarioCaptureSchema } from "./browserScenarioCapture.js";
 import { compareBrowserScenarios } from "./browserScenarioDiff.js";
 import { compareWebCaptures } from "./webCaptureDiff.js";
 
@@ -24,6 +25,20 @@ export const browserCaptureComparisonInputSchema = z.union(
         : undefined,
   },
 );
+
+/**
+ * Whether a capture document is meant as a recorded browser scenario rather
+ * than a passive capture. Passive captures own the `inspection` wrapper; a
+ * document without it that holds any scenario-owned field is a scenario,
+ * even when its manifest is missing, so its own issues are reported.
+ */
+export const isScenarioCaptureDocument = (document: unknown): boolean =>
+  typeof document === "object" &&
+  document !== null &&
+  !("inspection" in document) &&
+  Object.keys(browserScenarioCaptureSchema.shape).some(
+    (field) => field in document,
+  );
 
 /** Parsed browser capture comparison input. */
 export type BrowserCaptureComparisonInput = z.output<

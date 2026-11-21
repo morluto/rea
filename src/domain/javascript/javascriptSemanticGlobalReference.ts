@@ -3,6 +3,10 @@ import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { isUnshadowedGlobal } from "./javascriptSemanticMutationInitializers.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  ambientPathMayHaveChanged,
+  opaqueCodeMayChangeGlobalRead,
+} from "./javascriptSemanticEffectLog.js";
 
 export const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -40,17 +44,37 @@ export const isUnmodifiedGlobalReference = (
 ): boolean => {
   const path: readonly [string, ...string[]] =
     typeof name === "string" ? [name] : name;
-  if (state.ambientWrites.covers(["global", ...path])) return false;
+  if (ambientPathMayHaveChanged(state, ["global", ...path])) return false;
   const namespace = globalReferenceNamespace(callee, state, path);
   return (
     namespace !== undefined &&
-    (namespace === null || !state.ambientWrites.covers(["global", namespace]))
+    (namespace === null ||
+      !ambientPathMayHaveChanged(state, ["global", namespace]))
   );
 };
+
+/**
+ * An intrinsic global read: an unmodified global reference that no opaque code
+ * may have rebound or replaced by the time its behavior is observed.
+ */
+export const isIntrinsicGlobalReference = (
+  reference: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  name: string | readonly [string, ...string[]],
+  observedAt: t.Node = reference,
+): boolean =>
+  isUnmodifiedGlobalReference(reference, state, name) &&
+  !opaqueCodeMayChangeGlobalRead(
+    reference,
+    state,
+    typeof name === "string" ? name : name[0],
+    observedAt,
+  );
 
 /** A module URL base is known only while its property has no visible write. */
 export const isUnmodifiedImportMetaUrl = (
   node: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  isImportMetaUrl(node) && !state.ambientWrites.covers(["import-meta", "url"]);
+  isImportMetaUrl(node) &&
+  !ambientPathMayHaveChanged(state, ["import-meta", "url"]);

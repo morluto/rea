@@ -48,23 +48,6 @@ const resolveUniversalTarget = async (
 const universalTarget = (hostArchitecture: "arm64" | "x64") =>
   resolveUniversalTarget(fat([0x01000007, 0x0100000c]), hostArchitecture);
 
-const copySelectedSlice = async ({
-  bytes,
-  target,
-}: Awaited<ReturnType<typeof universalTarget>>) => {
-  const workspace = await IdaWorkspace.allocate(target);
-  roots.push(workspace.directory);
-  await workspace.copyInput();
-  const input = await readFile(workspace.inputPath);
-  const { offset, size } = target.universalSlice;
-  expect(input.length, "no byte after the slice is copied").toBe(size);
-  expect(input.equals(bytes.subarray(offset, offset + size))).toBe(true);
-  expect(workspace.inputSha256).toBe(
-    createHash("sha256").update(input).digest("hex"),
-  );
-  return { workspace, input };
-};
-
 /** One slice of a synthetic universal file: CPU type, offset and size. */
 interface Layout {
   readonly cpu: number;
@@ -109,61 +92,41 @@ describe("IDA workspace input thinning", () => {
     expect(target.universalSlice).toMatchObject({ offset: 16384, size: 33464 });
   });
 
-  it.skipIf(process.platform === "win32")(
-    "thins the selected arm64 slice into the private headless input",
-    async () => {
-      const { bytes, target } = await universalTarget("arm64");
-      const { workspace, input } = await copySelectedSlice({ bytes, target });
-      expect(target.universalSlice.offset).toBeGreaterThan(0);
-      expect(input.readUInt32BE(0)).toBe(0xfeedfacf);
-      expect(input.readUInt32BE(4)).toBe(0x0100000c);
-      expect(parseExecutableHeader(input, "arm64")).toMatchObject({
+  it.skipIf(process.platform === "win32").each([
+    {
+      host: "arm64",
+      architecture: "arm64",
+      layout: multiSliceLayout,
+      offset: 16384,
+      size: 33464,
+    },
+    {
+      host: "x64",
+      architecture: "x86_64",
+      layout: [
+        { cpu: 0x01000007, offset: 16384, size: 37456 },
+        { cpu: 0x0100000c, offset: 65536, size: 33464 },
+      ],
+      offset: 16384,
+      size: 37456,
+    },
+  ] as const)(
+    "copies only the selected $architecture slice across reads",
+    async ({ host, architecture, layout, offset, size }) => {
+      const { bytes, target } = await largeUniversalTarget(layout, host);
+      expect(target.universalSlice).toMatchObject({ offset, size });
+      const workspace = await IdaWorkspace.allocate(target);
+      roots.push(workspace.directory);
+      await workspace.copyInput();
+      const input = await readFile(workspace.inputPath);
+      expect(input.equals(bytes.subarray(offset, offset + size))).toBe(true);
+      expect(workspace.inputSha256).toBe(
+        createHash("sha256").update(input).digest("hex"),
+      );
+      expect(parseExecutableHeader(input, host)).toMatchObject({
         ok: true,
-        value: { format: "mach-o", architecture: "arm64" },
+        value: { format: "mach-o", architecture },
       });
-      await workspace.remove();
-    },
-  );
-
-  it.skipIf(process.platform === "win32")(
-    "thins the x86_64 slice when the host is intel",
-    async () => {
-      const { bytes, target } = await universalTarget("x64");
-      const { workspace, input } = await copySelectedSlice({ bytes, target });
-      expect(input.readUInt32BE(4)).toBe(0x01000007);
-      await workspace.remove();
-    },
-  );
-
-  it.skipIf(process.platform === "win32")(
-    "copies exactly the selected slice when later slices follow it across read boundaries",
-    async () => {
-      const { bytes, target } = await largeUniversalTarget(
-        multiSliceLayout,
-        "arm64",
-      );
-      const { workspace } = await copySelectedSlice({ bytes, target });
-      expect(target.universalSlice.size, "the arm64 slice is selected").toBe(
-        33464,
-      );
-      await workspace.remove();
-    },
-  );
-
-  it.skipIf(process.platform === "win32")(
-    "copies exactly the first slice when it is selected and others follow",
-    async () => {
-      const { bytes, target } = await largeUniversalTarget(
-        [
-          { cpu: 0x01000007, offset: 16384, size: 37456 },
-          { cpu: 0x0100000c, offset: 65536, size: 33464 },
-        ],
-        "x64",
-      );
-      const { workspace } = await copySelectedSlice({ bytes, target });
-      expect(target.universalSlice.size, "the x86_64 slice is selected").toBe(
-        37456,
-      );
       await workspace.remove();
     },
   );
@@ -255,15 +218,19 @@ describe("IDA workspace write completion", () => {
 
 describe("IDA workspace admission identity", () => {
   it.skipIf(process.platform === "win32")(
-    "rejects a universal source that changed after admission",
+    "rejects a universal source changed outside the selected slice after admission",
     async () => {
-      const { target } = await universalTarget("arm64");
-      const workspace = await IdaWorkspace.allocate({
-        ...target,
-        sha256: "a".repeat(64),
-      });
+      const { bytes, target } = await largeUniversalTarget(
+        multiSliceLayout,
+        "arm64",
+      );
+      // This byte belongs to the unselected x86_64 slice.
+      bytes.writeUInt8(0x77, 4096 + 40);
+      await writeFile(target.path, bytes);
+      const workspace = await IdaWorkspace.allocate(target);
       roots.push(workspace.directory);
       await expect(workspace.copyInput()).rejects.toThrow("target changed");
+      expect(workspace.inputSha256).toBeUndefined();
       await workspace.remove();
     },
   );
@@ -278,6 +245,7 @@ describe("IDA workspace admission identity", () => {
         args: [],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { runHostQuery } from "./HostQuery.js";
 
 it("returns an inert Node query's actual output and status", async () => {
@@ -11,6 +11,23 @@ it("returns an inert Node query's actual output and status", async () => {
       undefined,
     ),
   ).toEqual({ stdout: "query result", exitCode: 0 });
+});
+
+it("retains raw stdout on a completed nonzero exit when requested", async () => {
+  const output = await runHostQuery(
+    process.execPath,
+    [
+      "-e",
+      "process.stdout.write(Buffer.from([0x61, 0xff])); process.exitCode = 1;",
+    ],
+    undefined,
+    { preserveStdoutBytes: true },
+  );
+  expect(output).toEqual({
+    stdout: "a�",
+    stdoutBuffer: Buffer.from([0x61, 0xff]),
+    exitCode: 1,
+  });
 });
 
 it("preserves cancellation recorded by the actual command owner", async () => {

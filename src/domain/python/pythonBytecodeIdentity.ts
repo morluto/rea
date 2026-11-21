@@ -1,3 +1,5 @@
+import { BinaryReader } from "../binaryContainer.js";
+
 /** Known CPython source-format identity, independent of decoder coverage. */
 export interface PythonBytecodeIdentity {
   readonly pythonVersion: string;
@@ -63,11 +65,11 @@ export const observePythonBytecodePrefix = (
   const magic =
     prefix.byteLength < 2
       ? null
-      : new DataView(
-          prefix.buffer,
-          prefix.byteOffset,
-          prefix.byteLength,
-        ).getUint16(0, true);
+      : new BinaryReader(
+          Buffer.from(prefix.buffer, prefix.byteOffset, prefix.byteLength),
+          true,
+          "python-bytecode",
+        ).u16(0);
   if (prefix.byteLength < 4 || magic === null)
     return { state: "incomplete", prefix, magic, identity: null };
   if (prefix[2] !== 0x0d || prefix[3] !== 0x0a)

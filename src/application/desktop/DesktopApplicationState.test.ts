@@ -1,3 +1,4 @@
+import { DESKTOP_VIEW_DEFAULTS } from "../../domain/desktop/desktopViewPolicy.js";
 import { chmod, open, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,7 +14,8 @@ import {
   primaryAnalysisError,
 } from "../../domain/analysisErrorBase.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import type {
@@ -182,6 +184,41 @@ describe("desktop state view admission", () => {
       userMessage: expect.stringContaining(missing),
     });
   });
+});
+
+it("records the complete effective view policy and refuses state without it", async () => {
+  const evidence = await inspectDesktopApplicationState(
+    await writeCaptureFolder(capture()),
+    readers,
+  );
+  if (!("normalized_result" in evidence)) throw evidence;
+  const state = desktopApplicationStateSchema.parse(evidence.normalized_result);
+  expect(state.effective_view_policy).toEqual(DESKTOP_VIEW_DEFAULTS);
+  const { effective_view_policy: policy, ...unrecorded } = state;
+  const { sqlite_view_bytes: _bytes, ...partial } = policy;
+  for (const refused of [
+    unrecorded,
+    { ...state, effective_view_policy: partial },
+  ])
+    expect(desktopApplicationStateSchema.safeParse(refused).success).toBe(
+      false,
+    );
+});
+
+it("refuses a capture from an earlier format revision with the recreate guidance", async () => {
+  const folder = await writeCaptureFolder(capture());
+  const path = join(folder, "capture.json");
+  const { evidence_format: _current, ...earlier } = JSON.parse(
+    await readFile(path, "utf8"),
+  ) as Record<string, unknown>;
+  await writeFile(path, JSON.stringify(earlier));
+
+  const refused = await inspectDesktopApplicationState(folder, readers);
+
+  expect(refused).toBeInstanceOf(Error);
+  expect(refused instanceof Error ? refused.message : "").toContain(
+    RECREATE_EVIDENCE_GUIDANCE,
+  );
 });
 
 describe("inspectDesktopApplicationState", () => {

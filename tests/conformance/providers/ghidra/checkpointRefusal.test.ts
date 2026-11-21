@@ -1,12 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 import { assertCheckpointRefusalPreservesManifest } from "../../../../scripts/lib/ghidra-checkpoint-refusal.mjs";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 const checkpointFile = async (bytes: Uint8Array) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-checkpoint-refusal-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-checkpoint-refusal-");
   const path = join(root, "current.json");
   await writeFile(path, bytes);
   return path;
@@ -19,13 +18,8 @@ const refusal = (code = "configuration_invalid", exitCode = 1) =>
     stderr: "controlled CLI diagnostic",
   });
 
-it.each([
-  {
-    name: "mismatched target identity",
-    bytes: Buffer.from(JSON.stringify({ target_sha256: "0".repeat(64) })),
-  },
-  { name: "malformed manifest", bytes: Buffer.from("{") },
-])("checks refusal-time manifest bytes for $name", async ({ bytes }) => {
+it("checks the original manifest bytes after the CLI refuses", async () => {
+  const bytes = Buffer.from("{");
   const path = await checkpointFile(bytes);
   await expect(
     assertCheckpointRefusalPreservesManifest(

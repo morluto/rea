@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Exact facts of the UTF-8 encoding and UTF-16 storage of retained text. */
 export const webTextFacts = (text: string) => ({
-  sha256: createHash("sha256").update(text).digest("hex"),
+  sha256: sha256Hex(text),
   utf8Bytes: Buffer.byteLength(text),
   utf16Units: text.length,
 });

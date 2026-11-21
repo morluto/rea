@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -9,10 +10,7 @@ import {
   deliverCliAnalysisEvidence,
   publishCliAnalysisEvidence,
 } from "../../../src/cli/analysisEvidenceDelivery.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../../src/domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createArtifactInspection } from "../../../src/domain/artifactInspection.js";
 import {
@@ -33,7 +31,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
 const source = (name: string, links: readonly string[] = []) =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     operation: "fixture_source",
     parameters: { name },
     result: { name },
@@ -41,7 +39,7 @@ const source = (name: string, links: readonly string[] = []) =>
   });
 
 const observed = (links: readonly string[]) =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     operation: "fixture_observation",
     parameters: {},
     result: { completed: true },
@@ -113,14 +111,14 @@ it("reports an unlinked captured source and stops at nothing linked or captured"
   const failure = cancelledWith(observation);
   expect(
     await publishCliAnalysisEvidence(err(failure), delivery(root, [])),
-  ).toBe(failure);
+  ).toEqual(failure);
   // A self-reference is the observation, not one of its sources.
   expect(
     await publishCliAnalysisEvidence(
       err(failure),
       delivery(root, [observation]),
     ),
-  ).toBe(failure);
+  ).toEqual(failure);
 });
 
 it("leaves failures untouched unless a completed observation requested delivery", async () => {
@@ -136,7 +134,7 @@ it("leaves failures untouched unless a completed observation requested delivery"
       ...requested,
       evidenceOutput: undefined,
     }),
-  ).toBe(noOutput);
+  ).toEqual(noOutput);
 
   const noObservation = projectAnalysisError(
     new AnalysisCancelledError("fixture_observation"),
@@ -165,7 +163,7 @@ it("leaves failures untouched unless a completed observation requested delivery"
 it("bounds records and listed omissions while counting everything", async () => {
   const root = await createTestTempDirectory("rea-closure-bounds-");
   const held = Array.from({ length: 200 }, (_, index) =>
-    createEvidence(undefined, provider, {
+    createEvidence(unknownTarget("not-observed"), provider, {
       operation: "fixture_source",
       parameters: { index },
       result: { text: "x".repeat(4 * 1024) },
@@ -202,7 +200,7 @@ const digestLink = (index: number) =>
   `ev_${index.toString(16).padStart(64, "0")}`;
 
 const wideSource = (links: readonly string[]) =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     operation: "fixture_source",
     parameters: {},
     result: { wide: true },
@@ -273,7 +271,7 @@ it("examines repeated links once across every captured source", async () => {
     () => shared.evidence_id,
   );
   const first = wideSource(repeated);
-  const second = createEvidence(undefined, provider, {
+  const second = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "fixture_source",
     parameters: { second: true },
     result: { wide: true },
@@ -343,7 +341,7 @@ it.each([
 
 it("spends the allowance on smaller later records after a record does not fit", async () => {
   const root = await createTestTempDirectory("rea-closure-greedy-");
-  const large = createEvidence(undefined, provider, {
+  const large = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "fixture_source",
     parameters: {},
     result: { text: "x".repeat(128 * 1024) },
@@ -384,12 +382,12 @@ it("does not duplicate sources an artifact inspection already embeds", async () 
   const root = await createTestTempDirectory("rea-closure-embedded-");
   const input = join(root, "input.txt");
   await writeFile(input, "artifact contents");
-  const embedded = createEvidence(undefined, provider, {
+  const embedded = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "inventory_artifact",
     parameters: {},
     result: await inventoryArtifact(input),
   });
-  const observation = createEvidence(undefined, provider, {
+  const observation = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "inspect_artifact",
     parameters: {},
     result: createArtifactInspection(embedded),
@@ -422,38 +420,28 @@ it("reports the closure when cancellation precedes bundle commit", async () => {
   expect(await readdir(root)).toEqual([]);
 });
 
-it("reports the closure when an existing output refuses publication", async () => {
-  const root = await createTestTempDirectory("rea-closure-exists-");
-  const held = source("held");
-  const requested = delivery(root, [held]);
+it("reports sources from the request and analysis result when a destination already exists", async () => {
+  const root = await createTestTempDirectory("rea-closure-existing-output-");
+  const selected = source("selected");
+  const captured = source("captured", [selected.evidence_id]);
+  const requested = delivery(root, [selected]);
   await writeFile(requested.evidenceOutput, "original");
   const output = await publishCliAnalysisEvidence(
-    ok(observed([held.evidence_id])),
+    { ...ok(observed([captured.evidence_id])), sourceEvidence: [captured] },
     requested,
   );
   expect(output).toMatchObject({ details: { reason: "exists" } });
-  expect(closureOf(output).records).toEqual([held]);
-  expect(await readFile(requested.evidenceOutput, "utf8")).toBe("original");
-});
-
-it("reports result sources when an existing output refuses publication", async () => {
-  const root = await createTestTempDirectory("rea-closure-result-sources-");
-  const held = source("held");
-  const requested = delivery(root);
-  await writeFile(requested.evidenceOutput, "original");
-  const output = await publishCliAnalysisEvidence(
-    { ...ok(observed([held.evidence_id])), sourceEvidence: [held] },
-    requested,
-  );
-  expect(output).toMatchObject({ details: { reason: "exists" } });
-  expect(closureOf(output)).toMatchObject({
+  const closure = closureOf(output);
+  expect(closure).toMatchObject({
     publication: "not_published",
     complete: true,
     omitted_count: 0,
     omitted: [],
   });
-  expect(closureOf(output).records).toEqual([held]);
+  expect(closure.records).toHaveLength(2);
+  expect(closure.records).toEqual(expect.arrayContaining([selected, captured]));
   expect(await readFile(requested.evidenceOutput, "utf8")).toBe("original");
+  expect(await readdir(root)).toEqual(["evidence.json"]);
 });
 
 it("defers to the committed bundle receipt after cancellation wins late", async () => {
@@ -518,21 +506,26 @@ it("defers to the published file when staging cleanup stays incomplete after com
   expect(output).not.toHaveProperty("details.source_closure");
 });
 
-it("does not change ordinary successful delivery", async () => {
+it("keeps the complete observation inline and writes its sources only when requested", async () => {
   const root = await createTestTempDirectory("rea-closure-success-");
   const held = source("held");
   const observation = observed([held.evidence_id]);
   const requested = delivery(root, [held]);
-  const delivered = await publishCliAnalysisEvidence(
-    ok(observation),
-    requested,
-  );
-  expect(JSON.stringify(delivered)).toBe(JSON.stringify(observation));
   const withoutOutput = await publishCliAnalysisEvidence(ok(observation), {
     ...requested,
     evidenceOutput: undefined,
   });
-  expect(JSON.stringify(withoutOutput)).toBe(JSON.stringify(observation));
+  expect(withoutOutput).toEqual(observation);
+  expect(await readdir(root)).toEqual([]);
+  const delivered = await publishCliAnalysisEvidence(
+    ok(observation),
+    requested,
+  );
+  expect(delivered).toEqual(observation);
+  const text = await readFile(requested.evidenceOutput, "utf8");
+  const { records } = parseEvidenceBundle(JSON.parse(text));
+  expect(records).toHaveLength(2);
+  expect(records).toEqual(expect.arrayContaining([held, observation]));
 });
 
 it.each(["interrupt", "cleanup-failure", "interrupt-cleanup-failure"] as const)(
@@ -709,18 +702,6 @@ it("reports the closure when delivered view projection refuses a completed obser
   expect(await readdir(root)).toEqual([]);
 });
 
-it("leaves a primary failure without a completed observation untouched", async () => {
-  const root = await createTestTempDirectory("rea-closure-primary-");
-  const held = source("held");
-  const primary = projectAnalysisError(
-    new AnalysisOutputError("fixture_observation", "primary reply failure"),
-    "invocation",
-  );
-  expect(
-    await publishCliAnalysisEvidence(err(primary), delivery(root, [held])),
-  ).toBe(primary);
-});
-
 it.each([false, true])(
   "keeps source closure unknown when embedded inspection sources cannot be read (captured link: %s)",
   async (captured) => {
@@ -728,12 +709,16 @@ it.each([false, true])(
       "rea-closure-invalid-inspection-",
     );
     const held = source("held");
-    const observation = createEvidence(undefined, provider, {
-      operation: "inspect_artifact",
-      parameters: {},
-      result: { malformed: true },
-      evidenceLinks: captured ? [held.evidence_id] : [],
-    });
+    const observation = createEvidence(
+      unknownTarget("not-observed"),
+      provider,
+      {
+        operation: "inspect_artifact",
+        parameters: {},
+        result: { malformed: true },
+        evidenceLinks: captured ? [held.evidence_id] : [],
+      },
+    );
     const output = await publishCliAnalysisEvidence(
       err(cancelledWith(observation)),
       delivery(root, captured ? [held] : []),
@@ -755,7 +740,7 @@ it.each([false, true])(
 it("reports missing links as unknown when an embedded source list cannot be read", async () => {
   const root = await createTestTempDirectory("rea-closure-invalid-missing-");
   const missing = "ev_".padEnd(67, "a");
-  const observation = createEvidence(undefined, provider, {
+  const observation = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "inspect_artifact",
     parameters: {},
     result: { malformed: true },

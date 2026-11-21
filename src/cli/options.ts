@@ -1,18 +1,10 @@
-import { z } from "incur";
-import { localPathStringSchema } from "../domain/localPath.js";
+import { z } from "zod";
 
-import {
-  executableFormatHintSchema,
-  type ExecutableFormatHint,
-} from "../domain/dosCom.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
-import {
-  binaryArchitectureSchema,
-  rawBinaryEntryPointSchema,
-} from "../domain/rawBinary.js";
-import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
-import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
-import type { Logger } from "pino";
+import { declaredTokenPattern } from "../domain/schemaConstraints.js";
+import { decimalTokenPattern } from "./decimalTokenPattern.js";
+
+import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
+import type { CliSessionTarget } from "./contractCliDescription.js";
 
 /** Decimal integer argv text. Leading zeros stay decimal; `0x` and exponent spellings do not. */
 const DECIMAL_INTEGER_TOKEN = /^[0-9]+$/u;
@@ -35,18 +27,10 @@ const isNumericCore = (field: z.ZodType): field is NumericCore =>
         typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
     ));
 
-/**
- * A literal set advertises its members as decimal tokens too, so the string
- * view of `--schema` admits only what the parser admits.
- */
-const decimalTokenPattern = (
-  domain: NumericCore,
+/** The decimal tokens of a literal set, so `--schema` admits only its members. */
+const literalTokenGrammar = (
+  domain: z.ZodLiteral<number>,
 ): { readonly pattern: RegExp; readonly message: string } => {
-  if (domain instanceof z.ZodNumber)
-    return {
-      pattern: DECIMAL_INTEGER_TOKEN,
-      message: "Expected a decimal integer",
-    };
   const members = [...domain.values];
   return {
     pattern: new RegExp(`^0*(?:${members.join("|")})$`, "u"),
@@ -54,20 +38,24 @@ const decimalTokenPattern = (
   };
 };
 
-const decimalToken = (domain: NumericCore) => {
-  const { pattern, message } = decimalTokenPattern(domain);
-  return z
-    .string()
-    .regex(pattern, message)
-    .pipe(z.coerce.number<string>())
-    .pipe(domain);
+const tokenGrammar = (domain: NumericCore) => {
+  if (domain instanceof z.ZodNumber)
+    return declaredTokenPattern(
+      z.string().regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer"),
+      new RegExp(decimalTokenPattern(domain), "u"),
+    );
+  const { pattern, message } = literalTokenGrammar(domain);
+  return z.string().regex(pattern, message);
 };
+
+const decimalToken = (domain: NumericCore) =>
+  tokenGrammar(domain).pipe(z.coerce.number<string>()).pipe(domain);
 
 const unwrapSchema = (field: { unwrap: () => unknown }): z.ZodType =>
   field.unwrap() as z.ZodType;
 
 /**
- * Incur advertises Zod's output view. Publish the input view so an argv token
+ * Command schemas advertise Zod's output view. Publish the input view so an argv token
  * grammar that transforms text survives `--schema` and other SDK conversions.
  */
 export const publishArgvInput = <Field extends z.ZodType>(
@@ -174,7 +162,7 @@ export const cliDecimalField = <Field extends z.ZodType>(
   const admitted = applyDecimalWrappers(
     numeric.core instanceof z.ZodLiteral
       ? z.union(branches, {
-          error: decimalTokenPattern(numeric.core).message,
+          error: literalTokenGrammar(numeric.core).message,
         })
       : z.union(branches),
     numeric.wrappers,
@@ -197,72 +185,54 @@ export const cliDecimalShape = <Shape extends Record<string, z.ZodType>>(
     ]),
   ) as Shape;
 
-export const providerSelectionOption = analysisProviderSelectorSchema
-  .optional()
-  .describe(
+/** Help of the flags that bind a native target interpretation. */
+const NATIVE_OPEN_HELP = {
+  format:
+    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
+  architecture:
+    "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
+  entryPoint:
+    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
+  provider:
     "Bind deep analysis to a provider ID or use deterministic auto selection",
-  );
-
-/** Optional path to the local analysis snapshot loaded or updated by a command. */
-export const snapshotSelectionOption = localPathStringSchema
-  .optional()
-  .describe("Load and update a local analysis snapshot");
+  snapshot: "Load and update a local analysis snapshot",
+} as const;
 
 /**
- * Explicit interpretation for headerless native executable formats. Flash
- * dumps take their offsets on the artifact commands instead.
+ * A native executable opened as an MCP client opens it, with `open_binary`'s
+ * format, architecture, entry point and provider fields. An operation that
+ * loads and updates an analysis snapshot also takes `snapshot_path`, with
+ * `snapshot` as its help when it differs from the shared one.
  */
-const formatSelectionOption = executableFormatHintSchema
-  .exclude(["esp-flash-image"])
-  .optional()
-  .describe(
-    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
-  );
-
-export const architectureSelectionOption = binaryArchitectureSchema
-  .optional()
-  .describe(
-    "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
-  );
-
-export const entryPointSelectionOption = rawBinaryEntryPointSchema
-  .optional()
-  .describe(
-    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
-  );
-
-/** Shared CLI flags that bind a native target interpretation. */
-export const nativeOpenOptionFields = {
-  "target-format": formatSelectionOption,
-  architecture: architectureSelectionOption,
-  "entry-point": entryPointSelectionOption,
-  provider: providerSelectionOption,
-};
-
-/** Native CLI flags consumed when opening a target for one-shot analysis. */
-export interface NativeOpenCliFlags {
-  readonly snapshot?: string | undefined;
-  readonly provider?: AnalysisProviderSelector | undefined;
-  readonly "target-format"?: ExecutableFormatHint | undefined;
-  readonly architecture?: BinaryArchitecture | undefined;
-  readonly "entry-point"?: string | undefined;
-}
-
-/** Map native CLI flags onto the shared one-shot analysis options. */
-export const directAnalysisOptionsFromCli = (
-  logger: Logger,
-  options: NativeOpenCliFlags,
-) => ({
-  logger,
-  snapshotPath: options.snapshot,
-  ...(options["target-format"] === undefined
-    ? {}
-    : { formatHint: options["target-format"] }),
-  ...(options.architecture === undefined
-    ? {}
-    : { architecture: options.architecture }),
-  ...(options["entry-point"] === undefined
-    ? {}
-    : { entryPoint: options["entry-point"] }),
-  ...(options.provider === undefined ? {} : { providerId: options.provider }),
+export const nativeTarget = (
+  description: string,
+  snapshot?: true | string,
+): CliSessionTarget => ({
+  description,
+  open: {
+    contract: OPEN_BINARY_TOOL_CONTRACT,
+    fields: {
+      ...(snapshot === undefined
+        ? {}
+        : {
+            snapshot_path: {
+              name: "snapshot",
+              callerPath: true,
+              description:
+                snapshot === true ? NATIVE_OPEN_HELP.snapshot : snapshot,
+            },
+          }),
+      format: {
+        name: "target-format",
+        values: ["dos-com", "raw-binary", "gamecube-dol"],
+        description: NATIVE_OPEN_HELP.format,
+      },
+      architecture: { description: NATIVE_OPEN_HELP.architecture },
+      entry_point: {
+        name: "entry-point",
+        description: NATIVE_OPEN_HELP.entryPoint,
+      },
+      provider_id: { name: "provider", description: NATIVE_OPEN_HELP.provider },
+    },
+  },
 });

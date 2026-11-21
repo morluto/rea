@@ -76,12 +76,6 @@ export const decodeSignalRecordingInputSchema =
       "Absolute local recording path",
     ),
   });
-export const signalRecordingOptionsSchema = signalInputShape
-  .omit({ path: true })
-  .refine(
-    withinSignalRecordingSelectorBudget,
-    signalRecordingSelectorBudgetIssue,
-  );
 export type DecodeSignalRecordingInput = z.infer<
   typeof decodeSignalRecordingInputSchema
 >;

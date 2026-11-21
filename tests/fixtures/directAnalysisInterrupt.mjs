@@ -10,7 +10,7 @@ import {
 import { BinarySession } from "../../dist/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../dist/application/binary/SessionProviderRouter.js";
 import { AnalysisProviderRegistry } from "../../dist/application/binary/AnalysisProviderRegistry.js";
-import { createAnalysisExecution } from "../../dist/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../dist/ports/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../dist/domain/analysisErrorCore.js";
 import { err, ok } from "../../dist/domain/result.js";
 

@@ -20,3 +20,18 @@ export function artifactMcpCall(
   parameters: Parameters<Client["callTool"]>[0],
   options?: Omit<CallToolRequestOptions, "toolDefinition">,
 ): ReturnType<Client["callTool"]>;
+
+/**
+ * Run the compiled CLI in the artifact verification environment for a run
+ * that must fail, and return its JSON error record.
+ */
+export function artifactCliFailure(
+  command: string,
+  target: string,
+  arguments_?: readonly string[],
+  options?: { readonly timeoutMs?: number; readonly signal?: AbortSignal },
+): Promise<{
+  readonly code: string;
+  readonly details?: Record<string, unknown>;
+  readonly [key: string]: unknown;
+}>;

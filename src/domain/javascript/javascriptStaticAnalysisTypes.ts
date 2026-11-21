@@ -40,7 +40,7 @@ interface JavaScriptStaticReferenceState {
     | "worker"
     | "service-worker";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   /** Source-relative filename selected by a proven createRequire factory. */
   readonly resolution_base_path?: string;
@@ -75,7 +75,7 @@ export interface JavaScriptStaticEndpoint {
   /** The request target is unresolved source text rather than an exact value. */
   readonly resolution?: "partial";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -92,7 +92,7 @@ export interface JavaScriptStaticStorage {
   readonly name: string | null;
   readonly mechanism: string;
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -137,7 +137,7 @@ export interface JavaScriptRolePath {
   readonly path_base?: "source-directory";
   readonly mechanism: string;
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -146,13 +146,15 @@ export interface JavaScriptRolePath {
 export interface JavaScriptStaticAnalysis {
   /** Established overall summary; syntax alone is reported in analysis_coverage. */
   readonly parse_status: "complete" | "partial" | "failed";
-  /** Historical facts omit this measurement; consumers must not infer it. */
-  readonly analysis_coverage?: JavaScriptStaticCoverage;
+  readonly analysis_coverage: JavaScriptStaticCoverage;
   readonly parse_error_count: number;
   readonly visited_ast_nodes: number;
   readonly references: readonly JavaScriptStaticReference[];
   readonly endpoints: readonly JavaScriptStaticEndpoint[];
-  /** Missing in historical analyses; absence means unmeasured route coverage. */
+  /**
+   * Absent when a worker checkpoint could not retain the route facts within
+   * its byte ceiling; absence means unmeasured route coverage.
+   */
   readonly routes?: JavaScriptRouteSourceFacts;
   readonly storage: readonly JavaScriptStaticStorage[];
   readonly bundler_registrations: readonly JavaScriptBundlerRegistration[];
@@ -163,6 +165,7 @@ export interface JavaScriptStaticAnalysis {
   }[];
   readonly vendors: readonly string[];
   readonly electron: ElectronStaticFindings;
+  readonly loaderCondition?: string;
   readonly limitations: readonly string[];
 }
 

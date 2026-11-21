@@ -2,7 +2,7 @@ import { createTestArtifactResourceScope } from "../../../fixtures/artifactResou
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { open } from "node:fs/promises";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,
@@ -23,6 +23,7 @@ import {
 import { GhidraLaunchSupportError } from "../../../../src/ghidra/GhidraJavaLaunch.js";
 import { ExecFileOutputCancelledError } from "../../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 const launch = async (
   javaLaunch: NonNullable<
@@ -352,7 +353,7 @@ it("keeps the cancellation primary through retained Darwin preparation cleanup a
     cleanupOwner: {
       close: async () => {
         if (denied) throw cleanup;
-        cleanup.resolveCleanup();
+        releaseOwnedCleanup(cleanup);
       },
     },
   });

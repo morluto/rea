@@ -1,4 +1,8 @@
 import { expect, it, vi } from "vitest";
+import {
+  changedEvidenceSubject,
+  UNKNOWN_EVIDENCE_SUBJECT,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
@@ -152,14 +156,20 @@ it("checks each parent's subject even after its immutable capture has been valid
   };
   expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
   expect(
-    projectAnalysisView({ ...source, subject: null }, { kind: "summary" }).ok,
+    projectAnalysisView(
+      { ...source, subject: UNKNOWN_EVIDENCE_SUBJECT },
+      { kind: "summary" },
+    ).ok,
   ).toBe(false);
-  if (source.subject === null) throw new Error("Expected fixture subject");
+  if (source.subject.identity.kind !== "file")
+    throw new Error("Expected fixture subject");
   expect(
     projectAnalysisView(
       {
         ...source,
-        subject: { ...source.subject, digest: { sha256: "e".repeat(64) } },
+        subject: changedEvidenceSubject(source.subject, {
+          sha256: "e".repeat(64),
+        }),
       },
       { kind: "summary" },
     ).ok,
@@ -225,7 +235,7 @@ it("retains explicitly unknown digests and rejects a different subject digest", 
   const unknown = projectAnalysisView(
     {
       ...parent,
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
       normalizedResult: {
         ...report,
         artifact: { ...report.artifact, sha256: null },
@@ -239,11 +249,14 @@ it("retains explicitly unknown digests and rejects a different subject digest", 
   expect(unknown.ok && unknown.value.unknowns.join(" ")).toContain(
     "excluded artifact digest",
   );
-  if (parent.subject === null) throw new Error("Expected fixture subject");
+  if (parent.subject.identity.kind !== "file")
+    throw new Error("Expected fixture subject");
   const mismatched = projectAnalysisView(
     {
       ...parent,
-      subject: { ...parent.subject, digest: { sha256: "e".repeat(64) } },
+      subject: changedEvidenceSubject(parent.subject, {
+        sha256: "e".repeat(64),
+      }),
     },
     { kind: "summary" },
   );

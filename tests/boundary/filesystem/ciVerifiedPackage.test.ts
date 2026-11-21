@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 import {
   executeWorkflowFixture,
   workflowGit,
@@ -224,17 +225,10 @@ function validate(fixture: Fixture, sourceSha = fixture.sourceSha) {
 // This catches an accidental transitive dependency import rather than mocking it away.
 async function preparePublication(fixture: Fixture, published = "false") {
   const scripts = join(fixture.directory, "scripts", "ci");
-  await mkdir(scripts, { recursive: true });
-  for (const name of [
-    "prepare-npm-publication.mjs",
-    "qualified-package-envelope.mjs",
-    "npm-release-state.mjs",
-  ]) {
-    await copyFile(
-      new URL(`../../../scripts/ci/${name}`, import.meta.url),
-      join(scripts, name),
-    );
-  }
+  await copyScriptsWithImports(
+    ["scripts/ci/prepare-npm-publication.mjs"],
+    fixture.directory,
+  );
   if (published !== "retain")
     await writeFile(
       join(fixture.directory, "registry-state.json"),

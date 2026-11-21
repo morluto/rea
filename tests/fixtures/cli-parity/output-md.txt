@@ -1,0 +1,25 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_result.window,normalized_result.blocks,normalized_result.thresholds --format md
+exit: 0
+--- stdout
+## normalized_result.blocks
+
+| offset | length | entropy |
+|--------|--------|---------|
+| 0      | 20     | 4.3219  |
+
+## normalized_result.thresholds
+
+| Key  | Value |
+|------|-------|
+| high | 7.2   |
+| low  | 1     |
+
+## normalized_result.window
+
+| Key    | Value |
+|--------|-------|
+| offset | 0     |
+| length | 20    |
+<end>
+--- stderr
+<end>

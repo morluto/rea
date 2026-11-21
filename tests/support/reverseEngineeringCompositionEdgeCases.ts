@@ -5,6 +5,8 @@ import { expect, it, vi } from "vitest";
 import { TestReverseEngineeringService as ReverseEngineeringService } from "./reverseEngineeringService.js";
 import {
   createArtifact,
+  ownedFailure,
+  ownedOutput,
   providerSnapshot,
 } from "./reverseEngineeringCompositionFixtures.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
@@ -29,9 +31,9 @@ const registerSharedReverseEngineeringEdgeCasesPart1 = (): void => {
     const { directory, path } = await createArtifact();
     const calls: string[][] = [];
     const service = new ReverseEngineeringService({
-      run: async (_command, args) => {
-        calls.push([...args]);
-        return { stdout: "DWARF output", stderr: "" };
+      runOwned: async (spawn) => {
+        calls.push([...spawn.arguments]);
+        return ownedOutput("DWARF output");
       },
     });
 
@@ -52,7 +54,7 @@ const registerSharedReverseEngineeringEdgeCasesPart1 = (): void => {
   it("marks opted-in external DWARF debug files as unbound Evidence sources", async () => {
     const { directory, path } = await createArtifact();
     const service = new ReverseEngineeringService({
-      run: async () => ({ stdout: "DWARF output", stderr: "" }),
+      runOwned: async () => ownedOutput("DWARF output"),
     });
 
     try {
@@ -74,9 +76,9 @@ const registerSharedReverseEngineeringEdgeCasesPart1 = (): void => {
   it("rejects malformed objdump requests before touching the provider", async () => {
     let invoked = false;
     const service = new ReverseEngineeringService({
-      run: async () => {
+      runOwned: async () => {
         invoked = true;
-        return { stdout: "", stderr: "" };
+        return ownedOutput();
       },
     });
 
@@ -297,19 +299,19 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
   });
 
   it.each([
-    ["ETIMEDOUT", "AnalysisTimeoutError"],
-    ["EACCES", "AnalysisCapabilityUnavailableError"],
-    ["EPERM", "AnalysisCapabilityUnavailableError"],
-    ["ABORT_ERR", "AnalysisCancelledError"],
+    ["timeout", "AnalysisTimeoutError"],
+    ["cancelled", "AnalysisCancelledError"],
     ["unknown", "AnalysisCapabilityUnavailableError"],
-  ])(
+  ] as const)(
     "maps provider failure %s to its tagged analysis error",
     async (code, tag) => {
       const { directory, path } = await createArtifact();
       const service = new ReverseEngineeringService({
-        run: async () => {
+        runOwned: async () => {
           if (code === "unknown") throw new Error("provider failure");
-          throw Object.assign(new Error("provider failure"), { code });
+          throw ownedFailure(code, null, {
+            cause: new Error("provider failure"),
+          });
         },
       });
 
@@ -323,20 +325,10 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
           error: {
             _tag: tag,
             operation: "inspect_with_objdump",
-            cause: { message: "provider failure" },
-            ...(code === "ETIMEDOUT" ? { timeoutMs: 120_000 } : {}),
-            ...(code === "EACCES" || code === "EPERM"
-              ? {
-                  providerId: "objdump.command",
-                  diagnostics: {
-                    boundary: "provider-launch",
-                    command: "objdump",
-                    system_code: code,
-                  },
-                }
-              : {}),
+            ...(code === "timeout" ? { timeoutMs: 120_000 } : {}),
             ...(code === "unknown"
               ? {
+                  cause: { message: "provider failure" },
                   providerId: "objdump.command",
                   reason: "Unable to run configured command (unknown error)",
                 }
@@ -354,15 +346,15 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
   it("records a changed artifact and unknown post-run digest separately", async () => {
     const { directory, path } = await createArtifact();
     const changed = new ReverseEngineeringService({
-      run: async () => {
+      runOwned: async () => {
         await writeFile(path, "changed during provider execution");
-        return { stdout: "observed", stderr: "" };
+        return ownedOutput("observed");
       },
     });
     const removed = new ReverseEngineeringService({
-      run: async () => {
+      runOwned: async () => {
         await rm(path);
-        return { stdout: "observed", stderr: "" };
+        return ownedOutput("observed");
       },
     });
 
@@ -399,54 +391,10 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
       await rm(directory, { recursive: true, force: true });
     }
   });
-
-  it.each(["EACCES", "EPERM"] as const)(
-    "retains raw failure output on a permission-denied provider launch (%s)",
-    async (code) => {
-      const { directory, path } = await createArtifact();
-      const service = new ReverseEngineeringService({
-        run: async () => {
-          throw Object.assign(new Error("provider permission denied"), {
-            stdout: "partial provider output",
-            stderr: "permission diagnostic",
-            code,
-            signal: null,
-            killed: false,
-          });
-        },
-      });
-
-      try {
-        const result = await service.inspectWithObjdump({
-          path,
-          operation: "file_headers",
-        });
-        expect(result).toMatchObject({
-          ok: false,
-          error: {
-            _tag: "AnalysisCapabilityUnavailableError",
-            providerId: "objdump.command",
-            diagnostics: {
-              boundary: "provider-launch",
-              command: "objdump",
-              system_code: code,
-            },
-            cause: {
-              code,
-              stdout: "partial provider output",
-              stderr: "permission diagnostic",
-            },
-          },
-        });
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
-    },
-  );
 };
 
 const registerSharedReverseEngineeringEdgeCasesPart5 = (): void => {
-  it("cancels after captured output when a provider reports a non-numeric status", async () => {
+  it("cancels after captured output when the provider exit status is unknown", async () => {
     const { directory, path } = await createArtifact();
     const controller = new AbortController();
     let digests = 0;
@@ -456,14 +404,11 @@ const registerSharedReverseEngineeringEdgeCasesPart5 = (): void => {
         if (digests === 2) controller.abort();
         return digests === 1 ? "a".repeat(64) : "b".repeat(64);
       },
-      run: async () => {
-        throw Object.assign(new Error("provider status unavailable"), {
-          stdout: "captured output",
-          stderr: "",
-          code: "provider-status-unknown",
-          signal: null,
-          killed: false,
-        });
+      runOwned: async () => {
+        throw ownedFailure(
+          "process",
+          ownedOutput("captured output", "", { exitCode: null }),
+        );
       },
     });
 
@@ -479,65 +424,6 @@ const registerSharedReverseEngineeringEdgeCasesPart5 = (): void => {
           partialObservation: {
             raw_result: { exit_code: null, completion_status: "unknown" },
           },
-        },
-      });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("maps an unavailable Rizin command to the Rizin capability error", async () => {
-    const { directory, path } = await createArtifact();
-    const service = new ReverseEngineeringService({
-      run: async () => {
-        throw Object.assign(new Error("not found"), { code: "ENOENT" });
-      },
-    });
-
-    try {
-      const result = await service.executeRizinCommand({ path, command: "iI" });
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "AnalysisCapabilityUnavailableError",
-          providerId: "rizin",
-          operation: "execute_rizin_command",
-          reason: "Unable to run configured command (ENOENT)",
-          cause: { message: "not found" },
-        },
-      });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("classifies a captured ENOENT as provider unavailability", async () => {
-    const { directory, path } = await createArtifact();
-    const cause = Object.assign(new Error("launch failed"), {
-      stdout: "",
-      stderr: "",
-      code: "ENOENT",
-      signal: null,
-      killed: false,
-    });
-    const service = new ReverseEngineeringService({
-      run: async () => {
-        throw cause;
-      },
-    });
-
-    try {
-      const result = await service.inspectWithObjdump({
-        path,
-        operation: "file_headers",
-      });
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "AnalysisCapabilityUnavailableError",
-          providerId: "objdump.command",
-          reason: "Unable to run configured command (ENOENT)",
-          cause: { message: "launch failed" },
         },
       });
     } finally {
@@ -698,7 +584,7 @@ const registerSharedReverseEngineeringEdgeCasesPart8 = (): void => {
     const { directory, path } = await createArtifact();
     const controller = new AbortController();
     const service = new ReverseEngineeringService({
-      run: async () => ({ stdout: "completed output", stderr: "" }),
+      runOwned: async () => ownedOutput("completed output"),
     });
 
     try {

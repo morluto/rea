@@ -1,7 +1,7 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 import {
-  objcImplementationClassName,
   nativeMetadataEvidenceSchema,
   nativeMetadataLocationSchema,
   type ObjcSwiftMetadata,
@@ -101,10 +101,18 @@ export type NativeInvestigationEdge = z.infer<
 /** Explicit inventory coverage so missing graph parts are not read as absent. */
 export const nativeInvestigationCoverageSchema = z.strictObject({
   facet: z.string().min(1),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
+  status: z
+    .enum([...coverageStatusSchema.options, "unsupported", "not_requested"])
+    .describe(
+      "unknown when the producer could not tell how much of the facet it covered; omitted is then null.",
+    ),
   reason: z.string().nullable(),
   examined: z.int().nonnegative(),
-  omitted: z.int().nonnegative(),
+  omitted: z
+    .int()
+    .nonnegative()
+    .nullable()
+    .describe("Omitted items; null when the count is unknown."),
 });
 
 export const nativeInvestigationProviderSchema = z.strictObject({
@@ -234,16 +242,26 @@ export const traceNativeInvestigationGraph = (
     const adjacent = adjacency.get(current.id) ?? [];
 
     for (const edge of adjacent) {
+      const nextId =
+        edge.resolution === "unresolved"
+          ? null
+          : direction === "forward"
+            ? edge.to
+            : edge.from;
+      if (nextId !== null && !nodeById.has(nextId)) {
+        truncated = true;
+        reason ??= "edge_target_missing_from_graph";
+        continue;
+      }
       if (selectedEdges.size + unresolved.size >= limits.max_edges) {
         truncated = true;
         reason = "max_edges_reached";
         break;
       }
-      if (edge.resolution === "unresolved") {
+      if (nextId === null) {
         unresolved.set(edge.id, edge);
         continue;
       }
-      const nextId = direction === "forward" ? edge.to : edge.from;
       const alreadyVisited = visited.has(nextId);
       if (!alreadyVisited && current.depth >= limits.max_depth) {
         truncated = true;
@@ -259,11 +277,6 @@ export const traceNativeInvestigationGraph = (
       }
       selectedEdges.set(edge.id, edge);
       if (alreadyVisited) continue;
-      if (!nodeById.has(nextId)) {
-        truncated = true;
-        reason ??= "edge_target_missing_from_graph";
-        continue;
-      }
       visited.add(nextId);
       // A retained node has already been reached even if a later sibling
       // exhausts a budget before this node is dequeued for expansion.
@@ -367,8 +380,7 @@ export const joinInterfaceBuilderDispatch = (
       (candidate) =>
         candidate.method_type === "instance" &&
         candidate.selector === selector &&
-        (className === null ||
-          objcImplementationClassName(candidate) === className),
+        (className === null || candidate.class_name === className),
     );
     const implementation = candidates.length === 1 ? candidates[0] : undefined;
     const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;

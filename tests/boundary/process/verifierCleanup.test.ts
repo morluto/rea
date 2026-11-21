@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   closeVerifierResources,
+  verifierFailureReasons,
   withVerifierCleanup,
 } from "../../../scripts/lib/verifier-cleanup.mjs";
 
@@ -214,4 +215,26 @@ it("preserves nested aggregates and independent failures with the same identity"
   expect(error.errors[1]).toBe(nested);
   expect(error.errors[2]).toBe(shared);
   expect(error.errors[3]).toBe(shared);
+});
+
+it("reports every leaf reason of a nested verifier failure", async () => {
+  const failure: unknown = await withVerifierCleanup(async () => {
+    throw new Error("analysis assertion failed");
+  }, [
+    () =>
+      closeVerifierResources([
+        async () => {
+          throw new AggregateError(
+            [new Error("EACCES: fixture root not removed"), "raw reason"],
+            "Retained verifier fixture",
+          );
+        },
+      ]),
+  ]).catch((cause: unknown) => cause);
+  expect(verifierFailureReasons(failure)).toEqual([
+    "analysis assertion failed",
+    "EACCES: fixture root not removed",
+    "raw reason",
+  ]);
+  expect(verifierFailureReasons(new Error("plain"))).toEqual(["plain"]);
 });

@@ -55,7 +55,7 @@ export const analyzeJavaScriptDirectory = async (
 ) => {
   let document: unknown;
   if (surface === "CLI") {
-    const run = cli.sharedCliRun ?? ((invocation) => cli.run(invocation));
+    const run = cli.run.bind(cli);
     const response = await run({
       arguments: [
         "analyze-javascript-application",

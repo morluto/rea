@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
 import { rizinInputSchema } from "../../../src/domain/reverseEngineering.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -136,18 +136,12 @@ cliTest(
       cwd: root,
     });
     expect(result.exitCode).toBe(1);
-    expect(analysisErrorProjectionSchema.parse(result.json)).toMatchObject({
-      code: "invalid_request",
-      details: {
-        operation: "execute_rizin_command",
-        issues: [
-          {
-            path: ["command"],
-            reason: "invalid_value",
-            message: "A single command line is required",
-          },
-        ],
-      },
+    // The argument takes the contract's own field, so argv parsing refuses it.
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        { path: "command", message: "A single command line is required" },
+      ],
     });
   },
 );
