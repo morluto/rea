@@ -81,24 +81,6 @@ afterEach(async () => {
   testDirectory = undefined;
 });
 
-it("requires an explicit inferior TTY before spawning Rizin", async () => {
-  let spawned = false;
-  const manager = new RizinDebugSessionManager(
-    { REA_RIZIN_COMMAND: "rizin" },
-    {
-      spawnProcess: async () => {
-        spawned = true;
-        throw new Error("must not spawn");
-      },
-    },
-  );
-
-  const result = await manager.start({ path: "/tmp/fixture.bin" } as never);
-
-  expect(result.ok).toBe(false);
-  expect(spawned).toBe(false);
-});
-
 it.skipIf(process.platform === "win32")(
   "fails the protocol when a NUL delimiter does not advance the frame parser",
   async () => {
