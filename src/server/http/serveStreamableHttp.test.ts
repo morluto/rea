@@ -278,14 +278,16 @@ it("keeps the instance's shutdown hook when two initialize requests race to repl
   );
   const opened = await slot.handle(initializeRequest());
   expect(opened.status).toBe(200);
-  // Both requests see the same open session and end it in lockstep.
+  // The second initialize waits until the first replacement has answered, then replaces that session.
   const raced = await Promise.all([
     slot.handle(initializeRequest()),
     slot.handle(initializeRequest()),
   ]);
-  expect(raced.map((response) => response.status).sort()).toEqual([200, 400]);
-  const winner = raced.find((response) => response.status === 200);
-  expect(winner?.headers.get("mcp-session-id")).toEqual(expect.any(String));
+  expect(raced.map((response) => response.status)).toEqual([200, 200]);
+  const ids = raced.map((response) => response.headers.get("mcp-session-id"));
+  expect(ids[0]).toEqual(expect.any(String));
+  expect(ids[1]).toEqual(expect.any(String));
+  expect(ids[0]).not.toBe(ids[1]);
   expect(shutdownHooks).toBe(0);
   // Only the slot's own close is the shutdown the instance's hook waits for.
   await slot.close();
