@@ -28,16 +28,20 @@ afterEach(async () => {
   });
 });
 
-it("serializes live commands and keeps cancelled placeholders within the GDB queue limit", async () => {
-  directory = await mkdtemp(join(tmpdir(), "rea-gdb-command-queue-limit-"));
+const consoleLine = (name: string) => `-interpreter-exec console "${name}"`;
+
+const makeQueueProvider = async (directory: string) => {
   const provider = join(directory, "fake-gdb-queue.mjs");
   const activePath = join(directory, "active-command");
-  const releasePath = join(directory, "release-command");
+  const releasePaths = {
+    hold: join(directory, "release-hold"),
+    follower: join(directory, "release-follower"),
+  };
   const unmodeledPath = join(directory, "unmodeled");
   const tracePath = join(directory, "commands");
   const replies = Object.fromEntries(
     ["hold", "first-follower", "second-follower", "after-drain"].map((name) => [
-      `-interpreter-exec console "${name}"`,
+      consoleLine(name),
       "^done",
     ]),
   );
@@ -48,7 +52,10 @@ ${fakeGdbStartupPreamble}
 ${fakeGdbModeledReplies(unmodeledPath, { ...FAKE_GDB_SESSION_REPLIES, ...replies })}
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 const activePath = ${JSON.stringify(activePath)};
-const releasePath = ${JSON.stringify(releasePath)};
+const gates = new Map(${JSON.stringify([
+      [consoleLine("hold"), releasePaths.hold],
+      [consoleLine("first-follower"), releasePaths.follower],
+    ])});
 const tracePath = ${JSON.stringify(tracePath)};
 let holding = false;
 process.stdout.write("(gdb)\\n");
@@ -59,9 +66,10 @@ process.stdin.on("data", (chunk) => {
     const [, token, command] = match;
     if (command.startsWith("-interpreter-exec console "))
       appendFileSync(tracePath, (holding ? "overlap " : "") + command + "\\n");
-    if (command === '-interpreter-exec console "hold"') {
+    const releasePath = gates.get(command);
+    if (releasePath !== undefined) {
       holding = true;
-      writeFileSync(activePath, "active");
+      writeFileSync(activePath, command);
       const release = setInterval(() => {
         if (!existsSync(releasePath)) return;
         clearInterval(release);
@@ -74,6 +82,13 @@ process.stdin.on("data", (chunk) => {
 `,
   );
   await chmod(provider, 0o700);
+  return { provider, activePath, releasePaths, unmodeledPath, tracePath };
+};
+
+it("serializes live commands and keeps cancelled placeholders within the GDB queue limit", async () => {
+  directory = await mkdtemp(join(tmpdir(), "rea-gdb-command-queue-limit-"));
+  const { provider, activePath, releasePaths, unmodeledPath, tracePath } =
+    await makeQueueProvider(directory);
   const manager = new GdbSessionManager({
     spawnProcess: fixtureOwner.spawnProcess,
     platform: "linux",
@@ -95,22 +110,32 @@ process.stdin.on("data", (chunk) => {
     controller.abort();
     return response;
   };
-  try {
-    await awaitAcknowledgement(
+  const awaitHeld = (command: string, operation: Promise<unknown>) =>
+    awaitAcknowledgement(
       waitFor(async () =>
-        expect(await readFile(activePath, "utf8")).toBe("active"),
+        expect(await readFile(activePath, "utf8")).toBe(consoleLine(command)),
       ),
-      active,
-      "held GDB command",
+      operation,
+      `held GDB command ${command}`,
     );
+  const trace = async () =>
+    (await readFile(tracePath, "utf8")).trimEnd().split("\n");
+  const expectedTrace = [
+    "hold",
+    "first-follower",
+    "second-follower",
+    "after-drain",
+  ].map(consoleLine);
+
+  try {
+    await awaitHeld("hold", active);
     const controllers = Array.from({ length: 13 }, () => new AbortController());
     const queued = controllers.map((controller, index) =>
       manager.execute(sessionId, `queued-${index}`, controller.signal),
     );
-    const followers = ["first-follower", "second-follower"].map((command) =>
-      manager.execute(sessionId, command),
-    );
-    pending.push(...queued, ...followers);
+    const first = manager.execute(sessionId, "first-follower");
+    const second = manager.execute(sessionId, "second-follower");
+    pending.push(...queued, first, second);
     const constraint = {
       ok: false,
       error: {
@@ -142,25 +167,19 @@ process.stdin.on("data", (chunk) => {
       constraint,
     );
 
-    await writeFile(releasePath, "release");
+    await writeFile(releasePaths.hold, "");
     expect((await active).ok).toBe(true);
-    expect((await Promise.all(followers)).map((result) => result.ok)).toEqual([
-      true,
-      true,
-    ]);
+    await awaitHeld("first-follower", first);
+    expect(await trace()).toEqual(expectedTrace.slice(0, 2));
+    await writeFile(releasePaths.follower, "");
+    expect(
+      (await Promise.all([first, second])).map((result) => result.ok),
+    ).toEqual([true, true]);
     expect(await manager.execute(sessionId, "after-drain")).toMatchObject({
       ok: true,
       value: { result: { completion_status: "complete" } },
     });
-    expect(await readFile(tracePath, "utf8")).toBe(
-      [
-        '-interpreter-exec console "hold"',
-        '-interpreter-exec console "first-follower"',
-        '-interpreter-exec console "second-follower"',
-        '-interpreter-exec console "after-drain"',
-        "",
-      ].join("\n"),
-    );
+    expect(await trace()).toEqual(expectedTrace);
     expect(await manager.close(sessionId)).toMatchObject({
       ok: true,
       value: { target_state: "none_observed" },
@@ -168,7 +187,12 @@ process.stdin.on("data", (chunk) => {
     expect(manager.status(sessionId)).toBeUndefined();
     await expectNoUnmodeledGdbCommands(unmodeledPath);
   } finally {
-    await writeFile(releasePath, "release");
-    await Promise.allSettled(pending);
+    try {
+      await Promise.all(
+        Object.values(releasePaths).map((path) => writeFile(path, "")),
+      );
+    } finally {
+      await Promise.allSettled(pending);
+    }
   }
 });
