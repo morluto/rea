@@ -13,10 +13,13 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   readExactJavaScriptLiteral,
+  isNullishJavaScriptSyntax,
   isObjectPrototypeSetter,
   primitiveOwnKeys,
+  semanticStaticPropertyKey,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
+  staticObjectProperty,
   staticObjectPropertyReader,
   staticObjectCopyPropertyReader,
   unwrapJavaScriptExpression,
@@ -78,6 +81,11 @@ export const collectJavaScriptSemanticResources = (
         candidate.specifier,
         context,
       ) &&
+        !rejectsSocketOptionsPort(
+          candidate.node,
+          candidate.specifier,
+          context,
+        ) &&
         !rejectsTlsProtocolVersionLiteral(
           candidate.node,
           candidate.specifier,
@@ -771,7 +779,24 @@ const rejectsSocketLiteralArguments = (
   const port = node.arguments[0];
   if (port === undefined) return specifier === "net";
   if (t.isSpreadElement(port)) return false;
-  const value = unwrapJavaScriptExpression(port).node;
+  return rejectsPortValueNode(
+    unwrapJavaScriptExpression(port).node,
+    specifier,
+    context,
+  );
+};
+
+/**
+ * Whether a port value is one Node rejects.
+ *
+ * This is the single reader for both the positional argument and the `port` member of an
+ * options object, so a rule learned for one spelling cannot drift from the other.
+ */
+const rejectsPortValueNode = (
+  value: t.Node,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
   if (
     specifier === "net" &&
     (t.isUnaryExpression(value, { operator: "void" }) ||
@@ -1143,6 +1168,450 @@ const rejectsSocketHostMember = (
   );
 };
 
+/**
+ * Whether an options object gives `net`/`tls` a port Node rejects.
+ *
+ * `net.connect` and `tls.connect` judge the same port value whether it arrives positionally
+ * or as a member, but only the positional slot was read. Measured on Node 24.22.1:
+ *
+ * | call | outcome |
+ * | --- | --- |
+ * | `net.connect({port: -1})`, `{port: 70000}`, `{port: "x"}`, `{port: null}` | THREW `ERR_SOCKET_BAD_PORT` |
+ * | `net.connect({port: 8080})`, `{port: "8080"}`, `{port: 0}` | socket created |
+ * | `tls.connect({port: -1})` | THREW `ERR_SOCKET_BAD_PORT` |
+ * | `net.connect({path: "/tmp/x.sock", port: -1})` | socket created — the path becomes the Unix socket |
+ *
+ * Two shapes stay undecided rather than guessed:
+ *
+ * - A later options object. `tls` merges slot 1 over slot 0, so the effective port can come
+ *   from either: `tls.connect({port: -1}, {port: 443})` connects while
+ *   `tls.connect({port: 443}, {port: -1})` throws. This reader does not model that merge.
+ * - An accessor. A getter runs while Node copies the members and can write the port first:
+ *   `net.connect({get side() { this.port = 80; }, port: -1})` connects.
+ */
+const rejectsSocketOptionsPort = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const first = node.arguments[0];
+  if (first === undefined || t.isSpreadElement(first)) return false;
+  const options = unwrapJavaScriptExpression(first).node;
+  if (!t.isObjectExpression(options)) return false;
+  // Only `tls` merges a later object over this one; for `net` slot 1 is an optional listener,
+  // so it cannot replace the port. Measured on Node 24.22.1, `net.connect({port: -1}, {})` and
+  // `net.connect({port: -1}, () => {})` both throw ERR_SOCKET_BAD_PORT.
+  // A getter runs while Node copies the members and can write the port first. A setter is
+  // never invoked by an `Object.assign` over a plain source, so it decides nothing on its
+  // own: measured on Node 24.22.1, `net.connect({set port(_) {}, port: -1})` throws
+  // ERR_SOCKET_BAD_PORT.
+  const accessorDecides = (value: t.ObjectExpression): boolean =>
+    value.properties.some(
+      (property) => t.isObjectMethod(property) && property.kind === "get",
+    );
+  // An inherited getter runs when Node reads a member through the prototype, and it can write
+  // the port: measured on Node 24.22.1,
+  // `net.connect({__proto__: {get timeout() { this.port = 80; return 0; }}, path: null,
+  // port: -1})` connects. A literal that installs a prototype is undecided for that reason.
+  if (accessorDecides(options) || installsPrototype(options)) return false;
+  const second = node.arguments[1];
+  // A spread can expand to the object `tls` merges over the first, so the port is
+  // undecided rather than decided by the first object. Measured on Node 24.22.1,
+  // `const args = [{ port: 443 }]; tls.connect({ port: -1 }, ...args)` connects.
+  if (specifier === "tls" && second !== undefined && t.isSpreadElement(second))
+    return false;
+  // `tls` copies the third argument into the options when the second is not an object,
+  // so it can carry the effective port: measured on Node 24.22.1,
+  // `tls.connect({ port: -1 }, undefined, { port: 443 })` connects. That copy is not
+  // modelled here, so its presence keeps the port undecided instead of pricing the
+  // first object and removing a real acquisition.
+  const third = node.arguments[2];
+  const secondIsObject =
+    second !== undefined &&
+    !t.isSpreadElement(second) &&
+    t.isObjectExpression(unwrapJavaScriptExpression(second).node);
+  if (specifier === "tls" && third !== undefined && !secondIsObject) {
+    // A function or `undefined` in slot 1 leaves slot 2 as the copied options; slot 1 being
+    // an object already means slot 2 is the connect callback, which changes no member.
+    if (t.isSpreadElement(third)) return false;
+    const thirdValue = unwrapJavaScriptExpression(third).node;
+    if (!isKnownNonObject(thirdValue, context)) return false;
+  }
+  if (
+    specifier === "tls" &&
+    second !== undefined &&
+    !t.isSpreadElement(second)
+  ) {
+    const secondValue = unwrapJavaScriptExpression(second).node;
+    // `tls` merges a non-null object and ignores everything else, including a known primitive.
+    // Measured on Node 24.22.1, `tls.connect({port: -1}, 0)` and `tls.connect({port: -1}, "x")`
+    // both throw `ERR_SOCKET_BAD_PORT`, and `tls.connect({port: 443}, 0)` connects.
+    if (isKnownNonObject(secondValue, context)) {
+      // Nothing is merged, so the first object decides below.
+    } else if (
+      !t.isObjectExpression(secondValue) &&
+      !t.isArrowFunctionExpression(secondValue) &&
+      !t.isFunctionExpression(secondValue) &&
+      !isNullishJavaScriptSyntax(secondValue) &&
+      !isUnmodifiedGlobalReference(secondValue, context.state, "undefined")
+    )
+      return false;
+    if (
+      t.isObjectExpression(secondValue) &&
+      !isKnownNonObject(secondValue, context)
+    ) {
+      // The later object replaces a member it writes, so its own `port` is the effective
+      // one. `Object.assign` reads that object in order, so a getter or an own `__proto__`
+      // only rescues the port when it is copied first. Measured on Node 24.22.1:
+      //
+      //   tls.connect({}, {get side() { this.port = 80; }, port: -1})                 -> connects
+      //   tls.connect({}, {port: -1, get side() { this.port = 80; }})                 -> THREW
+      //   tls.connect({}, {["__proto__"]: {set port(_) { this.path = "/tmp/x"; }}, port: -1}) -> connects
+      //   tls.connect({}, {port: -1, ["__proto__"]: {set port(_) { this.path = "/tmp/x"; }}}) -> THREW
+      const writerPrecedesPort = optionWriterPrecedesMember(
+        secondValue,
+        "port",
+      );
+      if (writerPrecedesPort) return false;
+      const sourcePort = staticObjectProperty(
+        secondValue,
+        "port",
+        isNullishJavaScriptSyntax,
+      );
+      // An empty override writes nothing, so argument 0 still decides: measured on Node
+      // 24.22.1, `tls.connect({port: -1}, {})` throws `ERR_SOCKET_BAD_PORT`. A missing member is
+      // therefore not the same as an unreadable one.
+      if (sourcePort.status === "explicit")
+        return rejectsPortMember(
+          unwrapJavaScriptExpression(sourcePort.value).node,
+          specifier,
+          context,
+        );
+      // A member this reader cannot price may hold any port, so the merge stays open.
+      if (sourcePort.status !== "missing") return false;
+    }
+  }
+  // A path that is present and not provably empty selects the Unix socket, and the port is
+  // never read. A path this reader cannot price may be a real one, so it stays undecided.
+  const pathMember = staticObjectProperty(
+    options,
+    "path",
+    isNullishJavaScriptSyntax,
+  );
+  if (pathMember.status === "explicit") {
+    const written = unwrapJavaScriptExpression(pathMember.value).node;
+    const empty =
+      isNullishJavaScriptSyntax(written) ||
+      (t.isStringLiteral(written) && written.value.length === 0) ||
+      (t.isTemplateLiteral(written) &&
+        written.expressions.length === 0 &&
+        (written.quasis[0]?.value.cooked ?? "").length === 0) ||
+      (t.isBooleanLiteral(written) && !written.value) ||
+      (t.isNumericLiteral(written) && written.value === 0);
+    if (!empty) return false;
+  } else if (pathMember.status !== "missing") return false;
+  const portMember = staticObjectProperty(
+    options,
+    "port",
+    isNullishJavaScriptSyntax,
+  );
+  if (portMember.status !== "explicit") return false;
+  return rejectsPortMember(
+    unwrapJavaScriptExpression(portMember.value).node,
+    specifier,
+    context,
+  );
+};
+
+/**
+ * Whether a string reads as a port Node accepts.
+ *
+ * A string in the positional slot is a pipe/Unix path, so only an empty one fails there. The
+ * `port` member is different: Node coerces it with `Number`, so `"8080"` connects while `"x"`
+ * throws `ERR_SOCKET_BAD_PORT`. Measured on Node 24.22.1.
+ */
+const usablePortText = (text: string): boolean => {
+  if (text.trim().length === 0) return false;
+  const value = Number(text);
+  return Number.isInteger(value) && value >= 0 && value <= 65535;
+};
+
+/**
+ * Whether a value written as a `port` member is one Node rejects.
+ *
+ * The member spelling differs from the positional one in three ways, so it cannot reuse
+ * `rejectsPortValueNode` alone:
+ *
+ * - Node coerces a string with `Number`, so `"8080"` connects while `"x"` throws
+ *   `ERR_SOCKET_BAD_PORT`.
+ * - A known non-scalar value is a type error rather than a range failure:
+ *   `{port: {}}` and `{port: []}` throw `ERR_INVALID_ARG_TYPE`.
+ *
+ * Measured on Node 24.22.1.
+ */
+const rejectsPortMember = (
+  written: t.Node,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
+  if (t.isStringLiteral(written)) return !usablePortText(written.value);
+  if (t.isTemplateLiteral(written) && written.expressions.length === 0) {
+    const cooked = written.quasis[0]?.value.cooked;
+    return cooked === null || cooked === undefined
+      ? false
+      : !usablePortText(cooked);
+  }
+  // A unary operator over a BigInt or over `undefined` is still not a port. Measured on Node
+  // 24.22.1, `net.connect({port: -1n})` and `net.connect({port: ~1n})` throw
+  // ERR_INVALID_ARG_TYPE, and `net.connect({port: +undefined})` throws ERR_SOCKET_BAD_PORT.
+  if (
+    t.isUnaryExpression(written) &&
+    (t.isBigIntLiteral(unwrapJavaScriptExpression(written.argument).node) ||
+      isUnmodifiedGlobalReference(
+        unwrapJavaScriptExpression(written.argument).node,
+        context.state,
+        "undefined",
+      ))
+  )
+    return true;
+  if (rejectsNonScalarPort(written)) return true;
+  // A nullish member leaves Node without a port, which it reports rather than ignoring.
+  // Measured on Node 24.22.1, `tls.connect({port: undefined})` and `net.connect({port: null})`
+  // both throw. The exemption in `rejectsPortValueNode` covers the positional slot, where a
+  // nullish value means "not given" and Node falls back to its default.
+  if (
+    isNullishJavaScriptSyntax(written) ||
+    isUnmodifiedGlobalReference(written, context.state, "undefined")
+  )
+    return true;
+  return rejectsPortValueNode(written, specifier, context);
+};
+
+/**
+ * Whether a getter or a copied `__proto__` is read before the effective `port` write.
+ *
+ * `Object.assign` walks the source by `OwnPropertyKeys`, not by source order: an array-index key
+ * comes first, ascending, and the string keys follow in insertion order. A getter only rescues the
+ * port when it runs before that write. Measured on Node 24.22.1:
+ *
+ *   {get side() { this.port = 80; }, port: -1}                       -> connects
+ *   {port: -1, get side() { this.port = 80; }}                       -> THREW
+ *   {port: -1, get 0() { this.port = 80; }}                          -> connects
+ *   {["__proto__"]: {set port(_) {...}}, port: -1}                    -> connects
+ *   {port: -1, ["__proto__"]: {set port(_) {...}}}                    -> THREW
+ *   {...{get side() { this.port = 80; }}, port: -1}                  -> THREW
+ *
+ * A spread is evaluated when the literal is built, so its getters have already run and left plain
+ * data properties — they are not writers here. A later data property replaces the descriptor, so a
+ * key written as data is no longer a getter.
+ */
+const optionWriterPrecedesMember = (
+  options: t.ObjectExpression,
+  member: string,
+): boolean => {
+  const firstInsertion = new Map<string, number>();
+  const lastDescriptor = new Map<
+    string,
+    { readonly node: t.ObjectProperty | t.ObjectMethod }
+  >();
+  let position = 0;
+  // A getter whose key is not statically known can land anywhere in `OwnPropertyKeys`,
+  // so it may precede the member: `const key = 0; {get [key]() { this.port = 80 }, port: -1}`
+  // visits `"0"` first and connects.
+  let unknownWriter = false;
+  const copiedPrototypeKeys = new Set<string>();
+  const evaluatedAccessors = new Set<t.Node>();
+  for (const property of options.properties) {
+    // A spread contributes data properties: its own accessors already ran.
+    const spread = t.isSpreadElement(property)
+      ? spreadDataEntries(property, evaluatedAccessors)
+      : {
+          entries: [property] as readonly (t.ObjectProperty | t.ObjectMethod)[],
+          copiesPrototypeAccessor: false,
+        };
+    for (const entry of spread.entries) {
+      const name = semanticStaticPropertyKey(entry.key, entry.computed);
+      if (name === null) {
+        // The key is not statically known, so it may be `__proto__`, and a value that is not
+        // a primitive then installs a setter-bearing prototype before `port` is read.
+        // Measured on Node 24.22.1,
+        // `const key = "__proto__"; tls.connect({}, {[key]: {set port(_) {…}}, port: -1})`
+        // connects, while `{ [key]: 5, port: -1 }` throws.
+        const writesPrototype =
+          t.isObjectProperty(entry) &&
+          entry.computed &&
+          primitiveOwnKeys(
+            unwrapJavaScriptExpression(entry.value).node,
+            isNullishJavaScriptSyntax,
+          ) === null;
+        if (
+          (t.isObjectMethod(entry) && entry.kind === "get") ||
+          writesPrototype
+        )
+          unknownWriter = true;
+        continue;
+      }
+      if (spread.copiesPrototypeAccessor && name === "__proto__")
+        copiedPrototypeKeys.add(name);
+      if (!firstInsertion.has(name)) firstInsertion.set(name, position);
+      lastDescriptor.set(name, { node: entry });
+      position += 1;
+    }
+  }
+  const orderOf = (name: string): readonly [number, number] => {
+    const key = Number(name);
+    const isArrayIndex =
+      Number.isInteger(key) &&
+      String(key) === name &&
+      key >= 0 &&
+      key < 2 ** 32 - 1;
+    return isArrayIndex
+      ? [0, key]
+      : [1, firstInsertion.get(name) ?? Number.MAX_SAFE_INTEGER];
+  };
+  const before = (
+    left: readonly [number, number],
+    right: readonly [number, number],
+  ): boolean =>
+    left[0] !== right[0] ? left[0] < right[0] : left[1] < right[1];
+  let writerOrder: readonly [number, number] | undefined;
+  let memberOrder: readonly [number, number] | undefined;
+  for (const [name, { node }] of lastDescriptor) {
+    const order = orderOf(name);
+    const writesThroughPrototype =
+      name === "__proto__" &&
+      (copiedPrototypeKeys.has(name) ||
+        (t.isObjectProperty(node) && node.shorthand) ||
+        node.computed);
+    if (
+      (t.isObjectMethod(node) &&
+        node.kind === "get" &&
+        !evaluatedAccessors.has(node)) ||
+      writesThroughPrototype
+    ) {
+      if (writerOrder === undefined || before(order, writerOrder))
+        writerOrder = order;
+    }
+    if (name === member) memberOrder = order;
+  }
+  if (unknownWriter) return true;
+  return (
+    writerOrder !== undefined &&
+    (memberOrder === undefined || before(writerOrder, memberOrder))
+  );
+};
+
+/**
+ * The data entries a spread contributes, plus the `__proto__` accessors it copies.
+ *
+ * A spread reads its source's own keys and creates data properties on the result, so the
+ * source's accessors have already run. A `__proto__` accessor is the exception the caller
+ * needs to know about: the copy is an own data key named `__proto__`, which sets the merge
+ * target's prototype when it is written there.
+ */
+const spreadDataEntries = (
+  property: t.SpreadElement,
+  evaluatedAccessors: Set<t.Node>,
+): {
+  readonly entries: readonly (t.ObjectProperty | t.ObjectMethod)[];
+  readonly copiesPrototypeAccessor: boolean;
+} => {
+  const spread = unwrapJavaScriptExpression(property.argument).node;
+  if (!t.isObjectExpression(spread))
+    return { entries: [], copiesPrototypeAccessor: false };
+  let copiesPrototypeAccessor = false;
+  const entries = spread.properties.filter(
+    (entry): entry is t.ObjectProperty | t.ObjectMethod => {
+      if (t.isSpreadElement(entry)) return false;
+      // Every own key of the source is copied, so an accessor keeps its insertion position as
+      // a data key: redefining that name later as a getter then stays where the spread put it.
+      // Measured on Node 24.22.1,
+      // `{...{get side() { return 0; }}, port: -1, get side() { this.port = 80; }}` connects.
+      if (t.isObjectMethod(entry) && entry.kind !== "method") {
+        // The spread already ran this accessor, so the copied value is data. It keeps its
+        // position but is not a writer at the merge target.
+        evaluatedAccessors.add(entry);
+        if (
+          semanticStaticPropertyKey(entry.key, entry.computed) === "__proto__"
+        )
+          copiesPrototypeAccessor = true;
+      }
+      return true;
+    },
+  );
+  return { entries, copiesPrototypeAccessor };
+};
+
+/** Whether an object literal copies an own `__proto__` key rather than setting its own prototype. */
+const copiesPrototypeKey = (options: t.ObjectExpression): boolean =>
+  options.properties.some(
+    (property) =>
+      !t.isSpreadElement(property) &&
+      // A shorthand `{__proto__}` copies a variable as an own enumerable key, so it counts like
+      // the computed spelling. Measured on Node 24.22.1,
+      // `const __proto__ = {set port(_) { this.path = "/tmp/x"; }}; tls.connect({}, {...{__proto__}, port: -1})`
+      // connects while `{...{__proto__: {...}}}` throws.
+      (property.computed ||
+        (t.isObjectProperty(property) && property.shorthand)) &&
+      semanticStaticPropertyKey(property.key, property.computed) ===
+        "__proto__",
+  );
+
+/** Whether a value is a literal that `tls` provably does not merge. */
+const isKnownNonObject = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): boolean =>
+  // Only scalars. An object literal is exactly what `tls` merges, so it must not land here.
+  t.isNumericLiteral(value) ||
+  t.isStringLiteral(value) ||
+  t.isBooleanLiteral(value) ||
+  t.isBigIntLiteral(value) ||
+  t.isNullLiteral(value) ||
+  (t.isTemplateLiteral(value) && value.expressions.length === 0) ||
+  isUnmodifiedGlobalReference(value, context.state, "undefined");
+
+/**
+ * Whether copying this object onto a merge target replaces the target's prototype.
+ *
+ * An own `__proto__` key is read by `Object.assign` as a normal key, but assigning it to the
+ * target runs the prototype accessor, so the target's prototype becomes this value and its
+ * setters fire for every remaining key.
+ *
+ * A spread produces the same own key as the direct spelling. Measured on Node 24.22.1,
+ * `tls.connect({}, {...{["__proto__"]: {set port(_) { this.path = "/tmp/x"; }}}, port: -1})`
+ * connects while `tls.connect({}, {...{}, port: -1})` throws `ERR_SOCKET_BAD_PORT`.
+ */
+const installsPrototype = (options: t.ObjectExpression): boolean =>
+  options.properties.some((property) => {
+    if (t.isSpreadElement(property)) {
+      const spread = unwrapJavaScriptExpression(property.argument).node;
+      // Inside a spread source only the computed spelling is an own key. Measured on Node
+      // 24.22.1, `{...{__proto__: {set port(_) { this.path = "/tmp/x"; }}}}` copies nothing and
+      // `tls.connect({}, {...}, port: -1)` throws `ERR_SOCKET_BAD_PORT`, while the computed
+      // `["__proto__"]` spelling does install the prototype.
+      return t.isObjectExpression(spread) && copiesPrototypeKey(spread);
+    }
+    return (
+      semanticStaticPropertyKey(property.key, property.computed) === "__proto__"
+    );
+  });
+
+/**
+ * Whether a known non-number, non-string port member is a type error.
+ *
+ * Measured on Node 24.22.1, `net.connect({port: {}})` and `net.connect({port: []})` throw
+ * `ERR_INVALID_ARG_TYPE` rather than reaching the port range check.
+ */
+const rejectsNonScalarPort = (value: t.Node): boolean =>
+  t.isObjectExpression(value) ||
+  t.isArrayExpression(value) ||
+  t.isRegExpLiteral(value) ||
+  t.isArrowFunctionExpression(value) ||
+  t.isFunctionExpression(value) ||
+  t.isClassExpression(value) ||
+  t.isUnaryExpression(value, { operator: "!" }) ||
+  t.isUnaryExpression(value, { operator: "typeof" });
 /** Only `net`/`tls` sockets take a port in argument 0. */
 const socketPortInFirstArgument = (
   candidate: Pick<AcquisitionReference, "specifier">,
