@@ -78,6 +78,7 @@ import {
   semanticClassCandidates,
   semanticClassPropertyReferences,
   semanticClassAccessorReferences,
+  createSemanticOwnPropertyReadQuery,
   semanticObjectPropertyReferences,
   semanticObjectAccessorReferences,
   semanticNativePrototypeChain,
@@ -533,37 +534,6 @@ const accessorEffectOperands = (
   accessorOperands.set(method, operands);
   return operands;
 };
-
-/** An own data descriptor prevents Reflect.set from consulting a prototype setter. */
-const ownLiteralDataProperty = (
-  initializers: readonly {
-    readonly node: t.Node;
-    readonly projection: readonly unknown[];
-  }[],
-  key: string,
-): boolean =>
-  initializers.length > 0 &&
-  initializers.every(({ node, projection }) => {
-    const object = unwrapJavaScriptExpression(node).node;
-    if (projection.length !== 0 || !t.isObjectExpression(object)) return false;
-    for (let index = object.properties.length - 1; index >= 0; index -= 1) {
-      const property = object.properties[index]!;
-      // Object spread creates data properties, so it cannot turn an earlier
-      // own data property into an accessor.
-      if (t.isSpreadElement(property)) continue;
-      const name = semanticStaticPropertyKey(property.key, property.computed);
-      if (name === null) {
-        if (t.isObjectMethod(property) && property.kind !== "method")
-          return false;
-        continue;
-      }
-      if (name !== key) continue;
-      return t.isObjectMethod(property)
-        ? property.kind === "method"
-        : key !== "__proto__" || property.computed || property.shorthand;
-    }
-    return false;
-  });
 
 export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
@@ -2129,52 +2099,10 @@ export function* collectSemanticMemberMutationsSteps(
     }
     return false;
   };
-  const ownDataPropertyAt = (
-    target: t.Node,
-    key: string,
-    at: t.Node,
-  ): boolean => {
-    const pending = [{ node: target, projection: [] as readonly unknown[] }];
-    const seen = new Set<t.Node>();
-    while (pending.length > 0) {
-      const candidate = pending.pop()!;
-      const value = javaScriptExpressionValue(candidate.node);
-      if (candidate.projection.length > 0 || seen.has(value)) return false;
-      seen.add(value);
-      if (!t.isIdentifier(value)) {
-        if (!ownLiteralDataProperty([{ node: value, projection: [] }], key))
-          return false;
-        continue;
-      }
-      const binding = resolveBinding(value, value.name);
-      if (
-        binding === undefined ||
-        opaqueReferenceEffect(binding, at) === true ||
-        bindingMemberEffectMayPrecedeReads(
-          state,
-          binding,
-          (kind, { path, node: site }) =>
-            site !== at &&
-            (kind === "member-write"
-              ? path.length === 0 ||
-                semanticPropertyPathKeyMatches(path[0]!, key)
-              : path.length === 0)
-              ? [at]
-              : undefined,
-          "activation",
-        )
-      )
-        return false;
-      const { initializers } = semanticMutationInitializers(
-        binding,
-        value,
-        parents,
-      );
-      if (initializers.length === 0) return false;
-      pending.push(...initializers);
-    }
-    return true;
-  };
+  const ownDataPropertyAt = createSemanticOwnPropertyReadQuery(
+    state,
+    opaqueReferenceEffect,
+  );
   const targetFacts = (target: t.Node) => {
     const binding = t.isIdentifier(target)
       ? resolveBinding(target, target.name)
@@ -2439,15 +2367,15 @@ export function* collectSemanticMemberMutationsSteps(
       interop.boundIntrinsic(node)?.kind === "known"
     )
       return;
-    if (
-      invocation?.kind === "opaque" &&
-      interop.boundIntrinsic(node.callee) !== undefined
-    )
-      markEscaped(node.callee, node);
-    for (const source of returnedReferences(
+    const returned = returnedReferences(
       node.callee,
       t.isNewExpression(node) ? undefined : node,
-    ).references)
+    );
+    if (invocation?.kind !== "known")
+      for (const candidate of returned.calleeCallResults ?? [])
+        if (interop.boundIntrinsic(candidate)?.kind === "known")
+          markEscaped(candidate, node, [], candidate);
+    for (const source of returned.references)
       markEscaped(source.node, node, source.projection);
     // The invocation owner includes captured bind arguments and call/apply
     // inputs for generic intrinsics as well as the mutators handled above.

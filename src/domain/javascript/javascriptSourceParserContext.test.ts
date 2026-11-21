@@ -581,3 +581,52 @@ it.each([
     expect(semanticRequireLoaderAt(required, state, new Set())).toBe(loader);
   },
 );
+
+it.each([
+  [
+    "const box={get owner(){observe(module);return 0;}};",
+    "typeof box.owner",
+    "unknown",
+  ],
+  ["function owner(){observe(module);return 0;}", "typeof owner()", "unknown"],
+  [
+    "const box={get owner(){listener.value=module;return 0;}};",
+    "typeof box.owner",
+    "unknown",
+  ],
+  [
+    "function owner(){listener.value=module;return 0;}",
+    "typeof owner()",
+    "unknown",
+  ],
+
+  ["", "typeof ({owner:module}).owner", "commonjs-loader"],
+  ["const box={owner:module};", "typeof box.owner", "commonjs-loader"],
+  ["const box={owner:module};", "void box.owner", "commonjs-loader"],
+  ["const box={owner:module};", "box.owner === null", "commonjs-loader"],
+  [
+    "const box={get owner(){return module;}};",
+    "typeof box.owner",
+    "commonjs-loader",
+  ],
+  ["function owner(){return module;}", "typeof owner()", "commonjs-loader"],
+  ["", "typeof ({owner:observe(module)}).owner", "unknown"],
+  [
+    "const box={get owner(){return observe(module);}};",
+    "typeof box.owner",
+    "unknown",
+  ],
+  ["function owner(){return observe(module);}", "typeof owner()", "unknown"],
+  ["const box={owner:module};", "typeof box[select(module)]", "unknown"],
+])(
+  "separates scalar evaluation from an intermediate value: %s %s",
+  (setup, prefix, expected) => {
+    const { required, state } = unboundRequireCall(
+      `${setup} Reflect.set({}, "require", 0, (${prefix}, {})); require("node:path");`,
+      "scalar.cjs",
+      "commonjs",
+      "node:path",
+    );
+    expect(semanticRequireLoaderAt(required, state, new Set())).toBe(expected);
+  },
+);

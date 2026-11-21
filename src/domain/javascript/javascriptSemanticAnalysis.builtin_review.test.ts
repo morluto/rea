@@ -2050,3 +2050,31 @@ it("preserves metadata reads before a later opaque-effect sequence", () => {
     ),
   ).toEqual(["kept"]);
 });
+
+it("tracks captured mutator inputs when a destructured callable is invoked", () => {
+  const source = `const fs=require('fs');
+    const box={set:Reflect.set.bind(null,fs,'readFileSync',()=>{})};
+    const {set}=box;
+    fs.readFileSync('before');
+    set();
+    fs.readFileSync('after');`;
+  expect(
+    analyzeJavaScriptSemantics(source).configurationOperations.map(
+      ({ key }) => key,
+    ),
+  ).toEqual(["before"]);
+});
+
+it("distinguishes evaluating a scalar from subsequently passing its object", () => {
+  const source = `Object.assign=(t,v)=>{if(typeof v==='object')v.require=replacement};
+    const box={owner:module};
+    Object.assign({},typeof box.owner);
+    require('fs').readFileSync('before');
+    Object.assign({},box.owner);
+    require('fs').readFileSync('after');`;
+  expect(
+    analyzeJavaScriptSemantics(source).configurationOperations.map(
+      ({ key }) => key,
+    ),
+  ).toEqual(["before"]);
+});

@@ -1,4 +1,9 @@
 import * as t from "@babel/types";
+import {
+  bindingMemberEffectMayPrecedeReads,
+  type createSemanticOpaqueReferenceEffectQuery,
+} from "./javascriptSemanticEffectLog.js";
+import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
   resolveSemanticBindingState,
@@ -7,6 +12,7 @@ import {
 import {
   isRuntimeJavaScriptClassProperty,
   javaScriptExpressionWrapperTarget,
+  javaScriptExpressionValue,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -949,3 +955,84 @@ export const semanticNativePrototypeChain = (
   }
   return ["Object"];
 };
+
+const ownLiteralPropertyMatches = (
+  object: t.Node,
+  key: string,
+  acceptsGetter?: (method: t.ObjectMethod) => boolean,
+): boolean => {
+  if (!t.isObjectExpression(object)) return false;
+  for (let index = object.properties.length - 1; index >= 0; index -= 1) {
+    const property = object.properties[index]!;
+    // Object spread creates data properties, so it cannot turn an earlier
+    // own data property into an accessor.
+    if (t.isSpreadElement(property)) continue;
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name === null) {
+      if (t.isObjectMethod(property) && property.kind !== "method")
+        return false;
+      continue;
+    }
+    if (name !== key) continue;
+    return t.isObjectMethod(property)
+      ? property.kind === "method" ||
+          (property.kind === "get" && acceptsGetter?.(property) === true)
+      : key !== "__proto__" || property.computed || property.shorthand;
+  }
+  return false;
+};
+
+/** Prove an own data slot, optionally accepting a getter whose read is known. */
+export const createSemanticOwnPropertyReadQuery =
+  (
+    state: JavaScriptSemanticAnalysisState,
+    opaqueReferenceEffect: ReturnType<
+      typeof createSemanticOpaqueReferenceEffectQuery
+    >,
+  ) =>
+  (
+    target: t.Node,
+    key: string,
+    at: t.Node,
+    acceptsGetter?: (method: t.ObjectMethod) => boolean,
+  ): boolean => {
+    const pending = [{ node: target, projection: [] as readonly unknown[] }];
+    const seen = new Set<t.Node>();
+    while (pending.length > 0) {
+      const candidate = pending.pop()!;
+      const value = javaScriptExpressionValue(candidate.node);
+      if (candidate.projection.length > 0 || seen.has(value)) return false;
+      seen.add(value);
+      if (!t.isIdentifier(value)) {
+        if (!ownLiteralPropertyMatches(value, key, acceptsGetter)) return false;
+        continue;
+      }
+      const binding = resolveSemanticBindingState(state, value, value.name);
+      if (
+        binding === undefined ||
+        opaqueReferenceEffect(binding, at) === true ||
+        bindingMemberEffectMayPrecedeReads(
+          state,
+          binding,
+          (kind, { path, node: site }) =>
+            site !== at &&
+            (kind === "member-write"
+              ? path.length === 0 ||
+                semanticPropertyPathKeyMatches(path[0]!, key)
+              : path.length === 0)
+              ? [at]
+              : undefined,
+          "activation",
+        )
+      )
+        return false;
+      const { initializers } = semanticMutationInitializers(
+        binding,
+        value,
+        state.parentsByNode,
+      );
+      if (initializers.length === 0) return false;
+      pending.push(...initializers);
+    }
+    return true;
+  };

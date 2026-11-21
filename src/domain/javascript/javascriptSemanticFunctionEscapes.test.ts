@@ -102,3 +102,47 @@ it.each([
     expect((shared?.escapedPaths.length ?? 0) > 0).toBe(escaped);
   },
 );
+
+it.each([
+  [
+    "let value=shared;const {pick}={pick:Object.keys.bind(null,value)};value={};pick();",
+    true,
+  ],
+  [
+    "let value={};const {pick}={pick:Object.keys.bind(null,value)};value=shared;pick();",
+    false,
+  ],
+  [
+    "const box=flag?{pick:Object.keys.bind(null,shared)}:{pick:()=>0};const {pick}=box;pick();",
+    true,
+  ],
+
+  [
+    "const box={pick:Object.keys.bind(null,shared)};const {pick}=box;pick();",
+    true,
+  ],
+  [
+    "const pair=[Object.keys.bind(null,shared)];const [pick]=pair;pick();",
+    true,
+  ],
+  ["const pick=flag?Object.keys.bind(null,shared):external;pick();", true],
+  [
+    "const box={child:{pick:Object.keys.bind(null,shared)}};const {child:{pick}}=box;pick();",
+    true,
+  ],
+  [
+    "const box={pick:()=>0,unused:Object.keys.bind(null,shared)};const {pick}=box;pick();",
+    false,
+  ],
+  ["const box={pick:Object.keys.bind(null,shared)};const {pick}=box;", false],
+  ["const pick=flag?()=>shared:()=>0;pick();", true],
+])(
+  "retains bound inputs selected by an invoked alias: %s",
+  (source, escaped) => {
+    const shared = indexedBindings(source).find(
+      ({ name }) => name === "shared",
+    );
+    expect(shared).toBeDefined();
+    expect((shared?.escapedPaths.length ?? 0) > 0).toBe(escaped);
+  },
+);

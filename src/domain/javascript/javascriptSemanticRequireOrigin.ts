@@ -95,6 +95,7 @@ import {
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import {
+  createSemanticOwnPropertyReadQuery,
   semanticArrayPropertyReferences,
   semanticObjectPropertyReferences,
 } from "./javascriptSemanticObjectReferences.js";
@@ -1720,7 +1721,7 @@ const writesModuleRequire = (
       interop.isFreshObject(value) ||
       (isPrimitiveJavaScriptExpression(expression) &&
         !exposesModule(
-          javaScriptScalarEvaluationSources(expression),
+          javaScriptScalarEvaluationSources(expression, scalarEvaluationBodies),
           expression,
         )) ||
       (t.isUnaryExpression(value) && !exposesModule([value.argument], value)) ||
@@ -1839,6 +1840,64 @@ const writesModuleRequire = (
       (value.status === "array" &&
         ambientEffectAt(["global", "Array", "prototype", "then"], at))
     );
+  };
+  const ownPropertyAt = createSemanticOwnPropertyReadQuery(
+    state,
+    opaqueReferenceEffect,
+  );
+  const scalarEvaluationBodies = (
+    node:
+      | t.MemberExpression
+      | t.OptionalMemberExpression
+      | t.CallExpression
+      | t.OptionalCallExpression,
+  ): readonly t.Node[] | undefined => {
+    // Reading a data slot does not call user code. For a proven own getter,
+    // follow what the getter evaluates, independently of the value it returns.
+    const bodies: t.Node[] = [];
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      const key = semanticStaticPropertyKey(node.property, node.computed);
+      const root = unwrapJavaScriptExpression(node.object).node;
+      if (
+        key === null ||
+        (!t.isObjectExpression(root) && !t.isIdentifier(root))
+      )
+        return undefined;
+      const known = ownPropertyAt(root, key, node, (method) => {
+        bodies.push(method.body);
+        return true;
+      });
+      return known ? bodies : undefined;
+    }
+    // Substituting parameter/default/receiver values requires call context.
+    // Keep those calls with the normal invocation owner.
+    if (
+      node.arguments.length > 0 ||
+      semanticGlobalCodeSites(state).some((site) =>
+        semanticEffectMayPrecede(state, node, site),
+      )
+    )
+      return undefined;
+    const targets = resolveLocalCallables({
+      node: node.callee,
+      state,
+      callableById,
+      bindingCache: callableCache,
+      seenInitializers: new Set(),
+    });
+    if (!targets.complete || targets.callableIds.length === 0) return undefined;
+    for (const id of targets.callableIds) {
+      const fn = state.callableNodesById.get(id);
+      if (
+        !t.isFunction(fn) ||
+        fn.generator ||
+        fn.async ||
+        fn.params.length !== 0
+      )
+        return undefined;
+      bodies.push(fn.body);
+    }
+    return bodies;
   };
   const returnedReferences = createSemanticReturnedReferences(state);
   const callableById = new Map(
@@ -2769,8 +2828,12 @@ const writesModuleRequire = (
         // typeof change(module) still evaluates the call, and a strict
         // comparison can contain a coercive arithmetic operand.
         if (isPrimitiveJavaScriptExpression(value)) {
+          timeDependent = true;
           pending.push(
-            ...javaScriptScalarEvaluationSources(value).map((node) => ({
+            ...javaScriptScalarEvaluationSources(
+              value,
+              scalarEvaluationBodies,
+            ).map((node) => ({
               node,
               path: [],
               readAt,
