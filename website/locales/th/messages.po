@@ -14673,15 +14673,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "ค้นหาผู้มีส่วนร่วม"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "จาก {ph0}รายชื่อผู้มีส่วนร่วมบน GitHub{ph1} · อัปเดตเมื่อ {ph2}"
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -14757,6 +14748,49 @@ msgstr "ประเมิน"
 msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr "คู่มือสร้างสภาพแวดล้อม"
+
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}สร้างสภาพแวดล้อมสำหรับแอปเดสก์ท็อป{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "สร้างสภาพแวดล้อมสำหรับแอปเดสก์ท็อป"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"อธิบายงานที่ต้องการให้เอเจนต์ฝึกในแอปเดสก์ท็อป Linux เช่น "
+"ขอให้สร้างสภาพแวดล้อม Gnote ที่เอเจนต์เพิ่มน้ำมันมะกอกลงในรายการซื้อของ "
+"เอเจนต์จะติดตั้งแอปบนเครื่องที่ใช้สร้างสภาพแวดล้อม เขียนงาน "
+"ส่งออกสภาพแวดล้อม แล้วตรวจสอบบนเครื่องใหม่โดยใช้ภาพหน้าจอ เมาส์ และแป้นพิมพ์"
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"เครื่องที่ใช้สร้างสภาพแวดล้อมต้องมี Linux บน amd64 หรือ arm64, Docker และ "
+"AgentEnv รุ่นที่ระบุ "
+"ทำตาม{ph0}คู่มือตั้งค่าเครื่องสำหรับสร้างสภาพแวดล้อมเดสก์ท็อป{ph1}เพื่อติดตั้งและตรวจสอบความพร้อม"
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -17202,3 +17236,8 @@ msgstr ""
 #~ "Windows x64 รองรับการวิเคราะห์แบบทดลองและอ่านอย่างเดียวสำหรับแอป PE และ DLL "
 #~ "เนทีฟ x86 และ x64 บนไดรฟ์ NTFS ภายในเครื่องแบบคงที่ ใช้ Ghidra 12.1.x "
 #~ "ที่ติดตั้งไว้แล้วและ JDK 21 ขึ้นไปแบบ 64 บิต:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "จาก {ph0}รายชื่อผู้มีส่วนร่วมบน GitHub{ph1} · อัปเดตเมื่อ {ph2}"

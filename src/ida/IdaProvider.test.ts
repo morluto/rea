@@ -448,6 +448,13 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
     expect(failed).toMatchObject({
       ok: false,
       error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "search_strings",
+        resource: "cpu",
+        reportedLimits: {
+          matching_deadline_ms: 100,
+          matching_deadline_source: "runtime",
+        },
         limit: {
           setting: "regex.matching_deadline_ms",
           effective_value: 100,

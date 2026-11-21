@@ -131,6 +131,9 @@ canonical SDK registrations and binds it to the runtime with its SHA-256
 digest. Target-free stdio MCP startup with the default catalog and output
 profiles serves its schemas without constructing analysis validators, including
 when `REA_MCP_TOOL_FAMILIES` limits which tools and prompts are advertised.
+The internal catalog stores object roots for the SDK's result codec, preserves
+non-object output schemas for legacy wrapping, and retains the complete
+`binary_session` output schema for `rea mcp doctor`.
 The first tool or guided-workflow request materializes the canonical runtime
 on that same SDK server. It preserves the advertised schemas throughout
 materialization. Initial-target, HTTP, compact output, and family-scoped hot/cold

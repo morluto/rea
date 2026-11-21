@@ -13917,15 +13917,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "貢献者を探す"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "{ph0}GitHub の貢献者一覧{ph1}より · 更新日：{ph2}。"
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -13999,6 +13990,46 @@ msgstr "評価"
 msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr "環境構築ガイド"
+
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}デスクトップアプリの環境を構築する{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "デスクトップアプリの環境を構築する"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"Linux デスクトップアプリでエージェントに練習させたいタスクを記述します。たとえば、買い物リストにオリーブオイルを追加する Gnote "
+"環境の作成を依頼します。エージェントはローカルのビルドマシンにアプリをインストールし、タスクを作成して環境をエクスポートします。その後、新しいマシンでスクリーンショット、マウス、キーボードを使って検証します。"
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"ビルドホストには amd64 または arm64 の Linux、Docker、指定バージョンの AgentEnv "
+"が必要です。インストールと準備状況の確認には{ph0}デスクトップ環境のビルド設定ガイド{ph1}を参照してください。"
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -16353,3 +16384,8 @@ msgstr ""
 #~ msgstr ""
 #~ "Windows x64では、固定ローカルNTFSドライブ上のネイティブx86/x64 "
 #~ "PEアプリとDLLに実験的な読み取り専用対応があります。既存のGhidra 12.1.xと64ビットのJDK 21以降を使ってください。"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "{ph0}GitHub の貢献者一覧{ph1}より · 更新日：{ph2}。"

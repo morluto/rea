@@ -2791,15 +2791,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr ""
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -13159,6 +13150,51 @@ msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr "പരിതസ്ഥിതി നിർമ്മാണ മാർഗ്ഗദർശി"
 
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}ഡെസ്‌ക്‌ടോപ്പ് ആപ്പിനായി ഒരു പരിസ്ഥിതി നിർമ്മിക്കുക{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "ഡെസ്‌ക്‌ടോപ്പ് ആപ്പിനായി ഒരു പരിസ്ഥിതി നിർമ്മിക്കുക"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"Linux ഡെസ്‌ക്‌ടോപ്പ് ആപ്പിൽ ഏജന്റ് പരിശീലിക്കേണ്ട ജോലി വിവരിക്കുക. "
+"ഉദാഹരണത്തിന്, സാധനങ്ങളുടെ പട്ടികയിൽ ഒലിവ് ഓയിൽ ചേർക്കാൻ കഴിയുന്ന ഒരു Gnote "
+"പരിസ്ഥിതി നിർമ്മിക്കാൻ ആവശ്യപ്പെടാം. ഏജന്റ് ലോക്കൽ ബിൽഡ് കമ്പ്യൂട്ടറിൽ ആപ്പ്"
+" ഇൻസ്റ്റാൾ ചെയ്ത് ജോലി തയ്യാറാക്കുകയും പരിസ്ഥിതി എക്സ്പോർട്ട് ചെയ്യുകയും "
+"ചെയ്യുന്നു. തുടർന്ന് പുതിയൊരു കമ്പ്യൂട്ടറിൽ സ്‌ക്രീൻഷോട്ടുകൾ, മൗസ്, കീബോർഡ് "
+"എന്നിവ ഉപയോഗിച്ച് അത് പരിശോധിക്കുന്നു."
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"ബിൽഡ് കമ്പ്യൂട്ടറിൽ amd64 അല്ലെങ്കിൽ arm64 Linux, Docker, നിർദിഷ്ട AgentEnv "
+"പതിപ്പ് എന്നിവ വേണം. ഇൻസ്റ്റാളേഷനും സജ്ജീകരണം പരിശോധിക്കുന്നതിനും "
+"{ph0}ഡെസ്‌ക്‌ടോപ്പ് ബിൽഡ് സജ്ജീകരണ ഗൈഡ്{ph1} പിന്തുടരുക."
+
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Skip to content"
@@ -14122,4 +14158,9 @@ msgstr ""
 #~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
 #~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
 #~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
 #~ msgstr ""

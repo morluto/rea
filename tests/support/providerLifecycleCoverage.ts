@@ -482,7 +482,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
-          "cancels queued work and stops active provider work on cancellation",
+          "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
         ),
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
@@ -675,13 +675,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/ida/IdaSessionClient.test.ts",
-          "retains the private workspace and reports cleanup failure when worker release is unverified",
+          "retries failed worker release through the retained connection",
         ),
       ),
       retry: covered(
         test(
-          "src/ida/IdaSessionClient.test.ts",
-          "retries failed worker release through the retained connection before removing its workspace",
+          "tests/boundary/providers/ida/retainedConnectionRetry.test.ts",
+          "retries cleanup through the detached stdio connection",
         ),
       ),
     },
@@ -1609,13 +1609,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "cancels a windowless wait action and cleans up the owned application",
+          "cancels a windowless wait action and cleans up the owned application (%s)",
         ),
       ),
       cleanup: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "keeps cleanup failure precedence over cancellation observed during cleanup",
+          "retains cancellation first observed during failed %s cleanup through retry",
         ),
       ),
       retry: covered(
@@ -1720,17 +1720,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "src/browser/modules/NativeModuleResolver.test.ts",
-          "closes a browser whose connection completes after cancellation",
-        ),
-        test(
-          "src/browser/modules/NativeModuleResolver.test.ts",
-          "reports failed cleanup of a browser whose connection completes after cancellation",
+          "awaits and closes the late browser connection after cancellation",
         ),
       ),
       operation: covered(
         test(
           "tests/boundary/filesystem/webModuleArtifacts.test.ts",
-          "verifies original bytes and tolerates relocation without inventing URL paths",
+          "verifies relocated source identity before accepting the captured bytes",
         ),
       ),
       cancel: covered(
@@ -1786,7 +1782,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "tests/boundary/filesystem/webSourceLocationArtifacts.test.ts",
-          "reads exact selected map bytes, retaining a BOM and explicitly selected URL context",
+          "retains exact selected map bytes and completed reads across failures",
         ),
       ),
       cancel: covered(

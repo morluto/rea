@@ -7,6 +7,8 @@ from html import escape
 from html.parser import HTMLParser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import re
+import shutil
 from pathlib import Path, PurePosixPath
 from string import Template
 import subprocess
@@ -33,6 +35,8 @@ def checked_contributors(data):
     if not isinstance(data.get("updated"), str):
         raise ValueError("Contributors need an ISO update date")
     date.fromisoformat(data["updated"])
+    if not re.fullmatch(r"[0-9a-f]{40}", str(data.get("revision", ""))):
+        raise ValueError("Contributors need the source commit SHA")
     people = data.get("contributors")
     if not isinstance(people, list) or not people:
         raise ValueError("Contributors must be a nonempty list")
@@ -45,6 +49,8 @@ def checked_contributors(data):
             raise ValueError("Contributor IDs must be unique positive integers")
         if not isinstance(login, str) or not login.strip() or login.casefold() in logins:
             raise ValueError("Contributor usernames must be nonempty and unique")
+        if type(person.get("commits")) is not int or person["commits"] < 1:
+            raise ValueError(f"Invalid commit count: {login}")
         if person.get("type") not in ("User", "Bot"):
             raise ValueError(f"Unknown contributor type: {login}")
         for key, host in (("html_url", "github.com"), ("avatar_url", "avatars.githubusercontent.com")):
@@ -59,12 +65,16 @@ def checked_contributors(data):
     return data
 
 
+def ranked_contributors(data):
+    return sorted(data["contributors"], key=lambda person: (-person["commits"], person["login"].casefold()))
+
+
 def contributor_block(root):
     """Render equal-sized profile links from the checked GitHub snapshot."""
     path = root / "website/public/contributors/people.json"
     data = checked_contributors(json.loads(path.read_text(encoding="utf-8")))
     cards = []
-    for person in sorted(data["contributors"], key=lambda item: item["login"].casefold()):
+    for person in ranked_contributors(data):
         login = escape(person["login"], quote=True)
         profile = escape(person["html_url"], quote=True)
         avatar = escape(person["avatar_url"], quote=True)
@@ -76,33 +86,92 @@ def contributor_block(root):
         )
     template = root / "website/templates/contributors.html.tmpl"
     return indent(Template(template.read_text(encoding="utf-8")).substitute(
-        cards="\n".join(cards), updated=escape(data["updated"], quote=True),
+        cards="\n".join(cards),
     ), "        ")
 
 
-def refresh_contributors(root):
-    """Validate every GitHub page, then atomically replace the offline snapshot."""
-    result = subprocess.run(
-        ["gh", "api", "--paginate", "repos/morluto/rea/contributors?per_page=100", "--jq",
-         "[.[] | {login,id,type,avatar_url,html_url}]"],
+def github_json(*arguments):
+    result = subprocess.run(["gh", "api", *arguments], capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+def collect_contributors():
+    """Count each GitHub profile once per commit on a fixed revision of main."""
+    revision = github_json("repos/morluto/rea/git/ref/heads/main")["object"]["sha"]
+    commits = subprocess.run(
+        ["gh", "api", "--paginate", f"repos/morluto/rea/commits?sha={revision}&per_page=100",
+         "--jq", ".[] | {sha, author: (.author | if . then {id,login,type,html_url,avatar_url} else null end)} | @json"],
         capture_output=True, text=True, check=True,
     )
-    decoder, remaining, people = json.JSONDecoder(), result.stdout.strip(), []
-    while remaining:
-        page, end = decoder.raw_decode(remaining)
-        if not isinstance(page, list):
-            raise ValueError("GitHub returned an invalid contributors page")
-        people.extend(page)
-        remaining = remaining[end:].lstrip()
+    primary = {}
+    for line in commits.stdout.splitlines():
+        commit = json.loads(line)
+        if commit["sha"] in primary:
+            raise ValueError("Duplicate commit in GitHub commit history")
+        primary[commit["sha"]] = commit["author"]
+
+    query = """query($revision: GitObjectID!, $endCursor: String) {
+      repository(owner: "morluto", name: "rea") {
+        object(oid: $revision) { ... on Commit {
+          history(first: 100, after: $endCursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes { oid authors(first: 100) { totalCount nodes {
+              user { id: databaseId login type: __typename html_url: url avatar_url: avatarUrl }
+            } } }
+          }
+        } }
+      }
+    }"""
+    pages = github_json("graphql", "--paginate", "--slurp", "-F", f"revision={revision}", "-f", f"query={query}")
+    people = {}
+    for page in pages:
+        for commit in page["data"]["repository"]["object"]["history"]["nodes"]:
+            sha, authors = commit["oid"], commit["authors"]
+            if sha not in primary or authors["totalCount"] != len(authors["nodes"]):
+                raise ValueError(f"Incomplete GitHub commit attribution at {sha}")
+            profiles = {node["user"]["id"]: node["user"] for node in authors["nodes"] if node["user"]}
+            author = primary.pop(sha)
+            if author:
+                profiles[author["id"]] = author
+            for identity, profile in profiles.items():
+                person = people.setdefault(identity, {**profile, "commits": 0})
+                if author and identity == author["id"]:
+                    person["type"] = author["type"]
+                person["commits"] += 1
+    if primary:
+        raise ValueError("Incomplete GitHub commit history")
     data = checked_contributors({
-        "repository": "morluto/rea", "updated": date.today().isoformat(), "contributors": people,
+        "repository": "morluto/rea", "revision": revision, "updated": date.today().isoformat(),
+        "contributors": list(people.values()),
     })
+    data["contributors"] = ranked_contributors(data)
+    return data
+
+
+def refresh_contributors(root):
+    """Replace the snapshot only after both sources have been collected and checked."""
+    data = collect_contributors()
     path = root / "website/public/contributors/people.json"
     with tempfile.TemporaryDirectory(dir=path.parent, prefix=f".{path.name}-") as directory:
         staged = Path(directory) / path.name
         staged.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        staged.replace(path)
-    print(f"Refreshed {len(people)} contributors. Run sync, translations extract and check.")
+        from website_contributor_grid import write_avatar_grid
+        grid = Path(directory) / "avatars.png"
+        write_avatar_grid(data["contributors"], grid)
+        destination = path.with_name(grid.name)
+        previous = Path(directory) / "previous.png"
+        if destination.exists():
+            shutil.copyfile(destination, previous)
+        grid.replace(destination)
+        try:
+            staged.replace(path)
+        except OSError:
+            if previous.exists():
+                previous.replace(destination)
+            else:
+                destination.unlink()
+            raise
+    print(f"Refreshed {len(data['contributors'])} contributors.")
 
 
 def authored_markdown(root):
@@ -347,6 +416,8 @@ def main():
         print(str(error), file=sys.stderr)
         return 1
     except subprocess.CalledProcessError as error:
+        if error.stderr:
+            print(error.stderr, file=sys.stderr)
         return error.returncode
     except KeyboardInterrupt:
         return 0

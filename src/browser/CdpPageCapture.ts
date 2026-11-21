@@ -401,12 +401,7 @@ const capturePageDom = async (state: CaptureState): Promise<DomCapture> => {
     );
     return emptyDomCapture;
   }
-  const capture = captureDom(
-    result,
-    allowedOrigins,
-    context.input,
-    state.events.completeness,
-  );
+  const capture = captureDom(result, allowedOrigins, state.events.completeness);
   let step = capture.next();
   let descriptionUnavailable = false;
   const pendingController = new AbortController();
