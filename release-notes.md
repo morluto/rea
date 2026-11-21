@@ -292,6 +292,7 @@
 * **process:** exercise Ghidra reserved reply IDs ([5f7a586](https://github.com/morluto/rea/commit/5f7a586aa59f25b99095a71903effcdba9b4d1d7))
 * **process:** exercise reserved success IDs with a valid frame ([#12787](https://github.com/morluto/rea/issues/12787)) ([5f7a586](https://github.com/morluto/rea/commit/5f7a586aa59f25b99095a71903effcdba9b4d1d7))
 * **process:** join descriptor inspection and consolidate ownership proof ([#12891](https://github.com/morluto/rea/issues/12891)) ([cbe3d16](https://github.com/morluto/rea/commit/cbe3d16e4459bd030f1727e9fd22ace763c3b992))
+* **process:** publish timeout stop signal atomically in ExecFileOutput test ([#13151](https://github.com/morluto/rea/issues/13151)) ([df1bd11](https://github.com/morluto/rea/commit/df1bd118959edc956575156dee55fc45b2b8b93b))
 * **process:** stop inherited-pipe fixtures when their workspace disappears ([d989ff0](https://github.com/morluto/rea/commit/d989ff06e8bdc5705ddab72b4e3c7f3965eb6043))
 * **process:** synchronize launcher exit proof and remove duplicate deadline check ([#12890](https://github.com/morluto/rea/issues/12890)) ([19f9a01](https://github.com/morluto/rea/commit/19f9a016559060cce5debec1403f19e6394fdb88))
 * **process:** verify Darwin snapshot and helper reply ownership ([#12904](https://github.com/morluto/rea/issues/12904)) ([6e99f60](https://github.com/morluto/rea/commit/6e99f607f7e6ff10ec77cf0ebd5a34cf527d54a6))
