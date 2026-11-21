@@ -19,6 +19,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { readReferenceSource } from "../../../src/reference/ReferenceSourceReader.js";
 import * as directoryValidation from "../../../src/reference/ReferenceSourceReaderValidate.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { requireReferenceSourceReads } from "../../support/referenceSourceResourceScope.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
@@ -42,6 +43,7 @@ interface DirectoryOperations {
   close(): Promise<void>;
 }
 
+beforeEach(requireReferenceSourceReads);
 beforeEach(async () => {
   actual =
     await vi.importActual<typeof import("node:fs/promises")>(

@@ -1,7 +1,7 @@
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, beforeEach, expect, it } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -9,8 +9,13 @@ import { sourceToBundleComparisonResultSchema } from "../../../src/domain/javasc
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import {
+  importReferenceSource,
+  requireReferenceSourceReads,
+} from "../../support/referenceSourceResourceScope.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
+
+beforeEach(requireReferenceSourceReads);
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());

@@ -3,14 +3,17 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   importReferenceSource,
   readReferenceSource,
+  requireReferenceSourceReads,
 } from "../../support/referenceSourceResourceScope.js";
+
+beforeEach(requireReferenceSourceReads);
 
 const importTree = (root: string) =>
   importReferenceSource({

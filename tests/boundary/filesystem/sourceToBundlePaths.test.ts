@@ -14,9 +14,13 @@ import {
   resolveJavaScriptSourceMapUrl,
 } from "../../../src/domain/javascript/javascriptSourceMapPaths.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import {
+  importReferenceSource,
+  referenceSourceReadsSupported,
+  requireReferenceSourceReads,
+} from "../../support/referenceSourceResourceScope.js";
 
-it.each([
+it.skipIf(!referenceSourceReadsSupported).each([
   { current: "export const value = 1;", status: "unchanged" },
   { current: "export const value = 2;", status: "modified" },
 ])(
@@ -54,7 +58,8 @@ it.each([
   },
 );
 
-it("retains two physical occurrences when equal bytes share an asset node", async () => {
+it("retains two physical occurrences when equal bytes share an asset node", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory("rea-source-occurrences-");
   const previous = join(root, "previous");
   const current = join(root, "current");
@@ -88,7 +93,8 @@ it("retains two physical occurrences when equal bytes share an asset node", asyn
       expect(comparison.unmapped_current_node_ids).not.toContain(id);
 });
 
-it("keeps literal hash characters in historical/current filesystem paths", async () => {
+it("keeps literal hash characters in historical/current filesystem paths", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory("rea-source-path-");
   const previous = join(root, "previous");
   const current = join(root, "current");
@@ -123,7 +129,8 @@ it("keeps literal hash characters in historical/current filesystem paths", async
   );
 });
 
-it("matches source-map originals named relative to the map", async () => {
+it("matches source-map originals named relative to the map", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory("rea-source-map-parent-");
   const previous = join(root, "previous");
   const current = join(root, "current");
@@ -191,7 +198,7 @@ it.each([
   ).toBe(expected);
 });
 
-it.each([
+it.skipIf(!referenceSourceReadsSupported).each([
   {
     mapPath: "maps/app.js.map",
     sourceRoot: "../src/",
@@ -375,7 +382,8 @@ it.each([
   },
 );
 
-it("retains every map location when identical map artifacts merge", async () => {
+it("retains every map location when identical map artifacts merge", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory("rea-source-map-merged-");
   const previous = join(root, "previous");
   const current = join(root, "current");
@@ -435,7 +443,8 @@ it("retains every map location when identical map artifacts merge", async () => 
   }
 });
 
-it("keeps leaf source roots distinct after indexed maps are serialized", async () => {
+it("keeps leaf source roots distinct after indexed maps are serialized", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory("rea-source-map-leaf-roots-");
   const previous = join(root, "previous");
   const current = join(root, "current");
@@ -516,7 +525,7 @@ it("keeps leaf source roots distinct after indexed maps are serialized", async (
       ).toHaveLength(1);
 });
 
-it.each([
+it.skipIf(!referenceSourceReadsSupported).each([
   { source: "file:/repo/src/a.js", hasPath: true },
   { source: "file:C:/repo/src/a.js", hasPath: true },
   { source: "file:C:\\repo\\src\\a.js", hasPath: true },
@@ -571,7 +580,9 @@ it.each([
   },
 );
 
-it.each(["#original.js", "?version.js", "?version.js#original.js"])(
+it
+  .skipIf(!referenceSourceReadsSupported)
+  .each(["#original.js", "?version.js", "?version.js#original.js"])(
   "uses the relative URL pathname rather than a literal %s filename",
   async (suffix) => {
     const root = await createTestTempDirectory("rea-source-map-suffix-");
@@ -625,7 +636,7 @@ it.each(["#original.js", "?version.js", "?version.js#original.js"])(
   },
 );
 
-it.each([
+it.skipIf(!referenceSourceReadsSupported).each([
   { filename: "a#b.js", decoyFilename: "a" },
   { filename: "a?b.js", decoyFilename: "a" },
   { filename: "a%23b.js", decoyFilename: "a#b.js" },
@@ -680,7 +691,7 @@ it.each([
   },
 );
 
-it.each([
+it.skipIf(!referenceSourceReadsSupported).each([
   { source: "", historicalPath: "maps.js" },
   { source: ".", historicalPath: "maps.js" },
   { source: "./", historicalPath: "maps.js" },
@@ -734,7 +745,8 @@ it.each([
   },
 );
 
-it("resolves parent segments against a nested source map's directory", async () => {
+it("resolves parent segments against a nested source map's directory", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory("rea-source-map-nested-");
   const previous = join(root, "previous");
   const current = join(root, "current");

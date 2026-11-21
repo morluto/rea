@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createReferenceSourceGitFixture } from "../../support/referenceSourceGitFixture.js";
-import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import {
+  importReferenceSource,
+  requireReferenceSourceReads,
+} from "../../support/referenceSourceResourceScope.js";
 
 const importTree = async (root: string) => {
   const result = await importReferenceSource({
@@ -15,7 +18,8 @@ const importTree = async (root: string) => {
   return result.value;
 };
 
-it("retains caller negations across project scopes while secrets remain excluded", async () => {
+it("retains caller negations across project scopes while secrets remain excluded", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory("rea-reference-caller-policy-");
   await mkdir(join(root, "nested"));
   await writeFile(join(root, ".gitignore"), "*.log\n");
@@ -47,7 +51,8 @@ it("retains caller negations across project scopes while secrets remain excluded
   });
 });
 
-it("keeps unreadable scoped policy fatal after opening a readable directory", async () => {
+it("keeps unreadable scoped policy fatal after opening a readable directory", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory(
     "rea-reference-scoped-policy-refusal-",
   );
@@ -72,7 +77,8 @@ it("keeps unreadable scoped policy fatal after opening a readable directory", as
   );
 });
 
-it("scopes nested ignore rules and honors local Git case policy", async () => {
+it("scopes nested ignore rules and honors local Git case policy", async (context) => {
+  requireReferenceSourceReads(context);
   const fixture = await createTestTempDirectory("rea-reference-scoped-policy-");
   const git = await createReferenceSourceGitFixture(fixture);
   const root = join(fixture, "source");

@@ -17,6 +17,7 @@ import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceSc
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
 import { readReferenceSourceVcs } from "../../../src/application/ReferenceSourceVcsAdapter.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { requireReferenceSourceReads } from "../../support/referenceSourceResourceScope.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -82,9 +83,10 @@ const failCloseUntilAllowed = (
   };
 };
 
-it.each([".", "nested"])(
+it.for([".", "nested"])(
   "retains failed %s/.gitignore cleanup under the caller's scope",
-  async (directory) => {
+  async (directory, context) => {
+    if (directory === "nested") requireReferenceSourceReads(context);
     const root = await createTestTempDirectory("rea-reference-ignore-owner-");
     await mkdir(join(root, directory), { recursive: true });
     const path = join(root, directory, ".gitignore");
@@ -151,7 +153,8 @@ it("retains local Git configuration cleanup before trusting ignore policy", asyn
   expect(close.calls()).toBe(3);
 });
 
-it("preserves Git metadata cleanup failure and the completed source read", async () => {
+it("preserves Git metadata cleanup failure and the completed source read", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory("rea-reference-head-owner-");
   const repository = join(root, "repository");
   const sourceRoot = join(root, "source");
@@ -531,7 +534,8 @@ it.each([false, true])(
   },
 );
 
-it("preserves physical Git failure and exact cancellation across parallel traversal", async () => {
+it("preserves physical Git failure and exact cancellation across parallel traversal", async (context) => {
+  requireReferenceSourceReads(context);
   const root = await createTestTempDirectory("rea-reference-parallel-abort-");
   const gitdir = join(root, ".git");
   await mkdir(gitdir);
@@ -585,9 +589,10 @@ it("preserves physical Git failure and exact cancellation across parallel traver
   }
 });
 
-it.each(["metadata", "import"] as const)(
+it.for(["metadata", "import"] as const)(
   "preserves optional commondir absence when its probe coincides with cancellation (%s)",
-  async (surface) => {
+  async (surface, context) => {
+    if (surface === "import") requireReferenceSourceReads(context);
     const root = await createTestTempDirectory("rea-reference-optional-git-");
     const gitdir = join(root, ".git");
     await mkdir(gitdir);

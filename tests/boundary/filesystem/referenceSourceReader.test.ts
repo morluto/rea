@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { readStableSymlinkTarget } from "../../../src/reference/ReferenceSourceReaderEntries.js";
-import { readReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import {
+  readReferenceSource,
+  requireReferenceSourceReads,
+} from "../../support/referenceSourceResourceScope.js";
 
 it.each(["rejected", "returned"] as const)(
   "retains a symlink's physical failure when cancellation accompanies its %s outcome",
@@ -45,7 +48,42 @@ it.each(["rejected", "returned"] as const)(
   },
 );
 
+it("marks a symlink changed when its path is replaced during target observation", async () => {
+  const root = await createTestTempDirectory("rea-reference-symlink-race-");
+  const link = join(root, "source-link");
+  await symlink("original-target", link);
+  const expected = await lstat(link, { bigint: true });
+
+  const result = await readStableSymlinkTarget(
+    link,
+    "source-link",
+    expected,
+    undefined,
+    async () => {
+      await unlink(link);
+      await symlink("replacement-target", link);
+      return {
+        status: "read",
+        kind: "symlink",
+        path: "source-link",
+        target: "original-target",
+        targetState: "missing",
+      };
+    },
+  );
+
+  expect(result).toEqual({
+    status: "failed",
+    kind: "symlink",
+    path: "source-link",
+    code: "changed",
+    message: "Symbolic link changed while its target was read",
+  });
+});
+
 describe("readReferenceSource entries", () => {
+  beforeEach(requireReferenceSourceReads);
+
   it("returns explicit entries in canonical code-point path order", async () => {
     const root = await createTestTempDirectory("rea-reference-");
     await mkdir(join(root, "nested"));
@@ -124,39 +162,6 @@ describe("readReferenceSource entries", () => {
     expect(result.value.bytesRead).toBe(5);
   });
 
-  it("marks a symlink changed when its path is replaced during target observation", async () => {
-    const root = await createTestTempDirectory("rea-reference-symlink-race-");
-    const link = join(root, "source-link");
-    await symlink("original-target", link);
-    const expected = await lstat(link, { bigint: true });
-
-    const result = await readStableSymlinkTarget(
-      link,
-      "source-link",
-      expected,
-      undefined,
-      async () => {
-        await unlink(link);
-        await symlink("replacement-target", link);
-        return {
-          status: "read",
-          kind: "symlink",
-          path: "source-link",
-          target: "original-target",
-          targetState: "missing",
-        };
-      },
-    );
-
-    expect(result).toEqual({
-      status: "failed",
-      kind: "symlink",
-      path: "source-link",
-      code: "changed",
-      message: "Symbolic link changed while its target was read",
-    });
-  });
-
   it("reads a source file above 16 MiB", async () => {
     const root = await createTestTempDirectory("rea-reference-large-");
     const size = 16 * 1024 * 1024 + 1;
@@ -205,6 +210,8 @@ describe("readReferenceSource entries", () => {
 });
 
 describe("readReferenceSource failures and exclusions", () => {
+  beforeEach(requireReferenceSourceReads);
+
   it("applies exclusions to normalized paths after no-follow type inspection", async () => {
     const root = await createTestTempDirectory("rea-reference-");
     await mkdir(join(root, "ignored"));

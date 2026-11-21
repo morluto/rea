@@ -23,7 +23,11 @@ import {
   readRegularFileText,
   RegularFileReadFailure,
 } from "../../../src/process/RegularFileRead.js";
-import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import {
+  importReferenceSource,
+  referenceSourceReadsSupported,
+  requireReferenceSourceReads,
+} from "../../support/referenceSourceResourceScope.js";
 import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReaderTypes.js";
 import { createHistoricalSourceManifest } from "../../../src/domain/referenceSourceGraph.js";
@@ -392,7 +396,7 @@ describe("reference source ignore policy cleanup ownership", () => {
 });
 
 describe("reference source symlink import", () => {
-  it.each([
+  it.skipIf(!referenceSourceReadsSupported).each([
     { target: "dist", reason: "default-ignored", pattern: "dist/" },
     { target: "generated", reason: "project-ignored", pattern: "generated/" },
     { target: "cache", reason: "caller-excluded", pattern: "cache/" },
@@ -456,7 +460,8 @@ describe("reference source symlink import", () => {
     },
   );
 
-  it("does not treat an excluded file as an excluded directory for a child link", async () => {
+  it("does not treat an excluded file as an excluded directory for a child link", async (context) => {
+    requireReferenceSourceReads(context);
     const root = await createTestTempDirectory(
       "rea-reference-excluded-file-link-",
     );
@@ -514,7 +519,8 @@ describe("reference source symlink import", () => {
     );
   });
 
-  it("retains external symlink targets as local graph diagnostics", async () => {
+  it("retains external symlink targets as local graph diagnostics", async (context) => {
+    requireReferenceSourceReads(context);
     const root = await createTestTempDirectory("rea-reference-links-");
     const outside = await createTestTempDirectory("rea-reference-outside-");
     const target = join(outside, "target.js");
@@ -540,7 +546,8 @@ describe("reference source symlink import", () => {
 });
 
 describe("reference source manifest inventory", () => {
-  it("retains manifest, test, generated and language classifications through import", async () => {
+  it("retains manifest, test, generated and language classifications through import", async (context) => {
+    requireReferenceSourceReads(context);
     const root = await createTestTempDirectory("rea-reference-classification-");
     const files = [
       ["CMakeLists.txt", "Text", ["documentation", "manifest"]],
@@ -609,7 +616,8 @@ describe("reference source manifest inventory", () => {
 });
 
 const registerReferenceRelocationTests = (): void => {
-  it("is relocation-stable, resolves imports, and excludes secrets before capture", async () => {
+  it("is relocation-stable, resolves imports, and excludes secrets before capture", async (context) => {
+    requireReferenceSourceReads(context);
     const parent = await createTestTempDirectory("rea-reference-import-");
     try {
       const leftRoot = await fixture(parent, "left");
@@ -708,7 +716,8 @@ describe("reference source import behavior", () => {
   // product. Cycling the sizes over every entry would make a thousand 4 MiB
   // members, which is nearly 4 GiB of fixture and cannot fit a runner's disk.
   // Entry count is crossed by volume, byte size by a single large member.
-  it("returns every written entry with complete coverage at any scale", async () => {
+  it("returns every written entry with complete coverage at any scale", async (context) => {
+    requireReferenceSourceReads(context);
     const root = await createTestTempDirectory("rea-reference-scale-");
     const sizes = [0, 1, 4_097, 65_536, 4_194_304];
     const written = Array.from(
@@ -773,7 +782,8 @@ describe("reference source import behavior", () => {
     // actually meaningful.
   });
 
-  it("imports BMP and supplementary filenames in Unicode code point order", async () => {
+  it("imports BMP and supplementary filenames in Unicode code point order", async (context) => {
+    requireReferenceSourceReads(context);
     const root = await createTestTempDirectory("reference-unicode-");
     try {
       const paths = ["\uE000.ts", "\u{10000}.ts"];
@@ -794,7 +804,8 @@ describe("reference source import behavior", () => {
 
   registerReferenceRelocationTests();
 
-  it("imports the caller-selected directory and honors cancellation", async () => {
+  it("imports the caller-selected directory and honors cancellation", async (context) => {
+    requireReferenceSourceReads(context);
     const outside = await createTestTempDirectory("rea-reference-outside-");
     try {
       const root = await fixture(outside, "tree");
@@ -823,7 +834,8 @@ describe("reference source import behavior", () => {
     },
   );
 
-  it("records bounded local Git state without invoking Git", async () => {
+  it("records bounded local Git state without invoking Git", async (context) => {
+    requireReferenceSourceReads(context);
     const parent = await createTestTempDirectory("rea-reference-git-");
     try {
       const root = await fixture(parent, "repo");
@@ -846,7 +858,8 @@ describe("reference source import behavior", () => {
 });
 
 describe("reference source path selection", () => {
-  it("does not omit selected files by secret-like path or filename", async () => {
+  it("does not omit selected files by secret-like path or filename", async (context) => {
+    requireReferenceSourceReads(context);
     const parent = await createTestTempDirectory("rea-reference-selected-");
     try {
       const root = await fixture(parent, "tree");
@@ -869,7 +882,8 @@ describe("reference source path selection", () => {
 });
 
 describe("reference source rooted module specifiers", () => {
-  it("keeps dot-prefixed bare specifiers external while resolving explicit relative paths", async () => {
+  it("keeps dot-prefixed bare specifiers external while resolving explicit relative paths", async (context) => {
+    requireReferenceSourceReads(context);
     const root = await createTestTempDirectory("rea-reference-dot-prefix-");
     await Promise.all([
       writeFile(
@@ -908,7 +922,8 @@ describe("reference source rooted module specifiers", () => {
     );
   });
 
-  it("does not rebase an absolute import onto a coincidentally matching source member", async () => {
+  it("does not rebase an absolute import onto a coincidentally matching source member", async (context) => {
+    requireReferenceSourceReads(context);
     const root = await createTestTempDirectory("rea-reference-rooted-");
     await mkdir(join(root, "src", "outside"), { recursive: true });
     await writeFile(
