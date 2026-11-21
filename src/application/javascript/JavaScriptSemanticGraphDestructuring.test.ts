@@ -2587,6 +2587,39 @@ it.each([
 );
 
 it.each([
+  ["null", "null", "candidate", "unknown"],
+  ["undefined", "undefined", "candidate", "unknown"],
+  ["number", "0", "resolved", "literal"],
+  ["string", '"hello"', "resolved", "literal"],
+  ["object", "{}", "resolved", "literal"],
+] as const)(
+  "keeps a later own slot uncertain after a nested object pattern with receiver %s",
+  (_name, receiver, resolution, status) => {
+    const source = `const model={bad:${receiver},mode:"one"};const {bad:{},mode:selected}=model;`;
+    const semantics = analyzeJavaScriptSemantics(source);
+    const graph = graphForJavaScript(source, semantics);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    const relation = graph.relations.find(
+      (edge) =>
+        edge.relation === "destructures" &&
+        edge.target_node_id === selected?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find(({ node_id }) => node_id === relation?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(["mode"]);
+    expect(
+      semantics.bindings.find(({ name }) => name === "selected")?.value,
+    ).toMatchObject(
+      status === "literal" ? { status, value: "one" } : { status },
+    );
+  },
+);
+
+it.each([
   [
     "immutable array assignment target",
     'const fixed=0;let selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',

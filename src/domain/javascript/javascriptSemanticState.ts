@@ -216,6 +216,8 @@ export interface JavaScriptSemanticAnalysisState {
   >;
   /** Initializer expressions whose write can be skipped by enclosing control flow. */
   readonly conditionallySkippedExpressions: WeakSet<t.Node>;
+  /** Bindings whose initialization may be skipped by an earlier pattern failure. */
+  readonly destructuringIncompleteBindings: Set<string>;
   /** Unbound identifier writes retain their source sites for capture ordering. */
   readonly ambientBindingWrites: Map<string, t.Node[]>;
   /** Source-local writes, tagged by global, import.meta or CJS module identity. */

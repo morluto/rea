@@ -28,6 +28,179 @@ import {
   semanticArrayPatternCanResumeAfterClose,
 } from "./javascriptSemanticReferenceSources.js";
 
+const isDefinitelyUndefinedReceiver = (
+  node: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (node === undefined) return false;
+  const value = unwrapJavaScriptExpression(node).node;
+  return (
+    t.isUnaryExpression(value, { operator: "void" }) ||
+    (t.isIdentifier(value, { name: "undefined" }) &&
+      resolveSemanticBindingState(state, value, value.name) === undefined)
+  );
+};
+
+const isDefinitelyNullishReceiver = (
+  node: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  node !== undefined &&
+  (t.isNullLiteral(unwrapJavaScriptExpression(node).node) ||
+    isDefinitelyUndefinedReceiver(node, state));
+
+interface PatternCompletionContext {
+  readonly state: JavaScriptSemanticAnalysisState;
+  readonly read: ((path: readonly string[]) => t.Node | undefined) | undefined;
+}
+
+const markIncompletePatternTargets = (
+  pattern: t.Node | undefined | null,
+  path: readonly string[] | null,
+  receiver: t.Node | undefined,
+  blocked: boolean,
+  nested: boolean,
+  context: PatternCompletionContext,
+): boolean => {
+  if (pattern == null) return false;
+  const node = unwrapJavaScriptExpression(pattern).node;
+  if (t.isAssignmentPattern(node)) {
+    const defaultReceiver = isDefinitelyUndefinedReceiver(
+      receiver,
+      context.state,
+    )
+      ? unwrapJavaScriptExpression(node.right).node
+      : receiver;
+    return markIncompletePatternTargets(
+      node.left,
+      path,
+      defaultReceiver,
+      blocked,
+      nested,
+      context,
+    );
+  }
+  if (t.isRestElement(node))
+    return markIncompletePatternTargets(
+      node.argument,
+      path,
+      undefined,
+      blocked,
+      nested,
+      context,
+    );
+  if (t.isIdentifier(node)) {
+    if (blocked) {
+      const binding = resolveSemanticBindingState(
+        context.state,
+        node,
+        node.name,
+      );
+      if (binding !== undefined)
+        context.state.destructuringIncompleteBindings.add(binding.bindingId);
+    }
+    return false;
+  }
+  if (t.isObjectPattern(node)) {
+    let blockedAfter =
+      blocked ||
+      (nested && isDefinitelyNullishReceiver(receiver, context.state));
+    for (const property of node.properties) {
+      const prop = t.isObjectProperty(property) ? property : undefined;
+      const name =
+        prop === undefined
+          ? null
+          : semanticStaticPropertyKey(prop.key, prop.computed);
+      if (prop === undefined || name === null || prop.computed) {
+        blockedAfter =
+          markIncompletePatternTargets(
+            prop?.value ?? property,
+            null,
+            undefined,
+            blockedAfter,
+            true,
+            context,
+          ) || blockedAfter;
+        continue;
+      }
+      const childPath = path === null ? null : [...path, name];
+      blockedAfter =
+        markIncompletePatternTargets(
+          prop.value,
+          childPath,
+          childPath === null ? undefined : context.read?.(childPath),
+          blockedAfter,
+          true,
+          context,
+        ) || blockedAfter;
+    }
+    return blockedAfter;
+  }
+  if (t.isArrayPattern(node)) {
+    let blockedAfter =
+      blocked ||
+      (nested && isDefinitelyNullishReceiver(receiver, context.state));
+    for (const [index, element] of node.elements.entries()) {
+      if (element === null) continue;
+      const childPath = path === null ? null : [...path, String(index)];
+      blockedAfter =
+        markIncompletePatternTargets(
+          element,
+          childPath,
+          childPath === null ? undefined : context.read?.(childPath),
+          blockedAfter,
+          true,
+          context,
+        ) || blockedAfter;
+    }
+    return blockedAfter;
+  }
+  return false;
+};
+
+export const collectJavaScriptDestructuringCompletion = (
+  program: t.Program,
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  if (!state.memberMutationFactsComplete) return;
+  const readPresence = createSemanticReadPresenceQuery(state, false);
+  const visit = (root: t.Node, initializer: t.Node | null | undefined) => {
+    const source = expressionObjectIdentity(initializer, state);
+    const sourcePresence =
+      initializer != null && source.path !== null
+        ? readPresence(source.bindingId, initializer, {
+            path: source.path,
+            selection: t.isArrayPattern(root) ? "array-iterator" : "own-data",
+          })
+        : undefined;
+    const read = sourcePresence?.read;
+    markIncompletePatternTargets(
+      root,
+      source.path,
+      source.path === null || read === undefined
+        ? initializer ?? undefined
+        : (read(source.path) ?? initializer ?? undefined),
+      false,
+      false,
+      { state, read },
+    );
+  };
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
+    enter: (node) => {
+      if (
+        t.isVariableDeclarator(node) &&
+        (t.isObjectPattern(node.id) || t.isArrayPattern(node.id))
+      )
+        visit(node.id, node.init);
+      else if (
+        t.isAssignmentExpression(node, { operator: "=" }) &&
+        (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
+      )
+        visit(node.left, node.right);
+    },
+  });
+};
+
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
   program: t.Program,
@@ -308,6 +481,9 @@ const collectDestructuring = (
       pattern,
       pattern.name,
     );
+    const patternBlocked =
+      targetBinding !== undefined &&
+      state.destructuringIncompleteBindings.has(targetBinding.bindingId);
     assignmentBlocked ||=
       assignment &&
       targetBinding !== undefined &&
@@ -322,7 +498,7 @@ const collectDestructuring = (
         objectBindingId: source.bindingId,
         targetBindingId: targetBinding?.bindingId ?? null,
         propertyPath,
-        partial: assignmentBlocked,
+        partial: assignmentBlocked || patternBlocked,
         provenOwnSlot:
           !assignmentBlocked &&
           (ownSlot !== undefined ||

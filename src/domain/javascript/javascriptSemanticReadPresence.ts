@@ -63,6 +63,7 @@ export const isKnownDefinedSource = (node: t.Node | undefined): boolean =>
 /** Prove a direct data slot in its source at the time of the read. */
 export const createSemanticReadPresenceQuery = (
   state: JavaScriptSemanticAnalysisState,
+  requireReferenceEffects = true,
 ) => {
   const readers = new WeakMap<
     t.ObjectExpression,
@@ -160,7 +161,8 @@ export const createSemanticReadPresenceQuery = (
       : { binding, value: initialValue };
     if (
       origin === undefined ||
-      !hasRecordedReferenceEffects(origin.binding, state) ||
+      (requireReferenceEffects &&
+        !hasRecordedReferenceEffects(origin.binding, state)) ||
       (origin.binding !== binding &&
         !semanticBindingPrecedesCapture(
           origin.binding,
