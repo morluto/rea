@@ -15,7 +15,6 @@
   "src/hopper/HopperAnalysisProfile.ts": 1,
   "src/hopper/HopperImageCopy.ts": 1,
   "src/ida/IdaSessionClient.ts": 1,
-  "src/inspector/V8InspectorProvider.ts": 1,
   "src/javascript/sourceMaps/SourceMapCommand.ts": 4,
   "src/jeb/JebMcpConnectionOwner.ts": 1,
   "src/jeb/JebProvider.ts": 1,
