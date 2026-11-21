@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { missingJavaProbe } from "./GhidraInstallation.fixture.js";
-import { ok as javaProbeOk } from "../domain/result.js";
+import { err, ok as javaProbeOk } from "../domain/result.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import {
   afterEach,
@@ -140,12 +141,15 @@ describe("Ghidra doctor JDK alternatives", () => {
       .mockResolvedValue(current);
     const discover = vi
       .spyOn(installedJdks, "findGhidraInstalledJdks")
-      .mockResolvedValue([
-        {
-          home: "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
-          version: "27.0.1",
-        },
-      ]);
+      .mockResolvedValue({
+        truncated: true,
+        candidates: [
+          {
+            home: "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+            version: "27.0.1",
+          },
+        ],
+      });
     onTestFinished(() => {
       discover.mockRestore();
       inspect.mockRestore();
@@ -173,6 +177,9 @@ describe("Ghidra doctor JDK alternatives", () => {
         'JDK 27.0.1 at "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"',
       ),
     });
+    expect(
+      result.checks.find(({ name }) => name === "java")?.remediation,
+    ).toContain("Set JAVA_HOME directly to the JDK you want to check");
   });
 
   it("reads candidate versions from files and excludes out-of-range JDKs and runtime-only homes", async () => {
@@ -199,11 +206,63 @@ describe("Ghidra doctor JDK alternatives", () => {
       null,
       { resourceOwner: inspectionResources.owner },
     );
-    expect(matches).toEqual([
-      { home: join(root, "wrong-name-21"), version: "27.0.1" },
-    ]);
+    expect(matches).toEqual({
+      candidates: [{ home: join(root, "wrong-name-21"), version: "27.0.1" }],
+      truncated: false,
+    });
   });
 });
+
+it.each(["before discovery", "during discovery"])(
+  "preserves a completed Java diagnostic when cancelled %s",
+  async (when) => {
+    const control = new AbortController();
+    const output = {
+      stdout: "",
+      stderr: "invalid Java properties",
+      truncated: false,
+    };
+    const current = await inspection(
+      { installDir: INSTALL },
+      {
+        probeJava: () =>
+          err({
+            _tag: "GhidraJavaProbeFailure",
+            code: "version_unresolved",
+            detail: "Java probe did not produce valid properties",
+            output,
+          }),
+      },
+    );
+    const inspect = vi
+      .spyOn(installationProbe, "inspectGhidraInstallation")
+      .mockImplementation(async () => {
+        if (when === "before discovery") control.abort("stopped");
+        return current;
+      });
+    const discover = vi
+      .spyOn(installedJdks, "findGhidraInstalledJdks")
+      .mockImplementation(async () => {
+        control.abort("stopped");
+        throw cancelledBy("ghidra:doctor", control.signal);
+      });
+    onTestFinished(() => {
+      discover.mockRestore();
+      inspect.mockRestore();
+    });
+    const result = await inspectSystemGhidraProvider(
+      {},
+      inspectionResources.owner,
+      control.signal,
+    );
+    expect(discover).toHaveBeenCalledTimes(when === "before discovery" ? 0 : 1);
+    expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
+      ok: false,
+      code: "version_unresolved",
+      details: { output },
+    });
+  },
+);
 
 describe("Ghidra doctor integration", async () => {
   it("accepts a valid BYO Ghidra engine when Hopper is absent", async () => {

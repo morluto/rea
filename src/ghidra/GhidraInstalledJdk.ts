@@ -2,9 +2,11 @@ import { constants } from "node:fs";
 import { access, opendir, realpath, stat } from "node:fs/promises";
 import { posix } from "node:path";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
+import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { readStableFileBytes } from "../filesystem/readStableFileBytes.js";
 import {
   ArtifactFileCleanupFailure,
+  ArtifactResourceScope,
   withArtifactRegularFile,
 } from "../resources/index.js";
 import type { GhidraInstallationFileOptions } from "./GhidraInstallationProperties.js";
@@ -14,7 +16,7 @@ import {
 } from "./GhidraInstallationPolicy.js";
 import { ghidraJavaMajor } from "./GhidraJavaProbe.js";
 
-const MAX_DIRECTORY_ENTRIES = 128;
+const MAX_LOCATION_CANDIDATES = 128;
 const MAX_RELEASE_BYTES = 64 * 1024;
 const MAX_SUGGESTIONS = 5;
 
@@ -74,8 +76,12 @@ export const findGhidraInstalledJdks = async (
   requirement: GhidraJavaRequirement,
   selectedHome: string | null,
   options: GhidraInstallationFileOptions,
-): Promise<readonly { readonly home: string; readonly version: string }[]> => {
-  if (requirement.unresolved !== null) return [];
+): Promise<{
+  readonly candidates: readonly JdkCandidate[];
+  readonly truncated: boolean;
+}> => {
+  if (requirement.unresolved !== null)
+    return { candidates: [], truncated: false };
   const selected =
     selectedHome !== null && posix.isAbsolute(selectedHome)
       ? await realpath(selectedHome).catch(() => undefined)
@@ -83,19 +89,14 @@ export const findGhidraInstalledJdks = async (
   const seen = new Set<string>();
   if (selected !== undefined) seen.add(selected);
   const candidates: JdkCandidate[] = [];
-  for (const { root, javaHome } of locations) {
-    if (options.signal?.aborted)
-      throw cancelledBy("ghidra:doctor", options.signal);
-    const directory = await opendir(root).catch(() => undefined);
-    if (directory === undefined) continue;
-    let entries = 0;
-    for await (const entry of directory) {
-      if (options.signal?.aborted)
-        throw cancelledBy("ghidra:doctor", options.signal);
-      if (++entries > MAX_DIRECTORY_ENTRIES) break;
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-      const home = javaHome(entry.name);
-      if (home === undefined) continue;
+  let truncated = false;
+  for (const location of locations) {
+    const listed = await options.resourceOwner.run(() =>
+      listJdkHomes(location, options),
+    );
+    truncated ||= listed.truncated;
+    for (const home of listed.homes) {
+      assertDiscoveryActive(options.signal);
       const candidate = await readJdkCandidate(
         home,
         seen,
@@ -104,10 +105,62 @@ export const findGhidraInstalledJdks = async (
       );
       if (candidate === undefined) continue;
       candidates.push(candidate);
-      if (candidates.length >= MAX_SUGGESTIONS) return candidates;
+      if (candidates.length >= MAX_SUGGESTIONS)
+        return { candidates, truncated: true };
     }
   }
-  return candidates;
+  return { candidates, truncated };
+};
+
+const assertDiscoveryActive = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted) throw cancelledBy("ghidra:doctor", signal);
+};
+
+const listJdkHomes = async (
+  { root, javaHome }: JdkLocation,
+  { signal, resourceOwner }: GhidraInstallationFileOptions,
+): Promise<{
+  readonly homes: readonly string[];
+  readonly truncated: boolean;
+}> => {
+  assertDiscoveryActive(signal);
+  const handle = await opendir(root).catch(() => undefined);
+  if (handle === undefined) return { homes: [], truncated: false };
+  const directory = new OwnedDirectoryHandle(handle);
+  const resources = new ArtifactResourceScope();
+  const homes: string[] = [];
+  let truncated = false;
+  let outcome: { kind: "completed" } | { kind: "failed"; cause: unknown };
+  try {
+    for (;;) {
+      assertDiscoveryActive(signal);
+      const entry = await directory.handle.read();
+      if (entry === null) break;
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const home = javaHome(entry.name);
+      if (home === undefined) continue;
+      if (homes.length === MAX_LOCATION_CANDIDATES) {
+        truncated = true;
+        break;
+      }
+      homes.push(home);
+    }
+    outcome = { kind: "completed" };
+  } catch (cause: unknown) {
+    outcome = { kind: "failed", cause };
+  }
+  const close = await resources.release({
+    kind: "directory-handle",
+    resource: root,
+    handle: directory,
+  });
+  if (close.kind === "failed") {
+    resourceOwner.retain(resources, root);
+    throw resources.cleanupFailure(outcome, [close]);
+  }
+  if (outcome.kind === "failed") throw outcome.cause;
+  assertDiscoveryActive(signal);
+  return { homes, truncated };
 };
 
 interface JdkCandidate {

@@ -1,4 +1,5 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
@@ -11,6 +12,7 @@ import {
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
 } from "./GhidraAdmission.js";
 import {
+  ghidraInstallationDiagnostics,
   inspectGhidraInstallation,
   type GhidraInstallationCheck,
   type GhidraInstallationInspection,
@@ -192,23 +194,40 @@ const ghidraJavaAlternatives = async (
 ): Promise<string | undefined> => {
   const checks = selectedChecks(installation);
   if (
+    signal?.aborted ||
     !checks.some(({ name, status }) => name === "java" && status === "failed")
   )
     return undefined;
-  const candidates = await findGhidraInstalledJdks(
+  const discovery = await findGhidraInstalledJdks(
     ghidraJdkLocations(installation.platform, installation.architecture, home),
     installation.javaRequirement,
     installation.javaHome,
     { resourceOwner, ...(signal === undefined ? {} : { signal }) },
-  );
-  if (candidates.length === 0) return undefined;
-  const choices = candidates
+  ).catch((cause: unknown) => {
+    if (cause instanceof AnalysisCancelledError && !cause.cleanupIncomplete)
+      return undefined;
+    throw analysisClientFailureForOperation(
+      cause,
+      "ghidra",
+      "doctor",
+      ghidraInstallationDiagnostics(installation),
+    );
+  });
+  if (discovery === undefined || signal?.aborted) return undefined;
+  const choices = discovery.candidates
     .map(
       ({ home: javaHome, version }) =>
         `JDK ${version} at ${JSON.stringify(javaHome)}`,
     )
     .join(", ");
-  return `Installed JDKs within the declared version bounds: ${choices}. Set JAVA_HOME to a candidate and rerun doctor to verify it.`;
+  const suggestions =
+    choices === ""
+      ? ""
+      : `Installed JDKs within the declared version bounds: ${choices}. Set JAVA_HOME to a candidate and rerun doctor to verify it.`;
+  const limitation = discovery.truncated
+    ? "Installed JDK discovery reached its scan or suggestion limit. Set JAVA_HOME directly to the JDK you want to check and rerun doctor."
+    : "";
+  return [suggestions, limitation].filter(Boolean).join(" ") || undefined;
 };
 
 const selectedChecks = (
