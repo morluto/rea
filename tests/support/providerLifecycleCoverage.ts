@@ -1580,7 +1580,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       retry: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "shares concurrent close and retries browser cleanup after failure",
+          "retries all opening leases after a refusal and reports only those still owned",
         ),
       ),
     },
