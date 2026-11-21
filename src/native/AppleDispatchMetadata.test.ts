@@ -1331,7 +1331,9 @@ describe("Apple dispatch binary metadata", () => {
       });
     },
   );
+});
 
+describe("Objective-C ivar alignment metadata", () => {
   it("maps the ivar WORD_ALIGN sentinel to 8 and keeps other raw values unknown", () => {
     const bytes = fixture();
     bytes.writeUInt32LE(3, 0x504);
