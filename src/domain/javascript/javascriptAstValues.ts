@@ -78,6 +78,17 @@ export const unwrapJavaScriptExpression = (
   return { node: current, depth };
 };
 
+const signedNumericLiteralValue = (node: t.Node): number | undefined => {
+  if (
+    !t.isUnaryExpression(node) ||
+    (node.operator !== "+" && node.operator !== "-")
+  )
+    return undefined;
+  const operand = unwrapJavaScriptExpression(node.argument).node;
+  if (!t.isNumericLiteral(operand)) return undefined;
+  return node.operator === "-" ? -operand.value : operand.value;
+};
+
 /** Read one syntax-level primitive only when its value is exact. */
 export const readExactJavaScriptLiteral = (
   node: t.Node,
@@ -90,17 +101,9 @@ export const readExactJavaScriptLiteral = (
     return { found: true, value: node.value };
   if (t.isBooleanLiteral(node)) return { found: true, value: node.value };
   if (t.isNullLiteral(node)) return { found: true, value: null };
-  if (
-    t.isUnaryExpression(node) &&
-    (node.operator === "+" || node.operator === "-")
-  ) {
-    const operand = unwrapJavaScriptExpression(node.argument).node;
-    if (t.isNumericLiteral(operand)) {
-      const value = node.operator === "-" ? -operand.value : operand.value;
-      if (Number.isFinite(value) && !Object.is(value, -0))
-        return { found: true, value };
-    }
-  }
+  const signed = signedNumericLiteralValue(node);
+  if (signed !== undefined && Number.isFinite(signed) && !Object.is(signed, -0))
+    return { found: true, value: signed };
   if (
     t.isTemplateLiteral(node) &&
     node.expressions.length === 0 &&
@@ -143,13 +146,10 @@ export const semanticStaticPropertyKey = (
   if (t.isNullLiteral(property)) return "null";
   if (t.isBigIntLiteral(property)) return String(property.value);
   if (t.isUnaryExpression(property, { operator: "void" })) return "undefined";
-  if (t.isUnaryExpression(property, { operator: "+" })) {
-    const argument = unwrapJavaScriptExpression(property.argument).node;
-    if (t.isNumericLiteral(argument)) return String(argument.value);
-  }
+  const signed = signedNumericLiteralValue(property);
+  if (signed !== undefined) return String(signed);
   if (t.isUnaryExpression(property, { operator: "-" })) {
     const argument = unwrapJavaScriptExpression(property.argument).node;
-    if (t.isNumericLiteral(argument)) return String(-argument.value);
     if (t.isBigIntLiteral(argument)) return String(-BigInt(argument.value));
   }
   if (
@@ -168,9 +168,18 @@ export const staticJavaScriptTruthiness = (
   node: t.Node,
 ): boolean | undefined => {
   const value = unwrapJavaScriptExpression(node).node;
+  if (t.isStringLiteral(value)) return value.value.length > 0;
+  if (t.isTemplateLiteral(value)) {
+    if (value.quasis.some(({ value: { cooked } }) => cooked)) return true;
+    return value.expressions.length === 0 ? false : undefined;
+  }
+  return nonStringTruthiness(value);
+};
+
+/** Truthiness only when unwrapped syntax also proves the value is not a string. */
+export const nonStringTruthiness = (value: t.Node): boolean | undefined => {
   if (t.isBooleanLiteral(value)) return value.value;
   if (t.isNullLiteral(value)) return false;
-  if (t.isStringLiteral(value)) return value.value.length > 0;
   if (t.isNumericLiteral(value))
     return value.value !== 0 && !Number.isNaN(value.value);
   // Babel exposes a BigIntLiteral value as a bigint or, in older versions, its
@@ -182,12 +191,8 @@ export const staticJavaScriptTruthiness = (
       return undefined;
     }
   }
-  if (
-    t.isUnaryExpression(value) &&
-    value.operator === "-" &&
-    t.isNumericLiteral(value.argument)
-  )
-    return value.argument.value !== 0 && !Number.isNaN(value.argument.value);
+  const signed = signedNumericLiteralValue(value);
+  if (signed !== undefined) return Boolean(signed);
   // Each of these evaluates to a fresh object, and every object is truthy.
   if (
     t.isObjectExpression(value) ||

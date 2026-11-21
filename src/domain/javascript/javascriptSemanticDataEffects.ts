@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.js";
 import {
   bindingAssignmentMayPrecede,
   bindingInitializersMayPrecede,
@@ -12,6 +13,7 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
+  staticJavaScriptTruthiness,
   javaScriptExpressionWrapperTarget,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -152,6 +154,12 @@ const configurationDetails = (
     (fsMethod === null &&
       promises?.path.length === 1 &&
       promises.path[0] === "readFile");
+  if (
+    fsMethod === "readFile" &&
+    fs?.builtinAuthority !== "candidate" &&
+    rejectsReadFileCallback(node)
+  )
+    return null;
   return isFileRead
     ? {
         kind: "file",
@@ -164,6 +172,26 @@ const configurationDetails = (
           literalString(node.arguments[0]) === null ? "partial" : "complete",
       }
     : null;
+};
+
+/** Node selects callback || options before starting any read. */
+const rejectsReadFileCallback = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  if (
+    node.arguments.slice(0, 3).some((argument) => t.isSpreadElement(argument))
+  )
+    return false;
+  const options = node.arguments[1];
+  const callback = node.arguments[2];
+  const truthy =
+    callback === undefined ? false : staticJavaScriptTruthiness(callback);
+  if (truthy === true) return rejectsSemanticEventListener(callback);
+  if (truthy === false) return rejectsSemanticEventListener(options);
+  return (
+    rejectsSemanticEventListener(callback) &&
+    rejectsSemanticEventListener(options)
+  );
 };
 
 const processConfigurationMember = (

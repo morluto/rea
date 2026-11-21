@@ -15,6 +15,15 @@ const spawnsFor = (call: string) =>
   ).childProcessSpawns;
 
 it.each([
+  ["`pipe`", "pipe"],
+  ["`p${suffix}`", "dynamic"],
+])("reads a template stdio mode %s", (stdio, stdioMode) => {
+  expect(spawnsFor(`fork("worker.js", { stdio: ${stdio} })`)).toMatchObject([
+    { stdioMode },
+  ]);
+});
+
+it.each([
   ["three inherits", `["inherit", "inherit", "inherit"]`],
   ["three pipes", `["pipe", "pipe", "pipe"]`],
   ["ignore then pipes", `["ignore", "pipe", "pipe"]`],

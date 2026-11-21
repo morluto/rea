@@ -15,6 +15,7 @@ import {
 } from "./javascriptSemanticExpressionShapes.js";
 import {
   readExactJavaScriptLiteral,
+  nonStringTruthiness,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
   staticObjectCopyPropertyReader,
@@ -536,10 +537,11 @@ const stdioMode = (
   const value = unwrapJavaScriptExpression(lookup.value).node;
   if (context.isNullish(value))
     return unsetStdioMode(readOption, method, context);
-  if (t.isStringLiteral(value)) return value.value;
+  const literal = readExactJavaScriptLiteral(value);
+  if (literal.found && typeof literal.value === "string") return literal.value;
   if (t.isArrayExpression(value)) return "array";
   // fork ignores any other known stdio value and falls back to `silent`.
-  if (method === "fork" && staticJavaScriptTruthiness(value) !== undefined)
+  if (method === "fork" && nonStringTruthiness(value) !== undefined)
     return unsetStdioMode(readOption, method, context);
   return "dynamic";
 };
