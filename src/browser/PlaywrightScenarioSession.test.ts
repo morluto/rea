@@ -1202,54 +1202,34 @@ it("refuses the next step after the policy session detaches", async () => {
   await session.close().catch(() => undefined);
 });
 
-it("finishes initialization cleanup independently of request cancellation", async () => {
-  const { context, opened } = fixture();
-  const controller = new AbortController();
-  const closeBrowser = vi.fn(async () => undefined);
-  const removeProfile = vi.fn(async () => undefined);
-  mocks.openBrowser.mockResolvedValue({
-    ...opened,
-    cleanup: new PlaywrightScenarioBrowserCleanupOwner({
-      closeBrowser,
-      removeProfile,
-    }),
-  });
-  context.addCookies.mockImplementationOnce(async () => {
-    controller.abort();
-  });
-  const retainCleanup = vi.fn();
-
-  await expect(
-    PlaywrightScenarioSession.open(
-      scenario,
-      {},
-      {
-        signal: controller.signal,
-        retainCleanup,
-      },
-    ),
-  ).rejects.toMatchObject({ _tag: "AnalysisCancelledError" });
-  expect(closeBrowser).toHaveBeenCalledTimes(1);
-  expect(removeProfile).toHaveBeenCalledTimes(1);
-  expect(retainCleanup).not.toHaveBeenCalled();
-});
-
-it.each([false, true])(
-  "joins pending cookie setup before releasing an attached browser (late rejection: %s)",
-  async (rejectCookies) => {
-    const { context, cleanup, storage } = fixture();
+it.each([
+  { mode: "launch", late: "fulfilled" },
+  { mode: "connect", late: "fulfilled" },
+  { mode: "connect", late: "rejected" },
+])(
+  "releases a cancelled $mode session after $late cookie setup settles",
+  async ({ mode, late }) => {
+    const { context, page, opened, cleanup, storage } = fixture();
+    const launched =
+      mode === "launch"
+        ? {
+            closeBrowser: vi.fn(async () => undefined),
+            removeProfile: vi.fn(async () => undefined),
+          }
+        : undefined;
+    if (launched !== undefined)
+      mocks.openBrowser.mockResolvedValue({
+        ...opened,
+        cleanup: new PlaywrightScenarioBrowserCleanupOwner(launched),
+      });
+    const close = launched?.closeBrowser ?? cleanup.close;
     const controller = new AbortController();
     const reason = { stop: "during cookie setup" };
-    const started = deferred();
-    const cookies = deferred();
-    context.addCookies.mockImplementationOnce(async () => {
-      started.resolve();
-      await cookies.promise;
-      if (rejectCookies)
-        throw new Error("cookie setup rejected after cancellation");
-    });
+    const cookies = phaseGate<void, undefined>();
+    context.addCookies.mockImplementationOnce(() => cookies.hold());
+
     const input = browserScenarioSchema.parse({
-      ...connectedScenario("allow"),
+      ...(mode === "launch" ? scenario : connectedScenario("allow")),
       storage: {
         cookies: [
           {
@@ -1263,45 +1243,63 @@ it.each([false, true])(
         ],
       },
     });
+    const retainCleanup = vi.fn();
     const provider = new PlaywrightBrowserScenarioProvider(
       (scenario, options) =>
-        PlaywrightScenarioSession.open(scenario, {}, options),
+        PlaywrightScenarioSession.open(
+          scenario,
+          {},
+          {
+            ...options,
+            retainCleanup: (...args) => {
+              retainCleanup(...args);
+              options.retainCleanup?.(...args);
+            },
+          },
+        ),
     );
     const result = provider.captureScenario(input, {
       signal: controller.signal,
     });
     try {
-      await awaitAcknowledgement(
-        started.promise,
-        result,
-        "cookie initialization",
-      );
+      await cookies.reached(result, "cookie initialization");
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(cleanup.close).not.toHaveBeenCalled();
-      cookies.resolve();
+      expect(close).not.toHaveBeenCalled();
+      if (late === "rejected")
+        cookies.reject(new Error("cookie acknowledgement rejected"));
+      else cookies.release(undefined);
+
       const outcome = await result;
       if (outcome.ok)
         throw new Error("Expected cancelled cookie initialization");
-      expect(outcome.error._tag).toBe("AnalysisCancelledError");
+      expect(outcome.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cleanupIncomplete: false,
+      });
       expect(outcome.error.cause).toBe(reason);
-      expect(outcome.error.cleanupIncomplete).toBe(false);
-      expect(cleanup.close).toHaveBeenCalledOnce();
-      expect(storage?.initialize).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledOnce();
+      if (launched !== undefined)
+        expect(launched.removeProfile).toHaveBeenCalledOnce();
+      expect(retainCleanup).not.toHaveBeenCalled();
+      expect(storage.initialize).not.toHaveBeenCalled();
+      expect(page.goto).not.toHaveBeenCalled();
     } finally {
-      cookies.resolve();
+      cookies.release(undefined);
       await result;
       await provider.close();
     }
   },
 );
 
-it("can retry cleanup of a browser that opened after request cancellation", async () => {
-  const { opened } = fixture();
+it("retries the same cleanup lease for a browser that opens after cancellation", async () => {
+  const { opened, page } = fixture();
+  const closing = phaseGate();
+  const failure = new Error("transport close failed");
   const closeBrowser = vi
     .fn()
-    .mockRejectedValueOnce(new Error("transport close failed"))
-    .mockResolvedValueOnce(undefined);
+    .mockImplementationOnce(() => closing.hold())
+    .mockResolvedValue(undefined);
   const removeProfile = vi.fn(async () => undefined);
   const lateOpened = {
     ...opened,
@@ -1310,11 +1308,8 @@ it("can retry cleanup of a browser that opened after request cancellation", asyn
       removeProfile,
     }),
   };
-  let resolveOpening: ((value: typeof lateOpened) => void) | undefined;
-  const opening = new Promise<typeof lateOpened>((resolve) => {
-    resolveOpening = resolve;
-  });
-  mocks.openBrowser.mockReturnValueOnce(opening);
+  const opening = phaseGate<void, typeof lateOpened>();
+  mocks.openBrowser.mockImplementationOnce(() => opening.hold());
   const controller = new AbortController();
   const retained: AnalysisCleanupLease[] = [];
   const result = PlaywrightScenarioSession.open(
@@ -1322,20 +1317,35 @@ it("can retry cleanup of a browser that opened after request cancellation", asyn
     {},
     {
       signal: controller.signal,
-      retainCleanup: (close) => retained.push(close),
+      retainCleanup: (lease) => retained.push(lease),
     },
   );
-  const cancelled = expect(result).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-  });
-  controller.abort();
-  await cancelled;
-  resolveOpening?.(lateOpened);
-  await waitFor(() => expect(closeBrowser).toHaveBeenCalledTimes(1));
-  expect(retained).toHaveLength(1);
-  await expect(retained[0]?.release()).resolves.toBeUndefined();
-  expect(closeBrowser).toHaveBeenCalledTimes(2);
-  expect(removeProfile).toHaveBeenCalledTimes(1);
+  try {
+    await opening.reached(result, "browser opening");
+    const cancelled = expect(result).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+    controller.abort();
+    await cancelled;
+    expect(retained).toHaveLength(1);
+    const lease = retained[0]!;
+    opening.release(lateOpened);
+
+    const firstClose = lease.release();
+    await closing.reached(firstClose, "late transport cleanup");
+    expect(removeProfile).not.toHaveBeenCalled();
+    closing.reject(failure);
+    await expect(firstClose).rejects.toBe(failure);
+    expect(removeProfile).not.toHaveBeenCalled();
+    await expect(lease.release()).resolves.toBeUndefined();
+    expect(closeBrowser).toHaveBeenCalledTimes(2);
+    expect(removeProfile).toHaveBeenCalledOnce();
+    expect(page.goto).not.toHaveBeenCalled();
+  } finally {
+    opening.release(lateOpened);
+    closing.release();
+    await result.catch(() => undefined);
+  }
 });
 
 it("uses browser disconnect as terminal storage release after detach failure", async () => {
