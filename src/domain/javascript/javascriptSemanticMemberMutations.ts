@@ -2164,6 +2164,11 @@ export function* collectSemanticMemberMutationsSteps(
       );
     else if (node.init != null) markEscaped(node.init, exit);
   };
+  const callableReads: {
+    callee: t.Node;
+    at: t.Node;
+    invocation?: t.CallExpression | t.OptionalCallExpression;
+  }[] = [];
   const markInvocation = (
     node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   ): void => {
@@ -2346,7 +2351,12 @@ export function* collectSemanticMemberMutationsSteps(
               ambientEffectAt(
                 ["global", "Object", "prototype", path[0]!],
                 node,
-              )) &&
+              ) ||
+              (origin?.specifier.replace(/^node:/u, "") === "events" &&
+                ambientEffectAt(
+                  ["global", "Function", "prototype", path[0]!],
+                  node,
+                ))) &&
             !nullPrototype
           ) {
             // Unknown and inherited descriptors may invoke a setter with
@@ -2372,9 +2382,11 @@ export function* collectSemanticMemberMutationsSteps(
       t.isNewExpression(node) ? undefined : node,
     );
     if (invocation?.kind !== "known")
-      for (const candidate of returned.calleeCallResults ?? [])
-        if (interop.boundIntrinsic(candidate)?.kind === "known")
-          markEscaped(candidate, node, [], candidate);
+      callableReads.push({
+        callee: node.callee,
+        at: node,
+        ...(t.isNewExpression(node) ? {} : { invocation: node }),
+      });
     for (const source of returned.references)
       markEscaped(source.node, node, source.projection);
     // The invocation owner includes captured bind arguments and call/apply
@@ -2519,6 +2531,7 @@ export function* collectSemanticMemberMutationsSteps(
             break;
           case "tagged-template":
             if (t.isTaggedTemplateExpression(node)) {
+              callableReads.push({ callee: node.tag, at: node });
               for (const source of returnedReferences(node.tag).references)
                 markEscaped(source.node, node, source.projection);
               markReceiver(node.tag, node);
@@ -2555,6 +2568,13 @@ export function* collectSemanticMemberMutationsSteps(
         }
     },
   });
+  // Function bodies can be visited before assignment of the callable they select.
+  for (const { callee, at, invocation } of callableReads) {
+    const returned = returnedReferences(callee, invocation);
+    for (const candidate of returned.calleeCallResults ?? [])
+      if (interop.boundIntrinsic(candidate)?.kind === "known")
+        markEscaped(candidate, at, [], candidate);
+  }
   // Descriptor proof needs every syntactic write, including those after a
   // function definition. First settle defaults, copied references and iterable
   // origins, then revisit descriptors against that completed mutation epoch.

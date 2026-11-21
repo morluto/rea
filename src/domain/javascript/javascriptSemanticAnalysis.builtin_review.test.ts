@@ -2078,3 +2078,81 @@ it("distinguishes evaluating a scalar from subsequently passing its object", () 
     ),
   ).toEqual(["before"]);
 });
+
+it.each([
+  [
+    "const fs=require('fs');function replace(t){t.readFileSync=()=>{}}const set=(Reflect.set=replace,Reflect.set);set(fs,'readFileSync',null,{});fs.readFileSync('after')",
+    [],
+  ],
+  [
+    "const fs=require('fs');Object.defineProperty(Function.prototype,'hook',{set(v){this.fs.readFileSync=v}});Reflect.set(require('events'),'hook',()=>{},{fs});fs.readFileSync('after')",
+    [],
+  ],
+  [
+    "const fs=require('fs'),h={};function use(){h.set()}h.set=Reflect.set.bind(null,fs,'readFileSync',()=>{});use();fs.readFileSync('after')",
+    [],
+  ],
+  [
+    "eval('Object.create=()=>module');Reflect.set(module,'require',replacement,Object.create(null));require('fs').readFileSync('after')",
+    [],
+  ],
+  [
+    "const fs=require('fs');const set=Reflect.set.bind(null,fs,'readFileSync',()=>{},fs);set``;fs.readFileSync('after')",
+    [],
+  ],
+  [
+    "Object.assign=(t,v)=>{if(typeof v==='object')v.require=replacement};const box={get owner(){observe(module);return 0},...{owner:0}};Object.assign({},typeof box.owner);require('fs').readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,v)=>{if(typeof v==='object')v.require=replacement};Object.assign({},module.id);require('fs').readFileSync('kept');module.id=module;Object.assign({},module.id);require('fs').readFileSync('after')",
+    ["kept"],
+  ],
+  [
+    "const fs=require('fs'),h={};function use(){h.set()}h.set=Reflect.set.bind(null,{},'readFileSync',()=>{});use();fs.readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "const fs=require('fs');const {tag}={tag:Reflect.set.bind(null,{},'readFileSync',()=>{})};tag``;fs.readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,v)=>{if(typeof v==='object')v.require=replacement};const box={...{owner:0},get owner(){observe(module);return 0}};Object.assign({},typeof box.owner);require('fs').readFileSync('after')",
+    [],
+  ],
+  [
+    "Object.assign=(t,v)=>{if(typeof v==='object')v.require=replacement};const box={get owner(){observe(module);return 0},...unknown};Object.assign({},typeof box.owner);require('fs').readFileSync('after')",
+    [],
+  ],
+  [
+    "const fs=require('fs');const set=(0,Reflect.set);Reflect.set=(t)=>{t.readFileSync=()=>{}};set(fs,'readFileSync',null,{});fs.readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "const make=Object.create;eval('Object.create=()=>module');Reflect.set(module,'require',replacement,make(null));require('fs').readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,v)=>{if(typeof v==='object')v.require=replacement};const id=module.id;module.id=module;Object.assign({},id);require('fs').readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,v)=>{if(typeof v==='object')v.require=replacement};const spread={owner:0};const box={get owner(){observe(module);return 0},...spread};Object.assign({},typeof box.owner);require('fs').readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,v)=>{if(typeof v==='object')v.require=replacement};const box={get owner(){observe(module);return 0},...{...{owner:0}}};Object.assign({},typeof box.owner);require('fs').readFileSync('kept')",
+    ["kept"],
+  ],
+  [
+    "Object.assign=(t,v)=>{if(typeof v==='object')v.require=replacement};const spread={owner:0};delete spread.owner;const box={get owner(){observe(module);return 0},...spread};Object.assign({},typeof box.owner);require('fs').readFileSync('after')",
+    [],
+  ],
+] as const)(
+  "tracks native reads through selected effects: %s",
+  (source, expected) => {
+    expect(
+      analyzeCommonJs(source).configurationOperations.map(({ key }) => key),
+    ).toEqual(expected);
+  },
+);

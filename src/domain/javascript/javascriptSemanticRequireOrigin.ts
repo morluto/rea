@@ -78,7 +78,6 @@ import {
   semanticBindingEffectGeneration,
   semanticEffectMayFollow,
   createSemanticOpaqueReferenceEffectQuery,
-  ambientPathMayHaveChanged,
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
   ambientPathOrMemberMayHaveChanged,
@@ -2570,10 +2569,12 @@ const writesModuleRequire = (
         const first = path[0];
         if (
           typeof first === "string" &&
-          ["id", "filename", "loaded"].includes(first) &&
-          !ambientPathMayHaveChanged(state, ["commonjs-module", first])
-        )
-          continue;
+          ["id", "filename", "loaded"].includes(first)
+        ) {
+          timeDependent = true;
+          if (!ambientEffectAt(["commonjs-module", first], readAt, call))
+            continue;
+        }
         return true;
       }
       if (t.isIdentifier(value)) {

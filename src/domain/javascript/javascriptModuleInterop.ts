@@ -42,6 +42,7 @@ import {
 import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
 import {
   opaqueCodeMayRebindBinding,
+  opaqueCodeMayChangeGlobalRead,
   semanticAmbientIntrinsicWrites,
   semanticAmbientEffectGeneration,
   semanticEffectMayPrecede,
@@ -361,7 +362,7 @@ export const createSemanticModuleInterop = (
     if (path === undefined) return undefined;
     const visited = new Set<string>();
     let current = node;
-    let capturedAt = node;
+    let capturedAt = javaScriptExpressionValue(node);
     let suffixLength = 0;
     for (;;) {
       const { root, members } = electronMemberPath(
@@ -385,7 +386,8 @@ export const createSemanticModuleInterop = (
       )
         return undefined;
       visited.add(binding.bindingId);
-      if (suffixLength === 0) capturedAt = initializer.node;
+      if (suffixLength === 0)
+        capturedAt = javaScriptExpressionValue(initializer.node);
       suffixLength += initializer.projection.length;
       current = initializer.node;
     }
@@ -796,12 +798,11 @@ export const createSemanticModuleInterop = (
     if (t.isNewExpression(current))
       return constructsFreshObject(current.callee);
     if (t.isCallExpression(current)) {
-      const invocation = resolveJavaScriptIntrinsicInvocation(
+      const invocation = resolveIntrinsicInvocation(
         current,
         intrinsicPath,
-        boundIntrinsic,
-        intrinsicReadChanged,
-        nativeArrayIteration,
+        (capture, path) =>
+          opaqueCodeMayChangeGlobalRead(capture, state, path[1]!),
       );
       return (
         invocation?.kind === "known" &&

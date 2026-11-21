@@ -836,6 +836,7 @@ const objectPropertyReferences = (
 
 const objectExpressionDefinedKeys = (
   root: t.ObjectExpression,
+  resolveSpread?: (source: t.Node) => t.ObjectExpression | undefined,
 ): ReadonlySet<string> => {
   const pending: t.ObjectExpression[] = [root];
   const seen = new Set<t.ObjectExpression>();
@@ -846,8 +847,10 @@ const objectExpressionDefinedKeys = (
     seen.add(object);
     for (const property of object.properties) {
       if (t.isSpreadElement(property)) {
-        if (t.isObjectExpression(property.argument))
-          pending.push(property.argument);
+        const literal = t.isObjectExpression(property.argument)
+          ? property.argument
+          : resolveSpread?.(property.argument);
+        if (literal !== undefined) pending.push(literal);
         continue;
       }
       const name = semanticStaticPropertyKey(property.key, property.computed);
@@ -959,6 +962,7 @@ export const semanticNativePrototypeChain = (
 const ownLiteralPropertyMatches = (
   object: t.Node,
   key: string,
+  spreadLiteral: (source: t.Node) => t.ObjectExpression | undefined,
   acceptsGetter?: (method: t.ObjectMethod) => boolean,
 ): boolean => {
   if (!t.isObjectExpression(object)) return false;
@@ -966,7 +970,15 @@ const ownLiteralPropertyMatches = (
     const property = object.properties[index]!;
     // Object spread creates data properties, so it cannot turn an earlier
     // own data property into an accessor.
-    if (t.isSpreadElement(property)) continue;
+    if (t.isSpreadElement(property)) {
+      const literal = spreadLiteral(property.argument);
+      if (
+        literal !== undefined &&
+        objectExpressionDefinedKeys(literal, spreadLiteral).has(key)
+      )
+        return true;
+      continue;
+    }
     const name = semanticStaticPropertyKey(property.key, property.computed);
     if (name === null) {
       if (t.isObjectMethod(property) && property.kind !== "method")
@@ -996,17 +1008,7 @@ export const createSemanticOwnPropertyReadQuery =
     at: t.Node,
     acceptsGetter?: (method: t.ObjectMethod) => boolean,
   ): boolean => {
-    const pending = [{ node: target, projection: [] as readonly unknown[] }];
-    const seen = new Set<t.Node>();
-    while (pending.length > 0) {
-      const candidate = pending.pop()!;
-      const value = javaScriptExpressionValue(candidate.node);
-      if (candidate.projection.length > 0 || seen.has(value)) return false;
-      seen.add(value);
-      if (!t.isIdentifier(value)) {
-        if (!ownLiteralPropertyMatches(value, key, acceptsGetter)) return false;
-        continue;
-      }
+    const unchangedInitializers = (value: t.Identifier, at: t.Node) => {
       const binding = resolveSemanticBindingState(state, value, value.name);
       if (
         binding === undefined ||
@@ -1025,13 +1027,47 @@ export const createSemanticOwnPropertyReadQuery =
           "activation",
         )
       )
-        return false;
+        return undefined;
       const { initializers } = semanticMutationInitializers(
         binding,
         value,
         state.parentsByNode,
       );
-      if (initializers.length === 0) return false;
+      return initializers.length === 0 ? undefined : initializers;
+    };
+    // A spread snapshots enumerable keys when it runs. Follow a stable literal
+    // alias at that capture, before selecting any later getter on the copy.
+    const spreadLiteral = (source: t.Node): t.ObjectExpression | undefined => {
+      let value = javaScriptExpressionValue(source);
+      const seen = new Set<t.Node>();
+      while (t.isIdentifier(value) && !seen.has(value)) {
+        seen.add(value);
+        const initializers = unchangedInitializers(value, source);
+        if (
+          initializers?.length !== 1 ||
+          initializers[0]!.projection.length !== 0
+        )
+          return undefined;
+        value = javaScriptExpressionValue(initializers[0]!.node);
+      }
+      return t.isObjectExpression(value) ? value : undefined;
+    };
+    const pending = [{ node: target, projection: [] as readonly unknown[] }];
+    const seen = new Set<t.Node>();
+    while (pending.length > 0) {
+      const candidate = pending.pop()!;
+      const value = javaScriptExpressionValue(candidate.node);
+      if (candidate.projection.length > 0 || seen.has(value)) return false;
+      seen.add(value);
+      if (!t.isIdentifier(value)) {
+        if (
+          !ownLiteralPropertyMatches(value, key, spreadLiteral, acceptsGetter)
+        )
+          return false;
+        continue;
+      }
+      const initializers = unchangedInitializers(value, at);
+      if (initializers === undefined) return false;
       pending.push(...initializers);
     }
     return true;
