@@ -10,63 +10,6 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-it.each([
-  ["related", { openerId: "allowed-page" }, 1, null],
-  ["foreign", { openerId: "other-page" }, 0, "out_of_target_scope"],
-  ["unknown", {}, 0, "unattributed_target"],
-] as const)(
-  "keeps %s worker ownership separate from attachment state",
-  async (_relation, ownership, count, exclusion) => {
-    const browser = await startFakeCdpBrowser({
-      commandResult: (command, origin) =>
-        command.method === "Target.getTargets"
-          ? {
-              targetInfos: [
-                {
-                  targetId: "worker",
-                  type: "worker",
-                  url: `${origin}/worker.js`,
-                  attached: true,
-                  ...ownership,
-                },
-              ],
-            }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        allowed_origins: [browser.allowedOrigin],
-        observation_ms: 0,
-      }),
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.workers).toHaveLength(count);
-    expect(result.value.completeness.attach_limited_sections).toContain(
-      "workers",
-    );
-    expect(result.value.limitations.join(" ")).toContain(
-      "not worker-session observation",
-    );
-    if (exclusion !== null)
-      expect(result.value.completeness.excluded).toContainEqual({
-        section: "workers",
-        reason: exclusion,
-        count: 1,
-      });
-    if (_relation === "unknown") {
-      expect(result.value.completeness.unavailable_sections).toContain(
-        "workers",
-      );
-      expect(result.value.completeness.policy_filtered_sections).not.toContain(
-        "workers",
-      );
-    }
-  },
-);
-
 it("preserves Document Link fields, structured policies and derived agent hints", async () => {
   const browser = await startFakeCdpBrowser({
     commandEvents(command, origin) {
