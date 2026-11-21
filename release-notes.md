@@ -212,6 +212,7 @@
 * **capture:** consolidate historical worker lifecycle checks ([#13216](https://github.com/morluto/rea/issues/13216)) ([e5850af](https://github.com/morluto/rea/commit/e5850aff15178098fa8ae26a3b70b946654af454))
 * **capture:** consolidate Playwright trace contracts ([#13207](https://github.com/morluto/rea/issues/13207)) ([339f0ac](https://github.com/morluto/rea/commit/339f0ace57b2c365972c261b228ff23bcbe6586b))
 * **capture:** consolidate Protobuf descriptor identity checks ([#13214](https://github.com/morluto/rea/issues/13214)) ([1e89bcc](https://github.com/morluto/rea/commit/1e89bcc2163ff2f081b6d0f011572c0389dfaeb6))
+* **capture:** consolidate redirect and URL admission checks ([#13218](https://github.com/morluto/rea/issues/13218)) ([0ee5f84](https://github.com/morluto/rea/commit/0ee5f8461e44fbf1b0cea9ec590ef41b6d4971c7))
 * **capture:** prove retained summaries survive source deletion ([#13206](https://github.com/morluto/rea/issues/13206)) ([a2faf4c](https://github.com/morluto/rea/commit/a2faf4cc343608862c4c7d496c3b1c6520e299fb))
 * **capture:** retain independent Playwright trace coverage checks ([#13208](https://github.com/morluto/rea/issues/13208)) ([62d836a](https://github.com/morluto/rea/commit/62d836a630bfd97e10b21088470ac3a80e3ea809))
 * **captures:** consolidate packet provider coverage ([4b79eaa](https://github.com/morluto/rea/commit/4b79eaa9edae781b4c094caea9158d0f39498492))
