@@ -248,8 +248,18 @@ it("fingerprints decoded cache bytes and leaves malformed cache entries incomple
     expect(cacheEntries).toHaveLength(entries.length);
     expect(cacheEntries).toEqual(
       expect.arrayContaining(
-        entries.map(({ decoded }) =>
+        entries.map(({ path, decoded }) =>
           expect.objectContaining({
+            identity_sha256: createHash("sha256")
+              .update(
+                JSON.stringify({
+                  cache: "assets-v1",
+                  requestHeaders: [],
+                  requestMethod: "GET",
+                  requestURL: browser.allowedOrigin + path,
+                }),
+              )
+              .digest("hex"),
             complete: decoded !== null,
             value_sha256:
               decoded === null
