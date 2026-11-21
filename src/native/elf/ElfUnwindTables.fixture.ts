@@ -68,6 +68,8 @@ export interface ElfUnwindFixtureOptions {
    * a `.dynamic` DT_PLTGOT entry.
    */
   readonly datarel?: "got" | "none" | "dynamic";
+  /** Overrides the dynamic records, including the position of DT_NULL. */
+  readonly dynamicEntries?: readonly (readonly [tag: number, value: number])[];
   /**
    * First CIE and first FDE use the 0xffffffff extended (64-bit) length
    * escape; their CIE ID / CIE pointer stays 4 bytes, as `.eh_frame` requires.
@@ -711,12 +713,17 @@ const addOptionalSections = (
       entsize: 8,
       align: 8,
     });
-  if (options.datarel === "dynamic") {
+  if (options.datarel === "dynamic" || options.dynamicEntries !== undefined) {
     const width = bits === 64 ? 16 : 8;
-    const dynamic = Buffer.alloc(width * 2);
-    // DT_PLTGOT, then DT_NULL.
-    writeWord(dynamic, 0, 3, bits, little);
-    writeWord(dynamic, width / 2, UNWIND_GOT_VA, bits, little);
+    const entries = options.dynamicEntries ?? [
+      [3, UNWIND_GOT_VA],
+      [0, 0],
+    ];
+    const dynamic = Buffer.alloc(width * entries.length);
+    for (const [index, [tag, value]] of entries.entries()) {
+      writeWord(dynamic, index * width, tag, bits, little);
+      writeWord(dynamic, index * width + width / 2, value, bits, little);
+    }
     sections.push({
       name: ".dynamic",
       type: options.dynamicSection === false ? 1 : 6,

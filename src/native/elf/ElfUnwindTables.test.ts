@@ -866,6 +866,97 @@ it.each([
   },
 );
 
+const gotRecord = [3, UNWIND_GOT_VA] as const;
+const conflictingGotRecord = [3, UNWIND_GOT_VA + 0x100] as const;
+const dynamicTerminator = [0, 0] as const;
+const fillerDynamicRecords = (count: number) =>
+  Array.from({ length: count }, () => [21, 0] as const);
+
+it.each([
+  ["equal GOT records", [gotRecord, gotRecord, dynamicTerminator]],
+  [
+    "a conflicting record after DT_NULL",
+    [gotRecord, dynamicTerminator, conflictingGotRecord],
+  ],
+  [
+    "DT_NULL at the scan limit",
+    [
+      gotRecord,
+      ...fillerDynamicRecords(4094),
+      dynamicTerminator,
+      conflictingGotRecord,
+    ],
+  ],
+] as const)("resolves both ranges after %s", (_label, dynamicEntries) => {
+  const report = parse(
+    elfUnwindFixture({ header: "match", datarel: "dynamic", dynamicEntries }),
+  );
+  expect(report.ranges.map((range) => range.start)).toEqual([
+    address(UNWIND_FN_A),
+    address(UNWIND_FN_B),
+  ]);
+  expect(report.coverage.status).toBe("complete");
+});
+
+it.each([
+  [
+    "conflicting GOT records",
+    [gotRecord, conflictingGotRecord, dynamicTerminator],
+  ],
+  ["a missing DT_NULL", [gotRecord]],
+  [
+    "a conflicting record after the scan limit",
+    [
+      gotRecord,
+      ...fillerDynamicRecords(4095),
+      conflictingGotRecord,
+      dynamicTerminator,
+    ],
+  ],
+] as const)(
+  "retains only the independent range after %s",
+  (_label, dynamicEntries) => {
+    const report = parse(
+      elfUnwindFixture({ header: "match", datarel: "dynamic", dynamicEntries }),
+    );
+    expect(report.ranges.map((range) => range.start)).toEqual([
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations).toContain(GOT_UNKNOWN);
+  },
+);
+
+it.each([
+  {
+    name: "a terminated directory without a GOT tag",
+    dynamicEntries: [dynamicTerminator],
+    ranges: [UNWIND_FN_A, UNWIND_FN_B],
+    status: "complete",
+  },
+  {
+    name: "an unexamined GOT tag beyond the scan limit",
+    dynamicEntries: [
+      ...fillerDynamicRecords(4096),
+      conflictingGotRecord,
+      dynamicTerminator,
+    ],
+    ranges: [UNWIND_FN_B],
+    status: "partial",
+  },
+] as const)(
+  "checks directory coverage before using the allocated GOT fallback ($name)",
+  ({ dynamicEntries, ranges, status }) => {
+    const report = parse(
+      elfUnwindFixture({ header: "match", datarel: "got", dynamicEntries }),
+    );
+    expect(report.ranges.map((range) => range.start)).toEqual(
+      ranges.map(address),
+    );
+    expect(report.coverage.status).toBe(status);
+  },
+);
+
 it("keeps the GOT unknown when repeated allocated .got.plt sections disagree", () => {
   const report = parse(
     elfUnwindFixture({

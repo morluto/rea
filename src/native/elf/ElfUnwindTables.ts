@@ -11,7 +11,11 @@ import {
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
-import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
+import {
+  elfDynamicTableGeometry,
+  walkElfDynamicTable,
+} from "../../domain/elfDynamicEntry.js";
+import { err } from "../../domain/result.js";
 import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   elfStringTableText,
@@ -49,7 +53,6 @@ const SHT_STRTAB = 3;
 const SHT_DYNAMIC = 6;
 const SHT_NOBITS = 8;
 const SHT_DYNSYM = 11;
-const DT_NULL = 0n;
 const DT_PLTGOT = 3n;
 /** Bound on dynamic entries scanned for DT_PLTGOT. */
 const MAX_DYNAMIC_ENTRIES = 4096;
@@ -1131,7 +1134,7 @@ const fileRange = (section: NativeSection): FileRange | null => {
  * GOT base for `.eh_frame` DW_EH_PE_datarel values: DT_PLTGOT, then the
  * `.got.plt` address, then the `.got` address. Null when none is declared,
  * or when a repeated PT_DYNAMIC header, SHT_DYNAMIC section or allocated GOT
- * section leaves the source ambiguous.
+ * section leaves the source ambiguous or the dynamic table is not fully examined.
  */
 const resolveGotBase = (
   bytes: Buffer,
@@ -1164,25 +1167,34 @@ const resolveGotBase = (
   }
   if (dynamic !== null) {
     const start = dynamic.offset;
-    const end = dynamic.offset + dynamic.fileSize;
-    if (start >= 0n && end <= BigInt(bytes.length)) {
-      const limit = Number(end);
-      const width = directory.bits === 64 ? 16 : 8;
-      for (
-        let at = Number(start), index = 0;
-        at + width <= limit && index < MAX_DYNAMIC_ENTRIES;
-        at += width, index += 1
-      ) {
-        const entry = readElfDynamicEntry(
-          bytes.subarray(at, at + width),
-          directory.bits,
-          directory.little,
-        );
-        if (!entry.ok || entry.value.tag === DT_NULL) break;
-        if (entry.value.tag === DT_PLTGOT && entry.value.value !== 0n)
-          return { address: entry.value.value, source: "DT_PLTGOT" };
-      }
-    }
+    const end = start + dynamic.fileSize;
+    if (start < 0n || dynamic.fileSize < 0n || end > BigInt(bytes.length))
+      return null;
+    const { width } = elfDynamicTableGeometry(
+      Number(dynamic.fileSize),
+      directory.bits,
+    );
+    const boundedEnd = Math.min(
+      Number(end),
+      Number(start) + MAX_DYNAMIC_ENTRIES * width,
+    );
+    const table = bytes.subarray(Number(start), boundedEnd);
+    let dynamicGot: bigint | null = null;
+    const walked = walkElfDynamicTable<"conflicting-got">(
+      table,
+      { bits: directory.bits, littleEndian: directory.little },
+      new Set<bigint>(),
+      ({ tag, value }) => {
+        if (tag !== DT_PLTGOT || value === 0n) return;
+        if (dynamicGot !== null && dynamicGot !== value)
+          return err("conflicting-got");
+        dynamicGot = value;
+        return;
+      },
+    );
+    if (!walked.ok || walked.value.terminatorOffset === null) return null;
+    if (dynamicGot !== null)
+      return { address: dynamicGot, source: "DT_PLTGOT" };
   }
   // Only an allocated section has a load address; a repeated allocated GOT
   // section has no single base.
