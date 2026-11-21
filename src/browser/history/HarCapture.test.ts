@@ -873,6 +873,41 @@ it.each([
   },
 );
 
+it("retains the empty serverIPAddress Chromium DevTools writes for a request without a remote address", () => {
+  const fixture = historicalHar();
+  const first = fixture.log.entries[0];
+  if (first === undefined) throw new Error("fixture missing");
+  const log = {
+    ...fixture.log,
+    creator: { name: "WebInspector", version: "537.36" },
+    entries: [{ ...first, serverIPAddress: "" }, structuredClone(first)],
+  };
+  const decoded = decodeHarCapture(JSON.stringify({ log }), []);
+  expect(decoded.records).toHaveLength(2);
+  expect(decoded.records[0]).toMatchObject({
+    reported: { serverIPAddress: "" },
+  });
+  const limitation = decoded.records[0]?.limitations.find((line) =>
+    line.includes("WebInspector 537.36"),
+  );
+  expect(limitation).toMatch(/Chromium DevTools.*empty serverIPAddress/iu);
+  expect(limitation).toMatch(/empty value is retained.*validation copy/iu);
+  expect(limitation).toMatch(/server address is unknown/iu);
+  expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
+  expect(
+    decoded.records[1]?.limitations.some((line) =>
+      line.includes("empty serverIPAddress"),
+    ),
+  ).toBe(false);
+  for (const creator of [
+    { name: "other", version: "1" },
+    { name: "Playwright", version: "1.64.1" },
+  ])
+    expect(() =>
+      decodeHarCapture(JSON.stringify({ log: { ...log, creator } }), []),
+    ).toThrow("HAR schema validation failed");
+});
+
 it.each([
   "c2VjcmV0",
   "c2Vj",
