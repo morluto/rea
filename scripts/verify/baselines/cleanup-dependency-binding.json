@@ -11,7 +11,7 @@
   "src/domain/explicitSensitiveFailure.ts": 1,
   "src/evm/EvmoleInterfaceProvider.ts": 3,
   "src/gdb/GdbSessionManager.ts": 2,
-  "src/hopper/BridgeLauncher.ts": 3,
+  "src/hopper/BridgeLauncher.ts": 2,
   "src/hopper/HopperAnalysisProfile.ts": 1,
   "src/hopper/HopperImageCopy.ts": 1,
   "src/ida/IdaSessionClient.ts": 1,
