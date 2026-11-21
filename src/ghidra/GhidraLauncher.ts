@@ -59,6 +59,11 @@ import {
   type SpawnedOwnedProviderProcess,
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import {
+  assessMemoryAdmission,
+  parseMemorySizeBytes,
+  readHostMemoryAdmissionFacts,
+} from "../process/HostMemoryAdmission.js";
 import { ghidraJavaEnvironment } from "./GhidraInstallation.js";
 import {
   ghidraJavaLaunch,
@@ -543,6 +548,16 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform === "win32"
           ? undefined
           : inspectedJavaLaunch.configuredMaxHeap;
+      if (configuredMaxHeap !== undefined) {
+        // Refuse a launch the host or the effective cgroup ceiling cannot admit,
+        // so the JVM is not OOM-killed mid-analysis. The cgroup ceiling covers
+        // ancestor limits (containers/services), not just this group.
+        const admission = assessMemoryAdmission(
+          await readHostMemoryAdmissionFacts({ platform }),
+          parseMemorySizeBytes(configuredMaxHeap),
+        );
+        if (!admission.admitted) throw new GhidraLaunchError(admission.reason);
+      }
       const command =
         platform === "win32"
           ? {

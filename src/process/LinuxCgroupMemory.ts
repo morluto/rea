@@ -116,14 +116,19 @@ const parseLinuxCgroup2Mounts = (value: Buffer): readonly LinuxCgroup2Mount[] =>
           ];
     });
 
+interface LinuxCgroupLocation {
+  readonly directory: string;
+  readonly mountPoint: string;
+}
+
 /**
  * Locate a cgroup path below the mount whose root covers it most closely; a
  * mount that exposes only part of the hierarchy is joined from its own root.
  */
-const linuxCgroupDirectory = (
+const linuxCgroupLocation = (
   mounts: readonly LinuxCgroup2Mount[],
   path: string,
-): string | undefined => {
+): LinuxCgroupLocation | undefined => {
   let selected:
     | { readonly mount: LinuxCgroup2Mount; readonly rest: string }
     | undefined;
@@ -145,7 +150,13 @@ const linuxCgroupDirectory = (
   }
   return selected === undefined
     ? undefined
-    : posix.resolve(selected.mount.mountPoint, `.${selected.rest}`);
+    : {
+        directory: posix.resolve(
+          selected.mount.mountPoint,
+          `.${selected.rest}`,
+        ),
+        mountPoint: selected.mount.mountPoint,
+      };
 };
 
 /**
@@ -178,10 +189,11 @@ export const readLinuxCgroupMemoryState = async (
   const group =
     mountInfo === undefined
       ? undefined
-      : linuxCgroupDirectory(parseLinuxCgroup2Mounts(mountInfo), path);
+      : linuxCgroupLocation(parseLinuxCgroup2Mounts(mountInfo), path);
   if (group === undefined) return undefined;
+  const directory = group.directory;
   const events = await readKernelFile(
-    posix.join(group, "memory.events"),
+    posix.join(directory, "memory.events"),
     undefined,
     options.retainFailedClose,
   );
@@ -191,7 +203,7 @@ export const readLinuxCgroupMemoryState = async (
       : parseLinuxCgroupOomKills(events.toString("utf8"));
   if (oomKills === undefined) return undefined;
   const limit = await readKernelFile(
-    posix.join(group, "memory.max"),
+    posix.join(directory, "memory.max"),
     undefined,
     options.retainFailedClose,
   );
@@ -202,6 +214,111 @@ export const readLinuxCgroupMemoryState = async (
       limit === undefined
         ? null
         : (parseLinuxCgroupMemoryMax(limit.toString("utf8")) ?? null),
+  };
+};
+
+/** Reclaim-relevant memory facts used to decide whether a launch fits a cgroup. */
+export interface LinuxCgroupAdmissionFacts {
+  /**
+   * Tightest finite `memory.max` on this process's cgroup or any visible
+   * ancestor: bytes, `max` when no ancestor limits it, or null when unreadable.
+   */
+  readonly effectiveMemoryMax: number | "max" | null;
+  /** This group's `memory.current` in bytes, or null when unreadable. */
+  readonly usageBytes: number | null;
+}
+
+/** Read one cgroup v2 `memory.current` byte count. */
+const parseLinuxCgroupCurrent = (value: string): number | null => {
+  const token = value.trim();
+  if (!/^[0-9]+$/u.test(token)) return null;
+  const bytes = Number(token);
+  return Number.isSafeInteger(bytes) ? bytes : null;
+};
+
+/** Tightest finite `memory.max` from the group up to the mount point. */
+const readEffectiveAncestorMax = async (
+  location: LinuxCgroupLocation,
+  retainFailedClose?: (path: string, owner: OwnedFileHandle) => void,
+): Promise<number | "max" | null> => {
+  let tightest: number | "max" | null = null;
+  let directory = location.directory;
+  for (;;) {
+    const raw = await readKernelFile(
+      posix.join(directory, "memory.max"),
+      undefined,
+      retainFailedClose,
+    );
+    const parsed =
+      raw === undefined
+        ? undefined
+        : parseLinuxCgroupMemoryMax(raw.toString("utf8"));
+    if (parsed === "max") {
+      if (tightest === null) tightest = "max";
+    } else if (parsed !== undefined) {
+      tightest =
+        tightest === null || tightest === "max"
+          ? parsed
+          : Math.min(tightest, parsed);
+    }
+    if (directory === location.mountPoint) break;
+    const parent = posix.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return tightest;
+};
+
+/**
+ * Read the effective cgroup memory ceiling for this process: the tightest
+ * finite `memory.max` across the group and its visible ancestors, together
+ * with the group's current charge. Admission caps host availability by this
+ * ceiling so a container/service limit cannot admit a launch the kernel would
+ * OOM-kill.
+ */
+export const readLinuxCgroupAdmissionFacts = async (
+  options: {
+    readonly platform?: NodeJS.Platform;
+    readonly procCgroupPath?: string;
+    readonly procMountInfoPath?: string;
+    readonly retainFailedClose?: (path: string, owner: OwnedFileHandle) => void;
+  } = {},
+): Promise<LinuxCgroupAdmissionFacts | undefined> => {
+  if ((options.platform ?? HOST_PLATFORM.platform) !== "linux")
+    return undefined;
+  const membership = await readKernelFile(
+    options.procCgroupPath ?? "/proc/self/cgroup",
+    undefined,
+    options.retainFailedClose,
+  );
+  const path =
+    membership === undefined ? undefined : parseLinuxCgroupV2Path(membership);
+  if (path === undefined) return undefined;
+  const mountInfo = await readKernelFile(
+    options.procMountInfoPath ?? "/proc/self/mountinfo",
+    MOUNT_INFO_BYTES,
+    options.retainFailedClose,
+  );
+  const location =
+    mountInfo === undefined
+      ? undefined
+      : linuxCgroupLocation(parseLinuxCgroup2Mounts(mountInfo), path);
+  if (location === undefined) return undefined;
+  const effectiveMemoryMax = await readEffectiveAncestorMax(
+    location,
+    options.retainFailedClose,
+  );
+  const current = await readKernelFile(
+    posix.join(location.directory, "memory.current"),
+    undefined,
+    options.retainFailedClose,
+  );
+  return {
+    effectiveMemoryMax,
+    usageBytes:
+      current === undefined
+        ? null
+        : parseLinuxCgroupCurrent(current.toString("utf8")),
   };
 };
 
