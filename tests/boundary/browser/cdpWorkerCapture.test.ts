@@ -875,13 +875,22 @@ it.each(["missing", "observation"] as const)(
 );
 
 it.each(
-  [null, [42], "malformed", [""], ["allowed-page", ""]].map(
-    (controlledClients) => ({ controlledClients }),
+  [null, [42], "malformed", [""], ["allowed-page", ""]].flatMap(
+    (controlledClients) =>
+      [undefined, "service"].map((targetId) => ({
+        controlledClients,
+        targetId,
+      })),
   ),
 )(
   "marks malformed controlled clients incomplete: %j",
-  async ({ controlledClients }) => {
+  async ({ controlledClients, targetId }) => {
     const { provider, input } = await fixture({
+      commandResult: (command) =>
+        command.method === "Target.getTargets"
+          ? { targetInfos: [] }
+          : undefined,
+      eventsBeforeReply: ["ServiceWorker.enable"],
       commandEvents: (command) =>
         command.method === "ServiceWorker.enable"
           ? [
@@ -891,7 +900,8 @@ it.each(
                 params: {
                   versions: [
                     {
-                      targetId: "service",
+                      ...(targetId === undefined ? {} : { targetId }),
+                      runningStatus: "running",
                       controlledClients,
                       status: "activated",
                     },

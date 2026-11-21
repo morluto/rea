@@ -839,6 +839,13 @@ export class CdpWorkerCapture {
         )
           ? version.controlledClients
           : null;
+      if (version.controlledClients !== undefined && clients === null) {
+        this.pageEvents.completeness.unavailable("workers");
+        this.pageEvents.completeness.exclude(
+          "workers",
+          "invalid_protocol_value",
+        );
+      }
       if (version.targetId === undefined) {
         // A running controlled worker without a target cannot be reconciled with inventory.
         if (version.runningStatus === "running" && clients !== null) {
@@ -863,13 +870,7 @@ export class CdpWorkerCapture {
         this.#invalidServiceTarget(id);
         continue;
       }
-      if (version.controlledClients !== undefined && clients === null) {
-        this.pageEvents.completeness.unavailable("workers");
-        this.pageEvents.completeness.exclude(
-          "workers",
-          "invalid_protocol_value",
-        );
-      }
+
       // A missing first snapshot records a permanent discovery gap. Later
       // incomplete updates need neither revoke prior clients nor rescan history.
       if (clients === null && !this.#versionsByTarget.has(id))
