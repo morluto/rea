@@ -6,8 +6,16 @@ import { sha256Hex } from "../kernel/sha256Hex.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, type Dirent } from "node:fs";
+import {
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { inflate } from "node:zlib";
 import { promisify } from "node:util";
 import { basename, join, relative, resolve } from "node:path";
@@ -1287,7 +1295,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             } else {
               const timeLeftForDisasm =
                 remainingTimeMs !== undefined
-                  ? remainingTimeMs() - PUBLICATION_RESERVE_MS
+                  ? Math.floor(remainingTimeMs() - PUBLICATION_RESERVE_MS)
                   : 15_000;
               if (timeLeftForDisasm <= 0) {
                 disassemblyStatus = "omitted";
@@ -1310,9 +1318,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 let objdumpErrorMsg: string | null = null;
                 let llvmError: unknown;
                 let objdumpError: unknown;
-                const disasmTimeout = Math.min(
-                  15_000,
-                  Math.max(500, timeLeftForDisasm),
+                const disasmTimeout = Math.floor(
+                  Math.min(15_000, Math.max(500, timeLeftForDisasm)),
                 );
                 try {
                   const { stdout } = await execFileOutput(
@@ -1335,12 +1342,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   llvmErrorMsg = errorMessage(err);
                   const remainingForObjdump =
                     remainingTimeMs !== undefined
-                      ? remainingTimeMs() - PUBLICATION_RESERVE_MS
+                      ? Math.floor(remainingTimeMs() - PUBLICATION_RESERVE_MS)
                       : 15_000;
                   if (remainingForObjdump > 0) {
-                    const objdumpTimeout = Math.min(
-                      15_000,
-                      Math.max(500, remainingForObjdump),
+                    const objdumpTimeout = Math.floor(
+                      Math.min(15_000, Math.max(500, remainingForObjdump)),
                     );
                     try {
                       const { stdout } = await execFileOutput(
@@ -1446,7 +1452,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               MAX_DECOMPILE_TOTAL_BYTES - totalStagedCBytes;
             const timeLeftForGhidra =
               remainingTimeMs !== undefined
-                ? remainingTimeMs() - PUBLICATION_RESERVE_MS
+                ? Math.floor(remainingTimeMs() - PUBLICATION_RESERVE_MS)
                 : 45_000;
             if (remainingCBytes <= 0) {
               if (
@@ -1464,9 +1470,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 effectiveLimitations.push(ghidraSkipMsg);
               }
             } else {
-              const ghidraTimeout = Math.min(
-                45_000,
-                Math.max(1_000, timeLeftForGhidra),
+              const ghidraTimeout = Math.floor(
+                Math.min(45_000, Math.max(1_000, timeLeftForGhidra)),
               );
               ghidraOutC = join(
                 tempRoot.path,
@@ -1476,6 +1481,32 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 const bridgeDir = fileURLToPath(
                   new URL("../../bridge/ghidra", import.meta.url),
                 );
+                const scriptPath = join(bridgeDir, "ReaDecompileToC.java");
+                const ghidraHome = join(tempRoot.path, "ghidra_home");
+                const ghidraConfig = join(tempRoot.path, "ghidra_config");
+                const ghidraTemp = join(tempRoot.path, "ghidra_temp");
+                await Promise.all([
+                  mkdir(ghidraHome, { recursive: true }),
+                  mkdir(ghidraConfig, { recursive: true }),
+                  mkdir(ghidraTemp, { recursive: true }),
+                ]);
+                const ghidraEnv: NodeJS.ProcessEnv = {
+                  ...process.env,
+                  HOME: ghidraHome,
+                  TMPDIR: ghidraTemp,
+                  XDG_CONFIG_HOME: ghidraConfig,
+                  XDG_CACHE_HOME: ghidraTemp,
+                  XDG_DATA_HOME: ghidraHome,
+                  ...(HOST_PLATFORM.platform === "win32"
+                    ? {
+                        USERPROFILE: ghidraHome,
+                        APPDATA: ghidraConfig,
+                        LOCALAPPDATA: ghidraTemp,
+                        TEMP: ghidraTemp,
+                        TMP: ghidraTemp,
+                      }
+                    : {}),
+                };
                 const ghidraArgs = [
                   tempRoot.path,
                   `UefiDecomp_${cIdentifier}_${moduleSeq}`,
@@ -1484,7 +1515,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   "-scriptPath",
                   bridgeDir,
                   "-postScript",
-                  "ReaDecompileToC.java",
+                  scriptPath,
                   ghidraOutC,
                   "-deleteProject",
                 ];
@@ -1495,7 +1526,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   isWindowsBatchFile(ghidraBin)
                 ) {
                   const batch = windowsBatchCommand({
-                    environment: process.env,
+                    environment: ghidraEnv,
                     batchPath: ghidraBin,
                     arguments: ghidraArgs,
                   });
@@ -1507,6 +1538,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   stopSignal: "SIGTERM",
                   timeout: ghidraTimeout,
                   maxBuffer: 10 * 1024 * 1024,
+                  env: ghidraEnv,
                 });
                 if (existsSync(ghidraOutC)) {
                   const cStat = await stat(ghidraOutC);
@@ -1557,6 +1589,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                         "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
                       );
                     }
+                  }
+                } else {
+                  const noOutputMsg = `Ghidra C decompilation for ${mod.rawName} failed: decompilation script produced no output.`;
+                  if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                    effectiveLimitations.push(noOutputMsg);
+                    recordedGhidraFailures++;
+                  } else if (
+                    !effectiveLimitations.includes(
+                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                    )
+                  ) {
+                    effectiveLimitations.push(
+                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                    );
                   }
                 }
               } catch (ghidraErr: unknown) {
@@ -1982,10 +2028,47 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     remainingTimeMs?: () => number,
   ): Promise<AnalysisExecution> {
     const input = request.input;
-    const dirEntries = await readdir(input.path, {
-      withFileTypes: true,
-      recursive: true,
-    });
+    const MAX_DIRECTORY_INVENTORY_ENTRIES = 10_000;
+    const limitations: string[] = [];
+    const dirEntries: Array<{
+      name: string;
+      parentPath: string;
+      isFile: () => boolean;
+    }> = [];
+    const dirQueue: string[] = [input.path];
+
+    while (dirQueue.length > 0) {
+      checkpoint();
+      signal.throwIfAborted();
+      const currentDir = dirQueue.shift()!;
+      let entries: Dirent[];
+      try {
+        entries = await readdir(currentDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        checkpoint();
+        signal.throwIfAborted();
+        if (dirEntries.length >= MAX_DIRECTORY_INVENTORY_ENTRIES) {
+          limitations.push(
+            `Directory discovery stopped after reaching ${MAX_DIRECTORY_INVENTORY_ENTRIES} entry budget.`,
+          );
+          dirQueue.length = 0;
+          break;
+        }
+        if (entry.isDirectory()) {
+          dirQueue.push(join(currentDir, entry.name));
+        } else if (entry.isFile()) {
+          dirEntries.push({
+            name: entry.name,
+            parentPath: currentDir,
+            isFile: () => true,
+          });
+        }
+      }
+    }
+
     const guidRegex =
       /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
@@ -2016,7 +2099,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
     interface CandidateModule {
       readonly fullPath: string;
-      readonly normRelPath: string;
+      readonly identityRelPath: string;
       readonly name: string;
       readonly size: number;
       readonly phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
@@ -2138,11 +2221,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       if (!isPeOrTe) continue;
 
       const relPath = relative(input.path, fullPath);
-      const normRelPath = relPath.split(/[/\\]+/).join("/");
-      const segments = normRelPath.toLowerCase().split("/");
-      const fromManifest = manifestModulesByRelPath.get(
-        normRelPath.toLowerCase(),
-      );
+      const identityRelPath =
+        HOST_PLATFORM.platform === "win32"
+          ? relPath.replaceAll("\\", "/")
+          : relPath;
+      const manifestLookupKey = relPath
+        .split(/[/\\]+/)
+        .join("/")
+        .toLowerCase();
+      const segments = manifestLookupKey.split("/");
+      const fromManifest = manifestModulesByRelPath.get(manifestLookupKey);
 
       let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
       const manifestPhase = fromManifest?.phase?.toUpperCase();
@@ -2180,7 +2268,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         if (nameMatch && nameMatch[1]) {
           guid = nameMatch[1].toLowerCase();
         } else {
-          const pathMatch = normRelPath.match(guidRegex);
+          const pathMatch = manifestLookupKey.match(guidRegex);
           if (pathMatch && pathMatch[1]) {
             guid = pathMatch[1].toLowerCase();
           }
@@ -2207,7 +2295,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
       candidates.push({
         fullPath,
-        normRelPath,
+        identityRelPath,
         name: entry.name,
         size: fileStat.size,
         phase,
@@ -2219,7 +2307,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
     // Sort candidates deterministically by Unicode code point order (locale-independent)
     candidates.sort((a, b) =>
-      compareUnicodeCodePoints(a.normRelPath, b.normRelPath),
+      compareUnicodeCodePoints(a.identityRelPath, b.identityRelPath),
     );
 
     const dirHash = createHash("sha256");
@@ -2234,7 +2322,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const candidate = candidates[i]!;
       const content = await readFile(candidate.fullPath);
       const fileSha256 = sha256Hex(content);
-      dirHash.update(compositeKey([candidate.normRelPath, fileSha256]) + "\n");
+      dirHash.update(
+        compositeKey([candidate.identityRelPath, fileSha256]) + "\n",
+      );
 
       const isSelected = i < request.input.max_modules;
       let retainedBytes: Buffer | undefined;
@@ -2266,7 +2356,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       request,
       dirSha256,
       discoveredModules,
-      [],
+      limitations,
       signal,
       checkpoint,
       "directory",

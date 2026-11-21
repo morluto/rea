@@ -3233,3 +3233,27 @@ it("decompiles multiple modules under normal deadline budget without premature s
     await provider.close();
   }
 });
+
+it("tolerates fractional millisecond remaining time values without command deadline failures", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-fractional-time-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x55, 140);
+  await writeFile(join(inDir, "Sample.efi"), pe);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+  } finally {
+    await provider.close();
+  }
+});
