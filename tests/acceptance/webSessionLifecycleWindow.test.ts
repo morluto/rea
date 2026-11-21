@@ -44,6 +44,24 @@ const startLifecycleBrowser = () =>
           milestone("loader-current-window", 21),
           milestone("loader-malformed-clock", "21"),
           {
+            method: "Network.requestWillBeSent",
+            sessionId,
+            params: {
+              requestId: "redirect-chain",
+              frameId: "frame-main",
+              loaderId: "redirect-loader",
+              type: "Document",
+              timestamp: 22,
+              request: { url: `${origin}/after`, method: "GET" },
+              redirectResponse: {
+                url: `${origin}/before?token=visible`,
+                status: 302,
+                headers: { Authorization: "discard-redirect-header" },
+                body: "discard-redirect-body",
+              },
+            },
+          },
+          {
             method: "Page.frameNavigated",
             sessionId,
             params: {
@@ -62,7 +80,7 @@ const startLifecycleBrowser = () =>
   });
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "retains in-window navigation and lifecycle evidence through %s",
+  "retains in-window navigation, redirects, and lifecycle evidence through %s",
   async (surface, { cli }) => {
     const browser = await startLifecycleBrowser();
     onTestFinished(() => browser.close());
@@ -95,6 +113,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       evidence = response.structuredContent;
     }
 
+    expect(JSON.stringify(evidence)).not.toContain("discard-redirect-");
     const contract = toolContract("observe_web_session");
     const sourceEvidence = contract.outputSchema.parse(evidence);
     const normalized = z
@@ -129,6 +148,49 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         detail: "backforwardcacherestore",
       }),
     );
+    expect(
+      normalized.timeline.filter(({ type }) => type === "redirect"),
+    ).toEqual([
+      expect.objectContaining({
+        frame_id: "frame-main",
+        loader_id: "redirect-loader",
+        request_id: "redirect-chain",
+        timestamp: 22,
+        url: `${browser.allowedOrigin}/after`,
+        destination_scope: "approved",
+        redirect_response: {
+          url: `${browser.allowedOrigin}/before?token=visible`,
+          status: 302,
+          scope: "approved",
+        },
+      }),
+    ]);
+    if (surface === "CLI") {
+      const index = normalized.timeline.findIndex(
+        ({ type }) => type === "redirect",
+      );
+      const redirect = normalized.timeline[index]!;
+      for (const altered of [
+        { ...redirect, redirect_response: undefined },
+        { ...redirect, type: "lifecycle" as const },
+      ]) {
+        const timeline = normalized.timeline.with(index, altered);
+        expect(
+          webObservationSessionSchema.safeParse({ ...normalized, timeline }),
+        ).toMatchObject({
+          success: false,
+          error: {
+            issues: [
+              expect.objectContaining({
+                path: ["timeline", index, "redirect_response"],
+                message:
+                  "redirect_response is present exactly on redirect events.",
+              }),
+            ],
+          },
+        });
+      }
+    }
     expect(normalized.limitations).toContainEqual(
       expect.stringMatching(
         /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
