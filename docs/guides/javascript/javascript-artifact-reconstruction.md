@@ -167,7 +167,7 @@ must also satisfy the new admission. For CLI or future MCP processes, set
 `REA_ASAR_MAX_HEADER_BYTES` in the launch environment. Changing that environment
 requires a new REA process. Invalid launch values are configuration errors,
 never a silent fallback. See the
-[settings design](../../design/limits-and-recovery.md#failure-and-retry) for recovery
+[analysis settings and recovery](../../reference/limits-and-recovery.md#failure-and-retry) for recovery
 metadata, precedence, and reset behavior.
 
 The archive index is read before any member can be selected, so
@@ -376,7 +376,11 @@ ES module import. Direct execution and require can reject the same source.
 A plain hashbang stays valid.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including
-angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
+angle-bracket type assertions. Application analysis and reference imports share
+the syntax rules for `.cts` and `.mts`. Ambiguous generic arrows such as
+`<T>(value: T) => value` produce a diagnostic while recovered declarations
+remain available. Angle-bracket assertions are accepted in both suffixes.
+`.tsx` and `.jsx` retain JSX parsing.
 JavaScript sources use JavaScript grammar with JSX, never TypeScript syntax,
 so valid JavaScript that TypeScript reads differently keeps its JavaScript
 meaning.
@@ -574,9 +578,6 @@ bound, the fingerprint is unavailable and its status is `truncated`; a bounded
 prefix is never presented as a complete stable fingerprint.
 
 ## Cached-data compilation boundaries
-
-The [feature specification](../../specs/javascript/v8-cached-data/spec.md) defines
-the static admission and uncertainty contract.
 
 A `node:vm` compilation reports whether `cachedData` is declared, absent or
 unknown. Explicitly supplied undefined bytes are treated as absent; shadowed
@@ -958,7 +959,7 @@ analyzer; the caller's `NODE_OPTIONS` still controls the CLI/MCP process heap.
 For defaults across new MCP operations, use `update_analysis_settings` with
 `javascript.max_heap_mb` or `javascript.analysis_timeout_ms`. Explicit per-call
 arguments take precedence, and accepted work keeps its original settings. See
-the [settings design](../../design/limits-and-recovery.md#precedence-and-lifetime).
+the [analysis settings and recovery](../../reference/limits-and-recovery.md#precedence-and-lifetime).
 V8 old-space limits do not impose a process RSS limit. When REA runs on Bun,
 the analyzer ignores the V8 heap flags; resource failures then report
 `worker_heap_limit_bytes` as null instead of a requested or V8-reported limit.

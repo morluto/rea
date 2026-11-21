@@ -38,7 +38,6 @@ import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { ResolvedMachoSlice } from "./NativeMachoSelectedSlice.js";
 import { reconcileMachoUuid } from "./parsers/machoUuid.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import type {
   MachoEncryptionFacts,
   MachoSliceEncryption,
@@ -57,7 +56,10 @@ import {
 } from "./NativeMachoCommandDiagnostics.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
-import type { LipoArchitecture } from "../domain/apple/lipo.js";
+import {
+  lipoDescribesCpu,
+  type LipoArchitecture,
+} from "../domain/apple/lipo.js";
 
 interface NativeMachoObservation {
   readonly result: JsonValue;
@@ -672,14 +674,7 @@ const lipoDescribesSlice = (
     ? format === "thin" && slice.container_file_offset === 0
     : architecture.file_offset === slice.container_file_offset) &&
   (architecture.size === null || architecture.size === slice.size) &&
-  (architecture.cpu_type_code === null ||
-    slice.cpu_type === null ||
-    architecture.cpu_type_code === slice.cpu_type) &&
-  (slice.cpu_subtype === null ||
-    (architecture.cpu_subtype_code === null
-      ? architecture.cpu_subtype_base === null ||
-        architecture.cpu_subtype_base === machoCpuSubtypeBase(slice.cpu_subtype)
-      : architecture.cpu_subtype_code === slice.cpu_subtype));
+  lipoDescribesCpu(architecture, slice.cpu_type, slice.cpu_subtype);
 
 const encryptionLimitation = (slice: MachoSliceEncryption): string[] => {
   const name =

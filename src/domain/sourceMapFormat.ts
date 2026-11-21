@@ -706,7 +706,9 @@ export const inspectLocalSourceMapDeclarations = (
 /** Recover observed source content without treating incomplete maps as absent. */
 export const inspectSourceMapSourceContent = (
   text: string,
-  options: Pick<SourceMapStructureOptions, "limits" | "check"> = {},
+  options: Pick<SourceMapStructureOptions, "limits" | "check"> & {
+    readonly hasObservedContent?: (content: string) => boolean;
+  } = {},
 ):
   | { readonly embedded: boolean; readonly complete: true }
   | {
@@ -730,12 +732,14 @@ export const inspectSourceMapSourceContent = (
       }),
     };
   }
+  const hasObservedContent =
+    options.hasObservedContent ?? ((content: string) => content.length > 0);
   const hasContent = (
     inspection: ReturnType<typeof inspectSourceMapValue>,
   ): boolean =>
     inspection.declarations.some(
       (declaration) =>
-        declaration.content !== null && declaration.content.length > 0,
+        declaration.content !== null && hasObservedContent(declaration.content),
     );
   try {
     return {
@@ -746,9 +750,10 @@ export const inspectSourceMapSourceContent = (
     if (!isSourceMapFailure(failure)) throw failure;
     let embedded = false;
     const observe = (leaf: z.output<typeof leafSchema>): void => {
-      embedded ||= leaf.sources.some(
-        (_source, index) => (leaf.sourcesContent?.[index]?.length ?? 0) > 0,
-      );
+      embedded ||= leaf.sources.some((_source, index) => {
+        const content = leaf.sourcesContent?.[index];
+        return content != null && hasObservedContent(content);
+      });
     };
     if (isVersion3Map(value))
       walkSourceMapStructure(value, options, (_node, leaf) => observe(leaf), {

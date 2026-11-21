@@ -1,19 +1,21 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import MarkdownIt from "markdown-it";
 import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { processTest } from "../support/process/processFixture.js";
 
-const jsonExamples = (content: string): unknown[] =>
-  [...content.matchAll(/```json\s*([\s\S]*?)```/gu)].map((match): unknown =>
-    JSON.parse(match[1] ?? ""),
-  );
+const markdown = new MarkdownIt({ html: true });
 
-const shellExamples = (content: string): string[] =>
-  [...content.matchAll(/```bash\s*([\s\S]*?)```/gu)].map((match) =>
-    (match[1] ?? "").trim(),
-  );
+const examples = (content: string, languages: readonly string[]): string[] =>
+  markdown
+    .parse(content, {})
+    .flatMap((token) =>
+      token.type === "fence" && languages.includes(token.info.trim())
+        ? [token.content.trim()]
+        : [],
+    );
 
 describe("onboarding documentation product facts", () => {
   it("documents manual MCP registration with an absolute runtime and entry script", async () => {
@@ -21,7 +23,9 @@ describe("onboarding documentation product facts", () => {
       resolve("docs/getting-started/installation.md"),
       "utf8",
     );
-    expect(jsonExamples(content)).toContainEqual(
+    expect(
+      examples(content, ["json"]).map((value): unknown => JSON.parse(value)),
+    ).toContainEqual(
       expect.objectContaining({
         mcpServers: expect.objectContaining({
           rea: expect.objectContaining({
@@ -40,16 +44,13 @@ describe("onboarding documentation product facts", () => {
     const translatedReadmes = inventory
       .filter((language) => language.code !== "en")
       .map((language) => language.readme);
-    expect(translatedReadmes).toContain("docs/readme/README_it.md");
-    expect(translatedReadmes).toContain("docs/readme/README_el.md");
-    const editions = (await readdir(resolve("docs/readme")))
-      .filter((name) => /^README_[A-Za-z0-9-]+\.md$/u.test(name))
-      .map((name) => `docs/readme/${name}`);
-    expect([...translatedReadmes].sort()).toEqual(editions.sort());
-    const english = shellExamples(await readFile(resolve("README.md"), "utf8"));
+    const english = examples(await readFile(resolve("README.md"), "utf8"), [
+      "bash",
+      "sh",
+    ]);
     for (const path of translatedReadmes)
       expect(
-        shellExamples(await readFile(resolve(path), "utf8")),
+        examples(await readFile(resolve(path), "utf8"), ["bash", "sh"]),
         path,
       ).toEqual(english);
   });

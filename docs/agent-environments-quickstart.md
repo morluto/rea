@@ -18,7 +18,7 @@ records the app you provide; you start it and prepare its test data.
 
 To run the exported environment, install the
 [AgentEnv framework](https://github.com/scaleapi/agentenv-framework#install)
-and start Docker. REA's [compatibility check](development/testing.md#exported-environment-bundles)
+and start Docker. REA's [compatibility check](testing-lanes.md#exported-environment-bundles)
 uses AgentEnv version `0.9.1431` with Python 3.12.
 
 There are two ways to build an environment: ask your agent to record the app,
@@ -201,6 +201,4 @@ Credential-name warnings point to values worth reviewing; they do not remove
 those values or establish that the recording contains no credentials.
 
 For direct MCP serving, replay behavior, state controls, and resource limits,
-see the [environment reference](agent-environments.md). The
-[implementation index](specs/agent-environments/README.md) links the contributing
-PRs and their verification records.
+see the [environment reference](agent-environments.md).

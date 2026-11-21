@@ -70,7 +70,7 @@ it.each([
 it.each([
   "other-producer",
   "other-version",
-  "successful-response",
+  "empty-failure",
   "missing-failure",
   "invalid-duration",
 ])("keeps timing validation for %s", (variant) => {
@@ -78,12 +78,15 @@ it.each([
   const failed = fixture.log.entries[1]!;
   if (variant === "other-producer") fixture.log.creator.name = "unknown";
   if (variant === "other-version") fixture.log.creator.version = "unknown";
-  if (variant === "successful-response") {
-    failed.response.status = 200;
-    Reflect.deleteProperty(failed.response, "_failureText");
-  }
+  if (variant === "empty-failure")
+    Object.assign(failed.response, { _failureText: "" });
   if (variant === "missing-failure")
     Reflect.deleteProperty(failed.response, "_failureText");
   if (variant === "invalid-duration") failed.timings.send = -2;
-  expect(() => decodeHarCapture(JSON.stringify(fixture), [])).toThrow();
+  expect(() => decodeHarCapture(JSON.stringify(fixture), [])).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({ kind: "malformed" }),
+      pointer: "/log/entries/1/timings/send",
+    }),
+  );
 });

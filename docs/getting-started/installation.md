@@ -217,8 +217,11 @@ instructions and references. Consumers should use `identity.skill.state`,
 obsolete `installed_catalog_digest` field has been removed; current catalog
 identity remains available at `identity.catalog`.
 
-Setup pins package-runner MCP registrations to the exact installed REA version,
-installs the matching skill and on-demand references in the same plan, and adds
+Setup records MCP registrations that launch the installation performing setup
+directly: its absolute JavaScript runtime and entry script, followed by `mcp`
+(see [MCP Registry](#mcp-registry)). Client starts therefore run that
+installation instead of resolving a package. In the same plan, setup installs
+the matching skill and on-demand references and adds
 `startup_timeout_sec = 30` for Codex and Grok Build when no positive timeout
 is already configured. Codex also receives a
 `tool_timeout_sec` derived from known provider startup plus operation headroom.
@@ -631,6 +634,10 @@ npm ci
 npm run build:cached
 ```
 
+These commands do not build the Windows x64 native addon or its manifest.
+Windows workflows that need native controls require the extra step in
+[Windows source checkouts](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#windows-source-checkouts).
+
 Then run `npm link` once in the checkout to put its `rea` on your `PATH`, or,
 wherever these docs say `rea …`, run
 `node /absolute/path/to/rea/scripts/rea.mjs …`. Setup run this way registers
@@ -1017,14 +1024,23 @@ stage `connection`.
 
 If macOS denies Apple Events, REA reports
 `details.launch_rejection.boundary: "apple_events_authorization"` with
-`reason: "not_authorized"`, category `unavailable`, and `retryable: false`.
-Allow the application that starts REA under
-**System Settings → Privacy & Security → Automation** when that client can be
-authorized. A hardened-runtime application requires the
+`reason: "not_authorized"`,
+`responsibility: "client_or_disclaimed_runtime"`,
+`settings_pane: "privacy_security_automation"`, and
+`entitlement_id: "com.apple.security.automation.apple-events"`,
+category `unavailable`, and `retryable: false`. The helper does not identify
+the responsible process, so `responsibility` covers both an authorizable client
+and a client that disclaims TCC responsibility.
+Allow the application that macOS identifies as responsible for REA under
+**System Settings → Privacy & Security → Automation**. Some MCP clients, including
+Claude Desktop, disclaim responsibility, so macOS attributes the request to the
+REA runtime, such as `node`; changing the client's Automation setting cannot
+authorize that runtime. In this case start REA from a client macOS can authorize,
+such as Claude Code or Terminal. A hardened-runtime application requires the
 `com.apple.security.automation.apple-events` entitlement before macOS will
-prompt; without it, ask the client developer to add the entitlement or start
-REA from a client macOS can authorize, such as Terminal. Retrying from the same
-unauthorized client will not succeed until authorization changes. REA releases
+prompt; if the responsible client lacks it, ask its developer to add the
+entitlement. Retrying from the same unauthorized client will not succeed until
+authorization changes. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
@@ -1554,7 +1570,7 @@ invocation instead. In MCP, `ghidra.decompile_timeout_seconds` can override the 
 value for newly accepted operations on the existing Program; explicit `null`
 removes the deadline. A transient timeout remains uncached so the same function
 can be retried after an update. See the
-[settings design](../design/limits-and-recovery.md#runtime-settings-through-mcp).
+[analysis settings and recovery](../reference/limits-and-recovery.md#runtime-settings-through-mcp).
 Codex/Kimi registrations derived by `rea setup` add the selected launch value
 to the tool deadline as a single-decompile estimate; a runtime update does not
 change that registration. A bulk call can need that limit for
@@ -1612,12 +1628,13 @@ test ! -e "$decompiler_dir/decompile" && test ! -L "$decompiler_dir/decompile" &
 rea doctor --json
 ```
 
-Verified end to end on macOS 15.6 arm64 with Apple clang 17 and the stock
-bison 2.3, against Ghidra 12.1.4: the build produces a Mach-O arm64
-`ghidra_opt`, the doctor check `ghidra-native_decompiler` turns healthy with
-"reports mach-o arm64, which matches darwin/arm64", and `rea decompile` on an
-arm64 Mach-O returns decompiled C through the headless provider. The JDK is
-not needed for the make step, only for the Ghidra provider. If your toolchain
+Recorded on Ghidra 12.1.4 (no longer accepted); not yet re-run on 12.2. On
+macOS 15.6 arm64 with Apple clang 17 and the stock bison 2.3, that build
+produced a Mach-O arm64 `ghidra_opt`, the doctor check
+`ghidra-native_decompiler` turned healthy with "reports mach-o arm64, which
+matches darwin/arm64", and `rea decompile` on an arm64 Mach-O returned
+decompiled C through the headless provider. The JDK is not needed for the make
+step, only for the Ghidra provider. If your toolchain
 rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
 `ADDITIONAL_FLAGS="-w"`.
 
@@ -2053,7 +2070,7 @@ terminal, use the package runner at the version the plugin pins:
 <!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@6.9.0 doctor --provider ghidra --json
+npx -y rea-agents@6.10.1 doctor --provider ghidra --json
 ```
 
 <!-- x-release-please-end -->
@@ -2086,7 +2103,7 @@ therefore runs the published package instead of a local build:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.9.0", "mcp"]
+      "args": ["-y", "rea-agents@6.10.1", "mcp"]
     }
   }
 }

@@ -1,4 +1,5 @@
-import { readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 
@@ -13,6 +14,92 @@ const releaseExposureContract = RELEASE_EXPOSURE_TOOL_CONTRACTS.find(
 if (releaseExposureContract === undefined)
   throw new Error("Missing release exposure contract");
 const outputSchema = releaseExposureContract.outputSchema;
+
+cliTest(
+  "retains observed findings without treating lossy text as complete",
+  async ({ cli }) => {
+    const invalidMap = (embedded: boolean) =>
+      Buffer.concat([
+        Buffer.from('{"version":3,"sources":["src/'),
+        Buffer.from([0xff]),
+        Buffer.from(
+          embedded
+            ? '"],"sourcesContent":["export {};"],"mappings":""}'
+            : '"],"mappings":""}',
+        ),
+      ]);
+    const cases = [
+      {
+        name: "app.js",
+        bytes: Buffer.from('const x = "ok";'),
+        id: "text.credential_markers",
+        status: "not_observed",
+      },
+      {
+        name: "app.js",
+        bytes: Buffer.concat([
+          Buffer.from('const x = "'),
+          Buffer.from([0xff]),
+          Buffer.from('";'),
+        ]),
+        id: "text.credential_markers",
+        status: "unknown",
+      },
+      {
+        name: "app.js",
+        bytes: Buffer.concat([
+          Buffer.from("-----BEGIN PRIVATE KEY-----\n"),
+          Buffer.from([0xff]),
+        ]),
+        id: "text.credential_markers",
+        status: "exposed",
+      },
+      {
+        name: "app.js.map",
+        bytes: Buffer.from(
+          '{"version":3,"sources":["src/app.js"],"mappings":""}',
+        ),
+        id: "javascript.source_map_sources",
+        status: "not_observed",
+      },
+      {
+        name: "app.js.map",
+        bytes: invalidMap(false),
+        id: "javascript.source_map_sources",
+        status: "unknown",
+      },
+      {
+        name: "app.js.map",
+        bytes: invalidMap(true),
+        id: "javascript.source_map_sources",
+        status: "exposed",
+      },
+    ] as const;
+    for (const item of cases) {
+      const root = await createTestTempDirectory("rea-release-lossy-cli-");
+      const file = join(root, item.name);
+      await writeFile(file, item.bytes);
+      const hash = createHash("sha256").update(item.bytes).digest("hex");
+      const result = await cli.run({
+        arguments: ["audit-release-exposure", root, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = outputSchema.parse(result.json);
+      expect(
+        evidence.normalized_result.checks.find(({ id }) => id === item.id)
+          ?.status,
+      ).toBe(item.status);
+      expect(
+        createHash("sha256")
+          .update(await readFile(file))
+          .digest("hex"),
+      ).toBe(hash);
+      expect(JSON.stringify(evidence)).not.toContain(
+        "-----BEGIN PRIVATE KEY-----",
+      );
+    }
+  },
+);
 
 cliTest("exits 3 when a shipped source map embeds sources", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-release-exposure-cli-");

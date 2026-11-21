@@ -50,8 +50,8 @@ export interface FakeOptions {
     command: FakeCdpCommand,
     origin: string,
   ) => readonly CdpEvent[] | undefined;
-  /** Delay each HTTP discovery document so a short command deadline can be observed separately. */
-  readonly discoveryDelayMs?: number;
+  /** Hold HTTP discovery responses until the test releases the gate. */
+  readonly discoveryGate?: PhaseGate<string>;
   /**
    * Hold each WebSocket upgrade (by request URL) until the test releases the
    * gate. A held socket the client abandons is destroyed, not accepted.
@@ -84,14 +84,7 @@ export interface FakeOptions {
   readonly extraCollections?: boolean;
   readonly indexedDbDateKeys?: boolean;
   readonly foreignSessionEvents?: boolean;
-  readonly redirectToDisallowedOrigin?: boolean;
-  readonly redirectFromDisallowedOrigin?: boolean;
-  readonly redirectWithinOrigin?: boolean;
   readonly malformedRedirectResponse?: boolean;
-  readonly omitRedirectResponse?: boolean;
-  readonly redirectResponseUrl?: string;
-  readonly redirectResponseEnvelope?: unknown;
-  readonly responseAfterMalformedUrl?: string;
   readonly unrelatedWorker?: boolean;
   readonly binaryWebSocketEvent?: boolean;
   /** Emit an allowed WebSocket creation without any frames in the capture window. */
@@ -112,8 +105,6 @@ export interface FakeOptions {
   readonly sensitiveShapes?: boolean;
   /** Deliver a console argument the protocol spells as `{ type: "object", subtype: "null" }`. */
   readonly nullConsoleArgument?: boolean;
-  readonly cachedResponseBody?: string;
-  readonly invalidResponseBodyBase64?: boolean;
   readonly webMcpTools?: boolean;
   /** Replaces the primary tool's registration stack; returning `undefined` omits it. */
   readonly webMcpStackTrace?: (origin: string) => JsonValue | undefined;

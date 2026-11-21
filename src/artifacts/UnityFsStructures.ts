@@ -7,6 +7,7 @@ import {
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import { decodeLz4Block } from "../compression/Lz4Block.js";
 import {
+  BinaryReader,
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../domain/binaryContainer.js";
@@ -253,14 +254,15 @@ export const decodeUnityFsLz4 = async (
 };
 
 const parseBlocks = async (
-  table: Buffer,
+  table: BinaryReader,
+  dataBytes: number,
   budget: Budget,
   signal?: AbortSignal,
 ): Promise<UnityFsBlock[]> => {
-  if (table.length < 24)
+  if (table.bytes.length < 24)
     throw unityFsFormatFailure("blocks-info table is truncated");
-  const blockCount = table.readUInt32BE(16);
-  if (20 + blockCount * 10 + 4 > table.length)
+  const blockCount = table.u32(16);
+  if (20 + blockCount * 10 + 4 > table.bytes.length)
     throw unityFsFormatFailure("declared block count exceeds the table");
   // Includes array slots, numeric fields and the retained lookup representation.
   budget.charge(blockCount * 256, directoryLimit);
@@ -272,9 +274,13 @@ const parseBlocks = async (
   for (let index = 0; index < blockCount; index++) {
     if (index % 256 === 0) await setImmediate();
     assertArtifactReadActive(signal);
-    const uncompressedSize = table.readUInt32BE(cursor);
-    const compressedSize = table.readUInt32BE(cursor + 4);
-    const flags = table.readUInt16BE(cursor + 8);
+    const uncompressedSize = table.u32(cursor);
+    const compressedSize = table.u32(cursor + 4);
+    const flags = table.u16(cursor + 8);
+    if (compressedSize > dataBytes - compressedStart)
+      throw unityFsFormatFailure(
+        "declared data area exceeds the bundle extent",
+      );
     const compression = flags & UNITYFS_FLAG_COMPRESSION_MASK;
     cursor += 10;
     const lz4 =
@@ -321,17 +327,17 @@ const parseBlocks = async (
 };
 
 const parseNodes = async (
-  table: Buffer,
+  table: BinaryReader,
   blocks: readonly UnityFsBlock[],
   budget: Budget,
   signal?: AbortSignal,
 ): Promise<UnityFsNode[]> => {
   let cursor = 20 + blocks.length * 10;
-  if (cursor + 4 > table.length)
+  if (cursor + 4 > table.bytes.length)
     throw unityFsFormatFailure("node count is missing from the table");
-  const nodeCount = table.readUInt32BE(cursor);
+  const nodeCount = table.u32(cursor);
   cursor += 4;
-  if (cursor + nodeCount * 21 > table.length)
+  if (cursor + nodeCount * 21 > table.bytes.length)
     throw unityFsFormatFailure("declared node count exceeds the table");
   // Covers parsed rows plus the reader's owned entries/map; paths are charged separately.
   budget.charge(nodeCount * 512, directoryLimit);
@@ -344,19 +350,20 @@ const parseNodes = async (
   for (let index = 0; index < nodeCount; index++) {
     if (index % 256 === 0) await setImmediate();
     assertArtifactReadActive(signal);
-    if (cursor + 20 > table.length)
+    if (cursor + 20 > table.bytes.length)
       throw unityFsFormatFailure("node fixed fields are truncated");
-    const offsetBig = table.readBigUInt64BE(cursor);
-    const sizeBig = table.readBigUInt64BE(cursor + 8);
-    const flags = table.readUInt32BE(cursor + 16);
+    const offsetBig = table.word(cursor, 64);
+    const sizeBig = table.word(cursor + 8, 64);
+    const flags = table.u32(cursor + 16);
     cursor += 20;
-    const nameEnd = table.indexOf(0, cursor);
+    const nameEnd = table.bytes.indexOf(0, cursor);
     if (nameEnd === -1) throw unityFsFormatFailure("node path is unterminated");
     // UTF-16 plus repeated JSON-escaped source/canonical path projections.
     budget.charge((nameEnd - cursor) * 24, directoryLimit);
+    const name = table.range(cursor, nameEnd - cursor, "UnityFS node path");
     let path: string;
     try {
-      path = UTF8.decode(table.subarray(cursor, nameEnd));
+      path = UTF8.decode(name);
     } catch (cause: unknown) {
       throw new ArtifactReaderFailure(
         "format",
@@ -382,32 +389,6 @@ const parseNodes = async (
   return nodes;
 };
 
-const resolveDataStart = (
-  header: UnityFsHeader,
-  blocks: readonly UnityFsBlock[],
-): number => {
-  const layout = header.layout;
-  if (layout.status !== "available")
-    throw new ArtifactReaderFailure(
-      "unavailable",
-      "UnityFS directory layout is unavailable",
-    );
-  let dataStart = header.blocksInfoAtEnd
-    ? layout.afterHeader
-    : layout.blocksInfoOffset + header.compressedBlocksInfoSize;
-  if (layout.dataPadding) dataStart = align16(dataStart);
-  const compressedTotal = blocks.reduce(
-    (total, block) => total + block.compressedSize,
-    0,
-  );
-  const dataEnd = header.blocksInfoAtEnd
-    ? layout.blocksInfoOffset
-    : header.declaredSize;
-  if (dataStart < 0 || dataStart + compressedTotal > dataEnd)
-    throw unityFsFormatFailure("declared data area exceeds the bundle extent");
-  return dataStart;
-};
-
 export const readUnityFsBlocksInfo = async (
   handle: FileHandle,
   header: UnityFsHeader,
@@ -424,6 +405,17 @@ export const readUnityFsBlocksInfo = async (
     header.uncompressedBlocksInfoSize > MAX_TABLE_BYTES
   )
     throw directoryLimit();
+  const unalignedDataStart = header.blocksInfoAtEnd
+    ? layout.afterHeader
+    : layout.blocksInfoOffset + header.compressedBlocksInfoSize;
+  const dataStart = layout.dataPadding
+    ? align16(unalignedDataStart)
+    : unalignedDataStart;
+  const dataEnd = header.blocksInfoAtEnd
+    ? layout.blocksInfoOffset
+    : header.declaredSize;
+  if (dataStart < 0 || dataStart > dataEnd)
+    throw unityFsFormatFailure("declared data area exceeds the bundle extent");
   const budget = new Budget(DIRECTORY_BUDGET_BYTES);
   budget.charge(header.compressedBlocksInfoSize, directoryLimit);
   if (header.compression !== UNITYFS_COMPRESSION_NONE)
@@ -435,15 +427,17 @@ export const readUnityFsBlocksInfo = async (
     header.declaredSize,
     signal,
   );
-  const table = await decodeBlocksInfoTable(header, compressed, signal);
-  if (table.length < 20)
-    throw unityFsFormatFailure("blocks-info table is truncated");
-  const blocks = await parseBlocks(table, budget, signal);
+  const table = new BinaryReader(
+    await decodeBlocksInfoTable(header, compressed, signal),
+    false,
+    "unityfs",
+  );
+  const blocks = await parseBlocks(table, dataEnd - dataStart, budget, signal);
   const nodes = await parseNodes(table, blocks, budget, signal);
   return {
-    dataHash: table.subarray(0, 16).toString("hex"),
+    dataHash: table.range(0, 16, "UnityFS data hash").toString("hex"),
     blocks,
     nodes,
-    dataStart: resolveDataStart(header, blocks),
+    dataStart,
   };
 };

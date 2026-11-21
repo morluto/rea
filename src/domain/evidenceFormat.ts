@@ -18,7 +18,7 @@ import { ParseFailureError, unsupportedInput } from "./parseFailure.js";
  * summary identities are no longer rebuilt.
  *
  * Revision 2: the Evidence subject names its target identity
- * (`subject.identity`, docs/adr/evidence/target-identity.md). The Evidence ID
+ * (`subject.identity`). The Evidence ID
  * commits to that identity, including its kind and selection, instead of the
  * subject's digest, format and architecture, so every Evidence ID changes.
  * Each record also declares `evidence_format`, so a standalone record names
