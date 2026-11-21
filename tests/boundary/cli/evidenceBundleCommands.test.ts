@@ -1,5 +1,6 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
 import {
   access,
@@ -504,19 +505,23 @@ cliTest(
     const refusal = {
       code: "evidence_integrity_mismatch",
       retryable: false,
-      message: expect.stringMatching(
-        /Evidence record predates format revision.*Recreate observations with the current REA release/u,
+      message: expect.stringContaining(
+        "Evidence record predates format revision",
       ),
     };
     const imported = await cli.run({
       arguments: ["evidence-import", path, "--json"],
     });
     expect(imported.exitCode).toBe(1);
-    expect(imported.json).toMatchObject(refusal);
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected shared MCP session");
     const response = await call("import_evidence_bundle", { path });
     expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response)).toMatchObject({ error: refusal });
+    for (const error of [imported.json, parseMcpToolError(response).error]) {
+      expect(error).toMatchObject(refusal);
+      expect(error).toMatchObject({
+        message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
+      });
+    }
   },
 );
