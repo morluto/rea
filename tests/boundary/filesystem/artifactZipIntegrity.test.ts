@@ -770,8 +770,12 @@ it("reports a member with an unsupported compression method as unavailable and k
       sha256: createHash("sha256").update("sibling bytes").digest("hex"),
     }),
   );
-  expect(inventory.coverage.status).toBe("unknown");
-  expect(inventory.limitations).toContain(limitation);
+  // The central directory lists every entry; only one member's content is
+  // unreadable, so entry coverage stays complete, as for an encrypted member.
+  expect(inventory.coverage).toEqual({
+    scope: "container-entries",
+    status: "complete",
+  });
 });
 
 /** Inventory one archive through the provider and expect a typed failure. */
