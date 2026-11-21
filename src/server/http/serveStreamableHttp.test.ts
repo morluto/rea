@@ -297,6 +297,9 @@ it("keeps the instance's shutdown hook when two initialize requests race to repl
   );
   const opened = await slot.handle(initializeRequest());
   expect(opened.status).toBe(200);
+  await expect(initializationResult(opened)).resolves.toMatchObject(
+    completedInitialization,
+  );
   // The second initialize waits until the first replacement has answered, then replaces that session.
   const raced = await Promise.all([
     slot.handle(initializeRequest()),
@@ -307,6 +310,11 @@ it("keeps the instance's shutdown hook when two initialize requests race to repl
   expect(ids[0]).toEqual(expect.any(String));
   expect(ids[1]).toEqual(expect.any(String));
   expect(ids[0]).not.toBe(ids[1]);
+  for (const response of raced) {
+    await expect(initializationResult(response)).resolves.toMatchObject(
+      completedInitialization,
+    );
+  }
   expect(shutdownHooks).toBe(0);
   // Only the slot's own close is the shutdown the instance's hook waits for.
   await slot.close();
@@ -324,36 +332,42 @@ it("refuses a session id that is not live and does not arm a transport", async (
     await connectServer(transport);
   };
   const slot = new McpSessionSlot(server, undefined);
-  const absent = await slot.handle(sessionPost("missing-session", echoCall));
-  expect(absent.status).toBe(404);
-  await expect(absent.json()).resolves.toMatchObject({
-    error: { message: "Session not found" },
-  });
-  expect(connections).toBe(0);
+  let arming: Promise<Response> | undefined;
+  try {
+    const absent = await slot.handle(sessionPost("missing-session", echoCall));
+    expect(absent.status).toBe(404);
+    await expect(absent.json()).resolves.toMatchObject({
+      error: { message: "Session not found" },
+    });
+    expect(connections).toBe(0);
 
-  const arming = slot.handle(initializeRequest());
-  await admitted.reached(arming, "transport connect");
-  const during = await slot.handle(sessionPost("missing-session", echoCall));
-  expect(during.status).toBe(404);
-  await expect(during.json()).resolves.toMatchObject({
-    error: { message: "Session not found" },
-  });
-  expect(connections).toBe(1);
-  admitted.release();
-  const opened = await arming;
-  expect(opened.status).toBe(200);
-  const sessionId = opened.headers.get("mcp-session-id");
-  expect(sessionId).toEqual(expect.any(String));
+    arming = slot.handle(initializeRequest());
+    await admitted.reached(arming, "transport connect");
+    const during = await slot.handle(sessionPost("missing-session", echoCall));
+    expect(during.status).toBe(404);
+    await expect(during.json()).resolves.toMatchObject({
+      error: { message: "Session not found" },
+    });
+    expect(connections).toBe(1);
+    admitted.release();
+    const opened = await arming;
+    expect(opened.status).toBe(200);
+    const sessionId = opened.headers.get("mcp-session-id");
+    expect(sessionId).toEqual(expect.any(String));
 
-  const wrong = await slot.handle(sessionPost("other-session", echoCall));
-  expect(wrong.status).toBe(404);
-  expect(connections).toBe(1);
+    const wrong = await slot.handle(sessionPost("other-session", echoCall));
+    expect(wrong.status).toBe(404);
+    expect(connections).toBe(1);
 
-  const live = await slot.handle(sessionPost(sessionId ?? "", echoCall));
-  expect(live.status).toBe(200);
-  expect(await live.text()).toContain('"text":"kept"');
-  expect(connections).toBe(1);
-  await slot.close();
+    const live = await slot.handle(sessionPost(sessionId ?? "", echoCall));
+    expect(live.status).toBe(200);
+    expect(await live.text()).toContain('"text":"kept"');
+    expect(connections).toBe(1);
+  } finally {
+    admitted.release();
+    await arming?.catch(() => undefined);
+    await slot.close();
+  }
 });
 
 it("refuses an unknown session id without waiting for a session drain", async () => {
