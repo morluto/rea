@@ -376,6 +376,7 @@
 * **web:** consolidate module context and resolver evidence checks ([#13071](https://github.com/morluto/rea/issues/13071)) ([56a0617](https://github.com/morluto/rea/commit/56a0617f518432f14ba981c8c55f1b920f857f5e))
 * **web:** consolidate module syntax and capture identity fixtures ([#13073](https://github.com/morluto/rea/issues/13073)) ([8322b55](https://github.com/morluto/rea/commit/8322b555523ed83aa895af5e4ff666023ca511fc))
 * **web:** consolidate network capture queue lifecycle checks ([#13125](https://github.com/morluto/rea/issues/13125)) ([9a9ee6c](https://github.com/morluto/rea/commit/9a9ee6cf3d97fffea4849902872ad9b028cbc54f))
+* **web:** consolidate network content evidence checks ([#13128](https://github.com/morluto/rea/issues/13128)) ([c20ee87](https://github.com/morluto/rea/commit/c20ee87b2b849846d5959339670dd0b48ba3df0e))
 * **web:** consolidate passive capture uncertainty checks ([#13083](https://github.com/morluto/rea/issues/13083)) ([9a66726](https://github.com/morluto/rea/commit/9a66726389aa74d4a7e49874d641ba085ae6c087))
 * **web:** consolidate passive CDP admission proofs ([#13092](https://github.com/morluto/rea/issues/13092)) ([750120a](https://github.com/morluto/rea/commit/750120a4ce5405ca3b803287be8d522d21e341d9))
 * **web:** consolidate passive CDP event fact proofs ([#13093](https://github.com/morluto/rea/issues/13093)) ([47a108e](https://github.com/morluto/rea/commit/47a108e64e3cf981901673e2bb795bace99235b8))
