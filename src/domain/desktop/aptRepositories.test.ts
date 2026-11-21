@@ -1273,3 +1273,69 @@ it.each([1, 65_536])(
     expect(fields?.get("other")).toBe("value");
   },
 );
+
+it("filters out deb822 stanzas disabled with Enabled: false, no, or 0 while keeping enabled and implicitly enabled stanzas", () => {
+  const multiStanzaSources = [
+    // Stanza 1: Enabled: false (explicitly disabled)
+    "Types: deb",
+    "URIs: https://example.org/disabled-false",
+    "Suites: stable",
+    "Components: main",
+    "Enabled: false",
+    "",
+    // Stanza 2: Implicitly enabled (Enabled field omitted)
+    "Types: deb",
+    "URIs: https://example.org/implicitly-enabled",
+    "Suites: stable",
+    "Components: main",
+    "",
+    // Stanza 3: Explicitly enabled with true
+    "Types: deb",
+    "URIs: https://example.org/enabled-true",
+    "Suites: stable",
+    "Components: main",
+    "Enabled: true",
+    "",
+    // Stanza 4: Explicitly disabled with case-insensitive No
+    "Types: deb",
+    "URIs: https://example.org/disabled-no",
+    "Suites: stable",
+    "Components: main",
+    "Enabled: No",
+    "",
+    // Stanza 5: Explicitly enabled with 1
+    "Types: deb",
+    "URIs: https://example.org/enabled-one",
+    "Suites: stable",
+    "Components: main",
+    "Enabled: 1",
+    "",
+    // Stanza 6: Explicitly enabled with yes
+    "Types: deb",
+    "URIs: https://example.org/enabled-yes",
+    "Suites: stable",
+    "Components: main",
+    "Enabled: yes",
+    "",
+    // Stanza 7: Explicitly disabled with 0
+    "Types: deb",
+    "URIs: https://example.org/disabled-zero",
+    "Suites: stable",
+    "Components: main",
+    "Enabled: 0",
+    "",
+  ].join("\n");
+
+  const stanzas = parseDeb822Sources(multiStanzaSources, "multi.sources");
+  expect(
+    stanzas.map((entry) => ({
+      position: entry.position,
+      uri: entry.uris[0]?.uri,
+    })),
+  ).toEqual([
+    { position: 2, uri: "https://example.org/implicitly-enabled" },
+    { position: 3, uri: "https://example.org/enabled-true" },
+    { position: 5, uri: "https://example.org/enabled-one" },
+    { position: 6, uri: "https://example.org/enabled-yes" },
+  ]);
+});
