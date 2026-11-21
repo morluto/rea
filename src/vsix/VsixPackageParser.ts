@@ -421,15 +421,21 @@ const caseOnlyEntryPointMatch = (
 };
 
 /**
- * What a directory's own package.json says about `main`. Node's loader
- * rejects a manifest that is not a JSON object with
+ * What a directory's own package.json says about `main`. `directoryOnly` marks
+ * a `main` that resolves to the `extension` root directory, where file
+ * suffixes would name archive-root siblings outside the installed payload.
+ * Node's loader rejects a manifest that is not a JSON object with
  * ERR_INVALID_PACKAGE_CONFIG instead of falling back to `index.*`, so that
  * outcome stays distinct from a manifest that names no usable `main`.
  * `unread` marks a manifest skipped by the byte budget: its `main` is
  * unknown, so the index files cannot stand in for it either.
  */
 type DirectoryManifestMain =
-  | { readonly kind: "main"; readonly path: string }
+  | {
+      readonly kind: "main";
+      readonly path: string;
+      readonly directoryOnly: boolean;
+    }
   | { readonly kind: "none" }
   | { readonly kind: "malformed" }
   | { readonly kind: "unread" };
@@ -440,8 +446,9 @@ const directoryMainStopsLookup = (main: DirectoryManifestMain): boolean =>
 
 /**
  * `main` of a directory's own package.json, joined onto that directory with
- * its `/`-separated `.` and `..` segments resolved (`\` stays literal);
- * `none` when it names nothing, is absolute, or climbs out of `extension/`, `malformed` when
+ * its `/`-separated `.` and `..` segments resolved (`\` stays literal), marked
+ * `directoryOnly` when it resolves to the `extension` root; `none` when it
+ * names nothing, is absolute, or climbs out of `extension/`, `malformed` when
  * the manifest is not a JSON object, `unread` when it holds more values than
  * the parse allowance.
  */
@@ -468,7 +475,8 @@ const directoryManifestMain = (
   // absolute path names a host file outside the package, never a member.
   if (main.startsWith("/")) return { kind: "none" };
   // `directory` always starts at the `extension` root; a `..` that would pop
-  // that root names a file outside the installed extension, never a member.
+  // that root names a file outside the installed extension, never a member,
+  // and landing on `extension` itself can only resolve via `extension/index.*`.
   const segments: string[] = [];
   const joined = `${directory}/${main}`;
   for (const segment of joined.split("/")) {
@@ -479,15 +487,20 @@ const directoryManifestMain = (
   }
   return segments.length === 0
     ? { kind: "none" }
-    : { kind: "main", path: segments.join("/") };
+    : {
+        kind: "main",
+        path: segments.join("/"),
+        directoryOnly: segments.length === 1 && segments[0] === "extension",
+      };
 };
 
 /**
  * The member a `main` entry resolves to under Node's CommonJS lookup: unless
  * the specifier is directory-only, the file itself or with an added
- * extension; then the directory's package.json `main`, then the directory's
- * `index.*`. A malformed directory package.json stops the lookup, as it does
- * in Node; an unread one stops it too, since its `main` is unknown.
+ * extension; then the directory's package.json `main` (index-only when it
+ * names the `extension` root), then the directory's `index.*`. A malformed
+ * directory package.json stops the lookup, as it does in Node; an unread one
+ * stops it too, since its `main` is unknown.
  */
 const resolveNodeEntryPoint = (
   declared: string,
@@ -508,7 +521,9 @@ const resolveNodeEntryPoint = (
   if (directoryMain.kind === "main") {
     const viaManifest = resolveEntryPoint(
       directoryMain.path,
-      [...NODE_FILE_CANDIDATES, ...NODE_INDEX_CANDIDATES],
+      directoryMain.directoryOnly
+        ? NODE_INDEX_CANDIDATES
+        : [...NODE_FILE_CANDIDATES, ...NODE_INDEX_CANDIDATES],
       memberPaths,
     );
     if (viaManifest.present) return viaManifest;

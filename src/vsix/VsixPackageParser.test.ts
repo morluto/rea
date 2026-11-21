@@ -1165,6 +1165,51 @@ it.each([
   },
 );
 
+it("keeps a directory package.json main targeting the extension root from matching archive-root files", async () => {
+  const withIndex = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+    }),
+    extraMembers: {
+      "extension/out/package.json": JSON.stringify({ main: ".." }),
+      "extension.js": "exports.activate = () => {};",
+      "extension/index.js": "exports.activate = () => {};",
+    },
+  });
+  const withIndexReport = vsixPackageSchema.parse(
+    await parseVsixPackage(withIndex, artifactOf(withIndex), defaults),
+  );
+  expect(withIndexReport.entry_points.main).toEqual({
+    path: "extension/index.js",
+    present: true,
+  });
+
+  const withoutIndex = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+    }),
+    extraMembers: {
+      "extension/out/package.json": JSON.stringify({ main: ".." }),
+      "extension.js": "exports.activate = () => {};",
+    },
+  });
+  const withoutIndexReport = vsixPackageSchema.parse(
+    await parseVsixPackage(withoutIndex, artifactOf(withoutIndex), defaults),
+  );
+  expect(withoutIndexReport.entry_points.main).toEqual({
+    path: "extension/out",
+    present: false,
+  });
+});
+
 it("reports an absolute directory package.json main absent without an index", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({
