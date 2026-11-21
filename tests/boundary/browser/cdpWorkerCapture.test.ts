@@ -891,6 +891,108 @@ it.each(["revoked", "selected", "controlled"])(
   },
 );
 
+it("bounds queued worker source reads with one collection deadline", async () => {
+  const ids = ["first", "second", "third", "fourth", "fifth"];
+  const { provider, input, browser } = await fixture({
+    commandResult: (command, origin) =>
+      command.method === "Target.getTargets"
+        ? {
+            targetInfos: [
+              {
+                targetId: "allowed-page",
+                type: "page",
+                title: "Page",
+                url: origin + "/app",
+                attached: false,
+              },
+            ],
+          }
+        : undefined,
+    eventsBeforeReply: ["Page.getResourceTree"],
+    commandEvents(command, origin) {
+      const parsed = (id: string): CdpEvent => ({
+        method: "Debugger.scriptParsed",
+        sessionId: "worker-own",
+        params: {
+          scriptId: id,
+          url: origin + "/" + id + ".js",
+          executionContextId: 1,
+          hash: id,
+        },
+      });
+      if (
+        command.method === "Debugger.enable" &&
+        command.sessionId === "worker-own"
+      )
+        return [parsed(ids[0]!)];
+      // This page read follows observation_ms, with no pending worker reads.
+      if (command.method === "Page.getResourceTree")
+        return ids.slice(1).map(parsed);
+      return undefined;
+    },
+    commandDelayMs: ({ method, sessionId, params }) => {
+      if (method !== "Debugger.getScriptSource" || sessionId !== "worker-own")
+        return 0;
+      if (params.scriptId === "first") return 400;
+      return params.scriptId === "second" ? 0 : 800;
+    },
+  });
+  onTestFinished(() => provider.close());
+  const selected = inspectWebPageInputSchema.parse({
+    ...input,
+    cdp_endpoint: browser.browserWebSocketUrl,
+  });
+  const result = await provider.inspectPage({
+    ...selected,
+    observation_ms: 1400,
+    command_timeout_ms: 1000,
+  });
+  if (!result.ok) throw result.error;
+  const observation = result.value.workers.find(
+    ({ target_id }) => target_id === "own",
+  )!.observation!;
+  expect(observation.scripts.map(({ script_id }) => script_id)).toEqual(ids);
+  expect(
+    observation.scripts
+      .filter(({ source }) => source.included)
+      .map(({ script_id }) => script_id),
+  ).toEqual(["first", "second"]);
+  const omitted = observation.scripts.filter(({ source }) => !source.included);
+  for (const { source } of omitted)
+    expect(source).toMatchObject({
+      included: false,
+      reason: expect.stringContaining("1000 ms command_timeout_ms"),
+    });
+  expect(observation.completeness.excluded).toContainEqual({
+    section: "script_sources",
+    reason: "resource_budget_exhausted",
+    count: omitted.length,
+  });
+  expect(observation.completeness.truncated_sections).not.toContain("scripts");
+  const reads = browser.commands.filter(
+    ({ method, sessionId }) =>
+      method === "Debugger.getScriptSource" && sessionId === "worker-own",
+  );
+  expect(reads.map(({ params }) => params.scriptId)).toEqual([
+    "first",
+    "second",
+    "third",
+  ]);
+  expect(
+    browser.commands.some(
+      ({ method, params }) =>
+        method === "Target.detachFromTarget" &&
+        params.sessionId === "worker-own",
+    ),
+  ).toBe(true);
+  const next = await provider.inspectPage({
+    ...selected,
+    include_script_sources: false,
+  });
+  if (!next.ok) throw next.error;
+  expect(browser.openedConnectionCount()).toBe(1);
+});
+
 it("reports the aggregate worker source limit separately from the event budget", async () => {
   const { provider, input } = await fixture({
     commandResult(command) {
@@ -3063,13 +3165,15 @@ it.each([
 );
 
 it.each([
-  ["owned", "unavailable", "unknown"],
-  ["selected", "truncated", "unknown"],
-  ["owned", "complete", "not-observed-in-capture"],
-  ["unselected", "unavailable", "not-observed-in-capture"],
+  ["owned", "unavailable", "unknown", false],
+  ["selected", "truncated", "unknown", false],
+  ["selected", "truncated", "unknown", true],
+  ["legacy", "missing", "unknown", false],
+  ["owned", "complete", "not-observed-in-capture", false],
+  ["unselected", "unavailable", "not-observed-in-capture", false],
 ] as const)(
-  "uses retained %s worker %s coverage for static absence",
-  async (scope, coverage, expected) => {
+  "uses retained %s worker %s coverage for static absence and reconciliation (%s, attach limited %s)",
+  async (scope, coverage, expected, attachLimited) => {
     const { provider, input } = await fixture();
     const captured = await provider.inspectPage(input);
     if (!captured.ok) throw captured.error;
@@ -3090,7 +3194,14 @@ it.each([
       unavailable_sections: [],
       excluded: [],
     };
-    inspection.completeness = complete;
+    inspection.completeness = attachLimited
+      ? {
+          ...complete,
+          status: "attach_limited",
+          conditions: ["attach_limited"],
+          attach_limited_sections: ["workers"],
+        }
+      : complete;
     inspection.workers = [worker];
     observation.ownership = scope === "owned" ? "page_related" : "unknown";
     observation.page_target_id = scope === "owned" ? input.target_id : null;
@@ -3112,6 +3223,7 @@ it.each([
             }
           : {}),
     };
+    if (scope === "legacy") delete worker.observation;
     const evidence = createBrowserEvidence(
       "inspect_web_page",
       {
@@ -3133,7 +3245,7 @@ it.each([
           ),
       );
     expect(staticAsset).toBeDefined();
-    const reconciled = reconcileJavaScriptRuntimeEvidence({
+    const request = {
       static_layers: [
         {
           role: "application",
@@ -3148,11 +3260,51 @@ it.each([
         },
       ],
       runtime_observations: [evidence],
-    });
+    };
+    const reconciled = reconcileJavaScriptRuntimeEvidence(request);
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
       reconciled.value.evidence.normalized_result,
     );
+    const incomplete = expected === "unknown";
+    const truncated = coverage === "truncated";
+    expect(result.coverage).toMatchObject({
+      status: truncated
+        ? "truncated"
+        : incomplete
+          ? "partial"
+          : "complete-within-inputs",
+      truncated,
+    });
+    expect(result.graph.coverage).toMatchObject({
+      status: incomplete ? "partial" : "complete",
+      truncated,
+      omitted_count: incomplete ? null : 0,
+    });
+    if (attachLimited) {
+      const file = join(root, "worker-reconciliation.json");
+      await writeFile(file, JSON.stringify(request));
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        ["scripts/rea.mjs", "reconcile-javascript-runtime", file, "--json"],
+        { maxBuffer: 8 * 1024 * 1024 },
+      );
+      const { call } = await connectLocalToolsMcp({
+        REA_MCP_MAX_INPUT_ELEMENTS: "100000",
+      });
+      const mcp = await call("reconcile_javascript_runtime", request);
+      expect(mcp.isError, JSON.stringify(mcp.content)).not.toBe(true);
+      for (const evidence of [
+        JSON.parse(stdout) as unknown,
+        mcp.structuredContent,
+      ])
+        expect(evidence).toMatchObject({
+          normalized_result: {
+            coverage: result.coverage,
+            graph: { coverage: result.graph.coverage },
+          },
+        });
+    }
     expect(
       result.static_load_states.find(
         ({ static_node_id }) => static_node_id === staticAsset!.node_id,

@@ -177,13 +177,11 @@ const parseBrowserCapture = (
   const scriptsCompleteWithinScope =
     scriptsComplete(inspection.completeness) &&
     workerDiscoveryComplete(inspection.completeness) &&
-    inspection.workers.every(
-      (worker) =>
-        worker.observation !== undefined &&
-        ((worker.observation.ownership === "unknown" &&
-          !worker.observation.selected_explicitly) ||
-          (scriptsComplete(worker.observation.completeness) &&
-            workerDiscoveryComplete(worker.observation.completeness))),
+    workerCoverageLedgers(inspection.workers).every(
+      (ledger) =>
+        ledger !== undefined &&
+        scriptsComplete(ledger) &&
+        workerDiscoveryComplete(ledger),
     );
   return {
     kind: "browser",
@@ -484,6 +482,15 @@ const assertRuntimeParameters = (
       "Runtime Evidence contains source without source-capture selection",
     );
 };
+
+/** Missing observation on a retained legacy worker is a gap; an explicitly
+ * out-of-scope observation contributes no claims about the selected capture. */
+export const workerCoverageLedgers = (workers: WebPageInspection["workers"]) =>
+  workers.flatMap(({ observation }) =>
+    observation?.ownership === "unknown" && !observation.selected_explicitly
+      ? []
+      : [observation?.completeness],
+  );
 
 export const scriptsComplete = (completeness: {
   readonly attach_limited_sections: readonly string[];

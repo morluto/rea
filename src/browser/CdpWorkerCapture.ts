@@ -16,6 +16,10 @@ import {
   type CdpWorkerRelationships,
 } from "./CdpWorkerTarget.js";
 import { exclusionReasonForUrl } from "./CdpCaptureEventHelpers.js";
+import {
+  CdpScriptSourceBudget,
+  cdpScriptSourceDeadlineOmissionReason,
+} from "./CdpScriptSourceBudget.js";
 import { Budget } from "../domain/budget.js";
 import { noRuntimeOverrideSentence } from "../domain/browserDeadline.js";
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
@@ -115,11 +119,11 @@ export class CdpWorkerCapture {
     item: Observation["scripts"][number];
   }[] = [];
   #readingSources = false;
+  #sourceBudget: CdpScriptSourceBudget | undefined;
   #failure: unknown;
   #removeListener: (() => void) | undefined;
   #stopped = false;
   readonly #eventBytes = new Budget(WEB_RUNTIME_LIMITS.retainedEventBytes);
-  readonly #sourceBytes = new Budget(WEB_RUNTIME_LIMITS.sourceBytes);
   readonly #unavailableSourceSessions = new Set<string | undefined>();
   readonly #abort = new AbortController();
   readonly signal: AbortSignal;
@@ -775,6 +779,33 @@ export class CdpWorkerCapture {
   }
 
   async #readSources(): Promise<void> {
+    const budget = (this.#sourceBudget ??= new CdpScriptSourceBudget(
+      this.signal,
+      this.context.input.command_timeout_ms,
+    ));
+    // Successive bursts share the time and byte allowances. Idle observation
+    // between bursts does not consume the source collection deadline.
+    budget.beginCollection();
+    const read = async (worker: WorkerState, scriptId: string) => {
+      if (
+        budget.timedOut ||
+        this.#unavailableSourceSessions.has(worker.sessionId)
+      )
+        return undefined;
+      try {
+        return await this.#command(
+          "Debugger.getScriptSource",
+          { scriptId },
+          worker.sessionId,
+          worker.item.observation.limitations,
+          budget.signal,
+        );
+      } catch (cause: unknown) {
+        if (!this.signal.aborted && budget.deadlineFailed(cause))
+          return undefined;
+        throw cause;
+      }
+    };
     try {
       for (
         let index = 0;
@@ -785,21 +816,23 @@ export class CdpWorkerCapture {
         try {
           const result = await readScopedWorkerSource(
             () => this.#canCollect(worker),
-            () =>
-              this.#unavailableSourceSessions.has(worker.sessionId)
-                ? Promise.resolve(undefined)
-                : this.#command(
-                    "Debugger.getScriptSource",
-                    { scriptId: item.script_id },
-                    worker.sessionId,
-                    worker.item.observation.limitations,
-                  ),
+            () => read(worker, item.script_id),
           );
           if (!result.selected) {
             item.source = sourceExcluded(
               "Worker source is outside the current collection scope",
             );
             worker.events.completeness.unavailable("script_sources");
+            continue;
+          }
+          if (budget.timedOut) {
+            item.source = sourceExcluded(
+              cdpScriptSourceDeadlineOmissionReason(budget.commandTimeoutMs),
+            );
+            worker.events.completeness.exclude(
+              "script_sources",
+              "resource_budget_exhausted",
+            );
             continue;
           }
           if (result.reply === undefined) {
@@ -814,13 +847,13 @@ export class CdpWorkerCapture {
             continue;
           }
           const text = result.reply.scriptSource;
-          if (!this.#sourceBytes.tryCharge(Buffer.byteLength(text)))
+          if (!budget.admit(text))
             throw new BrowserObservationError(
               this.context.operation,
               "payload_limit",
               {
                 detail: noRuntimeOverrideSentence(
-                  `Retained worker script sources exceeded the aggregate ${String(this.#sourceBytes.maximum)}-byte capture budget.`,
+                  `Retained worker script sources exceeded the aggregate ${String(WEB_RUNTIME_LIMITS.sourceBytes)}-byte capture budget.`,
                   "command_timeout_ms",
                 ),
                 remediationAction:
@@ -828,7 +861,7 @@ export class CdpWorkerCapture {
                 related: { parameters: ["include_script_sources"] },
                 diagnostics: {
                   kind: "worker_script_sources",
-                  limit_bytes: this.#sourceBytes.maximum,
+                  limit_bytes: WEB_RUNTIME_LIMITS.sourceBytes,
                 },
               },
             );
@@ -845,6 +878,7 @@ export class CdpWorkerCapture {
         }
       }
     } finally {
+      budget.endCollection();
       this.#sourceReads.length = 0;
       this.#readingSources = false;
     }
@@ -1121,9 +1155,10 @@ export class CdpWorkerCapture {
     params: CdpCommandParams<M>,
     sessionId: string | undefined,
     limitations = this.limitations,
+    signal = this.signal,
   ) {
     const result = await optionalCdpCommand(
-      { connection: this.context.connection, sessionId, signal: this.signal },
+      { connection: this.context.connection, sessionId, signal },
       method,
       params,
       limitations,

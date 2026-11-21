@@ -8,7 +8,10 @@ import type {
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
-import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
+import {
+  workerCoverageLedgers,
+  type ParsedRuntimeCapture,
+} from "./javascriptRuntimeReconciliationCaptureParsing.js";
 import { joinCoverageStatus } from "../coverage.js";
 import {
   known,
@@ -57,27 +60,45 @@ export const reconciliationInputCoverage = (
 ): {
   readonly status: ReconciliationInputStatus;
   readonly truncated: boolean;
+  readonly captureOmissions: Known<number>;
 } => {
+  const ledgers = input.captures.flatMap((capture) => [
+    capture.inspection.completeness,
+    ...(capture.kind === "browser"
+      ? workerCoverageLedgers(capture.inspection.workers)
+      : []),
+  ]);
+  const captureTruncated = ledgers.some((ledger) =>
+    ledger?.conditions.includes("truncated"),
+  );
+  const captureOmissions = captureTruncated
+    ? unknownBecause("a passive capture is truncated")
+    : ledgers.some(
+          (ledger) =>
+            ledger === undefined ||
+            ledger.attach_limited_sections.length > 0 ||
+            ledger.unavailable_sections.length > 0,
+        )
+      ? unknownBecause(
+          "a passive capture has missing observations or attach-limited or unavailable sections",
+        )
+      : known(0);
   const coverage = joinCoverageStatus([
-    "complete",
+    ledgers.every((ledger) => ledger?.status === "complete_within_window")
+      ? "complete"
+      : "partial",
     ...input.layers.map(({ graph }) =>
       applicationCoverageKnowledge(graph.coverage.status),
-    ),
-    ...input.captures.map(({ inspection }) =>
-      inspection.completeness.status === "complete_within_window"
-        ? ("complete" as const)
-        : ("partial" as const),
     ),
   ]);
   const truncated =
     input.layers.some(({ graph }) => graph.coverage.truncated) ||
-    input.captures.some(({ inspection }) =>
-      inspection.completeness.conditions.includes("truncated"),
-    );
+    captureTruncated;
   return {
     status:
       coverage === "unknown" ? "unknown" : truncated ? "truncated" : coverage,
     truncated,
+    captureOmissions,
   };
 };
 
@@ -190,30 +211,17 @@ const graphCoverageFacts = (
     input.runtime.omittedEntities +
     input.omittedReconciliationItems +
     omittedNodeObservations;
-  const captureTruncated = input.captures.some(({ inspection }) =>
-    inspection.completeness.conditions.includes("truncated"),
-  );
-  const captureHasUnknownOmissions = input.captures.some(
-    ({ inspection }) =>
-      inspection.completeness.attach_limited_sections.length > 0 ||
-      inspection.completeness.unavailable_sections.length > 0,
-  );
-  const outputTruncated = projectionOmissions > 0;
-  const omissions = captureTruncated
-    ? unknownBecause("a passive capture is truncated")
-    : captureHasUnknownOmissions
-      ? unknownBecause(
-          "a passive capture has attach-limited or unavailable sections",
-        )
-      : sumKnownCounts([
-          known(projectionOmissions),
-          ...input.layers.map(({ graph }) =>
-            graph.coverage.omitted_count === null
-              ? unknownBecause("a static graph did not count its omissions")
-              : known(graph.coverage.omitted_count),
-          ),
-        ]);
   const inputCoverage = reconciliationInputCoverage(input);
+  const outputTruncated = projectionOmissions > 0;
+  const omissions = sumKnownCounts([
+    inputCoverage.captureOmissions,
+    known(projectionOmissions),
+    ...input.layers.map(({ graph }) =>
+      graph.coverage.omitted_count === null
+        ? unknownBecause("a static graph did not count its omissions")
+        : known(graph.coverage.omitted_count),
+    ),
+  ]);
   return {
     projectionOmissions,
     omissions,

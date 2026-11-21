@@ -115,7 +115,7 @@ export const captureElectronScripts = async (
       items.push({ script_key: scriptKey, ...identity, source });
     }
   } finally {
-    sourceBudget?.dispose();
+    sourceBudget?.endCollection();
   }
   if (!input.request.include_script_sources)
     input.completeness.exclude("script_sources", "not_approved", total);

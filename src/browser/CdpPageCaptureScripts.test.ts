@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
@@ -123,9 +124,15 @@ it("preserves the caller cancellation reason when a source read is pending", asy
 it.each([
   { selection: "default", commandTimeoutMs: undefined, deadlineMs: 20_000 },
   { selection: "caller-selected", commandTimeoutMs: 1_234, deadlineMs: 1_234 },
+  {
+    selection: "CDP response timer first",
+    commandTimeoutMs: 1_234,
+    deadlineMs: 1_234,
+    commandTimerFirst: true,
+  },
 ])(
   "stops source reads at the $selection collection deadline and retains metadata",
-  async ({ commandTimeoutMs, deadlineMs }) => {
+  async ({ commandTimeoutMs, deadlineMs, commandTimerFirst }) => {
     vi.useFakeTimers();
     try {
       const input = inspectWebPageInputSchema.parse({
@@ -152,6 +159,14 @@ it.each([
           signal?: AbortSignal,
         ) =>
           new Promise((_resolve, reject) => {
+            if (commandTimerFirst)
+              setTimeout(
+                () =>
+                  reject(
+                    new BrowserObservationError("inspect_web_page", "timeout"),
+                  ),
+                deadlineMs - 1,
+              );
             signal?.addEventListener(
               "abort",
               () => reject(new AnalysisCancelledError("inspect_web_page")),

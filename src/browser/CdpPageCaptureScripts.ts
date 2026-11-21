@@ -88,7 +88,7 @@ export const captureScripts = async (
       drafts.push(buildScriptDraft(script, state, source));
     }
   } finally {
-    sourceBudget?.dispose();
+    sourceBudget?.endCollection();
   }
   if (!context.input.include_script_sources)
     events.completeness.exclude("script_sources", "not_approved", scripts.size);
