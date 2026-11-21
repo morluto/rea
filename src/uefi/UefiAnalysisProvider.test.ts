@@ -162,6 +162,34 @@ const expectOk = <
   return executed as Extract<T, { readonly ok: true }>;
 };
 
+const createMinimalPeBuffer = (
+  machine = 0x8664,
+  numSections = 1,
+  totalSize = 256,
+): Buffer => {
+  const buf = Buffer.alloc(Math.max(totalSize, 256), 0);
+  buf[0] = 0x4d;
+  buf[1] = 0x5a;
+  buf.writeUInt32LE(0x80, 0x3c);
+  buf.set(Buffer.from("PE\0\0"), 0x80);
+  buf.writeUInt16LE(machine, 0x84);
+  buf.writeUInt16LE(numSections, 0x86);
+  return buf;
+};
+
+const createMinimalTeBuffer = (
+  machine = 0x8664,
+  numSections = 1,
+  totalSize = 64,
+): Buffer => {
+  const buf = Buffer.alloc(Math.max(totalSize, 40), 0);
+  buf[0] = 0x56;
+  buf[1] = 0x5a;
+  buf.writeUInt16LE(machine, 2);
+  buf[4] = numSections;
+  return buf;
+};
+
 it("maps a flash image into an inspect execution with volume and section coverage", async () => {
   const { imagePath } = await writeTestImage();
   const provider = new UefiAnalysisProvider();
@@ -1716,10 +1744,7 @@ it("decompiles directory of pre-extracted binaries with bounded sniffing, duplic
   const inDir = join(directory, "input");
   const outDir = join(directory, "output");
 
-  const mzHeader = Buffer.alloc(128, 0);
-  mzHeader[0] = 0x4d; // M
-  mzHeader[1] = 0x5a; // Z
-  mzHeader.write("TEST_PAYLOAD", 64, "utf8");
+  const mzHeader = createMinimalPeBuffer();
 
   const secDir = join(inDir, "sec");
   const dxeDir = join(inDir, "dxe");
@@ -1792,9 +1817,7 @@ it("caps decompilation to max_modules while discovering all candidate modules", 
   const inDir = join(directory, "input");
   const outDir = join(directory, "output");
 
-  const mzHeader = Buffer.alloc(128, 0);
-  mzHeader[0] = 0x4d;
-  mzHeader[1] = 0x5a;
+  const mzHeader = createMinimalPeBuffer();
 
   const { mkdir: mkdirFs } = await import("node:fs/promises");
   await mkdirFs(inDir, { recursive: true });
@@ -1850,14 +1873,10 @@ it("computes deterministic content-addressed directory sha256 regardless of disc
   const outA = join(directory, "outA");
   const outB = join(directory, "outB");
 
-  const mzHeader1 = Buffer.alloc(128, 0);
-  mzHeader1[0] = 0x4d;
-  mzHeader1[1] = 0x5a;
+  const mzHeader1 = createMinimalPeBuffer();
   mzHeader1.write("MODULE_ALPHA", 64, "utf8");
 
-  const mzHeader2 = Buffer.alloc(128, 0);
-  mzHeader2[0] = 0x4d;
-  mzHeader2[1] = 0x5a;
+  const mzHeader2 = createMinimalPeBuffer();
   mzHeader2.write("MODULE_BETA", 64, "utf8");
 
   const { mkdir: mkdirFs } = await import("node:fs/promises");
@@ -2048,9 +2067,7 @@ it("truncates raw executable payload staging when reaching aggregate budget of 1
   await mkdirFs(inDir, { recursive: true });
 
   // 128 MiB budget: create module A (20 MiB), module B (20 MiB), and verify tracking
-  const peHeader = Buffer.alloc(128, 0);
-  peHeader[0] = 0x4d;
-  peHeader[1] = 0x5a;
+  const peHeader = createMinimalPeBuffer();
   peHeader.write("TEST_HEADER", 64, "utf8");
 
   await writeFile(join(inDir, "mod_a.efi"), peHeader);
@@ -2082,17 +2099,29 @@ it("gracefully filters out non-PE, corrupt, and oversized files during directory
   const { mkdir: mkdirFs } = await import("node:fs/promises");
   await mkdirFs(inDir, { recursive: true });
 
-  // 1. Valid PE file (MZ)
-  const validPe = Buffer.alloc(128, 0);
-  validPe[0] = 0x4d;
-  validPe[1] = 0x5a;
+  // 1. Valid PE file
+  const validPe = createMinimalPeBuffer();
   await writeFile(join(inDir, "valid.efi"), validPe);
 
-  // 2. Non-PE file (random data, no MZ/VZ)
+  // 2. Plain DOS executable (MZ with no PE signature / invalid e_lfanew)
+  const plainDos = Buffer.alloc(128, 0);
+  plainDos[0] = 0x4d;
+  plainDos[1] = 0x5a;
+  await writeFile(join(inDir, "dos.exe"), plainDos);
+
+  // 3. Corrupt PE file with invalid signature
+  const corruptPe = Buffer.alloc(128, 0);
+  corruptPe[0] = 0x4d;
+  corruptPe[1] = 0x5a;
+  corruptPe.writeUInt32LE(0x40, 0x3c);
+  corruptPe.set(Buffer.from("NOPE"), 0x40);
+  await writeFile(join(inDir, "corrupt.efi"), corruptPe);
+
+  // 4. Non-PE file (random data, no MZ/VZ)
   const nonPe = Buffer.from("NOT_A_PE_OR_TE_BINARY_AT_ALL");
   await writeFile(join(inDir, "notes.txt"), nonPe);
 
-  // 3. Zero-byte file
+  // 5. Zero-byte file
   await writeFile(join(inDir, "empty.efi"), Buffer.alloc(0));
 
   const provider = new UefiAnalysisProvider();
@@ -2161,9 +2190,7 @@ it("discovers Terse Executable (TE / VZ) binaries in directory input mode", asyn
   await mkdirFs(inDir, { recursive: true });
 
   // Valid TE file header: 0x56, 0x5a ('VZ')
-  const teHeader = Buffer.alloc(128, 0);
-  teHeader[0] = 0x56;
-  teHeader[1] = 0x5a;
+  const teHeader = createMinimalTeBuffer();
   await writeFile(join(inDir, "sec_core.te"), teHeader);
 
   const provider = new UefiAnalysisProvider();
@@ -2190,9 +2217,7 @@ it("preserves AnalysisTimeoutError when aborted via timeout deadline", async () 
   const { mkdir: mkdirFs } = await import("node:fs/promises");
   await mkdirFs(inDir, { recursive: true });
 
-  const mzHeader = Buffer.alloc(128, 0);
-  mzHeader[0] = 0x4d;
-  mzHeader[1] = 0x5a;
+  const mzHeader = createMinimalPeBuffer();
   await writeFile(join(inDir, "mod1.efi"), mzHeader);
 
   const controller = new AbortController();
@@ -2224,9 +2249,7 @@ it("omits disassembly and records limitation when staging disassembly exceeds re
   const { mkdir: mkdirFs } = await import("node:fs/promises");
   await mkdirFs(inDir, { recursive: true });
 
-  const mzHeader = Buffer.alloc(128, 0);
-  mzHeader[0] = 0x4d;
-  mzHeader[1] = 0x5a;
+  const mzHeader = createMinimalPeBuffer();
   await writeFile(join(inDir, "mod1.efi"), mzHeader);
 
   const provider = new UefiAnalysisProvider();
@@ -2258,9 +2281,7 @@ it("recognizes MISC directory segments and filters them correctly", async () => 
   const miscDir = join(inDir, "MISC", "extra_pkg");
   await mkdirFs(miscDir, { recursive: true });
 
-  const mzHeader = Buffer.alloc(128, 0);
-  mzHeader[0] = 0x4d;
-  mzHeader[1] = 0x5a;
+  const mzHeader = createMinimalPeBuffer();
   await writeFile(join(miscDir, "payload.efi"), mzHeader);
 
   const provider = new UefiAnalysisProvider();
@@ -2298,9 +2319,7 @@ it("recovers GUID and module name from directory hierarchy <guid>_<name>/<name>.
   const modDir = join(inDir, "DXE", `${testGuid}_SpecialDriver`);
   await mkdirFs(modDir, { recursive: true });
 
-  const mzHeader = Buffer.alloc(128, 0);
-  mzHeader[0] = 0x4d;
-  mzHeader[1] = 0x5a;
+  const mzHeader = createMinimalPeBuffer();
   await writeFile(join(modDir, "SpecialDriver.efi"), mzHeader);
 
   const provider = new UefiAnalysisProvider();
@@ -2958,20 +2977,14 @@ it("allocates strictly injective directory paths for colliding names without GUI
   await mkdir(join(inDir, "b"), { recursive: true });
   await mkdir(join(inDir, "c"), { recursive: true });
 
-  const dummyPeA = Buffer.alloc(0x80);
-  dummyPeA[0] = 0x4d;
-  dummyPeA[1] = 0x5a;
-  dummyPeA.fill(0xaa, 2);
+  const dummyPeA = createMinimalPeBuffer(0x8664, 1, 256);
+  dummyPeA.fill(0xaa, 140);
 
-  const dummyPeB = Buffer.alloc(0x80);
-  dummyPeB[0] = 0x4d;
-  dummyPeB[1] = 0x5a;
-  dummyPeB.fill(0xbb, 2);
+  const dummyPeB = createMinimalPeBuffer(0x8664, 1, 256);
+  dummyPeB.fill(0xbb, 140);
 
-  const dummyPeC = Buffer.alloc(0x80);
-  dummyPeC[0] = 0x4d;
-  dummyPeC[1] = 0x5a;
-  dummyPeC.fill(0xcc, 2);
+  const dummyPeC = createMinimalPeBuffer(0x8664, 1, 256);
+  dummyPeC.fill(0xcc, 140);
 
   // Three files where a simple counter would collide: Foo, Foo_1, Foo
   await writeFile(join(inDir, "a", "Foo.efi"), dummyPeA);
@@ -3012,10 +3025,8 @@ it("retains read bytes for directory modules without TOCTOU drift", async () => 
   const outDir = join(root, "out");
   await mkdir(inDir, { recursive: true });
 
-  const dummyPe = Buffer.alloc(0x80);
-  dummyPe[0] = 0x4d;
-  dummyPe[1] = 0x5a;
-  dummyPe.fill(0x77, 2);
+  const dummyPe = createMinimalPeBuffer(0x8664, 1, 256);
+  dummyPe.fill(0x77, 140);
   const sourcePath = join(inDir, "module.efi");
   await writeFile(sourcePath, dummyPe);
 
@@ -3031,6 +3042,112 @@ it("retains read bytes for directory modules without TOCTOU drift", async () => 
     const result = executed.value.result as UefiDecompileResult;
     expect(result.total_modules_decompiled).toBe(1);
     expect(result.modules[0]?.payload_sha256).toBe(expectedSha256);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("declares opaque struct types for PEI core hand-off and PPI descriptor to avoid pointer-level inflation", () => {
+  const peiCoreScaffold = buildUefiEntryPointScaffolding(
+    "PeiCore",
+    "PeiCoreModule",
+    1024,
+    "PEI",
+    "pei-core",
+  );
+  expect(peiCoreScaffold.typedefs).toContain("struct _EFI_SEC_PEI_HAND_OFF;");
+  expect(peiCoreScaffold.typedefs).toContain(
+    "typedef struct _EFI_SEC_PEI_HAND_OFF EFI_SEC_PEI_HAND_OFF;",
+  );
+  expect(peiCoreScaffold.typedefs).toContain("struct _EFI_PEI_PPI_DESCRIPTOR;");
+  expect(peiCoreScaffold.typedefs).toContain(
+    "typedef struct _EFI_PEI_PPI_DESCRIPTOR EFI_PEI_PPI_DESCRIPTOR;",
+  );
+  expect(peiCoreScaffold.typedefs).not.toContain(
+    "typedef void* EFI_SEC_PEI_HAND_OFF;",
+  );
+  expect(peiCoreScaffold.typedefs).not.toContain(
+    "typedef void* EFI_PEI_PPI_DESCRIPTOR;",
+  );
+  expect(peiCoreScaffold.prototype).toContain(
+    "const EFI_SEC_PEI_HAND_OFF *SecCoreData",
+  );
+  expect(peiCoreScaffold.prototype).toContain(
+    "const EFI_PEI_PPI_DESCRIPTOR *PpiList",
+  );
+});
+
+it("defines EFIAPI with ms_abi calling convention for x86-64 in generated header", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-efiapi-header-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  const peX64 = createMinimalPeBuffer(0x8664, 1, 128);
+  await writeFile(join(inDir, "driver.efi"), peX64);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const headerPath = result.modules[0]?.header_file;
+    expect(headerPath).toBeDefined();
+    const headerContent = await readFile(headerPath!, "utf8");
+    expect(headerContent).toContain(
+      "#elif defined(__x86_64__) || defined(__amd64__)",
+    );
+    expect(headerContent).toContain("#define EFIAPI __attribute__((ms_abi))");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds generated module directory and file paths to avoid filesystem path component limits", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-path-bounds-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // 240-char module name: exceeding 255 bytes when combined with prefixes if unbounded
+  const longName = "A".repeat(240);
+  const peBuf = createMinimalPeBuffer(0x8664, 1, 128);
+  await writeFile(join(inDir, `${longName}.efi`), peBuf);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const mod = result.modules[0];
+    expect(mod?.name).toBe(longName);
+    expect(mod?.relative_c_file).toBeDefined();
+
+    // Each path segment in the relative C path must be <= 255 bytes
+    const segments = mod!.relative_c_file!.split("/");
+    for (const segment of segments) {
+      expect(Buffer.byteLength(segment, "utf8")).toBeLessThanOrEqual(255);
+    }
+    expect(existsSync(mod!.c_file!)).toBe(true);
+    expect(existsSync(mod!.header_file!)).toBe(true);
+    expect(existsSync(mod!.payload_file!)).toBe(true);
+
+    const manifestRaw = await readFile(
+      join(outDir, "firmware_manifest.json"),
+      "utf8",
+    );
+    const manifestJson = JSON.parse(manifestRaw);
+    expect(manifestJson.modules[0]?.name).toBe(longName);
   } finally {
     await provider.close();
   }

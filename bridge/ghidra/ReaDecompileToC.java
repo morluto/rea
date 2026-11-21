@@ -55,6 +55,7 @@ public class ReaDecompileToC extends GhidraScript {
 
                 FunctionIterator iter = currentProgram.getListing().getFunctions(true);
                 int decompiledCount = 0;
+                int failedCount = 0;
                 while (iter.hasNext() && !monitor.isCancelled()) {
                     Function function = iter.next();
                     if (function.isExternal() || function.getBody().isEmpty()) {
@@ -69,12 +70,25 @@ public class ReaDecompileToC extends GhidraScript {
                                 writer.write(cCode);
                                 writer.write("\n\n");
                                 decompiledCount++;
+                                continue;
                             }
                         }
                     }
+                    failedCount++;
+                    String errMsg = (results != null) ? results.getErrorMessage() : "null results";
+                    if (errMsg == null || errMsg.trim().isEmpty()) {
+                        errMsg = "decompilation incomplete or timed out";
+                    }
+                    String safeFunc = function.getName().replace("*/", "* /").replace("\r", " ").replace("\n", " ");
+                    String safeEntry = String.valueOf(function.getEntryPoint()).replace("*/", "* /");
+                    String safeErr = errMsg.replace("*/", "* /").replace("\r", " ").replace("\n", " ");
+                    writer.write("/* WARNING: Failed to decompile function " + safeFunc + " at " + safeEntry + ": " + safeErr + " */\n\n");
                 }
                 writer.flush();
-                println("ReaDecompileToC: decompiled " + decompiledCount + " functions to " + outputFile.getAbsolutePath());
+                println("ReaDecompileToC: decompiled " + decompiledCount + " functions (" + failedCount + " failed/incomplete) to " + outputFile.getAbsolutePath());
+                if (decompiledCount == 0 && failedCount > 0) {
+                    throw new RuntimeException("ReaDecompileToC: all " + failedCount + " function(s) failed decompilation");
+                }
             } catch (Exception writeEx) {
                 printerr("ReaDecompileToC: failed writing decompiled output: " + writeEx.getMessage());
                 if (outputFile.exists()) {

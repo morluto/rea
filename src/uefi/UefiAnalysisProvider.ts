@@ -202,8 +202,10 @@ export const buildUefiEntryPointScaffolding = (
   if (normType === "pei-core") {
     return {
       typedefs: [
-        "typedef void* EFI_SEC_PEI_HAND_OFF;",
-        "typedef void* EFI_PEI_PPI_DESCRIPTOR;",
+        "struct _EFI_SEC_PEI_HAND_OFF;",
+        "typedef struct _EFI_SEC_PEI_HAND_OFF EFI_SEC_PEI_HAND_OFF;",
+        "struct _EFI_PEI_PPI_DESCRIPTOR;",
+        "typedef struct _EFI_PEI_PPI_DESCRIPTOR EFI_PEI_PPI_DESCRIPTOR;",
       ],
       prototype: `void EFIAPI ${identifier}EntryPoint(const EFI_SEC_PEI_HAND_OFF *SecCoreData, const EFI_PEI_PPI_DESCRIPTOR *PpiList, void *Context);`,
       functionDefinition: [
@@ -1078,7 +1080,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
     const MAX_DECOMPILE_MODULE_BYTES = 4 * 1024 * 1024;
     const MAX_DECOMPILE_TOTAL_BYTES = 64 * 1024 * 1024;
+    const MAX_GHIDRA_FAILURE_DIAGNOSTICS = 20;
+    let recordedGhidraFailures = 0;
     let totalStagedCBytes = 0;
+
+    const sanitizeDiag = (msg: string | null): string => {
+      if (msg === null) return "unknown";
+      const line = msg.replace(/[\r\n\t]+/g, " ").trim();
+      return ellipsisExcerpt(line, 120);
+    };
 
     const MAX_RAW_PAYLOAD_TOTAL_BYTES = 128 * 1024 * 1024;
     let totalStagedRawBytes = 0;
@@ -1153,15 +1163,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
         const idPrefix =
           mod.guid ?? `noguid_${sha256Hex(modBytes).slice(0, 8)}`;
-        let moduleRelDir = `${mod.phase}/${idPrefix}_${mod.cleanName}`;
+        const maxCleanNameLen = 160;
+        const boundedName = mod.cleanName.slice(0, maxCleanNameLen);
+        let moduleRelDir = `${mod.phase}/${idPrefix}_${boundedName}`;
         let occurrence = 0;
         while (allocatedRelDirs.has(moduleRelDir)) {
           occurrence++;
-          moduleRelDir = `${mod.phase}/${idPrefix}_${mod.cleanName}_${occurrence}`;
+          moduleRelDir = `${mod.phase}/${idPrefix}_${boundedName}_${occurrence}`;
         }
         allocatedRelDirs.add(moduleRelDir);
 
-        const efiRelPath = `${moduleRelDir}/${mod.cleanName}.efi`;
+        const efiRelPath = `${moduleRelDir}/${boundedName}.efi`;
         let relativePayloadFile: string | null = null;
         let payloadSha256: string | null = null;
         if (
@@ -1201,7 +1213,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           : null;
         const safeGuid = mod.guid ? sanitizeCComment(mod.guid) : null;
 
-        const headerName = `${mod.cleanName}.h`;
+        const headerName = `${boundedName}.h`;
         const headerRelPath = `${moduleRelDir}/${headerName}`;
         const headerGuard = `_UEFI_${cIdentifier.toUpperCase()}_H_`;
         const headerContent = [
@@ -1219,6 +1231,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           "#ifndef EFIAPI",
           "#if defined(_WIN32) || defined(__CYGWIN__)",
           "#define EFIAPI __cdecl",
+          "#elif defined(__x86_64__) || defined(__amd64__)",
+          "#define EFIAPI __attribute__((ms_abi))",
           "#else",
           "#define EFIAPI",
           "#endif",
@@ -1328,7 +1342,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   totalStagedAsmBytes + asmBytes.length <=
                   MAX_DISASSEMBLY_TOTAL_BYTES
                 ) {
-                  const asmName = `${mod.cleanName}.asm`;
+                  const asmName = `${boundedName}.asm`;
                   asmRelPath = `${moduleRelDir}/${asmName}`;
                   asmSha256 = sha256Hex(asmBytes);
                   publicationEntries.push({
@@ -1366,11 +1380,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   }
                 } else {
                   disassemblyStatus = "failed";
-                  const sanitizeDiag = (msg: string | null): string => {
-                    if (msg === null) return "unknown";
-                    const line = msg.replace(/[\r\n\t]+/g, " ").trim();
-                    return ellipsisExcerpt(line, 120);
-                  };
                   if (
                     recordedDisassemblyFailures <
                     MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS
@@ -1393,7 +1402,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             }
           }
 
-          const cName = `${mod.cleanName}.c`;
+          const cName = `${boundedName}.c`;
           const cRelPath = `${moduleRelDir}/${cName}`;
           let cContent: string | null = null;
           let cGenerator: "ghidra" | "scaffold" = "scaffold";
@@ -1475,6 +1484,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       cContent = candidateC;
                       totalStagedCBytes += candidateCBytes;
                       cGenerator = "ghidra";
+                      if (
+                        candidateC.includes(
+                          "/* WARNING: Failed to decompile function",
+                        )
+                      ) {
+                        const incompleteMsg = `Ghidra C decompilation for ${mod.rawName} was incomplete; one or more functions failed to decompile.`;
+                        if (!effectiveLimitations.includes(incompleteMsg)) {
+                          effectiveLimitations.push(incompleteMsg);
+                        }
+                      }
                     } else if (
                       !effectiveLimitations.includes(
                         "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
@@ -1498,6 +1517,21 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               } catch (ghidraErr: unknown) {
                 if (signal.aborted) signal.throwIfAborted();
                 if (isAbortOf(ghidraErr, signal)) throw ghidraErr;
+                const errDetail = sanitizeDiag(errorMessage(ghidraErr));
+                if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                  effectiveLimitations.push(
+                    `Ghidra C decompilation for ${mod.rawName} failed: ${errDetail}`,
+                  );
+                  recordedGhidraFailures++;
+                } else if (
+                  !effectiveLimitations.includes(
+                    "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                  )
+                ) {
+                  effectiveLimitations.push(
+                    "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                  );
+                }
               }
             }
           }
@@ -1961,19 +1995,82 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       } catch {
         continue;
       }
-      if (fileStat.size <= 0 || fileStat.size > 32 * 1024 * 1024) continue;
+      if (fileStat.size < 40 || fileStat.size > 32 * 1024 * 1024) continue;
 
       let isPeOrTe = false;
       let owner: OwnedFileHandle | undefined;
       try {
         const rawHandle = await open(fullPath, "r");
         owner = new OwnedFileHandle(rawHandle);
-        const headerBuf = Buffer.alloc(64);
-        const { bytesRead } = await owner.handle.read(headerBuf, 0, 64, 0);
-        if (bytesRead >= 2) {
-          const isPe = headerBuf[0] === 0x4d && headerBuf[1] === 0x5a; // MZ
-          const isTe = headerBuf[0] === 0x56 && headerBuf[1] === 0x5a; // VZ
-          isPeOrTe = isPe || isTe;
+        const probeLen = Math.min(fileStat.size, 4096);
+        const headerBuf = Buffer.alloc(probeLen);
+        const { bytesRead } = await owner.handle.read(
+          headerBuf,
+          0,
+          probeLen,
+          0,
+        );
+        if (bytesRead >= 40) {
+          if (headerBuf[0] === 0x56 && headerBuf[1] === 0x5a) {
+            // Terse Executable ("VZ")
+            const reader = new BinaryReader(
+              headerBuf,
+              true,
+              "UEFI candidate TE header",
+            );
+            const machine = reader.u16(2);
+            const numSections = reader.u8(4);
+            if (decodePeMachine(machine) !== undefined && numSections > 0) {
+              isPeOrTe = true;
+            }
+          } else if (
+            headerBuf[0] === 0x4d &&
+            headerBuf[1] === 0x5a &&
+            bytesRead >= 64
+          ) {
+            // Portable Executable ("MZ")
+            const reader = new BinaryReader(
+              headerBuf,
+              true,
+              "UEFI candidate PE DOS header",
+            );
+            const eLfanew = reader.u32(60);
+            if (eLfanew >= 64 && eLfanew + 24 <= fileStat.size) {
+              let peHeaderBuf: Buffer | undefined;
+              if (eLfanew + 24 <= bytesRead) {
+                peHeaderBuf = headerBuf.subarray(eLfanew, eLfanew + 24);
+              } else {
+                const extraBuf = Buffer.alloc(24);
+                const { bytesRead: extraRead } = await owner.handle.read(
+                  extraBuf,
+                  0,
+                  24,
+                  eLfanew,
+                );
+                if (extraRead >= 24) {
+                  peHeaderBuf = extraBuf;
+                }
+              }
+              if (peHeaderBuf !== undefined) {
+                const peReader = new BinaryReader(
+                  peHeaderBuf,
+                  true,
+                  "UEFI candidate PE header",
+                );
+                const peSig = peReader.u32(0);
+                if (peSig === 0x00004550) {
+                  const machine = peReader.u16(4);
+                  const numSections = peReader.u16(6);
+                  if (
+                    decodePeMachine(machine) !== undefined &&
+                    numSections > 0
+                  ) {
+                    isPeOrTe = true;
+                  }
+                }
+              }
+            }
+          }
         }
       } catch {
         continue;
