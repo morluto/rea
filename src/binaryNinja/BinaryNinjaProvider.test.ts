@@ -246,6 +246,7 @@ describe("Binary Ninja provider", () => {
         sha256: "a".repeat(64),
         kind: "database",
         format: "analysis-database",
+        databaseEngine: null,
       }),
     ).toMatchObject({ code: "target_kind_unsupported" });
   });

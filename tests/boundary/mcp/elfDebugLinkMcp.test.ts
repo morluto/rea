@@ -1,10 +1,10 @@
+import { crc32 } from "node:zlib";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { contractNamed } from "../../../src/cli/contractCliDescription.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { gnuDebuglinkCrc32 } from "../../../src/native/elf/ElfDebugLink.js";
 import {
   debuglinkSection,
   elfDebugCandidateFixture,
@@ -102,11 +102,7 @@ mcpTest("verifies one caller-selected debug file", async ({ mcp }) => {
     await writeFile(
       imagePath,
       elfDebugLinkFixture({
-        debuglink: debuglinkSection(
-          FIXTURE_DEBUG_NAME,
-          gnuDebuglinkCrc32(candidate),
-          true,
-        ),
+        debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, crc32(candidate), true),
       }),
     );
     await writeFile(candidatePath, candidate);

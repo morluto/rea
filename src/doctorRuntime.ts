@@ -4,7 +4,11 @@ import {
 } from "./binaryNinja/BinaryNinjaDoctor.js";
 import { readBinaryNinjaConfiguration } from "./binaryNinja/BinaryNinjaConfiguration.js";
 import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
-import { systemDoctorHost, type DoctorHost } from "./application/Doctor.js";
+import {
+  systemDoctorHost,
+  type DoctorHost,
+  type RetainedProviderRequestBudgetResolver,
+} from "./application/Doctor.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
@@ -386,12 +390,15 @@ export const createSystemDoctorHost = (
     }
     return registration;
   };
-  return systemDoctorHost({
-    environment,
-    platform,
-    architecture: host.architecture,
-    ...(signal === undefined ? {} : { signal }),
-    resolveProviderRequestBudget: async (
+  const budgetProviders = {
+    ida: { setting: IDA_DOCTOR_SETTINGS[0], read: readRegistration },
+    "binary-ninja": {
+      setting: BINARY_NINJA_DOCTOR_SETTINGS[0],
+      read: readBinaryNinjaRegistration,
+    },
+  } as const;
+  const resolveProviderRequestBudget: RetainedProviderRequestBudgetResolver =
+    async (
       analysisProvider,
       registrationEnvironment,
       resourceScope,
@@ -403,17 +410,10 @@ export const createSystemDoctorHost = (
         analysisProvider !== "auto"
       )
         return ok(undefined);
-      const providers = {
-        ida: { setting: "REA_IDA_MCP_CONFIG", read: readRegistration },
-        "binary-ninja": {
-          setting: "REA_BINARY_NINJA_MCP_CONFIG",
-          read: readBinaryNinjaRegistration,
-        },
-      } as const;
       const candidates =
         analysisProvider === "auto"
-          ? [providers.ida, providers["binary-ninja"]]
-          : [providers[analysisProvider]];
+          ? Object.values(budgetProviders)
+          : [budgetProviders[analysisProvider]];
       let budget: number | undefined;
       for (const provider of candidates) {
         const path = registrationEnvironment[provider.setting];
@@ -430,7 +430,17 @@ export const createSystemDoctorHost = (
         else if (analysisProvider !== "auto") return registration;
       }
       return ok(budget);
-    },
+    };
+  return systemDoctorHost({
+    environment,
+    platform,
+    architecture: host.architecture,
+    ...(signal === undefined ? {} : { signal }),
+    resolveProviderRequestBudget: Object.assign(resolveProviderRequestBudget, {
+      budgetSettings: new Set(
+        Object.values(budgetProviders).map(({ setting }) => setting),
+      ),
+    }),
     providerInspections: async (
       resourceScope: RetainedResourceScope,
       inspectionSignal: AbortSignal,

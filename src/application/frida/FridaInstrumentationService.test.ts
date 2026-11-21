@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import { FridaScriptLoadCancelledError } from "../../ports/frida/FridaInstrumentationPort.js";
 import type { FridaInstrumentationPort } from "../../ports/frida/FridaInstrumentationPort.js";
@@ -1199,87 +1200,83 @@ it.each([
 );
 
 it("preserves typed load cancellation cause, safe diagnostics, and decoded source representation in partial Evidence", async () => {
-  const directory = await mkdtemp(
-    join(tmpdir(), "rea-frida-cancelled-source-"),
+  const directory = await createTestTempDirectory(
+    "rea-frida-cancelled-source-",
   );
   const path = join(directory, "invalid-utf8.js");
   await writeFile(path, Buffer.from([0x2f, 0x2f, 0x20, 0xff, 0x0a]));
-  try {
-    const controller = new AbortController();
-    const abortReason = new Error("native load cancelled after decoding");
-    const diagnostics = {
-      native_failure: "script load cancelled; transport_token=<redacted>",
-      read_attempt: 1,
-    };
-    const script = {
-      ...createScriptObservation(),
-      sourceKind: "file" as const,
-      sourcePath: path,
-      sourceRepresentation: {
-        encoding: "utf8" as const,
-        decoding: "replacement" as const,
-        loadedSourceSha256: "b".repeat(64),
+  const controller = new AbortController();
+  const abortReason = new Error("native load cancelled after decoding");
+  const diagnostics = {
+    native_failure: "script load cancelled; transport_token=<redacted>",
+    read_attempt: 1,
+  };
+  const script = {
+    ...createScriptObservation(),
+    sourceKind: "file" as const,
+    sourcePath: path,
+    sourceRepresentation: {
+      encoding: "utf8" as const,
+      decoding: "replacement" as const,
+      loadedSourceSha256: "b".repeat(64),
+    },
+    messages: [{ type: "send", payload: "retained-before-cancel" }],
+  };
+  let closes = 0;
+  const service = new FridaInstrumentationService(
+    createProvider({
+      async loadScript() {
+        controller.abort(abortReason);
+        return {
+          ok: false,
+          error: new FridaScriptLoadCancelledError(script, {
+            cause: abortReason,
+            diagnostics,
+          }),
+        };
       },
-      messages: [{ type: "send", payload: "retained-before-cancel" }],
-    };
-    let closes = 0;
-    const service = new FridaInstrumentationService(
-      createProvider({
-        async loadScript() {
-          controller.abort(abortReason);
-          return {
-            ok: false,
-            error: new FridaScriptLoadCancelledError(script, {
-              cause: abortReason,
-              diagnostics,
-            }),
-          };
-        },
-        async closeSession() {
-          closes += 1;
-          return { ok: true, value: { targetResumeObserved: false } };
-        },
-      }),
-    );
+      async closeSession() {
+        closes += 1;
+        return { ok: true, value: { targetResumeObserved: false } };
+      },
+    }),
+  );
 
-    const result = await service.instrument(
-      {
-        mode: "spawn",
-        program: "/fixture",
-        source: { sourceKind: "file", path },
-        durationMs: 0,
-      },
-      controller.signal,
-    );
+  const result = await service.instrument(
+    {
+      mode: "spawn",
+      program: "/fixture",
+      source: { sourceKind: "file", path },
+      durationMs: 0,
+    },
+    controller.signal,
+  );
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(abortReason);
-    expect(result.error.diagnostics).toEqual(diagnostics);
-    expect(result.error.partialObservation).toMatchObject({
-      normalized_result: {
-        source_kind: "file",
-        source_path: path,
-        source_sha256: script.sourceSha256,
-        messages: script.messages,
-        instrumentation_cleanup: "released",
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(abortReason);
+  expect(result.error.diagnostics).toEqual(diagnostics);
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      source_kind: "file",
+      source_path: path,
+      source_sha256: script.sourceSha256,
+      messages: script.messages,
+      instrumentation_cleanup: "released",
+    },
+    raw_result: {
+      source_representation: {
+        encoding: "utf8",
+        decoding: "replacement",
+        loaded_source_sha256: "b".repeat(64),
       },
-      raw_result: {
-        source_representation: {
-          encoding: "utf8",
-          decoding: "replacement",
-          loaded_source_sha256: "b".repeat(64),
-        },
-      },
-      limitations: expect.arrayContaining([
-        expect.stringContaining("Invalid UTF-8"),
-      ]),
-    });
-    expect(closes).toBe(1);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+    },
+    limitations: expect.arrayContaining([
+      expect.stringContaining("Invalid UTF-8"),
+    ]),
+  });
+  expect(closes).toBe(1);
 });
 
 it("preserves a provider-committed load when cancellation arrives during result delivery", async () => {

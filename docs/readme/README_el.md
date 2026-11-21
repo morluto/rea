@@ -160,7 +160,7 @@ npx rea-agents@latest setup
 | Δυαδικά αρχεία με κώδικα μηχανής       | Ψευδοκώδικα, κώδικα assembly, συμβολοσειρές, σύμβολα, κλήσεις και αναφορές                                                  | Hopper, Ghidra, IDA ή Kuna· [ανάλυση κώδικα μηχανής](../guides/native/native-investigation.md)                                                                |
 | Δομή ELF χωρίς εκτέλεση                | Ενότητες, τμήματα, αρχικά σύμβολα/εγγραφές μετεγκατάστασης και ενδείξεις πιθανών μέτρων προστασίας από στατική ανάλυση      | pwntools που παρέχει ο χρήστης σε Linux x64· [διαγνωστικά δυαδικών αρχείων](../guides/native/binary-diagnostics.md)                                           |
 | Δυαδικά αρχεία Go                      | Ενσωματωμένη έκδοση μεταγλωττιστή, modules, αντικαταστάσεις και ρυθμίσεις μεταγλώττισης                                     | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· δεν απαιτείται εγκατάσταση του Go                                                                            |
-| Δυαδικά αρχεία Rust                    | Ενσωματωμένα ονόματα, εκδόσεις, πηγές και σχέσεις εξάρτησης των crates από το cargo-auditable                               | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· [δυαδικά αρχεία Rust](../rust-binaries.md)                                                                   |
+| Δυαδικά αρχεία Rust                    | Ενσωματωμένα ονόματα, εκδόσεις, πηγές και σχέσεις εξάρτησης των crates από το cargo-auditable                               | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O/WebAssembly· [δυαδικά αρχεία Rust](../rust-binaries.md)                                                       |
 | PE certificates                        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
 | PE imports                             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
 | Windows shortcuts                      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                     |
@@ -364,7 +364,6 @@ npx rea-agents@latest setup
 - [CLI και Evidence](../getting-started/cli.md): εντολές, επιλογή παρόχου, στιγμιότυπα, εισαγωγή/εξαγωγή και κωδικοί εξόδου.
 - [Προδιαγραφές MCP](../reference/mcp-contracts.md) και [prompts για agents](../getting-started/mcp-prompts.md): αποτελέσματα εργαλείων, συνεδρίες και καθοδηγούμενες διερευνήσεις.
 - [Κατάλογος εργαλείων](../reference/mcp-contracts.md#generated-catalog): αυτόματα παραγόμενος κατάλογος εργαλείων, παρόχων και εντολών CLI.
-- [Οδικός χάρτης](../development/roadmap.md): προγραμματισμένες εργασίες και παρακολούθηση της ανάπτυξης δυνατοτήτων.
 
 Ανάφερε ευπάθειες ακολουθώντας το [SECURITY.md](../../SECURITY.md).
 
@@ -394,7 +393,7 @@ npx rea-agents@latest setup
 
 Θα χαρούμε να βοηθήσεις στο REA! [Άνοιξε ένα issue](https://github.com/morluto/rea/issues) για να αναφέρεις ένα σφάλμα ή να προτείνεις μια λειτουργία, ή [στείλε ένα pull request](https://github.com/morluto/rea/pulls) για να βελτιώσεις τον κώδικα ή την τεκμηρίωση.
 
-Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../development/testing.md) για τις διαδικασίες επαλήθευσης και τον [χάρτη αρχιτεκτονικής](../architecture/architecture.mermaid) για τη δομή του έργου.
+Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../development/testing.md) για τις διαδικασίες επαλήθευσης.
 
 ## Άδεια χρήσης
 

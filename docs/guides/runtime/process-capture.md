@@ -112,6 +112,21 @@ event includes that field. Semantic fields such as output, interaction outcome,
 exit status, finalization delivery, process identity/command, and filesystem
 contents still participate in the default comparison.
 
+A located divergence names the compared fields that differed, so a report does
+not have to be diffed by hand: `first_divergence.fields` lists sorted leaf names
+such as `files[0].path`, `pid`, or `finalization.signals[0].delivery`, with array
+positions as bracketed indices, `$` for a whole observation, and at most eight
+names for a wide difference. The names describe only the projection the
+comparison actually judged, so capture-local timing is never named unless a
+`trace_spec` made it part of the question. `left` and `right` still retain the
+complete observations. `fields` is optional in the contract because records
+authenticated before it existed remain readable; new reports always populate it.
+Naming a volatile value is not a claim of equivalence: when a per-run temporary
+path or PID is not behavior, exclude it at capture time with
+`normalization.paths`, `normalization.pids`, or an explicit
+`normalization.patterns` replacement, and recapture both sides under the same
+rules. Comparison refuses captures whose normalization rules differ.
+
 For scenarios where independent scheduling can change event order, the CLI
 also accepts an optional trace-specification JSON file as the third argument.
 That specification must state the exact events and ordering constraints to

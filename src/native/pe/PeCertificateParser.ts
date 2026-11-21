@@ -7,13 +7,14 @@ import type {
   PeCertificates,
 } from "../../domain/native/peCertificates.js";
 import { peCertificateTypeName } from "../../domain/native/peCertificates.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import {
   oidName,
   parsePkcs7SignedData,
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { readPeHeaders } from "../../domain/pe/peResourceLayout.js";
+import { readPeImageHeaders } from "../../domain/pe/peImageHeaders.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const fail = (message: string): never => {
@@ -23,7 +24,7 @@ const fail = (message: string): never => {
 /** Shared PE header admission, with malformed headers as format failures. */
 const readCertificateImageHeaders = (bytes: Buffer) => {
   try {
-    return readPeHeaders(bytes);
+    return readPeImageHeaders(bytes);
   } catch (cause) {
     throw artifactParseFailure(cause, undefined);
   }
@@ -94,6 +95,7 @@ export const parsePeCertificates = (
   const table = bytes.subarray(tableOffset, tableOffset + tableSize);
   const entries: PeCertificates["entries"] = [];
   let at = 0;
+  const reader = new BinaryReader(table, true, "pe-certificate-table");
   let examined = 0;
   let teletexStringCompatibilityUsed = false;
   let unsignedAttributesPresent = false;
@@ -102,6 +104,15 @@ export const parsePeCertificates = (
     // Bytes that remain after that boundary are a short header, including
     // zeros at the start of the table.
     if (table.length - at < 8) fail("WIN_CERTIFICATE header is truncated.");
+    const length = reader.u32(at);
+    if (length < 8)
+      fail("WIN_CERTIFICATE dwLength is shorter than its header.");
+    const entryEnd = at + length;
+    if (entryEnd > table.length)
+      fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
+    const next = align8(entryEnd);
+    if (next > table.length)
+      fail("WIN_CERTIFICATE alignment padding is truncated.");
     examined += 1;
     if (examined > input.max_entries)
       throw new ArtifactReaderFailure(
@@ -109,18 +120,9 @@ export const parsePeCertificates = (
         `PE certificate table exceeds the ${String(input.max_entries)}-entry budget.`,
         { boundary: "capacity" },
       );
-    const length = table.readUInt32LE(at);
-    const revision = table.readUInt16LE(at + 4);
-    const certificateType = table.readUInt16LE(at + 6);
-    if (length < 8)
-      fail("WIN_CERTIFICATE dwLength is shorter than its header.");
-    if (at + length > table.length)
-      fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
-    const next = align8(at + length);
-    if (next <= at) fail("WIN_CERTIFICATE alignment did not advance.");
-    if (next > table.length)
-      fail("WIN_CERTIFICATE alignment padding is truncated.");
-    const entryPayload = table.subarray(at + 8, at + length);
+    const revision = reader.u16(at + 4);
+    const certificateType = reader.u16(at + 6);
+    const entryPayload = table.subarray(at + 8, entryEnd);
     let payload = entryPayload;
     let pkcs7: PeCertificates["entries"][number]["pkcs7"] = null;
     if (peCertificateTypeName(certificateType) === "pkcs7") {

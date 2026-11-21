@@ -2,7 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import type { DesktopApplicationState } from "../../domain/desktop/desktopState.js";
+import { capturedHomePlan } from "../../domain/desktop/appExport.js";
 import { planLaunch } from "./DesktopExportLaunch.js";
+
+const launchWithReplay = (
+  capture: DesktopApplicationCapture,
+  electron: boolean,
+  seeds: Parameters<typeof planLaunch>[2],
+  files: ReadonlyMap<string, StatePath>,
+) =>
+  planLaunch(capture, electron, seeds, {
+    ...capturedHomePlan(capture),
+    files,
+    restoredFiles: seeds.keys(),
+  });
 
 const HOME = "/home/ada";
 type StatePath = DesktopApplicationState["paths"][number];
@@ -11,6 +24,38 @@ const file = (physical: string, role: StatePath["role"]): StatePath =>
   ({ path: physical, role }) as StatePath;
 
 describe("planLaunch captured paths", () => {
+  it("uses the env-selected directory to identify and replay a relative document", () => {
+    const first = `${HOME}/ambient`;
+    const selected = `${HOME}/selected`;
+    const capture = {
+      host: { home: HOME },
+      application: {
+        argv: ["env", "--chdir=../selected", "--", "./app", "project.txt"],
+        working_directory: first,
+        application_working_directory: selected,
+        desktop_entry: { exec: "env --chdir=../selected -- ./app %f" },
+        state_directories: [],
+      },
+      state: { state_directories: [] },
+    } as unknown as DesktopApplicationCapture;
+    const files = new Map([
+      [
+        "ambient/project.txt",
+        file(`${first}/project.txt`, "application_state"),
+      ],
+      ["selected/project.txt", file(`${selected}/project.txt`, "document")],
+    ]);
+    const seeds = new Map([
+      ["selected/project.txt", { sha256: "a".repeat(64), format: "text" }],
+    ]);
+    const launch = launchWithReplay(capture, false, seeds, files);
+    expect(launch.opens).toEqual({ kind: "captured" });
+    expect(launch.command[2]).toContain('cd "$HOME"/');
+    expect(launch.command[2]).toMatch(/'-C'[^;]+\$HOME[^;]+selected/u);
+    expect(launch.command[2]).not.toContain("../selected");
+    expect(launch.command[2]).toContain("project.txt");
+  });
+
   it.each([
     ["/mnt/data/books.db", "/mnt/data/books.db"],
     ["file:///mnt/data/books.db?mode=edit#page", "/mnt/data/books.db"],
@@ -39,7 +84,7 @@ describe("planLaunch captured paths", () => {
     const seeds = new Map([
       ["Documents/books.db", { sha256: "a".repeat(64), format: "text" }],
     ]);
-    const launch = planLaunch(capture, false, seeds, files);
+    const launch = launchWithReplay(capture, false, seeds, files);
     expect(launch.opens).toEqual({ kind: "captured" });
     expect(launch.command.join(" ")).toContain("Documents/books.db");
     expect(launch.command.join(" ")).not.toContain("/mnt/data/books.db");
@@ -71,9 +116,12 @@ describe("planLaunch captured paths", () => {
     const files = new Map([
       ["Documents/books.db", file("/mnt/data/books.db", "document")],
     ]);
-    const command = planLaunch(capture, false, new Map(), files).command.join(
-      " ",
-    );
+    const command = launchWithReplay(
+      capture,
+      false,
+      new Map(),
+      files,
+    ).command.join(" ");
     expect(command).toContain("/mnt/other/unselected.db");
   });
 });
@@ -100,9 +148,12 @@ describe("planLaunch URL and argument spelling", () => {
     const files = new Map([
       ["Documents/A budget.svg", file(physical, "document")],
     ]);
-    const command = planLaunch(capture, false, new Map(), files).command.join(
-      " ",
-    );
+    const command = launchWithReplay(
+      capture,
+      false,
+      new Map(),
+      files,
+    ).command.join(" ");
     expect(command).toContain("/Documents/%41%20budget.svg?mode=edit#page");
   });
 
@@ -127,9 +178,12 @@ describe("planLaunch URL and argument spelling", () => {
     const files = new Map([
       ["Documents/A budget.svg", file(physical, "document")],
     ]);
-    const command = planLaunch(capture, false, new Map(), files).command.join(
-      " ",
-    );
+    const command = launchWithReplay(
+      capture,
+      false,
+      new Map(),
+      files,
+    ).command.join(" ");
     expect(command).toContain("file://localhost");
     expect(command).toContain("/Documents/%41%20budget.svg?mode=edit#page");
     expect(command).not.toContain("/data/%41%20budget.svg");
@@ -166,9 +220,12 @@ describe("planLaunch URL and argument spelling", () => {
       },
     } as unknown as DesktopApplicationCapture;
 
-    const command = planLaunch(capture, false, new Map(), files).command.join(
-      " ",
-    );
+    const command = launchWithReplay(
+      capture,
+      false,
+      new Map(),
+      files,
+    ).command.join(" ");
 
     expect(command).toContain(`"$HOME"/'.config/geany/profiles/work'`);
     expect(command).toContain("'--line=10'");
@@ -198,7 +255,7 @@ describe("planLaunch URL and argument spelling", () => {
     const note = file(`${HOME}/work/note.txt`, "document");
     files.set("work/note.txt", note);
 
-    const command = planLaunch(
+    const command = launchWithReplay(
       capture,
       false,
       new Map([["work/note.txt", { sha256: "a".repeat(64), format: "text" }]]),

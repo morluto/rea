@@ -32,7 +32,14 @@ const armSession = () =>
   });
 
 it("refuses direct callers and keeps caller coverage unknown in an ARM64 dossier", async () => {
-  const { client } = await armSession();
+  const { client, producer } = await callGraphSession({
+    callees: [{ addr: "0x4000", name: "bogus_callee", type: "external" }],
+    callgraph: graphRow([
+      edge("0x1000", "0x2000"),
+      edge("0x1000", "0x3000"),
+      edge("0x2000", "0x4000"),
+    ]),
+  });
   try {
     const declared = idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false);
     const callers = declared.find(
@@ -71,6 +78,13 @@ it("refuses direct callers and keeps caller coverage unknown in an ARM64 dossier
       callers: [],
       callees: [{ address: "0x2000" }, { address: "0x3000" }],
     });
+    expect(requestedRoots(producer)).toEqual(["0x1000"]);
+    expect(producer.calls.map(({ name }) => name)).not.toContain("callees");
+    expect(result.value.rawResult).toMatchObject({
+      observations: expect.arrayContaining([
+        expect.objectContaining({ tool: "callgraph" }),
+      ]),
+    });
   } finally {
     await client.close();
   }
@@ -79,8 +93,9 @@ it("refuses direct callers and keeps caller coverage unknown in an ARM64 dossier
 it("shows the callee edges of an ARM64 procedure in the call graph", async () => {
   const { client, producer } = await armSession();
   try {
-    const result = await new EnhancedTools(client).execute("get_call_graph", {
-      address: "main",
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
     });
 
     if (!result.ok) throw result.error;
@@ -136,9 +151,9 @@ it("shows the callee edges of an ARM64 procedure in the call graph", async () =>
 it("reaches an ARM64 callee in a call path", async () => {
   const { client } = await armSession();
   try {
-    const result = await new EnhancedTools(client).execute("trace_call_path", {
-      start: "main",
-      goal: "0x3000",
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", goal: "0x3000", direction: "forward" },
     });
 
     if (!result.ok) throw result.error;
@@ -157,8 +172,9 @@ it("reaches an ARM64 callee in a call path", async () => {
 it("traverses every ARM64 callee in a call path without a goal and records no failure", async () => {
   const { client, producer } = await armSession();
   try {
-    const result = await new EnhancedTools(client).execute("trace_call_path", {
-      start: "main",
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", direction: "forward" },
     });
 
     if (!result.ok) throw result.error;
@@ -259,8 +275,9 @@ it("preserves missing callgraph coverage through direct, graph, and trace workfl
     });
 
     const application = new EnhancedTools(client);
-    const graph = await application.execute("get_call_graph", {
-      address: "main",
+    const graph = await application.executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
     });
     if (!graph.ok) throw graph.error;
     expect(graph.value).toMatchObject({
@@ -277,9 +294,9 @@ it("preserves missing callgraph coverage through direct, graph, and trace workfl
       },
     });
 
-    const trace = await application.execute("trace_call_path", {
-      start: "main",
-      goal: "0x3000",
+    const trace = await application.executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", goal: "0x3000", direction: "forward" },
     });
     if (!trace.ok) throw trace.error;
     expect(trace.value).toMatchObject({
@@ -313,8 +330,9 @@ it("records a failed ARM64 call graph read as the node's error, not as a complet
     callgraphTruncatedOutput: true,
   });
   try {
-    const result = await new EnhancedTools(client).execute("get_call_graph", {
-      address: "main",
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
     });
 
     if (!result.ok) throw result.error;
@@ -354,10 +372,16 @@ it("preserves an explicit root cap below the edge limit through every relationsh
     });
     if (!direct.ok) throw direct.error;
     expect(direct.value.limitations).toContain(limitation);
+    expect(direct.value.relationshipCoverage).toMatchObject({
+      status: "partial",
+      limitations: [limitation],
+      limited_directions: ["callees"],
+    });
     expect(direct.value.result).toEqual(["0x2000"]);
     const application = new EnhancedTools(client);
-    const graph = await application.execute("get_call_graph", {
-      address: "main",
+    const graph = await application.executeValidated({
+      name: "get_call_graph",
+      input: { address: "main", direction: "forward" },
     });
     if (!graph.ok) throw graph.error;
     expect(graph.value).toMatchObject({
@@ -371,8 +395,9 @@ it("preserves an explicit root cap below the edge limit through every relationsh
       },
       limitations: expect.arrayContaining([limitation]),
     });
-    const trace = await application.execute("trace_call_path", {
-      start: "main",
+    const trace = await application.executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", direction: "forward" },
     });
     if (!trace.ok) throw trace.error;
     expect(trace.value).toMatchObject({
@@ -388,24 +413,33 @@ it("preserves an explicit root cap below the edge limit through every relationsh
 
 it("does not treat omitted x86 callee truncation as a definite miss", async () => {
   const { client, producer } = await callGraphSession(
-    {
-      callees: [{ addr: "0x2000", name: "square", type: "internal" }],
-    },
+    { callees: [] },
     "x86_64",
   );
   const inner = producer.overrideCall;
   producer.overrideCall = (name, args) =>
-    name === "callees"
+    name === "callees" &&
+    Array.isArray(args.addrs) &&
+    args.addrs[0] === "0x1000"
       ? [{ callees: [{ addr: "0x2000", name: "square", type: "internal" }] }]
       : inner?.(name, args);
   try {
-    const result = await new EnhancedTools(client).execute("trace_call_path", {
-      start: "main",
-      goal: "0x3000",
+    const result = await new EnhancedTools(client).executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", goal: "0x3000", direction: "forward" },
     });
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       goal_status: "unknown",
+      edges: [{ source_address: "0x1000", target_address: "0x2000" }],
+      relationship_coverage: {
+        "0x1000": {
+          status: "unknown",
+          reason: expect.stringMatching(
+            /omitted.*truncation marker.*callees remain unknown/iu,
+          ),
+        },
+      },
       residual_unknowns: expect.arrayContaining([
         expect.stringContaining(
           "Call relationship coverage is unknown for 0x1000:",

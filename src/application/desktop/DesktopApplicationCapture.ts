@@ -216,7 +216,8 @@ const admit = async (
     signal,
   );
   if (!inspected.ok) throw applicationRefusal(inspected.error);
-  const { inventory, limitations, signingKeys } = inspected.value;
+  const { inventory, envProgramIndex, limitations, signingKeys } =
+    inspected.value;
   const windows = host.desktop.observeWindows(xprop, host.environment);
   const windowMatching = applicationWindowMatching(inventory);
   const running = await host.desktop.runningApplicationWindows(
@@ -240,6 +241,7 @@ const admit = async (
     home: await canonicalCallerPath(home),
     output: prepared.path,
     inventory,
+    envProgramIndex,
     limitations,
     signingKeys,
     windows,
@@ -289,6 +291,9 @@ const recordCapture = async (
   await host.report(`Launching ${inventory.argv.join(" ")}.`);
   const outcome = await host.desktop.runSession({
     argv: inventory.argv,
+    ...(admitted.envProgramIndex === undefined
+      ? {}
+      : { envProgramIndex: admitted.envProgramIndex }),
     workingDirectory: inventory.working_directory,
     environment: host.environment,
     windows: admitted.windows,

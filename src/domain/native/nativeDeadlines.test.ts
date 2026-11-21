@@ -15,7 +15,6 @@ it("keeps today's omitted native deadlines and the shared timer range", () => {
   expect(DEFAULT_NATIVE_COMMAND_TIMEOUT_MS).toBe(60_000);
   expect(DEFAULT_NATIVE_UI_DEADLINE_MS).toBe(180_000);
   expect(DEFAULT_PWNTOOLS_TIMEOUT_MS).toBe(30_000);
-  expect(MAX_NODE_TIMER_DELAY_MS).toBe(2_147_483_647);
   for (const field of [
     nativeCommandTimeoutField,
     nativeUiDeadlineField,

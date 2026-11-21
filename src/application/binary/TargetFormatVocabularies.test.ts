@@ -1,27 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   analysisSnapshotSchema,
   snapshotTarget,
 } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import { executableFormatHintSchema } from "../../domain/dosCom.js";
+import { openBinaryInputSchema } from "../../contracts/sessionLifecycleInputs.js";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
 import {
   createImmutableEvidenceBundle,
   parseEvidenceBundle,
 } from "../../domain/evidenceBundle.js";
+import type {
+  BINARY_TARGET_FORMAT_KINDS,
+  TargetFormat,
+} from "../../domain/targetFormats.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 
 /**
  * One admitted target per format. A format added to `BinaryTarget` fails
  * compilation here until it has a fixture, and the cases below then require
- * every vocabulary that persists or projects targets to accept it. This guards
- * the failure class of #7290 until target formats have a single owner.
+ * every vocabulary that persists or projects targets to accept it.
  */
 type TargetFixtures = {
-  readonly [Format in BinaryTarget["format"]]: BinaryTarget & {
+  readonly [Format in TargetFormat]: BinaryTarget & {
     readonly format: Format;
+    readonly kind: (typeof BINARY_TARGET_FORMAT_KINDS)[Format];
   };
 };
 
@@ -107,6 +111,7 @@ const TARGETS: TargetFixtures = {
     ...identity,
     kind: "database",
     format: "analysis-database",
+    databaseEngine: "hopper",
   },
   zip: { ...archive, format: "zip" },
   ipa: { ...archive, format: "ipa" },
@@ -141,6 +146,7 @@ const TARGETS: TargetFixtures = {
   plist: { ...artifact, format: "plist" },
   javascript: { ...artifact, format: "javascript" },
   "source-map": { ...artifact, format: "source-map" },
+  uefi: { ...artifact, format: "uefi" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;
@@ -148,6 +154,10 @@ const roundTrip = (value: unknown): unknown =>
   JSON.parse(JSON.stringify(value));
 
 describe("target format vocabularies", () => {
+  it("defines a target type for every canonical format", () => {
+    expectTypeOf<BinaryTarget["format"]>().toEqualTypeOf<TargetFormat>();
+  });
+
   it.each(Object.values(TARGETS))(
     "persists and projects $format targets",
     (target) => {
@@ -185,7 +195,7 @@ describe("target format vocabularies", () => {
     },
   );
 
-  it.each(executableFormatHintSchema.options)(
+  it.each(openBinaryInputSchema.shape.format.unwrap().options)(
     "admits the caller-selected %s hint only as its own target format",
     (hint) => {
       // An ESP flash dump is the one caller-selected format read as an archive.

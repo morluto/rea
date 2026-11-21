@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { declaredTokenPattern } from "../domain/schemaConstraints.js";
+import { decimalTokenPattern } from "./decimalTokenPattern.js";
+
 import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
 import type { CliSessionTarget } from "./contractCliDescription.js";
 
@@ -14,9 +17,10 @@ type DecimalWrapper =
     };
 
 const decimalToken = (domain: z.ZodNumber) =>
-  z
-    .string()
-    .regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer")
+  declaredTokenPattern(
+    z.string().regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer"),
+    new RegExp(decimalTokenPattern(domain), "u"),
+  )
     .pipe(z.coerce.number<string>())
     .pipe(domain);
 

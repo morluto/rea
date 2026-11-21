@@ -197,6 +197,30 @@ it("rejects an excessive vendor ramdisk count before reading the table", async (
   }
 });
 
+it("reports a truncated vendor ramdisk table above the count allowance without reading its rows", async () => {
+  const image = vendorBootWithRamdisks(4097);
+  // One header page and two pages of 1-byte ramdisks precede 4097 108-byte rows.
+  const tableEnd = 3 * 4096 + 4097 * 108;
+  const path = await fixture(image.subarray(0, tableEnd - 1));
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new AndroidBootImageArtifactReader(path, admitted);
+  const reads = vi.spyOn(admitted.handle, "read");
+  try {
+    await expect(entries(reader)).rejects.toMatchObject({
+      reason: "truncated",
+      cause: {
+        kind: "truncated",
+        failure: { field: "components", offset: tableEnd - 1 },
+      },
+    });
+    expect(reads).toHaveBeenCalledTimes(1);
+  } finally {
+    await reader.close();
+    reads.mockRestore();
+    await admitted.handle.close();
+  }
+});
+
 artifactReaderLifecycleCases({
   image: () => buildBootImage({ version: 0 }),
   createReader: (path, admitted) =>

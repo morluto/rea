@@ -70,12 +70,7 @@ export const startFakeCdpBrowser = async (
       );
       return;
     }
-    if (options.handshakeDelayMs === undefined) {
-      accept();
-      return;
-    }
-    const timer = setTimeout(accept, options.handshakeDelayMs);
-    socket.once("close", () => clearTimeout(timer));
+    accept();
   });
   webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
     const directPage = request.url?.startsWith("/devtools/page/") === true;
@@ -96,6 +91,7 @@ export const startFakeCdpBrowser = async (
           directPage,
           options,
           sessionState,
+          port,
         )
       )
         return;
@@ -264,9 +260,12 @@ const handleSimulatedWireFault = (
   directPage: boolean,
   options: FakeOptions,
   sessionState: SocketSessionState,
+  port: number,
 ): boolean => {
   const commandError = options.commandError?.(command);
   if (commandError !== undefined) {
+    if (options.eventsBeforeReply?.includes(command.method) === true)
+      sendCommandEvents(socket, command, port, options);
     sendCommandReply(socket, command, { error: commandError });
     if (options.closeAfterMethod === command.method)
       setImmediate(() => socket.close());
@@ -375,15 +374,24 @@ const replyToCommand = (
   const eventsFirst =
     options.eventsBeforeReply?.includes(command.method) === true;
   if (!eventsFirst) reply();
+  sendCommandEvents(socket, command, port, options);
+  if (eventsFirst) reply();
+  if (options.closeAfterMethod === command.method)
+    setImmediate(() => socket.close());
+};
+
+const sendCommandEvents = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+): void => {
   const customEvents = options.commandEvents?.(
     command,
     `http://127.0.0.1:${String(port)}`,
   );
   if (customEvents === undefined) emitEvents(socket, command, port, options);
   else for (const event of customEvents) socket.send(JSON.stringify(event));
-  if (eventsFirst) reply();
-  if (options.closeAfterMethod === command.method)
-    setImmediate(() => socket.close());
 };
 
 const serveSourceMap = (

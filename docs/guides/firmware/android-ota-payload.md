@@ -46,8 +46,16 @@ and `estimate_cow_size`. Operation types include REPLACE, ZERO,
 REPLACE_BZ/XZ/ZSTD, SOURCE_COPY, BSDIFF family, PUFFDIFF, ZUCCHINI and
 LZ4DIFF.
 
+Repeated encodings of the singular old/new `PartitionInfo` messages merge
+their fields under Protobuf rules. A later size-only or empty message does
+not erase an earlier declared hash; a repeated scalar field keeps its last
+value. The resulting size and hash feed both inventory and extraction.
+
 Metadata and payload signature blobs are counted from the `Signatures`
-protobuf. `signatures_verified` is always `false`: sizes and counts are
+protobuf. A payload signature is declared when both `signatures_offset` and
+`signatures_size` are present. Inventory preserves a lone field as manifest
+metadata and leaves the payload signature blob size and count null.
+`signatures_verified` is always `false`: sizes and counts are
 facts, not a cryptographic check. `payload_properties.txt` and
 `META-INF/com/android/metadata` beside a zip member are out of scope. A zip
 that already lists `payload.bin` still classifies that member by `CrAU`
@@ -57,15 +65,18 @@ magic; zip inventory does not recurse into its partitions.
 
 A partition is reconstructed only when every install operation is REPLACE,
 ZERO or REPLACE_ZSTD (via `node:zlib` zstd), the new size is known and at
-most 32 MiB, and every needed blob extent is present. The reconstructed
+most 32 MiB, and every needed blob extent is present. When an operation
+declares `data_sha256_hash`, REA checks its stored blob bytes before writing
+or decompressing them. A mismatch prevents reconstruction. The reconstructed
 image is checked against `new_partition_info.hash` when that hash is
 present. Any other operation type leaves the occurrence inventoried with
 `hash_status: unavailable` and refuses extraction of that member.
 Delta payloads therefore inventory completely and fail a full extract.
 
 A truncated file whose header and manifest still fit keeps the partition
-table and records that the blob was truncated. Bytes past end of file are
-not invented as zeros.
+table and records that the blob was truncated. An incomplete signature is
+skipped, with its declared size retained and its count left unknown. Manifest
+and signature size limits apply only when those regions fit in the file.
 
 ## Bounded work
 

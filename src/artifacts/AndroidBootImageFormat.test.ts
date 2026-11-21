@@ -4,13 +4,11 @@ import {
   appendAvbFooter,
   buildBootImage,
   buildVendorBootImage,
-  declareVendorRamdiskCount,
   osVersionRaw,
   truncateImage,
 } from "../../tests/fixtures/androidBootImage.js";
 import {
   compressionFromPrefix,
-  hasAndroidBootImageMagic,
   inspectAvbFooter,
   parseAndroidBootHeader,
   parseVendorRamdiskTable,
@@ -29,10 +27,7 @@ const failed = (bytes: Buffer, fileSize = bytes.length) => {
   return result.error;
 };
 
-it("recognizes ANDROID! and VNDRBOOT and names compression from a prefix", () => {
-  expect(hasAndroidBootImageMagic(Buffer.from("ANDROID!"))).toBe(true);
-  expect(hasAndroidBootImageMagic(Buffer.from("VNDRBOOT"))).toBe(true);
-  expect(hasAndroidBootImageMagic(Buffer.from("short"))).toBe(false);
+it("names recognized compression from a component prefix", () => {
   expect(compressionFromPrefix(Buffer.from([0x1f, 0x8b]))).toBe("gzip");
   expect(compressionFromPrefix(Buffer.from([0x04, 0x22, 0x4d, 0x18]))).toBe(
     "lz4",
@@ -232,6 +227,39 @@ it("accepts an image that ends at its last declared byte", () => {
   }
 });
 
+it.each([
+  { version: 1, page: 2048 },
+  { version: 2, page: 2048 },
+  { version: 3, page: 4096 },
+  { version: 4, page: 4096 },
+] as const)(
+  "rejects a v$version boot header that cannot fit its first page",
+  ({ version, page }) => {
+    const valid = buildBootImage({ version, headerSize: page });
+    expect(parsed(valid).headerSize).toBe(page);
+    const impossible = buildBootImage({ version, headerSize: 1024 * 1024 + 1 });
+    expect(failed(impossible)).toMatchObject({
+      kind: "malformed",
+      message: expect.stringContaining(`through ${page}`),
+    });
+  },
+);
+
+it("distinguishes an oversized vendor header from a truncated one", () => {
+  const headerSize = 1024 * 1024 + 1;
+  const image = buildVendorBootImage({ version: 4, headerSize });
+  expect(failed(image.subarray(0, headerSize))).toMatchObject({
+    kind: "limit",
+    failure: {
+      limit: { name: "Android boot image header_size", maximum: 1024 * 1024 },
+    },
+  });
+  expect(failed(image.subarray(0, headerSize - 1))).toMatchObject({
+    kind: "truncated",
+    failure: { offset: headerSize - 1 },
+  });
+});
+
 it("aligns a kernel larger than 2^31 without allocating the image", () => {
   const header = Buffer.alloc(1632);
   header.write("ANDROID!", 0, "ascii");
@@ -396,7 +424,7 @@ it("splits a v4 vendor ramdisk table and a v3 section", () => {
   ]);
 });
 
-it("rejects vendor table overlap, overrun, and an excessive entry count", () => {
+it("rejects truncated, overlapping, and out-of-range vendor ramdisk rows", () => {
   const image = buildVendorBootImage({
     version: 4,
     ramdisks: [
@@ -444,20 +472,6 @@ it("rejects vendor table overlap, overrun, and an excessive entry count", () => 
   expect(overran.ok).toBe(false);
   if (overran.ok) return;
   expect(overran.error.message).toContain("overruns the vendor ramdisk");
-  const capacity = failed(
-    declareVendorRamdiskCount(buildVendorBootImage({ version: 4 }), 4097),
-  );
-  expect(capacity).toMatchObject({
-    kind: "limit",
-    failure: {
-      format: "android-boot-image",
-      limit: {
-        name: "Android vendor ramdisk table entry count",
-        maximum: 4096,
-      },
-    },
-  });
-  expect(capacity.message).toContain("4096");
   expect(
     failed(
       buildVendorBootImage({
@@ -467,6 +481,44 @@ it("rejects vendor table overlap, overrun, and an excessive entry count", () => 
       }),
     ).message,
   ).toContain("smaller than the 108-byte");
+});
+
+it("checks vendor ramdisk table dimensions before the entry count allowance", () => {
+  const image = buildVendorBootImage({ version: 4 });
+  image.writeUInt32LE(108, 2112); // Only one row declared by table_size.
+  image.writeUInt32LE(4097, 2116);
+  expect(failed(image)).toMatchObject({
+    kind: "malformed",
+    message:
+      "vendor ramdisk table size 108 does not equal 4097 entries of 108 bytes",
+  });
+
+  image.writeUInt32LE(4097 * 107, 2112);
+  image.writeUInt32LE(107, 2120);
+  expect(failed(image)).toMatchObject({
+    kind: "malformed",
+    message:
+      "vendor ramdisk table entry size 107 is smaller than the 108-byte v4 entry",
+  });
+});
+
+it("applies the vendor ramdisk row-width allowance only to file-backed tables", () => {
+  const image = buildVendorBootImage({
+    version: 4,
+    entrySize: 4097,
+    ramdisks: [{ name: "wide", bytes: Buffer.from("a") }],
+  });
+  const end = 2 * 4096 + 4097;
+  expect(failed(image.subarray(0, end))).toMatchObject({
+    kind: "limit",
+    failure: {
+      limit: { name: "Android vendor ramdisk table entry size", maximum: 4096 },
+    },
+  });
+  expect(failed(image.subarray(0, end - 1))).toMatchObject({
+    kind: "truncated",
+    failure: { field: "components", offset: end - 1 },
+  });
 });
 
 it("names unsafe vendor ramdisk paths and reports an uncovered section", () => {
@@ -630,7 +682,7 @@ it("records an AVB footer and rejects vbmeta that overlaps a component", () => {
     imageEnd: facts.imageEnd,
     headerOccupied: facts.headerOccupied,
     components: facts.components,
-    tail: null,
+    tail: image.subarray(image.length - 64),
   });
   expect(bare).toMatchObject({
     ok: true,
@@ -643,7 +695,7 @@ it("records an AVB footer and rejects vbmeta that overlaps a component", () => {
     imageEnd: facts.imageEnd,
     headerOccupied: facts.headerOccupied,
     components: facts.components,
-    tail: null,
+    tail: short.subarray(short.length - 64),
   });
   expect(shortFooter.ok).toBe(true);
   if (!shortFooter.ok) return;
