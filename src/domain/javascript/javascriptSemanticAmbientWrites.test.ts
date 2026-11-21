@@ -702,3 +702,32 @@ it.each([
   "escapes values thrown uncaught at the top level: $source",
   expectAmbientEffectPaths,
 );
+
+it("yields between ambient effect sites after the reference-store fixpoint", () => {
+  const count = 16;
+  const source = Array.from(
+    { length: count },
+    (_, index) => `globalThis.p${index} = 0; consume(globalThis.q${index});`,
+  ).join("");
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected ambient checkpoint fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const steps = index.indexAmbientWritesSteps();
+  const effects = () =>
+    [
+      index.bindings.ambientWriteEffects.length,
+      index.bindings.ambientEscapeEffects.length,
+    ] as const;
+  let previous = effects();
+  for (;;) {
+    const step = steps.next();
+    const current = effects();
+    expect(current[0] - previous[0]).toBeLessThanOrEqual(1);
+    expect(current[1] - previous[1]).toBeLessThanOrEqual(1);
+    previous = current;
+    if (step.done) break;
+  }
+  expect(previous).toEqual([count, count]);
+});
