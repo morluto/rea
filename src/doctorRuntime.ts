@@ -2,6 +2,7 @@ import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
 import {
   systemDoctorHost,
   type DoctorHost,
+  type DoctorProviderConfiguration,
   type RetainedProviderRequestBudgetResolver,
 } from "./application/Doctor.js";
 import type {
@@ -299,74 +300,45 @@ const providerConfigurationPresent = (
 
 const unresolvedProvider = (
   id: string,
-  selected: SelectedRegistrationEnvironment | undefined,
-  environment: Readonly<Record<string, string | undefined>>,
+  unresolvedSettings: ReadonlySet<string> | undefined,
+  environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
 ): DoctorProviderInspection | undefined => {
-  if (selected === undefined) return undefined;
-  const normalize = (key: string) =>
-    platform === "win32" ? key.toUpperCase() : key;
-  const read = new Set((PROVIDER_SETTINGS[id] ?? []).map(normalize));
-  const unresolved = [...selected.unresolved].filter(
+  if (unresolvedSettings === undefined) return undefined;
+  const read = new Set(PROVIDER_SETTINGS[id] ?? []);
+  const unresolved = [...unresolvedSettings].filter(
     (name) =>
-      read.has(normalize(name)) &&
-      settingAffectsProbe(id, normalize(name), environment, platform),
+      read.has(name) && settingAffectsProbe(id, name, environment, platform),
   );
-  if (selected.unknown !== true && unresolved.length === 0) return undefined;
-  const configurationKey = PROVIDER_CONFIGURATION_KEYS[id];
-  const unknownConfiguration =
-    selected.unknown === true ||
-    configurationKey === undefined ||
-    unresolved.some((name) => normalize(name) === normalize(configurationKey));
-  return {
+  if (unresolved.length === 0) return undefined;
+  const key = PROVIDER_CONFIGURATION_KEYS[id];
+  return unresolvedProviderInspection(
     id,
-    configured: unknownConfiguration
+    key === undefined || unresolved.includes(key)
       ? null
       : providerConfigurationPresent(id, environment),
-    available: null,
-    providerVersion: null,
-    registrationEnvironment: {},
-    checks: [
-      {
-        name: "configuration",
-        ok: false,
-        code: "registration_environment_unknown",
-        classification: "unknown",
-        detail:
-          selected.unknown === true
-            ? "The selected client's registration could not be read or resolved."
-            : `The selected client's registration has unresolved settings: ${unresolved.join(", ")}.`,
-        remediation:
-          "Inspect the selected client's registration on the host and rerun doctor.",
-      },
-    ],
-  };
+    {
+      code: "registration_environment_unknown",
+      classification: "unknown",
+      detail: `The selected client's registration has unresolved settings: ${unresolved.join(", ")}.`,
+      remediation:
+        "Inspect the selected client's registration on the host and rerun doctor.",
+    },
+  );
 };
 
-const providerConfigurationFailure = (
-  explicit: Readonly<NodeJS.ProcessEnv>,
-  classification: "unknown" | "config_drift",
-  code: string,
-  detail: string,
-  remediation: string,
-): readonly DoctorProviderInspection[] =>
-  Object.keys(PROVIDER_SETTINGS).map((id) => ({
-    id,
-    configured: providerConfigurationPresent(id, explicit) ? true : null,
-    available: null,
-    providerVersion: null,
-    registrationEnvironment: {},
-    checks: [
-      {
-        name: "configuration",
-        ok: false,
-        code,
-        classification,
-        detail,
-        remediation,
-      },
-    ],
-  }));
+const unresolvedProviderInspection = (
+  id: string,
+  configured: boolean | null,
+  failure: NonNullable<DoctorProviderConfiguration["failure"]>,
+): DoctorProviderInspection => ({
+  id,
+  configured,
+  available: null,
+  providerVersion: null,
+  registrationEnvironment: {},
+  checks: [{ name: "configuration", ok: false, ...failure }],
+});
 
 const withProbeResourceScope = <T>(
   parent: RetainedResourceScope,
@@ -543,12 +515,12 @@ export const createSystemDoctorHost = (
         },
       },
     ),
-    providerInspections: async (
-      resourceScope: RetainedResourceScope,
-      inspectionSignal: AbortSignal,
-      clients: readonly string[],
+    selectProviderConfiguration: async (
+      resourceScope,
+      inspectionSignal,
+      clients,
     ) => {
-      const selected = await withProbeResourceScope(
+      const selection = await withProbeResourceScope(
         resourceScope,
         "selected-registration",
         (probeScope) =>
@@ -560,77 +532,112 @@ export const createSystemDoctorHost = (
             platform,
           ),
       );
-      let inspectionEnvironment = environment;
-      let inspectionDefaults = savedDefaults;
-      let providerSelection = selected;
-      if (selected !== undefined && selected.unknown !== true) {
-        // Re-resolve the client-selected locator from literal values. Values
-        // loaded from the terminal's saved file cannot mask the client's file.
-        const explicit = selectedProviderSettings(
-          selected,
-          inheritedEnvironment,
-          platform,
-        );
-        const unresolved = new Set(
-          [...selected.unresolved].map((name) =>
-            platform === "win32" ? name.toUpperCase() : name,
+      if (selection === undefined) return { environment, savedDefaults };
+      if (selection.unknown === true)
+        return {
+          environment: {},
+          failure: {
+            classification: "unknown",
+            code: "registration_environment_unknown",
+            detail:
+              "The selected client's registration could not be read or resolved.",
+            remediation:
+              "Inspect the selected client's registration on the host and rerun doctor.",
+          },
+        };
+
+      // Values loaded from the terminal's saved file cannot mask the client's file.
+      const explicit = selectedProviderSettings(
+        selection,
+        inheritedEnvironment,
+        platform,
+      );
+      const unresolved = new Set(
+        [...selection.unresolved].map((name) =>
+          platform === "win32" ? name.toUpperCase() : name,
+        ),
+      );
+      const location = userConfigLocationSettings(explicit, platform);
+      const unresolvedLocation = [...unresolved].filter((name) =>
+        location.has(name),
+      );
+      if (unresolvedLocation.length > 0)
+        return {
+          environment: explicit,
+          failure: {
+            classification: "unknown",
+            code: "registration_environment_unknown",
+            detail: `The selected client's user configuration location has unresolved settings: ${unresolvedLocation.join(", ")}.`,
+            remediation:
+              "Resolve those settings in the selected client's registration, then rerun doctor.",
+          },
+        };
+
+      const defaults = await readProviderDefaults(explicit, true);
+      if (!defaults.ok)
+        return {
+          environment: explicit,
+          failure: {
+            classification: "config_drift",
+            code: "invalid_configuration",
+            detail: defaults.error.message,
+            remediation:
+              "Check the named file and its parent directory before retrying.",
+          },
+        };
+
+      const resolved = applyUserConfigurationDefaults(explicit, defaults.value);
+      return {
+        environment: omitEnvironmentSettings(resolved.environment, unresolved),
+        savedDefaults: new Set(
+          [...resolved.savedDefaults].filter((name) => !unresolved.has(name)),
+        ),
+        unresolved,
+      };
+    },
+    providerInspections: async (
+      resourceScope,
+      inspectionSignal,
+      _clients,
+      configuration,
+    ) => {
+      const {
+        environment: inspectionEnvironment,
+        savedDefaults: inspectionDefaults,
+        unresolved,
+        failure,
+      } = configuration;
+      if (failure !== undefined)
+        return Object.keys(PROVIDER_SETTINGS).map((id) =>
+          unresolvedProviderInspection(
+            id,
+            providerConfigurationPresent(id, inspectionEnvironment)
+              ? true
+              : null,
+            failure,
           ),
         );
-        const location = userConfigLocationSettings(explicit, platform);
-        const unresolvedLocation = [...unresolved].filter((name) =>
-          location.has(name),
-        );
-        if (unresolvedLocation.length > 0)
-          return providerConfigurationFailure(
-            explicit,
-            "unknown",
-            "registration_environment_unknown",
-            `The selected client's user configuration location has unresolved settings: ${unresolvedLocation.join(", ")}.`,
-            "Resolve those settings in the selected client's registration, then rerun doctor.",
-          );
-        const defaults = await readProviderDefaults(explicit, true);
-        if (!defaults.ok)
-          return providerConfigurationFailure(
-            explicit,
-            "config_drift",
-            "invalid_configuration",
-            defaults.error.message,
-            "Check the named file and its parent directory before retrying.",
-          );
-        const resolved = applyUserConfigurationDefaults(
-          explicit,
-          defaults.value,
-        );
-        inspectionEnvironment = omitEnvironmentSettings(
-          resolved.environment,
-          unresolved,
-        );
-        inspectionDefaults = new Set(
-          [...resolved.savedDefaults].filter((name) => !unresolved.has(name)),
-        );
-        providerSelection = { ...selected, unresolved };
-      }
       const ghidraUnresolved = unresolvedProvider(
         "ghidra",
-        providerSelection,
+        unresolved,
         inspectionEnvironment,
         platform,
       );
       const idaUnresolved = unresolvedProvider(
         "ida",
-        providerSelection,
+        unresolved,
         inspectionEnvironment,
         platform,
       );
       const jadxUnresolved = unresolvedProvider(
         "jadx",
-        providerSelection,
+        unresolved,
         inspectionEnvironment,
         platform,
       );
       const kunaUnresolved = unresolvedProvider(
         "kuna",
-        providerSelection,
+        unresolved,
         inspectionEnvironment,
         platform,
       );
@@ -682,7 +689,6 @@ export const createSystemDoctorHost = (
               }),
             ),
       ]);
-      if (providerSelection?.unknown === true) return inspections;
       return inspections.map((inspection) =>
         providerSettingOrigins(
           inspection,
@@ -692,13 +698,17 @@ export const createSystemDoctorHost = (
       );
     },
     desktopBuildFacts: readDesktopBuildFacts,
-    linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
+    linuxDemoRuntimeCheck: (
+      resourceScope,
+      inspectionSignal,
+      probeEnvironment,
+    ) =>
       withProbeResourceScope(
         resourceScope,
         "hopper-demo-runtime",
         (probeScope) =>
           inspectLinuxHopperDemoRuntime(
-            environment,
+            probeEnvironment,
             probeScope,
             inspectionSignal,
           ),

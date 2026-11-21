@@ -194,13 +194,16 @@ export const systemSetupHost = (
       scope?: DoctorScope,
     ): Promise<SetupInitialState> => {
       const diagnosis = await runDoctor(undefined, doctorHost, scope);
+      const hopperSetting =
+        diagnosis.staticProviderSettings?.HOPPER_LAUNCHER_PATH;
       const providerEnvironment: SetupProviderEnvironment = {
         ...omitEnvironmentSettings(
           {
             ...providerRegistrationEnvironment(
               diagnosis.providerInspections ?? [],
             ),
-            ...(diagnosis.hopperPath === undefined
+            ...(diagnosis.hopperPath === undefined ||
+            hopperSetting?.source === "config"
               ? {}
               : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
             ...explicitSetupRegistrationEnvironment(environment),
@@ -218,9 +221,10 @@ export const systemSetupHost = (
         ...(diagnosis.hopperPath === undefined
           ? {}
           : { hopperPath: diagnosis.hopperPath }),
-        ...(typeof environment.HOPPER_LAUNCHER_PATH === "string" &&
-        environment.HOPPER_LAUNCHER_PATH.trim() !== "" &&
-        diagnosis.hopperPath === environment.HOPPER_LAUNCHER_PATH
+        ...(diagnosis.hopperPath !== undefined &&
+        (hopperSetting === undefined
+          ? diagnosis.hopperPath === environment.HOPPER_LAUNCHER_PATH
+          : hopperSetting.source !== "auto")
           ? { hopperLauncherConfigured: true }
           : {}),
         providerConfigured:

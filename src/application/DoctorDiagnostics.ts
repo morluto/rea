@@ -7,7 +7,12 @@ import { hopperLauncherDiscovery } from "../hopperPaths/HopperLauncherDiscovery.
 import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
 import { isDesktopBuildCheck } from "../domain/doctorProviderIds.js";
-import type { DoctorHost } from "./Doctor.js";
+import type {
+  DoctorHost,
+  DoctorProviderConfiguration,
+  DoctorProviderProbeHost,
+  StaticDoctorProviderSettings,
+} from "./Doctor.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
@@ -18,6 +23,8 @@ import { settleConcurrent } from "./settleConcurrent.js";
 export interface DoctorDiagnostics {
   readonly checks: readonly DoctorCheck[];
   readonly hopperPath?: string;
+  readonly configuredHopperPath?: string;
+  readonly staticProviderSettings?: StaticDoctorProviderSettings;
   readonly providerInspections?: readonly DoctorProviderInspection[];
 }
 
@@ -28,47 +35,135 @@ export const collectDoctorDiagnostics = async (
   clients: readonly string[] = [],
 ): Promise<DoctorDiagnostics> => {
   const checks: DoctorCheck[] = [nodeCheck(host)];
-  const [
-    resolvedHostCheck,
-    hopperOutcome,
-    providerInspections,
-    ilspyCheck,
-    targetCheck,
-  ] = await settleConcurrent([
+  const [resolvedHostCheck, providers, targetCheck] = await settleConcurrent([
     hostCheck(host),
-    (async () => {
-      const hopperPath = await findHopper(host);
-      const [hopperVersionCheck, hopperDemoCheck] = await settleConcurrent([
-        optionalHopperVersionCheck(host, hopperPath),
-        optionalHopperDemoCheck(host, hopperPath),
-      ]);
-      return { hopperPath, hopperVersionCheck, hopperDemoCheck };
-    })(),
-    Promise.resolve(host.providerInspections?.(clients ?? [])),
-    optionalIlspyCheck(host),
+    collectProviderDiagnostics(host, clients),
     optionalTargetCheck(target, host),
   ]);
-  checks.push(resolvedHostCheck);
+  checks.push(resolvedHostCheck, ...providers.checks);
+  if (targetCheck !== undefined) checks.push(targetCheck);
+  return { ...providers, checks };
+};
+
+const collectProviderDiagnostics = async (
+  host: DoctorHost,
+  clients: readonly string[],
+): Promise<DoctorDiagnostics> => {
+  const selection = await host.forProviderDiagnostics?.(clients);
+  const providerHost = selection?.host ?? host;
+  const configuration = selection?.configuration;
+  const hopperFailure = staticProviderFailure(
+    configuration,
+    "hopper",
+    "HOPPER_LAUNCHER_PATH",
+  );
+  const ilspyFailure = staticProviderFailure(
+    configuration,
+    "ilspycmd",
+    "REA_ILSPY_CMD_PATH",
+  );
+  const [hopperOutcome, providerInspections, ilspyCheck] =
+    await settleConcurrent([
+      (async () => {
+        if (hopperFailure !== undefined) return {};
+        const hopperPath = await findHopper(providerHost);
+        const [hopperVersionCheck, hopperDemoCheck] = await settleConcurrent([
+          optionalHopperVersionCheck(providerHost, hopperPath),
+          optionalHopperDemoCheck(providerHost, hopperPath),
+        ]);
+        return { hopperPath, hopperVersionCheck, hopperDemoCheck };
+      })(),
+      Promise.resolve(providerHost.providerInspections?.(clients)),
+      ilspyFailure === undefined
+        ? optionalIlspyCheck(providerHost)
+        : Promise.resolve(ilspyFailure),
+    ]);
 
   const { hopperPath, hopperVersionCheck, hopperDemoCheck } = hopperOutcome;
-  checks.push(hopperCheck(host, hopperPath));
-  const hopperTimeoutCheck = optionalHopperStartupTimeoutCheck(host);
-  if (hopperTimeoutCheck !== undefined) checks.push(hopperTimeoutCheck);
+  const checks = [hopperFailure ?? hopperCheck(providerHost, hopperPath)];
+  if (hopperFailure === undefined) {
+    const timeout = optionalHopperStartupTimeoutCheck(providerHost);
+    if (timeout !== undefined) checks.push(timeout);
+  }
+  // Process admission still describes the original terminal invocation.
   checks.push(...runtimeConfigurationChecks(host));
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
-
   if (providerInspections !== undefined)
     checks.push(...providerInspections.flatMap(providerDoctorChecks));
-
   if (ilspyCheck !== undefined) checks.push(ilspyCheck);
   if (hopperDemoCheck !== undefined) checks.push(hopperDemoCheck);
-  if (targetCheck !== undefined) checks.push(targetCheck);
 
+  const { configuredHopperPath, configuredIlspyCmdPath } = providerHost;
+  const settings =
+    configuration === undefined
+      ? {}
+      : {
+          ...staticSetting(
+            configuration,
+            "HOPPER_LAUNCHER_PATH",
+            configuredHopperPath,
+            hopperPath,
+          ),
+          ...staticSetting(
+            configuration,
+            "REA_ILSPY_CMD_PATH",
+            configuredIlspyCmdPath,
+          ),
+        };
   return {
     checks,
     ...(hopperPath === undefined ? {} : { hopperPath }),
+    ...(configuredHopperPath === undefined ? {} : { configuredHopperPath }),
+    ...(Object.keys(settings).length === 0
+      ? {}
+      : { staticProviderSettings: settings }),
     ...(providerInspections === undefined ? {} : { providerInspections }),
   };
+};
+
+type StaticProviderSettingName = keyof StaticDoctorProviderSettings;
+
+const staticProviderFailure = (
+  configuration: DoctorProviderConfiguration | undefined,
+  name: string,
+  setting: StaticProviderSettingName,
+): DoctorCheck | undefined => {
+  const failure = configuration?.failure;
+  if (failure !== undefined)
+    return {
+      name,
+      ok: false,
+      classification: failure.classification,
+      detail: failure.detail,
+      remediation: failure.remediation,
+    };
+  if (configuration?.unresolved?.has(setting) !== true) return undefined;
+  return {
+    name,
+    ok: false,
+    classification: "unknown",
+    detail: `The selected client's registration has an unresolved ${setting}.`,
+    remediation:
+      "Resolve the setting in the selected client's registration, then rerun doctor.",
+  };
+};
+
+const staticSetting = (
+  configuration: DoctorProviderConfiguration,
+  name: StaticProviderSettingName,
+  configured: string | undefined,
+  discovered?: string,
+): StaticDoctorProviderSettings => {
+  if (configuration.failure !== undefined) return {};
+  const value = configured ?? discovered;
+  if (value === undefined) return {};
+  const source =
+    configured === undefined
+      ? "auto"
+      : configuration.savedDefaults?.has(name)
+        ? "config"
+        : "env";
+  return { [name]: { value, source } };
 };
 
 /** Evaluate core health while treating unconfigured providers as optional. */
@@ -181,7 +276,9 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
   });
 };
 
-const findHopper = async (host: DoctorHost): Promise<string | undefined> => {
+const findHopper = async (
+  host: DoctorProviderProbeHost,
+): Promise<string | undefined> => {
   if (host.configuredHopperPath !== undefined)
     return firstExecutable(host, [host.configuredHopperPath]);
   const discovery = hopperLauncherDiscovery(host.platform, host.homeDirectory);
@@ -198,7 +295,7 @@ const findHopper = async (host: DoctorHost): Promise<string | undefined> => {
 };
 
 const firstExecutable = async (
-  host: DoctorHost,
+  host: DoctorProviderProbeHost,
   candidates: readonly string[],
 ): Promise<string | undefined> => {
   for (const candidate of new Set(candidates))
@@ -207,7 +304,7 @@ const firstExecutable = async (
 };
 
 const hopperCheck = (
-  host: DoctorHost,
+  host: DoctorProviderProbeHost,
   hopperPath: string | undefined,
 ): DoctorCheck =>
   check(
@@ -227,7 +324,7 @@ const hopperCheck = (
   );
 
 const optionalHopperStartupTimeoutCheck = (
-  host: DoctorHost,
+  host: DoctorProviderProbeHost,
 ): DoctorCheck | undefined => {
   const parsed = host.nativeConfiguration?.configuredHopperStartupTimeout;
   if (parsed === undefined) return undefined;
@@ -283,7 +380,7 @@ const runtimeConfigurationChecks = (
 };
 
 const optionalHopperVersionCheck = async (
-  host: DoctorHost,
+  host: DoctorProviderProbeHost,
   hopperPath: string | undefined,
 ): Promise<DoctorCheck | undefined> => {
   if (host.platform !== "linux" || hopperPath === undefined) return undefined;
@@ -318,7 +415,7 @@ const optionalHopperVersionCheck = async (
 };
 
 const optionalHopperDemoCheck = async (
-  host: DoctorHost,
+  host: DoctorProviderProbeHost,
   hopperPath: string | undefined,
 ): Promise<DoctorCheck | undefined> =>
   host.platform !== "linux" || hopperPath === undefined
@@ -326,7 +423,7 @@ const optionalHopperDemoCheck = async (
     : host.linuxDemoRuntimeCheck();
 
 const optionalIlspyCheck = async (
-  host: DoctorHost,
+  host: DoctorProviderProbeHost,
 ): Promise<DoctorCheck | undefined> => {
   if (host.configuredIlspyCmdPath === undefined) return undefined;
   const version = await host.ilspyCmdVersion?.(host.configuredIlspyCmdPath);

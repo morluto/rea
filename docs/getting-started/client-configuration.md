@@ -1238,10 +1238,11 @@ use provider discovery. When setup relies on saved defaults from a non-default
 MCP start reads the saved file again. Setup uses its saved IDA request budget
 when recommending client deadlines and preserves any existing client deadline.
 When one client is selected, doctor uses that registration's configuration
-location for its Ghidra, IDA, and JADX probes. The JSON report lists available
-provider settings and their source (`env`, `config`, or `auto`) under
-`providerInspections[].providerSettings`. Setup leaves values from the saved
-file in that file so a later edit takes effect at the next MCP start.
+location for provider probes. The JSON report lists the effective settings
+and their source (`env`, `config`, or `auto`) under
+`providerInspections[].providerSettings` and `staticProviderSettings` for
+Hopper and ILSpy. Setup leaves values from the saved file in that file so a
+later edit takes effect at the next MCP start.
 
 An edit to an existing file retains its original contents in
 `rea.json.rea.backup`. If doctor reports malformed or unreadable configuration,

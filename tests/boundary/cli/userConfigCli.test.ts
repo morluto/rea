@@ -313,3 +313,103 @@ cliTest.skipIf(process.platform === "win32")(
     expect(await readdir(dirname(config))).toEqual(["rea.json"]);
   },
 );
+
+// Linux verifies a launcher against authenticated publisher metadata. The macOS
+// fixture can exercise selection with a local executable and no publisher access.
+cliTest.runIf(process.platform === "darwin")(
+  "doctor uses the selected client file for Hopper and ILSpy probes",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-static-provider-settings-");
+    const configHome = join(home, "client-config");
+    const savedConfig = join(configHome, "rea", "rea.json");
+    const codexHome = join(home, ".codex");
+    const codexConfig = join(codexHome, "config.toml");
+    const hopper = join(home, "selected-hopper");
+    const ilspy = join(home, "selected-ilspycmd");
+    await writeFile(hopper, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await writeFile(ilspy, "#!/bin/sh\nprintf 'ilspycmd: 9.1.0\\n'\n", {
+      mode: 0o700,
+    });
+    await mkdir(dirname(savedConfig), { recursive: true });
+    await mkdir(codexHome);
+    await writeFile(
+      savedConfig,
+      JSON.stringify({
+        HOPPER_LAUNCHER_PATH: hopper,
+        REA_ILSPY_CMD_PATH: ilspy,
+      }),
+    );
+    const cliPath = join(process.cwd(), "scripts", "rea.mjs");
+    await writeFile(
+      codexConfig,
+      [
+        "[mcp_servers.rea]",
+        `command = ${JSON.stringify(process.execPath)}`,
+        `args = ${JSON.stringify([cliPath, "mcp"])}`,
+        "startup_timeout_sec = 30",
+        "tool_timeout_sec = 450",
+        "[mcp_servers.rea.env]",
+        `XDG_CONFIG_HOME = ${JSON.stringify(configHome)}`,
+      ].join("\n"),
+    );
+    const run = (...arguments_: string[]) =>
+      cli.run({
+        arguments: [
+          ...arguments_,
+          "--client",
+          "codex",
+          "--skill=false",
+          "--json",
+        ],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          CODEX_HOME: codexHome,
+          XDG_CONFIG_HOME: undefined,
+          HOPPER_LAUNCHER_PATH: undefined,
+          REA_ILSPY_CMD_PATH: undefined,
+        },
+        freshProcess: true,
+      });
+    const report = await run("doctor");
+    expect(report.json).toMatchObject({
+      hopperPath: hopper,
+      staticProviderSettings: {
+        HOPPER_LAUNCHER_PATH: { value: hopper, source: "config" },
+        REA_ILSPY_CMD_PATH: { value: ilspy, source: "config" },
+      },
+      checks: expect.arrayContaining([
+        expect.objectContaining({ name: "hopper", ok: true, detail: hopper }),
+        expect.objectContaining({
+          name: "ilspycmd",
+          ok: true,
+          detail: expect.stringContaining(ilspy),
+        }),
+      ]),
+    });
+
+    const setup = await run("setup", "--yes");
+    expect(setup.exitCode, setup.stdout).toBe(0);
+    const setupRegistration = await readFile(codexConfig, "utf8");
+    expect(setupRegistration).toContain("XDG_CONFIG_HOME");
+    expect(setupRegistration).not.toContain("HOPPER_LAUNCHER_PATH");
+    expect(setupRegistration).not.toContain("REA_ILSPY_CMD_PATH");
+
+    await writeFile(savedConfig, "{");
+    const invalid = await run("doctor");
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.json).not.toHaveProperty("hopperPath");
+    expect(invalid.json).toMatchObject({
+      checks: expect.arrayContaining(
+        ["hopper", "ilspycmd"].map((name) =>
+          expect.objectContaining({
+            name,
+            ok: false,
+            detail: expect.stringContaining(savedConfig),
+          }),
+        ),
+      ),
+    });
+  },
+);
