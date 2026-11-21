@@ -149,3 +149,36 @@ it("retains fixed dispatch and rereads live spread arguments", () => {
   expect(after.settled).toBe(false);
   expect(after.invocation?.arguments?.[0]?.type).toBe("SpreadElement");
 });
+
+it("refreshes settled dispatch when its owner records an earlier replacement", () => {
+  const parsed = parseJavaScriptSource(
+    "Object.getPrototypeOf = replacement; Object.getPrototypeOf([]);",
+    "captured-dispatch.mjs",
+  );
+  if (parsed === null) throw new Error("Expected dispatch fixture");
+  const [write, read] = parsed.program.body;
+  if (!t.isExpressionStatement(read) || !t.isCallExpression(read.expression))
+    throw new Error("Expected invocation");
+  if (write === undefined) throw new Error("Expected earlier effect site");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const path = ["intrinsic", "Object", "getPrototypeOf"];
+  const interop = createSemanticModuleInterop(state, {
+    fixedIntrinsicPaths: true,
+    intrinsicPath: () => path,
+  });
+  const original = interop.intrinsicInvocationFacts(read.expression);
+  expect(original).toMatchObject({
+    invocation: { kind: "known" },
+    settled: true,
+  });
+  expect(interop.intrinsicInvocationFacts(read.expression)).toBe(original);
+  interop.retainWrite(write, path);
+  const changed = interop.intrinsicInvocationFacts(read.expression);
+  expect(changed).toMatchObject({
+    invocation: { kind: "opaque", path },
+    settled: true,
+  });
+  expect(interop.intrinsicInvocationFacts(read.expression)).toBe(changed);
+});
