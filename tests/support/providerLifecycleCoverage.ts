@@ -1720,11 +1720,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "src/browser/modules/NativeModuleResolver.test.ts",
-          "closes a browser whose connection completes after cancellation",
-        ),
-        test(
-          "src/browser/modules/NativeModuleResolver.test.ts",
-          "reports failed cleanup of a browser whose connection completes after cancellation",
+          "awaits and closes the late browser connection after cancellation",
         ),
       ),
       operation: covered(
