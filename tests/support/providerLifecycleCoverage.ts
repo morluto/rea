@@ -1552,23 +1552,19 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "applies command_timeout_ms to the primary connect handshake when service workers are allowed",
-        ),
-        test(
-          "src/browser/PlaywrightScenarioBrowser.test.ts",
           "closes a browser that connects after its deadline without waiting to report the timeout",
         ),
       ),
       operation: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "returns an initial state and every step of a long scenario",
+          "retains all long-scenario steps and monotonic elapsed time",
         ),
       ),
       cancel: covered(
         test(
-          "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "cancels an active action and still closes the session",
+          "src/browser/PlaywrightScenarioSession.test.ts",
+          "preserves $outcome action rejection through provider cancellation (cleanup refused: $cleanupFails)",
         ),
       ),
       cleanup: covered(
@@ -1580,7 +1576,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       retry: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "shares concurrent close and retries browser cleanup after failure",
+          "retries all opening leases after a refusal and reports only those still owned",
         ),
       ),
     },
@@ -1662,7 +1658,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/v8CodeCacheCli.test.ts",
-        "reports wide and synthetic narrow header extents through the public CLI",
+        "reports wide, synthetic narrow and synthetic six-word header extents through the public CLI",
       ),
     ),
     covered(

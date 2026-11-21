@@ -272,6 +272,7 @@ def prose_units(source, path):
 
 def attribute_units(source, path):
     """Extract accessibility labels and authored metadata without translating URLs."""
+    from website import DEFAULT_IMAGE_ALT
     units = []
     document = Document(source)
     for node in document.nodes:
@@ -284,7 +285,7 @@ def attribute_units(source, path):
             text = node.attrs.get(name)
             if text and translatable(text):
                 context = "shared" if "<!-- website:header:start -->" in source[:node.start] and "<!-- website:header:end -->" not in source[:node.start] else "page:" + path
-                if name == "content" and node.attrs.get("name") != "description":
+                if text == DEFAULT_IMAGE_ALT and name == "content":
                     context = "shared"
                 units.append((context, text, {}, node, name))
     return units

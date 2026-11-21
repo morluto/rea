@@ -581,6 +581,34 @@ it("composes cleanup failures that complete only after every part releases", () 
   expect(composite.cleanupIncomplete).toBe(false);
 });
 
+it("lists a resource shared by several parts once", () => {
+  const parts = ["first", "second"].map(
+    (reason) =>
+      new ProviderCleanupError(
+        "fixture",
+        ["shared-handle", `${reason}-handle`],
+        { reason },
+        { operation: "fixture_close" },
+      ),
+  );
+  const composite = providerCleanupErrorFromFailures(
+    "fixture-provider",
+    parts,
+    "Fixture cleanup remains incomplete",
+    { operation: "fixture_close" },
+  );
+  expect(composite.cleanupResources).toEqual([
+    "shared-handle",
+    "first-handle",
+    "second-handle",
+  ]);
+  releaseOwnedCleanup(parts[0]!);
+  expect(composite.cleanupResources).toEqual([
+    "shared-handle",
+    "second-handle",
+  ]);
+});
+
 it("defaults the aggregate cause to the owned failures", () => {
   const only = new ProviderCleanupError(
     "fixture",

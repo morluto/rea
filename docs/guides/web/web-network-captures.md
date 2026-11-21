@@ -63,6 +63,9 @@ redaction, and its live status clears only after a confirmed retry.
 
 ## Formats and upstream profiles
 
+Unsupported format and decoder errors identify the reported requirement and
+include its source location when the decoder supplies one.
+
 HAR uses `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
 `ajv-formats@3.0.1`, `jsonc-parser@3.3.1` JSON visitor, and
 `lossless-json@4.3.1` numeric representations, pinned in the npm lockfile.
@@ -105,6 +108,13 @@ REA preserves the original spelling in reported Evidence and removes brackets
 only from its validation copy, only for these declared producers and a valid
 IPv6 literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
 validation failures. Producer declarations do not authenticate origin.
+The same Chromium DevTools writer reports `serverIPAddress` as `""` when a
+request has no remote address, such as a refused connection, an aborted request
+or an internal redirect: it copies `NetworkRequest.remoteAddress()`, which
+starts empty. REA retains that empty value in reported Evidence, omits the
+optional field only from its validation copy for this declared producer, and
+adds a record limitation that the server address is unknown. Other producers'
+empty addresses remain validation failures.
 
 Native mitmproxy decoding requires a caller-supplied **mitmdump 12.2.3 on
 Linux**. Set its absolute executable path:

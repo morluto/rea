@@ -300,33 +300,15 @@ msgstr ""
 #: website/public/blog/index.html:105 website/public/blog/index.html:118
 #: website/public/blog/reverse-engineering-models/index.html:105
 #: website/public/blog/reverse-engineering-models/index.html:118
-#: website/public/blog/touhou-reconstruction/index.html:105
-#: website/public/blog/touhou-reconstruction/index.html:118
 #: website/public/contributors/index.html:105 website/public/contributors/index.html:118
 #: website/public/examples/dino-lab/index.html:105
 #: website/public/examples/dino-lab/index.html:118 website/public/faq/index.html:105
 #: website/public/faq/index.html:118 website/public/first-investigation/index.html:105
 #: website/public/first-investigation/index.html:118
 #: website/public/get-started/index.html:105 website/public/get-started/index.html:118
-#: website/public/guides/browser/index.html:105
-#: website/public/guides/browser/index.html:118 website/public/guides/index.html:105
-#: website/public/guides/index.html:118 website/public/guides/javascript/index.html:105
-#: website/public/guides/javascript/index.html:118
-#: website/public/guides/native/index.html:105
-#: website/public/guides/native/index.html:118
-#: website/public/guides/rl-environments/index.html:105
-#: website/public/guides/rl-environments/index.html:118 website/public/index.html:105
-#: website/public/index.html:118 website/public/showcase/aegis/index.html:105
-#: website/public/showcase/aegis/index.html:118
-#: website/public/showcase/ctf/index.html:105 website/public/showcase/ctf/index.html:118
-#: website/public/showcase/dx-ball/index.html:105
-#: website/public/showcase/dx-ball/index.html:118 website/public/showcase/index.html:105
-#: website/public/showcase/index.html:118 website/public/showcase/notion/index.html:105
-#: website/public/showcase/notion/index.html:118
-#: website/public/showcase/th04/index.html:105
-#: website/public/showcase/th04/index.html:118
+#: website/public/index.html:105 website/public/index.html:118
 msgctxt "shared"
-msgid "REA: Find out how software works. Reverse engineering with your coding agent."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
 msgstr ""
 
 #: website/public/blog/index.html:132
@@ -2624,6 +2606,8 @@ msgid "{ph0}More articles{ph1} · {ph2}Explore a TH04 investigation{ph3}"
 msgstr ""
 
 #: website/public/blog/touhou-reconstruction/index.html:6
+#: website/public/blog/touhou-reconstruction/index.html:105
+#: website/public/blog/touhou-reconstruction/index.html:118
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "Reverse Engineering’s Industrial Revolution — REA"
 msgstr ""
@@ -6245,6 +6229,8 @@ msgid ""
 msgstr ""
 
 #: website/public/guides/browser/index.html:6
+#: website/public/guides/browser/index.html:105
+#: website/public/guides/browser/index.html:118
 msgctxt "page:guides/browser/index.html"
 msgid "Browser and Network Analysis — REA"
 msgstr ""
@@ -6512,7 +6498,8 @@ msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr ""
 
-#: website/public/guides/index.html:6
+#: website/public/guides/index.html:6 website/public/guides/index.html:105
+#: website/public/guides/index.html:118
 msgctxt "page:guides/index.html"
 msgid "Reverse Engineering Guides — REA"
 msgstr ""
@@ -6917,6 +6904,8 @@ msgid ""
 msgstr ""
 
 #: website/public/guides/javascript/index.html:6
+#: website/public/guides/javascript/index.html:105
+#: website/public/guides/javascript/index.html:118
 msgctxt "page:guides/javascript/index.html"
 msgid "JavaScript and Electron Analysis — REA"
 msgstr ""
@@ -7446,7 +7435,8 @@ msgid ""
 " or value unresolved, use that location as the next question."
 msgstr ""
 
-#: website/public/guides/native/index.html:6
+#: website/public/guides/native/index.html:6 website/public/guides/native/index.html:105
+#: website/public/guides/native/index.html:118
 msgctxt "page:guides/native/index.html"
 msgid "Native Binary Analysis — REA"
 msgstr ""
@@ -7946,6 +7936,8 @@ msgid ""
 msgstr ""
 
 #: website/public/guides/rl-environments/index.html:6
+#: website/public/guides/rl-environments/index.html:105
+#: website/public/guides/rl-environments/index.html:118
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build RL environments with REA"
 msgstr ""
@@ -10012,6 +10004,8 @@ msgid ""
 msgstr ""
 
 #: website/public/showcase/aegis/index.html:6
+#: website/public/showcase/aegis/index.html:105
+#: website/public/showcase/aegis/index.html:118
 msgctxt "page:showcase/aegis/index.html"
 msgid "Aegis APK Reverse Engineering: Login Codes — REA"
 msgstr ""
@@ -10660,7 +10654,8 @@ msgctxt "page:showcase/ctf/index.html"
 msgid "Set up REA with your coding agent"
 msgstr ""
 
-#: website/public/showcase/ctf/index.html:6
+#: website/public/showcase/ctf/index.html:6 website/public/showcase/ctf/index.html:105
+#: website/public/showcase/ctf/index.html:118
 msgctxt "page:showcase/ctf/index.html"
 msgid "CTF Reverse Engineering: DownUnderCTF Flag Checker — REA"
 msgstr ""
@@ -11387,6 +11382,8 @@ msgid "Start with your own target"
 msgstr ""
 
 #: website/public/showcase/dx-ball/index.html:6
+#: website/public/showcase/dx-ball/index.html:105
+#: website/public/showcase/dx-ball/index.html:118
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "DX-Ball Reverse Engineering: Sound Panning — REA"
 msgstr ""
@@ -11739,7 +11736,8 @@ msgctxt "page:showcase/index.html"
 msgid "Read the guides"
 msgstr ""
 
-#: website/public/showcase/index.html:6
+#: website/public/showcase/index.html:6 website/public/showcase/index.html:105
+#: website/public/showcase/index.html:118
 msgctxt "page:showcase/index.html"
 msgid "Reverse Engineering Case Studies — REA"
 msgstr ""
@@ -12308,6 +12306,8 @@ msgid "Analyze your own app"
 msgstr ""
 
 #: website/public/showcase/notion/index.html:6
+#: website/public/showcase/notion/index.html:105
+#: website/public/showcase/notion/index.html:118
 msgctxt "page:showcase/notion/index.html"
 msgid "Notion Electron Reverse Engineering: Clipboard — REA"
 msgstr ""
@@ -13070,7 +13070,8 @@ msgid ""
 "port.{ph3}"
 msgstr ""
 
-#: website/public/showcase/th04/index.html:6
+#: website/public/showcase/th04/index.html:6 website/public/showcase/th04/index.html:105
+#: website/public/showcase/th04/index.html:118
 msgctxt "page:showcase/th04/index.html"
 msgid "TH04 Reverse Engineering: DOS Bullet Patterns — REA"
 msgstr ""
