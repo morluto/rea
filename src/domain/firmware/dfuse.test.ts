@@ -410,3 +410,55 @@ it("counts empty elements past the entry cap and names only the first four", () 
     );
   expect(limitation).toContain("65534 more");
 });
+
+it("counts every overlap while naming only four in address order", () => {
+  const decoded = image(
+    dfuseFile({
+      targets: [
+        {
+          alternateSetting: 0,
+          elements: [
+            // File order is reversed; the earliest address is still the owner.
+            ...Array.from({ length: 9 }, (_, index) => ({
+              address: 0x0800_0000 + (8 - index),
+              data: [1, 2, 3, 4],
+            })),
+            { address: 0x0800_0020, data: [9] },
+          ],
+        },
+        {
+          alternateSetting: 1,
+          // A different alternate setting never adds an overlap.
+          elements: [{ address: 0x0800_0000, data: [9] }],
+        },
+      ],
+    }),
+  );
+  expect(decoded.elements).toHaveLength(11);
+  expect(decoded.metadata.overlapping_element_count).toBe(8);
+  expect(decoded.metadata.data_bytes).toBe(38);
+  expect(decoded.limitations).toEqual([
+    "8 DfuSe element(s) overlap an element earlier in address order within the same alternate setting; each stays a separate entry and no bytes were merged: " +
+      "target 0 element 7 (0x08000001-0x08000004) overlaps target 0 element 8 (0x08000000-0x08000003) in alternate setting 0; " +
+      "target 0 element 6 (0x08000002-0x08000005) overlaps target 0 element 7 (0x08000001-0x08000004) in alternate setting 0; " +
+      "target 0 element 5 (0x08000003-0x08000006) overlaps target 0 element 6 (0x08000002-0x08000005) in alternate setting 0; " +
+      "target 0 element 4 (0x08000004-0x08000007) overlaps target 0 element 5 (0x08000003-0x08000006) in alternate setting 0; and 4 more.",
+  ]);
+  expect(
+    decoded.elements.map((element) => ({
+      target: element.targetIndex,
+      index: element.elementIndex,
+      address: element.address,
+      bytes: [...element.bytes],
+    })),
+  ).toEqual([
+    ...Array.from({ length: 9 }, (_, index) => ({
+      target: 0,
+      index,
+      address: 0x0800_0000 + (8 - index),
+      bytes: [1, 2, 3, 4],
+    })),
+    { target: 0, index: 9, address: 0x0800_0020, bytes: [9] },
+    { target: 1, index: 0, address: 0x0800_0000, bytes: [9] },
+  ]);
+});
