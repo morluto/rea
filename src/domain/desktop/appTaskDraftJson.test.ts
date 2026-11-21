@@ -591,6 +591,56 @@ const outlineOf = (
 };
 const book = (title: string) => `/nodes/[format=BOOK][>data~1Title=${title}]`;
 
+it("guards a literal slash field separately from the nested selector path", () => {
+  const withFlatTitle = (value: JsonValue): JsonValue => {
+    const copy = structuredClone(value) as {
+      nodes: Array<{
+        format: string;
+        data: { Title: string };
+        [key: string]: unknown;
+      }>;
+    };
+    for (const node of copy.nodes) {
+      if (node.format === "BOOK") {
+        node["data/Title"] = `flat ${node.data.Title}`;
+        node.data = { Title: node.data.Title };
+      }
+    }
+    return copy as unknown as JsonValue;
+  };
+  const seed = withFlatTitle(outlineOf());
+  const end = withFlatTitle(outlineOf([CLOCKWORK]));
+  const file = drafted(seed, end);
+  expect(file.suggested.map(pointerOf)).toContain(
+    `${book("The Clockwork Ocean")}/data~1Title`,
+  );
+  expect(file.suggested.map(pointerOf)).not.toContain(
+    `${book("The Clockwork Ocean")}/data/Title`,
+  );
+  expect(file.guards.map(pointerOf)).toContain(
+    `${book("Small Engines of Life")}/data~1Title`,
+  );
+  expect(passing(end, file.guards).every(Boolean)).toBe(true);
+  const wrong = structuredClone(end) as {
+    nodes: Array<{
+      format: string;
+      data: { Title: string };
+      [key: string]: unknown;
+    }>;
+  };
+  const existing = wrong.nodes.find(
+    (node) =>
+      node.format === "BOOK" && node.data.Title === "Small Engines of Life",
+  );
+  if (existing === undefined) throw new Error("Expected existing book");
+  existing["data/Title"] = "changed";
+  expect(
+    passing(wrong as unknown as JsonValue, file.guards).some(
+      (value) => value === false,
+    ),
+  ).toBe(true);
+});
+
 describe("draftTaskFiles for a book added under a category, as TreeLine saved one on a real run", () => {
   it("checks the new book's author and copyright, not the empty children every book holds, guards the nearest books' same fields named by their titles, and names Science by its name", () => {
     const seed = outlineOf();

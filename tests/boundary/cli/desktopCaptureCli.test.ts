@@ -17,6 +17,36 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { serveCli as serve } from "./cliServeHarness.js";
+import { desktopSlashCapture } from "../../fixtures/desktopSlashCapture.js";
+
+it("drafts checks and guards for a literal slash key distinct from a nested selector", async () => {
+  const { recorded, before, after } = desktopSlashCapture();
+  const folder = await writeCaptureFolder(recorded, undefined, [
+    EDITED_NOTE,
+    before,
+    after,
+  ]);
+  const result = await serve([
+    "describe-desktop-application-task",
+    folder,
+    "--seed-checkpoint",
+    "seed",
+    "--end-checkpoint",
+    "end",
+    "--json",
+  ]);
+  expect(result.exitCode, result.stdout).toBe(0);
+  const draft = parseEvidence(JSON.parse(result.stdout)).normalized_result as {
+    task: { checks: Array<{ pointer?: string }> };
+    guards: Array<{ pointer?: string }>;
+  };
+  expect(draft.task.checks.map((check) => check.pointer)).toContain(
+    "/nodes/[format=BOOK][>data~1Title=New]/data~1Title",
+  );
+  expect(draft.guards.map((guard) => guard.pointer)).toContain(
+    "/nodes/[format=BOOK][>data~1Title=Second]/data~1Title",
+  );
+});
 
 cliTest.skipIf(process.platform !== "linux")(
   "exports an env-terminated Electron-style launch that native env can execute",
