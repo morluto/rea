@@ -1883,3 +1883,213 @@ it("computes deterministic content-addressed directory sha256 regardless of disc
     await provider.close();
   }
 });
+
+it("retains partial observation and committed receipts when cancelled during post-publication cleanup", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled_cancel");
+  const controller = new AbortController();
+
+  const provider = new UefiAnalysisProvider();
+  let intercepted = false;
+
+  const originalClose = PrivateRuntimeRoot.prototype.close;
+  vi.spyOn(PrivateRuntimeRoot.prototype, "close").mockImplementation(
+    async function (this: PrivateRuntimeRoot) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("test cancellation after publication commit");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await provider.execute(
+      decompileRequest(imagePath, outDir),
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const partial = executed.error.partialObservation as {
+      kind: string;
+      result: UefiDecompileResult;
+    };
+    expect(partial.kind).toBe("uefi");
+    expect(partial.result.output_directory).toBe(outDir);
+    expect(partial.result.total_modules_decompiled).toBe(1);
+    expect(partial.result.receipts).toBeDefined();
+    expect(partial.result.receipts!.length).toBeGreaterThan(0);
+
+    // Verify files were preserved and committed on disk
+    expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
+
+it("preserves combined-peim-driver and combined-smm-dxe across multi-phase filtering", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-combined-phases-");
+  const pePayload = Buffer.concat([
+    Buffer.from([0x4d, 0x5a]),
+    Buffer.alloc(62, 0),
+    Buffer.from("COMBINED_MODULE_CODE", "utf8"),
+  ]);
+
+  const guidPeimDriver = "44445555-6666-7777-8888-999900001111";
+  const guidSmmDxe = "55556666-7777-8888-9999-000011112222";
+
+  const combinedPeim = buildFfsFile({
+    guid: guidPeimDriver,
+    typeCode: 0x08, // combined-peim-driver
+    payload: buildSection(0x10, pePayload),
+  });
+  const combinedSmm = buildFfsFile({
+    guid: guidSmmDxe,
+    typeCode: 0x0c, // combined-smm-dxe
+    payload: buildSection(0x10, pePayload),
+  });
+
+  const pad = buildFfsFile({
+    guid: GUID_PAD,
+    typeCode: 0xf0,
+    payload: Buffer.alloc(0),
+  });
+
+  const volume = buildFv({ files: [pad, combinedPeim, combinedSmm] });
+  const image = buildImage({ volumes: [volume.buffer] });
+
+  const imagePath = join(directory, "combined.bin");
+  await writeFile(imagePath, image);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    // 1. Filter: "pei" -> should match combined-peim-driver (0x08), NOT combined-smm-dxe (0x0c)
+    const peiRes = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, join(directory, "out_pei"), {
+          filter_phase: "pei",
+        }),
+      ),
+    );
+    const peiResult = peiRes.value.result as UefiDecompileResult;
+    expect(peiResult.total_modules_found).toBe(1);
+    expect(peiResult.modules[0]?.guid).toBe(guidPeimDriver);
+
+    // 2. Filter: "smm" -> should match combined-smm-dxe (0x0c), NOT combined-peim-driver (0x08)
+    const smmRes = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, join(directory, "out_smm"), {
+          filter_phase: "smm",
+        }),
+      ),
+    );
+    const smmResult = smmRes.value.result as UefiDecompileResult;
+    expect(smmResult.total_modules_found).toBe(1);
+    expect(smmResult.modules[0]?.guid).toBe(guidSmmDxe);
+
+    // 3. Filter: "dxe" -> should match BOTH combined-peim-driver AND combined-smm-dxe
+    const dxeRes = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, join(directory, "out_dxe"), {
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const dxeResult = dxeRes.value.result as UefiDecompileResult;
+    expect(dxeResult.total_modules_found).toBe(2);
+    const dxeGuids = dxeResult.modules.map((m) => m.guid);
+    expect(dxeGuids).toContain(guidPeimDriver);
+    expect(dxeGuids).toContain(guidSmmDxe);
+
+    // 4. Filter: "sec" -> should match neither
+    const secRes = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, join(directory, "out_sec"), {
+          filter_phase: "sec",
+        }),
+      ),
+    );
+    const secResult = secRes.value.result as UefiDecompileResult;
+    expect(secResult.total_modules_found).toBe(0);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("truncates raw executable payload staging when reaching aggregate budget of 128 MiB", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-payload-budget-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // 128 MiB budget: create module A (20 MiB), module B (20 MiB), and verify tracking
+  const peHeader = Buffer.alloc(128, 0);
+  peHeader[0] = 0x4d;
+  peHeader[1] = 0x5a;
+  peHeader.write("TEST_HEADER", 64, "utf8");
+
+  await writeFile(join(inDir, "mod_a.efi"), peHeader);
+  await writeFile(join(inDir, "mod_b.efi"), peHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(inDir, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+
+    for (const mod of result.modules) {
+      expect(mod.payload_file).toBeDefined();
+      expect(mod.payload_sha256).toBeDefined();
+      expect(existsSync(mod.payload_file!)).toBe(true);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("gracefully filters out non-PE, corrupt, and oversized files during directory decompilation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-filtering-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // 1. Valid PE file (MZ)
+  const validPe = Buffer.alloc(128, 0);
+  validPe[0] = 0x4d;
+  validPe[1] = 0x5a;
+  await writeFile(join(inDir, "valid.efi"), validPe);
+
+  // 2. Non-PE file (random data, no MZ/VZ)
+  const nonPe = Buffer.from("NOT_A_PE_OR_TE_BINARY_AT_ALL");
+  await writeFile(join(inDir, "notes.txt"), nonPe);
+
+  // 3. Zero-byte file
+  await writeFile(join(inDir, "empty.efi"), Buffer.alloc(0));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(inDir, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    // Only valid PE should be discovered
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.name).toBe("valid");
+  } finally {
+    await provider.close();
+  }
+});

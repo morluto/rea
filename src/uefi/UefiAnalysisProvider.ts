@@ -38,9 +38,10 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import {
@@ -955,6 +956,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const MAX_RAW_PAYLOAD_TOTAL_BYTES = 128 * 1024 * 1024;
     let totalStagedRawBytes = 0;
 
+    let publishedResult: UefiDecompileResult | undefined;
+    let establishedError: unknown;
+
     try {
       const occurrences = new Map<string, number>();
       const phaseCounts = {
@@ -1405,6 +1409,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       });
 
       const { result } = publication;
+      publishedResult = result;
       if (publication.failure !== undefined) {
         throw publication.failure.retainPartialObservation({
           kind: "uefi",
@@ -1421,6 +1426,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         locations: [{ kind: "artifact-path", path: input.path }],
         limitations: effectiveLimitations,
       });
+    } catch (cause: unknown) {
+      establishedError = cause;
+      throw cause;
     } finally {
       try {
         await tempRoot.close();
@@ -1431,9 +1439,26 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           root: tempRoot,
         });
       }
-      checkpoint();
       if (signal.aborted) {
-        throw cancelledBy("decompile_uefi_firmware", signal);
+        const cancellation = cancelledBy("decompile_uefi_firmware", signal, {
+          partialObservation:
+            publishedResult !== undefined
+              ? {
+                  kind: "uefi",
+                  result: jsonValueSchema.parse(publishedResult),
+                  provenance: {
+                    path: input.path,
+                    sha256: imageSha256,
+                  },
+                }
+              : undefined,
+        });
+        if (establishedError instanceof AnalysisError) {
+          throw analysisErrorWithCancellation(establishedError, cancellation);
+        }
+        if (establishedError === undefined) {
+          throw cancellation;
+        }
       }
     }
   }
