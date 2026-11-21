@@ -115,6 +115,7 @@ import {
 } from "../application/ApplicationToolExecutions.js";
 import { projectAndroidApplicationEvidence } from "../application/android/AndroidApplicationService.js";
 import { inspectApiContractEvidence } from "../application/apiContract/ApiContractService.js";
+import { inspectCargoManifestEvidence } from "../application/cargoManifest/CargoManifestService.js";
 import { projectAppleApplicationEvidence } from "../application/apple/AppleApplicationService.js";
 import { projectHarmonyApplicationEvidence } from "../application/harmony/HarmonyApplicationService.js";
 import type { EvidenceWorkflowExecution } from "../application/investigation/EvidenceWorkflowExecution.js";
@@ -1116,6 +1117,21 @@ const SERVICE_TOOL_BINDINGS = {
           inspectionExecution(
             await inspectNtfsJournalEvidence(input, resources, signal),
           ),
+      },
+      inspect_cargo_manifest: {
+        admission: "sdk",
+        workflow: async (input, { signal }) => {
+          const inspected = await inspectCargoManifestEvidence(
+            input,
+            resources,
+            {
+              signal,
+            },
+          );
+          return inspectionExecution(
+            inspected.ok ? ok(inspected.value.evidence) : inspected,
+          );
+        },
       },
       inspect_playwright_trace: {
         admission: "sdk",

@@ -118,7 +118,9 @@ describe("MCP doctor help boundary", () => {
       }
     },
   );
+});
 
+describe("MCP doctor help option position", () => {
   workspaceCliTest(
     "answers help in option position regardless of surrounding output options",
     async ({ cli }) => {
