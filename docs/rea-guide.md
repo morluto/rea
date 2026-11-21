@@ -125,13 +125,13 @@ The bundle is the source of truth for observations; it doesn't decide whether a 
 | -------------------- | --------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Purpose              | Store immutable observations and provenance   | Track open questions and how they evolve            | Decide which reconstruction claims are proven                                                                                          |
 | Identity             | Collection of `ev_…` and `unk_…` records      | Versioned `unk_…` heads with revision digests       | `ledger_id` + `closure_digest` over the complete result                                                                                |
-| Mutability           | Immutable records; new ones are added         | Revisioned, append-only history                     | Derived; rebuilt from bundle + manifest                                                                                                |
+| Mutability           | Immutable records; new ones are added         | Revisioned, append-only history                     | Derived; rebuilt from the bundle, reviewed obligations, and manifest                                                                   |
 | What it proves       | "Observed or inferred under these conditions" | "Still open, or resolved by these Evidence IDs"     | Per-obligation status (`verified`, `unowned`, `blocked`, `out-of-scope`, …) and a ledger status (`ready`, `open`, `failed`, `unknown`) |
 | Closure              | None (observations only)                      | `resolved` with a resolution object citing Evidence | Status `verified`: unique owner, fixtures, and a passing verifier of comparable authority                                              |
 | Disposition handling | Explicit limitations and unknowns fields      | Status + resolution                                 | Input `disposition` on reviewed obligations; derived output `status`; blocked and out-of-scope never count as verified                 |
-| Relationship         | Input to the other two                        | Linked from obligations via `residual_unknown_ids`  | Consumes bundle + manifest; unknowns keep claims open                                                                                  |
+| Relationship         | Input to the other two                        | Linked from obligations via `residual_unknown_ids`  | Consumes the bundle, reviewed obligations, and manifest; unknowns keep claims open                                                     |
 
-**How they fit:** the bundle captures what was observed and what's unknown; the unknowns registry makes open questions durable and versioned; the obligation ledger consumes both plus a manifest and gives a deterministic verdict whose `closure_digest` covers every obligation, status, unknown link, and Evidence reference. The ledgers build on the bundle without replacing the original records.
+**How they fit:** the bundle captures what was observed and what's unknown; the unknowns registry makes open questions durable and versioned; the obligation ledger consumes the bundle, reviewed obligations, and a manifest and gives a deterministic verdict whose `closure_digest` covers every obligation, status, unknown link, and Evidence reference. The ledgers build on the bundle without replacing the original records.
 
 ## Obligation Ledger
 
@@ -202,7 +202,7 @@ Public tool names and Evidence schemas are provider-neutral. Ghidra, Hopper, IDA
 
 ### 3. Session-owned Evidence ledger
 
-Each MCP connection (or CLI process) owns an in-memory `EvidenceLedger` of immutable records and unknown revisions. Tools return complete Evidence inline and retain it in the session; `retained-evidence` references are scoped to the connection. Export produces a portable Evidence Bundle; import validates and merges atomically. Agents can cite earlier results without re-running them, and full export still supports offline or cross-session use.
+Each MCP connection (or CLI process) owns an in-memory `EvidenceLedger` of immutable records and unknown revisions. Tools return Evidence inline and retain it in the session. `analyze_function` returns summary Evidence by default and keeps the complete dossier retained; [MCP runtime contracts](reference/mcp-contracts.md#tool-results) says how to select that dossier. `retained-evidence` references are scoped to the connection. Export produces a portable Evidence Bundle; import validates and merges atomically. Agents can cite earlier results without re-running them, and full export still supports offline or cross-session use.
 
 ### 4. Fail-closed and explicit unknowns
 
@@ -210,11 +210,11 @@ Missing coverage is recorded as unknown, not absence. Limitations are first-clas
 
 ### 5. Conservative derived ledgers
 
-The obligation ledger is a deterministic projection over an Evidence bundle and a manifest. Static graph facts create candidates only. Reaching `verified` needs a unique owner, required fixtures, and a passing verifier of comparable authority. Statuses and proof rules are in [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md). The result is identified by `ledger_id` (`rol_…`) and `closure_digest`.
+The obligation ledger is a deterministic projection over an Evidence bundle, reviewed obligations, and a manifest. Static graph facts create candidates only. Reaching `verified` needs a unique owner, required fixtures, and a passing verifier of comparable authority. Statuses and proof rules are in [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md). The result is identified by `ledger_id` (`rol_…`) and `closure_digest`.
 
 ### 6. Shared CLI / MCP contracts with agent-aware delivery
 
-CLI and MCP share workflows and Evidence contracts. MCP returns complete Evidence inline, with paging and summaries for large results, and retains it in the session. Delivery favors summaries and retained references to save agent tokens while keeping full Evidence reachable. Tools are composable primitives rather than rigid call sequences.
+CLI and MCP share workflows and Evidence contracts. MCP returns Evidence inline, with paging and summaries for large results, and retains it in the session. Default delivery is not the complete record for every tool; see [MCP runtime contracts](reference/mcp-contracts.md#tool-results). Delivery favors summaries and retained references to save agent tokens while keeping full Evidence reachable. Tools are composable primitives rather than rigid call sequences.
 
 ### 7. Ownership and lifecycle invariants
 
@@ -252,7 +252,7 @@ Immutable Evidence, residual unknowns, and a conservative obligation ledger have
 
 - **Closure is expensive on purpose.** An obligation reaches `verified` only with a unique owner, required fixtures, and a passing verifier of comparable authority; static graphs alone can't prove runtime behavior. That raises the bar for "we reconstructed it."
 - **Partial progress stays useful.** You can ship or reason about a reconstruction while some obligations stay blocked or out-of-scope; the ledger shows exactly what's left open.
-- **Reproducible verdicts.** The same bundle + manifest always yields the same `closure_digest`, so later readers or tools can re-derive the result without trusting the original narrative.
+- **Reproducible verdicts.** The same Evidence bundle, reviewed obligations, and manifest always yield the same `closure_digest`. See [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md).
 
 ### For tooling and workflow
 
