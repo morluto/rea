@@ -27,16 +27,17 @@ export const registerApiContractCommand = (
     contractNamed(API_CONTRACT_TOOL_CONTRACTS, operation),
     {
       description:
-        "Inspect local OpenAPI JSON or GraphQL SDL declarations and field bindings offline",
+        "Inspect local OpenAPI JSON/YAML or GraphQL SDL declarations and field bindings offline",
       positionals: ["path"],
       callerPaths: ["path", "operations_path"],
       evidenceDelivery: true,
       viewDelivery: { invalidJson: "view must be valid JSON" },
       fields: {
-        path: { description: "Local OpenAPI JSON or GraphQL SDL path" },
+        path: { description: "Local OpenAPI JSON/YAML or GraphQL SDL path" },
         format: {
           name: "contractFormat",
-          description: "Input API contract syntax: OpenAPI JSON or GraphQL SDL",
+          description:
+            "Input API contract syntax: OpenAPI JSON, OpenAPI YAML, or GraphQL SDL",
         },
         operations_path: {
           description:
