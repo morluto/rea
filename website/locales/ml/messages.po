@@ -7927,6 +7927,11 @@ msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr ""
 
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "കമ്പ്യൂട്ടറിനു മുന്നിലിരുന്ന് ചിന്തിക്കുന്ന ഒരു അനലിസ്റ്റ്"
+
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
 msgid "Illustrative expert reasoning"

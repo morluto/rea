@@ -909,7 +909,7 @@ class WebsiteTranslationChecks(unittest.TestCase):
         arabic.feed((site / "ar/faq/index.html").read_text())
         self.assertEqual(arabic.lang, "ar")
 
-    def test_every_reading_page_loads_theme_before_styles(self):
+    def test_reading_pages_set_the_initial_theme_and_defer_external_scripts(self):
         site = ROOT / "website/_site"
         english_pages = reading_pages(ROOT / "website/public")
         self.assertTrue(english_pages)
@@ -924,12 +924,12 @@ class WebsiteTranslationChecks(unittest.TestCase):
                         self.assertEqual(len(colors), 1)
                         self.assertEqual(colors[0].attrs.get("content"), "#ffffff")
                         self.assertNotIn("media", colors[0].attrs)
-                        theme = [node for node in doc.nodes if node.tag == "script" and (node.attrs.get("src") or "").endswith("/assets/theme.js")]
-                        self.assertEqual(len(theme), 1)
-                        for deferred in ("defer", "async", "type"):
-                            self.assertNotIn(deferred, theme[0].attrs)
+                        scripts = [node for node in doc.nodes if node.tag == "script"]
+                        for node in scripts:
+                            if node.attrs.get("src"):
+                                self.assertTrue("defer" in node.attrs or "async" in node.attrs or node.attrs.get("type") == "module")
                         stylesheet = next(node for node in doc.nodes if node.tag == "link" and node.attrs.get("rel") == "stylesheet")
-                        self.assertLess(theme[0].start, stylesheet.start)
+                        self.assertTrue(any(node.start < stylesheet.start and "src" not in node.attrs and "type" not in node.attrs for node in scripts))
                         toggle = [node for node in doc.nodes if "data-theme-toggle" in node.attrs]
                         self.assertEqual(len(toggle), 1)
                         self.assertEqual(toggle[0].tag, "button")

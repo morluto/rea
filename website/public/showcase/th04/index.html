@@ -8,6 +8,21 @@
       name="description"
       content="Inspect TH04's original 16-bit DOS code with REA. Follow the assembly and recovered C++ to see how a ring of bullets is spaced and aimed at the player."
     />
+    <!-- website:theme:start -->
+    <meta name="theme-color" content="#ffffff" />
+    <script>
+      (() => {
+        let theme;
+        try { theme = localStorage.getItem("rea-theme"); } catch {}
+        if (theme !== "light" && theme !== "dark")
+          theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content = theme === "dark" ? "#1e1e2e" : "#ffffff";
+      })();
+    </script>
+    <script defer src="../../assets/theme.js"></script>
+    <!-- website:theme:end -->
+    <link rel="stylesheet" href="../../assets/styles.css" />
     <!-- website:sharing:start -->
     <!-- prettier-ignore -->
     <link rel="canonical" href="https://rea.tools/showcase/th04/" />
@@ -100,13 +115,7 @@
       content="REA: Find out how software works. Reverse engineering with your coding agent."
     />
     <!-- website:sharing:end -->
-    <!-- website:theme:start -->
-    <meta name="theme-color" content="#ffffff" />
-    <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
-    <script src="../../assets/theme.js"></script>
-    <!-- website:theme:end -->
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="../../assets/styles.css" />
     <script src="../../assets/main.js" defer></script>
   </head>
   <body id="top">

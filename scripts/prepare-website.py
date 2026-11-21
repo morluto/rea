@@ -6,7 +6,7 @@ import sys
 import xml.etree.ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
-from website import PageMetadata, page_url
+from website import SITE_ORIGIN, PageMetadata, page_url
 from website_agents import prepare_discovery, prepare_markdown
 
 
@@ -77,8 +77,34 @@ def prepare_notes_example(site):
     print(f"Prepared examples/notes-example.zip ({len(EXAMPLE_FILES)} files).")
 
 
+def prepare_redirects(site):
+    """Publish permanent Cloudflare redirects and equivalent static Pages links."""
+    routes = {
+        "showcases": ("showcase", "REA showcases"),
+        "environments": ("guides/rl-environments", "Build RL environments"),
+    }
+    rules = []
+    for alias, (target, title) in routes.items():
+        rules.extend(f"/{alias}{suffix} /{target}/ 301" for suffix in ("", "/"))
+        directory = site / alias
+        directory.mkdir()
+        directory.joinpath("index.html").write_text(
+            f'<!doctype html><html lang="en"><head><meta charset="utf-8">\n'
+            f'<title>{title}</title><meta name="robots" content="noindex">\n'
+            f'<link rel="canonical" href="{SITE_ORIGIN}/{target}/">\n'
+            f'<meta http-equiv="refresh" content="0; url=../{target}/"></head>\n'
+            f'<body><h1><a href="../{target}/">{title}</a></h1></body></html>\n',
+            encoding="utf-8",
+        )
+    (site / "_redirects").write_text("\n".join(rules) + "\n", encoding="utf-8")
+
+
 def prepare_assets(site):
     """Finish the shared publish artifact before it replaces the current preview."""
+    from rcssmin import cssmin
+    stylesheet = site / "assets/styles.css"
+    stylesheet.write_text(cssmin(stylesheet.read_text(encoding="utf-8")), encoding="utf-8")
+    prepare_redirects(site)
     prepare_sharing_image(site)
     prepare_sitemap(site)
     prepare_notes_example(site)

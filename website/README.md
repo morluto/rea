@@ -17,7 +17,7 @@ frontend framework or bundler. A build generates all editions in
 Korean editions load the variable Noto Sans KR webfont through Google Fonts
 (`fonts.googleapis.com` and `fonts.gstatic.com`) so the preferred Korean font
 does not depend on fonts installed on the reader's PC. Other editions keep
-system fonts. Text remains visible while the font loads (`display=swap`), and
+system fonts. The Korean font stylesheet loads at low priority. Text remains visible while the font loads (`display=swap`), and
 local Korean fonts are used if Google Fonts is unavailable. The stylesheet is
 added during translation rendering; generated `_site/` pages are not authored.
 
@@ -335,8 +335,8 @@ language editions and tabs on the same host. If storage is blocked, the button
 still works for the current page. Without JavaScript, the site stays light and
 the button stays hidden.
 
-The shared `theme` head region loads `assets/theme.js` before the stylesheet so a
-saved choice applies before the first paint. That script owns the resolved
+The shared `theme` head region applies the saved choice inline before the first
+paint. The deferred `assets/theme.js` then synchronizes the resolved
 `data-theme`, browser `theme-color` and `website-theme-change` event. The CSS
 palette, embedded SVGs and dinosaur canvas follow that choice. Keep the theme
 region in the page scaffold and run `sync` after editing its template.
@@ -616,6 +616,10 @@ Verify <https://rea.tools/>, <https://rea.tools/guides/javascript/>,
 404, and directory pages retain trailing slashes so relative assets and links
 resolve correctly. The root README and browser guide use `https://rea.tools/`
 as the public website URL.
+
+The build minifies the shared stylesheet. It also publishes permanent redirects
+from `/showcases` to `/showcase/` and from `/environments` to
+`/guides/rl-environments/`. GitHub Pages serves static redirects for the same URLs.
 
 Production publication uses the synchronized GitHub Actions workflow below.
 Local Wrangler commands above publish only the separate preview Worker.
