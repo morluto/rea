@@ -33,6 +33,7 @@ import {
   readStableArtifact,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
+  SafeOutputTree,
 } from "../resources/index.js";
 import {
   createAnalysisExecution,
@@ -122,6 +123,12 @@ interface DiscoveredUefiModule {
   readonly typeName?: string | undefined;
   readonly bytes?: Buffer | undefined;
   readonly sourcePath?: string | undefined;
+  readonly sourceRelPath?: string | undefined;
+  readonly sourceLogicalPath?: string | undefined;
+  readonly sourceRange?:
+    | { readonly offset: number; readonly length: number }
+    | null
+    | undefined;
   readonly byteLength: number;
 }
 
@@ -633,6 +640,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     };
     return this.#resources.run(async () => {
       checkpoint();
+      if (request.operation === "decompile_uefi_firmware") {
+        await SafeOutputTree.checkDestination(request.input.output_directory);
+      }
       let isDirectory = false;
       try {
         const pathStat = await stat(request.input.path);
@@ -1076,11 +1086,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       );
     }
 
+    await SafeOutputTree.checkDestination(input.output_directory);
+
     const tempRoot = await PrivateRuntimeRoot.create({
       prefix: "rea-uefi-decompile-",
     });
 
     const ghidraBin = resolveGhidraHeadless();
+    let ghidraEngineUsed = false;
 
     const MAX_DISASSEMBLY_MODULE_BYTES = 2 * 1024 * 1024;
     const MAX_DISASSEMBLY_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -1124,6 +1137,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         guid: string | null;
         name: string;
         phase: string;
+        type?: string | undefined;
+        source_path?: string | undefined;
+        source_logical_path?: string | undefined;
+        source_range?: { offset: number; length: number } | null | undefined;
         disassembly_status: "ok" | "failed" | "omitted";
         relative_c_file: string;
         relative_asm_file: string | null;
@@ -1587,6 +1604,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       cContent = candidateC;
                       totalStagedCBytes += candidateCBytes;
                       cGenerator = "ghidra";
+                      ghidraEngineUsed = true;
                       if (
                         candidateC.includes(
                           "/* WARNING: Failed to decompile function",
@@ -1673,6 +1691,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             guid: mod.guid,
             name: mod.rawName,
             phase: mod.phase,
+            ...(mod.typeName !== undefined ? { type: mod.typeName } : {}),
+            ...(mod.sourceRelPath !== undefined || mod.sourcePath !== undefined
+              ? { source_path: mod.sourceRelPath ?? mod.sourcePath }
+              : {}),
+            ...(mod.sourceLogicalPath !== undefined
+              ? { source_logical_path: mod.sourceLogicalPath }
+              : {}),
+            ...(mod.sourceRange !== undefined
+              ? { source_range: mod.sourceRange }
+              : {}),
             disassembly_status: disassemblyStatus,
             relative_c_file: cRelPath,
             relative_asm_file: asmRelPath,
@@ -1819,7 +1847,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             phases: phaseCounts,
             modules: finalModules,
             producers: {
-              ghidra: ghidraBin,
+              ghidra: ghidraEngineUsed ? ghidraBin : null,
               disassembler: input.include_disassembly
                 ? disassemblyEngineUsed
                 : "none",
@@ -1892,6 +1920,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         new AnalysisCleanupLeaseGroup(cleanupError, [released.lease]);
       }
 
+      const primaryError =
+        establishedError instanceof AnalysisError
+          ? establishedError
+          : establishedError !== undefined
+            ? classifyProviderFailure(
+                establishedError,
+                uefiFailureDialect(request.operation, input.path),
+              )
+            : undefined;
+
       if (signal.aborted) {
         const partialObservation =
           publishedResult !== undefined
@@ -1927,34 +1965,32 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           );
         }
 
-        if (establishedError instanceof AnalysisError) {
+        if (primaryError !== undefined) {
           if (terminationError instanceof AnalysisCancelledError) {
-            throw analysisErrorWithCancellation(
-              establishedError,
-              terminationError,
-            );
+            throw analysisErrorWithCancellation(primaryError, terminationError);
           }
-          establishedError.retainSecondaryFailure(terminationError);
-          throw establishedError;
+          primaryError.retainSecondaryFailure(terminationError);
+          throw primaryError;
         }
-        if (establishedError === undefined) {
-          throw terminationError;
+        throw terminationError;
+      }
+
+      if (cleanupError !== undefined) {
+        if (primaryError !== undefined) {
+          throw analysisErrorWithCleanupDependencies(
+            primaryError,
+            cleanupError,
+            "decompile_uefi_firmware",
+          );
         }
+        throw cleanupError;
       }
 
       if (
-        establishedError instanceof AnalysisError &&
-        cleanupError !== undefined
+        primaryError !== undefined &&
+        !(establishedError instanceof AnalysisError)
       ) {
-        throw analysisErrorWithCleanupDependencies(
-          establishedError,
-          cleanupError,
-          "decompile_uefi_firmware",
-        );
-      }
-
-      if (establishedError === undefined && cleanupError !== undefined) {
-        throw cleanupError;
+        throw primaryError;
       }
     }
   }
@@ -2022,6 +2058,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   cleanName,
                   typeName: file.type_name,
                   phase,
+                  sourceLogicalPath: section.logical_path,
+                  sourceRange: {
+                    offset: section.offset + section.header_length,
+                    length: payload.bytes.length,
+                  },
                   bytes: payload.bytes,
                   byteLength: payload.bytes.length,
                 });
@@ -2112,6 +2153,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       guid?: string | null | undefined;
       name?: string | undefined;
       phase?: string | undefined;
+      type?: string | undefined;
     };
     const manifestModulesByExactRelPath = new Map<
       string,
@@ -2176,10 +2218,26 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               );
             }
 
+            let validType: string | undefined = undefined;
+            if (typeof m.type === "string" && m.type.length > 0) {
+              validType = m.type;
+            } else if (
+              typeof m.typeName === "string" &&
+              m.typeName.length > 0
+            ) {
+              validType = m.typeName;
+            } else if (
+              typeof m.type_name === "string" &&
+              m.type_name.length > 0
+            ) {
+              validType = m.type_name;
+            }
+
             const manifestEntry: ManifestModuleEntry = {
               guid: validGuid,
               name: validName,
               phase: validPhase,
+              type: validType,
             };
             manifestModulesByExactRelPath.set(exactNorm, manifestEntry);
             if (!manifestModulesByFoldedRelPath.has(foldedNorm)) {
@@ -2200,6 +2258,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       readonly name: string;
       readonly size: number;
       readonly phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
+      readonly typeName?: string | undefined;
       readonly guid: string | null;
       readonly rawName: string;
       readonly cleanName: string;
@@ -2406,6 +2465,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         name: entry.name,
         size: fileStat.size,
         phase,
+        typeName: fromManifest?.type,
         guid,
         rawName,
         cleanName,
@@ -2449,6 +2509,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         rawName: candidate.rawName,
         cleanName: candidate.cleanName,
         phase: candidate.phase,
+        typeName: candidate.typeName,
+        sourceRelPath: candidate.identityRelPath,
         ...(retainedBytes !== undefined ? { bytes: retainedBytes } : {}),
         sourcePath: candidate.fullPath,
         byteLength: candidate.size,

@@ -266,7 +266,14 @@ export const uefiInputSchemas = {
       ),
   }),
   decompile_uefi_firmware: z.strictObject({
-    ...target,
+    path: localPathStringSchema
+      .refine(isAbsolute, {
+        message:
+          "path must be an absolute local firmware image or extracted module directory path",
+      })
+      .describe(
+        "Absolute local UEFI firmware image or pre-extracted module directory; never executed. Relative paths are rejected.",
+      ),
     output_directory: localPathStringSchema
       .refine(isAbsolute, {
         message: "output_directory must be an absolute local filesystem path",
@@ -557,6 +564,10 @@ export const uefiResultSchemas = {
         guid: guidSchema.nullable(),
         name: z.string(),
         phase: z.string(),
+        type: z.string().optional(),
+        source_path: z.string().optional(),
+        source_logical_path: z.string().optional(),
+        source_range: range.nullable().optional(),
         disassembly_status: z.enum(["ok", "failed", "omitted"]),
         c_file: z.string().nullable(),
         asm_file: z.string().nullable(),

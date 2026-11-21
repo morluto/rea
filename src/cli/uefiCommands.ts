@@ -160,11 +160,14 @@ export const registerUefiCommands = (
     contractNamed(UEFI_TOOL_CONTRACTS, "decompile_uefi_firmware"),
     {
       description:
-        "Decompile all PE32 and TE modules of a UEFI flash image into a structured C source tree",
+        "Decompile all PE32 and TE modules of a UEFI flash image or pre-extracted module directory into a structured C source tree",
       positionals: ["path", "output_directory"],
       callerPaths: ["path", "output_directory"],
       fields: {
-        path: FLASH_PATH,
+        path: {
+          description:
+            "Firmware image or pre-extracted module directory to decompile",
+        },
         output_directory: {
           description: "Absent output directory; parent must exist",
         },
