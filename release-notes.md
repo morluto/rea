@@ -385,6 +385,7 @@
 * **web:** consolidate Browser worker inventory proofs ([#13098](https://github.com/morluto/rea/issues/13098)) ([e6df39b](https://github.com/morluto/rea/commit/e6df39bbba9c434942e742540b41c9e39a368bb3))
 * **web:** consolidate capture completeness proofs ([#13089](https://github.com/morluto/rea/issues/13089)) ([2d9c208](https://github.com/morluto/rea/commit/2d9c2088173067c8004eb379b47e03f1a374b502))
 * **web:** consolidate CDP binary body proofs ([#13097](https://github.com/morluto/rea/issues/13097)) ([1585513](https://github.com/morluto/rea/commit/15855137b79de905bb63e4a6afdf08c8410ed865))
+* **web:** consolidate CDP browser socket identity checks ([#13180](https://github.com/morluto/rea/issues/13180)) ([4f9ce44](https://github.com/morluto/rea/commit/4f9ce44908ff2e5bdfc3f391fee2a1777ece3da6))
 * **web:** consolidate CDP command settlement checks ([#13110](https://github.com/morluto/rea/issues/13110)) ([80b980e](https://github.com/morluto/rea/commit/80b980e5f43102aa1985727a2535a510cd85d2e5))
 * **web:** consolidate CDP context retention proofs ([#13090](https://github.com/morluto/rea/issues/13090)) ([cc24a0b](https://github.com/morluto/rea/commit/cc24a0b4c0416f4643967398f8c7dfb6a298de8f))
 * **web:** consolidate CDP discovery and HTTP response contracts ([#13173](https://github.com/morluto/rea/issues/13173)) ([b95bd81](https://github.com/morluto/rea/commit/b95bd814a7126f7aca445f0ad7efdbbee788bd9e))
