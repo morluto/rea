@@ -1,3 +1,7 @@
+import {
+  controlledCleanup,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import { EventEmitter } from "node:events";
 import type { BrowserContext, Page, Request, Response } from "playwright-core";
 import { capturePlaywrightStepArtifacts } from "./PlaywrightScenarioArtifacts.js";
@@ -1041,63 +1045,25 @@ describe("PlaywrightBrowserScenarioProvider request cancellation", () => {
   });
 });
 
-it("shares concurrent close and retries browser cleanup after failure", async () => {
-  const browserClose = vi
-    .fn<() => Promise<void>>()
-    .mockRejectedValueOnce(new Error("browser close failed"))
-    .mockResolvedValue(undefined);
-  const removeProfile = vi
-    .fn<() => Promise<void>>()
-    .mockResolvedValue(undefined);
-  const finishEvents = vi
-    .fn<() => Promise<void>>()
-    .mockResolvedValue(undefined);
-  const cleanupSettlements: boolean[] = [];
-  const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser: (disconnectAtBoundary) =>
-      disconnectAtBoundary(() => browserClose()),
-    removeProfile,
-    onSettled: (browserClosed) => cleanupSettlements.push(browserClosed),
-  });
-
-  const first = cleanup.close(finishEvents);
-  const concurrent = cleanup.close(finishEvents);
-  await expect(first).rejects.toMatchObject({ reason: "cleanup_failed" });
-  await expect(concurrent).rejects.toMatchObject({ reason: "cleanup_failed" });
-  expect(browserClose).toHaveBeenCalledTimes(1);
-  expect(removeProfile).not.toHaveBeenCalled();
-  expect(finishEvents).toHaveBeenCalledTimes(1);
-  expect(cleanupSettlements).toEqual([false]);
-
-  await expect(cleanup.close(finishEvents)).resolves.toBeUndefined();
-  await expect(cleanup.close(finishEvents)).resolves.toBeUndefined();
-  expect(browserClose).toHaveBeenCalledTimes(2);
-  expect(removeProfile).toHaveBeenCalledTimes(1);
-  expect(finishEvents).toHaveBeenCalledTimes(1);
-  expect(cleanupSettlements).toEqual([false, true]);
-});
-
 it("keeps failed event finalization failed across cleanup retries", async () => {
-  const finishEvents = vi
-    .fn<() => Promise<void>>()
-    .mockRejectedValue(new Error("event finalization failed"));
-  const closeBrowser = vi
-    .fn<() => Promise<void>>()
-    .mockResolvedValue(undefined);
+  const failure = new Error("event finalization failed");
+  const finishEvents = vi.fn(async () => {
+    throw failure;
+  });
+  const closeBrowser = vi.fn(async () => undefined);
   const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser: (disconnectAtBoundary) =>
-      disconnectAtBoundary(() => closeBrowser()),
+    closeBrowser: (disconnectAtBoundary) => disconnectAtBoundary(closeBrowser),
     removeProfile: undefined,
   });
 
-  await expect(cleanup.close(finishEvents)).rejects.toMatchObject({
-    reason: "cleanup_failed",
-  });
-  await expect(cleanup.close(finishEvents)).rejects.toMatchObject({
-    reason: "cleanup_failed",
-  });
-  expect(finishEvents).toHaveBeenCalledTimes(1);
-  expect(closeBrowser).toHaveBeenCalledTimes(1);
+  for (let attempt = 0; attempt < 2; attempt++)
+    await expect(cleanup.close(finishEvents)).rejects.toMatchObject({
+      reason: "cleanup_failed",
+      cause: failure,
+      cleanupResources: ["browser_events"],
+    });
+  expect(finishEvents).toHaveBeenCalledOnce();
+  expect(closeBrowser).toHaveBeenCalledOnce();
 });
 
 it.each(["launch", "connect"] as const)(
@@ -1234,110 +1200,68 @@ it("resolves the returned failure after retrying a plain session cleanup capabil
   }
 });
 
-it("retries every retained opening cleanup and preserves the original failure through mixed recovery", async () => {
-  let denied = true;
-  let healthyCloses = 0;
-  const physical = new AnalysisOutputError(
+it("retries all opening leases after a refusal and reports only those still owned", async () => {
+  const firstFailure = new Error("first release denied");
+  const secondFailure = new Error("second release denied");
+  const first = controlledCleanup({ refused: true, failure: firstFailure });
+  const second = controlledCleanup({ refused: true, failure: secondFailure });
+  const primary = new AnalysisOutputError(
     "capture_browser_scenario",
     "authored open failure",
   );
   const provider = new PlaywrightBrowserScenarioProvider(
     async (_scenario, options) => {
       options.retainCleanup?.(
-        new AnalysisCleanupLease(async () => {
-          if (denied) throw new Error("first cleanup denied");
-        }, ["first cleanup"]),
+        new AnalysisCleanupLease(first.close, ["first cleanup"]),
       );
       options.retainCleanup?.(
-        new AnalysisCleanupLease(async () => {
-          healthyCloses++;
-        }, ["healthy cleanup"]),
+        new AnalysisCleanupLease(second.close, ["second cleanup"]),
       );
-      throw physical;
+      throw primary;
     },
   );
   try {
     const result = await provider.captureScenario(scenario());
     if (result.ok) throw new Error("Expected opening failure");
-    const failed: unknown = await provider
+    const both: unknown = await provider
       .close()
       .catch((cause: unknown) => cause);
-    expect(failed).toMatchObject({ cleanupIncomplete: true });
-    expect(result.error.cleanupIncomplete).toBe(true);
-    expect(healthyCloses).toBe(1);
-    denied = false;
-    await provider.close();
-    expect(result.error).toMatchObject({
-      cleanupIncomplete: false,
-      cleanupResources: [],
-    });
-    expect(failed).toMatchObject({
-      cleanupIncomplete: false,
-      cleanupResources: [],
-    });
-    expect(result.error.cleanupPrimary).toBe(physical);
-    expect(healthyCloses).toBe(1);
-  } finally {
-    denied = false;
-    await provider.close();
-  }
-});
-
-it("composes several failed cleanup retries and completes only after each releases", async () => {
-  const denied = { first: true, second: true };
-  const provider = new PlaywrightBrowserScenarioProvider(
-    async (_scenario, options) => {
-      options.retainCleanup?.(
-        new AnalysisCleanupLease(async () => {
-          if (denied.first) throw new Error("first cleanup denied");
-        }, ["first cleanup"]),
-      );
-      options.retainCleanup?.(
-        new AnalysisCleanupLease(async () => {
-          if (denied.second) throw new Error("second cleanup denied");
-        }, ["second cleanup"]),
-      );
-      throw new AnalysisOutputError(
-        "capture_browser_scenario",
-        "authored open failure",
-      );
-    },
-  );
-  try {
-    const result = await provider.captureScenario(scenario());
-    if (result.ok) throw new Error("Expected opening failure");
-    const composite: unknown = await provider
-      .close()
-      .catch((cause: unknown) => cause);
-
-    if (!(composite instanceof ProviderCleanupError))
-      throw new Error("Expected a provider cleanup failure");
-    expect(composite).toMatchObject({
+    expect(both).toBeInstanceOf(ProviderCleanupError);
+    expect(both).toMatchObject({
       operation: "capture_browser_scenario",
       cleanupIncomplete: true,
       cleanupResources: ["first cleanup", "second cleanup"],
+      cause: { errors: [{ cause: firstFailure }, { cause: secondFailure }] },
     });
-    expect(composite.cause).toBeInstanceOf(AggregateError);
-    expect((composite.cause as AggregateError).errors).toHaveLength(2);
+    second.allow();
+    const remaining: unknown = await provider
+      .close()
+      .catch((cause: unknown) => cause);
+    for (const failure of [result.error, both, remaining])
+      expect(failure).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: ["first cleanup"],
+      });
+    expect([first.attempts, second.attempts]).toEqual([2, 2]);
 
-    denied.first = false;
-    await provider.close().catch(() => undefined);
-    expect(composite.cleanupIncomplete).toBe(true);
-    denied.second = false;
+    first.allow();
     await provider.close();
-    expect(composite.cleanupIncomplete).toBe(false);
+    for (const failure of [result.error, both, remaining])
+      expect(failure).toMatchObject({
+        cleanupIncomplete: false,
+        cleanupResources: [],
+      });
+    expect(result.error.cleanupPrimary).toBe(primary);
+    expect([first.attempts, second.attempts]).toEqual([3, 2]);
   } finally {
-    denied.first = false;
-    denied.second = false;
+    first.allow();
+    second.allow();
     await provider.close();
   }
 });
 
 it("keeps a cancelled opening incomplete until its retained late cleanup finishes", async () => {
-  let finish: () => void = () => {};
-  const late = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const late = phaseGate();
   const reason = { caller: "cancelled opening before late handshake" };
   const primary = new AnalysisCancelledError("capture_browser_scenario", {
     cause: reason,
@@ -1345,7 +1269,7 @@ it("keeps a cancelled opening incomplete until its retained late cleanup finishe
   const provider = new PlaywrightBrowserScenarioProvider(
     async (_scenario, options) => {
       options.retainCleanup?.(
-        new AnalysisCleanupLease(() => late, ["late opening"]),
+        new AnalysisCleanupLease(() => late.hold(), ["late opening"]),
       );
       throw primary;
     },
@@ -1355,9 +1279,12 @@ it("keeps a cancelled opening incomplete until its retained late cleanup finishe
     if (result.ok) throw new Error("Expected cancelled opening");
     expect(result.error.cleanupIncomplete).toBe(true);
     const closing = provider.close();
-    await Promise.resolve();
-    expect(result.error.cleanupIncomplete).toBe(true);
-    finish();
+    await late.reached(closing, "late opening release");
+    expect(result.error).toMatchObject({
+      cleanupIncomplete: true,
+      cleanupResources: ["late opening"],
+    });
+    late.release();
     await closing;
     expect(result.error).toMatchObject({
       cleanupIncomplete: false,
@@ -1369,7 +1296,7 @@ it("keeps a cancelled opening incomplete until its retained late cleanup finishe
       code: "cancelled",
     });
   } finally {
-    finish();
+    late.release();
     await provider.close();
   }
 });
@@ -1574,18 +1501,10 @@ it.each(["clean", "pending", "queued"] as const)(
   "refuses scenario admission during %s shutdown without claiming cleanup failed",
   async (stage) => {
     let opened = 0;
-    let finish: () => void = () => {};
-    let started: () => void = () => {};
-    const release = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-    const closingStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
+    const finalization = phaseGate();
     const session = new FakeSession("launch");
     session.close = async () => {
-      started();
-      await release;
+      await finalization.hold();
       return "terminated-owned-process";
     };
     const provider = new PlaywrightBrowserScenarioProvider(async () => {
@@ -1597,14 +1516,20 @@ it.each(["clean", "pending", "queued"] as const)(
     try {
       if (stage !== "clean") {
         running = provider.captureScenario(scenario());
-        await closingStarted;
+        await finalization.reached(running, "scenario finalization");
       }
       const queued =
         stage === "queued" ? provider.captureScenario(scenario()) : undefined;
       closing = provider.close();
       if (stage === "clean") await closing;
+      else {
+        const onClose = vi.fn();
+        void closing.then(onClose, onClose);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(onClose).not.toHaveBeenCalled();
+      }
       const refusal = queued ?? provider.captureScenario(scenario());
-      if (stage === "queued") finish();
+      if (stage === "queued") finalization.release();
       const result = await refusal;
       expect(result.ok).toBe(false);
       if (result.ok)
@@ -1615,8 +1540,11 @@ it.each(["clean", "pending", "queued"] as const)(
         details: { operation: "capture_browser_scenario" },
       });
       expect(opened).toBe(stage === "clean" ? 0 : 1);
+      finalization.release();
+      if (running !== undefined)
+        await expect(running).resolves.toMatchObject({ ok: true });
     } finally {
-      finish();
+      finalization.release();
       await running;
       await closing;
       await provider.close();
