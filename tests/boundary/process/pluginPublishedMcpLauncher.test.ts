@@ -1350,6 +1350,41 @@ it("verifies Windows cache privacy by SID rather than account display names", as
   expect(inspect).not.toMatch(/windowsCacheUser|USERNAME/u);
 });
 
+it("establishes Windows cache ownership when elevated defaults use Administrators", async () => {
+  const source = await readFile(launcher, "utf8");
+  const establish = source.match(
+    /const establishWindowsPrivateOwner =[\s\S]*?\n\};\n\n\/\*\*/u,
+  )?.[0];
+  const apply = source.match(
+    /const applyWindowsPrivateAcl =[\s\S]*?\n\};\n\n\/\*\*/u,
+  )?.[0];
+  const publish = source.match(
+    /const publishInstalledPrefix =[\s\S]*?\n\};\n\n\/\*\*/u,
+  )?.[0];
+  expect(establish).toBeDefined();
+  expect(apply).toBeDefined();
+  expect(publish).toBeDefined();
+  // Elevated tokens default new-object owners to Administrators; repair must
+  // set the account owner (icacls /setowner) rather than weaken verification.
+  expect(establish).toMatch(/\/setowner/u);
+  expect(establish).toMatch(/windowsCacheUser\(\)/u);
+  expect(apply).toMatch(/establishWindowsPrivateOwner\(path, kind\)/u);
+  // Installer outputs (npm entry + ready marker) get ownership without a file
+  // DACL rewrite that would clear inheritance.
+  expect(publish).toMatch(
+    /establishWindowsPrivateOwner\(cacheEntry\(staging\), "entry"\)/u,
+  );
+  expect(publish).toMatch(
+    /establishWindowsPrivateOwner\(readyMarkerPath\(staging\), "ready"\)/u,
+  );
+  expect(publish).toMatch(
+    /verifyOwnedCachePath\(cacheEntry\(staging\), "entry"\)/u,
+  );
+  expect(publish).toMatch(
+    /verifyOwnedCachePath\(readyMarkerPath\(staging\), "ready"\)/u,
+  );
+});
+
 it.skipIf(process.platform !== "win32")(
   "accepts a Windows cold install whose files inherit the private directory DACL",
   async () => {

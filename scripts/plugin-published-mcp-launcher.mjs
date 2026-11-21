@@ -149,10 +149,33 @@ const WINDOWS_PRIVATE_ACL_OBSERVER_TIMEOUT_MS = 60_000;
 const WINDOWS_SYSTEM_SID = "S-1-5-18";
 
 /**
- * Apply a user+SYSTEM protected DACL matching native PrivateRuntimeRoot.
- * Call only after lstat rejected symlinks/junctions — icacls follows links.
+ * Set the Windows object owner to the current account. Elevated tokens default
+ * new-object owners to Administrators; inspectWindowsPrivateAcl requires the
+ * account SID (native filesystem.cc SetSecurityDescriptorOwner). Call only
+ * after lstat rejected symlinks/junctions — icacls follows links.
+ */
+const establishWindowsPrivateOwner = (path, kind) => {
+  const user = windowsCacheUser();
+  const result = spawnSync("icacls", [path, "/setowner", user], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    throw new Error(
+      `executable cache ${kind} could not establish user ownership${detail ? `: ${detail}` : ""}`,
+    );
+  }
+};
+
+/**
+ * Apply account ownership plus a user+SYSTEM protected DACL matching native
+ * PrivateRuntimeRoot. Call only after lstat rejected symlinks/junctions —
+ * icacls follows links.
  */
 const applyWindowsPrivateAcl = (path, kind) => {
+  establishWindowsPrivateOwner(path, kind);
   const user = windowsCacheUser();
   const grant =
     kind === "entry" || kind === "ready"
@@ -648,6 +671,13 @@ const retryRetainedStagingCleanup = () => {
 
 const publishInstalledPrefix = (staging, prefix) => {
   writeFileSync(readyMarkerPath(staging), version, { mode: 0o600 });
+  if (process.platform === "win32") {
+    // Elevated npm/writeFileSync may leave Administrators as owner (native
+    // process.cc normalizes the child's default owner). Establish the account
+    // SID on installer outputs without rewriting inherited file DACLs.
+    establishWindowsPrivateOwner(cacheEntry(staging), "entry");
+    establishWindowsPrivateOwner(readyMarkerPath(staging), "ready");
+  }
   verifyOwnedCachePath(staging, "prefix");
   verifyOwnedCachePath(cacheEntry(staging), "entry");
   verifyOwnedCachePath(readyMarkerPath(staging), "ready");
