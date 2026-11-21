@@ -12,6 +12,7 @@ import {
   type CapturedCache,
   type CapturedStorageItems,
 } from "./CdpCaptureStorageFingerprints.js";
+import { captureCacheStorageEntries } from "./CdpCaptureStorageEntries.js";
 import { recordsValue, cdpStringValue } from "./CdpCaptureValues.js";
 
 /** Capture redacted storage metadata for an authorized page and its origin. */
@@ -27,6 +28,7 @@ export const captureStorage = async (
 ): Promise<{
   readonly value: WebPageInspection["storage"];
   readonly keysExclusion: BrowserExclusionReason | undefined;
+  readonly cacheEntriesExclusions: readonly BrowserExclusionReason[];
 }> => {
   const origin = new URL(pageUrl).origin;
   const quota = await optionalCdpCommand(
@@ -63,6 +65,9 @@ export const captureStorage = async (
     : undefined;
   const cacheValues = cacheReply?.ok ? cacheReply.value.caches : undefined;
   const caches = capturedCaches(recordsValue(cacheValues ?? []));
+  const cacheEntries = context.input.include_cache_storage_entries
+    ? await captureCacheStorageEntries(context, caches, limitations)
+    : { entries: [], exclusions: [] };
   const fingerprints = context.input.include_storage_fingerprints
     ? await captureStorageFingerprints({
         context,
@@ -77,12 +82,23 @@ export const captureStorage = async (
     : { items: [], complete: false };
   // A malformed or partly unusable name list is an incomplete enumeration
   // rather than an empty one.
-  const structuredStorageComplete =
-    indexedValues !== undefined &&
-    indexed.length === indexedValues.length &&
+  const cacheListComplete =
     cacheValues !== undefined &&
     caches.length === cacheValues.length &&
     caches.every(({ id }) => id !== undefined);
+  const structuredStorageComplete =
+    indexedValues !== undefined &&
+    indexed.length === indexedValues.length &&
+    cacheListComplete;
+  const cacheEntriesExclusions = new Set<BrowserExclusionReason>(
+    cacheEntries.exclusions,
+  );
+  if (context.input.include_cache_storage_entries && !cacheListComplete)
+    cacheEntriesExclusions.add(
+      commandUnavailable(cacheReply)
+        ? "provider_unavailable"
+        : "invalid_protocol_value",
+    );
   const keysExclusion = !context.input.include_storage_keys
     ? undefined
     : local.exclusion === "provider_unavailable" ||
@@ -95,6 +111,7 @@ export const captureStorage = async (
         : undefined;
   return {
     keysExclusion,
+    cacheEntriesExclusions: [...cacheEntriesExclusions].sort(),
     value: {
       origin,
       usage_bytes: quota.ok ? quota.value.usage : null,
@@ -103,6 +120,7 @@ export const captureStorage = async (
       session_storage_keys: session.items.map(({ key }) => key),
       indexed_db_names: [...indexed],
       cache_names: caches.map(({ name }) => name),
+      cache_entries: cacheEntries.entries,
       content_fingerprints: [...fingerprints.items],
       fingerprint_algorithm: "sha256",
       fingerprints_complete: fingerprints.complete && structuredStorageComplete,

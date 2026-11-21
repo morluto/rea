@@ -84,6 +84,10 @@ export const registerBrowserCommands = (
         include_storage_fingerprints: {
           description: "Include content-derived storage fingerprints",
         },
+        include_cache_storage_entries: {
+          description:
+            "Include Cache Storage entry metadata without cached bodies",
+        },
       },
     },
     observeThroughBrowser(inspectPage, inspectWebPage),
@@ -175,6 +179,7 @@ const registerBundleAnalysis = (
         include_websocket_shapes: pageInspectionOnly,
         include_storage_keys: pageInspectionOnly,
         include_storage_fingerprints: pageInspectionOnly,
+        include_cache_storage_entries: pageInspectionOnly,
       },
     },
     async (input, { signal, delivery }) => {

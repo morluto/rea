@@ -313,6 +313,20 @@ export const webPageInspectionSchema = z.object({
     session_storage_keys: z.array(z.string()),
     indexed_db_names: z.array(z.string()),
     cache_names: z.array(z.string()),
+    cache_entries: z.array(
+      z.object({
+        cache: z.string(),
+        request_url: z.string(),
+        request_method: z.string(),
+        response_status: z.int().min(0).nullable(),
+        response_status_text: z.string().nullable(),
+        response_type: z.string().nullable(),
+        response_time: z.number().nullable(),
+        request_header_names: z.array(z.string()),
+        response_header_names: z.array(z.string()),
+        content_type: z.string().nullable(),
+      }),
+    ),
     content_fingerprints: z.array(
       z.discriminatedUnion("scope", [
         z.object({

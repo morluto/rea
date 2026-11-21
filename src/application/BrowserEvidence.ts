@@ -243,6 +243,7 @@ const browserParameters = (
           include_websocket_shapes: input.include_websocket_shapes,
           include_storage_keys: input.include_storage_keys,
           include_storage_fingerprints: input.include_storage_fingerprints,
+          include_cache_storage_entries: input.include_cache_storage_entries,
           ...("include_script_sources" in input
             ? { include_script_sources: input.include_script_sources }
             : {}),

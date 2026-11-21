@@ -129,6 +129,7 @@ export const createWebPageInspection = (
       session_storage_keys: [],
       indexed_db_names: [],
       cache_names: [],
+      cache_entries: [],
       content_fingerprints: [],
       fingerprint_algorithm: "sha256",
       fingerprints_complete: false,

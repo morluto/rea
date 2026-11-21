@@ -228,6 +228,7 @@ const inspectWebPageInputFacts = {
   include_websocket_shapes: z.boolean().default(false),
   include_storage_keys: z.boolean().default(false),
   include_storage_fingerprints: z.boolean().default(false),
+  include_cache_storage_entries: z.boolean().default(false),
 } as const;
 
 const inspectWebPageWithoutSourceSchema = z.strictObject({
@@ -253,6 +254,12 @@ const refineInspectWebPageInput = (
       code: "custom",
       path: ["include_storage_fingerprints"],
       message: "Storage fingerprints require storage key capture",
+    });
+  if (input.include_cache_storage_entries && !input.include_storage_keys)
+    context.addIssue({
+      code: "custom",
+      path: ["include_cache_storage_entries"],
+      message: "Cache Storage entries require storage key capture",
     });
 };
 

@@ -355,8 +355,14 @@ const addCaches = async (
         run.state.complete = false;
       for (const entry of entries)
         await addCacheEntry(run, { name: cache.name, id: cacheId }, entry);
+      if (returnCount !== undefined && returnCount !== result.returnCount)
+        run.state.complete = false;
       returnCount = result.returnCount;
-      if (skipCount + examinedCount >= returnCount) break;
+      if (examinedCount > returnCount - skipCount) {
+        run.state.complete = false;
+        break;
+      }
+      if (skipCount + examinedCount === returnCount) break;
       if (
         examinedCount === 0 ||
         skipCount > Number.MAX_SAFE_INTEGER - examinedCount
