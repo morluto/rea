@@ -374,6 +374,7 @@
 * **native:** consolidate keyed archive scalar journeys ([#12799](https://github.com/morluto/rea/issues/12799)) ([7f41107](https://github.com/morluto/rea/commit/7f411078a3ddd85d570bc1ed5050ecb372be7a38))
 * **native:** consolidate signature cancellation coverage ([8f762f9](https://github.com/morluto/rea/commit/8f762f9bc84032efe06141fa0ad667e4e35560ed))
 * **native:** consolidate signature target cancellation coverage ([#12791](https://github.com/morluto/rea/issues/12791)) ([8f762f9](https://github.com/morluto/rea/commit/8f762f9bc84032efe06141fa0ad667e4e35560ed))
+* **native:** isolate Objective-C ivar alignment coverage ([#13205](https://github.com/morluto/rea/issues/13205)) ([204434e](https://github.com/morluto/rea/commit/204434e087e2f3fee260c46abb928345d3171b44))
 * **native:** retain per-ivar alignment facts in mixed lists ([#3424](https://github.com/morluto/rea/issues/3424)) ([3dcd6b6](https://github.com/morluto/rea/commit/3dcd6b62e813e1d7808ee4d0554130b5aa207538))
 * **package:** consolidate verifier diagnostics and setup applicability ([#12862](https://github.com/morluto/rea/issues/12862)) ([c6fe1e4](https://github.com/morluto/rea/commit/c6fe1e43e81c55065216e166247af043c95e9584))
 * **pcap:** consolidate packet provider output and cleanup coverage ([#12816](https://github.com/morluto/rea/issues/12816)) ([4b79eaa](https://github.com/morluto/rea/commit/4b79eaa9edae781b4c094caea9158d0f39498492))
