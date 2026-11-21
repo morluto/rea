@@ -496,11 +496,21 @@ export const parseClientConfiguration = (
   };
 };
 
-/** Read a server row, keeping `enabled` only while merging legacy OpenCode layers. */
+/** Interpret activation in the authored dialect and preserve malformed values. */
+export const openCodeDisabled = (
+  { enabled, disabled }: Record<string, unknown>,
+  dialect: "opencode" | "opencode_v2",
+): unknown =>
+  dialect === "opencode" && enabled !== undefined
+    ? typeof enabled === "boolean"
+      ? !enabled
+      : enabled
+    : disabled;
+
+/** Read a server row in the shared effective representation. */
 export const effectiveClientServer = (
   parsed: ClientConfigurationDocument,
   name: string,
-  dialect: ClientRegistrationDialect = "opencode_v2",
 ): unknown => {
   const native = Object.hasOwn(parsed.servers, name);
   const value = native
@@ -515,20 +525,13 @@ export const effectiveClientServer = (
     Array.isArray(value)
   )
     return value;
-  const { enabled, disabled, ...registration } = value as Record<
-    string,
-    unknown
-  >;
-  if (parsed.dialect === "opencode_v2" && native)
-    return disabled === undefined
-      ? registration
-      : { ...registration, disabled };
-  if (enabled === undefined) return registration;
-  if (dialect === "opencode") return { ...registration, enabled };
-  return {
-    ...registration,
-    disabled: typeof enabled === "boolean" ? !enabled : enabled,
-  };
+  const entry = value as Record<string, unknown>;
+  const disabled = openCodeDisabled(
+    entry,
+    parsed.dialect === "opencode_v2" && native ? "opencode_v2" : "opencode",
+  );
+  const { enabled: _enabled, disabled: _disabled, ...registration } = entry;
+  return disabled === undefined ? registration : { ...registration, disabled };
 };
 
 /** Preserve source policy when editing its native table. A legacy OpenCode

@@ -533,7 +533,7 @@ export const mergeClientConfigurationDocuments = (
     ]);
     for (const name of names) {
       const previous = servers[name];
-      const next = effectiveClientServer(document, name, dialect);
+      const next = effectiveClientServer(document, name);
       // Goose overlays each extension one field deep (`merge_nested_entries`),
       // replacing nested values such as `envs` whole.
       const goose = document.dialect === "goose";

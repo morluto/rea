@@ -22,6 +22,7 @@ import {
   clientRegistrationEntry,
   clientRegistrationLauncherEntry,
   clientServerRowsReplace,
+  openCodeDisabled,
   type ClientConfigurationDocument,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
@@ -436,12 +437,16 @@ export const replaceClientRegistrationLauncher = (
           // Goose reads its `env` alias as `envs`.
           (dialect === "goose" &&
             key === "envs" &&
-            inheritsGooseEnvironmentAlias(inherited)) ||
-          (dialect === "opencode" &&
-            key === "enabled" &&
-            Object.hasOwn(inheritedPolicy.data, "disabled")))
+            inheritsGooseEnvironmentAlias(inherited)))
       )
         delete defaults[key];
+  if (
+    dialect === "opencode" &&
+    (openCodeDisabled(retained, dialect) !== undefined ||
+      (inheritedPolicy.success &&
+        openCodeDisabled(inheritedPolicy.data, dialect) !== undefined))
+  )
+    delete defaults.enabled;
   const launcher = clientRegistrationLauncherEntry(dialect, command);
   if (facts.value.nested)
     for (const key of Object.keys(launcher)) delete defaults[key];
