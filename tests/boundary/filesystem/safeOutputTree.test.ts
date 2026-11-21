@@ -59,7 +59,7 @@ describe("safe artifact output cleanup", () => {
     });
   });
 
-  it("closes a pending file handle when rollback cannot admit it", async () => {
+  it("retries pending-file cleanup after the exclusive handle can be identified", async () => {
     const parent = await createTestTempDirectory("rea-safe-output-pending-");
     const output = join(parent, "published");
     const destination = join(output, "payload.txt");
@@ -90,11 +90,20 @@ describe("safe artifact output cleanup", () => {
         message: "injected file identity failure",
         cleanup: { resources: [output] },
       });
-      expect(pendingHandle?.fd).toBe(-1);
+      expect(pendingHandle?.fd).toBeGreaterThanOrEqual(0);
       expect(await readFile(destination, "utf8")).toBe("");
       expect(tree.cleanup).toEqual({
         status: "incomplete",
         residualPaths: ["published"],
+      });
+      stat.mockRestore();
+      expect(await tree.rollback()).toEqual({
+        status: "complete",
+        residualPaths: [],
+      });
+      expect(pendingHandle?.fd).toBe(-1);
+      await expect(readFile(destination, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
       });
     } finally {
       stat.mockRestore();
@@ -119,6 +128,72 @@ describe("safe artifact output cleanup", () => {
 });
 
 describe("safe artifact output file identity admission", () => {
+  it.skipIf(process.platform === "win32")(
+    "closes a captured pending identity and retries the path without that handle",
+    async () => {
+      const parent = await createTestTempDirectory(
+        "rea-safe-output-pending-path-",
+      );
+      const output = join(parent, "published");
+      const destination = join(output, "payload.txt");
+      const displaced = join(parent, "owned-payload.txt");
+      const prototypeHandle = await open(join(parent, "handle"), "w");
+      const handlePrototype = Object.getPrototypeOf(prototypeHandle) as Pick<
+        typeof prototypeHandle,
+        "stat"
+      >;
+      await prototypeHandle.close();
+      await rm(join(parent, "handle"));
+      const tree = await SafeOutputTree.create(output);
+      const originalStat = handlePrototype.stat;
+      let pendingHandle: { fd: number } | undefined;
+      const remember = (handle: { fd: number }): void => {
+        pendingHandle = handle;
+      };
+      const stat = vi.spyOn(handlePrototype, "stat");
+      stat.mockImplementationOnce(function (this: { fd: number }) {
+        remember(this);
+        return Promise.reject(new Error("injected file identity failure"));
+      });
+      await expect(
+        tree.write("payload.txt", Readable.from(Buffer.from("owned")), {
+          sha256: createHash("sha256").update("owned").digest("hex"),
+          bytes: Buffer.byteLength("owned"),
+        }),
+      ).rejects.toThrow("injected file identity failure");
+      stat.mockImplementationOnce(async function (
+        this: typeof prototypeHandle,
+        ...args
+      ) {
+        remember(this);
+        const metadata = await originalStat.apply(this, args);
+        await rename(destination, displaced);
+        await writeFile(destination, "replacement");
+        return metadata;
+      });
+      try {
+        const failure = await tree.rollback().catch((cause: unknown) => cause);
+        expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+        expect(failure).toMatchObject({
+          message: `Extraction file identity changed: ${destination}`,
+          cleanup: { resources: [output] },
+        });
+        expect(pendingHandle?.fd).toBe(-1);
+        expect(await readFile(destination, "utf8")).toBe("replacement");
+        expect(await readFile(displaced, "utf8")).toBe("");
+        await rm(destination);
+        await rename(displaced, destination);
+        expect(await tree.rollback()).toEqual({
+          status: "complete",
+          residualPaths: [],
+        });
+        expect(await readdir(parent)).toEqual([]);
+      } finally {
+        stat.mockRestore();
+      }
+    },
+  );
+
   it.skipIf(process.platform === "win32")(
     "retains an O_EXCL file handle until its identity can be retried",
     async () => {
