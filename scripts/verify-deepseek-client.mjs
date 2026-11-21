@@ -23,6 +23,29 @@ import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
+const expectedFinal = "REA_CLIENT_COMPATIBILITY_OK";
+
+// The headless --json producer emits newline-delimited events and ends
+// the projection with exactly one final event carrying the full answer.
+function hasExpectedHeadlessFinal(stdout) {
+  let start = 0;
+  while (start < stdout.length) {
+    const end = stdout.indexOf("\n", start);
+    if (end === -1) return false;
+    let event;
+    try {
+      event = JSON.parse(stdout.slice(start, end));
+    } catch {
+      return false;
+    }
+    if (typeof event?.type !== "string") return false;
+    if (event.type === "final")
+      return end + 1 === stdout.length && event.text === expectedFinal;
+    start = end + 1;
+  }
+  return false;
+}
+
 const mode = process.argv[2] ?? "call";
 assert(["chat", "call"].includes(mode), "Select chat or call.");
 assert(process.platform !== "win32", "Native Windows coverage is unverified.");
@@ -61,6 +84,7 @@ let skillLoaded = false;
 let expectedSkillBody;
 let evidenceSeen = false;
 let finalSeen = false;
+let clientFinalSeen = false;
 let artifactDigest;
 let mainRequests = 0;
 const lifecycle = [];
@@ -217,7 +241,7 @@ await withVerifierCleanup(async () => {
         }
         if (mode === "chat" || evidenceSeen) {
           finalSeen = true;
-          return { role: "assistant", content: "REA_CLIENT_COMPATIBILITY_OK" };
+          return { role: "assistant", content: expectedFinal };
         }
         const call = (name, args) => ({
           role: "assistant",
@@ -331,33 +355,47 @@ await withVerifierCleanup(async () => {
     );
     assert.equal(doctor.healthy, true);
     lifecycle.push("doctor");
-    const result = await saveVerifierCommandOutput(
-      () =>
-        commands.exec(
-          command,
-          [
-            "--profile",
-            "headless",
-            "--json",
-            mode === "chat"
-              ? "Say hello briefly."
-              : `Use REA to analyze ${target}.`,
-          ],
-          {
-            env: environment,
-            cwd: workspace,
-            timeout: 120_000,
-            stdin: "closed-pipe",
-            maxBuffer: 10 * 1024 * 1024,
-          },
-        ),
+    await saveVerifierCommandOutput(
+      async () => {
+        const result = await commands
+          .exec(
+            command,
+            [
+              "--profile",
+              "headless",
+              "--json",
+              mode === "chat"
+                ? "Say hello briefly."
+                : `Use REA to analyze ${target}.`,
+            ],
+            {
+              env: environment,
+              cwd: workspace,
+              timeout: 120_000,
+              stdin: "closed-pipe",
+              maxBuffer: 10 * 1024 * 1024,
+            },
+          )
+          .catch((cause) => {
+            const stdout = cause?.snapshot?.stdout;
+            if (stdout !== undefined && stdout.bytes === stdout.observedBytes)
+              clientFinalSeen = hasExpectedHeadlessFinal(stdout.text);
+            throw cause;
+          });
+        clientFinalSeen = hasExpectedHeadlessFinal(result.stdout);
+        return result;
+      },
       {
         stdout: join(lab, "client.stdout"),
         stderr: join(lab, "client.stderr"),
       },
     );
     assert.equal(fixture.failure, undefined);
-    assert(finalSeen && result.stdout.includes("REA_CLIENT_COMPATIBILITY_OK"));
+    assert(finalSeen, "The loopback model did not supply the expected answer");
+    assert(
+      clientFinalSeen,
+      "Harness did not emit the expected terminal final event",
+    );
     if (mode === "call") assert(evidenceSeen && skillLoaded);
     lifecycle.push(mode === "call" ? "native-tool-invocation" : "native-chat");
     const uninstall = await runRea(["uninstall"], "uninstall");
@@ -407,6 +445,7 @@ await withVerifierCleanup(async () => {
       evidenceSeen,
       artifactDigest,
       finalSeen,
+      clientFinalSeen,
       requests: fixture?.requests,
       fixtureFailure: fixture?.failure,
       verifier: await completeVerifierRun(verifier),

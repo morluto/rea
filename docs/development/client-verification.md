@@ -314,7 +314,10 @@ chat with REA enabled, or `REA_VERIFY_RUNTIME_ROOT` for an installed package.
 The fixture uses Harness's custom OpenAI adapter and the one-million-token
 context capacity declared by its default DeepSeek Flash model; it does not
 establish live DeepSeek API or native Windows coverage. Receipts include
-request artifacts, result digests and owned-process lineage.
+request artifacts, result digests and owned-process lineage. `finalSeen`
+records the model fixture's answer, and `clientFinalSeen` records the exact
+answer in the terminal headless JSON event. A passing receipt also requires
+successful client termination, uninstall, and verifier cleanup.
 
 The DSH acceptance journey also exercises public setup, approval, doctor,
 generated-launcher MCP startup and uninstall without an installed Harness.
