@@ -80,11 +80,15 @@ it("rejects sparse or incomplete results for selected literal imports", async ()
   const artifacts = webModuleArtifactsFixture();
   const sparse: WebModuleResolution[] = [];
   sparse.length = 1;
-  const failures: [WebModuleResolution[], string][] = [
-    [sparse, "malformed or incomplete native evidence"],
-    [[], "did not return every selected literal specifier"],
+  const excess: WebModuleResolution[] = [
+    { state: "resolved", url: "https://app.test/dep.js" },
+    { state: "resolved", url: "https://app.test/unrequested.js" },
   ];
-  for (const [resolutions, message] of failures) {
+  for (const [name, resolutions] of [
+    ["sparse", sparse],
+    ["short", []],
+    ["excess", excess],
+  ] satisfies [string, WebModuleResolution[]][]) {
     const result = await new WebModuleTraceService(
       { load: async () => ok(artifacts) },
       {
@@ -98,9 +102,9 @@ it("rejects sparse or incomplete results for selected literal imports", async ()
       },
     ).trace(args);
     if (result.ok) throw new Error("Expected invalid resolver output");
-    expect(result.error).toMatchObject({
+    expect(result.error, name).toMatchObject({
       _tag: "AnalysisOutputError",
-      message: expect.stringContaining(message),
+      operation: "trace_web_module_imports",
       partialObservation: {
         kind: "web-trace-observation",
         analysis: "incomplete",
