@@ -209,6 +209,28 @@ it("accepts JSON reads up to the per-document budget for every manifest and conf
   if (!result.ok) throw result.error;
 });
 
+it("accepts cumulative JSON reads beyond a 32-bit counter within the budget", async () => {
+  const jsonBytesRead = 0xffffffff + 1;
+  const service = new OciImageLayoutService({
+    close: async () => {},
+    identity,
+    inspect: async () =>
+      ok({
+        ...report,
+        coverage: { ...report.coverage, json_bytes_read: jsonBytesRead },
+      }),
+  });
+  const result = await service.inspect({
+    path: report.artifact.path,
+    max_json_bytes: 16 * 1024 * 1024,
+    max_descriptors: 256,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    coverage: { json_bytes_read: jsonBytesRead },
+  });
+});
+
 it("rejects JSON reads beyond what the descriptor budget allows", async () => {
   const service = new OciImageLayoutService({
     close: async () => {},

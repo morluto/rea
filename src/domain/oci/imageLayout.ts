@@ -10,6 +10,11 @@ export const OCI_IMAGE_LAYOUT_FORMAT = "oci-image-layout";
 const uint = z.number().int().min(0).max(0xffffffff);
 /** Declared and observed blob sizes; the hash budget bounds reading, not reporting. */
 const byteSize = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+/**
+ * Cumulative bytes across every JSON document read; the service bounds it by
+ * max_json_bytes * (2 + 2 * max_descriptors), which can exceed 32 bits.
+ */
+const cumulativeByteCount = z.number().int().nonnegative().safe();
 
 /** Hard ceiling on one JSON document (oci-layout, index, manifest, or config). */
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_JSON_BYTES = 16 * 1024 * 1024;
@@ -319,7 +324,7 @@ export const ociImageLayoutSchema = z.strictObject({
     status: coverageStatusSchema,
     entries_examined: uint,
     blobs_hashed: uint,
-    json_bytes_read: uint,
+    json_bytes_read: cumulativeByteCount,
   }),
   limitations: z.array(z.string().min(1)).min(1),
 });
