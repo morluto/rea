@@ -666,7 +666,7 @@ export const createSemanticModuleInterop = (
         current = bindTarget;
         continue;
       }
-      if (captured !== undefined && mayObserve !== undefined)
+      if (captured !== undefined)
         opaqueArguments ||= intrinsicReadChanged(
           captured.capturedAt,
           path,

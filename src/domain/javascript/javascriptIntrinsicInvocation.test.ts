@@ -202,6 +202,38 @@ it("refreshes settled dispatch when its owner records an earlier replacement", (
   expect(interop.intrinsicInvocationFacts(read.expression)).toBe(changed);
 });
 
+it("checks the captured target of a generic bind against recorded writes", () => {
+  const parsed = parseJavaScriptSource(`
+    const saved = Object.keys;
+    const captured = Object.keys.bind(null);
+    Function.prototype.bind.call(Object.keys, null);
+    0;
+    Function.prototype.bind.call(Object.keys, null);
+    Function.prototype.bind.call(saved, null);
+    Object.keys.bind(null);
+    captured;
+  `);
+  if (!parsed) throw new Error("Expected a program");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const interop = createSemanticModuleInterop(state);
+  const [, , early, write, late, saved, direct, captured] = parsed.program.body;
+  if (!write) throw new Error("Expected a write position");
+  interop.retainWrite(write, ["intrinsic", "Object", "keys"]);
+  for (const [statement, kind] of [
+    [early, "known"],
+    [late, "opaque"],
+    [saved, "known"],
+    [direct, "opaque"],
+    [captured, "known"],
+  ] as const) {
+    if (!t.isExpressionStatement(statement))
+      throw new Error("Expected a callable expression");
+    expect(interop.boundIntrinsic(statement.expression)?.kind).toBe(kind);
+  }
+});
+
 it("preserves a Reflect method captured before a deferred change", () => {
   const parsed = parseJavaScriptSource(
     "const set=Reflect.set; function update(){Reflect.set=other} update(); set({}, 'label', 1);",
