@@ -1,39 +1,24 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  unselectBodyShapes,
   passiveNetworkCapture,
   withPassiveDroppedEvents,
 } from "../../tests/fixtures/passiveNetworkCapture.js";
-import {
-  browserCaptureComparisonInputSchema,
-  compareBrowserCaptures,
-} from "./browserCaptureComparison.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
-import { webCaptureDiffSchema } from "./webCaptureDiffSchemas.js";
+import { compareWebCaptures } from "./webCaptureDiff.js";
+import { compareWebCapturesInputSchema } from "./webCaptureDiffSchemas.js";
 
 const compare = (before: WebPageInspection, after: WebPageInspection) =>
-  webCaptureDiffSchema.parse(
-    compareBrowserCaptures(
-      browserCaptureComparisonInputSchema.parse({
-        before: { inspection: before },
-        after: { inspection: after },
-      }),
-    ),
+  compareWebCaptures(
+    compareWebCapturesInputSchema.parse({
+      before: { inspection: before },
+      after: { inspection: after },
+    }),
   ).dimensions.network;
 
-const unselectedShapes = (capture: WebPageInspection): WebPageInspection => {
-  capture.completeness.excluded.push({
-    section: "json_body_shapes",
-    reason: "not_approved",
-    count: null,
-  });
-  for (const request of capture.network.requests)
-    request.body_shapes.status = "not_approved";
-  return capture;
-};
-
 const redirectCapture = (resourceType: string | null): WebPageInspection => {
-  const capture = unselectedShapes(passiveNetworkCapture());
+  const capture = unselectBodyShapes(passiveNetworkCapture());
   capture.network.requests[0]!.redirects = [
     {
       url: "https://app.example.test/start",
@@ -51,14 +36,14 @@ const redirectCapture = (resourceType: string | null): WebPageInspection => {
 };
 
 it("refuses a captured request without its redirect list", () => {
-  const capture = unselectedShapes(passiveNetworkCapture());
+  const capture = unselectBodyShapes(passiveNetworkCapture());
   const { redirects: _redirects, ...request } = capture.network.requests[0]!;
   const malformed = {
     ...capture,
     network: { ...capture.network, requests: [request] },
   };
   expect(
-    browserCaptureComparisonInputSchema.safeParse({
+    compareWebCapturesInputSchema.safeParse({
       before: { inspection: malformed },
       after: { inspection: capture },
     }).success,
@@ -97,7 +82,7 @@ describe("nullable redirect resource types", () => {
   );
 
   it("retains proven HTTP membership with incomplete redirect metadata", () => {
-    const before = unselectedShapes(passiveNetworkCapture([]));
+    const before = unselectBodyShapes(passiveNetworkCapture([]));
     const after = redirectCapture(null);
     expect(compare(before, after)).toMatchObject({
       status: "changed",
@@ -111,7 +96,7 @@ describe("passive network inventory changes", () => {
   it.each(["websocket_connections", "websocket_frames"] as const)(
     "does not infer duplicate WebSocket inventory changes from dropped %s",
     (kind) => {
-      const before = unselectedShapes(passiveNetworkCapture());
+      const before = unselectBodyShapes(passiveNetworkCapture());
       before.network.websocket_connections = [
         {
           request_id: "ws-one",
@@ -143,25 +128,41 @@ describe("passive network inventory changes", () => {
     },
   );
 
-  it.each(["dropped", "truncated", "unavailable"] as const)(
-    "does not infer repeated-request count changes from %s HTTP inventory",
-    (limitation) => {
-      const after = unselectedShapes(passiveNetworkCapture(["/a", "/a"]));
-      let before = unselectedShapes(passiveNetworkCapture());
-      if (limitation === "dropped")
-        before = withPassiveDroppedEvents(before, { network_requests: 1 });
-      else if (limitation === "truncated")
-        before.completeness.truncated_sections.push("network_requests");
-      else before.completeness.unavailable_sections.push("network_requests");
-      for (const [left, right] of [
-        [before, after],
-        [after, before],
-      ] as const)
-        expect(compare(left, right)).toMatchObject({
-          status: "unknown",
-          total_changes: 0,
-          changes: [],
-        });
+  it.each(["complete", "dropped", "truncated", "unavailable"] as const)(
+    "uses %s HTTP coverage to compare repeated request counts",
+    (coverage) => {
+      const one = unselectBodyShapes(passiveNetworkCapture());
+      const two = unselectBodyShapes(passiveNetworkCapture(["/a", "/a"]));
+      let limited = structuredClone(one);
+      if (coverage === "dropped")
+        limited = withPassiveDroppedEvents(limited, { network_requests: 1 });
+      else if (coverage === "truncated")
+        limited.completeness.truncated_sections.push("network_requests");
+      else if (coverage === "unavailable")
+        limited.completeness.unavailable_sections.push("network_requests");
+
+      const expected =
+        coverage === "complete"
+          ? {
+              status: "changed",
+              total_changes: 1,
+              changes: [{ change: "modified" }],
+            }
+          : { status: "unknown", total_changes: 0, changes: [] };
+      expect(compare(limited, two)).toMatchObject(expected);
+      expect(compare(two, limited)).toMatchObject(expected);
+
+      // A partial inventory can still contain more equal samples than the
+      // complete peer. Matching sets of values would lose this contradiction.
+      const retainedTwo = {
+        ...limited,
+        network: { ...limited.network, requests: two.network.requests },
+      };
+      expect(compare(one, retainedTwo)).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+        changes: [{ change: "modified" }],
+      });
     },
   );
 
@@ -238,7 +239,7 @@ describe("unknown WebSocket opcode evidence", () => {
   const captureWithWebSocketFrames = (
     events: WebPageInspection["network"]["websocket_connections"][number]["events"],
   ): WebPageInspection => {
-    const capture = unselectedShapes(passiveNetworkCapture([]));
+    const capture = unselectBodyShapes(passiveNetworkCapture([]));
     capture.network.websocket_connections.push({
       request_id: "capture-local-socket-id",
       url: "wss://app.example.test/live",
@@ -366,53 +367,63 @@ describe("passive network coverage uncertainty", () => {
 });
 
 describe("independent WebSocket inventory evidence", () => {
-  it("does not use complete HTTP inventory to infer an unobserved WebSocket connection", () => {
-    const before = passiveNetworkCapture();
-    const after = structuredClone(before);
-    after.network.websocket_connections.push({
-      request_id: "ws",
-      url: "wss://app.example.test/live",
-      events: [],
-    });
-    before.completeness.attach_limited_sections.push("websocket_connections");
-    expect(compare(before, after)).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-    expect(compare(after, before)).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-    after.network.requests.push({
-      ...passiveNetworkCapture(["/b"]).network.requests[0]!,
-      request_id: "request-b",
-    });
-    expect(compare(before, after)).toMatchObject({
-      status: "changed",
-      total_changes: 1,
-      changes: [{ identity: expect.stringMatching(/^net_/u), change: "added" }],
-    });
-  });
-
-  it("retains complete WebSocket membership changes when HTTP inventory is limited", () => {
-    const before = passiveNetworkCapture();
-    before.completeness.attach_limited_sections.push("network_requests");
-    const after = structuredClone(before);
-    after.network.websocket_connections.push({
-      request_id: "ws",
-      url: "wss://app.example.test/live",
-      events: [],
-    });
-    for (const [left, right, change] of [
-      [before, after, "added"],
-      [after, before, "removed"],
-    ] as const)
-      expect(compare(left, right)).toMatchObject({
-        status: "changed",
-        total_changes: 1,
-        changes: [{ identity: expect.stringMatching(/^ws_/u), change }],
+  it.each(["attachment", "websocket_connections", "websocket_frames"] as const)(
+    "keeps %s WebSocket limits separate from HTTP inventory",
+    (coverage) => {
+      let before = unselectBodyShapes(passiveNetworkCapture());
+      if (coverage === "attachment")
+        before.completeness.attach_limited_sections.push(
+          "websocket_connections",
+        );
+      else before = withPassiveDroppedEvents(before, { [coverage]: 1 });
+      const after = structuredClone(before);
+      after.network.websocket_connections.push({
+        request_id: "ws",
+        url: "wss://app.example.test/live",
+        events: [],
       });
-  });
+      const unknown = { status: "unknown", total_changes: 0, changes: [] };
+      expect(compare(before, after)).toMatchObject(unknown);
+      expect(compare(after, before)).toMatchObject(unknown);
+      after.network.requests.push(
+        unselectBodyShapes(passiveNetworkCapture(["/b"])).network.requests[0]!,
+      );
+      for (const [left, right, change] of [
+        [before, after, "added"],
+        [after, before, "removed"],
+      ] as const)
+        expect(compare(left, right)).toMatchObject({
+          status: "changed",
+          total_changes: 1,
+          changes: [{ identity: expect.stringMatching(/^net_/u), change }],
+        });
+    },
+  );
+
+  it.each(["attachment", "drop"] as const)(
+    "retains complete WebSocket membership when an HTTP %s limits inventory",
+    (coverage) => {
+      let before = unselectBodyShapes(passiveNetworkCapture());
+      if (coverage === "attachment")
+        before.completeness.attach_limited_sections.push("network_requests");
+      else before = withPassiveDroppedEvents(before, { network_requests: 1 });
+      const after = structuredClone(before);
+      after.network.websocket_connections.push({
+        request_id: "ws",
+        url: "wss://app.example.test/live",
+        events: [],
+      });
+      for (const [left, right, change] of [
+        [before, after, "added"],
+        [after, before, "removed"],
+      ] as const)
+        expect(compare(left, right)).toMatchObject({
+          status: "changed",
+          total_changes: 1,
+          changes: [{ identity: expect.stringMatching(/^ws_/u), change }],
+        });
+    },
+  );
 
   it("does not turn missing WebSocket payload facts into membership changes", () => {
     const before = passiveNetworkCapture();
@@ -456,7 +467,7 @@ describe("repeated HTTP request identity uncertainty", () => {
       const after = structuredClone(before);
       after.network.requests[1]!.resource_type = null;
       if (!selected)
-        for (const capture of [before, after]) unselectedShapes(capture);
+        for (const capture of [before, after]) unselectBodyShapes(capture);
       for (const [left, right] of [
         [before, after],
         [after, before],
@@ -469,22 +480,8 @@ describe("repeated HTTP request identity uncertainty", () => {
     },
   );
 
-  it("retains a known repeated-request count change", () => {
-    const before = unselectedShapes(passiveNetworkCapture(["/a", "/a"]));
-    const after = unselectedShapes(passiveNetworkCapture());
-    for (const [left, right] of [
-      [before, after],
-      [after, before],
-    ] as const)
-      expect(compare(left, right)).toMatchObject({
-        status: "changed",
-        total_changes: 1,
-        changes: [{ change: "modified" }],
-      });
-  });
-
   it("does not assign observed content to an ambiguous type bucket", () => {
-    const before = unselectedShapes(passiveNetworkCapture(["/a", "/a"]));
+    const before = unselectBodyShapes(passiveNetworkCapture(["/a", "/a"]));
     before.network.requests[1]!.resource_type = null;
     before.network.requests[1]!.status = 503;
     const after = structuredClone(before);
@@ -510,7 +507,7 @@ describe("nullable HTTP request identities", () => {
       const after = structuredClone(before);
       after.network.requests[0]!.resource_type = null;
       if (!selected)
-        for (const capture of [before, after]) unselectedShapes(capture);
+        for (const capture of [before, after]) unselectBodyShapes(capture);
       for (const [left, right] of [
         [before, after],
         [after, before],
@@ -525,7 +522,7 @@ describe("nullable HTTP request identities", () => {
   );
 
   it("does not prove equality from two unknown request types", () => {
-    const capture = unselectedShapes(passiveNetworkCapture());
+    const capture = unselectBodyShapes(passiveNetworkCapture());
     capture.network.requests[0]!.resource_type = null;
     expect(compare(capture, structuredClone(capture))).toMatchObject({
       status: "unknown",
@@ -535,7 +532,7 @@ describe("nullable HTTP request identities", () => {
   });
 
   it("does not assign an unknown type to one of multiple same-method/URL candidates", () => {
-    const before = unselectedShapes(passiveNetworkCapture(["/a", "/a"]));
+    const before = unselectBodyShapes(passiveNetworkCapture(["/a", "/a"]));
     before.network.requests[1]!.resource_type = "Fetch";
     const after = structuredClone(before);
     after.network.requests[1]!.resource_type = null;
@@ -555,8 +552,8 @@ describe("nullable HTTP request identities", () => {
   ])(
     "retains a distinct %s %s request beside ambiguous identities",
     (path, method) => {
-      const before = unselectedShapes(passiveNetworkCapture());
-      const after = unselectedShapes(passiveNetworkCapture(["/a", path]));
+      const before = unselectBodyShapes(passiveNetworkCapture());
+      const after = unselectBodyShapes(passiveNetworkCapture(["/a", path]));
       after.network.requests[0]!.resource_type = null;
       after.network.requests[1]!.method = method;
       for (const [left, right, change] of [
@@ -572,8 +569,8 @@ describe("nullable HTTP request identities", () => {
   );
 
   it("uses a complete empty peer inventory to prove absence despite an unknown type", () => {
-    const empty = unselectedShapes(passiveNetworkCapture([]));
-    const observed = unselectedShapes(passiveNetworkCapture());
+    const empty = unselectBodyShapes(passiveNetworkCapture([]));
+    const observed = unselectBodyShapes(passiveNetworkCapture());
     observed.network.requests[0]!.resource_type = null;
     for (const [left, right, change] of [
       [empty, observed, "added"],
@@ -591,7 +588,7 @@ describe("nullable HTTP request identities", () => {
   });
 
   it("retains definite type changes and independently observed metadata changes", () => {
-    const before = unselectedShapes(passiveNetworkCapture());
+    const before = unselectBodyShapes(passiveNetworkCapture());
     const changedType = structuredClone(before);
     changedType.network.requests[0]!.resource_type = "Fetch";
     expect(compare(before, changedType)).toMatchObject({
@@ -617,45 +614,6 @@ describe("nullable HTTP request identities", () => {
 });
 
 describe("passive dropped-event inventory coverage", () => {
-  it("does not infer request absence from a capture with independently counted drops", () => {
-    const before = withPassiveDroppedEvents(passiveNetworkCapture(), {
-      network_requests: 1,
-    });
-    const after = passiveNetworkCapture(["/a", "/b"]);
-    expect(before.completeness).toMatchObject({
-      status: "truncated",
-      truncated_sections: [],
-      unavailable_sections: [],
-      attach_limited_sections: [],
-      policy_filtered_sections: [],
-      dropped_events: { network_requests: 1, total: 1 },
-    });
-    for (const [left, right] of [
-      [before, after],
-      [after, before],
-    ] as const)
-      expect(compare(left, right)).toMatchObject({
-        status: "unknown",
-        total_changes: 0,
-      });
-    const changed = structuredClone(before);
-    changed.network.requests[0]!.status = 503;
-    expect(compare(before, changed)).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-      changes: [],
-    });
-    // Once one complete inventory excludes the peer's observed response,
-    // omissions cannot explain that response difference.
-    changed.completeness.dropped_events.network_requests = 0;
-    changed.completeness.dropped_events.total = 0;
-    expect(compare(before, changed)).toMatchObject({
-      status: "changed",
-      total_changes: 1,
-      changes: [{ change: "modified" }],
-    });
-  });
-
   it.each([
     "network_requests",
     "websocket_connections",
@@ -664,7 +622,7 @@ describe("passive dropped-event inventory coverage", () => {
     "cannot prove network equality after dropped %s even when shapes are unselected",
     (kind) => {
       const before = withPassiveDroppedEvents(
-        unselectedShapes(passiveNetworkCapture()),
+        unselectBodyShapes(passiveNetworkCapture()),
         { [kind]: 1 },
       );
       expect(before.completeness.truncated_sections).toEqual([]);
@@ -675,97 +633,29 @@ describe("passive dropped-event inventory coverage", () => {
     },
   );
 
-  it.each(["websocket_connections", "websocket_frames"] as const)(
-    "keeps %s drops separate from HTTP inventory",
-    (kind) => {
-      const before = withPassiveDroppedEvents(passiveNetworkCapture(), {
-        [kind]: 1,
+  it("keeps HTTP comparison complete despite unrelated event drops", () => {
+    const before = withPassiveDroppedEvents(
+      unselectBodyShapes(passiveNetworkCapture()),
+      {
+        console_events: 1,
+        scripts: 1,
+        timeline_events: 1,
+        webmcp_tools: 1,
+      },
+    );
+    const after = unselectBodyShapes(passiveNetworkCapture(["/a", "/b"]));
+    expect(compare(before, before)).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+    });
+    for (const [left, right, change] of [
+      [before, after, "added"],
+      [after, before, "removed"],
+    ] as const)
+      expect(compare(left, right)).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+        changes: [{ change }],
       });
-      const after = structuredClone(before);
-      after.network.websocket_connections.push({
-        request_id: "ws",
-        url: "wss://app.example.test/live",
-        events: [],
-      });
-      for (const [left, right] of [
-        [before, after],
-        [after, before],
-      ] as const)
-        expect(compare(left, right)).toMatchObject({
-          status: "unknown",
-          total_changes: 0,
-        });
-      after.network.requests.push({
-        ...passiveNetworkCapture(["/b"]).network.requests[0]!,
-        request_id: "request-b",
-      });
-      for (const [left, right, change] of [
-        [before, after, "added"],
-        [after, before, "removed"],
-      ] as const)
-        expect(compare(left, right)).toMatchObject({
-          status: "changed",
-          total_changes: 1,
-          changes: [{ identity: expect.stringMatching(/^net_/u), change }],
-        });
-    },
-  );
-
-  it("retains complete WebSocket membership despite HTTP drops", () => {
-    const before = withPassiveDroppedEvents(passiveNetworkCapture(), {
-      network_requests: 1,
-    });
-    const after = structuredClone(before);
-    after.network.websocket_connections.push({
-      request_id: "ws",
-      url: "wss://app.example.test/live",
-      events: [],
-    });
-    expect(compare(before, after)).toMatchObject({
-      status: "changed",
-      total_changes: 1,
-      changes: [{ identity: expect.stringMatching(/^ws_/u), change: "added" }],
-    });
-    expect(compare(after, before)).toMatchObject({
-      status: "changed",
-      total_changes: 1,
-      changes: [
-        { identity: expect.stringMatching(/^ws_/u), change: "removed" },
-      ],
-    });
   });
-
-  it.each([
-    "console_events",
-    "scripts",
-    "timeline_events",
-    "webmcp_tools",
-  ] as const)(
-    "does not use the total or unrelated %s drops as HTTP absence limits",
-    (kind) => {
-      const before = withPassiveDroppedEvents(
-        unselectedShapes(passiveNetworkCapture()),
-        { [kind]: 2 },
-      );
-      expect(before.completeness).toMatchObject({
-        status: "truncated",
-        dropped_events: { total: 2 },
-      });
-      expect(compare(before, structuredClone(before))).toMatchObject({
-        status: "unchanged",
-        total_changes: 0,
-      });
-      const after = unselectedShapes(passiveNetworkCapture(["/a", "/b"]));
-      expect(compare(before, after)).toMatchObject({
-        status: "changed",
-        total_changes: 1,
-        changes: [{ change: "added" }],
-      });
-      expect(compare(after, before)).toMatchObject({
-        status: "changed",
-        total_changes: 1,
-        changes: [{ change: "removed" }],
-      });
-    },
-  );
 });
