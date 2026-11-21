@@ -59,8 +59,8 @@ export interface SetupClient {
   readonly configPath: string;
   /** User configuration files in increasing precedence, including the write target. */
   readonly configPaths?: readonly string[];
-  /** OpenCode loads its explicit file again when it is also found in the project walk. */
-  readonly openCodeExplicitConfigPath?: string;
+  /** User-selected OpenCode files can also occur in the native project walk. */
+  readonly openCodeUserOverridePaths?: readonly string[];
   /** Read-only configuration the client merges over every file layer. */
   readonly inlineConfiguration?: ClientInlineConfiguration;
   /** The selected Pi profile's persisted project-trust inputs. */
@@ -606,27 +606,33 @@ const openCodeExplicitConfigPath = ({
 }: ClientPathContext): string | undefined =>
   env.OPENCODE_CONFIG ? resolve(env.OPENCODE_CONFIG) : undefined;
 
+const openCodeDirectoryConfigPaths = (directory: string): readonly string[] => [
+  resolve(directory, "opencode.json"),
+  resolve(directory, "opencode.jsonc"),
+];
+
+const openCodeUserOverridePaths = (
+  context: ClientPathContext,
+): readonly string[] => {
+  const file = openCodeExplicitConfigPath(context);
+  const directory = openCodeOverrideDirectory(context.env);
+  return [
+    ...(file === undefined ? [] : [file]),
+    ...(directory === undefined ? [] : openCodeDirectoryConfigPaths(directory)),
+  ];
+};
+
 /** OpenCode loads global JSON before JSONC, then explicit file and directory overrides. */
 const openCodeConfigurationPaths = (
   context: ClientPathContext,
 ): readonly string[] => {
   const directory = join(xdgConfigHomeOrDefault(context), "opencode");
-  const overrideDirectory = openCodeOverrideDirectory(context.env);
-  const explicitPath = openCodeExplicitConfigPath(context);
   const paths = [
-    join(directory, "config.json"),
-    join(directory, "opencode.json"),
-    join(directory, "opencode.jsonc"),
-    ...(explicitPath === undefined ? [] : [explicitPath]),
-    ...(overrideDirectory !== undefined
-      ? [
-          join(overrideDirectory, "opencode.json"),
-          join(overrideDirectory, "opencode.jsonc"),
-        ]
-      : []),
+    resolve(directory, "config.json"),
+    ...openCodeDirectoryConfigPaths(directory),
+    ...openCodeUserOverridePaths(context),
   ];
-  const resolved = paths.map((path) => resolve(path));
-  return resolved.filter((path, index) => resolved.lastIndexOf(path) === index);
+  return paths;
 };
 
 const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
@@ -635,16 +641,10 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
   const explicitPath = openCodeExplicitConfigPath(context);
   const candidates =
     overrideDirectory !== undefined
-      ? [
-          join(overrideDirectory, "opencode.json"),
-          join(overrideDirectory, "opencode.jsonc"),
-        ].map((path) => resolve(path))
+      ? openCodeDirectoryConfigPaths(overrideDirectory)
       : explicitPath !== undefined
         ? [explicitPath]
-        : [
-            join(opencodeDirectory(context), "opencode.json"),
-            join(opencodeDirectory(context), "opencode.jsonc"),
-          ].map((path) => resolve(path));
+        : openCodeDirectoryConfigPaths(opencodeDirectory(context));
   return (
     [...candidates].reverse().find((path) => {
       try {
@@ -2071,18 +2071,18 @@ export const supportedClients = (
             : { msixPackage: location.error.msixPackage }),
         };
       const { configPath, markerPath, msixPackage } = location.value;
-      const explicitPath =
+      const userOverridePaths =
         definition.format === "opencode"
-          ? openCodeExplicitConfigPath(context)
-          : undefined;
+          ? openCodeUserOverridePaths(context)
+          : [];
       return {
         name: definition.name,
         registrationProfile: definition.registrationProfile,
         displayName: definition.displayName,
         configPath,
-        ...(explicitPath === undefined
+        ...(userOverridePaths.length === 0
           ? {}
-          : { openCodeExplicitConfigPath: explicitPath }),
+          : { openCodeUserOverridePaths: userOverridePaths }),
         ...(definition.geminiSettings === undefined
           ? {}
           : { geminiSettings: definition.geminiSettings(context) }),

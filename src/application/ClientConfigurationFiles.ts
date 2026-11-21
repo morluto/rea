@@ -608,9 +608,9 @@ export const readEffectiveClientRegistrationConfiguration = async (
     string,
     NonNullable<ProjectConfigurationReadOptions["candidates"]>[number]
   >();
+  const userOverrides = new Set(client.openCodeUserOverridePaths);
   const layers = paths.value.filter(
-    ({ userPath }) =>
-      userPath === undefined || userPath === client.openCodeExplicitConfigPath,
+    ({ userPath }) => userPath === undefined || userOverrides.has(userPath),
   );
   const userAliases = [
     ...new Set(
@@ -975,11 +975,7 @@ const presentProjectSources = async (
     ClientConfigurationFileError
   >
 > => {
-  const userPaths = (client.configPaths ?? [client.configPath]).filter(
-    (path) => path !== client.openCodeExplicitConfigPath,
-  );
-  if (client.openCodeExplicitConfigPath !== undefined)
-    userPaths.push(client.openCodeExplicitConfigPath);
+  const userPaths = client.configPaths ?? [client.configPath];
   const user = new Map(
     await Promise.all(
       userPaths.map(

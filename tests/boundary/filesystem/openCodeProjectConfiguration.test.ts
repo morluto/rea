@@ -24,7 +24,7 @@ const localServer = (command: string) => ({
 const readReaServer = (document: ClientConfigurationDocument | undefined) =>
   document === undefined ? undefined : effectiveClientServer(document, "rea");
 
-const fixture = async (explicitProjectFile = false, name = "child") => {
+const fixture = async (selection?: "file" | "directory", name = "child") => {
   const root = await createTestTempDirectory("rea-opencode-project-layout-");
   const home = join(root, "home");
   const repository = join(root, "repository");
@@ -34,9 +34,11 @@ const fixture = async (explicitProjectFile = false, name = "child") => {
   const client = supportedClients(
     home,
     process.platform,
-    explicitProjectFile
+    selection === "file"
       ? { OPENCODE_CONFIG: join(projectDirectory, "opencode.json") }
-      : {},
+      : selection === "directory"
+        ? { OPENCODE_CONFIG_DIR: join(root, ".opencode") }
+        : {},
   ).find(({ name }) => name === "opencode");
   if (client === undefined)
     throw new Error("OpenCode is missing from the client table");
@@ -59,7 +61,10 @@ const fixture = async (explicitProjectFile = false, name = "child") => {
 };
 
 it("keeps the last native occurrence while returning each project file once for ownership", async () => {
-  const { root, projectDirectory, read } = await fixture(false, ".opencode");
+  const { root, projectDirectory, read } = await fixture(
+    undefined,
+    ".opencode",
+  );
   const outer = join(root, ".opencode", "opencode.json");
   const repeated = join(projectDirectory, "opencode.json");
   await writeConfiguration(outer, {
@@ -188,11 +193,19 @@ it("keeps OpenCode activation tied to the authored row dialect", async () => {
   });
 });
 
-it.each(["legacy", "native"] as const)(
-  "preserves an explicit user file's second occurrence in the OpenCode %s project order",
-  async (dialect) => {
-    const { client, projectDirectory, read } = await fixture(true);
-    const ancestor = join(dirname(projectDirectory), "opencode.json");
+it.each([
+  ["file", "legacy"],
+  ["file", "native"],
+  ["directory", "legacy"],
+  ["directory", "native"],
+] as const)(
+  "preserves a user file selected via %s at its later position in the OpenCode %s project order",
+  async (selection, dialect) => {
+    const { client, projectDirectory, read } = await fixture(selection);
+    const project = join(
+      selection === "directory" ? projectDirectory : dirname(projectDirectory),
+      "opencode.json",
+    );
     const document = (command: string) => ({
       mcp:
         dialect === "native"
@@ -200,12 +213,12 @@ it.each(["legacy", "native"] as const)(
           : { rea: localServer(command) },
     });
     await writeConfiguration(client.configPath, document("user"));
-    const ancestorServer = { ...localServer("ancestor"), enabled: false };
+    const projectServer = { ...localServer("project"), enabled: false };
     await writeConfiguration(
-      ancestor,
+      project,
       dialect === "native"
-        ? document("ancestor")
-        : { mcp: { rea: ancestorServer } },
+        ? document("project")
+        : { mcp: { rea: projectServer } },
     );
 
     const result = await read("ownership");
@@ -216,10 +229,10 @@ it.each(["legacy", "native"] as const)(
       launcherScope: "user",
       launcherConfigPath: client.configPath,
       projectUserAliases: [client.configPath],
-      projectSources: [{ sourcePath: ancestor }],
+      projectSources: [{ sourcePath: project }],
     });
     expect(result.value.activationConfigPath).toBe(
-      dialect === "native" ? client.configPath : ancestor,
+      dialect === "native" ? client.configPath : project,
     );
     expect(readReaServer(result.value.document)).toEqual({
       ...localServer("user"),
