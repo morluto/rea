@@ -430,157 +430,160 @@ describe("safe CDP response metadata CSP sources", () => {
   });
 });
 
-describe("Link header value delimiters", () => {
-  const captureLinks = (link: string) =>
-    safeResponseMetadata(
-      "owned",
-      "https://owned.test/page",
+const captureOwnedLinks = (link: string) =>
+  safeResponseMetadata(
+    "owned",
+    "https://owned.test/page",
+    {
+      headers: { Link: link },
+    },
+    new Set(["https://owned.test"]),
+  ).response.links;
+
+it("retains declarations and untrusted hints across comma, LF, and CRLF field boundaries", () => {
+  const separators = [
+    ["comma", ", "],
+    ["lf", "\n"],
+    ["crlf", "\r\n"],
+  ] as const;
+  const link = separators
+    .map(
+      ([id, separator]) =>
+        `</assets/${id},blue.js>; rel="preload"; type="text/javascript; charset=utf-8"; title="a,b"${separator}</${id}/agent?selected=keep>; rel="mcp service-desc"`,
+    )
+    .join("\n");
+  const { response, agentHints } = safeResponseMetadata(
+    "document-response",
+    `${origin}/page`,
+    { headers: { Link: link } },
+    new Set([origin]),
+  );
+
+  expect(response.links).toMatchObject(
+    separators.flatMap(([id]) => [
       {
-        headers: { Link: link },
+        href: `${origin}/assets/${id},blue.js`,
+        rel: ["preload"],
+        type: "text/javascript; charset=utf-8",
       },
-      new Set(["https://owned.test"]),
-    ).response.links;
-
-  it.each([", ", "\n", "\r\n"])(
-    "preserves repeated field declarations and agent hints joined by %j",
-    (separator) => {
-      const captured = safeResponseMetadata(
-        "document-response",
-        `${origin}/page`,
-        {
-          headers: {
-            Link: [
-              '</assets/red,blue.js>; rel="preload"; type="text/javascript; charset=utf-8"; title="a,b"',
-              '</agent?selected=keep>; rel="mcp service-desc"',
-            ].join(separator),
-          },
-        },
-        new Set([origin]),
-      );
-      expect(captured.response.links).toMatchObject([
-        {
-          href: `${origin}/assets/red,blue.js`,
-          rel: ["preload"],
-          type: "text/javascript; charset=utf-8",
-        },
-        {
-          href: `${origin}/agent?selected=keep`,
-          rel: ["mcp", "service-desc"],
-        },
-      ]);
-      expect(captured.agentHints).toContainEqual({
-        mechanism: "link_rel",
-        declaration: "mcp service-desc",
-        url: `${origin}/agent?selected=keep`,
-        trust: "page-declared-untrusted",
-      });
-    },
+      {
+        href: `${origin}/${id}/agent?selected=keep`,
+        rel: ["mcp", "service-desc"],
+      },
+    ]),
   );
-
-  it.each(["\u00a0", "\u000b", "\u000c", "\u2003", "\ufeff"])(
-    "preserves non-HTTP whitespace %j without inventing agent relations",
-    (separator) => {
-      for (const declaration of [
-        `"alternate${separator}mcp"`,
-        `${separator}mcp${separator}`,
-        `"${separator}mcp${separator}"`,
-      ]) {
-        const captured = safeResponseMetadata(
-          "owned",
-          "https://owned.test/page",
-          { headers: { Link: `</agent>; rel=${declaration}` } },
-          new Set(["https://owned.test"]),
-        );
-        expect(captured.response.links[0]?.rel).toEqual([
-          declaration.replace(/^"|"$/gu, ""),
-        ]);
-        expect(captured.agentHints).toEqual([]);
-      }
-    },
-  );
-
-  it("does not trim non-HTTP whitespace into link or parameter syntax", () => {
-    expect(captureLinks("\u00a0</agent>; rel=mcp")).toEqual([]);
-    const links = captureLinks(
-      "</agent>; \u00a0rel=mcp; rel\u00a0=service-desc",
-    );
-    expect(links[0]?.rel).toEqual([]);
-  });
-
-  it("uses HTTP spaces and tabs for relation and parameter boundaries", () => {
-    const captured = safeResponseMetadata(
-      "owned",
-      "https://owned.test/page",
-      { headers: { Link: '\t</agent>; \trel\t=\t" MCP\t service-desc "\t' } },
-      new Set(["https://owned.test"]),
-    );
-    expect(captured.response.links[0]?.rel).toEqual(["mcp", "service-desc"]);
-    expect(captured.agentHints).toContainEqual({
+  expect(agentHints).toEqual(
+    separators.map(([id]) => ({
       mechanism: "link_rel",
       declaration: "mcp service-desc",
-      url: "https://owned.test/agent",
+      url: `${origin}/${id}/agent?selected=keep`,
       trust: "page-declared-untrusted",
-    });
-  });
+    })),
+  );
+});
 
-  it("keeps delimiters scoped to each CDP field line", () => {
-    const links = captureLinks(
-      '</first>; title="unterminated\n</agent>; rel=mcp',
-    );
-    expect(links.map(({ href }) => href)).toEqual([
-      "https://owned.test/first",
-      "https://owned.test/agent",
-    ]);
-    expect(links[1]?.rel).toEqual(["mcp"]);
-  });
+it("keeps non-HTTP whitespace inside relation tokens", () => {
+  const relations = ["\u00a0", "\u000b", "\u000c", "\u2003", "\ufeff"].flatMap(
+    (separator) => [
+      [`"alternate${separator}mcp"`, `alternate${separator}mcp`],
+      [`${separator}mcp${separator}`, `${separator}mcp${separator}`],
+      [`"${separator}mcp${separator}"`, `${separator}mcp${separator}`],
+    ],
+  );
+  const { response, agentHints } = safeResponseMetadata(
+    "owned",
+    "https://owned.test/page",
+    {
+      headers: {
+        Link: relations
+          .map(
+            ([declaration], index) =>
+              `</agent/${String(index)}>; rel=${declaration}`,
+          )
+          .join("\n"),
+      },
+    },
+    new Set(["https://owned.test"]),
+  );
+  expect(response.links).toMatchObject(
+    relations.map(([, token], index) => ({
+      href: `https://owned.test/agent/${String(index)}`,
+      rel: [token],
+    })),
+  );
+  expect(agentHints).toEqual([]);
+});
 
-  it("preserves commas in URI references and separates later links", () => {
-    const links = captureLinks(
-      '</assets/red,blue.js>; rel="preload"; as=script, </ordinary.js>; rel="modulepreload"',
-    );
-    expect(links.map(({ href }) => href)).toEqual([
-      "https://owned.test/assets/red,blue.js",
-      "https://owned.test/ordinary.js",
-    ]);
-    expect(links[0]?.as).toBe("script");
-  });
+it("does not trim non-HTTP whitespace into link or parameter syntax", () => {
+  expect(captureOwnedLinks("\u00a0</agent>; rel=mcp")).toEqual([]);
+  const links = captureOwnedLinks(
+    "</agent>; \u00a0rel=mcp; rel\u00a0=service-desc",
+  );
+  expect(links[0]?.rel).toEqual([]);
+});
 
-  it("preserves semicolons and commas inside quoted parameter values", () => {
-    const links = captureLinks(
-      '</plugin.js>; rel="preload"; type="text/javascript; charset=utf-8"; title="a,b", </ordinary.js>; rel="modulepreload"',
-    );
-    expect(links).toHaveLength(2);
-    expect(links[0]?.type).toBe("text/javascript; charset=utf-8");
-    expect(links[1]?.href).toBe("https://owned.test/ordinary.js");
-  });
-
-  it("counts quoted-pair escapes rather than treating every preceding slash as an escape", () => {
-    const links = captureLinks(
-      String.raw`</one.js>; title="ends with \\"; rel="preload", </two.js>; rel="modulepreload"`,
-    );
-    expect(links.map(({ href }) => href)).toEqual([
-      "https://owned.test/one.js",
-      "https://owned.test/two.js",
-    ]);
-    expect(links[0]?.rel).toEqual(["preload"]);
-  });
-
-  it("keeps a quoted escaped quote from exposing a delimiter", () => {
-    const links = captureLinks(
-      String.raw`</one.js>; title="quoted \" comma, value"; rel="preload", </two.js>; rel="modulepreload"`,
-    );
-    expect(links).toHaveLength(2);
-    expect(links[0]?.rel).toEqual(["preload"]);
-  });
-
-  it("retains the existing outside-policy classification", () => {
-    const links = captureLinks(
-      '<https://elsewhere.test/red,blue.js>; rel="preload", </ordinary.js>; rel="modulepreload"',
-    );
-    expect(links[0]?.destination_scope).toBe("outside_policy");
-    expect(links[1]?.destination_scope).toBe("approved");
+it("uses HTTP spaces and tabs for relation and parameter boundaries", () => {
+  const captured = safeResponseMetadata(
+    "owned",
+    "https://owned.test/page",
+    { headers: { Link: '\t</agent>; \trel\t=\t" MCP\t service-desc "\t' } },
+    new Set(["https://owned.test"]),
+  );
+  expect(captured.response.links[0]?.rel).toEqual(["mcp", "service-desc"]);
+  expect(captured.agentHints).toContainEqual({
+    mechanism: "link_rel",
+    declaration: "mcp service-desc",
+    url: "https://owned.test/agent",
+    trust: "page-declared-untrusted",
   });
 });
+
+it("keeps delimiters scoped to each CDP field line", () => {
+  const links = captureOwnedLinks(
+    '</first>; title="unterminated\n</agent>; rel=mcp',
+  );
+  expect(links.map(({ href }) => href)).toEqual([
+    "https://owned.test/first",
+    "https://owned.test/agent",
+  ]);
+  expect(links[1]?.rel).toEqual(["mcp"]);
+});
+
+it("preserves URI and quoted delimiters without merging neighboring links", () => {
+  const links = captureOwnedLinks(
+    [
+      '</assets/red,blue.js>; rel="preload"; as=script',
+      '</plugin.js>; rel="preload"; type="text/javascript; charset=utf-8"; title="a,b"',
+      String.raw`</paired-slash.js>; title="ends with \\"; rel="preload"`,
+      String.raw`</escaped-quote.js>; title="quoted \" comma, value"; rel="preload"`,
+      '<https://elsewhere.test/red,blue.js>; rel="preload"',
+      '</ordinary.js>; rel="modulepreload"',
+    ].join(", "),
+  );
+  expect(links).toMatchObject([
+    {
+      href: "https://owned.test/assets/red,blue.js",
+      as: "script",
+      rel: ["preload"],
+    },
+    {
+      href: "https://owned.test/plugin.js",
+      type: "text/javascript; charset=utf-8",
+    },
+    { href: "https://owned.test/paired-slash.js", rel: ["preload"] },
+    { href: "https://owned.test/escaped-quote.js", rel: ["preload"] },
+    {
+      href: "https://elsewhere.test/red,blue.js",
+      destination_scope: "outside_policy",
+    },
+    {
+      href: "https://owned.test/ordinary.js",
+      rel: ["modulepreload"],
+      destination_scope: "approved",
+    },
+  ]);
+});
+
 describe("safe CDP response metadata referrer policy", () => {
   it.each<[string | undefined, string | null]>([
     [
