@@ -22,6 +22,8 @@ import { phaseGate } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -355,21 +357,43 @@ describe.each([RIZIN, GDB, CUTTER])(
       const completed = debuggerTools.evidence();
       const execute = vi.fn(async () => ok(completed));
       const { client } = await connect({ execute }, session);
+      const partial = vi.spyOn(
+        ToolResultDelivery.prototype,
+        "toPartialErrorToolResult",
+      );
+      onTestFinished(() => {
+        partial.mockRestore();
+      });
       const controller = new AbortController();
       const command = client
         .callTool(debuggerTools.command, { signal: controller.signal })
-        .catch(() => undefined);
+        .catch((cause: unknown) => cause);
       await retiring.reached(command, "analysis retirement close");
       expect(execute).toHaveBeenCalledOnce();
       expect(session.hasEvidence(completed.evidence_id)).toBe(false);
       controller.abort();
+      await client.ping();
       retiring.release();
-      await command;
-      // Retirement still completes, and the completed command's Evidence is
-      // retained through the session writer as the cancellation's partial.
+      expect(await command).toBeInstanceOf(Error);
+
+      // The SDK suppresses replies to cancelled calls. Observe the canonical
+      // server result so client rejection alone cannot satisfy the test.
       await waitFor(() =>
-        expect(session.evidenceById(completed.evidence_id)).toEqual(completed),
+        expect(session.hasEvidence(completed.evidence_id)).toBe(true),
       );
+      expect(partial).toHaveBeenCalledOnce();
+      const delivery = partial.mock.results[0];
+      if (delivery?.type !== "return")
+        throw new Error("Missing server cancellation result");
+      expect(parseMcpToolError(delivery.value)).toMatchObject({
+        error: {
+          code: "cancelled",
+          details: {
+            partial_observation: { evidence_id: completed.evidence_id },
+          },
+        },
+      });
+      expect(session.evidenceById(completed.evidence_id)).toEqual(completed);
       expect(session.activeTarget()).toBeUndefined();
     });
 
