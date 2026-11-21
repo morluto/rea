@@ -16,6 +16,10 @@ import {
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
 import {
+  findGhidraInstalledJdks,
+  ghidraJdkLocations,
+} from "./GhidraInstalledJdk.js";
+import {
   GHIDRA_RESTRICTED_TEMP_REMEDIATION,
   probeGhidraTemporaryDirectory,
   type GhidraTemporaryDirectoryProbe,
@@ -33,7 +37,10 @@ export const GHIDRA_DOCTOR_SETTINGS = [
 export const projectGhidraDoctorInspection = (
   inspection: GhidraInstallationInspection,
   temporaryDirectory?: GhidraTemporaryDirectoryProbe,
-  selection: { readonly existingProject: boolean } = { existingProject: false },
+  selection: {
+    readonly existingProject: boolean;
+    readonly javaAlternatives?: string;
+  } = { existingProject: false },
 ): DoctorProviderInspection => {
   const admission = admitGhidraInstallation(inspection, selection);
   const existingProjectRefused =
@@ -57,14 +64,17 @@ export const projectGhidraDoctorInspection = (
           }
         : {},
     checks: [
-      ...selectedChecks(inspection).map((check) =>
-        projectCheck(
-          check,
-          inspection.installDir !== null,
-          inspection.javaProbeFailure,
-          inspection.nativeDecompilerHeaderFailure,
-        ),
-      ),
+      ...selectedChecks(inspection).map((check) => {
+        const projected = projectCheck(check, inspection);
+        return check.name === "java" &&
+          projected.remediation !== null &&
+          selection.javaAlternatives !== undefined
+          ? {
+              ...projected,
+              remediation: `${projected.remediation} ${selection.javaAlternatives}`,
+            }
+          : projected;
+      }),
       ...(readiness !== undefined
         ? [
             {
@@ -159,12 +169,46 @@ export const inspectSystemGhidraProvider = async (
       installation.status === "available" && installation.platform === "win32"
         ? await probeGhidraTemporaryDirectory(resourceOwner)
         : undefined;
+    const javaAlternatives = await ghidraJavaAlternatives(
+      installation,
+      environment.HOME,
+      resourceOwner,
+      signal,
+    );
     return projectGhidraDoctorInspection(installation, temporaryDirectory, {
       existingProject: environment.REA_GHIDRA_PROJECT_PATH !== undefined,
+      ...(javaAlternatives === undefined ? {} : { javaAlternatives }),
     });
   } catch (cause: unknown) {
     throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
   }
+};
+
+const ghidraJavaAlternatives = async (
+  installation: GhidraInstallationInspection,
+  home: string | undefined,
+  resourceOwner: RetainedResourceScope,
+  signal?: AbortSignal,
+): Promise<string | undefined> => {
+  const checks = selectedChecks(installation);
+  if (
+    !checks.some(({ name, status }) => name === "java" && status === "failed")
+  )
+    return undefined;
+  const candidates = await findGhidraInstalledJdks(
+    ghidraJdkLocations(installation.platform, installation.architecture, home),
+    installation.javaRequirement,
+    installation.javaHome,
+    { resourceOwner, ...(signal === undefined ? {} : { signal }) },
+  );
+  if (candidates.length === 0) return undefined;
+  const choices = candidates
+    .map(
+      ({ home: javaHome, version }) =>
+        `JDK ${version} at ${JSON.stringify(javaHome)}`,
+    )
+    .join(", ");
+  return `Installed JDKs within the declared version bounds: ${choices}. Set JAVA_HOME to a candidate and rerun doctor to verify it.`;
 };
 
 const selectedChecks = (
@@ -197,9 +241,11 @@ const selectedChecks = (
 
 const projectCheck = (
   check: GhidraInstallationCheck,
-  configured: boolean,
-  javaFailure: GhidraInstallationInspection["javaProbeFailure"],
-  headerFailure: GhidraInstallationInspection["nativeDecompilerHeaderFailure"],
+  {
+    installDir,
+    javaProbeFailure: javaFailure,
+    nativeDecompilerHeaderFailure: headerFailure,
+  }: GhidraInstallationInspection,
 ): DoctorProviderCheck => ({
   name: check.name,
   ok: check.status === "passed",
@@ -233,7 +279,7 @@ const projectCheck = (
             check.status === "failed" &&
             check.code === "runtime_unavailable"
           ? "runtime_failure"
-          : configured
+          : installDir !== null
             ? "config_drift"
             : "missing_analysis_engine",
 });
