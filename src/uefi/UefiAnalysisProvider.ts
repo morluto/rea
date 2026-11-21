@@ -1458,17 +1458,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     const objdumpTimeout = Math.floor(
                       Math.min(15_000, Math.max(500, remainingForObjdump)),
                     );
-                    let objdumpExecutable =
+                    const configuredCommand =
                       process.env.REA_OBJDUMP_COMMAND ?? "objdump";
-                    if (
-                      objdumpExecutable.includes("/") ||
-                      objdumpExecutable.includes("\\")
-                    ) {
-                      objdumpExecutable = resolve(
-                        process.cwd(),
-                        objdumpExecutable,
-                      );
-                    }
+                    const objdumpExecutable =
+                      configuredCommand.includes("/") ||
+                      configuredCommand.includes("\\")
+                        ? resolve(process.cwd(), configuredCommand)
+                        : configuredCommand;
                     try {
                       const { stdout } = await execFileOutput(
                         objdumpExecutable,
