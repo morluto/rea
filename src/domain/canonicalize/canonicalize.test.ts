@@ -6,6 +6,7 @@ import {
   type CanonicalizeFact,
 } from "./canonicalizeArtifact.js";
 import type { NormalizerBudget } from "./normalizer.js";
+import { MAX_JSON_STRUCTURE_BYTES } from "./normalizers/jsonStructure.js";
 
 const budget = (
   overrides: Partial<NormalizerBudget> = {},
@@ -457,6 +458,24 @@ describe("json-structure normalizer", () => {
     expect(childNames).toHaveLength(2);
     // Two keys that share their first 128 units must not collapse to one name.
     expect(new Set(childNames).size).toBe(2);
+  });
+});
+
+describe("json-structure size budget", () => {
+  it("reports input beyond the structural-canonicalization size budget as partial without parsing", () => {
+    // One byte over the fixed budget. JSON.parse would allocate the whole value
+    // before the depth and node caps apply, so the pass must refuse to parse and
+    // report a bounded partial with the artifact's own digest instead.
+    const bytes = Buffer.alloc(MAX_JSON_STRUCTURE_BYTES + 1, 0x20);
+    const facts = canonicalizeArtifactFacts(bytes, "json", budget());
+    expect(facts.detected_format).toBe("json");
+    expect(facts.normalizer).toBe("json-structure");
+    expect(facts.core).toHaveLength(0);
+    expect(facts.coverage.status).toBe("partial");
+    expect(facts.coverage.truncated).toBe(true);
+    expect(facts.limitations.join(" ")).toMatch(
+      /structural-canonicalization budget/u,
+    );
   });
 });
 

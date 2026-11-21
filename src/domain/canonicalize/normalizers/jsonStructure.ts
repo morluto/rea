@@ -18,6 +18,18 @@ import { findDuplicateJsonMemberBounded } from "../../jsonDuplicateMember.js";
 /** Multiplier bounding the pass's own node walk against structural inflation. */
 const NODE_BUDGET_FACTOR = 256;
 const MIN_NODE_BUDGET = 1024;
+/**
+ * Fixed byte budget for structural JSON canonicalization. `JSON.parse` builds
+ * the whole value graph before the depth and node caps can apply, and that
+ * graph is several times its JSON text in memory, so an input bounded only by
+ * the 512 MiB file ceiling could allocate multiple GiB before any cap engages.
+ * Bounding the bytes that reach `decodeStrictUtf8`/`JSON.parse` here keeps that
+ * allocation in check; a larger input is reported as partial with the artifact's
+ * own digest rather than parsed. Sized from measured peak RSS: a pathological
+ * 32 MiB input parses within a few hundred MiB over baseline, and this is twice
+ * the fixed ASAR header budget, leaving headroom for real oversized dumps.
+ */
+export const MAX_JSON_STRUCTURE_BYTES = 32 * 1024 * 1024;
 /** Maximum code units kept for one path segment (object key or array index). */
 const MAX_SEGMENT_UNITS = 128;
 /** Maximum code units kept for a whole structural path name. */
@@ -410,6 +422,27 @@ const canonicalize = (
   bytes: Buffer,
   budget: NormalizerBudget,
 ): NormalizedArtifactFacts => {
+  // Bound the bytes decoded and parsed before allocation. Above this tier the
+  // pass does not parse the structure, since JSON.parse would materialize the
+  // whole value before max_depth/max_facts apply; the artifact's own sha256
+  // still holds the exact bytes.
+  if (bytes.length > MAX_JSON_STRUCTURE_BYTES)
+    return {
+      detected_format: "json",
+      normalizer: "json-structure",
+      core: [],
+      collapsed: [],
+      reductions: [],
+      coverage: {
+        status: "partial",
+        examined: 0,
+        total: null,
+        truncated: true,
+      },
+      limitations: [
+        `JSON is ${String(bytes.length)} bytes, beyond this pass's fixed ${String(MAX_JSON_STRUCTURE_BYTES)}-byte structural-canonicalization budget; JSON.parse would allocate the whole value before the depth and node caps apply, so the structure is left unverified and the artifact's own sha256 holds the exact bytes.`,
+      ],
+    };
   let text: string;
   try {
     // Strict UTF-8: a lossy decode would replace invalid bytes and change keys

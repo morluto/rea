@@ -123,7 +123,7 @@ export const canonicalizeAsarBytes = async (
   if (extents.value.headerBytes > DEFAULT_ASAR_MAX_HEADER_BYTES)
     return classifyAsarInventory([], budget, {
       reachable: new Set(),
-      listingTruncated: true,
+      inventoryTruncated: true,
       extraLimitations: [
         `ASAR header is ${String(extents.value.headerBytes)} bytes, beyond this pass's fixed ${String(DEFAULT_ASAR_MAX_HEADER_BYTES)}-byte header budget; the pass does not parse a larger header, so the header structure is unverified.`,
       ],
@@ -143,7 +143,7 @@ export const canonicalizeAsarBytes = async (
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
       return classifyAsarInventory([], budget, {
         reachable: new Set(),
-        listingTruncated: true,
+        inventoryTruncated: true,
         extraLimitations: [cause.message],
       });
     throw cause;
@@ -164,7 +164,7 @@ export const canonicalizeAsarBytes = async (
   }));
   return classifyAsarInventory(inventory, budget, {
     reachable: reachability.reachable,
-    listingTruncated: false,
+    inventoryTruncated: false,
     ...(reachability.limitation === undefined
       ? {}
       : { extraLimitations: [reachability.limitation] }),

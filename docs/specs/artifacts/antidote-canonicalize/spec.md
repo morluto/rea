@@ -90,17 +90,24 @@ normalizer in the profile, not by forking the engine.
   Pickle framing and the header inventory (depth, node schema and expanded-path
   byte budgets) before any allocation; the pure `asarInventory` classifier then
   classifies the validated entries. Proven reachability from `package.json`
-  `main`/`exports` wins over every heuristic, so a real entrypoint is never
-  mislabeled; only non-reachable abnormally long paths are flagged as
-  unreferenced inflation. A header beyond REA's documented
-  `asar.max_header_bytes` is noted without failing.
+  `main`/`exports` — including nested conditional and subpath `exports` such as
+  an `import`/`require` pair — wins over every heuristic: a reachable entry is
+  never mislabeled a decoy, and it is retained ahead of unverified entries so an
+  earlier flood of members cannot push a real entrypoint into the overflow
+  digest. Only non-reachable abnormally long paths are flagged as unreferenced
+  inflation. A header beyond this pass's fixed header budget (the pass applies a
+  fixed cutoff, not the configurable `asar.max_header_bytes` setting) is noted
+  without failing.
 - **Structured JSON** (`json-structure`): a bounded, iterative, depth- and
   node-capped walk that retains bounded behavior-relevant content (keys and
   scalar values) rather than only a count. Arrays are enumerated without
   materializing every element, so a long array cannot exhaust the heap before
-  the cap. Nesting beyond `max_depth` and children beyond the fact budget are
-  left `unverified` with partial coverage, never asserted as padding. This also
-  covers oversized `tshark`/pcap JSON dumps.
+  the cap. Because `JSON.parse` builds the whole value before those caps apply,
+  input beyond a fixed structural-canonicalization size budget is reported as
+  partial with the artifact's own digest instead of being parsed. Nesting beyond
+  `max_depth` and children beyond the fact budget are left `unverified` with
+  partial coverage, never asserted as padding. This also covers oversized
+  `tshark`/pcap JSON dumps.
 
 Unrecognized inputs retain byte identity and report their structure as
 `unverified`. Every collapse records a reduction whose `group_sha256` identifies

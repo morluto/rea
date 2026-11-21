@@ -26,7 +26,7 @@ const context = (
   overrides: Partial<Parameters<typeof classifyAsarInventory>[2]> = {},
 ) => ({
   reachable: new Set<string>(),
-  listingTruncated: false,
+  inventoryTruncated: false,
   ...overrides,
 });
 
@@ -146,7 +146,7 @@ describe("classifyAsarInventory", () => {
   it("reports a truncated listing with the reader's own guidance", () => {
     const facts = classifyAsarInventory([], budget(), {
       reachable: new Set(),
-      listingTruncated: true,
+      inventoryTruncated: true,
       extraLimitations: [
         "ASAR expanded listing exceeds its budget; set asar.max_listing_bytes.",
       ],
@@ -154,6 +154,9 @@ describe("classifyAsarInventory", () => {
     expect(facts.coverage.status).toBe("partial");
     expect(facts.coverage.truncated).toBe(true);
     expect(facts.limitations[0]).toMatch(/asar\.max_listing_bytes/u);
+    // The classifier does not add its own listing-budget note; the reason is the
+    // caller's, so a header-budget caller is never misattributed to the listing.
+    expect(facts.limitations).toHaveLength(1);
   });
 
   it("distinguishes a packed entry from an unpacked one of the same path and size", () => {
@@ -256,6 +259,33 @@ describe("classifyAsarInventory aggregate byte limits", () => {
   });
 });
 
+describe("classifyAsarInventory reachable retention priority", () => {
+  it("retains a reachable entry listed after the budget is filled by others", () => {
+    // Three non-reachable entries precede the reachable one under max_facts 2.
+    // Sharing one budget in listing order would overflow the reachable entry;
+    // reachable entries must claim the budget before unverified ones.
+    const facts = classifyAsarInventory(
+      [
+        entry("a.js", 1),
+        entry("b.js", 1),
+        entry("c.js", 1),
+        entry("main.js", 1),
+      ],
+      budget({ maxFacts: 2 }),
+      context({ reachable: new Set(["main.js"]) }),
+    );
+    const mainFact = facts.core.find((fact) => fact.name === "main.js");
+    expect(mainFact?.classification).toBe("behavior-relevant");
+    expect(mainFact?.detail).toMatch(/reachable from package\.json/iu);
+    // The non-reachable entries are what overflowed the fact budget, not main.js.
+    expect(
+      facts.reductions.some(
+        (reduction) => reduction.collection === "asar-entry",
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("reachableAsarPaths", () => {
   it("resolves main and exports from a package.json member", () => {
     const { reachable, limitation } = reachableAsarPaths(
@@ -271,6 +301,26 @@ describe("reachableAsarPaths", () => {
     expect(reachable.has("dist/app.js")).toBe(true);
     expect(reachable.has("index.js")).toBe(true);
     expect(limitation).toBeUndefined();
+  });
+
+  it("resolves entrypoints from nested conditional and array exports", () => {
+    // Node's conditional and subpath exports nest objects and arrays; an
+    // entrypoint named only in an import/require pair must still be reachable.
+    const { reachable } = reachableAsarPaths(
+      Buffer.from(
+        JSON.stringify({
+          exports: {
+            ".": { import: "./index.mjs", require: "./index.cjs" },
+            "./feature": ["./feature.mjs", { default: "./feature.js" }],
+          },
+        }),
+        "utf8",
+      ),
+    );
+    expect(reachable.has("index.mjs")).toBe(true);
+    expect(reachable.has("index.cjs")).toBe(true);
+    expect(reachable.has("feature.mjs")).toBe(true);
+    expect(reachable.has("feature.js")).toBe(true);
   });
 
   it("leaves reachability unproven on a malformed manifest", () => {

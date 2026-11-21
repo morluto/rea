@@ -52,9 +52,14 @@ export interface AsarInventoryEntry {
 export interface AsarClassificationContext {
   /** Paths proven reachable from the archive's own package.json. */
   readonly reachable: ReadonlySet<string>;
-  /** True when the owning reader stopped before the whole inventory. */
-  readonly listingTruncated: boolean;
-  /** Reader-supplied limitation details to surface first (e.g., a listing limit). */
+  /**
+   * True when the pass stopped before the whole inventory, for any reason (an
+   * over-budget header, the reader's listing budget, ...). It drives coverage
+   * only; the caller states the specific reason through `extraLimitations`, so
+   * the disclosure is never misattributed to the wrong budget.
+   */
+  readonly inventoryTruncated: boolean;
+  /** Reader-supplied limitation details to surface first (the truncation reason). */
   readonly extraLimitations?: readonly string[];
 }
 
@@ -110,6 +115,8 @@ const sourceFactsSuffix = (entry: AsarInventoryEntry): string => {
 export const MAX_ASAR_MANIFEST_BYTES = 8 * 1024 * 1024;
 /** Maximum distinct reachable module paths retained before reachability is partial. */
 export const MAX_REACHABLE_PATHS = 4096;
+/** Maximum nesting of `exports` conditions walked when proving reachability. */
+const MAX_EXPORTS_DEPTH = 8;
 
 /** Proven-reachable paths plus a note when a budget left reachability partial. */
 export interface AsarReachability {
@@ -146,21 +153,35 @@ export const reachableAsarPaths = (manifest: Buffer): AsarReachability => {
     }
     reachable.add(value.replace(/^\.?\//u, ""));
   };
-  normalize(record["main"]);
-  const exports = record["exports"];
-  if (typeof exports === "string") normalize(exports);
-  else if (exports !== null && typeof exports === "object") {
-    // Iterate members in place rather than copying every export into an array.
-    const exportsRecord = exports as Record<string, unknown>;
-    for (const key in exportsRecord) {
-      if (!Object.hasOwn(exportsRecord, key)) continue;
-      if (reachable.size >= MAX_REACHABLE_PATHS) {
-        capped = true;
-        break;
-      }
-      normalize(exportsRecord[key]);
+  // `exports` may be a bare string, a conditional/subpath object, an array
+  // fallback, or any nesting of these (e.g. an `{ import, require }` pair). Walk
+  // the subtree in place so an entrypoint declared only in a nested condition is
+  // proven reachable rather than mislabeled a decoy, bounded by the reachable-
+  // path count and a fixed depth so a crafted manifest cannot drive the walk.
+  const addExportPaths = (value: unknown, depth: number): void => {
+    if (typeof value === "string") {
+      normalize(value);
+      return;
     }
-  }
+    if (capped || depth >= MAX_EXPORTS_DEPTH) return;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (capped) return;
+        addExportPaths(item, depth + 1);
+      }
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      const exportsRecord = value as Record<string, unknown>;
+      for (const key in exportsRecord) {
+        if (!Object.hasOwn(exportsRecord, key)) continue;
+        if (capped) return;
+        addExportPaths(exportsRecord[key], depth + 1);
+      }
+    }
+  };
+  normalize(record["main"]);
+  addExportPaths(record["exports"], 0);
   return capped
     ? {
         reachable,
@@ -319,11 +340,11 @@ const collectInventoryLimitations = (
   context: AsarClassificationContext,
   state: InventoryState,
 ): string[] => {
+  // The truncation reason is supplied by the caller through extraLimitations,
+  // not assumed here: the pass stops for an over-budget header as well as the
+  // reader's listing budget, so a fixed message would misattribute one to the
+  // other. The coverage object carries the truncated flag programmatically.
   const limitations: string[] = [...(context.extraLimitations ?? [])];
-  if (context.listingTruncated)
-    limitations.push(
-      "The ASAR inventory was truncated by the reader's listing budget; the remaining inventory is unverified.",
-    );
   const entryLimitations = new Set<string>();
   let entryLimitationsOverflow = false;
   for (const entry of entries)
@@ -375,12 +396,19 @@ export const classifyAsarInventory = (
     decoyDigest: createHash("sha256"),
   };
 
-  for (const entry of entries) {
-    // Proven reachability wins over every heuristic, so a real entrypoint with
-    // a long path is never mislabeled an unreachable decoy.
-    if (context.reachable.has(entry.path)) {
+  // Retain proven-reachable entries first, in a pass of their own, so unverified
+  // members listed ahead of a real entrypoint cannot consume the fact budget and
+  // push that entrypoint into the overflow digest. Reachability then wins over
+  // the retention budget, not only over the decoy heuristic: both passes share
+  // one `maxFacts`, but reachable entries claim it before unverified ones.
+  for (const entry of entries)
+    if (context.reachable.has(entry.path))
       retainOrOverflow(state, budget, entry, reachableFact(entry, budget));
-    } else if (entry.path.length > MAX_PLAUSIBLE_ENTRY_PATH_UNITS) {
+
+  for (const entry of entries) {
+    if (context.reachable.has(entry.path)) continue;
+    // A long, unreferenced path reads as inflation, not a real module.
+    if (entry.path.length > MAX_PLAUSIBLE_ENTRY_PATH_UNITS) {
       state.decoyExamined += 1;
       const addedDecoy = addSaturating(state.decoyBytes, sizeBytes(entry));
       state.decoyBytes = addedDecoy.total;
@@ -435,10 +463,10 @@ export const classifyAsarInventory = (
     collapsed: state.collapsed,
     reductions,
     coverage: {
-      status: context.listingTruncated || omitted ? "partial" : "complete",
+      status: context.inventoryTruncated || omitted ? "partial" : "complete",
       examined: entries.length,
-      total: context.listingTruncated ? null : entries.length,
-      truncated: context.listingTruncated,
+      total: context.inventoryTruncated ? null : entries.length,
+      truncated: context.inventoryTruncated,
     },
     limitations,
   };

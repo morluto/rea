@@ -43,10 +43,12 @@ describe("canonicalizeAsarBytes header decoding", () => {
 });
 
 describe("canonicalizeAsarBytes header admission", () => {
-  it("refuses to parse a header beyond asar.max_header_bytes, returning a bounded partial", async () => {
-    // Declare a header larger than REA's documented 16 MiB admission. The pass
-    // must refuse to decode and duplicate-scan it (the memory-exhaustion vector)
-    // before allocating, and report an explicit truncated result instead.
+  it("refuses to parse a header beyond this pass's fixed header budget, not a configurable setting", async () => {
+    // Declare a header larger than this pass's fixed 16 MiB budget. The pass
+    // applies a fixed cutoff, not the configurable asar.max_header_bytes setting
+    // the artifact readers honor, and must refuse to decode and duplicate-scan it
+    // (the memory-exhaustion vector) before allocating, reporting a truncated
+    // result instead.
     const headerJson = Buffer.alloc(16 * 1024 * 1024 + 64, 0x20);
     headerJson[0] = 0x7b; // '{' so the framing is recognized as an ASAR
     const bytes = asarArchiveRaw(headerJson);
@@ -57,6 +59,47 @@ describe("canonicalizeAsarBytes header admission", () => {
     expect(facts.coverage.truncated).toBe(true);
     expect(facts.limitations[0]).toMatch(/fixed .*header budget/iu);
     expect(facts.limitations[0]).toMatch(/unverified/iu);
+    // The reason is the header budget, so the output must not misattribute the
+    // truncation to the reader's listing budget.
+    expect(facts.limitations.join(" ")).not.toMatch(/listing budget/iu);
+  });
+});
+
+describe("canonicalizeAsarBytes reachable retention priority", () => {
+  it("retains a reachable entrypoint listed after more than max_facts other files", async () => {
+    // A realistic layout: package.json names main.js, but main.js is listed
+    // after several unreferenced filler members. Under a small fact budget the
+    // fillers would, in listing order, consume every slot and push the proven
+    // entrypoint into the overflow digest. The pass must retain reachable
+    // entries ahead of unverified ones instead.
+    const manifest = Buffer.from(JSON.stringify({ main: "main.js" }), "utf8");
+    const files: Record<string, unknown> = {
+      "package.json": { size: manifest.length, offset: "0" },
+    };
+    for (let index = 0; index < 6; index += 1)
+      files[`filler${String(index)}.js`] = { size: 1, unpacked: true };
+    files["main.js"] = { size: 2, unpacked: true };
+    const header = Buffer.from(JSON.stringify({ files }), "utf8");
+    const bytes = asarArchiveRaw(header, manifest);
+
+    const facts = await canonicalizeAsarBytes(bytes, {
+      ...budget,
+      maxFacts: 3,
+    });
+
+    const mainFact = facts.core.find((fact) => fact.name === "main.js");
+    expect(mainFact?.classification).toBe("behavior-relevant");
+    expect(mainFact?.detail).toMatch(/reachable from package\.json/iu);
+    // The archive's own manifest is reachable too and must likewise survive.
+    expect(
+      facts.core.find((fact) => fact.name === "package.json")?.classification,
+    ).toBe("behavior-relevant");
+    // The unreferenced fillers are what overflowed the fact budget, not main.js.
+    expect(
+      facts.reductions.some(
+        (reduction) => reduction.collection === "asar-entry",
+      ),
+    ).toBe(true);
   });
 });
 
