@@ -117,7 +117,11 @@ export const managedClientLauncher = (
   );
   return fallbackRuntime === undefined
     ? undefined
-    : { shim: launcher.shim, fallbackRuntime };
+    : {
+        shim: launcher.shim,
+        fallbackRuntime,
+        nodeBinding: launcher.nodeBinding,
+      };
 };
 
 /** Restrictions on the automatically selected launcher shared by setup and mcp add. */
@@ -527,6 +531,7 @@ const inspectDirectRegistrationCommand = (
             managed.shim,
             process.execPath,
             managed.fallbackRuntime,
+            managed.nodeBinding,
           );
     return {
       launch: "managed_shim",
@@ -537,6 +542,7 @@ const inspectDirectRegistrationCommand = (
       entrypoint: shim?.target,
       independentFallback:
         shim !== undefined &&
+        shim.fallbackApplies &&
         entrypointIdentity(managed.fallbackRuntime, process.execPath) ===
           "owned" &&
         !launcherPathWalksThrough(

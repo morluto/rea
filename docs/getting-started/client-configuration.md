@@ -33,8 +33,10 @@ the registration can follow the manager's REA installation across upgrades.
 The wrapper supplies shell helpers by absolute path and binds a verified
 Node path for the shim's fallback. Setup prefers a Node alias that works
 independently of the shim's sibling interpreter, then falls back to the
-installed Node executable. The shim can launch without Node on the client's
-`PATH` if the sibling interpreter is missing or stops resolving.
+installed Node executable. Ordinary shims can use their sibling interpreter
+first and fall back to the saved Node without relying on the client's `PATH`.
+Host-bound shims use the saved Node. A saved manager alias can keep the
+registration working after the hardcoded interpreter is removed.
 
 Setup forwards supported, explicitly selected REA settings into client
 configuration, but does not copy unrelated ambient environment values. To refresh an older registration, preview

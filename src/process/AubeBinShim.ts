@@ -38,29 +38,41 @@ const SHIM_HELPERS = [
   'dirname() { if [ -x /usr/bin/dirname ]; then /usr/bin/dirname "$@"; else /bin/dirname "$@"; fi; }',
   'readlink() { if [ -x /usr/bin/readlink ]; then /usr/bin/readlink "$@"; else /bin/readlink "$@"; fi; }',
 ];
-const SHIM_WITH_NODE = [
-  ...SHIM_HELPERS,
-  'rea_node="$1"',
-  "shift",
-  // Intercept the generated fallback command and keep the client's PATH.
-  // POSIX exec looks up external commands without consulting shell functions.
-  'rea_exec() { if [ "$1" = node ]; then shift; command exec "$rea_node" "$@"; fi; command exec "$@"; }',
-  "alias exec=rea_exec",
-  '. "$0"',
-].join("\n");
+type AubeNodeBinding = "shim" | "saved";
+
+const shimWrapper = (exec: string): string =>
+  [
+    ...SHIM_HELPERS,
+    'rea_node="$1"',
+    "shift",
+    exec,
+    "alias exec=rea_exec",
+    '. "$0"',
+  ].join("\n");
+
+const SHIM_WRAPPERS = {
+  // Preserve the saved unbound wrapper and its sibling-first behavior.
+  shim: shimWrapper(
+    'rea_exec() { if [ "$1" = node ]; then shift; command exec "$rea_node" "$@"; fi; command exec "$@"; }',
+  ),
+  // The verified bound template has one exec, whose arguments select the script.
+  saved: shimWrapper('rea_exec() { shift; command exec "$rea_node" "$@"; }'),
+} satisfies Record<AubeNodeBinding, string>;
 
 export interface AubeShimLauncher {
   readonly shim: string;
   readonly fallbackRuntime: string;
+  readonly nodeBinding: AubeNodeBinding;
 }
 
 export const aubeShimRegistration = ({
   shim,
   fallbackRuntime,
+  nodeBinding,
 }: AubeShimLauncher): readonly string[] => [
   SHIM_SHELL,
   "-c",
-  SHIM_WITH_NODE,
+  SHIM_WRAPPERS[nodeBinding],
   shim,
   fallbackRuntime,
   "mcp",
@@ -70,16 +82,20 @@ export const registeredAubeShim = (
   command: readonly string[],
 ): AubeShimLauncher | undefined => {
   const [, , body, shim, argument, last] = command;
-  if (command[0] !== SHIM_SHELL || command[1] !== "-c" || shim === undefined)
-    return undefined;
   if (
-    command.length === 6 &&
-    body === SHIM_WITH_NODE &&
-    argument !== undefined &&
-    isAbsolute(argument) &&
-    last === "mcp"
+    command.length !== 6 ||
+    command[0] !== SHIM_SHELL ||
+    command[1] !== "-c" ||
+    shim === undefined ||
+    argument === undefined ||
+    !isAbsolute(argument) ||
+    last !== "mcp"
   )
-    return { shim, fallbackRuntime: argument };
+    return undefined;
+  if (body === SHIM_WRAPPERS.shim)
+    return { shim, fallbackRuntime: argument, nodeBinding: "shim" };
+  if (body === SHIM_WRAPPERS.saved)
+    return { shim, fallbackRuntime: argument, nodeBinding: "saved" };
   return undefined;
 };
 
@@ -139,14 +155,12 @@ interface AubeShimFacts {
   readonly target: string;
   /** The sibling slot, before any symlink at that file is followed. */
   readonly siblingRuntime: string;
+  /** Present only for a verified host-bound template. */
+  readonly boundRuntime?: string;
 }
 
-/** The script and sibling slot of a supported Aube Node shim. */
-export const inspectAubeShim = (
-  shim: string,
-  runtime: string,
-  fallbackRuntime?: string,
-): AubeShimFacts | undefined => {
+/** Interpret the supported shell templates once and retain their interpreter facts. */
+const readAubeShim = (shim: string): AubeShimFacts | undefined => {
   if (!isAbsolute(shim)) return undefined;
   const lines = readShim(shim)?.split("\n");
   if (lines?.shift() !== "#!/bin/sh") return undefined;
@@ -164,64 +178,104 @@ export const inspectAubeShim = (
     return undefined;
   if (lines[0] !== undefined && SAFE_NODE_PATH.test(lines[0])) lines.shift();
 
+  let boundRuntime: string | undefined;
+  if (bound) {
+    const exec = /^exec '([^'\n]+)' "\$basedir\/"'([^'\n]+)' "\$@"$/u.exec(
+      lines[0] ?? "",
+    );
+    boundRuntime = exec?.[1];
+    if (
+      lines.length !== 2 ||
+      lines[1] !== "" ||
+      boundRuntime === undefined ||
+      !isAbsolute(boundRuntime) ||
+      exec?.[2] !== target
+    )
+      return undefined;
+  } else {
+    const body = [
+      'if [ -x "$basedir/node" ]; then',
+      ` exec "$basedir/node" "$basedir/${target}" "$@"`,
+      "else",
+      ` exec node "$basedir/${target}" "$@"`,
+      "fi",
+      "",
+    ];
+    if (
+      lines.length !== body.length ||
+      !body.every(
+        (line, index) => line.trimStart() === lines[index]?.trimStart(),
+      )
+    )
+      return undefined;
+  }
+
   try {
     const parent = dirname(shellShimPath(shim));
-    const selectedRuntime = realpathSync.native(runtime);
-    if (bound) {
-      const exec = /^exec '([^'\n]+)' "\$basedir\/"'([^'\n]+)' "\$@"$/u.exec(
-        lines[0] ?? "",
-      );
-      const interpreter = exec?.[1];
-      if (
-        lines.length !== 2 ||
-        lines[1] !== "" ||
-        interpreter === undefined ||
-        interpreter !== selectedRuntime ||
-        exec?.[2] !== target
-      )
-        return undefined;
-      accessSync(interpreter, constants.X_OK);
-    } else {
-      const body = [
-        'if [ -x "$basedir/node" ]; then',
-        ` exec "$basedir/node" "$basedir/${target}" "$@"`,
-        "else",
-        ` exec node "$basedir/${target}" "$@"`,
-        "fi",
-        "",
-      ];
-      if (
-        lines.length !== body.length ||
-        !body.every(
-          (line, index) => line.trimStart() === lines[index]?.trimStart(),
-        )
-      )
-        return undefined;
-      // The shell resolves a Node executable with native traversal. Only the
-      // script argument is later normalized by Node itself.
-      const localRuntime = appendCallerPath(parent, "node");
-      const interpreter = executable(localRuntime)
-        ? localRuntime
-        : fallbackRuntime;
-      if (
-        interpreter === undefined ||
-        !executable(interpreter) ||
-        realpathSync.native(interpreter) !== selectedRuntime
-      )
-        return undefined;
-    }
     return {
+      // Node normalizes the script argument, while the shell selects Node natively.
       target: resolve(parent, target),
       siblingRuntime: appendCallerPath(realpathSync.native(parent), "node"),
+      ...(boundRuntime === undefined ? {} : { boundRuntime }),
     };
   } catch {
     return undefined;
   }
 };
 
+const runtimeMatches = (path: string | undefined, runtime: string): boolean =>
+  path !== undefined && executable(path) && sameFile(path, runtime);
+
+const shimRuntime = (
+  { boundRuntime, siblingRuntime }: AubeShimFacts,
+  fallbackRuntime: string | undefined,
+): string | undefined =>
+  boundRuntime ??
+  (executable(siblingRuntime) ? siblingRuntime : fallbackRuntime);
+
+interface AubeShimInspection {
+  readonly target: string;
+  readonly siblingRuntime: string;
+  readonly fallbackApplies: boolean;
+}
+
+/** Verify the interpreter selected by the saved wrapper, or by the direct shim. */
+export const inspectAubeShim = (
+  shim: string,
+  runtime: string,
+  fallbackRuntime?: string,
+  nodeBinding: AubeNodeBinding = "shim",
+): AubeShimInspection | undefined => {
+  const facts = readAubeShim(shim);
+  if (facts === undefined) return undefined;
+  const interpreter =
+    nodeBinding === "saved"
+      ? fallbackRuntime
+      : shimRuntime(facts, fallbackRuntime);
+  if (!runtimeMatches(interpreter, runtime)) return undefined;
+  return {
+    target: facts.target,
+    siblingRuntime: facts.siblingRuntime,
+    fallbackApplies:
+      nodeBinding === "saved" || facts.boundRuntime === undefined,
+  };
+};
+
+/** A still-installed host binding must agree with the runtime selected for setup. */
+const compatibleBoundRuntime = (bound: string, runtime: string): boolean => {
+  try {
+    statSync(bound);
+  } catch (cause) {
+    // The recognized wrapper can use the selected runtime after the bound Node is removed.
+    return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+  }
+  return runtimeMatches(bound, runtime);
+};
+
 interface AubeShimLocation {
   readonly shim: string;
   readonly siblingRuntime: string;
+  readonly nodeBinding: AubeNodeBinding;
 }
 
 /** The outer generated shim that selects the running installation's script. */
@@ -238,14 +292,20 @@ export const aubeShimLauncher = (
     directory = dirname(directory)
   ) {
     if (basename(directory) !== "node_modules") continue;
-    const candidate = join(directory, ".bin", name);
-    const inspected = inspectAubeShim(
-      candidate,
-      installedRuntime,
-      installedRuntime,
-    );
-    if (inspected !== undefined && sameFile(inspected.target, entrypoint))
-      launcher = { shim: candidate, siblingRuntime: inspected.siblingRuntime };
+    const shim = join(directory, ".bin", name);
+    const facts = readAubeShim(shim);
+    if (facts === undefined || !sameFile(facts.target, entrypoint)) continue;
+    const { boundRuntime, siblingRuntime } = facts;
+    const compatible =
+      boundRuntime === undefined
+        ? runtimeMatches(shimRuntime(facts, installedRuntime), installedRuntime)
+        : compatibleBoundRuntime(boundRuntime, installedRuntime);
+    if (compatible)
+      launcher = {
+        shim,
+        siblingRuntime,
+        nodeBinding: boundRuntime === undefined ? "shim" : "saved",
+      };
   }
   return launcher;
 };

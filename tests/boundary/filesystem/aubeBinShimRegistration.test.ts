@@ -64,6 +64,26 @@ const installWithMise = async (
   };
 };
 
+const bindAubeShimNode = async (
+  shim: string,
+  version: string,
+  runtime: string,
+): Promise<void> => {
+  const target = storeTarget(version);
+  const header = Buffer.from(
+    JSON.stringify({ target, node: runtime, args: [] }),
+  ).toString("hex");
+  const template = aubeShim(target).split("if [ -x")[0]!;
+  const content = template.replace(
+    `# aube-bin-shim v2 target=${target}\n`,
+    `# aube-bin-shim v2 target=${target}\n# aube-node-shim v1 ${header}\n`,
+  );
+  await writeFile(
+    shim,
+    content + `exec '${runtime}' "$basedir/"'${target}' "$@"\n`,
+  );
+};
+
 const registerCommand = (
   entrypointPath: string,
   environment: NodeJS.ProcessEnv = {},
@@ -223,7 +243,11 @@ it.skipIf(process.platform === "win32")(
 
 it
   .skipIf(process.platform === "win32")
-  .each(["marker-only", "different-local-node"] as const)(
+  .each([
+    "marker-only",
+    "different-local-node",
+    "different-bound-node",
+  ] as const)(
   "keeps the explicit runtime for a %s Aube launcher",
   async (cause) => {
     const home = await createTestTempDirectory("rea-aube-unverified-shim-");
@@ -240,6 +264,8 @@ it
       const interpreter = join(dirname(shim), "node");
       await rm(interpreter);
       await writeFile(interpreter, "#!/bin/sh\nexit 44\n", { mode: 0o755 });
+      if (cause === "different-bound-node")
+        await bindAubeShimNode(shim, "6.7.0", interpreter);
     }
     expect(registerCommand(entrypoint)).toEqual([
       process.execPath,
@@ -260,20 +286,12 @@ it.skipIf(process.platform === "win32")(
       join(home, "installs", "rea"),
       "6.7.0",
     );
-    const target = storeTarget("6.7.0");
-    const header = Buffer.from(
-      JSON.stringify({ target, node: process.execPath, args: [] }),
-    ).toString("hex");
-    const template = aubeShim(target).split("if [ -x")[0]!;
-    const content = template.replace(
-      `# aube-bin-shim v2 target=${target}\n`,
-      `# aube-bin-shim v2 target=${target}\n# aube-node-shim v1 ${header}\n`,
-    );
+    const legacy = registerCommand(entrypoint);
     await rm(join(dirname(shim), "node"));
-    await writeFile(
-      shim,
-      content + `exec '${process.execPath}' "$basedir/"'${target}' "$@"\n`,
-    );
+    await bindAubeShimNode(shim, "6.7.0", process.execPath);
+    expect(launchFromClient(legacy)).toBe("6.7.0");
+    await registerWithClaudeCode(home, legacy);
+    expect(await claudeCodeState(home, entrypoint)).toBe("stale");
     const command = registerCommand(entrypoint);
     expect(command.slice(-3)).toEqual([shim, process.execPath, "mcp"]);
     expect(launchFromClient(command)).toBe("6.7.0");
@@ -379,9 +397,11 @@ it
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "keeps an independent Node alias across sibling removal and a runtime upgrade",
-  async () => {
+it
+  .skipIf(process.platform === "win32")
+  .each(["unbound", "host-bound"] as const)(
+  "keeps an independent Node alias after runtime removal with %s Aube binding",
+  async (binding) => {
     const home = await createTestTempDirectory("rea-aube-node-upgrade-");
     const { entrypoint, shim } = await installWithMise(
       join(home, "installs", "rea"),
@@ -403,6 +423,8 @@ it.skipIf(process.platform === "win32")(
     await symlink(oldRuntime, sibling);
     await symlink(sibling, join(dependentBin, "node"));
     await symlink(oldRuntime, fallback);
+    if (binding === "host-bound")
+      await bindAubeShimNode(shim, "6.7.0", oldRuntime);
     await writeFile(entrypoint, "console.log(process.execPath);\n");
 
     const owner = new URL(
@@ -435,6 +457,7 @@ it.skipIf(process.platform === "win32")(
     await symlink(process.execPath, fallback);
     await rm(oldVersion, { recursive: true });
     expect(launchFromClient(command)).toBe(process.execPath);
+    expect(registerCommand(entrypoint, { PATH: stableBin })).toEqual(command);
     await registerWithClaudeCode(home, command);
     expect(await claudeCodeState(home, entrypoint)).toBe("aligned");
 
