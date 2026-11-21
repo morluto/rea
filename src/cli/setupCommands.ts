@@ -89,6 +89,12 @@ const registerSetupCommand = (
         .array(skillClientSchema)
         .default([])
         .describe("Existing client skill destination to update; repeatable"),
+      cursorPlugin: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Opt in to downloading REA as a local Cursor plugin instead of direct setup",
+        ),
       toolFamilies: z
         .string()
         .optional()
@@ -251,6 +257,7 @@ interface SetupCommandOptions {
   readonly installAgentenv: boolean;
   readonly client: readonly string[];
   readonly skillClient: readonly string[];
+  readonly cursorPlugin: boolean;
   readonly toolFamilies?: string | undefined;
   readonly toolCatalogProfile?: McpToolCatalogProfile | undefined;
   readonly allDetected: boolean;
@@ -270,15 +277,38 @@ const runSetupCommand = async (
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
   const hasExplicitScope = setupHasExplicitScope(options);
-  const [{ runSetup }, { systemSetupHost }, { createSystemDoctorHost }] =
-    await Promise.all([
-      import("../application/Setup.js"),
-      import("../application/SetupHost.js"),
-      import("../doctorRuntime.js"),
-    ]);
+  const [
+    { runSetup },
+    { systemSetupHost },
+    { createSystemDoctorHost },
+    { withPluginSetup, preferPluginSetup },
+  ] = await Promise.all([
+    import("../application/Setup.js"),
+    import("../application/SetupHost.js"),
+    import("../doctorRuntime.js"),
+    import("../application/SetupPluginHost.js"),
+  ]);
   const result = await runSetup(
     { ...setupRunOptions(input, interactive, hasExplicitScope), signal },
-    systemSetupHost(createSystemDoctorHost(environment, signal), environment),
+    withPluginSetup(
+      systemSetupHost(createSystemDoctorHost(environment, signal), environment),
+      environment,
+      {
+        // Decide before PluginSetupHost caches a client route: plugins cannot
+        // persist caller-selected registration settings such as catalog profile
+        // or desktop build client environments.
+        preferPlugins: preferPluginSetup({
+          skill: options.skill,
+          skillClientIds: options.skillClient,
+          toolFamilies: options.toolFamilies,
+          toolCatalogProfile: options.toolCatalogProfile,
+          desktopBuild: options.desktopBuild,
+          installAgentenv: options.installAgentenv,
+        }),
+        cursorPlugin: options.cursorPlugin,
+        signal,
+      },
+    ),
     interactive
       ? (actions, context) =>
           confirmInteractiveSetup(actions, options.accessible, context, signal)

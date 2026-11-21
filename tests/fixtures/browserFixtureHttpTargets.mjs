@@ -109,24 +109,29 @@ await withVerifierCleanup(async () => {
   await checkOrdinary();
   if (process.argv[3] === "listener-scope") {
     assert.equal(kind, "storage");
+    assert.equal(site.listenerAddress, "127.0.0.1");
     const named = new URL(origin);
     named.hostname = "localhost";
     const localhost = await send(named.href, ordinary);
     assert.equal(localhost.status, 200);
     assert(localhost.body.includes('id="main-report"'));
-    const address = Object.values(networkInterfaces())
-      .flatMap((entries) => entries ?? [])
-      .find((entry) => entry.family === "IPv4" && !entry.internal);
-    assert(
-      address,
-      "Listener scope probe requires an owned non-loopback IPv4 interface",
-    );
-    const nonLoopback = new URL(origin);
-    nonLoopback.hostname = address.address;
-    await assert.rejects(send(nonLoopback.href, ordinary), {
-      code: "ECONNREFUSED",
-    });
-    console.log("storage: localhost served; non-loopback connection refused");
+    console.log("storage: IPv4 loopback binding verified; localhost served");
+    // Windows firewalls can drop self-connects instead of refusing them.
+    if (process.platform !== "win32") {
+      const address = Object.values(networkInterfaces())
+        .flatMap((entries) => entries ?? [])
+        .find((entry) => entry.family === "IPv4" && !entry.internal);
+      assert(
+        address,
+        "Listener scope probe requires an owned non-loopback IPv4 interface",
+      );
+      const nonLoopback = new URL(origin);
+      nonLoopback.hostname = address.address;
+      await assert.rejects(send(nonLoopback.href, ordinary), {
+        code: "ECONNREFUSED",
+      });
+      console.log("storage: non-loopback connection refused");
+    }
   }
   for (const target of [
     "http://[",

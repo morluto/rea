@@ -12,6 +12,7 @@ Options:
   --install-agentenv                      With --desktop-build, also install the agentenv-framework release bundles target with uv
   --client <array>                        Agent integration to configure; repeat for multiple agents
   --skill-client <array>                  Existing client skill destination to update; repeatable
+  --cursor-plugin                         Opt in to downloading REA as a local Cursor plugin instead of direct setup
   --tool-families <string>                Comma-separated tool families this registration advertises; omit to preserve the saved selection, or advertise every tool if none is saved. To restore every tool, remove REA_MCP_TOOL_FAMILIES from the client's registration and restart the client.
   --tool-catalog-profile <full|hot-cold>  MCP catalog: full advertises every in-scope tool; hot-cold loads tools on demand and requires client catalog refresh. Omit to preserve the saved profile, or use full if none is saved. Restart the client after changing it.
   --all-detected                          Configure every detected supported agent

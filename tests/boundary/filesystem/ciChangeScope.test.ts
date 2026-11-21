@@ -1976,6 +1976,16 @@ it.each([
     },
   ],
   [
+    "scripts/lib/cli-runtime-files.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
     "scripts/lib/runtime-admission.mjs",
     {
       code: true,

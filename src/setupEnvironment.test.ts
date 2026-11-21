@@ -56,7 +56,10 @@ it("plans setup and uninstall against selected home and client overrides", async
   vi.stubEnv("HOME", join(root, "ambient-home"));
   vi.stubEnv("CODEX_HOME", join(root, "ambient-codex"));
   vi.stubEnv("npm_command", "other");
-  const doctor = createDoctorHostFixture({ homeDirectory: environment.HOME });
+  const doctor = createDoctorHostFixture({
+    homeDirectory: environment.HOME,
+    platform: process.platform,
+  });
   const host = systemSetupHost(doctor, environment);
   const result = await runSetup(
     {
@@ -85,7 +88,10 @@ it("plans setup and uninstall against selected home and client overrides", async
     ]),
   );
   expect(host.registrationCommand).toEqual(
-    currentClientRegistrationCommand({ platform: "win32", environment }),
+    currentClientRegistrationCommand({
+      platform: process.platform,
+      environment,
+    }),
   );
   const clients = await systemUninstallHost(
     environment.HOME,
