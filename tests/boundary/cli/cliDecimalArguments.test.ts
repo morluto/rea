@@ -38,7 +38,7 @@ const bounds = (
         : members[0];
     return preferred === undefined
       ? nested
-      : [...nested, { min: preferred, max: preferred }];
+      : [...nested, { min: preferred, max: preferred, candidate: preferred }];
   }
   const min =
     typeof schema.exclusiveMinimum === "number"
