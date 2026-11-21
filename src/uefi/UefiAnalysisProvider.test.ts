@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { SafeOutputTree } from "../resources/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreationFailure.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -2775,3 +2776,69 @@ it.each([
     }
   },
 );
+
+it("surfaces a ProviderCleanupError with completedObservation when closing scratch root fails during decompile_uefi_firmware", async () => {
+  const root = await createTestTempDirectory("rea-uefi-cleanup-scratch-");
+  const path = join(root, "image.fd");
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: buildSection(0x10, MODULE_A),
+  });
+  await writeFile(path, buildFv({ files: [file] }).buffer);
+
+  const provider = new UefiAnalysisProvider();
+  const spy = vi
+    .spyOn(PrivateRuntimeRoot.prototype, "close")
+    .mockRejectedValueOnce(new Error("scratch root close locked"));
+  try {
+    const executed = await provider.execute(
+      decompileRequest(path, join(root, "out")),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error).toBeInstanceOf(ProviderCleanupError);
+      const cleanupErr = executed.error as ProviderCleanupError;
+      expect(cleanupErr.cleanupIncomplete).toBe(true);
+      expect(cleanupErr.completedObservation).toBeDefined();
+      if (
+        cleanupErr.completedObservation &&
+        "kind" in cleanupErr.completedObservation
+      ) {
+        expect(cleanupErr.completedObservation.kind).toBe("uefi");
+      }
+    }
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("surfaces a ProviderCleanupError when closing directory sniff file handle fails", async () => {
+  const root = await createTestTempDirectory("rea-uefi-cleanup-handle-");
+  const efiDir = join(root, "extracted");
+  await mkdir(efiDir, { recursive: true });
+  await writeFile(
+    join(efiDir, "driver.efi"),
+    Buffer.from("MZ" + "\0".repeat(62)),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  const spy = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockRejectedValueOnce(new Error("file handle close error"));
+  try {
+    const executed = await provider.execute(
+      decompileRequest(efiDir, join(root, "out")),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error).toBeInstanceOf(ProviderCleanupError);
+      const cleanupErr = executed.error as ProviderCleanupError;
+      expect(cleanupErr.cleanupIncomplete).toBe(true);
+    }
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+});

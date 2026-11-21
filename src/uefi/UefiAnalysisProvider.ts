@@ -43,7 +43,10 @@ import {
   compareUnicodeCodePoints,
   compositeKey,
 } from "../domain/unicodeCodePointOrder.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -1625,15 +1628,39 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       establishedError = cause;
       throw cause;
     } finally {
-      try {
-        await tempRoot.close();
-      } catch {
-        this.#resources.retain({
-          kind: "private-runtime-root",
-          resource: tempRoot.path,
-          root: tempRoot,
-        });
+      const released = await this.#resources.release({
+        kind: "private-runtime-root",
+        resource: tempRoot.path,
+        root: tempRoot,
+      });
+
+      let cleanupError: ProviderCleanupError | undefined;
+      if (released.kind === "failed") {
+        const completedObservation =
+          publishedResult !== undefined
+            ? {
+                kind: "uefi" as const,
+                result: jsonValueSchema.parse(publishedResult),
+                provenance: {
+                  path: input.path,
+                  sha256: imageSha256,
+                },
+              }
+            : undefined;
+        cleanupError = new ProviderCleanupError(
+          UEFI_PROVIDER_IDENTITY.id,
+          [tempRoot.path],
+          { reason: errorMessage(released.cause) },
+          {
+            cause: released.cause,
+            operation: "decompile_uefi_firmware",
+            ...(completedObservation === undefined
+              ? {}
+              : { completedObservation }),
+          },
+        );
       }
+
       if (signal.aborted) {
         const partialObservation =
           publishedResult !== undefined
@@ -1647,7 +1674,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               }
             : undefined;
 
-        const terminationError: AnalysisError =
+        let terminationError: AnalysisError =
           signal.reason instanceof AnalysisTimeoutError
             ? new AnalysisTimeoutError(
                 "decompile_uefi_firmware",
@@ -1660,6 +1687,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             : cancelledBy("decompile_uefi_firmware", signal, {
                 partialObservation,
               });
+
+        if (cleanupError !== undefined) {
+          terminationError = analysisErrorWithCleanupFailure(
+            terminationError,
+            cleanupError,
+            "decompile_uefi_firmware",
+          );
+        }
 
         if (establishedError instanceof AnalysisError) {
           if (terminationError instanceof AnalysisCancelledError) {
@@ -1674,6 +1709,21 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         if (establishedError === undefined) {
           throw terminationError;
         }
+      }
+
+      if (
+        establishedError instanceof AnalysisError &&
+        cleanupError !== undefined
+      ) {
+        throw analysisErrorWithCleanupFailure(
+          establishedError,
+          cleanupError,
+          "decompile_uefi_firmware",
+        );
+      }
+
+      if (establishedError === undefined && cleanupError !== undefined) {
+        throw cleanupError;
       }
     }
   }
@@ -1846,14 +1896,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         continue;
       } finally {
         if (owner !== undefined) {
-          try {
-            await owner.close();
-          } catch {
-            this.#resources.retain({
-              kind: "file-handle",
-              resource: fullPath,
-              handle: owner,
-            });
+          const released = await this.#resources.release({
+            kind: "file-handle",
+            resource: fullPath,
+            handle: owner,
+          });
+          if (released.kind === "failed") {
+            throw new ProviderCleanupError(
+              UEFI_PROVIDER_IDENTITY.id,
+              [fullPath],
+              { reason: errorMessage(released.cause) },
+              { cause: released.cause, operation: "decompile_uefi_firmware" },
+            );
           }
         }
       }
