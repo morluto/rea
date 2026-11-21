@@ -213,6 +213,7 @@
 * **browser:** consolidate bundle admission and retained facts ([#13227](https://github.com/morluto/rea/issues/13227)) ([6e30062](https://github.com/morluto/rea/commit/6e300622e9d6a2fe68092a050b600f8a1e62719d))
 * **browser:** consolidate local artifact provenance checks ([#13221](https://github.com/morluto/rea/issues/13221)) ([e94eb2c](https://github.com/morluto/rea/commit/e94eb2cb6447897fbffb8024415c54bb55449f2e))
 * **browser:** consolidate native module lifecycle checks ([#13224](https://github.com/morluto/rea/issues/13224)) ([de0418c](https://github.com/morluto/rea/commit/de0418c1f456496749d495eefbf1ef8d417c5f6b))
+* **browser:** consolidate runtime window and request contracts ([#13230](https://github.com/morluto/rea/issues/13230)) ([cfa0498](https://github.com/morluto/rea/commit/cfa04985c210cccc71483df1bf370824c6995bc5))
 * **browser:** consolidate source-map and deadline contracts ([#13220](https://github.com/morluto/rea/issues/13220)) ([7b3fb89](https://github.com/morluto/rea/commit/7b3fb897c0868c198b7c92b1a413c0535240ea8d))
 * **browser:** consolidate worker framing and cleanup checks ([#12885](https://github.com/morluto/rea/issues/12885)) ([87940b1](https://github.com/morluto/rea/commit/87940b192c486551c194fb06b5bf468854d5404e))
 * **browser:** sharpen HAR malformed input and producer guard checks ([#12805](https://github.com/morluto/rea/issues/12805)) ([9ab18ba](https://github.com/morluto/rea/commit/9ab18ba1dae99f690add39190ef964ba8be3232e))
