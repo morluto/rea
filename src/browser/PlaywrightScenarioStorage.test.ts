@@ -1,10 +1,11 @@
 import { EventEmitter } from "node:events";
 
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { waitFor } from "../../tests/support/testWait.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
 
@@ -146,12 +147,17 @@ const fixture = (cdp: FakeCdp) => {
   };
 };
 
-const waitForCall = async (cdp: FakeCdp, method: string): Promise<void> => {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (cdp.calls.some((call) => call.method === method)) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error(`CDP method was not called: ${method}`);
+const waitForCall = (cdp: FakeCdp, method: string) =>
+  waitFor(
+    () => expect(cdp.calls.map((call) => call.method)).toContain(method),
+    { interval: 1 },
+  );
+
+const storageCleanupDeadlineMs = 1_000;
+
+const useStorageClock = () => {
+  vi.useFakeTimers();
+  onTestFinished(() => void vi.useRealTimers());
 };
 
 const createInitializedStorage = async (
@@ -434,6 +440,7 @@ it("retries the owning CDP detach after a failed attempt", async () => {
   await expect(owner?.close(true)).resolves.toEqual({
     loadingStopped: true,
   });
+  await expect(owner?.close(true)).resolves.toEqual({ loadingStopped: true });
   expect(cdp.detachCalls).toBe(2);
   expect(cdp.listenerCount("Debugger.paused")).toBe(0);
   expect(
@@ -451,7 +458,6 @@ it("reports an unconfirmed stop when root initialization is still pending", asyn
     input,
     resolveScenarioSecrets(input, {}),
   );
-  expect(owner).toBeDefined();
   const initialization = owner?.initialize(page as never, contextApi as never);
   await waitForCall(cdp, "Target.getTargetInfo");
 
@@ -463,22 +469,6 @@ it("reports an unconfirmed stop when root initialization is still pending", asyn
     cdp.calls.filter(({ method }) => method === "Page.stopLoading"),
   ).toHaveLength(0);
   expect(cdp.detachCalls).toBe(1);
-});
-
-it("reports and retains a confirmed navigation stop", async () => {
-  const cdp = new FakeCdp();
-  const { page, contextApi } = fixture(cdp);
-  const owner = await createInitializedStorage(contextApi, page);
-
-  await expect(owner?.close(true)).resolves.toEqual({
-    loadingStopped: true,
-  });
-  await expect(owner?.close(true)).resolves.toEqual({
-    loadingStopped: true,
-  });
-  expect(
-    cdp.calls.filter(({ method }) => method === "Page.stopLoading"),
-  ).toHaveLength(1);
 });
 
 it("does not create storage instrumentation when there are no storage seeds", async () => {
@@ -511,7 +501,6 @@ it("detaches after setup cancellation even while script installation is pending"
     resolveScenarioSecrets(input, {}),
     { signal: controller.signal },
   );
-  expect(owner).toBeDefined();
   const initialization = owner?.initialize(page as never, contextApi as never);
   await waitForCall(cdp, "Page.addScriptToEvaluateOnNewDocument");
   controller.abort();
@@ -519,8 +508,11 @@ it("detaches after setup cancellation even while script installation is pending"
     _tag: "AnalysisCancelledError",
   });
 
-  await owner?.close();
+  useStorageClock();
+  const closing = owner?.close();
+  await vi.advanceTimersByTimeAsync(storageCleanupDeadlineMs);
   expect(cdp.detachCalls).toBe(1);
+  await closing;
   expect(
     cdp.calls.some(
       ({ method }) => method === "Page.removeScriptToEvaluateOnNewDocument",
@@ -537,7 +529,6 @@ it("cancels a pending storage-key reply and still releases its CDP owner", async
   const owner = await createInitializedStorage(contextApi, page, input, {
     signal: controller.signal,
   });
-  expect(owner).toBeDefined();
   cdp.holdMethod = "Storage.getStorageKey";
   emitSeedPause(cdp);
   const settling = owner?.settle();
@@ -552,49 +543,53 @@ it("cancels a pending storage-key reply and still releases its CDP owner", async
   expect(cdp.detachCalls).toBe(1);
 });
 
-// The child reply never arrives, so a missing command deadline leaves settle
-// pending until the test's deadline; the message names the value applied.
-it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
-  const cdp = new FakeCdp();
-  const { page, contextApi } = fixture(cdp);
-  const input = browserScenarioSchema.parse({
-    ...scenario(),
-    command_timeout_ms: 40,
-  });
-  const owner = await createInitializedStorage(contextApi, page, input);
-  expect(owner).toBeDefined();
-  cdp.emit("Target.attachedToTarget", {
-    sessionId: "iframe-session",
-    targetInfo: { type: "iframe", targetId: "iframe-target" },
-  });
-  await expect(owner?.settle()).rejects.toMatchObject({
-    _tag: "BrowserObservationError",
-    operation: "capture_browser_scenario",
-    reason: "timeout",
-    userMessage: expect.stringContaining(
-      "CDP command Page.enable exceeded its 40 ms command_timeout_ms",
-    ),
-    remediationAction: expect.stringContaining(
-      "Set command_timeout_ms in the capture-browser-scenario JSON above 40",
-    ),
-  });
-  await owner?.close();
-});
-
-it("releases the CDP owner when an attached target reply remains pending", async () => {
-  const cdp = new FakeCdp();
-  const { page, contextApi } = fixture(cdp);
-  const input = scenario();
-  const owner = await createInitializedStorage(contextApi, page, input);
-  expect(owner).toBeDefined();
-  cdp.emit("Target.attachedToTarget", {
-    sessionId: "iframe-session",
-    targetInfo: { type: "iframe", targetId: "iframe-target" },
-  });
-  await waitForCall(cdp, "Target.sendMessageToTarget");
-  await owner?.close();
-  expect(cdp.detachCalls).toBe(1);
-});
+it.each(["command", "cleanup"] as const)(
+  "bounds a stalled child reply by the %s deadline",
+  async (phase) => {
+    const cdp = new FakeCdp();
+    const { page, contextApi } = fixture(cdp);
+    const input = browserScenarioSchema.parse({
+      ...scenario(),
+      ...(phase === "command" ? { command_timeout_ms: 40 } : {}),
+    });
+    const owner = await createInitializedStorage(contextApi, page, input);
+    if (owner === undefined) throw new Error("Expected storage owner");
+    useStorageClock();
+    cdp.emit("Target.attachedToTarget", {
+      sessionId: "iframe-session",
+      targetInfo: { type: "iframe", targetId: "iframe-target" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cdp.pendingNested).toHaveLength(1);
+    if (phase === "command") {
+      const settling = owner.settle().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(40);
+      const resume = cdp.pendingNested[1];
+      if (resume === undefined)
+        throw new Error("Expected debugger resume after command timeout");
+      cdp.replyNested(resume.sessionId, resume.id);
+      expect(await settling).toMatchObject({
+        _tag: "BrowserObservationError",
+        operation: "capture_browser_scenario",
+        reason: "timeout",
+        userMessage: expect.stringContaining(
+          "CDP command Page.enable exceeded its 40 ms command_timeout_ms",
+        ),
+        remediationAction: expect.stringContaining(
+          "Set command_timeout_ms in the capture-browser-scenario JSON above 40",
+        ),
+      });
+      await owner.close();
+      return;
+    }
+    const closing = owner.close();
+    await vi.advanceTimersByTimeAsync(storageCleanupDeadlineMs - 1);
+    expect(cdp.detachCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(cdp.detachCalls).toBe(1);
+    await closing;
+  },
+);
 
 it("does not fail root storage capture when an OOPIF detaches during setup", async () => {
   const cdp = new FakeCdp();
@@ -626,16 +621,21 @@ it("retains the exact in-flight detach after the bounded wait expires", async ()
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);
   const owner = await createInitializedStorage(contextApi, page);
-  expect(owner).toBeDefined();
   cdp.holdDetach = true;
 
-  await expect(owner?.close()).rejects.toMatchObject({
+  useStorageClock();
+  const first = owner?.close().catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(cdp.detachCalls).toBe(1);
+  await vi.advanceTimersByTimeAsync(storageCleanupDeadlineMs);
+  expect(
+    await Promise.race([first, Promise.resolve("still pending")]),
+  ).toMatchObject({
     _tag: "BrowserObservationError",
     reason: "cleanup_failed",
   });
-  expect(cdp.detachCalls).toBe(1);
   const retry = owner?.close();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await vi.advanceTimersByTimeAsync(0);
   expect(cdp.detachCalls).toBe(1);
   cdp.releaseDetach();
   await retry;
