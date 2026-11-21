@@ -351,6 +351,10 @@ export class McpSessionSlot {
 
   async #handle(request: Request): Promise<Response> {
     if (this.#closed) return SHUTTING_DOWN();
+    // A presented session id is never a new client. Arming here would accept a
+    // stale id as initialize, because the SDK does not validate that header
+    // on an initialization request.
+    if (request.headers.has("mcp-session-id")) return this.#presented(request);
     const initialization = await classifyInitializePost(request);
     if (initialization === "batch")
       return jsonError(
@@ -376,6 +380,22 @@ export class McpSessionSlot {
     // Shutdown may have closed the slot while this request was arming it.
     if (this.#closed) return SHUTTING_DOWN();
     return session.handle(request);
+  }
+
+  /** Answer one request that already named a session. Never arms a transport. */
+  async #presented(request: Request): Promise<Response> {
+    if (this.#draining) await this.#live?.transport.close();
+    if (this.#closed) return SHUTTING_DOWN();
+    const presented = request.headers.get("mcp-session-id");
+    const live = this.#live;
+    if (
+      presented !== null &&
+      live !== undefined &&
+      live.transport.sessionId !== undefined &&
+      live.transport.sessionId === presented
+    )
+      return live.handle(request);
+    return SESSION_NOT_FOUND();
   }
 
   /** Cancel and drain MCP work before any shared provider shutdown hook can run. */

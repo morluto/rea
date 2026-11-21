@@ -182,6 +182,25 @@ const initializeRequest = (): Request =>
     }),
   });
 
+/** A post that already names a session, so it must not open one. */
+const sessionPost = (sessionId: string, body: unknown): Request =>
+  new Request("http://127.0.0.1/mcp", {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+      "mcp-session-id": sessionId,
+    },
+    body: JSON.stringify(body),
+  });
+
+const echoCall = {
+  jsonrpc: "2.0",
+  id: 2,
+  method: "tools/call",
+  params: { name: "echo", arguments: { text: "kept" } },
+};
+
 it("closes a bound listener without announcing it when startup aborts during factory creation", async () => {
   const controller = new AbortController();
   const reason = new Error("startup cancelled");
@@ -271,6 +290,49 @@ it("keeps the instance's shutdown hook when two initialize requests race to repl
   // Only the slot's own close is the shutdown the instance's hook waits for.
   await slot.close();
   expect(shutdownHooks).toBe(1);
+});
+
+it("refuses a session id that is not live and does not arm a transport", async () => {
+  let connections = 0;
+  const server = createEchoServer(() => undefined);
+  const connectServer = server.connect.bind(server);
+  const admitted = phaseGate();
+  server.connect = async (transport) => {
+    connections += 1;
+    await admitted.hold();
+    await connectServer(transport);
+  };
+  const slot = new McpSessionSlot(server, undefined);
+  const absent = await slot.handle(sessionPost("missing-session", echoCall));
+  expect(absent.status).toBe(404);
+  await expect(absent.json()).resolves.toMatchObject({
+    error: { message: "Session not found" },
+  });
+  expect(connections).toBe(0);
+
+  const arming = slot.handle(initializeRequest());
+  await admitted.reached(arming, "transport connect");
+  const during = await slot.handle(sessionPost("missing-session", echoCall));
+  expect(during.status).toBe(404);
+  await expect(during.json()).resolves.toMatchObject({
+    error: { message: "Session not found" },
+  });
+  expect(connections).toBe(1);
+  admitted.release();
+  const opened = await arming;
+  expect(opened.status).toBe(200);
+  const sessionId = opened.headers.get("mcp-session-id");
+  expect(sessionId).toEqual(expect.any(String));
+
+  const wrong = await slot.handle(sessionPost("other-session", echoCall));
+  expect(wrong.status).toBe(404);
+  expect(connections).toBe(1);
+
+  const live = await slot.handle(sessionPost(sessionId ?? "", echoCall));
+  expect(live.status).toBe(200);
+  expect(await live.text()).toContain('"text":"kept"');
+  expect(connections).toBe(1);
+  await slot.close();
 });
 
 it("serves plain routes beside the MCP endpoint and answers unknown paths with 404", async () => {
