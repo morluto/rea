@@ -33,6 +33,7 @@
 * **javascript:** preserve Electron identity beside unrelated alias exhaustion ([#12988](https://github.com/morluto/rea/issues/12988)) ([c2870f9](https://github.com/morluto/rea/commit/c2870f91320721222a6157b5728eaff92a6c5a2a))
 * **javascript:** preserve Webpack slots outside finite writes ([#13006](https://github.com/morluto/rea/issues/13006)) ([91a68a8](https://github.com/morluto/rea/commit/91a68a8b7cd374b0b5a09cf5b57b05b8bb304162))
 * **javascript:** share widened reference-store propagation ([#12990](https://github.com/morluto/rea/issues/12990)) ([fba5e44](https://github.com/morluto/rea/commit/fba5e44bf5f393dcd6bd3269d88d7101f1586ff0))
+* **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
 * **reference:** retain physical Git read failure after cleanup refusal ([#12848](https://github.com/morluto/rea/issues/12848)) ([f4937a0](https://github.com/morluto/rea/commit/f4937a04be3148a7f9a191f1114a8210b7264108))
 * **rizin:** report the required inferior terminal field ([#13019](https://github.com/morluto/rea/issues/13019)) ([d84652e](https://github.com/morluto/rea/commit/d84652e55b43ad7c494efe67d8324b35d4a05695))
 * **setup:** keep MCP launchers usable after session cleanup ([#13185](https://github.com/morluto/rea/issues/13185)) ([1587b46](https://github.com/morluto/rea/commit/1587b46a9faa54b1fac925e0d4c827383e80b1ff))
