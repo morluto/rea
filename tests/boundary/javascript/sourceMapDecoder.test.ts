@@ -159,39 +159,47 @@ it.each([
 ])(
   "starts the $name codec deadline after ownership preparation",
   async ({ selected, expectedMs }) => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const deadlineStates: (boolean | undefined)[] = [];
     let path: string | undefined;
+    const decoder = realDecoder({
+      prepareOwnership: async () => {
+        await vi.advanceTimersByTimeAsync(20_001);
+      },
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create();
+        path = root.path;
+        return root;
+      },
+      launcher: async ({ signal }) => {
+        await vi.advanceTimersByTimeAsync(expectedMs - 1);
+        deadlineStates.push(signal?.aborted);
+        await vi.advanceTimersByTimeAsync(1);
+        deadlineStates.push(signal?.aborted);
+        assertProcessOwnershipInspectionActive(signal);
+        throw new Error(
+          "Expected the codec deadline to interrupt the launcher",
+        );
+      },
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     try {
-      const response = await realDecoder({
-        prepareOwnership: async () => {
-          await vi.advanceTimersByTimeAsync(20_001);
-        },
-        createRuntime: async () => {
-          const root = await PrivateRuntimeRoot.create();
-          path = root.path;
-          return root;
-        },
-        launcher: async ({ signal }) => {
-          await vi.advanceTimersByTimeAsync(expectedMs - 1);
-          expect(signal?.aborted).toBe(false);
-          await vi.advanceTimersByTimeAsync(1);
-          expect(signal?.aborted).toBe(true);
-          throw new Error("launcher settled after deadline");
-        },
-      }).trace({
+      const response = await decoder.trace({
         ...input,
         ...(selected === undefined ? {} : { decodeTimeoutMs: selected }),
       });
-      if (response.ok) throw new Error("expected decode deadline");
+      expect(deadlineStates).toEqual([false, true]);
+      if (response.ok) throw new Error("Expected decode deadline");
       expect(response.error).toMatchObject({
         _tag: "AnalysisTimeoutError",
-        userMessage: expect.stringContaining(String(expectedMs)),
+        timeoutMs: expectedMs,
+        userMessage: expect.stringContaining("decode_timeout_ms"),
+        secondaryFailures: [],
       });
-      expect(response.error.userMessage).toContain("decode_timeout_ms");
-      if (path === undefined) throw new Error("runtime not acquired");
+      if (path === undefined) throw new Error("Runtime not acquired");
       await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       vi.useRealTimers();
+      await decoder.close();
     }
   },
 );
