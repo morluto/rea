@@ -4,8 +4,7 @@ import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { createWebTextArtifact } from "../domain/webContentArtifact.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
+import { webBundleWorkerScript as makeScript } from "../../tests/fixtures/webBundleAnalysis.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -43,26 +42,6 @@ import {
   javaScriptMemberMutationRefusal,
 } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
-
-const makeScript = (text: string): IncludedScript => ({
-  script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
-  frame_id: "frame-1",
-  url: "https://app.example.test/app.js",
-  origin: "https://app.example.test",
-  cdp_hash: null,
-  length: Buffer.byteLength(text),
-  is_module: false,
-  language: "JavaScript",
-  source_map_url: null,
-  resource_reconciliation: {
-    status: "unmatched",
-    reason: "no_exact_sanitized_url",
-  },
-  source: {
-    included: true,
-    artifact: createWebTextArtifact(text, "application/javascript"),
-  },
-});
 
 const sourceWorkerProgram = (
   hangMarker?: string,
