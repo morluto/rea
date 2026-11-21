@@ -102,7 +102,7 @@ it("does not create a previously unused child after the composite closes", async
   expect(child.close).not.toHaveBeenCalled();
 });
 
-it("retains every failed child resource across composite cleanup retries", async () => {
+it("retains child diagnostics across retries and returns the last typed failure unchanged", async () => {
   const left = failingProvider("provider-left", "address_name", "left-db");
   const right = failingProvider("provider-right", "procedure_info", "right-db");
   const client = new CompositeProvider([
@@ -148,6 +148,15 @@ it("retains every failed child resource across composite cleanup retries", async
 
   expect(left.close).toHaveBeenCalledTimes(2);
   expect(right.close).toHaveBeenCalledTimes(2);
+
+  left.close.mockResolvedValue(ok(null));
+  const remaining = await client.close();
+  if (remaining.ok) throw new Error("Expected remaining child cleanup failure");
+  expect(remaining.error).toBe(right.cleanupError);
+  right.close.mockResolvedValue(ok(null));
+  expect(await client.close()).toEqual(ok(null));
+  expect(left.close).toHaveBeenCalledTimes(3);
+  expect(right.close).toHaveBeenCalledTimes(4);
 });
 
 it.each(["live", "released", "unknown"] as const)(
@@ -262,56 +271,29 @@ it.each(["opaque", "already released", "still owned"] as const)(
   },
 );
 
-it("preserves one child's typed cleanup error unchanged", async () => {
-  const child = failingProvider("provider-only", "address_name", "one-db");
-  const client = new CompositeProvider([child.provider]).createClient(
-    executableTarget,
+it("does not close an already released child again when retry options change", async () => {
+  const first = failingProvider("provider-first", "address_name", "first-db");
+  const second = failingProvider(
+    "provider-second",
+    "procedure_info",
+    "second-db",
   );
-  expect((await client.execute("address_name", {})).ok).toBe(true);
-
-  const closed = await client.close();
-
-  if (closed.ok) throw new Error("Expected child cleanup failure");
-  expect(closed.error).toBe(child.cleanupError);
-});
-
-it("does not close a child again after its cleanup succeeded", async () => {
-  const firstIdentity = identity("provider-first");
-  const secondIdentity = identity("provider-second");
-  let secondCloseAttempts = 0;
-  const firstClose = vi.fn(async () => ok(null));
-  const secondClose = vi.fn(async () => {
-    secondCloseAttempts += 1;
-    return secondCloseAttempts === 1
-      ? err(new ProviderCleanupError("provider-second", ["second-db"], {}))
-      : ok(null);
-  });
-  const makeProvider = (
-    providerIdentity: ProviderIdentity,
-    operation: Exclude<AnalysisOperation, "health">,
-    close: AnalysisClient["close"],
-  ): AnalysisProvider => ({
-    identity: () => providerIdentity,
-    capabilities: () => [operationCapability(providerIdentity, operation)],
-    createClient: () => ({
-      execute: async () => ok(createAnalysisExecution(null, providerIdentity)),
-      close,
-    }),
-  });
+  first.close.mockResolvedValue(ok(null));
+  second.close
+    .mockResolvedValueOnce(err(second.cleanupError))
+    .mockResolvedValue(ok(null));
   const client = new CompositeProvider([
-    makeProvider(firstIdentity, "address_name", firstClose),
-    makeProvider(secondIdentity, "procedure_info", secondClose),
+    first.provider,
+    second.provider,
   ]).createClient(executableTarget);
   await client.execute("address_name", {});
   await client.execute("procedure_info", {});
 
   expect((await client.close({ retainDocument: true })).ok).toBe(false);
   expect((await client.close()).ok).toBe(true);
-  expect(firstClose).toHaveBeenCalledTimes(1);
-  expect(secondClose).toHaveBeenCalledTimes(2);
   expect((await client.close({ retainDocument: true })).ok).toBe(true);
-  expect(firstClose).toHaveBeenCalledTimes(1);
-  expect(secondClose).toHaveBeenCalledTimes(2);
+  expect(first.close).toHaveBeenCalledTimes(1);
+  expect(second.close).toHaveBeenCalledTimes(2);
 });
 
 it.each(["busy", "unknown", "idle", undefined] as const)(
