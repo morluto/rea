@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import type { FakeOptions } from "../../fixtures/fakeCdpBrowserTypes.js";
@@ -185,94 +186,141 @@ describe("CdpBrowserProvider: redirect errors: preserving authorized predecessor
 });
 
 it.each([
-  { phase: "redirect", malformed: true, orphan: true },
-  { phase: "redirect", malformed: false, orphan: true },
-  { phase: "redirect", malformed: true, orphan: false },
-  { phase: "redirect", malformed: false, orphan: false },
-  { phase: "response", malformed: true, orphan: false },
-  { phase: "response", malformed: false, orphan: false },
+  { label: "omitted", status: {}, invalid: false },
+  { label: "malformed", status: { status: "302" }, invalid: true },
 ])(
-  "retains $phase facts with missing versus malformed status (orphan=$orphan, malformed=$malformed)",
-  async ({ phase, malformed, orphan }) => {
+  "retains scoped network facts when status is $label",
+  async ({ status, invalid }) => {
+    const phases = [
+      "orphan-redirect",
+      "observed-redirect",
+      "response",
+    ] as const;
+    const cases = [
+      ...phases.map((phase) => ({
+        id: phase,
+        phase,
+        status,
+        mime: "text/plain",
+      })),
+      ...(invalid
+        ? [
+            {
+              id: "fractional",
+              phase: "response" as const,
+              status: { status: 200.5 },
+              mime: "application/json",
+            },
+          ]
+        : []),
+    ];
     const { browser, inspection } = await inspectNetwork({
+      eventsBeforeReply: ["Network.enable"],
       commandEvents(command, origin) {
         if (command.method !== "Network.enable") return undefined;
-        const request = (url: string) => ({
-          requestId: "status-request",
-          timestamp: 1,
-          type: "Fetch",
-          request: { url, method: "GET" },
-          initiator: { type: "other" },
-        });
-        const response = {
-          url: `${origin}/prior`,
-          mimeType: "text/plain",
-          encodedDataLength: 0,
-          ...(malformed ? { status: "302" } : {}),
-        };
-        return [
-          ...(orphan
-            ? []
-            : [
-                {
+        return cases.flatMap(({ id, phase, status, mime }): CdpEvent[] => {
+          const priorUrl = `${origin}/${id}/prior`;
+          const request = (url: string) => ({
+            requestId: id,
+            type: "Fetch",
+            request: { url, method: "GET" },
+            initiator: { type: "other" },
+          });
+          const response = {
+            url: phase === "response" ? `${origin}/${id}/reported` : priorUrl,
+            mimeType: mime,
+            encodedDataLength: 0,
+            headers: { "Content-Length": "123", "Content-Encoding": "gzip" },
+            ...status,
+          };
+          const events: CdpEvent[] = [];
+          if (phase !== "orphan-redirect")
+            events.push({
+              method: "Network.requestWillBeSent",
+              sessionId: command.sessionId,
+              params: { ...request(priorUrl), timestamp: 1 },
+            });
+          events.push(
+            phase === "response"
+              ? {
+                  method: "Network.responseReceived",
+                  sessionId: command.sessionId,
+                  params: { requestId: id, response },
+                }
+              : {
                   method: "Network.requestWillBeSent",
                   sessionId: command.sessionId,
-                  params: request(`${origin}/prior`),
+                  params: {
+                    ...request(`${origin}/${id}/final`),
+                    timestamp: 2,
+                    redirectResponse: response,
+                  },
                 },
-              ]),
-          phase === "redirect"
-            ? {
-                method: "Network.requestWillBeSent",
-                sessionId: command.sessionId,
-                params: {
-                  ...request(`${origin}/final`),
-                  timestamp: 2,
-                  redirectResponse: response,
-                },
-              }
-            : {
-                method: "Network.responseReceived",
-                sessionId: command.sessionId,
-                params: { requestId: "status-request", response },
-              },
-          {
-            method: "Network.loadingFinished",
-            sessionId: command.sessionId,
-            params: {
-              requestId: "status-request",
-              timestamp: 3,
-              encodedDataLength: 0,
-            },
-          },
-        ];
+          );
+          return events;
+        });
       },
     });
-    expect(inspection.network.requests).toHaveLength(1);
-    const retained = inspection.network.requests[0];
-    if (orphan)
-      expect(retained).toMatchObject({
-        url: `${browser.allowedOrigin}/final`,
+
+    const origin = browser.allowedOrigin;
+    expect(inspection.network.requests).toEqual([
+      expect.objectContaining({
+        request_id: "orphan-redirect",
+        url: `${origin}/orphan-redirect/final`,
         redirects: [],
-      });
-    else if (phase === "redirect")
-      expect(retained?.redirects).toContainEqual(
-        expect.objectContaining({
-          response_url: `${browser.allowedOrigin}/prior`,
-          status: null,
-        }),
-      );
-    else
-      expect(retained).toMatchObject({
-        url: `${browser.allowedOrigin}/prior`,
-        status: null,
-      });
-    const invalid = expect.objectContaining({
-      section: "network_requests",
-      reason: "invalid_protocol_value",
-      count: 1,
-    });
-    if (malformed)
-      expect(inspection.completeness.excluded).toContainEqual(invalid);
-    else expect(inspection.completeness.excluded).not.toContainEqual(invalid);
+      }),
+      expect.objectContaining({
+        request_id: "observed-redirect",
+        url: `${origin}/observed-redirect/final`,
+        redirects: [
+          expect.objectContaining({
+            response_url: `${origin}/observed-redirect/prior`,
+            status: null,
+            encoded_data_length: 0,
+            request_timestamp: 1,
+            redirect_event_timestamp: 2,
+          }),
+        ],
+      }),
+      ...cases
+        .filter(({ phase }) => phase === "response")
+        .map(({ id, mime }) =>
+          expect.objectContaining({
+            request_id: id,
+            url: `${origin}/${id}/prior`,
+            status: null,
+            mime_type: mime,
+            redirects: [],
+          }),
+        ),
+    ]);
+    expect(inspection.metadata.responses).toEqual(
+      cases
+        .filter(({ phase }) => phase === "response")
+        .map(({ id, mime }) =>
+          expect.objectContaining({
+            request_id: id,
+            url: `${origin}/${id}/reported`,
+            mime_type: mime,
+            content_length: 123,
+            content_encoding: "gzip",
+          }),
+        ),
+    );
+    expect(
+      inspection.completeness.excluded.filter(
+        ({ section }) => section === "network_requests",
+      ),
+    ).toEqual(
+      invalid
+        ? [
+            {
+              section: "network_requests",
+              reason: "invalid_protocol_value",
+              count: 4,
+            },
+          ]
+        : [],
+    );
   },
 );

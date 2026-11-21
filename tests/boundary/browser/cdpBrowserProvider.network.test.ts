@@ -1123,69 +1123,6 @@ describe("redirect origin policy", () => {
   });
 });
 
-it("keeps response facts when the reported status is malformed", async () => {
-  const browser = await startFakeCdpBrowser({
-    commandEvents(command, origin) {
-      if (command.method !== "Network.enable") return undefined;
-      return [
-        {
-          sessionId: command.sessionId,
-          method: "Network.requestWillBeSent",
-          params: {
-            requestId: "partial-response",
-            request: { url: `${origin}/requested`, method: "GET" },
-            initiator: { type: "parser" },
-          },
-        },
-        {
-          sessionId: command.sessionId,
-          method: "Network.responseReceived",
-          params: {
-            requestId: "partial-response",
-            response: {
-              url: `${origin}/reported-response`,
-              status: 200.5,
-              mimeType: "application/json",
-              headers: {
-                "Content-Type": "application/json",
-                "Content-Length": "123",
-                "Content-Encoding": "gzip",
-              },
-            },
-          },
-        },
-      ];
-    },
-  });
-  trackBrowser(browser);
-  const result = await new CdpBrowserProvider().inspectPage(
-    inspectWebPageInputSchema.parse({
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 0,
-    }),
-  );
-  if (!result.ok) throw result.error;
-  expect(result.value.network.requests).toContainEqual(
-    expect.objectContaining({
-      request_id: "partial-response",
-      url: `${browser.allowedOrigin}/requested`,
-      status: null,
-      mime_type: "application/json",
-    }),
-  );
-  expect(result.value.metadata.responses).toContainEqual(
-    expect.objectContaining({
-      request_id: "partial-response",
-      url: `${browser.allowedOrigin}/reported-response`,
-      mime_type: "application/json",
-      content_length: 123,
-      content_encoding: "gzip",
-    }),
-  );
-});
-
 it("does not persist or join an empty passive request identity", async () => {
   const browser = await startFakeCdpBrowser({
     commandEvents(command, origin) {
