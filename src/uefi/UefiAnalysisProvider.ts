@@ -92,8 +92,11 @@ import {
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import {
   OwnedCommandFailure,
+  ownedCommandResources,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
+import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import type { HostPlatform } from "../platform/HostPlatform.js";
 import {
   processInspectionFailure,
   retainProcessInspectionCleanup,
@@ -459,6 +462,7 @@ const selectTarget = (
 export interface UefiProviderOptions {
   readonly workerModulePath?: string;
   readonly ghidraInstallationHost?: GhidraInstallationHost;
+  readonly hostPlatform?: HostPlatform;
 }
 
 /**
@@ -473,6 +477,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   readonly #resources = new ArtifactResourceScope();
   readonly #workerModulePath: string;
   readonly #ghidraInstallationHost?: GhidraInstallationHost | undefined;
+  readonly #hostPlatform: HostPlatform;
   readonly #inspectionOwner: RetainedResourceScope = {
     retain: (owner, resource) =>
       this.#resources.retain({
@@ -486,12 +491,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   constructor(workerModulePathOrOptions?: string | UefiProviderOptions) {
     if (typeof workerModulePathOrOptions === "string") {
       this.#workerModulePath = workerModulePathOrOptions;
+      this.#hostPlatform = HOST_PLATFORM;
     } else {
       this.#workerModulePath =
         workerModulePathOrOptions?.workerModulePath ??
         fileURLToPath(new URL("./UefiLzmaWorker.js", import.meta.url));
       this.#ghidraInstallationHost =
         workerModulePathOrOptions?.ghidraInstallationHost;
+      this.#hostPlatform =
+        workerModulePathOrOptions?.hostPlatform ?? HOST_PLATFORM;
     }
   }
 
@@ -1634,6 +1642,33 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 Math.min(45_000, Math.max(1_000, timeLeftForGhidra)),
               );
               ghidraOutC = join(tempRoot.path, `mod_${moduleSeq}_decompiled.c`);
+              const ghidraRunId = `rea-ghidra-decomp-${randomUUID()}`;
+              let ghidraCleanupRetained = false;
+              const retainGhidraCleanup = (
+                owner: ProviderProcessSupervisor,
+              ) => {
+                if (ghidraCleanupRetained) return;
+                ghidraCleanupRetained = true;
+                const ownership = owner.launch.ownership;
+                this.#resources.retain({
+                  kind: "lease",
+                  resource:
+                    ownership === undefined
+                      ? `ghidra-process-${ghidraRunId}`
+                      : `ghidra-process-${ownership.runId}`,
+                  lease: new AnalysisCleanupLease(
+                    async () => {
+                      const stopped = await owner.stop();
+                      if (stopped.status === "incomplete") {
+                        throw new Error(stopped.reason);
+                      }
+                    },
+                    ownership === undefined
+                      ? [tempRoot.path]
+                      : ownedCommandResources(ownership, tempRoot.path),
+                  ),
+                });
+              };
               try {
                 const bridgeDir = fileURLToPath(
                   new URL("../../bridge/ghidra", import.meta.url),
@@ -1650,7 +1685,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 const baseJavaEnv = ghidraJavaEnvironment(
                   ghidraInspection?.javaHome ?? undefined,
                   process.env,
-                  HOST_PLATFORM.platform,
+                  this.#hostPlatform.platform,
                 );
                 const ghidraEnv: NodeJS.ProcessEnv = {
                   ...baseJavaEnv,
@@ -1660,7 +1695,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   XDG_CONFIG_HOME: ghidraConfig,
                   XDG_CACHE_HOME: ghidraTemp,
                   XDG_DATA_HOME: ghidraHome,
-                  ...(HOST_PLATFORM.platform === "win32"
+                  ...(this.#hostPlatform.platform === "win32"
                     ? {
                         USERPROFILE: ghidraHome,
                         APPDATA: ghidraConfig,
@@ -1686,7 +1721,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 let execCmd = ghidraBin;
                 let execArgs = ghidraArgs;
                 if (
-                  HOST_PLATFORM.platform === "win32" &&
+                  this.#hostPlatform.platform === "win32" &&
                   isWindowsBatchFile(ghidraBin)
                 ) {
                   const batch = windowsBatchCommand({
@@ -1697,12 +1732,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   execCmd = batch.command;
                   execArgs = [...batch.arguments];
                 }
-                if (HOST_PLATFORM.platform === "win32") {
+                if (this.#hostPlatform.platform === "win32") {
                   await runOwnedCommand(
                     {
                       command: execCmd,
                       arguments: execArgs,
-                      runId: `rea-ghidra-decomp-${randomUUID()}`,
+                      runId: ghidraRunId,
                       windowsVerbatimArguments: true,
                       platform: "win32",
                       env: ghidraEnv,
@@ -1715,6 +1750,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     },
                     {
                       signal,
+                      retainCleanup: (owner) => retainGhidraCleanup(owner),
                     },
                   );
                 } else {
@@ -1798,7 +1834,26 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               } catch (ghidraErr: unknown) {
                 if (signal.aborted) signal.throwIfAborted();
                 if (isAbortOf(ghidraErr, signal)) throw ghidraErr;
-                const rawErrMsg = errorMessage(ghidraErr);
+                if (
+                  ghidraErr instanceof OwnedCommandFailure &&
+                  ghidraErr.cleanupOwner !== undefined
+                ) {
+                  retainGhidraCleanup(ghidraErr.cleanupOwner);
+                }
+                let rawErrMsg = errorMessage(ghidraErr);
+                if (ghidraErr instanceof OwnedCommandFailure) {
+                  const diag =
+                    ghidraErr.snapshot?.stderr.text?.trim() ||
+                    ghidraErr.snapshot?.stdout.text?.trim();
+                  if (diag) {
+                    rawErrMsg = diag;
+                  } else if (
+                    ghidraErr.snapshot?.exitCode !== undefined &&
+                    ghidraErr.snapshot?.exitCode !== null
+                  ) {
+                    rawErrMsg = `${ghidraErr.message} (exit code ${ghidraErr.snapshot.exitCode})`;
+                  }
+                }
                 const budgetMatch =
                   /decompiled C output exceeded (\d+) byte limit/i.exec(
                     rawErrMsg,

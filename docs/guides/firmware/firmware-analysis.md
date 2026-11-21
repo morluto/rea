@@ -147,16 +147,16 @@ The tool accepts two input formats:
 1. **Full firmware images**: Local binary flash images (`.bin`, `.rom`, `.cap`, `.FIb`) up to 128 MiB.
    Volumes, FFS files, and compressed sections are parsed and decoded in-memory.
 2. **Pre-extracted directories**: An existing directory tree containing pre-extracted `.efi`,
-   `.pe`, `.te`, or raw binaries. Directory mode scans recursively, performs bounded 64-byte magic
-   sniffing (checking for PE `MZ` and TE `VZ` headers), ignores files larger than 32 MiB, deterministically
-   sorts modules by path, and classifies them into phases (`SEC`, `PEI`, `DXE`, `SMM`, `APP`, `MISC`) based
+   `.pe`, `.te`, or raw binaries. Directory mode scans recursively, reads up to 4,096 bytes (with
+   another 24-byte read when needed for PE/TE header verification), ignores files larger than 32 MiB,
+   deterministically sorts modules by path, and classifies them into phases (`SEC`, `PEI`, `DXE`, `SMM`, `APP`, `MISC`) based
    on directory hierarchy and GUID metadata.
 
 #### Decompilation and Scaffolding
 
 - **Headless Ghidra C Decompilation**: When an authorized Ghidra installation is detected (`ghidraRun` on
   `PATH` or via `GHIDRA_INSTALL_DIR`), REA runs headless Ghidra with the embedded `ReaDecompileToC.java`
-  script (`CppExporter`) to produce recovered C source code. C output is bounded at 4 MiB per module
+  script (`DecompInterface`) to produce recovered C source code. C output is bounded at 4 MiB per module
   and a 64 MiB aggregate staging budget.
 - **Phase-Correct Scaffolding Fallback**: When Ghidra is absent or decompilation exceeds budget, REA
   generates typed C entry point scaffolding adhering to PI and UEFI specifications:

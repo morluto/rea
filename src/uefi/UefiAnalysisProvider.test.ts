@@ -21,9 +21,13 @@ import {
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { SafeOutputTree } from "../resources/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreationFailure.js";
+import { DirectoryArtifactReader } from "../resources/DirectoryArtifactReader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import * as ExecFileOutputModule from "../process/ExecFileOutput.js";
+import * as OwnedCommandModule from "../process/OwnedCommand.js";
+import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   ghidraProfileInstallationHost,
   verifiedGhidraJavaObservation,
@@ -4937,11 +4941,33 @@ it("marks coverage partial when execution halts early to preserve deadline", asy
   await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
 
   const provider = new UefiAnalysisProvider();
-  let callCount = 0;
-  const nowSpy = vi.spyOn(performance, "now").mockImplementation(() => {
-    callCount++;
-    return callCount <= 10 ? 0 : 58_000;
-  });
+  let simulatedTime = 0;
+  const nowSpy = vi
+    .spyOn(performance, "now")
+    .mockImplementation(() => simulatedTime);
+  const originalOpen = DirectoryArtifactReader.prototype.open;
+  let openedModuleCount = 0;
+  const openSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "open")
+    .mockImplementation(async function (
+      this: unknown,
+      entry: unknown,
+      signal: unknown,
+    ) {
+      const handle = await originalOpen.call(
+        this as any,
+        entry as any,
+        signal as any,
+      );
+      if ((entry as { path: string }).path.endsWith(".efi")) {
+        openedModuleCount++;
+        // Advance clock at the completion of the first module boundary
+        if (openedModuleCount === 1) {
+          simulatedTime = 58_000;
+        }
+      }
+      return handle;
+    });
   try {
     const executed = expectOk(
       await provider.execute(
@@ -4959,6 +4985,7 @@ it("marks coverage partial when execution halts early to preserve deadline", asy
     );
   } finally {
     nowSpy.mockRestore();
+    openSpy.mockRestore();
     await provider.close();
   }
 });
@@ -5020,5 +5047,152 @@ it("matches Ghidra decompilation budget failures before excerpting diagnostics",
       delete process.env.GHIDRA_INSTALL_DIR;
     }
     await provider.close();
+  }
+});
+
+it("preserves stderr diagnostic details from OwnedCommandFailure snapshot on Windows", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-win-ghidra-diag-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless.bat");
+  await writeFile(mockHeadless, "@echo off\r\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const mockSnapshot = {
+    stdout: { text: "", bytes: 0, observedBytes: 0 },
+    stderr: {
+      text: "ERROR: Ghidra encountered decompilation exception in function sub_140001000: OutOfMemory",
+      bytes: 84,
+      observedBytes: 84,
+    },
+    exitCode: 1,
+    signal: null,
+  };
+  const spy = vi
+    .spyOn(OwnedCommandModule, "runOwnedCommand")
+    .mockImplementation(async () => {
+      throw new OwnedCommandFailure(
+        "process",
+        "Command failed; inspect its exit status and diagnostics.",
+        mockSnapshot,
+      );
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+    hostPlatform: { platform: "win32", architecture: "x64" },
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Ghidra encountered decompilation exception"),
+      ]),
+    );
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("retains process cleanup lease when owned Ghidra command cleanup fails on Windows", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-win-ghidra-retain-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless.bat");
+  await writeFile(mockHeadless, "@echo off\r\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  let retainCleanupCalled = false;
+  const mockSupervisor = {
+    launch: {
+      ownership: {
+        runId: "test-run",
+        leaderPid: 1234,
+        processGroupId: 1234,
+      },
+    },
+    stop: vi.fn().mockResolvedValue({ status: "complete" }),
+  } as unknown as ProviderProcessSupervisor;
+
+  const spy = vi
+    .spyOn(OwnedCommandModule, "runOwnedCommand")
+    .mockImplementation(async (_spawn, _limits, options) => {
+      if (options?.retainCleanup) {
+        options.retainCleanup(mockSupervisor, {
+          status: "incomplete",
+          reason: "Cannot terminate Windows process tree",
+        });
+        retainCleanupCalled = true;
+      }
+      throw new OwnedCommandFailure(
+        "process",
+        "Command failed; inspect its exit status and diagnostics.",
+        null,
+        null,
+        undefined,
+        [],
+        mockSupervisor,
+      );
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+    hostPlatform: { platform: "win32", architecture: "x64" },
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    expect(retainCleanupCalled).toBe(true);
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules.length).toBe(1);
+    await provider.close();
+    expect(mockSupervisor.stop).toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
   }
 });
