@@ -31,8 +31,6 @@ export interface FfsFileSpec {
   /** File-integrity mode; "correct"/"wrong" set the 0x40 attribute bit. */
   fileChecksum?: "none" | "correct" | "wrong";
   erasePolarity?: boolean;
-  /** Deliberately corrupt the header checksum byte. */
-  breakHeaderChecksum?: boolean;
 }
 
 const NORMALIZED_COMPLETE_STATE = 0x07;
@@ -69,9 +67,6 @@ export function buildFfsFile(spec: FfsFileSpec): Buffer {
     header[17] = (0x100 - payloadSum(spec.payload) + 1) & 0xff;
   } else {
     header[17] = 0xaa;
-  }
-  if (spec.breakHeaderChecksum === true) {
-    header[16] = ((header[16] ?? 0) + 1) & 0xff;
   }
   return Buffer.concat([header, spec.payload]);
 }

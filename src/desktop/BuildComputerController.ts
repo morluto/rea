@@ -17,10 +17,9 @@ import type {
   BuildControllerAnswer,
   ControlledComputer,
 } from "../ports/BuildComputerControl.js";
+import { AGENTENV_BRIDGE_SOURCES } from "./AgentEnvBridgeSources.js";
 
-const CONTROLLER = fileURLToPath(
-  new URL("../../bridge/agentenv/capture.py", import.meta.url),
-);
+const CONTROLLER = fileURLToPath(AGENTENV_BRIDGE_SOURCES.capture);
 /** The most file bytes one `data/get` brings back, so a large bundle arrives in several answers. */
 const FETCH_BATCH_BYTES = 8 * 1024 * 1024;
 /** Default time allowed for one REA command in the build computer. */

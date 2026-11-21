@@ -45,23 +45,7 @@ cliTest(
 );
 
 cliTest(
-  "resolves a relative code cache path against the working directory",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-v8-cli-rel-");
-    await writeFile(join(root, "module.jsc"), v8CodeCacheFixture());
-    const result = await cli.run({
-      arguments: ["inspect-v8-code-cache", "module.jsc", "--json"],
-      cwd: root,
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(
-      outputSchema.parse(result.json).normalized_result.artifact.path,
-    ).toBe(join(root, "module.jsc"));
-  },
-);
-
-cliTest(
-  "locates retained printable sequences with byte ranges",
+  "locates retained printable bytes from a working-directory-relative cache",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-v8-cli-strings-");
     const path = join(root, "module.jsc");
@@ -73,22 +57,32 @@ cliTest(
     const result = await cli.run({
       arguments: [
         "inspect-v8-code-cache",
-        path,
+        "module.jsc",
         "--minStringBytes",
         "8",
         "--json",
       ],
+      cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = outputSchema.parse(result.json).normalized_result;
     const observation = report.embedded_strings.find((entry) =>
       entry.text.includes(marker),
     );
-    expect(observation).toBeDefined();
-    expect(observation!.offset).toBeGreaterThanOrEqual(report.payload.offset);
-    expect(observation!.offset + observation!.bytes).toBeLessThanOrEqual(
+    if (observation === undefined) throw new Error("Missing printable marker");
+    expect(report.artifact.path).toBe(path);
+    expect(observation.offset).toBeGreaterThanOrEqual(report.payload.offset);
+    expect(observation.offset + observation.bytes).toBeLessThanOrEqual(
       report.artifact.bytes,
     );
+    expect(
+      bytes
+        .subarray(
+          observation.offset,
+          observation.offset + observation.retained_bytes,
+        )
+        .toString("latin1"),
+    ).toBe(observation.text);
   },
 );
 

@@ -37,15 +37,17 @@ export async function waitForNpmRelease(
   pause = setTimeout,
   onAbsent = () => {},
 ) {
-  const attempts = 120;
+  const windowMinutes = 75;
+  const intervalMs = 30_000;
+  const attempts = (windowMinutes * 60_000) / intervalMs + 1;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const published = await lookup(version);
     if (published.status === "published") return published;
     onAbsent(attempt, attempts);
-    if (attempt < attempts) await pause(15_000);
+    if (attempt < attempts) await pause(intervalMs);
   }
   throw new Error(
-    `rea-agents@${version} was not visible on npm after ${attempts} registry lookups`,
+    `rea-agents@${version} was not visible on npm after ${attempts} attempts over ${windowMinutes} minutes. Re-run the failed verification after the version becomes visible.`,
   );
 }
 

@@ -116,8 +116,8 @@ it("waits only for confirmed propagation absence and does not retry errors", asy
     ),
   ).resolves.toEqual(published);
   expect(calls).toBe(2);
-  expect(missing).toEqual([[1, 120]]);
-  expect(pauses).toEqual([15_000]);
+  expect(missing).toEqual([[1, 151]]);
+  expect(pauses).toEqual([30_000]);
   let failures = 0;
   await expect(
     waitForNpmRelease(
@@ -132,6 +132,30 @@ it("waits only for confirmed propagation absence and does not retry errors", asy
     ),
   ).rejects.toThrow("unavailable");
   expect(failures).toBe(1);
+});
+
+it("covers the observed 55-minute publication delay with a finite retry budget", async () => {
+  const published = await readNpmRelease("6.5.0", async () =>
+    Response.json(metadata("6.5.0", "sha512-target", { latest: "6.5.0" })),
+  );
+  let waited = 0;
+  const pause = async (milliseconds: number) => {
+    waited += milliseconds;
+  };
+  await expect(
+    waitForNpmRelease(
+      "6.5.0",
+      async () => (waited < 55 * 60_000 ? { status: "absent" } : published),
+      pause,
+    ),
+  ).resolves.toEqual(published);
+  expect(waited).toBe(55 * 60_000);
+
+  waited = 0;
+  await expect(
+    waitForNpmRelease("6.5.0", async () => ({ status: "absent" }), pause),
+  ).rejects.toThrow("after 151 attempts over 75 minutes");
+  expect(waited).toBe(75 * 60_000);
 });
 
 it.each([

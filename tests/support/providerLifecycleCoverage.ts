@@ -752,7 +752,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "tests/boundary/providers/jebMcpCatalog.test.ts",
-          "reads every JEB catalog page and refreshes the connected engine catalog",
+          "uses the selected discovery budget across handshake and catalog pages",
         ),
         test(
           "tests/boundary/providers/jebMcpConnection.test.ts",
@@ -1343,7 +1343,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/erlangBeamCli.test.ts",
-        "reports BEAM tables and code through the public CLI",
+        "reports BEAM tables and code for a path relative to the CLI working directory",
       ),
     ),
     typedFailures("tests/boundary/filesystem/erlangBeam.test.ts"),
@@ -1609,13 +1609,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "cancels a windowless wait action and cleans up the owned application",
+          "cancels a windowless wait action and cleans up the owned application (%s)",
         ),
       ),
       cleanup: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "keeps cleanup failure precedence over cancellation observed during cleanup",
+          "retains cancellation first observed during failed %s cleanup through retry",
         ),
       ),
       retry: covered(

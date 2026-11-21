@@ -362,7 +362,6 @@ npx rea-agents@latest setup
 - [CLI 및 Evidence](../getting-started/cli.md): 명령, 제공자 선택, 스냅샷, 가져오기/내보내기, 종료 상태.
 - [MCP 계약](../reference/mcp-contracts.md) 및 [에이전트 프롬프트](../getting-started/mcp-prompts.md): 도구 결과, 세션, 안내에 따른 조사.
 - [도구 카탈로그](../reference/mcp-contracts.md#generated-catalog): 빌드 시 생성되는 도구, 제공자, CLI 명령 목록.
-- [로드맵](../development/roadmap.md): 계획된 작업과 기능 진행 상황.
 
 취약점은 [SECURITY.md](../../SECURITY.md)에 따라 보고하세요.
 
@@ -392,7 +391,7 @@ REA는 법을 준수하는 연구, 교육, 상호운용성 확보, 소프트웨�
 
 REA에 도움을 보태 주세요! [issue를 등록](https://github.com/morluto/rea/issues)해 버그나 기능을 제안하거나, [pull request를 보내](https://github.com/morluto/rea/pulls) 코드와 문서를 개선할 수 있습니다.
 
-개발 환경과 검사 항목은 [CONTRIBUTING.md](../../CONTRIBUTING.md), 검증 절차는 [테스트 가이드](../development/testing.md), 프로젝트 구조는 [아키텍처 지도](../architecture/architecture.mermaid)를 참고하세요.
+개발 환경과 검사 항목은 [CONTRIBUTING.md](../../CONTRIBUTING.md), 검증 절차는 [테스트 가이드](../development/testing.md)를 참고하세요.
 
 한국어 번역도 개선할 수 있습니다. 이 README를 수정할 때는 [영문 README](../../README.md)의 명령어, 요구 사항, 분석 범위와 일치하는지 확인하세요. 웹사이트 번역은 `website/locales/ko/messages.po`의 `msgstr` 값을 수정하세요.
 

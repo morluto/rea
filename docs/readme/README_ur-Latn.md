@@ -443,7 +443,6 @@ Exact options, prerequisites aur result contracts ke liye:
 - [CLI aur Evidence](../getting-started/cli.md): commands, provider selection, snapshots, import/export aur exit statuses.
 - [MCP contracts](../reference/mcp-contracts.md) aur [agent prompts](../getting-started/mcp-prompts.md): tool results, sessions aur guided investigations.
 - [Tool catalog](../reference/mcp-contracts.md#generated-catalog): tools, providers aur CLI commands ki generated inventory.
-- [Roadmap](../development/roadmap.md): planned work aur capability trackers.
 
 Security vulnerabilities [SECURITY.md](../../SECURITY.md) ke zariye report karein.
 
@@ -481,8 +480,7 @@ karne ke liye [issue kholein](https://github.com/morluto/rea/issues), ya code au
 docs behtar karne ke liye [pull request bhejein](https://github.com/morluto/rea/pulls).
 
 Development setup aur checks ke liye [CONTRIBUTING.md](../../CONTRIBUTING.md),
-verification lanes ke liye [testing](../development/testing.md) aur project structure ke
-liye [architecture map](../architecture/architecture.mermaid) dekhein.
+verification lanes ke liye [testing](../development/testing.md) dekhein.
 
 ## License
 

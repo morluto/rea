@@ -7,6 +7,15 @@ import { registerHooks } from "node:module";
 import { idaCleanupState } from "./idaVerifierCleanupMock.mjs";
 
 const mockUrl = new URL("./idaVerifierCleanupMock.mjs", import.meta.url).href;
+const mockedBuiltModules = new Set(
+  [
+    "contracts/toolContracts.js",
+    "domain/evidence.js",
+    "domain/native/functionDossier.js",
+    "ida/IdaConfiguration.js",
+    "ida/IdaMcpConnection.js",
+  ].map((module) => new URL(`../../dist/${module}`, import.meta.url).href),
+);
 registerHooks({
   resolve(specifier, context, next) {
     const parent = context.parentURL ? new URL(context.parentURL).pathname : "";
@@ -22,7 +31,7 @@ registerHooks({
       specifier.endsWith("/owned-mcp-stdio.mjs") ||
       specifier.endsWith("/verify-commands.mjs") ||
       specifier.endsWith("/verifier-file-resources.mjs") ||
-      specifier.includes("/dist/")
+      mockedBuiltModules.has(specifier)
     )
       return { shortCircuit: true, url: mockUrl };
     return next(specifier, context);
@@ -56,14 +65,14 @@ try {
     const report = JSON.parse(await fs.readFile(reportPath, "utf8"));
     assert.equal(output.passed, false);
     assert.equal(process.exitCode, 1);
-    assert.equal(idaCleanupState.events.includes("client.close"), true);
-    assert.equal(idaCleanupState.events.includes("transport.close"), true);
     if (failClose)
       assert.deepEqual(report.failure.causes, [
         idaCleanupState.primary.message,
         idaCleanupState.cleanup.message,
       ]);
     else assert.equal(report.failure.message, idaCleanupState.primary.message);
+    assert.equal(idaCleanupState.events.includes("client.close"), true);
+    assert.equal(idaCleanupState.events.includes("transport.close"), true);
     write(
       JSON.stringify({
         failClose,
