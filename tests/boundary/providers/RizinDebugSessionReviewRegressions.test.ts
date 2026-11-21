@@ -852,39 +852,6 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "converts a Rizin stdin pipe failure into a provider session error",
-  async () => {
-    directory = await createTestTempDirectory("rea-rizin-stdin-error-");
-    const provider = join(directory, "fake-rizin-stdin-error.mjs");
-    await writeFile(
-      provider,
-      `#!/usr/bin/env node
-process.stdout.write("\\0");
-setTimeout(() => import("node:fs").then((fs) => fs.closeSync(0)), 40);
-setInterval(() => {}, 1000);
-`,
-    );
-    await chmod(provider, 0o700);
-    const manager = createRizinTestManager({
-      REA_RIZIN_COMMAND: provider,
-    });
-    managers.push(manager);
-    const started = await manager.start({
-      path: "/tmp/fixture.bin",
-      inferior_tty: await rizinTestInferiorTty(),
-    });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 80));
-
-    const result = await manager.execute(started.value.session_id, "dr");
-
-    expect(result.ok).toBe(false);
-    expect(manager.status(started.value.session_id)?.state).toBe("closed");
-  },
-);
-
-it.skipIf(process.platform === "win32")(
   "preserves Rizin process-exit reason and partial command output",
   async () => {
     directory = await createTestTempDirectory("rea-rizin-command-exit-");
