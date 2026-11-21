@@ -1183,11 +1183,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           : boundedRawCleanName;
         let moduleRelDir = `${mod.phase}/${idPrefix}_${boundedName}`;
         let occurrence = 0;
-        while (allocatedRelDirs.has(moduleRelDir)) {
+        while (allocatedRelDirs.has(moduleRelDir.toLowerCase())) {
           occurrence++;
           moduleRelDir = `${mod.phase}/${idPrefix}_${boundedName}_${occurrence}`;
         }
-        allocatedRelDirs.add(moduleRelDir);
+        allocatedRelDirs.add(moduleRelDir.toLowerCase());
 
         const efiRelPath = `${moduleRelDir}/${boundedName}.efi`;
         let relativePayloadFile: string | null = null;
@@ -1277,7 +1277,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         let asmSha256: string | null = null;
         let asmGenerator: "llvm-objdump" | "objdump" | null = null;
         let disassemblyStatus: "ok" | "failed" | "omitted" = "omitted";
-        const tempEfiPath = join(tempRoot.path, `mod_${moduleSeq}.efi`);
+        const scratchBasename = `mod_${moduleSeq}.efi`;
+        const tempEfiPath = join(tempRoot.path, scratchBasename);
         let ghidraOutC: string | undefined;
 
         await writeFile(tempEfiPath, modBytes);
@@ -1328,8 +1329,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 try {
                   const { stdout } = await execFileOutput(
                     "llvm-objdump",
-                    ["-d", "--no-show-raw-insn", tempEfiPath],
+                    ["-d", "--no-show-raw-insn", scratchBasename],
                     {
+                      cwd: tempRoot.path,
                       signal,
                       stopSignal: "SIGTERM",
                       timeout: disasmTimeout,
@@ -1355,8 +1357,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     try {
                       const { stdout } = await execFileOutput(
                         "objdump",
-                        ["-d", tempEfiPath],
+                        ["-d", scratchBasename],
                         {
+                          cwd: tempRoot.path,
                           signal,
                           stopSignal: "SIGTERM",
                           timeout: objdumpTimeout,
@@ -1500,7 +1503,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   ...process.env,
                   _JAVA_OPTIONS: "",
                   JAVA_TOOL_OPTIONS: "",
-                  JDK_JAVA_OPTIONS: "",
+                  JDK_JAVA_OPTIONS: `-Duser.home=${ghidraHome} -Djava.io.tmpdir=${ghidraTemp}`,
                   GHIDRA_JAVA_OPTIONS: "",
                   HOME: ghidraHome,
                   TMPDIR: ghidraTemp,
@@ -1529,6 +1532,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   ghidraOutC,
                   String(Math.min(MAX_DECOMPILE_MODULE_BYTES, remainingCBytes)),
                   "-deleteProject",
+                  "-vmargs",
+                  `-Duser.home=${ghidraHome}`,
+                  `-Djava.io.tmpdir=${ghidraTemp}`,
                 ];
                 let execCmd = ghidraBin;
                 let execArgs = ghidraArgs;
@@ -2061,6 +2067,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       let entries: Dirent[];
       try {
         entries = await readdir(currentDir, { withFileTypes: true });
+        entries.sort((a, b) => compareUnicodeCodePoints(a.name, b.name));
       } catch (dirErr) {
         if (currentDir === input.path) {
           throw new Error(
@@ -2101,13 +2108,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const embeddedGuidRegex =
       /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
-    const manifestModulesByRelPath = new Map<
+    type ManifestModuleEntry = {
+      guid?: string | null | undefined;
+      name?: string | undefined;
+      phase?: string | undefined;
+    };
+    const manifestModulesByExactRelPath = new Map<
       string,
-      {
-        guid?: string | null | undefined;
-        name?: string | undefined;
-        phase?: string | undefined;
-      }
+      ManifestModuleEntry
+    >();
+    const manifestModulesByFoldedRelPath = new Map<
+      string,
+      ManifestModuleEntry
     >();
     let manifestSha256: string | null = null;
     try {
@@ -2121,10 +2133,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             const m = parsed.modules[mIdx];
             if (!m || typeof m !== "object") continue;
             if (typeof m.payload_file !== "string") continue;
-            const norm = m.payload_file
-              .split(/[/\\]+/)
-              .join("/")
-              .toLowerCase();
+            const exactNorm = m.payload_file.split(/[/\\]+/).join("/");
+            const foldedNorm = exactNorm.toLowerCase();
 
             let validGuid: string | null | undefined = undefined;
             if (m.guid !== undefined && m.guid !== null) {
@@ -2166,11 +2176,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               );
             }
 
-            manifestModulesByRelPath.set(norm, {
+            const manifestEntry: ManifestModuleEntry = {
               guid: validGuid,
               name: validName,
               phase: validPhase,
-            });
+            };
+            manifestModulesByExactRelPath.set(exactNorm, manifestEntry);
+            if (!manifestModulesByFoldedRelPath.has(foldedNorm)) {
+              manifestModulesByFoldedRelPath.set(foldedNorm, manifestEntry);
+            }
           }
         }
       }
@@ -2318,12 +2332,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         HOST_PLATFORM.platform === "win32"
           ? relPath.replaceAll("\\", "/")
           : relPath;
-      const manifestLookupKey = relPath
-        .split(/[/\\]+/)
-        .join("/")
-        .toLowerCase();
-      const segments = manifestLookupKey.split("/");
-      const fromManifest = manifestModulesByRelPath.get(manifestLookupKey);
+      const exactLookupKey = relPath.split(/[/\\]+/).join("/");
+      const foldedLookupKey = exactLookupKey.toLowerCase();
+      const segments = foldedLookupKey.split("/");
+      const fromManifest =
+        manifestModulesByExactRelPath.get(exactLookupKey) ??
+        manifestModulesByFoldedRelPath.get(foldedLookupKey);
 
       let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "DXE";
       const manifestPhase = fromManifest?.phase?.toUpperCase();
@@ -2361,7 +2375,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         if (nameMatch && nameMatch[1]) {
           guid = nameMatch[1].toLowerCase();
         } else {
-          const pathMatch = manifestLookupKey.match(embeddedGuidRegex);
+          const pathMatch = foldedLookupKey.match(embeddedGuidRegex);
           if (pathMatch && pathMatch[1]) {
             guid = pathMatch[1].toLowerCase();
           }

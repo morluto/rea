@@ -16,6 +16,7 @@ import { SafeOutputTree } from "../resources/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreationFailure.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import * as ExecFileOutputModule from "../process/ExecFileOutput.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -142,7 +143,14 @@ const decompileRequest = (
   overrides?: {
     readonly max_modules?: number;
     readonly include_disassembly?: boolean;
-    readonly filter_phase?: "all" | "pei" | "dxe" | "smm" | "sec" | "app";
+    readonly filter_phase?:
+      | "all"
+      | "pei"
+      | "dxe"
+      | "smm"
+      | "sec"
+      | "app"
+      | "misc";
   },
 ) =>
   uefiRequestSchema.parse({
@@ -3494,6 +3502,243 @@ it("preserves manifest identity in dirHash for empty module directories", async 
 
     expect(sha1).not.toBe(sha2);
   } finally {
+    await provider.close();
+  }
+});
+
+it("admits MISC as a phase filter for decompilation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-filter-misc-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(join(inDir, "misc"), { recursive: true });
+  await mkdir(join(inDir, "dxe"), { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+
+  await writeFile(join(inDir, "misc", "MiscMod.efi"), pePayload);
+  await writeFile(join(inDir, "dxe", "DxeMod.efi"), pePayload);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          filter_phase: "misc",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result = res.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.phases.misc).toBe(1);
+    expect(result.phases.dxe).toBe(0);
+    expect(result.modules[0]?.phase).toBe("MISC");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("folds output allocation keys to avoid collisions on case-insensitive filesystems", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-case-fold-dest-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(join(inDir, "dir1"), { recursive: true });
+  await mkdir(join(inDir, "dir2"), { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+
+  await writeFile(join(inDir, "dir1", "Foo.efi"), pePayload);
+  await writeFile(join(inDir, "dir2", "foo.efi"), pePayload);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = res.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves distinct POSIX case in manifest lookup keys", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-case-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+
+  await writeFile(join(inDir, "ModA.efi"), pePayload);
+  await writeFile(join(inDir, "moda.efi"), pePayload);
+
+  const manifest = {
+    modules: [
+      {
+        payload_file: "ModA.efi",
+        name: "ModuleUpper",
+        phase: "PEI",
+        guid: "11111111-1111-1111-1111-111111111111",
+      },
+      {
+        payload_file: "moda.efi",
+        name: "ModuleLower",
+        phase: "DXE",
+        guid: "22222222-2222-2222-2222-222222222222",
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = res.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+
+    const modUpper = result.modules.find((m) => m.name === "ModuleUpper");
+    const modLower = result.modules.find((m) => m.name === "ModuleLower");
+    expect(modUpper).toBeDefined();
+    expect(modLower).toBeDefined();
+    expect(modUpper?.guid).toBe("11111111-1111-1111-1111-111111111111");
+    expect(modUpper?.phase).toBe("PEI");
+    expect(modLower?.guid).toBe("22222222-2222-2222-2222-222222222222");
+    expect(modLower?.phase).toBe("DXE");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("passes relative scratch basenames and working directory to disassemblers", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-disasm-basename-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Sample.efi"), pePayload);
+
+  let capturedCommand: string | undefined;
+  let capturedArgs: readonly string[] | undefined;
+  let capturedCwd: string | undefined;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command === "llvm-objdump" || command === "objdump") {
+        capturedCommand = command;
+        capturedArgs = args;
+        capturedCwd =
+          options?.cwd !== undefined ? String(options.cwd) : undefined;
+        return {
+          stdout: "dummy disassembly",
+          stderr: "",
+          stdoutBytes: 17,
+          stderrBytes: 0,
+        };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    expect(
+      (res.value.result as UefiDecompileResult).total_modules_decompiled,
+    ).toBe(1);
+    expect(capturedCommand).toBe("llvm-objdump");
+    expect(capturedArgs).toEqual(["-d", "--no-show-raw-insn", "mod_1.efi"]);
+    expect(capturedCwd).toBeDefined();
+    expect(capturedCwd).not.toContain("mod_1.efi");
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("injects isolated JVM home and tmpdir properties for Ghidra execution", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-jvm-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Sample.efi"), pePayload);
+
+  let ghidraArgsCaptured: readonly string[] | undefined;
+  let ghidraEnvCaptured: NodeJS.ProcessEnv | undefined;
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command.includes("analyzeHeadless")) {
+        ghidraArgsCaptured = args;
+        ghidraEnvCaptured = options?.env;
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "EFI_STATUS UefiMain() { return 0; }");
+        }
+        return {
+          stdout: "decompiled output",
+          stderr: "",
+          stdoutBytes: 17,
+          stderrBytes: 0,
+        };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+    expect(ghidraArgsCaptured).toBeDefined();
+    expect(ghidraArgsCaptured).toContain("-vmargs");
+    expect(ghidraArgsCaptured?.some((a) => a.startsWith("-Duser.home="))).toBe(
+      true,
+    );
+    expect(
+      ghidraArgsCaptured?.some((a) => a.startsWith("-Djava.io.tmpdir=")),
+    ).toBe(true);
+    expect(ghidraEnvCaptured?.JDK_JAVA_OPTIONS).toMatch(
+      /-Duser\.home=.* -Djava\.io\.tmpdir=/,
+    );
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    spy.mockRestore();
     await provider.close();
   }
 });

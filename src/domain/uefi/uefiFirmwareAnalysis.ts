@@ -284,7 +284,7 @@ export const uefiInputSchemas = {
       .default(true)
       .describe("Generate .asm disassembly files alongside .c source files"),
     filter_phase: z
-      .enum(["all", "pei", "dxe", "smm", "sec", "app"])
+      .enum(["all", "pei", "dxe", "smm", "sec", "app", "misc"])
       .default("all")
       .describe("Filter by UEFI initialization phase"),
   }),
