@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -42,6 +42,8 @@ export async function recordStaticTaskContext({
     throw new Error(
       "Run static context recording through npm run ci:static-context",
     );
+  const contextPath = join(outputDirectory, "static-task-context.json");
+  await rm(contextPath, { force: true });
   const options = {
     cwd: root,
     encoding: "utf8",
@@ -97,10 +99,7 @@ export async function recordStaticTaskContext({
       "Static context source does not match the workflow revision",
     );
   await mkdir(outputDirectory, { recursive: true });
-  await writeFile(
-    join(outputDirectory, "static-task-context.json"),
-    JSON.stringify(context, null, 2) + "\n",
-  );
+  await writeFile(contextPath, JSON.stringify(context, null, 2) + "\n");
   return context;
 }
 
