@@ -169,6 +169,11 @@ export const writeOutputTree = async (
       );
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
+      else if (
+        cause instanceof SafeOutputTreeDestinationRefusal &&
+        cause.retainedTree !== undefined
+      )
+        tree = cause.retainedTree;
       throw cause;
     }
     await write(tree);

@@ -1,8 +1,16 @@
-import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { planOutputTree, writeOutputTree } from "./DesktopOutputTree.js";
 
 it("does not create output parents or invoke the writer after cancellation", async () => {
@@ -32,6 +40,41 @@ it("does not create output parents or invoke the writer after cancellation", asy
     operation: refusal.operation,
     cause: reason,
   });
+});
+
+it("keeps a caller's file when an accepted directory is no longer empty", async () => {
+  const root = await createTestTempDirectory("rea-output-late-file-");
+  const directory = join(root, "output");
+  await mkdir(directory);
+  const refusal = {
+    operation: "export_desktop_application",
+    field: "directory",
+  };
+  const plan = await planOutputTree(directory, refusal);
+  const keep = join(directory, "keep");
+  await writeFile(keep, "existing");
+  let written = false;
+  const failure = await writeOutputTree(
+    plan,
+    async () => {
+      written = true;
+    },
+    refusal,
+    undefined,
+  ).catch((cause: unknown) => cause);
+  expect(written).toBe(false);
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(failure instanceof ArtifactReaderFailure))
+    throw new Error("expected retained output cleanup");
+  expect(failure.cleanup?.resources).toEqual([directory]);
+  expect(await readFile(keep, "utf8")).toBe("existing");
+  const lease = failure.cleanupLeases?.[0];
+  if (lease === undefined) throw new Error("expected a cleanup lease");
+  await expect(lease.release()).rejects.toThrow();
+  expect(await readFile(keep, "utf8")).toBe("existing");
+  await unlink(keep);
+  await lease.release();
+  expect(await readdir(directory)).toEqual([]);
 });
 
 it("refuses a regular file in the output parent path instead of failing a host write", async () => {

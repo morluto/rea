@@ -188,10 +188,13 @@ export class SafeOutputTree {
       await assertPathIdentity(canonicalOutput, rootIdentity);
       return tree;
     } catch (cause: unknown) {
-      // The caller still owns this directory. A refusal must not hand back a
-      // tree whose rollback treats the caller's files as an unowned remainder.
-      if (!created && cause instanceof SafeOutputTreeDestinationRefusal)
+      // The caller still owns this directory. Keep the tree on the refusal so
+      // a writer can retry verification, and do not wrap it as a creation
+      // failure. Rollback preserves the root.
+      if (!created && cause instanceof SafeOutputTreeDestinationRefusal) {
+        cause.retainTree(tree);
         throw cause;
+      }
       throw new SafeOutputTreeCreationFailure(cause, tree);
     }
   }
