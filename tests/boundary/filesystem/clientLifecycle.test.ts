@@ -84,6 +84,7 @@ const DETECTED_CLIENT_ORDER = [
   "junie",
   "goose",
   "kilo",
+  "muse",
   "grok_bot",
 ];
 
