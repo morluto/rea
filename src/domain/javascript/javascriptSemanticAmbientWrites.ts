@@ -281,10 +281,45 @@ interface AmbientReferenceFacts {
   readonly arrayIteratorReceiver: (node: t.Node) => boolean;
 }
 
+interface WidenedSummarySlot {
+  readonly word: number;
+  readonly bit: number;
+}
+
+/** Index covered roots in the direction queried by the live walk. */
+class WidenedSummaryCoverage {
+  readonly #roots = new WeakMap<t.Node, Map<number, number>>();
+  #nextSlot = 0;
+
+  register(roots: Iterable<t.Node>): WidenedSummarySlot {
+    const index = this.#nextSlot++;
+    const word = Math.floor(index / 32);
+    const bit = 1 << (index % 32);
+    for (const root of roots) {
+      let memberships = this.#roots.get(root);
+      if (memberships === undefined) {
+        memberships = new Map();
+        this.#roots.set(root, memberships);
+      }
+      memberships.set(word, (memberships.get(word) ?? 0) | bit);
+    }
+    return { word, bit };
+  }
+
+  covered(root: t.Node, active: ReadonlyMap<number, number>): boolean {
+    if (active.size === 0) return false;
+    const memberships = this.#roots.get(root);
+    if (memberships === undefined) return false;
+    for (const [word, bits] of memberships)
+      if ((bits & (active.get(word) ?? 0)) !== 0) return true;
+    return false;
+  }
+}
+
 interface WidenedStoreEffects {
   readonly frontier: ReadonlySet<t.Node>;
-  readonly roots: WeakMap<t.Node, AmbientPath | null>;
-  readonly paths: readonly AmbientPath[];
+  readonly slot: WidenedSummarySlot;
+  readonly paths: ReadonlyMap<string, AmbientPath>;
   readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
   readonly projectedSpread: boolean;
 }
@@ -340,6 +375,7 @@ export const createAmbientPathResolver = (
   const returnedReferences = createSemanticReturnedReferences(state);
   // Group values are read at their own sites. Once reference stores settle,
   // their any-depth effects are independent of the outer capture and suffix.
+  const coverage = new WidenedSummaryCoverage();
   const widenedEffects = new WeakMap<WidenedStoreGroup, WidenedStoreEffects>();
   const widenedEscapes = new WeakMap<WidenedStoreGroup, WidenedStoreEffects>();
   const resolve = (
@@ -360,7 +396,14 @@ export const createAmbientPathResolver = (
   ): AmbientResolution => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
-    const frontier = summary === undefined ? undefined : new Set<t.Node>();
+    const summaryWalk =
+      summary === undefined
+        ? undefined
+        : {
+            frontier: new Set<t.Node>(),
+            roots: new Map<t.Node, AmbientPath | null>(),
+          };
+    const frontier = summaryWalk?.frontier;
     const result = new Map<string, AmbientPath>();
     const callerPaths = new Map<string, AmbientPath>();
     let hasLocalIdentity = false;
@@ -413,7 +456,7 @@ export const createAmbientPathResolver = (
     const expanded =
       receiver?.kind === "widened"
         ? receiver.expanded
-        : new WeakMap<t.Node, AmbientPath | null>();
+        : (summaryWalk?.roots ?? new WeakMap<t.Node, AmbientPath | null>());
     const expandedAtCapture =
       receiver?.kind === "widened" && capture !== undefined
         ? new WeakMap<t.Node, AmbientPath | null>()
@@ -421,7 +464,7 @@ export const createAmbientPathResolver = (
     const queuedGroups = new Set<WidenedStoreGroup>();
     // Apply summaries in worklist order. A completed summary dominates later
     // visits to its roots just as expanding them at any depth would.
-    const summarizedRoots: WeakMap<t.Node, AmbientPath | null>[] = [];
+    const activeSummaries = new Map<number, number>();
     // Array-receiver reads filter stores at their capture. Tentative spread
     // reads can restore a finite prototype path from an any-depth projection.
     const summarizeGroups =
@@ -448,7 +491,7 @@ export const createAmbientPathResolver = (
         if (
           root !== undefined &&
           ((readsAtSelf ? expanded : expandedAtCapture).get(root) === null ||
-            summarizedRoots.some((roots) => roots.has(root)))
+            coverage.covered(root, activeSummaries))
         )
           return;
       }
@@ -507,13 +550,13 @@ export const createAmbientPathResolver = (
           );
         }
         if (effects !== undefined) {
-          for (const path of effects.paths)
-            result.set(JSON.stringify(path), path);
+          for (const [key, path] of effects.paths) result.set(key, path);
           for (const reason of effects.unknownReasons)
             unknownReasons.add(reason);
           if (observes === "ambient-effects" && effects.projectedSpread)
             projectedSpread = true;
-          summarizedRoots.push(effects.roots);
+          const { word, bit } = effects.slot;
+          activeSummaries.set(word, (activeSummaries.get(word) ?? 0) | bit);
           for (const next of effects.frontier) queue(next, undefined, true);
         }
         continue;
@@ -561,7 +604,7 @@ export const createAmbientPathResolver = (
               ]
             : current.capturedSelections;
         const expansions = current.readsAtSelf ? expanded : expandedAtCapture;
-        const previous = summarizedRoots.some((roots) => roots.has(root))
+        const previous = coverage.covered(root, activeSummaries)
           ? null
           : expansions.get(root);
         if (previous !== undefined) {
@@ -1113,11 +1156,12 @@ export const createAmbientPathResolver = (
     const paths = [...result.values()];
     // A separate walk cannot let a tentative selection mask an ordinary one
     // in the identity cache, or publish unrelated tentative ambient paths.
-    if (frontier !== undefined)
+    if (summaryWalk !== undefined)
       summary?.retain({
-        frontier,
-        roots: expanded,
-        paths,
+        frontier: summaryWalk.frontier,
+        slot: coverage.register(summaryWalk.roots.keys()),
+        // The summary owns the canonical keys produced by retain().
+        paths: result,
         unknownReasons: [...unknownReasons],
         projectedSpread,
       });

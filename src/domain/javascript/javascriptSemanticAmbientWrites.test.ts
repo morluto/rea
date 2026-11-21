@@ -1,5 +1,5 @@
 import * as t from "@babel/types";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
@@ -342,6 +342,103 @@ it.each([
   const small = work(32);
   expect(small).toBeGreaterThan(0);
   expect(work(64)).toBeLessThan(3 * small);
+});
+
+it("merges widened effects with their existing canonical path keys", () => {
+  const work = (count: number): number => {
+    const source =
+      widenedStoreCycle +
+      Array.from(
+        { length: count },
+        (_, index) => `a[k[0]][k[1]].p${index}=witness${index};`,
+      ).join("") +
+      "consume(a);".repeat(16);
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected widened path fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    const stringify = vi.spyOn(JSON, "stringify");
+    let keys: number;
+    try {
+      completeSemanticSteps(index.indexAmbientWritesSteps());
+      keys = stringify.mock.calls.filter(
+        ([path]) =>
+          Array.isArray(path) &&
+          path[0] === "global" &&
+          typeof path[1] === "string" &&
+          path[1].startsWith("witness"),
+      ).length;
+    } finally {
+      stringify.mockRestore();
+    }
+    const last = parsed.program.body.at(-1);
+    if (!t.isExpressionStatement(last))
+      throw new Error("Expected final escape site");
+    expect(
+      new Set(
+        index.bindings.ambientEscapeEffects
+          .filter(({ node }) => node === last.expression)
+          .map(({ path }) => path[1]),
+      ),
+    ).toEqual(new Set(Array.from({ length: count }, (_, i) => `witness${i}`)));
+    return keys;
+  };
+
+  const small = work(64);
+  expect(small).toBeGreaterThan(0);
+  expect(work(128)).toBeLessThan(3 * small);
+});
+
+it("queries settled widening coverage without scanning unrelated groups", () => {
+  const work = (count: number): number => {
+    const groups = Array.from({ length: count }, (_, index) => ({
+      a: `a${index}`,
+      b: `b${index}`,
+      value: index === 0 ? "window" : index === count - 1 ? "module" : "{}",
+    }));
+    const source =
+      "var k=[];" +
+      groups
+        .map(
+          ({ a, b, value }) =>
+            `var ${a}=[],${b}=[];${a}[k[0]]=${b};${b}[k[0]]=${a};${a}[k[0]][k[1]].slot=${value};`,
+        )
+        .join("") +
+      `consume([${groups.map(({ a }) => a).join(",")}]);`;
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected widened groups fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+
+    // The old resolver used one WeakMap membership probe per earlier group
+    // for each root reached by the escape query. Count those probes without
+    // wall-clock thresholds, and check that both distant groups contribute.
+    const original = WeakMap.prototype.has;
+    let probes = 0;
+    WeakMap.prototype.has = function (key) {
+      probes += 1;
+      return original.call(this, key);
+    };
+    try {
+      completeSemanticSteps(index.indexAmbientWritesSteps());
+    } finally {
+      WeakMap.prototype.has = original;
+    }
+    const call = parsed.program.body.at(-1);
+    const escape = t.isExpressionStatement(call) ? call.expression : undefined;
+    expect(
+      index.bindings.ambientEscapeEffects
+        .filter(({ node }) => node === escape)
+        .map(({ path }) => path[0])
+        .sort(),
+    ).toEqual(["commonjs-module", "global"]);
+    return probes;
+  };
+
+  const small = work(24);
+  expect(work(48)).toBeLessThanOrEqual(3 * small + 96);
 });
 
 it("propagates widened values through reference stores discovered later", () => {
