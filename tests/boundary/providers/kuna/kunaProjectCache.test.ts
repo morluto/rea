@@ -627,68 +627,72 @@ it("blocks repeated cache reads while a retained hash descriptor cannot close", 
   await cache.close();
 });
 
-it("keeps hash cleanup aggregates pending through retained staging removal", async () => {
-  const { installation, cacheRoot, cache, target } = await fixture(
-    "rea-kuna-cache-hash-staging-owner-",
-  );
-  const persistentCloseCause = new Error(
-    "persistent staging hash close failure",
-  );
-  const close = vi
-    .spyOn(OwnedFileHandle.prototype, "close")
-    .mockRejectedValue(persistentCloseCause);
-  let stagingPath: string | undefined;
-  let retainedPath: string | undefined;
-  let buildFailure: AnalysisError | undefined;
-  const aggregates: ProviderCleanupError[] = [];
-  try {
-    const built = await cache.build(
-      withKunaProjectDeadline({
-        installation,
-        ...(await target("program")),
-      }),
+// Root ignores the read-only staging directory, so the cleanup failure this case needs never happens.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "keeps hash cleanup aggregates pending through retained staging removal",
+  async () => {
+    const { installation, cacheRoot, cache, target } = await fixture(
+      "rea-kuna-cache-hash-staging-owner-",
     );
-    if (built.ok) throw new Error("Expected the retained hash close to fail");
-    expect(built.error.cleanupIncomplete).toBe(true);
-    buildFailure = built.error;
+    const persistentCloseCause = new Error(
+      "persistent staging hash close failure",
+    );
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockRejectedValue(persistentCloseCause);
+    let stagingPath: string | undefined;
+    let retainedPath: string | undefined;
+    let buildFailure: AnalysisError | undefined;
+    const aggregates: ProviderCleanupError[] = [];
+    try {
+      const built = await cache.build(
+        withKunaProjectDeadline({
+          installation,
+          ...(await target("program")),
+        }),
+      );
+      if (built.ok) throw new Error("Expected the retained hash close to fail");
+      expect(built.error.cleanupIncomplete).toBe(true);
+      buildFailure = built.error;
 
-    const [staging] = await entries(cacheRoot, "staging");
-    expect(staging).toBeDefined();
-    if (staging === undefined) throw new Error("Missing retained staging");
-    stagingPath = join(cacheRoot, "staging", staging);
-    await chmod(stagingPath, 0o500);
+      const [staging] = await entries(cacheRoot, "staging");
+      expect(staging).toBeDefined();
+      if (staging === undefined) throw new Error("Missing retained staging");
+      stagingPath = join(cacheRoot, "staging", staging);
+      await chmod(stagingPath, 0o500);
 
-    const firstClose = await cache.close();
-    if (firstClose.ok) throw new Error("Close lost the retained descriptor");
-    aggregates.push(firstClose.error);
+      const firstClose = await cache.close();
+      if (firstClose.ok) throw new Error("Close lost the retained descriptor");
+      aggregates.push(firstClose.error);
 
-    close.mockRestore();
-    const stagingClose = await cache.close();
-    if (stagingClose.ok) throw new Error("Close lost the retained staging");
-    aggregates.push(stagingClose.error);
-    retainedPath = stagingClose.error.cleanupResources[0];
-    expect(retainedPath).toBeDefined();
-    if (retainedPath === undefined)
-      throw new Error("Missing failed staging cleanup resource");
-    expect(buildFailure.cleanupIncomplete).toBe(false);
-    for (const failure of aggregates)
-      expect(failure.cleanupIncomplete).toBe(true);
+      close.mockRestore();
+      const stagingClose = await cache.close();
+      if (stagingClose.ok) throw new Error("Close lost the retained staging");
+      aggregates.push(stagingClose.error);
+      retainedPath = stagingClose.error.cleanupResources[0];
+      expect(retainedPath).toBeDefined();
+      if (retainedPath === undefined)
+        throw new Error("Missing failed staging cleanup resource");
+      expect(buildFailure.cleanupIncomplete).toBe(false);
+      for (const failure of aggregates)
+        expect(failure.cleanupIncomplete).toBe(true);
 
-    await chmod(retainedPath, 0o700);
-    expect(await cache.close()).toEqual({ ok: true, value: null });
-    expect(buildFailure.cleanupIncomplete).toBe(false);
-    expect(
-      aggregates.every(({ cleanupIncomplete }) => !cleanupIncomplete),
-    ).toBe(true);
-  } finally {
-    close.mockRestore();
-    if (stagingPath !== undefined)
-      await chmod(stagingPath, 0o700).catch(() => undefined);
-    if (retainedPath !== undefined)
-      await chmod(retainedPath, 0o700).catch(() => undefined);
-    await cache.close();
-  }
-});
+      await chmod(retainedPath, 0o700);
+      expect(await cache.close()).toEqual({ ok: true, value: null });
+      expect(buildFailure.cleanupIncomplete).toBe(false);
+      expect(
+        aggregates.every(({ cleanupIncomplete }) => !cleanupIncomplete),
+      ).toBe(true);
+    } finally {
+      close.mockRestore();
+      if (stagingPath !== undefined)
+        await chmod(stagingPath, 0o700).catch(() => undefined);
+      if (retainedPath !== undefined)
+        await chmod(retainedPath, 0o700).catch(() => undefined);
+      await cache.close();
+    }
+  },
+);
 
 it("shares one Kuna run between concurrent requests for one export", async () => {
   const { kuna, installation, cache, target } = await fixture(
@@ -1065,7 +1069,10 @@ it("sweeps retired entries but preserves staging with unresolved process ownersh
   expect(await entries(cacheRoot, "trash")).toEqual([]);
 });
 
-it.each(["sweep", "close"] as const)(
+// Root ignores the read-only retired directory, so the cleanup failure this case needs never happens.
+test
+  .skipIf(process.platform === "win32" || process.getuid?.() === 0)
+  .each(["sweep", "close"] as const)(
   "keeps failed file cleanup owned until recovery through %s",
   async (recovery) => {
     const { installation, cacheRoot, cache, target } = await fixture(

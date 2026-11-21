@@ -1087,47 +1087,51 @@ it("reports an abandoned export's unproven cleanup from close", async () => {
   expect(await client.close()).toEqual({ ok: true, value: null });
 });
 
-it("retries the abandoned export's file cleanup before reporting close success", async () => {
-  const launcher: KunaProcessLauncher = async (options) => {
-    const spawned = await spawnOwnedProviderProcess(options);
-    if (options.arguments[0] !== "decompile-project") return spawned;
-    return {
-      ...spawned,
-      cleanup: async () => {
-        const stopped = await cleanupOwnedProcessGroup(spawned.ownership);
-        // The child is stopped, but its private input cannot yet be removed.
-        await chmod(options.cwd ?? "", 0o500);
-        return stopped;
-      },
+// Root ignores the read-only export directory, so the cleanup failure this case needs never happens.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "retries the abandoned export's file cleanup before reporting close success",
+  async () => {
+    const launcher: KunaProcessLauncher = async (options) => {
+      const spawned = await spawnOwnedProviderProcess(options);
+      if (options.arguments[0] !== "decompile-project") return spawned;
+      return {
+        ...spawned,
+        cleanup: async () => {
+          const stopped = await cleanupOwnedProcessGroup(spawned.ownership);
+          // The child is stopped, but its private input cannot yet be removed.
+          await chmod(options.cwd ?? "", 0o500);
+          return stopped;
+        },
+      };
     };
-  };
-  const { kuna, cacheRoot, open } = await session(
-    "rea-kuna-close-export-files-",
-    { project: "hang" },
-    {},
-    launcher,
-  );
-  const client = open();
-  try {
-    await run(client, "procedure_pseudo_code", { procedure: "main" });
-    await expect.poll(() => exportsOf(kuna)).toHaveLength(1);
-    expect(await client.close()).toMatchObject({
-      ok: false,
-      error: { cleanupIncomplete: true },
-    });
-    expect((await client.close()).ok).toBe(false);
-  } finally {
-    const restore = async (directory: string): Promise<void> => {
-      await chmod(directory, 0o700);
-      for (const entry of await readdir(directory, { withFileTypes: true }))
-        if (entry.isDirectory()) await restore(join(directory, entry.name));
-    };
-    await restore(cacheRoot);
-    expect(await client.close()).toEqual({ ok: true, value: null });
-  }
-  expect(await readdir(join(cacheRoot, "staging"))).toEqual([]);
-  expect(await readdir(join(cacheRoot, "trash"))).toEqual([]);
-});
+    const { kuna, cacheRoot, open } = await session(
+      "rea-kuna-close-export-files-",
+      { project: "hang" },
+      {},
+      launcher,
+    );
+    const client = open();
+    try {
+      await run(client, "procedure_pseudo_code", { procedure: "main" });
+      await expect.poll(() => exportsOf(kuna)).toHaveLength(1);
+      expect(await client.close()).toMatchObject({
+        ok: false,
+        error: { cleanupIncomplete: true },
+      });
+      expect((await client.close()).ok).toBe(false);
+    } finally {
+      const restore = async (directory: string): Promise<void> => {
+        await chmod(directory, 0o700);
+        for (const entry of await readdir(directory, { withFileTypes: true }))
+          if (entry.isDirectory()) await restore(join(directory, entry.name));
+      };
+      await restore(cacheRoot);
+      expect(await client.close()).toEqual({ ok: true, value: null });
+    }
+    expect(await readdir(join(cacheRoot, "staging"))).toEqual([]);
+    expect(await readdir(join(cacheRoot, "trash"))).toEqual([]);
+  },
+);
 
 it("refuses to launch an executable replaced after the target was opened", async () => {
   const { kuna, open } = await session("rea-kuna-swapped-", {
