@@ -322,6 +322,9 @@ records the model fixture's answer, and `clientFinalSeen` records the exact
 answer in the terminal headless JSON event. A passing receipt also requires
 successful client termination, uninstall, and verifier cleanup.
 
+Passing native verifier receipts require verified lineage with no live
+descendants.
+
 The DSH acceptance journey also exercises public setup, approval, doctor,
 generated-launcher MCP startup and uninstall without an installed Harness.
 That journey proves REA workflow behavior, not native Cordis expression

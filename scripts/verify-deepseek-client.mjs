@@ -19,7 +19,11 @@ import {
   findClientResult,
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
@@ -456,15 +460,24 @@ await withVerifierCleanup(async () => {
       fixtureFailure: fixture?.failure,
       verifier: completed,
     };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    const publishReceipt = () =>
+      withVerifierCleanup(
+        () =>
+          writeFile(
+            join(lab, "receipt.json"),
+            JSON.stringify(receipt, null, 2),
+          ),
+        [() => console.log(JSON.stringify(receipt))],
+      );
+    await withVerifierCleanup(() => {
+      if (!receipt.passed) return;
+      try {
+        assertVerifierCleanupComplete(receipt.verifier.process_lineage);
+      } catch (cause) {
+        receipt.passed = false;
+        throw cause;
+      }
+    }, [publishReceipt]);
   },
   () => {
     const reason = commands.finish();
