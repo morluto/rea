@@ -17,8 +17,11 @@ the client can launch it.
 For JavaScript installations, setup registers the selected runtime
 executable and REA script by absolute path. On POSIX, it prefers executable
 `node` or `bun` and REA aliases on setup's `PATH` only when they resolve to the
-same selected files. This preserves manager-owned aliases across version updates;
-otherwise setup uses the selected paths directly. This also applies when setup
+same selected files. Setup skips paths that pass through fnm multishell
+directories or `XDG_RUNTIME_DIR`, including through another symlink.
+This preserves durable manager aliases across
+version updates. When no eligible alias exists, setup uses the selected
+installation paths. This also applies when setup
 runs through a package runner: retain the selected cache entry and runtime while
 the registration uses them. Clearing either makes startup fail without resolving
 another package from the client's project. Restore the same installation before
@@ -38,6 +41,9 @@ configuration, but does not copy unrelated ambient environment values. To refres
 without `--dry-run` and approve the displayed changes. Setup preserves unrelated
 settings, backs up changed configuration and leaves an aligned registration
 unchanged. Restart the client after applying the update.
+
+If doctor reports a saved session path that still resolves, run setup to
+refresh that registration before the session directory is removed.
 
 If a runtime manager removes the registered executable and no surviving alias
 was available, doctor reports its identity as unknown and setup retains the
@@ -319,8 +325,9 @@ read it. From that redirected view, setup and uninstall refuse to change other
 clients' files there (VS Code, Trae, Devin and Hermes) and skill directories
 there. `npm install -g` run from such a process installs into the package's
 `LocalCache\Roaming\npm`, which other processes cannot see at the `%APPDATA%`
-path. Setup refuses to register a launcher stored in any MSIX package's
-private storage. Install REA from an ordinary terminal and rerun setup there.
+path. Setup and the default `rea mcp add` launcher reject runtimes and REA
+scripts stored in any MSIX package's private storage. Install REA from an
+ordinary terminal and retry the registration there.
 
 Uninstall removes REA's entry from both the private copy and the `%APPDATA%`
 file, including registrations that earlier releases wrote to `%APPDATA%`.
@@ -575,7 +582,7 @@ the diagnostic identifies the setting to repair. See the
 for the supported policy values.
 
 When direct launcher paths prove the same executable or Node entrypoint,
-setup retains the existing caller-selected spelling. An otherwise aligned
+setup retains an existing spelling outside known session directories. An otherwise aligned
 registration therefore needs no rewrite or recovery backup merely because
 REA was invoked through another symlink. Setup also retains that spelling when
 another field, such as an invalid timeout, needs repair. Unresolved identity

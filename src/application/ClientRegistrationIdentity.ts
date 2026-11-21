@@ -1,6 +1,12 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { accessSync, constants, realpathSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import {
+  accessSync,
+  constants,
+  lstatSync,
+  readlinkSync,
+  realpathSync,
+} from "node:fs";
+import { isAbsolute, posix } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
@@ -12,6 +18,10 @@ import {
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { posixPathCandidates } from "../process/executableSearch.js";
+import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   aubeShimLauncher,
@@ -19,6 +29,10 @@ import {
   aubeShimTarget,
   registeredAubeShim,
 } from "../process/AubeBinShim.js";
+import {
+  msixPackagesDirectory,
+  packagePrivateLauncherBlocker,
+} from "./MsixPackageStorage.js";
 
 /** Package runners recognized for invocation guidance and legacy registrations. */
 type PackageRunner = "npx" | "bunx";
@@ -67,16 +81,50 @@ export const withoutPackageRunnerIdentity = (
     ),
   );
 
-/** A supported managed shim already owns both the selected script and interpreter. */
+/** A supported managed shim owns both the script and interpreter. */
 export const managedClientLauncher = (
   entrypoint: string | undefined,
+  environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-): string | undefined =>
-  platform !== "win32" &&
-  entrypoint !== undefined &&
-  javaScriptRuntime(process.versions).id === "node"
-    ? aubeShimLauncher(entrypoint, PRODUCT_IDENTITY.cliBinary, process.execPath)
-    : undefined;
+): string | undefined => {
+  if (
+    platform === "win32" ||
+    entrypoint === undefined ||
+    javaScriptRuntime(process.versions).id !== "node"
+  )
+    return undefined;
+  const roots = transientLauncherRoots(environment);
+  if (
+    usesTransientLauncherPath(entrypoint, roots) ||
+    usesTransientLauncherPath(process.execPath, roots)
+  )
+    return undefined;
+  const shim = aubeShimLauncher(
+    entrypoint,
+    PRODUCT_IDENTITY.cliBinary,
+    process.execPath,
+  );
+  return shim === undefined || usesTransientLauncherPath(shim, roots)
+    ? undefined
+    : shim;
+};
+
+/** Restrictions on the automatically selected launcher shared by setup and mcp add. */
+export const defaultClientRegistrationBlocker = (
+  command: readonly string[],
+  platform: NodeJS.Platform,
+  home: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): string | undefined => {
+  if (command.length === 0)
+    return "REA could not determine persistent paths for the current runtime and REA entrypoint. Run the installed REA CLI from outside the session directory, then retry.";
+  if (platform === "win32")
+    return packagePrivateLauncherBlocker(
+      command,
+      msixPackagesDirectory(home, environment),
+    );
+  return undefined;
+};
 
 /** Bind the selected REA entrypoint to the runtime already executing setup. */
 export const currentClientRegistrationCommand = (
@@ -93,18 +141,22 @@ export const currentClientRegistrationCommand = (
     ? selection.entrypointPath
     : CURRENT_ENTRYPOINT_PATH;
   if (entrypointPath === undefined || entrypointPath.length === 0) return [];
-  const managed = managedClientLauncher(entrypointPath, platform);
+  const managed = managedClientLauncher(entrypointPath, environment, platform);
   if (managed !== undefined) return aubeShimRegistration(managed);
-  return [
-    registrationRuntimePath(
-      process.execPath,
-      javaScriptRuntime(process.versions).id,
-      environment,
-      platform,
-    ),
-    registrationEntrypointPath(entrypointPath, environment, platform),
-    "mcp",
-  ];
+  const runtime = registrationRuntimePath(
+    process.execPath,
+    javaScriptRuntime(process.versions).id,
+    environment,
+    platform,
+  );
+  const script = registrationEntrypointPath(
+    entrypointPath,
+    environment,
+    platform,
+  );
+  return runtime === undefined || script === undefined
+    ? []
+    : [runtime, script, "mcp"];
 };
 
 const unwrapCmdCommand = (command: readonly string[]): readonly string[] => {
@@ -187,13 +239,28 @@ const sameFileExecutableAlias = (
   name: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   identify: typeof entrypointIdentity,
-): string => {
+): string | undefined => {
+  const roots = transientLauncherRoots(environment);
+  let fallback = selected;
+  if (usesTransientLauncherPath(selected, roots)) {
+    try {
+      fallback = realpathSync.native(selected);
+      if (
+        transientLauncherPath(fallback, roots) ||
+        identify(fallback, selected) !== "owned"
+      )
+        return undefined;
+    } catch {
+      return undefined;
+    }
+  }
   for (const { path: candidate } of posixPathCandidates(
     name,
     environment.PATH ?? "",
     { relativeEntries: "skip" },
   )) {
     if (identify(candidate, selected) !== "owned") continue;
+    if (usesTransientLauncherPath(candidate, roots)) continue;
     try {
       accessSync(candidate, constants.X_OK);
       return candidate;
@@ -201,7 +268,109 @@ const sameFileExecutableAlias = (
       // An unexecutable alias cannot launch the selected program.
     }
   }
-  return selected;
+  return fallback;
+};
+
+/** Follow directory and file links in POSIX lookup order, before realpath can erase a session hop. */
+const usesTransientLauncherPath = (
+  path: string,
+  roots: readonly string[],
+): boolean => {
+  if (!posix.isAbsolute(path)) return false;
+  const activeLinks = new Set<string>();
+  const transient = Symbol("transient");
+  const walk = (
+    target: string,
+    directory: string,
+  ): string | typeof transient | undefined => {
+    const absolute = posix.isAbsolute(target);
+    const spelled = absolute
+      ? target
+      : appendCallerPath(directory, target, "linux");
+    if (transientLauncherPath(spelled, roots)) return transient;
+    let current = absolute ? "/" : directory;
+    for (const component of target.split("/")) {
+      if (component === "" || component === ".") continue;
+      if (component === "..") {
+        current = posix.dirname(current);
+        continue;
+      }
+      const next = posix.join(current, component);
+      if (transientLauncherPath(next, roots)) return transient;
+      if (!lstatSync(next).isSymbolicLink()) {
+        current = next;
+        continue;
+      }
+      if (activeLinks.has(next)) return undefined;
+      activeLinks.add(next);
+      const destination = walk(readlinkSync(next), current);
+      activeLinks.delete(next);
+      if (typeof destination !== "string") return destination;
+      current = destination;
+    }
+    return current;
+  };
+  try {
+    return walk(path, "/") === transient;
+  } catch {
+    // A missing or unreadable component is not evidence of a session hop.
+    // Ownership and launch readiness are checked independently.
+    return false;
+  }
+};
+
+const transientLauncherRoots = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): readonly string[] => {
+  const { FNM_MULTISHELL_PATH, XDG_RUNTIME_DIR } = environment;
+  const roots = [FNM_MULTISHELL_PATH, XDG_RUNTIME_DIR];
+  if (XDG_RUNTIME_DIR !== undefined && posix.isAbsolute(XDG_RUNTIME_DIR)) {
+    try {
+      roots.push(realpathSync.native(XDG_RUNTIME_DIR));
+    } catch {
+      // Its spelling is still useful when the runtime directory is already gone.
+    }
+  }
+  // fnm's session directory is itself a link to the installed version.
+  return roots.flatMap((root) => {
+    if (root === undefined || !posix.isAbsolute(root)) return [];
+    const directory = absoluteCallerPath(root, { platform: "linux" }).replace(
+      /\/$/u,
+      "",
+    );
+    return directory === "" ? [] : [directory];
+  });
+};
+
+/** A fnm session path can outlive its shell environment but still be transient. */
+const transientLauncherPath = (
+  path: string,
+  roots: readonly string[],
+): boolean => {
+  const absolute = absoluteCallerPath(path, { platform: "linux" });
+  if (/(?:^|\/)fnm_multishells\/\d+_\d+(?:\/|$)/u.test(absolute)) return true;
+  return roots.some(
+    (directory) =>
+      absolute === directory || absolute.startsWith(`${directory}/`),
+  );
+};
+
+export const transientClientLauncherPaths = (
+  command: readonly string[],
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): readonly string[] => {
+  if (platform === "win32") return [];
+  const shim = registeredAubeShim(command);
+  const paths =
+    shim !== undefined
+      ? [shim]
+      : command.length === 3 && command[2] === "mcp"
+        ? command.slice(0, 2)
+        : [];
+  if (paths.length === 0) return [];
+  const roots = transientLauncherRoots(environment);
+  return paths.filter((path) => usesTransientLauncherPath(path, roots));
 };
 
 /** Prefer an executable PATH alias that proves the same selected REA file. */
@@ -209,7 +378,7 @@ const registrationEntrypointPath = (
   entrypoint: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-): string =>
+): string | undefined =>
   // A Windows command shim is a different program; file identity cannot prove
   // its script target. Keep that platform's existing Node/script registration.
   platform === "win32"
@@ -227,7 +396,7 @@ export const registrationRuntimePath = (
   runtime: JavaScriptRuntime["id"],
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-): string =>
+): string | undefined =>
   platform === "win32"
     ? executable
     : sameFileExecutableAlias(
@@ -241,7 +410,11 @@ export const registrationRuntimePath = (
 export const equivalentClientRegistrationCommands = (
   previous: readonly string[],
   requested: readonly string[],
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
 ): boolean => {
+  if (transientClientLauncherPaths(previous, environment, platform).length > 0)
+    return false;
   if (
     previous.length === requested.length &&
     previous.every((value, index) => value === requested[index])

@@ -35,6 +35,7 @@ interface HarProducerProfile {
   readonly version: string;
   readonly label?: string;
   readonly bracketedIpv6?: true;
+  readonly emptyServerAddress?: true;
   readonly unavailableFailedRequestTimings?: true;
   readonly nullPostDataText?: true;
 }
@@ -58,6 +59,7 @@ const HAR_PRODUCER_PROFILES: readonly HarProducerProfile[] = [
     version: "537.36",
     label: "Chromium DevTools (WebInspector 537.36)",
     bracketedIpv6: true,
+    emptyServerAddress: true,
   },
   { name: "mitmproxy", version: "12.2.3", nullPostDataText: true },
 ];
@@ -70,6 +72,7 @@ interface HarEntryAdaptation {
 
 interface HarProducerAdaptations {
   readonly bracketedIpv6: HarEntryAdaptation | null;
+  readonly emptyServerAddress: HarEntryAdaptation | null;
   readonly failedRequests: HarEntryAdaptation | null;
 }
 
@@ -142,7 +145,11 @@ export const createHarValidator = (): ((
 const allowObservedProducerRepresentations = (
   value: unknown,
 ): HarProducerAdaptations => {
-  const none = { bracketedIpv6: null, failedRequests: null };
+  const none = {
+    bracketedIpv6: null,
+    emptyServerAddress: null,
+    failedRequests: null,
+  };
   if (!captureObject(value) || !captureObject(value.log)) return none;
   const log = value.log;
   const creator = log.creator;
@@ -153,6 +160,7 @@ const allowObservedProducerRepresentations = (
   if (profile === undefined) return none;
   const failedRequests: number[] = [];
   const adaptedEntries: number[] = [];
+  const emptyAddressEntries: number[] = [];
   for (const [ordinal, entry] of log.entries.entries()) {
     const candidate: unknown = entry;
     if (!captureObject(candidate)) continue;
@@ -188,6 +196,14 @@ const allowObservedProducerRepresentations = (
       candidate.serverIPAddress = address.slice(1, -1);
       adaptedEntries.push(ordinal);
     }
+    // DevTools writes request.remoteAddress(), which stays "" when a request
+    // has no remote endpoint (a failed connection, an aborted or internally
+    // redirected request). serverIPAddress is optional, so only the
+    // validation copy omits that empty value.
+    if (profile.emptyServerAddress && address === "") {
+      delete candidate.serverIPAddress;
+      emptyAddressEntries.push(ordinal);
+    }
     if (!profile.nullPostDataText) continue;
     const request = candidate.request;
     if (!captureObject(request)) continue;
@@ -200,6 +216,10 @@ const allowObservedProducerRepresentations = (
       adaptedEntries.length === 0
         ? null
         : { producer, entries: adaptedEntries },
+    emptyServerAddress:
+      emptyAddressEntries.length === 0
+        ? null
+        : { producer, entries: emptyAddressEntries },
     failedRequests:
       failedRequests.length === 0
         ? null

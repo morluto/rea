@@ -23,6 +23,7 @@ import {
 import { classifyCdpFrameUrl } from "./CdpCaptureDocuments.js";
 import { selectCdpFrameIdentity } from "./CdpFrameIdentity.js";
 import { CdpTargetDocument } from "./CdpTargetDocument.js";
+import { cdpRootDocument } from "./CdpTargetSession.js";
 import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { observedFrameUrl, reportedFrameUrl } from "./protocol/CdpFrameTree.js";
 import {
@@ -75,15 +76,11 @@ export const observeCdpSession = async (
     allowedOrigins,
     operation: "observe_web_session",
   });
-  const initialUrl = observedFrameUrl(initial.root.url) ?? "";
-  const mainFrameId = initial.root.facts.frameId;
-  if (mainFrameId === null)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const document = CdpTargetDocument.watch(context, {
-    frameId: mainFrameId,
-    loaderId: initial.root.facts.loaderId,
-    url: observedFrameUrl(initial.root.url),
-  });
+  const selected = cdpRootDocument(initial);
+  if (selected === undefined)
+    throw new BrowserObservationError("observe_web_session", "protocol_error");
+  const initialUrl = selected.url ?? "";
+  const document = CdpTargetDocument.watch(context, selected);
   const capture = new TimelineCapture(allowedOrigins, document, initialUrl);
   let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
@@ -777,6 +774,10 @@ const captureFinalUrl = async (
     context.signal,
   );
   if (capture.scopeExcluded) return "target_left_scope";
+  if (cdpRootDocument(tree) === undefined) {
+    capture.invalidateFinalUrl();
+    return "window_elapsed";
+  }
   const observation = tree.root.url;
   const facts = classifyCdpFrameUrl(observation, allowedOrigins);
   if (observation.kind !== "observed") capture.invalidateFinalUrl();

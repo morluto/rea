@@ -4,6 +4,7 @@ import {
   gooseEnvironmentField,
 } from "./ClientRegistrationSource.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -452,6 +453,8 @@ export const refreshClientRegistration = (
   environment: Readonly<Record<string, string>>,
   previous: unknown,
   timeoutInputs: McpToolTimeoutInputs,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Result<Record<string, unknown>, ConfigurationError> => {
   const target = { dialect, profile: client.registrationProfile };
   const facts = clientRegistrationSourceFacts(target, command, previous);
@@ -465,7 +468,12 @@ export const refreshClientRegistration = (
     : undefined;
   const launcher =
     priorCommand !== undefined &&
-    equivalentClientRegistrationCommands(priorCommand, command)
+    equivalentClientRegistrationCommands(
+      priorCommand,
+      command,
+      launcherEnvironment,
+      platform,
+    )
       ? priorCommand
       : command;
   const defaults = clientRegistrationEntry(dialect, launcher, environment);

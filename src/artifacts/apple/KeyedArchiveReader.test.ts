@@ -303,7 +303,7 @@ describe("inert keyed archive decoding", () => {
         offset: 0,
         limit: 1,
       }),
-    ).toThrow("NSKeyedArchiver");
+    ).toThrow("not a keyed archive");
     expect(() =>
       decodeKeyedArchiveBytes(Buffer.from(buildBinary(archive)), {
         root: "missing",

@@ -42,101 +42,136 @@ const run = async (
   }
 };
 
-it.each(
-  operations.flatMap((operation) =>
-    ["about:blank", "about:srcdoc", "file:///local.html", "not a URL"].flatMap(
-      (url) =>
-        [7, "bad-fragment"].map((urlFragment) => ({
-          operation,
-          url,
-          urlFragment,
-        })),
-    ),
-  ),
-)(
-  "retries uncertain initial $url/$urlFragment before $operation authorizes",
-  async ({ operation, url, urlFragment }) => {
-    let reads = 0;
-    const browser = await startRuntimeBrowser({
-      commandResult: ({ method }) => {
-        if (method !== "Page.getFrameTree" || ++reads > 2) return undefined;
-        return {
-          frameTree: { frame: { id: "runtime-main", url, urlFragment } },
-        };
-      },
-    });
-    trackBrowser(browser);
-    const result = await run(browser, operation);
-    expect(result.ok).toBe(true);
-    expect(reads).toBeGreaterThan(2);
-  },
-);
+const frameReads = (browser: FakeCdpBrowser) =>
+  browser.commands.filter(({ method }) => method === "Page.getFrameTree");
 
-it.each(
-  operations.flatMap((operation) =>
-    [false, true].flatMap((foreign) =>
-      [7, "bad-fragment"].map((urlFragment) => ({
-        operation,
-        foreign,
-        urlFragment,
-      })),
-    ),
-  ),
-)(
-  "rejects known $foreign scope with malformed $urlFragment immediately for $operation",
-  async ({ operation, foreign, urlFragment }) => {
-    let reads = 0;
+const protectedDomain = {
+  inspect: "Network.enable",
+  session: "Network.enable",
+  runtime: "Debugger.enable",
+} satisfies Record<Operation, string>;
+
+const selectedFrame = (url: string, fields: Record<string, unknown> = {}) => ({
+  frameTree: {
+    frame: { id: "runtime-main", loaderId: "document-1", url, ...fields },
+  },
+});
+
+const startFrameBrowser = async (
+  reply: (origin: string, reads: number) => Record<string, unknown> | undefined,
+) => {
+  const browser = await startRuntimeBrowser({
+    commandResult: ({ method }, origin, reads) =>
+      method === "Page.getFrameTree" ? reply(origin, reads) : undefined,
+  });
+  trackBrowser(browser);
+  return browser;
+};
+
+it.each(operations)(
+  "authorizes %s only after the main frame is readable",
+  async (operation) => {
+    const startupFrames = [
+      { id: "runtime-main" },
+      { id: "runtime-main", url: "about:blank" },
+      { id: "runtime-main", url: "about:srcdoc", urlFragment: 7 },
+      {
+        id: "runtime-main",
+        url: "file:///local.html",
+        urlFragment: "bad-fragment",
+      },
+      { id: "runtime-main", url: "not a URL", urlFragment: 7 },
+    ];
+    let readsAtEnable: number | undefined;
     const browser = await startRuntimeBrowser({
-      commandResult: ({ method }, origin) => {
+      commandResult: ({ method }, _origin, reads) => {
+        if (method === protectedDomain[operation]) readsAtEnable ??= reads;
         if (method !== "Page.getFrameTree") return undefined;
-        reads += 1;
-        return {
-          frameTree: {
-            frame: {
-              id: "runtime-main",
-              url: foreign ? "https://foreign.example/page" : `${origin}/app`,
-              urlFragment,
-            },
-          },
-        };
+        const frame = startupFrames[reads - 1];
+        if (frame !== undefined) return { frameTree: { frame } };
+        return undefined;
       },
     });
     trackBrowser(browser);
     const result = await run(browser, operation);
-    expect(result).toMatchObject({
-      ok: false,
-      error: { reason: foreign ? "target_not_allowed" : "protocol_error" },
+    if (!result.ok) throw result.error;
+    expect(result.value.target).toMatchObject({
+      target_id: "allowed-page",
+      [operation === "inspect" ? "url" : "initial_url"]:
+        `${browser.allowedOrigin}/app`,
     });
-    if (foreign && !result.ok)
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "target_unavailable",
-        message: expect.stringContaining("permitted HTTP(S) origin scope"),
-        remediation: { action: expect.stringContaining("allowed_origins") },
-        details: { reason: "target_not_allowed" },
-      });
-    expect(reads).toBe(1);
+    expect(readsAtEnable).toBe(startupFrames.length + 1);
   },
 );
 
-// A reply without a frame tree is a protocol failure, not 80 retries that end
-// in an origin refusal.
-it.each(
-  operations.flatMap((operation) =>
-    [{}, { frameTree: null }, { frameTree: [] }].map((reply) => ({
-      operation,
-      reply,
-    })),
-  ),
-)(
-  "rejects a malformed frame tree reply $reply once for $operation",
-  async ({ operation, reply }) => {
-    const browser = await startRuntimeBrowser({
-      commandResult: ({ method }) =>
-        method === "Page.getFrameTree" ? reply : undefined,
-    });
-    trackBrowser(browser);
+it.each([
+  { operation: "inspect", fragment: undefined },
+  { operation: "session", fragment: 7 },
+  { operation: "runtime", fragment: "bad-fragment" },
+] as const)(
+  "refuses outside-policy $operation before enabling capture",
+  async ({ operation, fragment }) => {
+    const browser = await startFrameBrowser(() =>
+      selectedFrame("https://foreign.example/page", { urlFragment: fragment }),
+    );
     const result = await run(browser, operation);
-    expect(result).toMatchObject({
+    if (result.ok) throw new Error("Expected origin scope refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "target_unavailable",
+      remediation: { action: expect.stringContaining("allowed_origins") },
+      details: { reason: "target_not_allowed" },
+    });
+    expect(frameReads(browser)).toHaveLength(1);
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
+      protectedDomain[operation],
+    );
+  },
+);
+
+const child = { parentId: "enclosing-frame" };
+
+it.each([
+  {
+    operation: "inspect",
+    defect: "numeric fragment",
+    fields: { urlFragment: 7 },
+  },
+  {
+    operation: "runtime",
+    defect: "fragment missing delimiter",
+    fields: { urlFragment: "bad-fragment" },
+  },
+  ...operations.map((operation) => ({
+    operation,
+    defect: "parent on root",
+    fields: child,
+  })),
+] as const)(
+  "refuses $operation before capture for $defect",
+  async ({ operation, fields }) => {
+    const browser = await startFrameBrowser((origin) =>
+      selectedFrame(`${origin}/app`, fields),
+    );
+    expect(await run(browser, operation)).toMatchObject({
+      ok: false,
+      error: { reason: "protocol_error" },
+    });
+    expect(frameReads(browser)).toHaveLength(1);
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
+      protectedDomain[operation],
+    );
+  },
+);
+
+it.each([
+  { operation: "inspect", reply: {} },
+  { operation: "session", reply: { frameTree: null } },
+  { operation: "runtime", reply: { frameTree: [] } },
+] as const)(
+  "rejects a malformed frame tree reply once for $operation",
+  async ({ operation, reply }) => {
+    const browser = await startFrameBrowser(() => reply);
+    expect(await run(browser, operation)).toMatchObject({
       ok: false,
       error: {
         reason: "protocol_error",
@@ -144,26 +179,28 @@ it.each(
         pointer: "/frameTree",
       },
     });
-    expect(
-      browser.commands.filter(({ method }) => method === "Page.getFrameTree"),
-    ).toHaveLength(1);
+    expect(frameReads(browser)).toHaveLength(1);
   },
 );
 
-it("bounds unsupported malformed frame retries without authorizing execution", async () => {
-  let reads = 0;
-  const browser = await startRuntimeBrowser({
-    commandResult: ({ method }) => {
-      if (method !== "Page.getFrameTree") return undefined;
-      reads += 1;
-      return {
-        frameTree: {
-          frame: { id: "runtime-main", url: "about:blank", urlFragment: 7 },
-        },
-      };
-    },
+it("withholds the final session URL when the proposed root has a parent", async () => {
+  const browser = await startFrameBrowser((origin, reads) =>
+    reads > 1 ? selectedFrame(`${origin}/child`, child) : undefined,
+  );
+  const result = await run(browser, "session");
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    target: { initial_url: `${browser.allowedOrigin}/app`, final_url: null },
+    window: { end_reason: "window_elapsed" },
+    completeness: { unavailable_sections: ["timeline"] },
   });
-  trackBrowser(browser);
+  expect(frameReads(browser)).toHaveLength(2);
+});
+
+it("bounds unsupported malformed frame retries without authorizing execution", async () => {
+  const browser = await startFrameBrowser(() =>
+    selectedFrame("about:blank", { urlFragment: 7 }),
+  );
   const result = await run(browser, "runtime");
   expect(result).toMatchObject({
     ok: false,
@@ -173,7 +210,7 @@ it("bounds unsupported malformed frame retries without authorizing execution", a
   expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
     "outside the permitted HTTP(S) origin scope",
   );
-  expect(reads).toBe(80);
+  expect(frameReads(browser)).toHaveLength(80);
   expect(browser.commands.map(({ method }) => method)).not.toContain(
     "Debugger.enable",
   );
@@ -181,18 +218,10 @@ it("bounds unsupported malformed frame retries without authorizing execution", a
 
 it("preserves cancellation while an unsupported malformed frame awaits authorization", async () => {
   const controller = new AbortController();
-  const browser = await startRuntimeBrowser({
-    commandResult: ({ method }) => {
-      if (method !== "Page.getFrameTree") return undefined;
-      setTimeout(() => controller.abort("caller stopped authorization"), 5);
-      return {
-        frameTree: {
-          frame: { id: "runtime-main", url: "about:blank", urlFragment: 7 },
-        },
-      };
-    },
+  const browser = await startFrameBrowser(() => {
+    setTimeout(() => controller.abort("caller stopped authorization"), 5);
+    return selectedFrame("about:blank", { urlFragment: 7 });
   });
-  trackBrowser(browser);
   expect(await run(browser, "inspect", controller.signal)).toMatchObject({
     ok: false,
     error: {
@@ -200,51 +229,5 @@ it("preserves cancellation while an unsupported malformed frame awaits authoriza
       cause: "caller stopped authorization",
     },
   });
-  expect(
-    browser.commands.filter(({ method }) => method === "Page.getFrameTree"),
-  ).toHaveLength(1);
+  expect(frameReads(browser)).toHaveLength(1);
 });
-
-// Ordinary startup uncertainty and known policy exits keep their existing semantics.
-it.each(
-  operations.flatMap((operation) =>
-    ["unsupported", "missing", "foreign"].map((kind) => ({ operation, kind })),
-  ),
-)(
-  "preserves $kind authorization behavior for $operation",
-  async ({ operation, kind }) => {
-    let reads = 0;
-    const browser = await startRuntimeBrowser({
-      commandResult: ({ method }) => {
-        if (method !== "Page.getFrameTree" || ++reads > 2) return undefined;
-        return {
-          frameTree: {
-            frame: {
-              id: "runtime-main",
-              ...(kind === "missing"
-                ? {}
-                : {
-                    url:
-                      kind === "foreign"
-                        ? "https://foreign.example/page"
-                        : "about:blank",
-                  }),
-            },
-          },
-        };
-      },
-    });
-    trackBrowser(browser);
-    const result = await run(browser, operation);
-    if (kind === "foreign") {
-      expect(result).toMatchObject({
-        ok: false,
-        error: { reason: "target_not_allowed" },
-      });
-      expect(reads).toBe(1);
-    } else {
-      expect(result.ok).toBe(true);
-      expect(reads).toBeGreaterThan(2);
-    }
-  },
-);
