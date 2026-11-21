@@ -1069,94 +1069,101 @@ describe("web source-map sourcesContent validation", () => {
   });
 });
 
-describe("source-map dependency coverage of hard-to-parse sources", () => {
-  const fetchWithSources = (sources: readonly string[]) =>
-    fetchWebSourceMapsOk([request], input(), undefined, {
-      fetch: () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({
-              version: 3,
-              names: [],
-              sources: sources.map((_, index) => `source-${String(index)}.ts`),
-              sourcesContent: [...sources],
-              mappings: "AAAA",
-            }),
-          ),
-        ),
-    });
-
-  it.each([
+it("keeps exact dependency coverage for supported, recovered, and unparsable sources", async () => {
+  const supported = [
     [
-      "decorated classes and parameters",
+      "decorated-parameters.ts",
       '@Component({ selector: "app" })\nexport class A { @Inject() b: C; constructor(@Optional() private s: S) {} }\nimport "./a.js";',
       ["./a.js"],
     ],
     [
-      "legacy class decorators",
+      "decorated-class.ts",
       'class A { @dec method() {} }\nimport "./a.js";',
       ["./a.js"],
     ],
+    ["import-equals.ts", 'import lib = require("./lib.js");', ["./lib.js"]],
     [
-      "TypeScript import equals",
-      'import lib = require("./lib.js");',
-      ["./lib.js"],
-    ],
-    [
-      "type-only import equals",
+      "type-only-equals.ts",
       'import type Types = require("./types.js");\nimport lib = require("./lib.js");',
       ["./lib.js"],
     ],
+    ["type-only-import.ts", 'import type { Value } from "./types.js";', []],
+    ["type-only-export.ts", 'export type { Value } from "./types.js";', []],
     [
-      "whole-statement type-only import",
-      'import type { Value } from "./types.js";',
-      [],
-    ],
-    [
-      "whole-statement type-only export",
-      'export type { Value } from "./types.js";',
-      [],
-    ],
-    [
-      "inline type import retains module side effects",
+      "inline-types.ts",
       'import { type Value } from "./types.js";',
       ["./types.js"],
     ],
     [
-      "a local import alias",
+      "local-alias.ts",
       'import lib = localAlias;\nimport "./a.js";',
       ["./a.js"],
     ],
-  ])("recovers dependencies from %s", async (_label, text, expected) => {
-    const result = await fetchWithSources([text]);
-    expect(result.items[0]?.status).toBe("included");
-    expect(
-      result.items[0]?.original_module_edges.map(({ specifier }) => specifier),
-    ).toEqual(expected);
+  ] as const;
+  const maps = [
+    supported.map(([path, text]) => ({ path, text })),
+    [
+      {
+        path: "recovering.ts",
+        text: 'with (scope) { require("./c.js"); }\nrequire("./b.js");\nimport "./a.js";',
+      },
+    ],
+    [{ path: "unparsable.ts", text: 'import "./a.js"; const s = "oops' }],
+    [{ path: "clean.ts", text: "export const value = 1;" }],
+  ].map((sources, index) => {
+    const url = `${origin}/assets/${index}.map`;
+    return {
+      request: {
+        scriptKey: `scr_${String(index + 1).padStart(64, "0")}`,
+        declaredUrl: url,
+        fetchUrl: url,
+      },
+      text: JSON.stringify({
+        version: 3,
+        names: [],
+        sources: sources.map(({ path }) => path),
+        sourcesContent: sources.map(({ text }) => text),
+        mappings: "AAAA",
+      }),
+    };
   });
-
-  it("keeps recovered edges from a partly recovered source and reports them as partial", async () => {
-    const result = await fetchWithSources([
-      'with (scope) { require("./c.js"); }\nrequire("./b.js");\nimport "./a.js";',
-    ]);
-    expect(result.status).toBe("partial");
-    expect(result.items[0]?.status).toBe("partial");
-    expect(result.items[0]?.limitation).toContain(
-      "could not be parsed in full",
-    );
-    expect(
-      result.items[0]?.original_module_edges.map(({ specifier }) => specifier),
-    ).toEqual(["./b.js", "./a.js"]);
-  });
-
-  it("distinguishes an unparsable source from a source with no imports", async () => {
-    const broken = await fetchWithSources(['import "./a.js"; const s = "oops']);
-    expect(broken.items[0]?.status).toBe("partial");
-    expect(broken.items[0]?.original_module_edges).toEqual([]);
-    const clean = await fetchWithSources(["export const value = 1;"]);
-    expect(clean.status).toBe("included");
-    expect(clean.items[0]?.status).toBe("included");
-    expect(clean.items[0]?.original_module_edges).toEqual([]);
+  const replies = new Map(
+    maps.map(({ request, text }) => [request.fetchUrl, text]),
+  );
+  const result = await fetchWebSourceMapsOk(
+    maps.map(({ request }) => request),
+    input(),
+    undefined,
+    { fetch: async (url) => new Response(replies.get(String(url))) },
+  );
+  expect(result).toMatchObject({
+    status: "partial",
+    requested: 4,
+    processed: 4,
+    items: [
+      {
+        status: "included",
+        limitation: null,
+        original_module_edges: supported.flatMap(
+          ([path, , specifiers], declaration_index) =>
+            Array.from(specifiers, (specifier) => ({
+              declaration_index,
+              from_source: `${origin}/assets/${path}`,
+              specifier,
+            })),
+        ),
+      },
+      {
+        status: "partial",
+        limitation: expect.stringContaining("could not be parsed in full"),
+        original_module_edges: [
+          { specifier: "./b.js", kind: "require" },
+          { specifier: "./a.js", kind: "static_import" },
+        ],
+      },
+      { status: "partial", original_module_edges: [] },
+      { status: "included", limitation: null, original_module_edges: [] },
+    ],
   });
 });
 
