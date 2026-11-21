@@ -186,6 +186,10 @@ export class SafeOutputTree {
       await assertPathIdentity(canonicalOutput, rootIdentity);
       return tree;
     } catch (cause: unknown) {
+      // The caller still owns this directory. A refusal must not hand back a
+      // tree whose rollback treats the caller's files as an unowned remainder.
+      if (!created && cause instanceof SafeOutputTreeDestinationRefusal)
+        throw cause;
       throw new SafeOutputTreeCreationFailure(cause, tree);
     }
   }

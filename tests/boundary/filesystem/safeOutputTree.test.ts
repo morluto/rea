@@ -20,6 +20,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeDestinationRefusal } from "../../../src/resources/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 
@@ -98,6 +99,22 @@ describe("safe artifact output cleanup", () => {
     } finally {
       stat.mockRestore();
     }
+  });
+
+  it("returns a non-empty accepted directory without wrapping or removing it", async () => {
+    const parent = await createTestTempDirectory("rea-safe-output-nonempty-");
+    const output = join(parent, "output");
+    await mkdir(output);
+    await writeFile(join(output, "caller.txt"), "keep");
+    const failure = await SafeOutputTree.create(output, process.platform, {
+      acceptExistingEmpty: true,
+    }).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(SafeOutputTreeDestinationRefusal);
+    expect(failure).not.toBeInstanceOf(SafeOutputTreeCreationFailure);
+    expect(failure).toMatchObject({
+      message: "Output directory is not empty",
+    });
+    expect(await readFile(join(output, "caller.txt"), "utf8")).toBe("keep");
   });
 });
 
