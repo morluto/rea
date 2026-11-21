@@ -2133,3 +2133,33 @@ it("preserves classic special ordinals and returns unsupported at invalid bind l
     reason: `Dylib ordinal ${oversized} exceeds the safe integer range`,
   });
 });
+
+it("keeps the full signed addend in a format-3 import", () => {
+  const data = chainedData(3);
+  const secondImport = data.readUInt32LE(8) + 16;
+  const addend = -0x123456789abcdefn;
+  data.writeBigInt64LE(addend, secondImport + 8);
+  const fixups = parsePointerFixups(
+    data,
+    {
+      chained: { offset: 0, size: 180 },
+      binds: [],
+      rebases: [],
+      dylibs: ["/a", "/b"],
+    },
+    SEGMENTS,
+    BASE,
+  );
+  expect(
+    fixups.decode(BASE + 0x4008n, data.readBigUInt64LE(0x4008)),
+  ).toMatchObject({
+    kind: "bind",
+    symbol: "_free",
+    library: "/b",
+    addend,
+  });
+  const end = data.readUInt32LE(12);
+  expect(() => chainedImportNames(data.subarray(0, end - 1))).toThrow(
+    ParseFailureError,
+  );
+});

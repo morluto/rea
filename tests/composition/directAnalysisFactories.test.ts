@@ -25,12 +25,18 @@ import {
   createTestBinarySession,
 } from "../fixtures/binarySession.js";
 
+type SessionFactory = Exclude<
+  keyof DirectAnalysisDependencies,
+  "readConfiguration"
+>;
+
 const recordingFactories = (
   failure?: Error,
   profile?: ReturnType<typeof createAnalysisProfile>,
 ) => {
   const sessions: BinarySession[] = [];
   let clientsClosed = 0;
+  const selectedFactories: SessionFactory[] = [];
   const createSession = () => {
     const session = createTestBinarySession(
       () => ({
@@ -54,15 +60,26 @@ const recordingFactories = (
     sessions.push(session);
     return session;
   };
+  const select = (name: SessionFactory) => () => {
+    selectedFactories.push(name);
+    return createSession();
+  };
   const dependencies: DirectAnalysisDependencies = {
     readConfiguration: () => parseConfig({}),
-    createBinarySession: createSession,
-    createArtifactBinarySession: createSession,
-    createNativeDispatchBinarySession: createSession,
-    createNativeBinarySession: createSession,
-    createManagedBinarySession: createSession,
+    createBinarySession: select("createBinarySession"),
+    createArtifactBinarySession: select("createArtifactBinarySession"),
+    createNativeDispatchBinarySession: select(
+      "createNativeDispatchBinarySession",
+    ),
+    createNativeBinarySession: select("createNativeBinarySession"),
+    createManagedBinarySession: select("createManagedBinarySession"),
   };
-  return { dependencies, sessions, clientsClosed: () => clientsClosed };
+  return {
+    dependencies,
+    sessions,
+    selectedFactories,
+    clientsClosed: () => clientsClosed,
+  };
 };
 
 /** Schema-valid read_bytes input so lifecycle tests reach the session. */
@@ -181,67 +198,63 @@ describe("one-shot analysis factory boundary", () => {
       expect(factories.sessions).toEqual([]);
     },
   );
-
-  it.each([
-    "inspect_macho",
-    "inspect_signature",
-    "list_architectures",
-    "inspect_plist",
-    "demangle_swift",
-  ] satisfies readonly NativeToolName[])(
-    "runs %s without reading deep-engine configuration or constructing its session",
-    async (tool) => {
-      const [path] = await createBinarySessionTargets();
-      const factories = recordingFactories();
-      const unexpected = (): never => {
-        throw new Error("unrelated session factory must stay unused");
-      };
-      const arguments_ =
-        tool === "demangle_swift" ? { symbols: ["$s4Test3fooyyF"] } : {};
-      const result = await runProviderAnalysis(
-        {
-          ...factories.dependencies,
-          readConfiguration: unexpected,
-          createBinarySession: unexpected,
-          createArtifactBinarySession: unexpected,
-          createManagedBinarySession: unexpected,
-        },
-        path,
-        tool,
-        arguments_,
-      ).then(projectCliAnalysisResult);
-      expect(result).toMatchObject({
-        operation: tool,
-        normalized_result: { operation: tool },
-      });
-      expect(factories.clientsClosed()).toBe(1);
-      expect(factories.sessions[0]?.activeTarget()).toBeUndefined();
-    },
-  );
 });
 
 it.each([
-  "observe_native_ui",
-  "capture_native_ui_scenario",
-  "observe_native_calls",
-] satisfies readonly NativeToolName[])(
-  "keeps %s on the ordinary session route",
-  async (tool) => {
-    const [path] = await createBinarySessionTargets();
-    const factories = recordingFactories();
-    const result = await runProviderAnalysis(
-      {
-        ...factories.dependencies,
-        createNativeBinarySession: () => {
-          throw new Error("static inspection factory must stay unused");
-        },
-      },
-      path,
+  {
+    factory: "createNativeBinarySession",
+    needsConfiguration: false,
+    cases: (
+      [
+        "inspect_macho",
+        "inspect_signature",
+        "list_architectures",
+        "inspect_plist",
+        "demangle_swift",
+      ] satisfies readonly NativeToolName[]
+    ).map((tool) => ({
       tool,
-      admittedNativeSessionInput[tool],
-    ).then(projectCliAnalysisResult);
-    expect(result).toMatchObject({ operation: tool });
-    expect(factories.clientsClosed()).toBe(1);
+      input: tool === "demangle_swift" ? { symbols: ["$s4Test3fooyyF"] } : {},
+    })),
+  },
+  {
+    factory: "createBinarySession",
+    needsConfiguration: true,
+    cases: (
+      [
+        "observe_native_ui",
+        "capture_native_ui_scenario",
+        "observe_native_calls",
+      ] as const
+    ).map((tool) => ({ tool, input: admittedNativeSessionInput[tool] })),
+  },
+])(
+  "routes one-shot native operations through $factory",
+  async ({ factory, needsConfiguration, cases }) => {
+    const [path] = await createBinarySessionTargets();
+    const fixtures = recordingFactories();
+    const readConfiguration = vi.fn(fixtures.dependencies.readConfiguration);
+    const dependencies = { ...fixtures.dependencies, readConfiguration };
+    for (const { tool, input } of cases) {
+      const result = await runProviderAnalysis(
+        dependencies,
+        path,
+        tool,
+        input,
+      ).then(projectCliAnalysisResult);
+      expect(result, tool).toMatchObject({
+        operation: tool,
+        normalized_result: { operation: tool },
+      });
+      expect(fixtures.selectedFactories.at(-1), tool).toBe(factory);
+    }
+    expect(fixtures.clientsClosed()).toBe(cases.length);
+    expect(readConfiguration).toHaveBeenCalledTimes(
+      needsConfiguration ? cases.length : 0,
+    );
+    expect(fixtures.sessions.map((session) => session.activeTarget())).toEqual(
+      cases.map(() => undefined),
+    );
   },
 );
 

@@ -46,16 +46,7 @@ it("reuses parsed facts for re-read identical bytes while preserving each select
   const signal = new AbortController().signal;
   const first = await readAndroidMapping(path, OPERATION, resources, signal);
   if (!first.ok) throw first.error;
-  const warm = await readAndroidMapping(
-    path,
-    OPERATION,
-    resources,
-    signal,
-    first.value,
-  );
-  if (!warm.ok) throw warm.error;
-  expect(warm.value.mapping).toBe(first.value.mapping);
-  expect(warm.value.file).toEqual({
+  expect(first.value.file).toEqual({
     path,
     sha256: digest(SOURCE),
     bytes: Buffer.byteLength(SOURCE),

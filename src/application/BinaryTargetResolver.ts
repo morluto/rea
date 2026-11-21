@@ -51,6 +51,10 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
+  hasIdaDatabaseSignature,
+  type AnalysisDatabaseEngine,
+} from "../domain/analysisDatabase.js";
+import {
   PE_CODEVIEW_PREFIX_BYTES,
   type BinaryTarget,
   type BinaryArchitecture,
@@ -112,7 +116,7 @@ import {
   parseMzExecutableMetadata,
   parsePeRecordFacts,
   peDebugDirectoryEntry,
-  peCodeViewDataRanges,
+  peCodeViewDirectoryEntries,
   peRvaToFileOffset,
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
@@ -497,18 +501,23 @@ const readOpenedBinaryTarget = async (
     ...(await identity()),
     artifactSelectedPath: selectedPath,
   });
+  const databaseEngine =
+    targetKind === undefined || targetKind === "database"
+      ? await detectDatabaseEngine(path, handle, signal)
+      : null;
   if (
     targetKind === "database" ||
     (targetKind === undefined &&
       artifactFormat !== "ines" &&
       artifactFormat !== "uefi" &&
       artifactFormat !== "plist" &&
-      path.toLowerCase().endsWith(".hop"))
+      databaseEngine !== null)
   )
     return ok({
       ...(await identity()),
       kind: "database",
       format: "analysis-database",
+      databaseEngine,
     });
   if (artifactFormat !== undefined) {
     const identity = await artifactIdentity();
@@ -694,6 +703,21 @@ const targetResolutionFailure = (
 const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
     throw cancelledBy("resolve_binary_target", signal);
+};
+
+/** IDA databases carry a signature; Hopper databases are known only by suffix. */
+const detectDatabaseEngine = async (
+  path: string,
+  handle: FileHandle,
+  signal?: AbortSignal,
+): Promise<AnalysisDatabaseEngine | null> => {
+  throwIfTargetResolutionCancelled(signal);
+  const magic = Buffer.alloc(4);
+  const observed = await handle.read(magic, 0, magic.length, 0);
+  throwIfTargetResolutionCancelled(signal);
+  if (hasIdaDatabaseSignature(magic.subarray(0, observed.bytesRead)))
+    return "ida";
+  return path.toLowerCase().endsWith(".hop") ? "hopper" : null;
 };
 
 const detectArtifactFormat = async (
@@ -1455,12 +1479,13 @@ const readPeCodeView = async (
   for (const {
     fileOffset: pointerToRawData,
     declaredSize: sizeOfData,
-  } of peCodeViewDataRanges(
+  } of peCodeViewDirectoryEntries(
     debugDirectoryBuffer,
     sectionTable,
     numberOfSections,
     debugDir.sizeOfHeaders,
   )) {
+    if (pointerToRawData === undefined) continue;
     const maxCodeViewRead = Math.min(sizeOfData, PE_CODEVIEW_PREFIX_BYTES);
     const codeViewBuffer = await readHandleRange(
       handle,

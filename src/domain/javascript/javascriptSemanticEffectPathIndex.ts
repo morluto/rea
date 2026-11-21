@@ -22,8 +22,11 @@ export const semanticEffectPathMatches = (
       semanticAliasSelectionChoices(selected).some(
         (choice) =>
           choice === null ||
-          typeof choice === "object" ||
-          semanticPropertyPathKeyMatches(key, String(choice)),
+          (typeof choice === "object"
+            ? key === null ||
+              typeof key === "object" ||
+              semanticPropertyPathKeyMatches(choice, String(key))
+            : semanticPropertyPathKeyMatches(key, String(choice))),
       )
     );
   });

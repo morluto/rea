@@ -156,8 +156,8 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "inspect_plist",
-    nativeEvidenceEffects,
-    "Parse Info.plist from an open binary or bundle-resource session, or select path within that session. Use open_binary or open_bundle_resources first; path alone does not open one. Returns normalized JSON. native_command_timeout_ms bounds each file/plutil command, not fixed input/decode/nesting allowances. XML also requires plutil validation and may be refused at a shallower depth; errors name the applicable limit.",
+    { ...nativeEvidenceEffects, writesFilesystem: true },
+    "Parse Info.plist from an open binary or bundle-resource session, or select path within that session. Use open_binary or open_bundle_resources first. Returns normalized JSON from a private temporary copy of the selected plist. native_command_timeout_ms bounds each file/plutil command independently of input, decode and nesting limits. XML requires plutil validation and may be refused at a shallower depth.",
     z.object({
       path: localPathStringSchema
         .optional()

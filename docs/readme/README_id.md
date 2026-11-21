@@ -380,7 +380,6 @@ Untuk mengetahui opsi, prasyarat, dan kontrak hasil secara tepat:
 - [CLI dan Bukti](../getting-started/cli.md): perintah, pemilihan penyedia, snapshot, impor/ekspor, dan status keluar.
 - [Kontrak MCP](../reference/mcp-contracts.md) dan [prompt agen](../getting-started/mcp-prompts.md): hasil alat, sesi, dan investigasi terpandu.
 - [Katalog alat](../reference/mcp-contracts.md#generated-catalog): inventaris alat, penyedia, dan perintah CLI yang dibuat secara otomatis.
-- [Peta jalan](../development/roadmap.md): pekerjaan yang direncanakan dan pelacak kemampuan.
 
 Laporkan kerentanan melalui [SECURITY.md](../../SECURITY.md).
 
@@ -412,7 +411,7 @@ applicable licenses.
 
 Kami sangat menghargai bantuan Anda untuk REA! [Buat issue](https://github.com/morluto/rea/issues) untuk melaporkan bug atau menyarankan fitur, atau [kirim pull request](https://github.com/morluto/rea/pulls) untuk meningkatkan kode atau dokumentasi.
 
-Lihat [CONTRIBUTING.md](../../CONTRIBUTING.md) untuk penyiapan pengembangan dan pemeriksaan, [pengujian](../development/testing.md) untuk tahapan verifikasi, serta [peta arsitektur](../architecture/architecture.mermaid) untuk struktur proyek.
+Lihat [CONTRIBUTING.md](../../CONTRIBUTING.md) untuk penyiapan pengembangan dan pemeriksaan, [pengujian](../development/testing.md) untuk tahapan verifikasi.
 
 ## Lisensi
 

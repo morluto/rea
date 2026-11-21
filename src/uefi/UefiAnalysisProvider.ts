@@ -550,19 +550,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }
       const scan = await scanUefiImage(
         snapshot.bytes,
-        request.operation === "inspect_uefi_firmware"
+        request.operation === "decompile_uefi_firmware"
           ? {
+              maxDepth: UEFI_FIRMWARE_LIMITS.defaultMaxDepth,
+              maxVolumes: UEFI_FIRMWARE_LIMITS.defaultMaxVolumes,
+              maxFiles: UEFI_FIRMWARE_LIMITS.defaultMaxFiles,
+            }
+          : {
               maxDepth: request.input.max_depth,
               maxVolumes: request.input.max_volumes,
               maxFiles: request.input.max_files,
-            }
-          : {
-              maxDepth:
-                request.operation === "extract_uefi_firmware"
-                  ? request.input.max_depth
-                  : UEFI_FIRMWARE_LIMITS.defaultMaxDepth,
-              maxVolumes: UEFI_FIRMWARE_LIMITS.defaultMaxVolumes,
-              maxFiles: UEFI_FIRMWARE_LIMITS.defaultMaxFiles,
             },
         ({ payload, format, maxOutputBytes }) =>
           this.#decodeStream(
@@ -829,6 +826,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       });
     };
 
+    recordDerivation(selection.source_stream);
     for (const volume of scan.volumes) {
       for (const file of volume.ffs_files) {
         checkpoint();
@@ -1813,6 +1811,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           outcome: {
             bytes,
             decoderVersion: process.versions.zlib ?? "unknown",
+            consumedBytes,
           },
         };
       } catch (cause: unknown) {
@@ -1909,6 +1908,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       if (!reply.ok) {
         return reply;
       }
+      const consumedBytes = reply.input_bytes_consumed;
+      if (consumedBytes > payload.length) {
+        return {
+          ok: false,
+          reason: "decoder",
+          message: `LZMA worker reported consuming ${consumedBytes} bytes from a ${payload.length}-byte input.`,
+        };
+      }
       signal.throwIfAborted();
       const decoded = await readStableArtifact(
         outputPath,
@@ -1932,6 +1939,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         outcome: {
           bytes: decoded.bytes,
           decoderVersion: reply.lzma_version,
+          consumedBytes,
         },
       };
     };

@@ -657,36 +657,32 @@ describe("Ghidra disabled analyzers", () => {
     const seeds = arguments_.indexOf(
       posix.join("/package/bridge", "ReaGhidraApplySeeds.java"),
     );
+    expect(prepare).toBeGreaterThanOrEqual(0);
     expect(prepare).toBeLessThan(seeds);
     expect(seeds).toBeLessThan(options);
     expect(options).toBeLessThan(arguments_.indexOf("-postScript"));
   });
 
-  it.each(["darwin", "win32"] as const)(
-    "uses the target platform's script path for the options script on %s",
-    (platform) => {
-      const path = platform === "win32" ? win32 : posix;
-      const arguments_ = ghidraHeadlessArguments({
-        ...base,
-        platform,
-        bridgeScriptPath: path.join(
-          "/package",
-          "bridge",
-          "ReaGhidraBridge.java",
-        ),
-        disabledAnalyzers: ["Objective-C Message Analyzer"],
-      });
-      const options = arguments_.indexOf(
-        path.join("/package", "bridge", "ReaGhidraAnalysisOptions.java"),
-      );
-      expect(arguments_[options - 1]).toBe("-preScript");
-      expect(arguments_[options + 1]).toBe("Objective-C Message Analyzer");
-      expect(options).toBeLessThan(arguments_.indexOf("-postScript"));
-    },
-  );
+  it("passes the Windows script path and one literal analyzer argument", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      ...base,
+      platform: "win32",
+      bridgeScriptPath: "C:\\package\\bridge\\ReaGhidraBridge.java",
+      disabledAnalyzers: ["Objective-C Message Analyzer"],
+    });
+    const script = "C:\\package\\bridge\\ReaGhidraAnalysisOptions.java";
+    const options = arguments_.indexOf(script);
+    expect(arguments_.slice(options - 1, options + 2)).toEqual([
+      "-preScript",
+      script,
+      "Objective-C Message Analyzer",
+    ]);
+    expect(options).toBeLessThan(arguments_.indexOf("-postScript"));
+  });
 
-  it("keeps the invocation byte-identical without an override", () => {
-    expect(ghidraHeadlessArguments(base)).toEqual([
+  it("keeps the invocation byte-identical with no configured analyzer names", () => {
+    const arguments_ = ghidraHeadlessArguments(base);
+    expect(arguments_).toEqual([
       "/tmp/project",
       "rea-project",
       "-import",
@@ -705,13 +701,8 @@ describe("Ghidra disabled analyzers", () => {
       "/package/bridge/ReaGhidraBridge.java",
       "/tmp/session.json",
     ]);
-  });
-
-  it("adds no analyzer script for an empty override", () => {
-    expect(
-      ghidraHeadlessArguments({ ...base, disabledAnalyzers: [] }),
-    ).not.toContain(
-      posix.join("/package/bridge", "ReaGhidraAnalysisOptions.java"),
+    expect(ghidraHeadlessArguments({ ...base, disabledAnalyzers: [] })).toEqual(
+      arguments_,
     );
   });
 });

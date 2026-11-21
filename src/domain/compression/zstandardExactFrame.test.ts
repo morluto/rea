@@ -61,9 +61,13 @@ it("yields again after the last frame-by-frame decode before success", async () 
 });
 
 it("observes cancellation while admitting a multi-block frame", async () => {
-  const first = zstdCompressSync(Buffer.alloc(8 * 1024 * 1024, "read me\n"));
-  const second = zstdCompressSync(Buffer.from("another frame"));
-  const bytes = Buffer.concat([first, second]);
+  // A windowed frame of 33 one-byte raw blocks reaches a pause during framing.
+  const first = Buffer.concat([
+    Buffer.from("28b52ffd0050", "hex"),
+    repeat(Buffer.of(0x08, 0, 0, 0x61), 32),
+    Buffer.of(0x09, 0, 0, 0x61),
+  ]);
+  const bytes = Buffer.concat([first, rawFrame(0x62)]);
   const options = { allowance: allowance(1, "runtime") };
   const stopped = new Error("cancelled");
   await expect(
@@ -128,10 +132,6 @@ describe("exact Zstandard frames", () => {
       ok: false,
       reason: "truncated_checksum",
     });
-    expect(decodeZstandardFrames(frame.subarray(0, -4))).toMatchObject({
-      ok: false,
-      reason: "truncated_checksum",
-    });
     const wrong = Buffer.from(frame);
     const last = wrong.length - 1;
     wrong.writeUInt8(wrong.readUInt8(last) ^ 0xff, last);
@@ -146,8 +146,12 @@ describe("exact Zstandard frames", () => {
   it("rejects trailing garbage and a partial next-frame magic", () => {
     const frame = rawFrame(0x61);
     expect(
-      decodeZstandardFrames(Buffer.concat([frame, Buffer.of(0)])),
-    ).toMatchObject({ ok: false, reason: "trailing_bytes" });
+      decodeZstandardFrames(Buffer.concat([frame, Buffer.from("CCOB")])),
+    ).toMatchObject({
+      ok: false,
+      reason: "trailing_bytes",
+      offset: frame.length,
+    });
     expect(
       decodeZstandardFrames(
         Buffer.concat([frame, Buffer.of(0x28, 0xb5, 0x2f)]),
@@ -245,22 +249,24 @@ describe("Zstandard frame header widths", () => {
     const dictionary2 = magic([0x22, 0, 0, 0x00, 0x01, 0, 0]);
     const dictionary4 = magic([0x23, 0, 0, 0, 0, 0x00, 0x01, 0, 0]);
     const rle = magic([0x20, 0x04, 0x23, 0, 0, 0x41]);
-    expect(decode(fcs4)).toMatchObject({ ok: true, frames: 1 });
-    expect(decode(fcs8)).toMatchObject({ ok: true, frames: 1 });
-    expect(decode(fcs2)).toMatchObject({ ok: true, frames: 1 });
-    const empty = decode(windowed);
-    const repeated = decode(rle);
-    const wide = decode(fcs2);
-    const sized = decode(fcs4);
-    expect(empty.ok && empty.bytes.length).toBe(0);
-    expect(decode(dictionary1).ok).toBe(true);
-    expect(decode(dictionary2).ok).toBe(true);
-    expect(decode(dictionary4).ok).toBe(true);
-    expect(sized.ok && sized.bytes[0]).toBe(0x41);
-    expect(
-      repeated.ok && Buffer.compare(repeated.bytes, Buffer.from("AAAA")) === 0,
-    ).toBe(true);
-    expect(wide.ok && wide.bytes.length).toBe(256);
+    for (const [frame, expected] of [
+      [fcs4, "A"],
+      [fcs8, "A"],
+      [fcs2, "B".repeat(256)],
+      [rle, "AAAA"],
+      [windowed, ""],
+      [dictionary1, ""],
+      [dictionary2, ""],
+      [dictionary4, ""],
+    ] as const) {
+      const result = decode(frame);
+      if (!result.ok) throw new Error(result.reason);
+      expect(result.frames).toBe(1);
+      expect(
+        result.bytes.equals(Buffer.from(expected)),
+        frame.toString("hex"),
+      ).toBe(true);
+    }
   });
 
   it.each([

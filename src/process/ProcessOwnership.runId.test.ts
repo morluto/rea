@@ -13,7 +13,10 @@ it.each([undefined, "selected-token", ""])(
     if (selected !== undefined) environment.REA_PROCESS_RUN_ID = selected;
     const host: ProcessOwnershipHost = {
       listProcesses: async () => [],
-      environment: async () => environment,
+      environment: async (pid) => {
+        expect(pid).toBe(42);
+        return environment;
+      },
       signalGroup: () => undefined,
     };
     expect(await readProcessRunId(42, host)).toBe(selected);

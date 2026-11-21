@@ -656,6 +656,7 @@ import type {
 } from "./adb/adbDeviceAnalysis.js";
 import type {
   InspectMacho,
+  InspectPlist,
   InspectSignature,
 } from "./native/nativeInspection.js";
 import type { NativeUiObservationResult } from "./native/nativeUiObservation.js";
@@ -745,6 +746,7 @@ export type AnalysisPartialObservation =
   | NativeUiObservationResult
   | InspectSignature
   | InspectMacho
+  | InspectPlist
   | ElectronPagePartialObservation
   | ElectronPageInspection
   | AdbActivityStartPartialObservation

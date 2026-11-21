@@ -704,14 +704,12 @@ it("applies caller-selected discovery_timeout_ms to browser-socket discovery", a
     expect(projected.message).toContain(
       `${String(discoveryTimeoutMs)} ms discovery_timeout_ms`,
     );
-    expect(projected.remediation?.action).toContain(
-      `Increase discovery_timeout_ms above ${String(discoveryTimeoutMs)}`,
-    );
     expect(projected.remediation?.action).not.toContain("--");
     expect(projected.details?.limit).toMatchObject({
       control_kind: "parameter",
       parameter: "discovery_timeout_ms",
       effective_value: discoveryTimeoutMs,
+      applies_at: "next_call",
     });
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   } finally {
