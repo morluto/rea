@@ -1802,7 +1802,45 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     env: ghidraEnv,
                   });
                 }
-                if (existsSync(ghidraOutC)) {
+                const outcomeFile = `${ghidraOutC}.outcome.json`;
+                let exporterOutcome: {
+                  status?: string;
+                  decompiled_functions?: number;
+                  failed_functions?: number;
+                  bytes_written?: number;
+                  max_output_bytes?: number;
+                  error?: string;
+                } | null = null;
+                if (existsSync(outcomeFile)) {
+                  try {
+                    const rawOutcome = await readFile(outcomeFile, "utf8");
+                    exporterOutcome = JSON.parse(rawOutcome);
+                  } catch {
+                    // Ignore unparseable outcome metadata
+                  }
+                }
+
+                if (exporterOutcome?.status === "limit_exceeded") {
+                  isCoveragePartial = true;
+                  const perModuleLimit = `Decompiled C output for ${safeLimitationModName} exceeded 4 MiB module budget; generated entry point scaffolding instead.`;
+                  if (!effectiveLimitations.includes(perModuleLimit)) {
+                    effectiveLimitations.push(perModuleLimit);
+                  }
+                } else if (exporterOutcome?.status === "no_functions") {
+                  const noFuncMsg = `Ghidra C decompilation for ${safeLimitationModName} found no usable functions (${exporterOutcome.failed_functions ?? 0} failed); generated entry point scaffolding instead.`;
+                  if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                    effectiveLimitations.push(noFuncMsg);
+                    recordedGhidraFailures++;
+                  } else if (
+                    !effectiveLimitations.includes(
+                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                    )
+                  ) {
+                    effectiveLimitations.push(
+                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                    );
+                  }
+                } else if (existsSync(ghidraOutC)) {
                   const cStat = await stat(ghidraOutC);
                   if (cStat.size > remainingCBytes) {
                     isCoveragePartial = true;
@@ -1835,12 +1873,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       totalStagedCBytes += candidateCBytes;
                       cGenerator = "ghidra";
                       ghidraEngineUsed = true;
+                      const failedCount =
+                        exporterOutcome?.failed_functions ?? 0;
                       if (
+                        failedCount > 0 ||
                         candidateC.includes(
                           "/* WARNING: Failed to decompile function",
                         )
                       ) {
-                        const incompleteMsg = `Ghidra C decompilation for ${safeLimitationModName} was incomplete; one or more functions failed to decompile.`;
+                        const incompleteMsg =
+                          failedCount > 0
+                            ? `Ghidra C decompilation for ${safeLimitationModName} was incomplete; ${failedCount} function(s) failed to decompile.`
+                            : `Ghidra C decompilation for ${safeLimitationModName} was incomplete; one or more functions failed to decompile.`;
                         if (!effectiveLimitations.includes(incompleteMsg)) {
                           effectiveLimitations.push(incompleteMsg);
                         }
@@ -1857,7 +1901,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     }
                   }
                 } else {
-                  const noOutputMsg = `Ghidra C decompilation for ${safeLimitationModName} failed: decompilation script produced no output.`;
+                  const reason =
+                    exporterOutcome?.error ??
+                    "decompilation script produced no output";
+                  const noOutputMsg = `Ghidra C decompilation for ${safeLimitationModName} failed: ${reason}.`;
                   if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
                     effectiveLimitations.push(noOutputMsg);
                     recordedGhidraFailures++;

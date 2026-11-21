@@ -13,9 +13,47 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * Headless Ghidra script that exports decompiled C pseudocode for the current program
- * into an output C file using DecompInterface.
+ * into an output C file using DecompInterface. Writes a structured companion outcome
+ * file (<output>.outcome.json) recording function counts and limit or error details.
  */
 public class ReaDecompileToC extends GhidraScript {
+    private static String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\b", "\\b")
+                .replace("\f", "\\f")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+    private static void writeOutcome(File outcomeFile, String status, int decompiledCount, int failedCount,
+            long bytesWritten, long maxOutputBytes, String error) {
+        try {
+            File parent = outcomeFile.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
+            try (BufferedWriter w = new BufferedWriter(
+                    new OutputStreamWriter(new FileOutputStream(outcomeFile), StandardCharsets.UTF_8))) {
+                w.write("{\n");
+                w.write("  \"status\": \"" + status + "\",\n");
+                w.write("  \"decompiled_functions\": " + decompiledCount + ",\n");
+                w.write("  \"failed_functions\": " + failedCount + ",\n");
+                w.write("  \"bytes_written\": " + bytesWritten + ",\n");
+                w.write("  \"max_output_bytes\": " + maxOutputBytes);
+                if (error != null) {
+                    w.write(",\n  \"error\": \"" + escapeJson(error) + "\"\n");
+                } else {
+                    w.write("\n");
+                }
+                w.write("}\n");
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     @Override
     public void run() throws Exception {
         if (currentProgram == null) {
@@ -30,6 +68,7 @@ public class ReaDecompileToC extends GhidraScript {
         }
 
         File outputFile = new File(args[0]);
+        File outcomeFile = new File(args[0] + ".outcome.json");
         long maxOutputBytes = 4L * 1024L * 1024L;
         if (args.length > 1) {
             try {
@@ -50,12 +89,16 @@ public class ReaDecompileToC extends GhidraScript {
             decompiler.toggleSyntaxTree(true);
             decompiler.toggleJumpLoads(true);
             if (!decompiler.openProgram(currentProgram)) {
-                printerr("ReaDecompileToC: decompiler failed to open program: " + decompiler.getLastMessage());
+                String openErr = "decompiler failed to open program: " + decompiler.getLastMessage();
+                printerr("ReaDecompileToC: " + openErr);
+                writeOutcome(outcomeFile, "failed", 0, 0, 0, maxOutputBytes, openErr);
                 return;
             }
 
             long bytesWritten = 0;
             boolean limitExceeded = false;
+            int decompiledCount = 0;
+            int failedCount = 0;
             try (BufferedWriter writer = new BufferedWriter(
                     new OutputStreamWriter(new FileOutputStream(outputFile), StandardCharsets.UTF_8))) {
                 String header = "/*\n * Decompiled with Ghidra (" + currentProgram.getName() + ")\n */\n\n";
@@ -64,8 +107,6 @@ public class ReaDecompileToC extends GhidraScript {
                 writer.write(header);
 
                 FunctionIterator iter = currentProgram.getListing().getFunctions(true);
-                int decompiledCount = 0;
-                int failedCount = 0;
                 while (iter.hasNext() && !monitor.isCancelled()) {
                     Function function = iter.next();
                     if (function.isExternal() || function.getBody().isEmpty()) {
@@ -109,16 +150,24 @@ public class ReaDecompileToC extends GhidraScript {
                 }
                 writer.flush();
                 if (limitExceeded) {
+                    writeOutcome(outcomeFile, "limit_exceeded", decompiledCount, failedCount, bytesWritten, maxOutputBytes,
+                            "Decompiled C output exceeded " + maxOutputBytes + " byte limit");
                     throw new RuntimeException("ReaDecompileToC: decompiled C output exceeded " + maxOutputBytes + " byte limit");
                 }
-                println("ReaDecompileToC: decompiled " + decompiledCount + " functions (" + failedCount + " failed/incomplete) to " + outputFile.getAbsolutePath());
-                if (decompiledCount == 0 && failedCount > 0) {
-                    throw new RuntimeException("ReaDecompileToC: all " + failedCount + " function(s) failed decompilation");
+                if (decompiledCount == 0) {
+                    String noFuncErr = "No usable functions decompiled" + (failedCount > 0 ? " (" + failedCount + " failed)" : " (no non-empty functions found)");
+                    writeOutcome(outcomeFile, "no_functions", 0, failedCount, bytesWritten, maxOutputBytes, noFuncErr);
+                    throw new RuntimeException("ReaDecompileToC: " + noFuncErr);
                 }
+                writeOutcome(outcomeFile, "success", decompiledCount, failedCount, bytesWritten, maxOutputBytes, null);
+                println("ReaDecompileToC: decompiled " + decompiledCount + " functions (" + failedCount + " failed/incomplete) to " + outputFile.getAbsolutePath());
             } catch (Exception writeEx) {
                 printerr("ReaDecompileToC: failed writing decompiled output: " + writeEx.getMessage());
                 if (outputFile.exists()) {
                     outputFile.delete();
+                }
+                if (!outcomeFile.exists()) {
+                    writeOutcome(outcomeFile, "failed", decompiledCount, failedCount, bytesWritten, maxOutputBytes, writeEx.getMessage());
                 }
                 throw writeEx;
             }
