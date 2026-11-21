@@ -147,3 +147,10 @@ export const GDB_SESSION_TOOLS = {
   start: "start_gdb_session",
   close: "close_gdb_session",
 } as const satisfies DebuggerSessionTools;
+
+export const LLDB_SESSION_TOOLS = {
+  providerId: "lldb",
+  name: "LLDB",
+  start: "start_lldb_session",
+  close: "close_lldb_session",
+} as const satisfies DebuggerSessionTools;

@@ -37,7 +37,21 @@ it("reports debugger start host restrictions without requiring an analysis targe
       );
     }
     expect(
+      tools.find((tool) => tool.name === "start_lldb_session"),
+    ).toMatchObject(
+      process.platform === "darwin"
+        ? { available: true, reason: "available" }
+        : {
+            available: false,
+            reason: "unsupported_host",
+            remediation: expect.stringContaining("macOS"),
+          },
+    );
+    expect(
       tools.find((tool) => tool.name === "gdb_session_status"),
+    ).toMatchObject({ available: true });
+    expect(
+      tools.find((tool) => tool.name === "lldb_session_status"),
     ).toMatchObject({ available: true });
   }
   if (process.platform !== "linux") {

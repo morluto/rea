@@ -82,6 +82,7 @@ import {
   HOPPER_OPERATIONS,
   HOPPER_PROVIDER_IDENTITY,
 } from "../hopper/HopperProviderMetadata.js";
+import { LLDB_PROVIDER_IDENTITY } from "../lldb/LldbProviderIdentity.js";
 import {
   IDA_OPERATIONS,
   IDA_PROVIDER_IDENTITY,
@@ -409,6 +410,13 @@ export const CAPABILITY_DECLARATIONS = {
   jeb: {
     providers: [
       providerBinding(JEB_PROVIDER_IDENTITY, { group: "JEB_TOOL_CONTRACTS" }),
+    ],
+  },
+  lldbSessions: {
+    providers: [
+      providerBinding(LLDB_PROVIDER_IDENTITY, {
+        group: "LLDB_DEBUG_TOOL_CONTRACTS",
+      }),
     ],
   },
   kernelBuildConfig: {

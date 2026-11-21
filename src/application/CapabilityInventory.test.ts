@@ -1,5 +1,8 @@
 import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
-import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
+import {
+  persistentDebuggerHostSupported,
+  lldbDebuggerHostSupported,
+} from "../process/PersistentDebuggerHost.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { describe, expect, it } from "vitest";
 
@@ -1157,6 +1160,7 @@ it.each(["darwin", "linux", "win32"] as const)(
       ...enabledPolicy,
       hostUnsupported: {
         persistentDebugger: !persistentDebuggerHostSupported(platform),
+        lldbDebugger: !lldbDebuggerHostSupported(platform),
       },
     });
     for (const name of ["start_gdb_session", "start_rizin_debug_session"])
@@ -1169,7 +1173,23 @@ it.each(["darwin", "linux", "win32"] as const)(
               remediation: expect.stringContaining("Linux"),
             },
       );
-    for (const name of ["gdb_session_status", "close_rizin_debug_session"])
+    expect(
+      entries.find((entry) => entry.name === "start_lldb_session"),
+    ).toMatchObject(
+      platform === "darwin"
+        ? { available: true, reason: "available" }
+        : {
+            available: false,
+            reason: "unsupported_host",
+            remediation: expect.stringContaining("macOS"),
+          },
+    );
+    for (const name of [
+      "gdb_session_status",
+      "close_rizin_debug_session",
+      "lldb_session_status",
+      "close_lldb_session",
+    ])
       expect(entries.find((entry) => entry.name === name)).toMatchObject({
         available: true,
       });

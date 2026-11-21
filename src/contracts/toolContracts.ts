@@ -47,6 +47,7 @@ import { CUTTER_TOOL_CONTRACTS } from "./cutterToolContracts.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "./reverseEngineeringToolContracts.js";
 import { GDB_TOOL_CONTRACTS } from "./gdbToolContracts.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
+import { LLDB_DEBUG_TOOL_CONTRACTS } from "./lldbDebugToolContracts.js";
 import { FRIDA_TOOL_CONTRACTS } from "./fridaToolContracts.js";
 import { ENVIRONMENT_TOOL_CONTRACTS } from "./environmentToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
@@ -107,6 +108,7 @@ const CATALOG_CONTRACT_GROUPS = {
   REVERSE_ENGINEERING_TOOL_CONTRACTS,
   GDB_TOOL_CONTRACTS,
   RIZIN_DEBUG_TOOL_CONTRACTS,
+  LLDB_DEBUG_TOOL_CONTRACTS,
   FRIDA_TOOL_CONTRACTS,
 } as const;
 

@@ -145,6 +145,7 @@ import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureS
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import type { LldbSessionManager } from "../lldb/LldbSessionManager.js";
 import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import {
   resolveRizinCommandRequest,
@@ -152,6 +153,7 @@ import {
 } from "../application/reverse/ReverseEngineeringService.js";
 import {
   GDB_SESSION_TOOLS,
+  LLDB_SESSION_TOOLS,
   RIZIN_DEBUG_SESSION_TOOLS,
   unknownDebuggerSessionError,
 } from "../domain/debuggerSessionErrors.js";
@@ -335,6 +337,15 @@ const prepareRizinCommand =
 export interface GdbToolOptions {
   readonly manager: Pick<
     GdbSessionManager,
+    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** LLDB sessions a manager owns and the session their commands may change. */
+export interface LldbToolOptions {
+  readonly manager: Pick<
+    LldbSessionManager,
     "start" | "execute" | "status" | "close" | "retryCleanupFailures"
   >;
   readonly session: ExternalMutationAdmission | undefined;
@@ -1577,6 +1588,86 @@ const SERVICE_TOOL_BINDINGS = {
       },
     },
   })) satisfies Bind<GdbToolOptions>,
+  lldb: (({ manager, session }) => {
+    const retryCleanup = () => manager.retryCleanupFailures();
+    return {
+      start_lldb_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "value",
+          retryCleanup,
+          run: async (input, signal) => {
+            const started = await manager.start(signal, {
+              ...(input.path !== undefined && { path: input.path }),
+              ...(input.args !== undefined && { args: input.args }),
+              ...(input.env !== undefined && { env: input.env }),
+              ...(input.pid !== undefined && { pid: input.pid }),
+              ...(input.stop_at_entry !== undefined && {
+                stop_at_entry: input.stop_at_entry,
+              }),
+              ...(input.disable_aslr !== undefined && {
+                disable_aslr: input.disable_aslr,
+              }),
+              ...(input.breakpoints !== undefined && {
+                breakpoints: input.breakpoints,
+              }),
+            });
+            if (!started.ok) return started;
+            const value: JsonValue = {
+              session_id: started.value.session_id,
+              state: started.value.state,
+              pid: started.value.pid ?? null,
+              target: started.value.target ?? null,
+            };
+            return ok({
+              value,
+              retained: { session_id: started.value.session_id },
+            });
+          },
+        },
+      },
+      lldb_command: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "evidence",
+          retryCleanup,
+          run: async (input, signal) => {
+            const executed = await manager.execute(
+              input.session_id,
+              input.command,
+              signal,
+            );
+            return executed.ok ? ok(executed.value.evidence) : executed;
+          },
+        },
+      },
+      lldb_session_status: {
+        admission: "sdk",
+        value: async (input) => {
+          const status = await manager.status(input.session_id);
+          return status === undefined
+            ? err(
+                unknownDebuggerSessionError(
+                  LLDB_SESSION_TOOLS,
+                  "lldb_session_status",
+                ),
+              )
+            : ok({ ...status });
+        },
+      },
+      close_lldb_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "owned-cleanup",
+          resource: (input) => input.session_id,
+          run: (input) => manager.close(input.session_id),
+        },
+      },
+    };
+  }) satisfies Bind<LldbToolOptions>,
   // Browser observation runs through an optional provider; when it failed
   // to load, every call reports it unavailable before admission.
   browserObservation: (({ browser, loadFailure }, retention) => {

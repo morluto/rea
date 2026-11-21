@@ -163,7 +163,7 @@ export interface ProcessTargetIdentity {
 }
 
 /** Debugger sessions REA mints and can bind to a launch target. */
-export const debuggerSessionKindSchema = z.enum(["rizin", "gdb"]);
+export const debuggerSessionKindSchema = z.enum(["rizin", "gdb", "lldb"]);
 
 /**
  * A debugger session REA minted, bound to the target it launched: the launch

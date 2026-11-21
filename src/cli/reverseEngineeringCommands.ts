@@ -33,6 +33,7 @@ import { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbSessionMana
 import {
   createGdbSessionManager,
   createRizinDebugSessionManager,
+  createLldbSessionManager,
 } from "../composition/debuggerSessions.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -144,6 +145,9 @@ export const registerReverseEngineeringCommands = (
     environment: Readonly<NodeJS.ProcessEnv>,
   ) => ReturnType<typeof createGdbSessionManager> = createGdbSessionManager,
   createService: typeof createReverseEngineeringService = createReverseEngineeringService,
+  createLldbManager: (
+    environment: Readonly<NodeJS.ProcessEnv>,
+  ) => ReturnType<typeof createLldbSessionManager> = createLldbSessionManager,
 ): void => {
   const service = createService(environment);
   const objdump = contractNamed(
@@ -405,6 +409,69 @@ export const registerReverseEngineeringCommands = (
     },
     {
       operations: [{ name: "rizin_debug_command", flags: {} }],
+    },
+  );
+  registerCliCommand(
+    cli,
+    CLI_COMMANDS.debugWithLldb,
+    {
+      description:
+        "Run one unrestricted LLDB console command in an ephemeral session on macOS Apple Silicon",
+      args: z.object({
+        command: z
+          .string()
+          .min(1)
+          .describe("One unrestricted LLDB console command."),
+      }),
+      options: z.object({
+        path: z
+          .string()
+          .optional()
+          .describe("Optional target binary path to launch under LLDB."),
+      }),
+      run: ({ args, options }) =>
+        withCommandCancellation((signal) =>
+          logCliCommand(logger, CLI_COMMANDS.debugWithLldb, async () => {
+            const manager = createLldbManager(environment);
+            let sessionId: string | undefined;
+            return finishAnalysisCommand(
+              async () => {
+                const started = await manager.start(
+                  signal,
+                  options.path === undefined ? {} : { path: options.path },
+                );
+                if (!started.ok) return started;
+                sessionId = started.value.session_id;
+                const executed = await manager.execute(
+                  sessionId,
+                  args.command,
+                  signal,
+                );
+                return executed.ok ? ok(executed.value.evidence) : executed;
+              },
+              {
+                close: () =>
+                  closeDebuggerCommandSession(
+                    manager,
+                    sessionId,
+                    "apple.lldb",
+                    "lldb_command",
+                    (cleanup) =>
+                      logger.error(
+                        { command: CLI_COMMANDS.debugWithLldb, cleanup },
+                        "LLDB cleanup failed after collecting command output",
+                      ),
+                  ),
+              },
+              "apple.lldb",
+              "lldb_command",
+              signal,
+            ).then(projectCliAnalysisResult);
+          }),
+        ),
+    },
+    {
+      operations: [{ name: "lldb_command", flags: {} }],
     },
   );
 };

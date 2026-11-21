@@ -33,6 +33,7 @@ export const CLI_COMMANDS = Object.freeze({
   listObjdumpArchitectures: "list-objdump-architectures",
   debugWithGdb: "debug-with-gdb",
   debugWithRizin: "debug-with-rizin",
+  debugWithLldb: "debug-with-lldb",
   inspectEvidenceBundle: "inspect-evidence-bundle",
   evidenceImport: "evidence-import",
   evidenceExport: "evidence-export",

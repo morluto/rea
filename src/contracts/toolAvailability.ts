@@ -10,6 +10,7 @@ export const HOST_RESTRICTED_FEATURES = [
   "firmwareExtraction",
   "javascriptRecovery",
   "persistentDebugger",
+  "lldbDebugger",
 ] as const;
 export type HostRestrictedFeature = (typeof HOST_RESTRICTED_FEATURES)[number];
 

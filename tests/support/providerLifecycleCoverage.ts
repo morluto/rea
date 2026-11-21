@@ -254,6 +254,59 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "apple.lldb": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "tests/boundary/cli/lldbStartupCleanupCli.test.ts",
+          "retains caller-selected launch facts, provenance, and hashes target file in command evidence",
+        ),
+        test(
+          "tests/boundary/cli/lldbStartupCleanupCli.test.ts",
+          "resolves symlinked traversal paths so evidence hash and launch binary match the true target",
+        ),
+      ),
+      handshake: covered(
+        test(
+          "tests/boundary/cli/lldbStartupCleanupCli.test.ts",
+          "rejects session startup when LLDB bridge initialize handshake fails",
+        ),
+      ),
+      operation: covered(
+        test(
+          "tests/boundary/cli/lldbStartupCleanupCli.test.ts",
+          "executes LLDB command through public CLI and performs clean session close",
+        ),
+      ),
+      cancel: covered(
+        test(
+          "tests/boundary/cli/lldbStartupCleanupCli.test.ts",
+          "propagates cancellation and aborts an in-flight LLDB command",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          "tests/boundary/cli/lldbStartupCleanupCli.test.ts",
+          "marks the CLI failed when retained LLDB cleanup remains incomplete",
+        ),
+        test(
+          "tests/boundary/cli/lldbStartupCleanupCli.test.ts",
+          "retains session ownership in LldbSessionManager when target cleanup cannot be confirmed",
+        ),
+      ),
+      retry: covered(
+        test(
+          "tests/boundary/cli/lldbStartupCleanupCli.test.ts",
+          "retries retained LLDB cleanup when CLI session startup fails",
+        ),
+        test(
+          "tests/boundary/cli/lldbStartupCleanupCli.test.ts",
+          "releases session ownership in LldbSessionManager when target cleanup is confirmed",
+        ),
+      ),
+    },
+  },
   binwalk: {
     ownership: "process",
     stages: {
