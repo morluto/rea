@@ -102,8 +102,8 @@ const historicalCapture = (
   stages: {
     launch: covered(
       test(
-        HISTORICAL_DECODER,
-        "cancels after snapshot acquisition before launch and removes private input declarations",
+        "tests/boundary/browser/historicalCapturePreparationCleanup.test.ts",
+        "cancels after snapshot acquisition without launching or adopting the opaque caller reason",
       ),
     ),
     handshake: notApplicable(

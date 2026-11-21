@@ -1,3 +1,5 @@
+import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
+import { userConfigRegistrationFallback } from "./UserConfigurationLocation.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
@@ -125,6 +127,7 @@ export const hostRemediation = (host: SetupHost): string | undefined =>
 export const systemSetupHost = (
   selectedDoctorHost: DoctorHost | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  savedDefaults?: ReadonlySet<string>,
 ): SetupHost => {
   const doctorHost = selectedDoctorHost ?? systemDoctorHost({ environment });
   const platform = doctorHost.platform;
@@ -187,12 +190,25 @@ export const systemSetupHost = (
       scope?: DoctorScope,
     ): Promise<SetupInitialState> => {
       const diagnosis = await runDoctor(undefined, doctorHost, scope);
+      const hopperSetting =
+        diagnosis.staticProviderSettings?.HOPPER_LAUNCHER_PATH;
       const providerEnvironment: SetupProviderEnvironment = {
-        ...providerRegistrationEnvironment(diagnosis.providerInspections ?? []),
-        ...(diagnosis.hopperPath === undefined
-          ? {}
-          : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
-        ...explicitSetupRegistrationEnvironment(environment),
+        ...omitEnvironmentSettings(
+          {
+            ...providerRegistrationEnvironment(
+              diagnosis.providerInspections ?? [],
+            ),
+            ...(diagnosis.hopperPath === undefined ||
+            hopperSetting?.source === "config"
+              ? {}
+              : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
+            ...explicitSetupRegistrationEnvironment(environment),
+          },
+          savedDefaults,
+        ),
+        ...(savedDefaults !== undefined && savedDefaults.size > 0
+          ? userConfigRegistrationFallback(environment, platform)
+          : {}),
       };
       const requestedProvider = analysisProviderSelectorSchema.safeParse(
         environment.REA_ANALYSIS_PROVIDER,
@@ -201,9 +217,10 @@ export const systemSetupHost = (
         ...(diagnosis.hopperPath === undefined
           ? {}
           : { hopperPath: diagnosis.hopperPath }),
-        ...(typeof environment.HOPPER_LAUNCHER_PATH === "string" &&
-        environment.HOPPER_LAUNCHER_PATH.trim() !== "" &&
-        diagnosis.hopperPath === environment.HOPPER_LAUNCHER_PATH
+        ...(diagnosis.hopperPath !== undefined &&
+        (hopperSetting === undefined
+          ? diagnosis.hopperPath === environment.HOPPER_LAUNCHER_PATH
+          : hopperSetting.source !== "auto")
           ? { hopperLauncherConfigured: true }
           : {}),
         providerConfigured:

@@ -1412,7 +1412,7 @@ const purgeSelectedData = async (
   const directories: string[] = [];
   let custom: string | undefined;
   if (platform === "darwin" || platform === "linux") {
-    const defaultCache = defaultKunaCacheDirectory(home, environment, platform);
+    const defaultCache = defaultKunaCacheDirectory(environment, platform, home);
     directories.push(defaultCache);
     custom = environment.REA_KUNA_CACHE_DIR;
     // Lexical spellings identify the default namespace for reporting.

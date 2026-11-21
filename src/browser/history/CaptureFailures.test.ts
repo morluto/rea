@@ -14,7 +14,6 @@ import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapt
 import {
   EFFECTIVE_DECODER_CPU_RECORD,
   historicalCaptureFailure,
-  parseRecordedCpuCeiling,
   protobufCaptureFailure,
   recordedDecoderCpuSeconds,
 } from "./CaptureFailures.js";
@@ -359,42 +358,32 @@ it("leaves SIGXFSZ on the adapter failure path", () => {
   ).toMatchObject({ code: "execution_failure" });
 });
 
-it("reads only a recorded CPU ceiling at or below its budget", async () => {
-  expect(
-    parseRecordedCpuCeiling(
-      Buffer.from('{"requested_seconds":30,"seconds":1}'),
-    ),
-  ).toEqual({ seconds: 1, requestedSeconds: 30 });
-  expect(parseRecordedCpuCeiling(Buffer.from('{"seconds":1}'))).toBe(undefined);
-  expect(
-    parseRecordedCpuCeiling(
-      Buffer.from('{"requested_seconds":30,"seconds":1,"other":2}'),
-    ),
-  ).toBe(undefined);
-  expect(
-    parseRecordedCpuCeiling(
-      Buffer.from('{"requested_seconds":30,"seconds":1.5}'),
-    ),
-  ).toBe(undefined);
-  expect(
-    parseRecordedCpuCeiling(
-      Buffer.from('{"requested_seconds":1,"seconds":30}'),
-    ),
-  ).toBe(undefined);
+it("reads only an admitted CPU ceiling for the CPU limit exit", async () => {
   const root = await createTestTempDirectory("rea-cpu-limit-");
-  await writeFile(
-    join(root, EFFECTIVE_DECODER_CPU_RECORD),
-    '{"requested_seconds":30,"seconds":1}',
-    "utf8",
-  );
+  const path = join(root, EFFECTIVE_DECODER_CPU_RECORD);
   const cause = cpuSignalFailure("SIGXCPU");
+  expect(await recordedDecoderCpuSeconds(root, cause)).toBeUndefined();
+  await writeFile(path, '{"requested_seconds":30,"seconds":1}');
   expect(await recordedDecoderCpuSeconds(root, cause)).toEqual({
     seconds: 1,
     requestedSeconds: 30,
   });
   expect(
     await recordedDecoderCpuSeconds(root, cpuSignalFailure("SIGXFSZ")),
-  ).toBe(undefined);
+  ).toBeUndefined();
+  for (const record of [
+    '{"seconds":1}',
+    '{"requested_seconds":30,"seconds":1,"other":2}',
+    '{"requested_seconds":30,"seconds":1.5}',
+    '{"requested_seconds":1,"seconds":30}',
+    '{"requested_seconds":30,"seconds":1}' + " ".repeat(64),
+  ]) {
+    await writeFile(path, record);
+    expect(
+      await recordedDecoderCpuSeconds(root, cause),
+      record,
+    ).toBeUndefined();
+  }
 });
 
 it.each(["before open", "during read"])(

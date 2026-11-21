@@ -708,6 +708,35 @@ it("redacts actual authentication fields and explicit binary values while preser
   });
 });
 
+it("rejects absolute HAR request spellings that would change when parsed", () => {
+  const fixture = historicalHar();
+  const entry = fixture.log.entries[0]!;
+  for (const url of [
+    "http:\\\\user:pass@host.test/",
+    "https://host.test/a\tb",
+    "https://host.test/a b",
+  ]) {
+    expect(
+      () =>
+        decodeHarCapture(
+          JSON.stringify({
+            log: {
+              ...fixture.log,
+              entries: [{ ...entry, request: { ...entry.request, url } }],
+            },
+          }),
+          [],
+        ),
+      url,
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind: "malformed" }),
+        pointer: "/log/entries/0/request/url",
+      }),
+    );
+  }
+});
+
 it("preserves observed SaveHar null post-data without broadening arbitrary HAR producers", () => {
   const fixture = historicalHar();
   const first = fixture.log.entries[0];

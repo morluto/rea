@@ -48,19 +48,24 @@ it("preserves valid replacement-character text and rejects invalid bytes in the 
   });
 });
 
-it.each(["{broken", "\uFEFF{}"])(
-  "retains malformed JSON handling for %j",
-  async (text) => {
-    const file = await replyFile(Buffer.from(text));
-    await expect(
-      readHistoricalCaptureReply(file.path, "/capture.har", file.resources),
-    ).rejects.toMatchObject({
-      _tag: "AnalysisOutputError",
-      reason: expect.stringContaining("Reply is malformed JSON."),
-      cause: expect.any(SyntaxError),
-    });
+it.each([
+  { text: "{broken", reason: "Reply is malformed JSON.", cause: SyntaxError },
+  { text: "\uFEFF{}", reason: "Reply is malformed JSON.", cause: SyntaxError },
+  {
+    text: '{"ok":true,"value":{}}',
+    reason: "Reply violates its schema",
+    cause: Error,
   },
-);
+])("retains $reason for %j", async ({ text, reason, cause }) => {
+  const file = await replyFile(Buffer.from(text));
+  await expect(
+    readHistoricalCaptureReply(file.path, "/capture.har", file.resources),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisOutputError",
+    reason: expect.stringContaining(reason),
+    cause: expect.any(cause),
+  });
+});
 
 it("preserves native number sidecars until their plain or exponential spelling is marked sensitive", async () => {
   const payload = decodeHarCapture(JSON.stringify(historicalHar()), []);
