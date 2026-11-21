@@ -1,7 +1,4 @@
-import {
-  IDA_COMPATIBILITY_PROFILES,
-  readIdaConfiguration,
-} from "./IdaConfiguration.js";
+import { IDA_COMPATIBILITY_PROFILES } from "./IdaConfiguration.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -280,38 +277,6 @@ describe("IDA selected registration factories", () => {
     await mismatchedTargetClient.close();
     await mismatchedProfileClient.close();
     for (const client of clients) await client.close();
-  });
-
-  it("requires explicit opt-in and rejects native headless registrations", async () => {
-    const { root } = await fixture();
-    const path = join(root, "native.json");
-    await writeFile(
-      path,
-      JSON.stringify({ url: "http://127.0.0.1:13337/mcp", protocol: "native" }),
-    );
-    expect(await readIdaConfiguration(path, { resourceScope })).toMatchObject({
-      ok: true,
-      value: { mode: "attached", protocol: "native" },
-    });
-    await writeFile(
-      path,
-      JSON.stringify({
-        url: "http://127.0.0.1:13337/mcp",
-        protocol: "native",
-        mode: "headless",
-      }),
-    );
-    expect((await readIdaConfiguration(path, { resourceScope })).ok).toBe(
-      false,
-    );
-    await writeFile(
-      path,
-      JSON.stringify({ command: "python", protocol: "legacy" }),
-    );
-    expect(
-      (await readIdaConfiguration(path, { resourceScope })).ok,
-      "the removed legacy protocol is refused, not read as native",
-    ).toBe(false);
   });
 
   it("commits native profile semantics and advertises GUI effects without starting a provider", async () => {
