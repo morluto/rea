@@ -2748,14 +2748,19 @@ describe("DeepSeek Harness caller node metadata", () => {
 });
 
 describe("DeepSeek Harness uninstall of a shared operation", () => {
-  it("keeps a group patch's own fields and comment when its only row was REA's", async () => {
+  it("keeps a group insert from activating its ignored overrides on uninstall", async () => {
     const { home, client } = await harnessClient();
     const entry = canonicalEntry();
-    await writeFile(
-      client.configPath,
-      `- insert:
-    - id: user-a
-      name: plugin-a
+    const initial = `- insert:
+    - id: tools
+      name: "@deepseek-ai/cordis-plugin-group"
+      group: true
+      config:
+        - id: user-a
+          name: plugin-a
+- id: user-a
+  config:
+    sandbox: permissive
 # caller group patch
 - id: tools
   config:
@@ -2768,18 +2773,32 @@ describe("DeepSeek Harness uninstall of a shared operation", () => {
         transport: stdio
         command: ${entry.config.command}
         args: ${JSON.stringify(entry.config.args)}
-`,
-    );
+`;
+    await writeFile(client.configPath, initial);
 
-    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
-      "removed",
-    );
+    const host = systemUninstallHost(home);
+    expect((await host.removeClient(client)).status).toBe("removed");
     const text = await readFile(client.configPath, "utf8");
     expect(parseYaml(text)).toEqual([
-      { insert: [{ id: "user-a", name: "plugin-a" }] },
-      { id: "tools", config: { sandbox: "strict" } },
+      {
+        insert: [
+          {
+            id: "tools",
+            name: "@deepseek-ai/cordis-plugin-group",
+            group: true,
+            config: [{ id: "user-a", name: "plugin-a" }],
+          },
+        ],
+      },
+      { id: "user-a", config: { sandbox: "permissive" } },
+      { id: "tools", config: { sandbox: "strict" }, insert: [] },
     ]);
     expect(text).toContain("# caller group patch");
+    expect((await host.removeClient(client)).status).toBe("skipped");
+    expect(await readFile(client.configPath, "utf8")).toBe(text);
+    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+      initial,
+    );
   });
 
   it("keeps an operation's own fields when setup removes a second REA row from it", async () => {
@@ -2810,7 +2829,10 @@ ${row("second-launcher")}`,
     const text = await readFile(client.configPath, "utf8");
     expect(text).toContain("# caller operation");
     expect(loadedInserts(text)).toHaveLength(1);
-    expect((parseYaml(text) as unknown[]).at(-1)).toEqual({ disabled: false });
+    expect((parseYaml(text) as unknown[]).at(-1)).toEqual({
+      disabled: false,
+      insert: [],
+    });
     expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
   });
 

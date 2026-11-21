@@ -11,7 +11,7 @@ import { isRecord } from "../kernel/isRecord.js";
 export const DSH_ENTRY_ID = "rea-mcp";
 export const DSH_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client";
 const LAUNCHER_KEYS = new Set(["serverName", "transport", "command", "args"]);
-const SELECTOR_KEYS = new Set(["id", "name"]);
+const PATCH_ROUTING_KEYS = new Set(["id", "name", "insert"]);
 const isPatchRecord = (value: unknown): value is Record<string, unknown> =>
   isRecord(value) && !(value instanceof CordisExpression);
 
@@ -329,13 +329,13 @@ export class DshCordisDocument {
           this.#entry(edit.desired, edit.platform, invalidated),
         ] as typeof inserted.items;
       });
-      if (inserted.items.length === 0) copy.delete("insert");
-      // An emptied operation keeps caller fields unless it would patch REA's row.
+      // Cordis still treats an empty insert list as an insert operation.
+      // Dropping the list would activate the other fields as direct overrides.
       const kept =
         inserted.items.length > 0 ||
         (this.#id(op.map) !== DSH_ENTRY_ID &&
           copy.items.some(
-            (pair) => !SELECTOR_KEYS.has(this.#yaml.value(pair.key) as string),
+            (pair) => !PATCH_ROUTING_KEYS.has(this.#yaml.key(pair.key)),
           ));
       replacements.set(op.source, kept ? copy : undefined);
     }
