@@ -1,4 +1,5 @@
 import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type { UefiDecodeFormat } from "./FfsSections.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
@@ -121,13 +122,96 @@ interface UefiEntryPointScaffolding {
   readonly functionDefinition: string;
 }
 
+export type UefiMachineWidth = "32" | "64";
+
+export const sanitizeCComment = (text: string): string =>
+  text
+    .replace(/\*\//g, "* /")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+
+export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
+  if (bytes.length < 4) {
+    return "64";
+  }
+
+  try {
+    const reader = new BinaryReader(bytes, true, "UEFI image header");
+
+    // 1. Check for TE header (Signature "VZ" = 0x56, 0x5A)
+    if (bytes[0] === 0x56 && bytes[1] === 0x5a && bytes.length >= 4) {
+      const machine = reader.u16(2);
+      if (
+        machine === 0x014c || // IA32
+        machine === 0x01c0 || // ARM
+        machine === 0x01c2 || // ARMNT
+        machine === 0x5032 // RISCV32
+      ) {
+        return "32";
+      }
+      return "64";
+    }
+
+    // 2. Check for PE header ("MZ" DOS header followed by PE signature at e_lfanew)
+    if (bytes[0] === 0x4d && bytes[1] === 0x5a && bytes.length >= 0x40) {
+      const eLfanew = reader.u32(0x3c);
+      if (eLfanew + 6 <= bytes.length) {
+        if (
+          bytes[eLfanew] === 0x50 &&
+          bytes[eLfanew + 1] === 0x45 &&
+          bytes[eLfanew + 2] === 0x00 &&
+          bytes[eLfanew + 3] === 0x00
+        ) {
+          const machine = reader.u16(eLfanew + 4);
+          if (
+            machine === 0x014c || // IA32
+            machine === 0x01c0 || // ARM
+            machine === 0x01c2 || // ARMNT
+            machine === 0x5032 // RISCV32
+          ) {
+            return "32";
+          }
+          return "64";
+        }
+      }
+    }
+
+    // 3. Direct COFF header without DOS stub
+    if (
+      bytes.length >= 6 &&
+      bytes[0] === 0x50 &&
+      bytes[1] === 0x45 &&
+      bytes[2] === 0x00 &&
+      bytes[3] === 0x00
+    ) {
+      const machine = reader.u16(4);
+      if (
+        machine === 0x014c ||
+        machine === 0x01c0 ||
+        machine === 0x01c2 ||
+        machine === 0x5032
+      ) {
+        return "32";
+      }
+      return "64";
+    }
+  } catch {
+    return "64";
+  }
+
+  return "64";
+};
+
 export const buildUefiEntryPointScaffolding = (
   identifier: string,
   rawName: string,
   byteLength: number,
   phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC",
   typeName?: string,
+  machineWidth: UefiMachineWidth = "64",
 ): UefiEntryPointScaffolding => {
+  const safeName = sanitizeCComment(rawName);
+  const statusType = machineWidth === "32" ? "int32_t" : "int64_t";
   const normType = typeName?.toLowerCase();
   if (normType === "pei-core") {
     return {
@@ -142,7 +226,7 @@ export const buildUefiEntryPointScaffolding = (
         "    const EFI_PEI_PPI_DESCRIPTOR *PpiList,",
         "    void *Context",
         ") {",
-        `    // Reconstructed PEI Core EntryPoint scaffolding for ${rawName}`,
+        `    // Reconstructed PEI Core EntryPoint scaffolding for ${safeName}`,
         `    // Size: ${byteLength} bytes`,
         "    (void)SecCoreData;",
         "    (void)PpiList;",
@@ -155,7 +239,7 @@ export const buildUefiEntryPointScaffolding = (
   if (normType === "peim" || (normType === undefined && phase === "PEI")) {
     return {
       typedefs: [
-        "typedef int64_t EFI_STATUS;",
+        `typedef ${statusType} EFI_STATUS;`,
         "typedef void* EFI_PEI_FILE_HANDLE;",
         "struct _EFI_PEI_SERVICES;",
         "typedef struct _EFI_PEI_SERVICES EFI_PEI_SERVICES;",
@@ -167,7 +251,7 @@ export const buildUefiEntryPointScaffolding = (
         "    EFI_PEI_FILE_HANDLE FileHandle,",
         "    const EFI_PEI_SERVICES **PeiServices",
         ") {",
-        `    // Reconstructed PEIM EntryPoint scaffolding for ${rawName}`,
+        `    // Reconstructed PEIM EntryPoint scaffolding for ${safeName}`,
         `    // Size: ${byteLength} bytes`,
         "    EFI_STATUS Status = EFI_SUCCESS;",
         "    (void)FileHandle;",
@@ -189,7 +273,7 @@ export const buildUefiEntryPointScaffolding = (
         `void EFIAPI ${identifier}EntryPoint(`,
         "    void *PeiCoreEntryPoint",
         ") {",
-        `    // Reconstructed SEC EntryPoint scaffolding for ${rawName}`,
+        `    // Reconstructed SEC EntryPoint scaffolding for ${safeName}`,
         `    // Size: ${byteLength} bytes`,
         "    (void)PeiCoreEntryPoint;",
         "}",
@@ -205,7 +289,7 @@ export const buildUefiEntryPointScaffolding = (
         `void EFIAPI ${identifier}EntryPoint(`,
         "    void *HobStart",
         ") {",
-        `    // Reconstructed DXE Core EntryPoint scaffolding for ${rawName}`,
+        `    // Reconstructed DXE Core EntryPoint scaffolding for ${safeName}`,
         `    // Size: ${byteLength} bytes`,
         "    (void)HobStart;",
         "}",
@@ -215,7 +299,7 @@ export const buildUefiEntryPointScaffolding = (
 
   return {
     typedefs: [
-      "typedef int64_t EFI_STATUS;",
+      `typedef ${statusType} EFI_STATUS;`,
       "typedef void* EFI_HANDLE;",
       "struct _EFI_SYSTEM_TABLE;",
       "typedef struct _EFI_SYSTEM_TABLE EFI_SYSTEM_TABLE;",
@@ -227,7 +311,7 @@ export const buildUefiEntryPointScaffolding = (
       "    EFI_HANDLE ImageHandle,",
       "    EFI_SYSTEM_TABLE *SystemTable",
       ") {",
-      `    // Reconstructed EntryPoint scaffolding for ${rawName}`,
+      `    // Reconstructed EntryPoint scaffolding for ${safeName}`,
       `    // Size: ${byteLength} bytes`,
       "    EFI_STATUS Status = EFI_SUCCESS;",
       "    (void)ImageHandle;",
@@ -1017,7 +1101,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     let establishedError: unknown;
 
     try {
-      const occurrences = new Map<string, number>();
+      const allocatedRelDirs = new Set<string>();
+      let moduleSeq = 0;
       const phaseCounts = {
         sec: 0,
         pei: 0,
@@ -1065,6 +1150,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           }
         }
 
+        moduleSeq++;
         const modBytes =
           mod.bytes ??
           (mod.sourcePath ? await readFile(mod.sourcePath) : Buffer.alloc(0));
@@ -1079,15 +1165,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           cIdentifier = `_${cIdentifier}`;
         }
 
-        const dedupeKey = `${mod.phase}/${mod.guid ?? "noguid"}_${mod.cleanName}`;
-        const occurrence = occurrences.get(dedupeKey) ?? 0;
-        occurrences.set(dedupeKey, occurrence + 1);
-
-        const subDir =
-          occurrence === 0
-            ? `${mod.guid ?? "noguid"}_${mod.cleanName}`
-            : `${mod.guid ?? "noguid"}_${mod.cleanName}_${occurrence}`;
-        const moduleRelDir = `${mod.phase}/${subDir}`;
+        const idPrefix =
+          mod.guid ?? `noguid_${sha256Hex(modBytes).slice(0, 8)}`;
+        let moduleRelDir = `${mod.phase}/${idPrefix}_${mod.cleanName}`;
+        let occurrence = 0;
+        while (allocatedRelDirs.has(moduleRelDir)) {
+          occurrence++;
+          moduleRelDir = `${mod.phase}/${idPrefix}_${mod.cleanName}_${occurrence}`;
+        }
+        allocatedRelDirs.add(moduleRelDir);
 
         const efiRelPath = `${moduleRelDir}/${mod.cleanName}.efi`;
         let relativePayloadFile: string | null = null;
@@ -1113,22 +1199,30 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           );
         }
 
+        const machineWidth = detectPeTeMachineWidth(modBytes);
         const scaffold = buildUefiEntryPointScaffolding(
           cIdentifier,
           mod.rawName,
           modBytes.length,
           mod.phase,
           mod.typeName,
+          machineWidth,
         );
+
+        const safeRawName = sanitizeCComment(mod.rawName);
+        const safeTypeName = mod.typeName
+          ? sanitizeCComment(mod.typeName)
+          : null;
+        const safeGuid = mod.guid ? sanitizeCComment(mod.guid) : null;
 
         const headerName = `${mod.cleanName}.h`;
         const headerRelPath = `${moduleRelDir}/${headerName}`;
         const headerGuard = `_UEFI_${cIdentifier.toUpperCase()}_H_`;
         const headerContent = [
           "/**",
-          ` * UEFI Module Header: ${mod.rawName}`,
-          ` * Phase: ${mod.phase}${mod.typeName ? ` | Type: ${mod.typeName}` : ""}`,
-          ` * GUID: ${mod.guid ?? "N/A"}`,
+          ` * UEFI Module Header: ${safeRawName}`,
+          ` * Phase: ${mod.phase}${safeTypeName ? ` | Type: ${safeTypeName}` : ""}`,
+          ` * GUID: ${safeGuid ?? "N/A"}`,
           ` * Size: ${modBytes.length} bytes`,
           " */",
           `#ifndef ${headerGuard}`,
@@ -1146,7 +1240,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           "",
           ...scaffold.typedefs,
           ...(mod.guid
-            ? [`#define ${cIdentifier.toUpperCase()}_GUID "${mod.guid}"`]
+            ? [
+                `#define ${cIdentifier.toUpperCase()}_GUID "${mod.guid.replace(/["\\]/g, "")}"`,
+              ]
             : []),
           "",
           scaffold.prototype,
@@ -1167,7 +1263,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         let disassemblyStatus: "ok" | "failed" | "omitted" = "omitted";
         const tempEfiPath = join(
           tempRoot.path,
-          `${cIdentifier}_${occurrence}.efi`,
+          `${cIdentifier}_${moduleSeq}.efi`,
         );
         let ghidraOutC: string | undefined;
 
@@ -1332,7 +1428,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             } else {
               ghidraOutC = join(
                 tempRoot.path,
-                `${cIdentifier}_${occurrence}_decompiled.c`,
+                `${cIdentifier}_${moduleSeq}_decompiled.c`,
               );
               try {
                 const bridgeDir = resolve(
@@ -1344,7 +1440,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 );
                 const ghidraArgs = [
                   tempRoot.path,
-                  `UefiDecomp_${cIdentifier}_${occurrence}`,
+                  `UefiDecomp_${cIdentifier}_${moduleSeq}`,
                   "-import",
                   tempEfiPath,
                   "-scriptPath",
@@ -1423,9 +1519,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           if (cContent === null) {
             cContent = [
               "/**",
-              ` * Reconstructed Entry Scaffolding: ${mod.rawName}`,
-              ` * Phase: ${mod.phase}${mod.typeName ? ` | Type: ${mod.typeName}` : ""}`,
-              ` * GUID: ${mod.guid ?? "N/A"}`,
+              ` * Reconstructed Entry Scaffolding: ${safeRawName}`,
+              ` * Phase: ${mod.phase}${safeTypeName ? ` | Type: ${safeTypeName}` : ""}`,
+              ` * GUID: ${safeGuid ?? "N/A"}`,
               " *",
               " * NOTE: This file is reconstructed entry point scaffolding for integration",
               " * and analysis. Native executable instructions reside in the accompanying",
@@ -2015,6 +2111,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         rawName: candidate.rawName,
         cleanName: candidate.cleanName,
         phase: candidate.phase,
+        bytes: content,
         sourcePath: candidate.fullPath,
         byteLength: candidate.size,
       });

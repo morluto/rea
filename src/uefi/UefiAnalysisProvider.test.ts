@@ -34,6 +34,8 @@ import { FFS2_FILE_SYSTEM_GUID, FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
 import {
   UefiAnalysisProvider,
   buildUefiEntryPointScaffolding,
+  detectPeTeMachineWidth,
+  sanitizeCComment,
 } from "./UefiAnalysisProvider.js";
 import {
   uefiRequestSchema,
@@ -2845,4 +2847,166 @@ it("surfaces a ProviderCleanupError when closing directory sniff file handle fai
     await provider.close();
   }
   expect(cleanupErr?.cleanupIncomplete).toBe(false);
+});
+
+it("sanitizes C comment markers and newlines in module names and types", () => {
+  expect(sanitizeCComment("Foo*/Bar")).toBe("Foo* /Bar");
+  expect(sanitizeCComment("Driver\nName\r\nSecond")).toBe("Driver Name Second");
+  expect(sanitizeCComment("/* Injected */ Payload */")).toBe(
+    "/* Injected * / Payload * /",
+  );
+  expect(sanitizeCComment("  NormalName  ")).toBe("NormalName");
+});
+
+it("detects 32-bit and 64-bit machine width from PE and TE headers", () => {
+  // TE IA32: signature "VZ" (0x56, 0x5a) + machine 0x014c
+  const teIa32 = Buffer.alloc(16);
+  teIa32[0] = 0x56;
+  teIa32[1] = 0x5a;
+  teIa32.writeUInt16LE(0x014c, 2);
+  expect(detectPeTeMachineWidth(teIa32)).toBe("32");
+
+  // TE X64: signature "VZ" + machine 0x8664
+  const teX64 = Buffer.alloc(16);
+  teX64[0] = 0x56;
+  teX64[1] = 0x5a;
+  teX64.writeUInt16LE(0x8664, 2);
+  expect(detectPeTeMachineWidth(teX64)).toBe("64");
+
+  // TE ARMNT (Thumb-2): signature "VZ" + machine 0x01c2
+  const teArm = Buffer.alloc(16);
+  teArm[0] = 0x56;
+  teArm[1] = 0x5a;
+  teArm.writeUInt16LE(0x01c2, 2);
+  expect(detectPeTeMachineWidth(teArm)).toBe("32");
+
+  // PE IA32: "MZ" at 0, e_lfanew at 0x3c -> 0x40, PE\0\0 at 0x40, machine 0x014c at 0x44
+  const peIa32 = Buffer.alloc(0x80);
+  peIa32[0] = 0x4d;
+  peIa32[1] = 0x5a;
+  peIa32.writeUInt32LE(0x40, 0x3c);
+  peIa32.set(Buffer.from("PE\0\0"), 0x40);
+  peIa32.writeUInt16LE(0x014c, 0x44);
+  expect(detectPeTeMachineWidth(peIa32)).toBe("32");
+
+  // PE X64: "MZ" at 0, e_lfanew at 0x3c -> 0x40, PE\0\0 at 0x40, machine 0x8664 at 0x44
+  const peX64 = Buffer.alloc(0x80);
+  peX64[0] = 0x4d;
+  peX64[1] = 0x5a;
+  peX64.writeUInt32LE(0x40, 0x3c);
+  peX64.set(Buffer.from("PE\0\0"), 0x40);
+  peX64.writeUInt16LE(0x8664, 0x44);
+  expect(detectPeTeMachineWidth(peX64)).toBe("64");
+
+  // Short buffer fallback
+  expect(detectPeTeMachineWidth(Buffer.alloc(2))).toBe("64");
+});
+
+it("emits 32-bit or 64-bit EFI_STATUS and sanitized comments in scaffolding", () => {
+  const scaffold32 = buildUefiEntryPointScaffolding(
+    "MyDriver",
+    "My*/Driver\nMalicious",
+    1024,
+    "DXE",
+    undefined,
+    "32",
+  );
+  expect(scaffold32.typedefs).toContain("typedef int32_t EFI_STATUS;");
+  expect(scaffold32.functionDefinition).toContain("My* /Driver Malicious");
+
+  const scaffold64 = buildUefiEntryPointScaffolding(
+    "MyDriver",
+    "MyDriver",
+    1024,
+    "PEI",
+    "peim",
+    "64",
+  );
+  expect(scaffold64.typedefs).toContain("typedef int64_t EFI_STATUS;");
+});
+
+it("allocates strictly injective directory paths for colliding names without GUID", async () => {
+  const root = await createTestTempDirectory("rea-uefi-injective-paths-");
+  const inDir = join(root, "input");
+  const outDir = join(root, "out");
+  await mkdir(join(inDir, "a"), { recursive: true });
+  await mkdir(join(inDir, "b"), { recursive: true });
+  await mkdir(join(inDir, "c"), { recursive: true });
+
+  const dummyPeA = Buffer.alloc(0x80);
+  dummyPeA[0] = 0x4d;
+  dummyPeA[1] = 0x5a;
+  dummyPeA.fill(0xaa, 2);
+
+  const dummyPeB = Buffer.alloc(0x80);
+  dummyPeB[0] = 0x4d;
+  dummyPeB[1] = 0x5a;
+  dummyPeB.fill(0xbb, 2);
+
+  const dummyPeC = Buffer.alloc(0x80);
+  dummyPeC[0] = 0x4d;
+  dummyPeC[1] = 0x5a;
+  dummyPeC.fill(0xcc, 2);
+
+  // Three files where a simple counter would collide: Foo, Foo_1, Foo
+  await writeFile(join(inDir, "a", "Foo.efi"), dummyPeA);
+  await writeFile(join(inDir, "b", "Foo_1.efi"), dummyPeB);
+  await writeFile(join(inDir, "c", "Foo.efi"), dummyPeC);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(3);
+
+    for (const m of result.modules) {
+      expect(m.c_file).not.toBeNull();
+      expect(m.relative_c_file).not.toBeNull();
+    }
+    const relativeDirs = result.modules.map((m) =>
+      m.relative_c_file!.split("/").slice(0, 2).join("/"),
+    );
+    const uniqueDirs = new Set(relativeDirs);
+    expect(uniqueDirs.size).toBe(3);
+
+    const cFiles = result.modules.map((m) => m.c_file!);
+    const uniqueCFiles = new Set(cFiles);
+    expect(uniqueCFiles.size).toBe(3);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("retains read bytes for directory modules without TOCTOU drift", async () => {
+  const root = await createTestTempDirectory("rea-uefi-bytes-retention-");
+  const inDir = join(root, "input");
+  const outDir = join(root, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const dummyPe = Buffer.alloc(0x80);
+  dummyPe[0] = 0x4d;
+  dummyPe[1] = 0x5a;
+  dummyPe.fill(0x77, 2);
+  const sourcePath = join(inDir, "module.efi");
+  await writeFile(sourcePath, dummyPe);
+
+  const expectedSha256 = createHash("sha256").update(dummyPe).digest("hex");
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.payload_sha256).toBe(expectedSha256);
+  } finally {
+    await provider.close();
+  }
 });
