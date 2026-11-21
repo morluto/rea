@@ -548,6 +548,11 @@ export const documentationSections = [
         source: "guides/data/pcap-analysis.md",
         route: "/pcap-analysis",
       },
+      {
+        text: "Offline WARC archives",
+        source: "guides/data/warc-archives.md",
+        route: "/warc-archives",
+      },
     ],
   },
   {

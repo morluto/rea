@@ -44,9 +44,9 @@ import {
   type DerivedSources,
   createEvidenceToolHandler,
   createRetainedSummaryToolHandler,
-  type RetainedSummaryOperation,
   createValueToolHandler,
   type ContractToolService,
+  type RetainedSummaryOperation,
   type ValueOutcome,
   type ValueToolRequest,
 } from "./contractToolHandler.js";
