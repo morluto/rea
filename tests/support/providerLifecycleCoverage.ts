@@ -1562,7 +1562,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "returns an initial state and every step of a long scenario",
+          "retains all long-scenario steps and monotonic elapsed time",
         ),
       ),
       cancel: covered(

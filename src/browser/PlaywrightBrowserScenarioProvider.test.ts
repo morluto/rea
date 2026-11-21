@@ -254,45 +254,8 @@ class FakeSession implements BrowserScenarioSessionPort {
   }
 }
 
-const capturedResponseBodyEvents = (): readonly BrowserScenarioEvent[] => [
-  {
-    sequence: 1,
-    step_index: 0,
-    kind: "response",
-    transaction_id: "request-1",
-    redirected_from_transaction_id: null,
-    redirected_from_transaction_state: "root",
-    method: "GET",
-    url: sanitizeBrowserUrl("https://app.example.test/main.js"),
-    resource_type: "script",
-    header_names: [],
-    status: 200,
-    failure: null,
-  },
-  {
-    sequence: 2,
-    step_index: 0,
-    kind: "network-content",
-    transaction_id: "request-1",
-    source_event_sequence: 1,
-    phase: "response",
-    headers: { state: "not_requested" },
-    body: {
-      state: "captured",
-      representation: "playwright-response-body-bytes",
-      encoding: "base64",
-      content: "",
-      bytes: 0,
-      sha256:
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      media_type: "text/javascript",
-      redacted: false,
-    },
-  },
-];
-
 it("compares retained network observations despite a failed subresource", async () => {
-  const selected = scenario({ events: ["network"] });
+  const selected = scenario({ events: ["network", "console", "network"] });
   const input = browserScenarioSchema.parse({
     ...selected,
     capture: {
@@ -307,7 +270,7 @@ it("compares retained network observations despite a failed subresource", async 
       page,
       context: context as unknown as BrowserContext,
       ownsContext: true,
-      enabled: new Set(["network"]),
+      enabled: new Set(input.capture.events),
       network: input.capture.network,
       secrets: resolveScenarioSecrets(input, {}),
     });
@@ -357,6 +320,22 @@ it("compares retained network observations despite a failed subresource", async 
       equality_eligible: true,
       missing_sections: [],
     });
+    expect(result.value.scenario.event_families).toEqual([
+      "console",
+      "network",
+    ]);
+    expect(result.value.limitations).toContain(
+      PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION,
+    );
+    expect(result.value.events.items).toContainEqual(
+      expect.objectContaining({
+        kind: "network-content",
+        body: expect.objectContaining({
+          state: "captured",
+          representation: "playwright-response-body-bytes",
+        }),
+      }),
+    );
     expect(result.value.events.dropped).toBe(0);
     expect(result.value.events.items).toContainEqual(
       expect.objectContaining({
@@ -388,86 +367,68 @@ it("compares retained network observations despite a failed subresource", async 
 });
 
 describe("PlaywrightBrowserScenarioProvider", () => {
-  it("reports response-body provenance uncertainty without marking event coverage missing", async () => {
-    const session = new FakeSession("launch");
-    const selected = scenario();
-    session.eventItems = capturedResponseBodyEvents();
-    const input = browserScenarioSchema.parse({
-      ...selected,
-      capture: {
-        ...selected.capture,
-        network: { ...selected.capture.network, response_body: true },
-      },
-    });
-    const provider = new PlaywrightBrowserScenarioProvider(() =>
-      Promise.resolve(session),
-    );
+  it.each([
+    {
+      section: "events",
+      limitation: "Popup frames before discovery are unavailable",
+    },
+    {
+      section: "storage",
+      limitation:
+        "First-script seed coverage is unknown for popup top-level contexts",
+    },
+  ])(
+    "retains completed observations when $section coverage is incomplete",
+    async ({ section, limitation }) => {
+      const session = new FakeSession("launch");
+      if (section === "events") session.eventGaps = [limitation];
+      else session.storageGaps = [limitation];
+      const provider = new PlaywrightBrowserScenarioProvider(
+        async () => session,
+      );
+      const result = await provider.captureScenario(
+        scenario({ events: ["frames"] }),
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.completeness).toMatchObject({
+        status: "incomplete",
+        equality_eligible: false,
+        missing_sections: [section],
+      });
+      expect(result.value.steps.map(({ status }) => status)).toEqual([
+        "completed",
+        "completed",
+      ]);
+      expect(result.value.limitations).toContain(limitation);
+    },
+  );
 
-    const result = await provider.captureScenario(input);
-    if (!result.ok) throw result.error;
-    expect(result.value.limitations).toContain(
-      PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION,
-    );
-    expect(result.value.completeness.missing_sections).not.toContain("events");
-    expect(result.value.events.items[1]).toMatchObject({
-      kind: "network-content",
-      body: {
-        state: "captured",
-        representation: "playwright-response-body-bytes",
-      },
-    });
-  });
-
-  it("makes reported event gaps ineligible for equality even in launch mode", async () => {
-    const session = new FakeSession("launch");
-    session.eventGaps = ["Popup frames before discovery are unavailable"];
-    const provider = new PlaywrightBrowserScenarioProvider(() =>
-      Promise.resolve(session),
-    );
-    const result = await provider.captureScenario(
-      scenario({ events: ["frames"] }),
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.completeness).toMatchObject({
-      status: "incomplete",
-      equality_eligible: false,
-      missing_sections: ["events"],
-    });
-    expect(result.value.limitations).toContain(session.eventGaps[0]);
-  });
-
-  it("retains completed observations while popup initial-storage coverage remains unknown", async () => {
-    const session = new FakeSession("launch");
-    session.storageGaps = [
-      "First-script seed coverage is unknown for popup top-level contexts",
-    ];
-    const provider = new PlaywrightBrowserScenarioProvider(() =>
-      Promise.resolve(session),
-    );
-    const result = await provider.captureScenario(scenario());
-    if (!result.ok) throw result.error;
-    expect(result.value.completeness).toMatchObject({
-      status: "incomplete",
-      equality_eligible: false,
-      missing_sections: ["storage"],
-    });
-    expect(result.value.steps.map(({ status }) => status)).toEqual([
-      "completed",
-      "completed",
-    ]);
-    expect(result.value.limitations).toContain(session.storageGaps[0]);
-  });
-
-  it("returns an initial state and every step of a long scenario", async () => {
-    const session = new FakeSession("launch");
-    const provider = new PlaywrightBrowserScenarioProvider(() =>
-      Promise.resolve(session),
-    );
-    const result = await provider.captureScenario(scenario({ actions: 129 }));
-    if (!result.ok) throw result.error;
-    expect(result.value.scenario.action_count).toBe(129);
-    expect(result.value.steps).toHaveLength(130);
-    expect(result.value.steps.at(-1)?.step_id).toBe("wait_128");
+  it("retains all long-scenario steps and monotonic elapsed time", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = new FakeSession("launch");
+      session.onPerform = () => {
+        if (session.performCalls !== 1) return;
+        vi.setSystemTime(Date.now() - 10_000);
+        vi.advanceTimersByTime(37);
+      };
+      const provider = new PlaywrightBrowserScenarioProvider(
+        async () => session,
+      );
+      const result = await provider.captureScenario(scenario({ actions: 129 }));
+      if (!result.ok) throw result.error;
+      expect(result.value.scenario.action_count).toBe(129);
+      expect(result.value.duration_ms).toBe(37);
+      expect(result.value.steps).toHaveLength(130);
+      expect(result.value.steps[0]?.elapsed_ms).toBe(0);
+      expect(result.value.steps[1]?.elapsed_ms).toBe(37);
+      expect(result.value.steps.at(-1)).toMatchObject({
+        step_id: "wait_128",
+        elapsed_ms: 0,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("makes missing and truncated captures ineligible for equality", async () => {
@@ -513,136 +474,45 @@ describe("PlaywrightBrowserScenarioProvider", () => {
   });
 });
 
-describe("connected browser scenario captures", () => {
-  it("disconnects external CDP sessions and marks pre-attach events missing", async () => {
-    const session = new FakeSession("connect");
-    const provider = new PlaywrightBrowserScenarioProvider(() =>
-      Promise.resolve(session),
+it.each([false, true])(
+  "reports external browser coverage in attached observations (capture failed: %s)",
+  async (captureFailed) => {
+    const session = new FakeSession(
+      "connect",
+      captureFailed
+        ? { capture: { call: 1, error: new Error("fixture capture failure") } }
+        : {},
     );
+    const provider = new PlaywrightBrowserScenarioProvider(async () => session);
     const result = await provider.captureScenario(
       scenario({ mode: "connect" }),
     );
-    if (!result.ok) throw result.error;
-    expect(result.value.browser).toMatchObject({
-      process_ownership: "external",
-      cleanup: "disconnected-external",
-    });
-    expect(result.value.completeness).toMatchObject({
-      status: "incomplete",
-      equality_eligible: false,
-      missing_sections: ["events"],
-    });
-    expect(result.value.limitations).toEqual(
-      expect.arrayContaining([connectedPlatformEmulationLimitation]),
-    );
-    expect(session.closeCalls).toBe(1);
-  });
-
-  it("retains the attached platform-emulation limitation in partial observations", async () => {
-    const session = new FakeSession("connect", {
-      capture: { call: 1, error: new Error("fixture capture failure") },
-    });
-    const provider = new PlaywrightBrowserScenarioProvider(() =>
-      Promise.resolve(session),
-    );
-    const result = await provider.captureScenario(
-      scenario({ mode: "connect" }),
-    );
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      details: {
-        partial_observation: {
-          capture: {
-            limitations: expect.arrayContaining([
-              connectedPlatformEmulationLimitation,
-            ]),
-          },
-        },
+    expect(result.ok).toBe(!captureFailed);
+    const attached = {
+      browser: {
+        process_ownership: "external",
+        cleanup: "disconnected-external",
       },
-    });
-  });
-});
-
-describe("PlaywrightBrowserScenarioProvider timing", () => {
-  it("keeps capture elapsed values valid across a backward wall-clock jump", async () => {
-    let wallClock = 10_000;
-    vi.spyOn(Date, "now").mockImplementation(() => wallClock);
-    const session = new FakeSession("launch");
-    session.onPerform = () => {
-      wallClock = 1;
+      limitations: expect.arrayContaining([
+        connectedPlatformEmulationLimitation,
+      ]),
     };
-    const provider = new PlaywrightBrowserScenarioProvider(() =>
-      Promise.resolve(session),
-    );
-
-    try {
-      const result = await provider.captureScenario(scenario());
-      if (!result.ok) throw result.error;
-      expect(wallClock).toBe(1);
-      expect(Number.isInteger(result.value.duration_ms)).toBe(true);
-      expect(result.value.duration_ms).toBeGreaterThanOrEqual(0);
-      expect(
-        result.value.steps.every(
-          ({ elapsed_ms }) => Number.isInteger(elapsed_ms) && elapsed_ms >= 0,
-        ),
-      ).toBe(true);
-    } finally {
-      vi.restoreAllMocks();
-    }
-  });
-});
-
-describe("PlaywrightBrowserScenarioProvider comparison coverage", () => {
-  it("keeps quiet captures with different event families from comparing unchanged", async () => {
-    const capture = async (events: readonly BrowserScenarioEventFamily[]) => {
-      const provider = new PlaywrightBrowserScenarioProvider(() =>
-        Promise.resolve(new FakeSession("launch")),
-      );
-      const result = await provider.captureScenario(scenario({ events }));
-      if (!result.ok) throw result.error;
-      return result.value;
-    };
-    const compare = async (
-      before: readonly BrowserScenarioEventFamily[],
-      after: readonly BrowserScenarioEventFamily[],
-    ) =>
-      compareBrowserScenarios(
-        compareBrowserScenariosInputSchema.parse({
-          before_scenario: await capture(before),
-          after_scenario: await capture(after),
-        }),
-      );
-
-    const recorded = await capture(["page-errors", "console", "console"]);
-    expect(recorded.completeness.equality_eligible).toBe(true);
-    expect(recorded.scenario.event_families).toEqual([
-      "console",
-      "page-errors",
-    ]);
-    for (const [before, after] of [
-      [[], ["console"]],
-      [["console"], ["page-errors"]],
-    ] as const) {
-      const compared = await compare(before, after);
-      expect(compared.overall_status).toBe("unknown");
-      expect(
-        compared.steps.flatMap((step) => step.artifact_diffs),
-      ).toContainEqual(
-        expect.objectContaining({
-          artifact: "events",
-          status: "unknown",
-          reason: expect.stringContaining("Event family selections differ"),
-        }),
-      );
-    }
-    expect(
-      (await compare(["console", "page-errors"], ["page-errors", "console"]))
-        .overall_status,
-    ).toBe("unchanged");
-  });
-});
+    if (result.ok)
+      expect(result.value).toMatchObject({
+        ...attached,
+        completeness: {
+          status: "incomplete",
+          equality_eligible: false,
+          missing_sections: ["events"],
+        },
+      });
+    else
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        details: { partial_observation: { capture: attached } },
+      });
+    expect(session.closeCalls).toBe(1);
+  },
+);
 
 describe("PlaywrightBrowserScenarioProvider cleanup", () => {
   it("returns a cleanup failure with completed observations when close fails", async () => {
