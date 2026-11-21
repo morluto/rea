@@ -996,6 +996,8 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
   let browserDenied = true;
   let profileDenied = true;
   let browserCloses = 0;
+  const finishEvents = vi.fn(async () => undefined);
+  const settlements: boolean[] = [];
   const owner = new PlaywrightScenarioBrowserCleanupOwner({
     closeBrowser: async (disconnectAtBoundary) => {
       browserCloses++;
@@ -1004,23 +1006,35 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
           throw new Error("controlled transport close failure");
       });
     },
+    onSettled: (closed) => settlements.push(closed),
     removeProfile: async () => {
       if (profileDenied) throw new Error("controlled profile removal failure");
       await rm(profile, { recursive: true });
     },
   });
   try {
-    const first: unknown = await owner.close().catch((cause: unknown) => cause);
-    expect(first).toMatchObject({
-      cleanupIncomplete: true,
-      cleanupResources: ["browser_transport", "browser_profile"],
+    const initial = await Promise.allSettled([
+      owner.close(finishEvents),
+      owner.close(finishEvents),
+    ]);
+    const firstFailures = initial.map((result) => {
+      if (result.status !== "rejected")
+        throw new Error("Expected transport refusal");
+      const failure: unknown = result.reason;
+      expect(failure).toMatchObject({
+        reason: "cleanup_failed",
+        cleanupIncomplete: true,
+        cleanupResources: ["browser_transport", "browser_profile"],
+      });
+      return failure;
     });
+    expect(settlements).toEqual([false]);
     browserDenied = false;
     const second: unknown = await owner
       .close()
       .catch((cause: unknown) => cause);
     expect(owner.browserClosed).toBe(true);
-    for (const error of [first, second])
+    for (const error of [...firstFailures, second])
       expect(error).toMatchObject({
         cleanupIncomplete: true,
         cleanupResources: ["browser_profile"],
@@ -1029,12 +1043,15 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
     profileDenied = false;
     await owner.close();
     await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
-    for (const error of [first, second])
+    for (const error of [...firstFailures, second])
       expect(error).toMatchObject({
         cleanupIncomplete: false,
         cleanupResources: [],
       });
+    await owner.close(finishEvents);
     expect(browserCloses).toBe(2);
+    expect(finishEvents).toHaveBeenCalledOnce();
+    expect(settlements).toEqual([false, true, true]);
   } finally {
     browserDenied = false;
     profileDenied = false;
