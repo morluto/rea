@@ -3730,7 +3730,7 @@ it("injects isolated JVM home and tmpdir properties for Ghidra execution", async
       ghidraArgsCaptured?.some((a) => a.startsWith("-Djava.io.tmpdir=")),
     ).toBe(true);
     expect(ghidraEnvCaptured?.JDK_JAVA_OPTIONS).toMatch(
-      /-Duser\.home=.* -Djava\.io\.tmpdir=/,
+      /-Duser\.home=".*" -Djava\.io\.tmpdir=".*"/,
     );
   } finally {
     if (originalGhidra !== undefined) {

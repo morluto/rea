@@ -1503,7 +1503,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   ...process.env,
                   _JAVA_OPTIONS: "",
                   JAVA_TOOL_OPTIONS: "",
-                  JDK_JAVA_OPTIONS: `-Duser.home=${ghidraHome} -Djava.io.tmpdir=${ghidraTemp}`,
+                  JDK_JAVA_OPTIONS: `-Duser.home="${ghidraHome}" -Djava.io.tmpdir="${ghidraTemp}"`,
                   GHIDRA_JAVA_OPTIONS: "",
                   HOME: ghidraHome,
                   TMPDIR: ghidraTemp,
