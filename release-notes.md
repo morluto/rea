@@ -383,6 +383,7 @@
 * **web:** consolidate WebSocket payload comparison proofs ([#13086](https://github.com/morluto/rea/issues/13086)) ([ccfdd61](https://github.com/morluto/rea/commit/ccfdd6157282d3eaaeb7e6cfe9779bbe445b6ac9))
 * **web:** consolidate XHTML SVG namespace proofs ([#13105](https://github.com/morluto/rea/issues/13105)) ([c451857](https://github.com/morluto/rea/commit/c451857d380a809ba276b9c16f01865bd29494b0))
 * **web:** isolate captured module artifact checks ([#13075](https://github.com/morluto/rea/issues/13075)) ([4304a66](https://github.com/morluto/rea/commit/4304a6697446f2342a7052b580306c521d944a73))
+* **web:** make CDP discovery deadline checks deterministic ([#13109](https://github.com/morluto/rea/issues/13109)) ([5521bff](https://github.com/morluto/rea/commit/5521bff467d110a774cfc7390f418f1d0f41ed7e))
 * **website:** consolidate generated site verification checks ([#12783](https://github.com/morluto/rea/issues/12783)) ([e174349](https://github.com/morluto/rea/commit/e17434945f0d1108018363db379eb1c65c7eeb81))
 * **website:** consolidate verifier and fallback coverage ([e174349](https://github.com/morluto/rea/commit/e17434945f0d1108018363db379eb1c65c7eeb81))
 * **web:** verify importer integrity through Chromium ([#13076](https://github.com/morluto/rea/issues/13076)) ([ca1c328](https://github.com/morluto/rea/commit/ca1c3284ba825f4e757cd5d8011b7127cc8e5749))
