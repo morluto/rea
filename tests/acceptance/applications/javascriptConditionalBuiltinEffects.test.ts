@@ -151,6 +151,25 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const root = await createTestTempDirectory("rea-builtin-admission-");
     const cases = [
       ["rejected", 'const child=cp.spawn("tool",[],{cwd:5});', false],
+      ["uid-string", 'const child=cp.spawn("tool",[],{uid:"100"});', false],
+      ["gid-fraction", 'const child=cp.execFile("tool",[],{gid:1.5});', false],
+      ["uid-overflow", 'const child=cp.exec("tool",{uid:2147483648});', false],
+      [
+        "gid-underflow",
+        'const child=cp.fork("worker.js",[],{gid:-2147483649});',
+        false,
+      ],
+      [
+        "uid-getter",
+        'const child=cp.spawn("tool",[],{get x(){this.uid=1;return 0},uid:"bad"});',
+        true,
+      ],
+      ["uid-null", 'const child=cp.spawn("tool",[],{uid:null});', true],
+      [
+        "uid-unknown-spread",
+        'const child=cp.spawn("tool",[],{uid:"bad",...options});',
+        true,
+      ],
       [
         "qualified",
         'const child=cp.spawn("tool",[],{cwd:new globalThis.URL("file:///tmp/")});',

@@ -22,6 +22,17 @@ const spawnsFor = (call: string) =>
   ).childProcessSpawns.map(({ method }) => method);
 
 it.each([
+  ["a string uid", 'spawn("node", [], { uid: "100" })'],
+  ["a fractional gid", 'execFile("node", [], { gid: 1.5 }, () => {})'],
+  ["an overflowing uid", 'exec("node", { uid: 2147483648 }, () => {})'],
+  ["an underflowing gid", 'fork("worker.js", [], { gid: -2147483649 })'],
+  ["a BigInt uid", 'spawn("node", [], { uid: 1n })'],
+  ["a NaN gid", 'spawn("node", [], { gid: NaN })'],
+  ["a final invalid uid", 'spawn("node", [], { uid: 1, uid: "bad" })'],
+  [
+    "an invalid uid after a static spread",
+    'spawn("node", [], { uid: 1, ...{ uid: "bad" } })',
+  ],
   ["a missing command", "spawn()"],
   ["a null command", "spawn(null)"],
   ["an undefined command", "spawn(undefined)"],
@@ -52,6 +63,27 @@ it.each([
 });
 
 it.each([
+  ["a null uid", 'spawn("node", [], { uid: null })', "spawn"],
+  ["an undefined gid", 'spawn("node", [], { gid: undefined })', "spawn"],
+  ["a negative-zero uid", 'spawn("node", [], { uid: -0 })', "spawn"],
+  ["the minimum int32 uid", 'spawn("node", [], { uid: -2147483648 })', "spawn"],
+  ["the maximum int32 gid", 'spawn("node", [], { gid: 2147483647 })', "spawn"],
+  [
+    "a uid changed by an option getter",
+    'spawn("node", [], { get x() { this.uid = 1; return 0; }, uid: "bad" })',
+    "spawn",
+  ],
+  [
+    "an overwritten invalid uid",
+    'spawn("node", [], { uid: "bad", uid: 1 })',
+    "spawn",
+  ],
+  ["an unknown uid", 'spawn("node", [], { uid: input })', "spawn"],
+  [
+    "an unknown spread after uid",
+    'spawn("node", [], { uid: "bad", ...options })',
+    "spawn",
+  ],
   ["a command name", 'spawn("node")', "spawn"],
   ["a blank command", 'spawn(" ")', "spawn"],
   ["a template command", "spawn(`node`)", "spawn"],
