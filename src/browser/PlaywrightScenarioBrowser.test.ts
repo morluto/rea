@@ -1350,13 +1350,70 @@ it("closes a context that launches after its deadline before removing the profil
     userMessage: expect.stringContaining(
       "Browser launch and persistent-context startup",
     ),
-    diagnostics: { phase: "launch", command_timeout_ms: 40 },
+    diagnostics: {
+      phase: "launch",
+      command_timeout_ms: 40,
+      profile_preparation_elapsed_ms: expect.any(Number),
+      elapsed_ms: expect.any(Number),
+      operation_settled_elapsed_ms: expect.any(Number),
+      operation_settled: "resolved",
+    },
   });
   expect(
     (failure as { remediationAction?: string }).remediationAction,
   ).not.toContain("--command-timeout-ms");
+  const diagnostics = (failure as { diagnostics: Record<string, unknown> })
+    .diagnostics;
+  expect(diagnostics.operation_settled_elapsed_ms).toBeGreaterThan(
+    diagnostics.elapsed_ms as number,
+  );
   expect(order).toEqual(["launched", "close"]);
   await expect(access(profilePath)).rejects.toThrow();
+});
+
+it("records a late launch rejection after reporting its deadline", async () => {
+  let profilePath = "";
+  const scenario = browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: process.execPath },
+    start_url: { url: "https://example.test" },
+    command_timeout_ms: 40,
+    actions: scenarioActions,
+  });
+  const failure = await openPlaywrightScenarioBrowser(
+    scenario,
+    {},
+    {
+      launcher: {
+        connectOverCDP: async () => {
+          throw new Error("Unexpected connection");
+        },
+        launchPersistentContext: async (profile) => {
+          profilePath = profile;
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          throw new Error("late Chromium launch failure");
+        },
+      },
+    },
+  ).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({
+    reason: "timeout",
+    diagnostics: {
+      phase: "launch",
+      command_timeout_ms: 40,
+      elapsed_ms: expect.any(Number),
+      operation_settled_elapsed_ms: expect.any(Number),
+      operation_settled: "rejected",
+    },
+  });
+  const diagnostics = (failure as { diagnostics: Record<string, unknown> })
+    .diagnostics;
+  expect(diagnostics.operation_settled_elapsed_ms).toBeGreaterThan(
+    diagnostics.elapsed_ms as number,
+  );
+  await expect(access(profilePath)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("closes a browser that connects after its deadline without waiting to report the timeout", async () => {

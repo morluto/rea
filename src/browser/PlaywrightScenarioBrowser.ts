@@ -897,6 +897,7 @@ export const openPlaywrightScenarioBrowser = async (
     );
 
   throwIfScenarioCancelled(options.signal);
+  const profilePreparationStartedAt = performance.now();
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   let context: BrowserContext;
   const executablePath = scenario.browser.executable_path;
@@ -905,6 +906,10 @@ export const openPlaywrightScenarioBrowser = async (
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
+    const profilePreparationElapsedMs = Math.max(
+      0,
+      Math.round(performance.now() - profilePreparationStartedAt),
+    );
     throwIfScenarioCancelled(options.signal);
     launchStarted = true;
     context = await withScenarioCommandDeadline(
@@ -938,6 +943,7 @@ export const openPlaywrightScenarioBrowser = async (
       "launch",
       undefined,
       executablePath,
+      { profile_preparation_elapsed_ms: profilePreparationElapsedMs },
     );
   } catch (cause: unknown) {
     const cleanup = new AnalysisCleanupLease(async () => {
