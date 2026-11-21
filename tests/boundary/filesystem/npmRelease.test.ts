@@ -70,6 +70,39 @@ it("keeps prerelease verification on next and the updater on stable latest", asy
   ).toThrow("stable release");
 });
 
+it.each([
+  ["6.9.0", "6.10.1", "6.10.1"],
+  ["6.9.0-rc.1", "6.10.1-rc.1", "6.10.0"],
+])(
+  "recovers %s after its tag advances to %s",
+  async (version, replacement, latest) => {
+    const tag = version.includes("-") ? "next" : "latest";
+    const published = await readNpmRelease(version, async () =>
+      Response.json(
+        metadata(version, "sha512-original", { latest, [tag]: replacement }),
+      ),
+    );
+    expect(() => stableUpdateVersion(version, published)).toThrow(
+      "release channel",
+    );
+    expect(
+      stableUpdateVersion(version, published, { allowSuperseded: true }),
+    ).toBe(latest);
+    if (published.status !== "published")
+      throw new Error("Fixture release is absent");
+    const wrongChannel = tag === "latest" ? "6.11.0-rc.1" : "6.11.0";
+    for (const taggedVersion of [null, "6.0.0", "invalid", wrongChannel]) {
+      expect(() =>
+        stableUpdateVersion(
+          version,
+          { ...published, taggedVersion },
+          { allowSuperseded: true },
+        ),
+      ).toThrow("release channel");
+    }
+  },
+);
+
 it("distinguishes absence from failed or malformed registry responses", async () => {
   await expect(
     readNpmRelease(

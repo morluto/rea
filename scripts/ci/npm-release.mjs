@@ -2,7 +2,7 @@ import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout } from "node:timers/promises";
-import { prerelease, valid } from "semver";
+import { gt, prerelease, valid } from "semver";
 import { releaseNpmTag } from "../release-npm-tag.mjs";
 import {
   readQualifiedNpmRelease,
@@ -15,9 +15,27 @@ export async function readNpmRelease(version, request = fetch) {
 }
 
 /** REA update follows stable latest even when the candidate is published on next. */
-export function stableUpdateVersion(version, published) {
-  if (published.status !== "published" || published.taggedVersion !== version)
-    throw new Error(`npm does not select ${version} on its release channel`);
+export function stableUpdateVersion(
+  version,
+  published,
+  { allowSuperseded = false } = {},
+) {
+  const mismatch = () =>
+    new Error(`npm does not select ${version} on its release channel`);
+  if (published.status !== "published") throw mismatch();
+  const tagged = published.taggedVersion;
+  if (
+    tagged !== version &&
+    !(
+      allowSuperseded &&
+      typeof tagged === "string" &&
+      valid(tagged) === tagged &&
+      valid(version) === version &&
+      releaseNpmTag(tagged) === published.tag &&
+      gt(tagged, version)
+    )
+  )
+    throw mismatch();
   const stable = published.stableVersion;
   if (
     typeof stable !== "string" ||

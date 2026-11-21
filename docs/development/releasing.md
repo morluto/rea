@@ -165,6 +165,9 @@ and verifier runtime. Expired or missing artifacts stop recovery. The archive's 
 original run/attempt and Node version must match, and its SHA-512 must equal
 npm's published integrity. The corrected controller runs the public CLI, MCP
 catalog/session and previous-version update canary against that released runtime.
+If the release channel has advanced to a newer version, recovery still verifies
+the requested version's package and exercises its updater against the current
+stable `latest`.
 The installation completes before MCP's handshake begins; dependency lifecycle
 scripts are disabled as in the installed-package verifier.
 
