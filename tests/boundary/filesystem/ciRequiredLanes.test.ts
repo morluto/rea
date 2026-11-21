@@ -166,6 +166,26 @@ it.skipIf(process.platform === "win32").each([
   },
 );
 
+it("uses bounded APT provisioning before verifying packet captures", async () => {
+  const job = (await workflow("real-packet-capture.yml")).jobs.tshark;
+  const steps = z
+    .array(
+      z.object({
+        uses: z.string().optional(),
+        with: z.record(z.string(), z.unknown()).optional(),
+      }),
+    )
+    .parse(job?.steps);
+  const archive = steps.findIndex(
+    (step) => step.uses === "./.github/actions/ubuntu-archive",
+  );
+  expect(archive).toBeGreaterThanOrEqual(0);
+  expect(steps[archive + 1]).toEqual({
+    uses: "./.github/actions/host-apt-packages",
+    with: { packages: "tshark util-linux python3" },
+  });
+});
+
 it("keeps every SQLite runtime selector inside the published package engine range", async () => {
   const { engines } = z
     .object({ engines: z.object({ node: z.string() }) })
@@ -1246,7 +1266,9 @@ it.skipIf(process.platform === "win32").each([
     expect(result.code).toBe(Number(status));
     expect(commands).toEqual([
       `timeout --kill-after=5s ${seconds}s apt-get -o Acquire::Retries=2 --download-only ${install}`,
-      ...(status === "0" ? [`apt-get --no-download ${install}`] : []),
+      ...(status === "0"
+        ? [`DEBIAN_FRONTEND=noninteractive apt-get --no-download ${install}`]
+        : []),
     ]);
     if (status !== "0") expect(result.stdout).toContain(`(exit ${status})`);
   },
