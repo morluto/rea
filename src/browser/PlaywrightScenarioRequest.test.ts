@@ -1981,7 +1981,7 @@ it.each(["array", "embedded", "headers"])(
     ]);
     const secrets = resolved(parsed);
     secrets.save("source.large", "large", "x".repeat(3_000_000), false);
-    const page = { ...fakePage({}), evaluate: vi.fn() } as unknown as Page;
+    const page = { url: () => ORIGIN, evaluate: vi.fn() } as unknown as Page;
     await expect(perform(page, parsed.actions[1]!, secrets)).rejects.toThrow(
       "serialization allowance",
     );
@@ -2016,7 +2016,7 @@ it.each([
     ]);
     const dispatch = vi.fn();
     const page = {
-      ...fakePage({}),
+      url: () => ORIGIN,
       evaluate: dispatch,
       goto: dispatch,
     } as unknown as Page;
