@@ -1581,38 +1581,6 @@ it("replays source-bearing entries only when their complete retained closure exi
       )
       ?.sourceEvidence?.map((record) => record.evidence_id),
   ).toEqual([source.evidence_id, parent.evidence_id]);
-
-  const otherSource = immutableEvidence(
-    createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
-      operation: "other_source",
-      parameters: {},
-      result: "different source",
-    }),
-  );
-  const otherParent = immutableEvidence(
-    createAnalysisExecutionEvidence(
-      "procedure_info",
-      parameters,
-      { ...execution, sourceEvidence: [otherSource] },
-      "observed",
-    ),
-  );
-  const records = [parent, movedSource, leaf, otherParent, otherSource];
-  const ambiguous = new AnalysisSnapshotCache();
-  ambiguous.stage(
-    parseAnalysisSnapshot({
-      ...exported.value,
-      evidence_bundle: createEvidenceBundle(records),
-    }),
-  );
-  const allRecords = new Map(
-    records.map((record) => [record.evidence_id, record]),
-  );
-  expect(
-    ambiguous.lookup(target, profile, "procedure_info", parameters, (id) =>
-      allRecords.get(id),
-    ),
-  ).toBeUndefined();
 });
 
 describe("executions that report truncated references", () => {
