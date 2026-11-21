@@ -8,7 +8,6 @@ import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { responsePointerValue } from "./BrowserScenarioResponseValues.js";
 import { performPlaywrightScenarioAction } from "./PlaywrightScenarioActions.js";
 import { phaseArrival } from "../../tests/support/lifecycleHarness.js";
-import { waitFor } from "../../tests/support/testWait.js";
 
 const ORIGIN = "https://app.example.test";
 
@@ -1592,59 +1591,47 @@ const clickSaving = (path: string) =>
     },
   ]);
 
-describe("ambiguous saved response observations", () => {
-  it("refuses an ambiguous poll and click request without choosing either identity", async () => {
-    const parsed = clickSaving("/api/items");
-    const secrets = resolved(parsed);
-    const { page, listeners } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: '{"id":"poll"}',
-      },
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: '{"id":"created"}',
-      },
-    ]);
-    await expect(perform(page, parsed.actions[0]!, secrets)).rejects.toThrow(
-      "ambiguous",
-    );
-    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    expect(listeners.size).toBe(0);
-  });
-
-  it("refuses a second matching request observed while the selected body is pending", async () => {
-    const parsed = clickSaving("/api/items");
-    const secrets = resolved(parsed);
-    let release!: (body: string) => void;
-    const late = new Promise<string>((resolve) => {
-      release = resolve;
+it.each(["before response binding", "during the body read"])(
+  "refuses a competing request observed %s without publishing either identity",
+  async (phase) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
     });
+    const parsed = clickSaving("/api/items");
+    const secrets = resolved(parsed);
+    const body = '{"id":"created"}';
+    let finishBody!: (value: string) => void;
+    const late = new Promise<string>((resolveBody) => {
+      finishBody = resolveBody;
+    });
+    const started = { method: "POST", url: `${ORIGIN}/api/items`, status: 201 };
+    const beforeBinding = phase === "before response binding";
     const { page, listeners, reads } = uiPage([
-      {
-        method: "POST",
-        url: `${ORIGIN}/api/items`,
-        status: 201,
-        body: "",
-        size: 30,
-        late,
-      },
+      { ...started, body, late },
+      ...(beforeBinding ? [{ ...started, body: '{"id":"poll"}' }] : []),
     ]);
-    const running = perform(page, parsed.actions[0]!, secrets);
-    const rejected = expect(running).rejects.toThrow("ambiguous");
-    await waitFor(() => expect(reads.count).toBe(1));
-    for (const listener of listeners)
-      listener({ method: () => "POST", url: () => `${ORIGIN}/api/items` });
-    release('{"id":"wrong-object"}');
-    await rejected;
+    const outcome = perform(page, parsed.actions[0]!, secrets).catch(
+      (cause: unknown) => cause,
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads.count).toBe(beforeBinding ? 0 : 1);
+      if (!beforeBinding) {
+        for (const listener of listeners)
+          listener({ method: () => started.method, url: () => started.url });
+      }
+    } finally {
+      finishBody(body);
+      await outcome;
+    }
+    expect(await outcome).toMatchObject({
+      message: expect.stringContaining("multiple matching requests"),
+    });
     expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
     expect(listeners.size).toBe(0);
-  });
-});
+  },
+);
 
 describe("saving from a UI step's response", () => {
   it("waits before clicking, and saves from the response the step names", async () => {
@@ -1739,39 +1726,32 @@ describe("saving from a UI step's response", () => {
   });
 });
 
-it.each([false, true])(
-  "retains the physical response-wait failure despite late cancellation %s and removes its request watcher",
-  async (cancelAtCompletion) => {
-    const parsed = clickSaving("/api/items");
-    const secrets = resolved(parsed);
-    const { page, listeners } = uiPage([]);
-    const primary = new Error(
-      "page.waitForResponse: Target page has been closed",
-    );
-    vi.spyOn(page, "waitForResponse").mockRejectedValue(primary);
-    const cancel = new AbortController();
-    if (cancelAtCompletion) {
-      const remove = cancel.signal.removeEventListener.bind(cancel.signal);
-      const removing = vi
-        .spyOn(cancel.signal, "removeEventListener")
-        .mockImplementation((type, listener, options) => {
-          remove(type, listener, options);
-          cancel.abort("cancelled after the physical wait failed");
-        });
-      onTestFinished(() => removing.mockRestore());
-    }
-    const failure = await perform(
-      page,
-      parsed.actions[0]!,
-      secrets,
-      cancel.signal,
-    ).catch((cause: unknown) => cause);
-    expect(failure).toMatchObject({ cause: primary });
-    expect((failure as Error).message).toContain(primary.message);
-    expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
-    expect(listeners.size).toBe(0);
-  },
-);
+it("retains the physical response-wait failure through late cancellation", async () => {
+  const parsed = clickSaving("/api/items");
+  const secrets = resolved(parsed);
+  const { page, listeners } = uiPage([]);
+  const primary = new Error(
+    "page.waitForResponse: Target page has been closed",
+  );
+  vi.spyOn(page, "waitForResponse").mockRejectedValue(primary);
+  const cancel = new AbortController();
+  const remove = cancel.signal.removeEventListener.bind(cancel.signal);
+  const removing = vi
+    .spyOn(cancel.signal, "removeEventListener")
+    .mockImplementation((type, listener, options) => {
+      remove(type, listener, options);
+      cancel.abort("cancelled after the physical wait failed");
+    });
+  onTestFinished(() => removing.mockRestore());
+  const attempt = perform(page, parsed.actions[0]!, secrets, cancel.signal);
+  await expect(attempt).rejects.toMatchObject({
+    cause: primary,
+    message: expect.stringContaining(primary.message),
+  });
+  expect(cancel.signal.aborted).toBe(true);
+  expect(() => secrets.savedValue("item")).toThrow("No earlier step saved");
+  expect(listeners.size).toBe(0);
+});
 
 it("retains saved values when cancellation follows completed click publication", async () => {
   const parsed = clickSaving("/api/items");
