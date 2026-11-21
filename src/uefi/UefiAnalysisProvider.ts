@@ -177,8 +177,11 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
           ? "64"
           : "32";
       }
-      if (candidateMachine === 0x5032) {
+      if (candidateMachine === 0x5032 || candidateMachine === 0x0ebc) {
         return "32";
+      }
+      if (candidateMachine === 0x5064 || candidateMachine === 0x5128) {
+        return "64";
       }
     }
   } catch {
@@ -1133,16 +1136,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         signal.throwIfAborted();
 
         // Reserve time to finalize completed modules and publish them before the deadline
-        if (remainingTimeMs !== undefined) {
+        if (remainingTimeMs !== undefined && stagedModules.length > 0) {
           const timeLeft = remainingTimeMs();
-          const reserveTime = ghidraBin !== null ? 8_000 : 3_000;
-          if (timeLeft <= reserveTime) {
-            if (stagedModules.length > 0) {
-              effectiveLimitations.push(
-                `Decompilation halted early to finalize and publish ${stagedModules.length} completed modules before operation deadline.`,
-              );
-              break;
-            }
+          const nextModuleReserve =
+            (request.input.include_disassembly === false ? 0 : 30_000) +
+            (ghidraBin !== null ? 45_000 : 0) +
+            5_000;
+          if (timeLeft <= nextModuleReserve) {
+            effectiveLimitations.push(
+              `Decompilation halted early to finalize and publish ${stagedModules.length} completed modules before operation deadline.`,
+            );
+            break;
           }
         }
 
@@ -1426,12 +1430,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 `${cIdentifier}_${moduleSeq}_decompiled.c`,
               );
               try {
-                const bridgeDir = resolve(
-                  fileURLToPath(import.meta.url),
-                  "..",
-                  "..",
-                  "bridge",
-                  "ghidra",
+                const bridgeDir = fileURLToPath(
+                  new URL("../../bridge/ghidra", import.meta.url),
                 );
                 const ghidraArgs = [
                   tempRoot.path,
@@ -1467,11 +1467,22 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 });
                 if (existsSync(ghidraOutC)) {
                   const cStat = await stat(ghidraOutC);
-                  const maxCBytes = Math.min(
-                    MAX_DECOMPILE_MODULE_BYTES,
-                    remainingCBytes,
-                  );
-                  if (cStat.size <= maxCBytes) {
+                  if (cStat.size > remainingCBytes) {
+                    if (
+                      !effectiveLimitations.includes(
+                        "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                      )
+                    ) {
+                      effectiveLimitations.push(
+                        "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                      );
+                    }
+                  } else if (cStat.size > MAX_DECOMPILE_MODULE_BYTES) {
+                    const perModuleLimit = `Decompiled C output for ${mod.rawName} exceeded 4 MiB module budget (${cStat.size} bytes); generated entry point scaffolding instead.`;
+                    if (!effectiveLimitations.includes(perModuleLimit)) {
+                      effectiveLimitations.push(perModuleLimit);
+                    }
+                  } else {
                     const candidateC = await readFile(ghidraOutC, "utf8");
                     const candidateCBytes = Buffer.byteLength(
                       candidateC,
@@ -1503,15 +1514,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                         "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
                       );
                     }
-                  } else if (
-                    cStat.size > remainingCBytes &&
-                    !effectiveLimitations.includes(
-                      "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-                    )
-                  ) {
-                    effectiveLimitations.push(
-                      "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-                    );
                   }
                 }
               } catch (ghidraErr: unknown) {
@@ -2020,7 +2022,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             );
             const machine = reader.u16(2);
             const numSections = reader.u8(4);
-            if (decodePeMachine(machine) !== undefined && numSections > 0) {
+            if (machine !== 0 && numSections > 0) {
               isPeOrTe = true;
             }
           } else if (
@@ -2061,10 +2063,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 if (peSig === 0x00004550) {
                   const machine = peReader.u16(4);
                   const numSections = peReader.u16(6);
-                  if (
-                    decodePeMachine(machine) !== undefined &&
-                    numSections > 0
-                  ) {
+                  if (machine !== 0 && numSections > 0) {
                     isPeOrTe = true;
                   }
                 }

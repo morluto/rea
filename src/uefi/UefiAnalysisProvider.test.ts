@@ -3152,3 +3152,54 @@ it("bounds generated module directory and file paths to avoid filesystem path co
     await provider.close();
   }
 });
+
+it("discovers RISC-V and EFI Byte Code binaries in directory input mode and detects machine widths", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-riscv-ebc-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // 1. RISC-V 64-bit PE (machine 0x5064)
+  const peRiscv64 = createMinimalPeBuffer(0x5064, 1, 256);
+  await writeFile(join(inDir, "riscv64.efi"), peRiscv64);
+
+  // 2. RISC-V 32-bit PE (machine 0x5032)
+  const peRiscv32 = createMinimalPeBuffer(0x5032, 1, 256);
+  await writeFile(join(inDir, "riscv32.efi"), peRiscv32);
+
+  // 3. EFI Byte Code PE (machine 0x0ebc)
+  const peEbc = createMinimalPeBuffer(0x0ebc, 1, 256);
+  await writeFile(join(inDir, "ebc.efi"), peEbc);
+
+  // 4. RISC-V 64-bit TE (machine 0x5064)
+  const teRiscv64 = createMinimalTeBuffer(0x5064, 1, 64);
+  await writeFile(join(inDir, "riscv64_core.te"), teRiscv64);
+
+  expect(detectPeTeMachineWidth(peRiscv64)).toBe("64");
+  expect(detectPeTeMachineWidth(peRiscv32)).toBe("32");
+  expect(detectPeTeMachineWidth(peEbc)).toBe("32");
+  expect(detectPeTeMachineWidth(teRiscv64)).toBe("64");
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    // All 4 valid firmware modules must be discovered and decompiled
+    expect(result.total_modules_found).toBe(4);
+    expect(result.total_modules_decompiled).toBe(4);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("resolves packaged Ghidra script ReaDecompileToC.java from module URL at package root", () => {
+  const bridgeDir = fileURLToPath(
+    new URL("../../bridge/ghidra", import.meta.url),
+  );
+  expect(existsSync(join(bridgeDir, "ReaDecompileToC.java"))).toBe(true);
+});
