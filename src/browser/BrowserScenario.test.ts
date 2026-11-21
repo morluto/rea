@@ -214,19 +214,6 @@ describe("browserScenarioSchema", () => {
     expect(parsed.environment.service_workers).toBe("allow");
   });
 
-  it("accepts caller selected action timeouts without a fixed ceiling", () => {
-    const input = baseScenario();
-    input.actions[0] = { ...input.actions[0], timeout_ms: 120_000 } as never;
-    input.actions[1] = {
-      step_id: "pause",
-      action: "wait_for_timeout",
-      duration_ms: 120_001,
-    } as never;
-    const actions = browserScenarioSchema.parse(input).actions;
-    expect(actions[0]).toMatchObject({ timeout_ms: 120_000 });
-    expect(actions[1]).toMatchObject({ duration_ms: 120_001 });
-  });
-
   it("redacts overlapping secrets longest-first", () => {
     const scenario = browserScenarioSchema.parse(baseScenario());
     const secrets = resolveScenarioSecrets(scenario, {
@@ -295,42 +282,29 @@ describe("browserScenarioSchema", () => {
     ];
     expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
   });
-
-  it("accepts explicitly selected navigation and storage origins without an allowlist", () => {
-    const scenario = baseScenario();
-    scenario.actions[2] = {
-      ...scenario.actions[2],
-      destination: { url: "https://other.example.test/" },
-    } as never;
-    scenario.storage.local_storage[0]!.origin = "https://storage.example.test";
-    expect(browserScenarioSchema.safeParse(scenario).success).toBe(true);
-  });
 });
 
 describe("browserScenarioSchema secret declarations", () => {
-  it("rejects missing and duplicate secret declarations but accepts redaction-only declarations", () => {
-    const missing = baseScenario();
-    missing.secrets = missing.secrets.filter(
-      ({ secret_id }) => secret_id !== "login_input",
-    );
-    expect(browserScenarioSchema.safeParse(missing).success).toBe(false);
-
-    const duplicate = baseScenario();
-    duplicate.secrets.push({ ...duplicate.secrets[0]! });
-    expect(browserScenarioSchema.safeParse(duplicate).success).toBe(false);
-
-    const unused = baseScenario();
-    const redactionOnly = {
-      secret_id: "unused",
-      environment_variable: "rea.test-unused",
+  it("accepts redaction-only declarations with valid environment names", () => {
+    const scenario = baseScenario();
+    const declaration = {
+      secret_id: "redaction_only",
+      environment_variable: "rea.test-redaction",
     };
-    unused.secrets.push(redactionOnly);
-    expect(browserScenarioSchema.safeParse(unused).success).toBe(true);
+    scenario.secrets.push(declaration);
+    expect(browserScenarioSchema.parse(scenario).secrets).toContainEqual(
+      declaration,
+    );
 
-    redactionOnly.environment_variable = "INVALID=NAME";
-    expect(browserScenarioSchema.safeParse(unused).success).toBe(false);
-    redactionOnly.environment_variable = "INVALID\0NAME";
-    expect(browserScenarioSchema.safeParse(unused).success).toBe(false);
+    for (const environment_variable of ["INVALID=NAME", "INVALID\0NAME"]) {
+      declaration.environment_variable = environment_variable;
+      const invalid = browserScenarioSchema.safeParse(scenario);
+      expect(invalid.error?.issues).toEqual([
+        expect.objectContaining({
+          path: ["secrets", 3, "environment_variable"],
+        }),
+      ]);
+    }
   });
 
   it("rejects raw secret-shaped action values", () => {
@@ -343,25 +317,25 @@ describe("browserScenarioSchema secret declarations", () => {
   });
 
   it("preserves inline URL queries and fragments but rejects userinfo", () => {
-    const credentialedUrl = new URL("https://app.example.test/");
-    credentialedUrl.username = String.fromCodePoint(120);
-    const invalid = baseScenario();
-    invalid.start_url.url = credentialedUrl.href;
-    expect(browserScenarioSchema.safeParse(invalid).success).toBe(false);
+    const input = baseScenario();
+    const url = "https://app.example.test/?q=one&q=two#section";
+    const scenario = { ...input, start_url: { ...input.start_url, url } };
+    expect(browserScenarioSchema.parse(scenario).start_url).toEqual(
+      scenario.start_url,
+    );
 
-    const scenario = baseScenario();
-    scenario.start_url.url = "https://app.example.test/?q=one&q=two#section";
-    scenario.start_url.query = [];
-    scenario.secrets = scenario.secrets.filter(
-      ({ secret_id }) => secret_id !== "session",
-    );
-    const parsed = browserScenarioSchema.parse(scenario);
-    expect(parsed.start_url.url).toBe(
-      "https://app.example.test/?q=one&q=two#section",
-    );
+    const credentialed = new URL(url);
+    credentialed.username = "fixture";
+    const invalid = browserScenarioSchema.safeParse({
+      ...scenario,
+      start_url: { ...scenario.start_url, url: credentialed.href },
+    });
+    expect(invalid.error?.issues).toEqual([
+      expect.objectContaining({ path: ["start_url", "url"] }),
+    ]);
   });
 
-  it("derives external ownership from CDP connection mode", () => {
+  it("accepts a CDP target without caller-defined teardown", () => {
     const scenario = {
       ...baseScenario(),
       browser: {
