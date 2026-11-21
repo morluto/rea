@@ -979,8 +979,7 @@ it("records actions after a failed action as not executed and keeps the capture"
   const click = vi.fn(async () => {
     throw new Error("strict mode violation");
   });
-  const waitForTimeout = vi.fn(async () => undefined);
-  const page = { locator: () => ({ click }), waitForTimeout };
+  const page = { locator: () => ({ click }) };
   const application = {
     process: () => ({ pid: 424242 }),
     close: vi.fn(async () => undefined),
@@ -1010,7 +1009,6 @@ it("records actions after a failed action as not executed and keeps the capture"
 
   if (!result.ok) throw result.error;
   expect(click).toHaveBeenCalledOnce();
-  expect(waitForTimeout).not.toHaveBeenCalled();
   expect(application.close).toHaveBeenCalledOnce();
   expect(result.value.actions).toEqual([
     {

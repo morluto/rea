@@ -1,5 +1,6 @@
 import type { ElectronApplication, JSHandle, Page } from "playwright-core";
 import { z } from "zod";
+import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
@@ -12,6 +13,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
@@ -278,21 +280,20 @@ const runAction = async ({
         options.signal,
       );
       return;
-    case "wait": {
-      const page =
-        selectedWindow ??
-        (await runWithExecutionLimits(
-          application.firstWindow({
-            timeout: 0,
-          }),
+    case "wait":
+      if (selectedWindow === undefined)
+        await runWithExecutionLimits(
+          application.firstWindow({ timeout: 0 }),
           options.signal,
-        ));
-      await runWithExecutionLimits(
-        page.waitForTimeout(action.duration_ms),
-        options.signal,
-      );
+        );
+      // Window selection and the caller's delay have separate lifetimes. A
+      // renderer crash can close the Page clock during an intended recovery.
+      if (
+        (await waitForAbortableDelay(action.duration_ms, options.signal)) ===
+        "aborted"
+      )
+        throw cancelledBy(OPERATION, carriedReason(options.signal?.reason));
       return;
-    }
     case "renderer-reload":
       if (selectedWindow === undefined)
         throw new BrowserObservationError(OPERATION, "window_not_found");
