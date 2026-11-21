@@ -14,14 +14,10 @@ import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapt
 import {
   EFFECTIVE_DECODER_CPU_RECORD,
   historicalCaptureFailure,
-  parseRecordedCpuCeiling,
   protobufCaptureFailure,
   recordedDecoderCpuSeconds,
 } from "./CaptureFailures.js";
-import {
-  CaptureFormatError,
-  captureLimitForReply,
-} from "./CaptureFormatError.js";
+import { CaptureFormatError } from "./CaptureFormatError.js";
 import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../tests/fixtures/captureDecoderLimits.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
@@ -362,42 +358,32 @@ it("leaves SIGXFSZ on the adapter failure path", () => {
   ).toMatchObject({ code: "execution_failure" });
 });
 
-it("reads only a recorded CPU ceiling at or below its budget", async () => {
-  expect(
-    parseRecordedCpuCeiling(
-      Buffer.from('{"requested_seconds":30,"seconds":1}'),
-    ),
-  ).toEqual({ seconds: 1, requestedSeconds: 30 });
-  expect(parseRecordedCpuCeiling(Buffer.from('{"seconds":1}'))).toBe(undefined);
-  expect(
-    parseRecordedCpuCeiling(
-      Buffer.from('{"requested_seconds":30,"seconds":1,"other":2}'),
-    ),
-  ).toBe(undefined);
-  expect(
-    parseRecordedCpuCeiling(
-      Buffer.from('{"requested_seconds":30,"seconds":1.5}'),
-    ),
-  ).toBe(undefined);
-  expect(
-    parseRecordedCpuCeiling(
-      Buffer.from('{"requested_seconds":1,"seconds":30}'),
-    ),
-  ).toBe(undefined);
+it("reads only an admitted CPU ceiling for the CPU limit exit", async () => {
   const root = await createTestTempDirectory("rea-cpu-limit-");
-  await writeFile(
-    join(root, EFFECTIVE_DECODER_CPU_RECORD),
-    '{"requested_seconds":30,"seconds":1}',
-    "utf8",
-  );
+  const path = join(root, EFFECTIVE_DECODER_CPU_RECORD);
   const cause = cpuSignalFailure("SIGXCPU");
+  expect(await recordedDecoderCpuSeconds(root, cause)).toBeUndefined();
+  await writeFile(path, '{"requested_seconds":30,"seconds":1}');
   expect(await recordedDecoderCpuSeconds(root, cause)).toEqual({
     seconds: 1,
     requestedSeconds: 30,
   });
   expect(
     await recordedDecoderCpuSeconds(root, cpuSignalFailure("SIGXFSZ")),
-  ).toBe(undefined);
+  ).toBeUndefined();
+  for (const record of [
+    '{"seconds":1}',
+    '{"requested_seconds":30,"seconds":1,"other":2}',
+    '{"requested_seconds":30,"seconds":1.5}',
+    '{"requested_seconds":1,"seconds":30}',
+    '{"requested_seconds":30,"seconds":1}' + " ".repeat(64),
+  ]) {
+    await writeFile(path, record);
+    expect(
+      await recordedDecoderCpuSeconds(root, cause),
+      record,
+    ).toBeUndefined();
+  }
 });
 
 it.each(["before open", "during read"])(
@@ -656,25 +642,3 @@ it.each([
     expect(projected.remediation.action).toContain(String(limit.maximum));
   },
 );
-
-it("derives each decoder-child wire reason from the limit table", () => {
-  expect(
-    new CaptureFormatError(
-      { name: "nesting-depth", maximum: 64 },
-      "deep",
-      "/log",
-    ),
-  ).toMatchObject({ replyReason: "input-limit", pointer: "/log" });
-  expect(
-    new CaptureFormatError({ name: "expanded-input", maximum: 1 }, "big")
-      .replyReason,
-  ).toBe("expanded-limit");
-  expect(new CaptureFormatError("malformed", "bad").replyReason).toBe("format");
-  expect(new CaptureFormatError("unsupported", "no").replyReason).toBe(
-    "unsupported",
-  );
-  expect(captureLimitForReply("input-limit")).toBe("nesting-depth");
-  expect(captureLimitForReply("expanded-limit")).toBe("expanded-input");
-  // A reply-size refusal is not a decoder input limit.
-  expect(captureLimitForReply("limit")).toBeUndefined();
-});

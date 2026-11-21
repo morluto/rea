@@ -27,6 +27,17 @@ the registration uses them. Clearing either makes startup fail without resolving
 another package from the client's project. Restore the same installation before
 repairing it; an unidentified registration remains untouched. See
 [installation and recovery](installation.md#package-runners-and-global-installation).
+
+For a supported Aube v2 package shim, setup saves a wrapper around the shim so
+the registration can follow the manager's REA installation across upgrades.
+The wrapper supplies shell helpers by absolute path and binds a verified
+Node path for the shim's fallback. Setup prefers a Node alias that works
+independently of the shim's sibling interpreter, then falls back to the
+installed Node executable. The wrapper uses an executable sibling Node when
+the shim selects it and uses the saved Node for bare or hardcoded interpreter
+commands. This works without Node on the client's `PATH` and when an upgrade
+switches between the two supported shim formats.
+
 Setup forwards supported, explicitly selected REA settings into client
 configuration, but does not copy unrelated ambient environment values. To refresh an older registration, preview
 `rea setup --client <client-id> --skill=false --dry-run`, then run the same command

@@ -28,6 +28,7 @@ import {
 } from "../config/mcpStartupPolicy.js";
 import {
   inspectClientRegistrationCommand,
+  managedClientLauncher,
   transientClientLauncherPaths,
   type ClientRegistrationCommandFacts,
   type ClientRegistrationCommandIdentity,
@@ -180,6 +181,12 @@ export const readClientRegistrationInspections = async (
 ): Promise<readonly ClientRegistrationInspection[]> => {
   const inspections: ClientRegistrationInspection[] = [];
   const projectDirectory = options.scope === "user" ? undefined : process.cwd();
+  const preferManaged =
+    managedClientLauncher(
+      currentCommandPath,
+      options.environment ?? process.env,
+      options.platform,
+    ) !== undefined;
   for (const client of await resolveSupportedClients(
     home,
     options.platform,
@@ -460,6 +467,7 @@ export const readClientRegistrationInspections = async (
             registration,
             client: effectiveClient,
             commandFacts,
+            preferManaged,
           });
       const observeProbeSetting = hasProjectRegistrationContribution(
         configuration.value,
@@ -505,8 +513,11 @@ export const readClientRegistrationInspections = async (
             ? packageLauncherRemediation(
                 packageReference,
                 client,
-                launcherPath,
-                launcherRegistrationScope,
+                {
+                  path: launcherPath,
+                  scope: launcherRegistrationScope,
+                  preferManaged,
+                },
                 packageVersionDrift,
               )
             : alignment === "unknown"
@@ -580,10 +591,12 @@ const registrationAligned = ({
   registration,
   client,
   commandFacts,
+  preferManaged,
 }: {
   readonly registration: ClientRegistration;
   readonly client: SetupClient;
   readonly commandFacts: ClientRegistrationCommandFacts;
+  readonly preferManaged: boolean;
 }): "aligned" | "stale" | "unknown" => {
   const { identity } = commandFacts;
   if (identity === "unknown") return "unknown";
@@ -616,7 +629,11 @@ const registrationAligned = ({
   if (commandFacts.package !== undefined) return "stale";
   // Owning the script does not establish how its shebang interpreter resolves
   // in the client. Setup migrates these launchers without losing ownership.
-  return commandFacts.launch === "runtime_script" ? "aligned" : "stale";
+  if (commandFacts.launch === "managed_shim")
+    return commandFacts.independentFallback === true ? "aligned" : "stale";
+  return commandFacts.launch === "runtime_script" && !preferManaged
+    ? "aligned"
+    : "stale";
 };
 
 /** A client that rewrites its file from memory must be quit before setup. */
@@ -842,16 +859,23 @@ const timeoutAdvisory = (
 const packageLauncherRemediation = (
   packageReference: string,
   client: SetupClient,
-  launcherTarget: string,
-  scope: ClientRegistrationScope | undefined,
+  launcher: {
+    readonly path: string;
+    readonly scope: ClientRegistrationScope | undefined;
+    readonly preferManaged: boolean;
+  },
   versionDrift: boolean,
 ): string => {
   const packageDetail = versionDrift
     ? `requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}`
     : `uses the package runner ${packageReference}`;
-  return scope === "project"
-    ? `This project-scoped registration in ${launcherTarget} ${packageDetail}. Replace the launcher in ${launcherTarget} with the installed JavaScript runtime and REA entry script, or remove the project override and run rea setup --client ${client.name} to configure REA at user scope. Restart the client after making the change.`
-    : `This registration ${packageDetail}. REA does not resolve package-runner requests during doctor; update the registration with rea setup --client ${client.name}, then restart the client.`;
+  const setupCommand = `rea setup --client ${client.name}`;
+  if (launcher.scope !== "project")
+    return `This registration ${packageDetail}. REA does not resolve package-runner requests during doctor; update the registration with ${setupCommand}, then restart the client.`;
+  const repair = launcher.preferManaged
+    ? `Run ${setupCommand} to prepare the user-level registration. Replace the launcher in ${launcher.path} with its managed launcher, or remove the project override to use the user-level registration.`
+    : `Replace the launcher in ${launcher.path} with the installed JavaScript runtime and REA entry script, or remove the project override and run ${setupCommand} to configure REA at user scope.`;
+  return `This project-scoped registration in ${launcher.path} ${packageDetail}. ${repair} Restart the client after making the change.`;
 };
 
 const unavailableStatus = (

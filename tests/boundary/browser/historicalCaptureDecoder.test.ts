@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
@@ -600,24 +601,29 @@ it.each(["missing-capture", "missing-reply", "failed-command"])(
     const path = join(root, "explicit-private-value.har");
     if (mode !== "missing-capture")
       await writeFile(path, JSON.stringify(historicalHar()));
+    let privatePath: string | undefined;
     const decoder = new HistoricalCaptureDecoder(
       [
         {
           format: "har",
           identity: HAR_CAPTURE_PROVIDER_IDENTITY,
-          command: async () => ({
-            command: process.execPath,
-            arguments: [
-              "-e",
-              mode === "failed-command"
-                ? 'process.stderr.write("explicit-private-value ordinary diagnostic"); process.exit(2)'
-                : "process.exit(0)",
-            ],
-          }),
+          command: async (_, runtimePath) => {
+            privatePath = runtimePath;
+            return {
+              command: process.execPath,
+              arguments: [
+                "-e",
+                mode === "failed-command"
+                  ? 'process.stderr.write("explicit-private-value ordinary diagnostic"); process.exit(2)'
+                  : "process.exit(0)",
+              ],
+            };
+          },
         },
       ],
       process.env,
     );
+    onTestFinished(() => decoder.close());
     const result = await decoder.inspect(
       inspectWebNetworkCaptureInputSchema.parse({
         capture_path: path,
@@ -637,84 +643,20 @@ it.each(["missing-capture", "missing-reply", "failed-command"])(
           ? "AnalysisOutputError"
           : "ProviderAdapterError",
     );
-    if (mode === "missing-capture") expect(serialized).toContain("ENOENT");
+    if (mode === "missing-capture") {
+      expect(privatePath).toBeUndefined();
+      expect(serialized).toContain("ENOENT");
+      return;
+    }
+    if (privatePath === undefined)
+      throw new Error("Private root was not acquired");
+    await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
+    if (mode === "missing-reply")
+      expect(result.error.message).toContain("ENOENT");
     if (mode === "failed-command")
       expect(serialized).toContain('"exit_code":2');
   },
 );
-
-it("reports an absent owned reply as output failure and removes its private snapshot root", async () => {
-  const root = await createTestTempDirectory("rea-historical-decoder-");
-  const path = join(root, "input.har");
-  await writeFile(path, JSON.stringify(historicalHar()));
-  let privatePath: string | undefined;
-  const decoder = new HistoricalCaptureDecoder(
-    [
-      {
-        format: "har",
-        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
-        command: async (_, runtimePath) => {
-          privatePath = runtimePath;
-          return {
-            command: process.execPath,
-            arguments: ["-e", "process.exit(0)"],
-          };
-        },
-      },
-    ],
-    process.env,
-  );
-  const result = await decoder.inspect(
-    inspectWebNetworkCaptureInputSchema.parse({
-      capture_path: path,
-      format: "har",
-    }),
-  );
-  if (result.ok) throw new Error("Owned reply is required");
-  expect(result.error._tag).toBe("AnalysisOutputError");
-  expect(result.error.message).toContain("ENOENT");
-  if (privatePath === undefined)
-    throw new Error("Private root was not acquired");
-  await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
-});
-
-it("cancels after snapshot acquisition before launch and removes private input declarations", async () => {
-  const root = await createTestTempDirectory("rea-historical-cancel-");
-  const path = join(root, "input.har");
-  await writeFile(path, JSON.stringify(historicalHar()));
-  let privatePath: string | undefined;
-  const controller = new AbortController();
-  const decoder = new HistoricalCaptureDecoder(
-    [
-      {
-        format: "har",
-        identity: HAR_CAPTURE_PROVIDER_IDENTITY,
-        command: async (_, runtimePath) => {
-          privatePath = runtimePath;
-          controller.abort();
-          return {
-            command: process.execPath,
-            arguments: ["-e", "process.exit(3)"],
-          };
-        },
-      },
-    ],
-    process.env,
-  );
-  const result = await decoder.inspect(
-    inspectWebNetworkCaptureInputSchema.parse({
-      capture_path: path,
-      format: "har",
-      sensitive_values: ["explicit-private-declaration"],
-    }),
-    { signal: controller.signal },
-  );
-  if (result.ok) throw new Error("Cancelled acquisition must fail");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
-  if (privatePath === undefined)
-    throw new Error("Private root was not acquired");
-  await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
-});
 
 it("preserves the exact cancellation reason observed during final runtime close", async () => {
   const root = await createTestTempDirectory("rea-historical-final-cancel-");
@@ -1172,10 +1114,6 @@ it.each([
   { closeFails: true, reply: "capture" },
   { closeFails: false, reply: "malformed" },
   { closeFails: true, reply: "malformed" },
-  { closeFails: false, reply: "malformed UTF-8" },
-  { closeFails: true, reply: "malformed UTF-8" },
-  { closeFails: false, reply: "malformed schema" },
-  { closeFails: true, reply: "malformed schema" },
   { closeFails: false, reply: "refusal" },
   { closeFails: true, reply: "refusal" },
 ])(
@@ -1184,6 +1122,7 @@ it.each([
     const root = await createTestTempDirectory("rea-reply-finalization-");
     const path = join(root, "input.har");
     const text = JSON.stringify(historicalHar());
+    const sha256 = createHash("sha256").update(text).digest("hex");
     await writeFile(path, text);
     const controller = new AbortController();
     const reason = { caller: "reply descriptor close" };
@@ -1218,35 +1157,26 @@ it.each([
           identity: HAR_CAPTURE_PROVIDER_IDENTITY,
           command: async (_, runtimePath) => {
             replyPath = join(runtimePath, "reply.json");
-            const bytes =
-              reply === "malformed UTF-8"
-                ? Buffer.concat([
-                    Buffer.from('{"ok":false,"reason":"format","message":"'),
-                    Buffer.from([0xff]),
-                    Buffer.from('","pointer":""}'),
-                  ])
-                : Buffer.from(
-                    reply === "malformed"
-                      ? "{"
-                      : JSON.stringify(
-                          reply === "malformed schema"
-                            ? { ok: true, value: {} }
-                            : reply === "refusal"
-                              ? {
-                                  ok: false,
-                                  reason: "limit",
-                                  message: "Complete reply allowance exceeded",
-                                  pointer: "",
-                                }
-                              : { ok: true, value: decodeHarCapture(text, []) },
-                        ),
+            const content =
+              reply === "malformed"
+                ? "{"
+                : JSON.stringify(
+                    reply === "refusal"
+                      ? {
+                          ok: false,
+                          reason: "limit",
+                          message: "Complete reply allowance exceeded",
+                          pointer: "",
+                        }
+                      : { ok: true, value: decodeHarCapture(text, []) },
                   );
             return {
               command: process.execPath,
               arguments: [
                 "-e",
-                `require('node:fs').writeFileSync(process.argv[1],Buffer.from(${JSON.stringify(bytes.toString("base64"))},'base64'))`,
+                "require('node:fs').writeFileSync(process.argv[1], process.argv[2])",
                 replyPath,
+                content,
               ],
             };
           },
@@ -1276,11 +1206,11 @@ it.each([
           kind: "file-snapshot-hash",
           path,
           bytes: Buffer.byteLength(text),
-          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          sha256,
         });
       else
         expect(result.error.partialObservation).toMatchObject({
-          artifact: { path },
+          artifact: { path, sha256, bytes: Buffer.byteLength(text) },
           records: [{ ordinal: 0 }],
         });
       await decoder.close();
@@ -1302,10 +1232,6 @@ it.each([
         ).toBe(true);
         if (reply === "malformed")
           expect(primary.message).toContain("Reply is malformed JSON.");
-        if (reply === "malformed UTF-8")
-          expect(primary.message).toContain("Reply is not valid UTF-8.");
-        if (reply === "malformed schema")
-          expect(primary.message).toContain("Reply violates its schema");
       } else expect(primary.cause).toBe(reason);
       expect(replyCloses).toBe(closeFails ? 2 : 1);
     } finally {

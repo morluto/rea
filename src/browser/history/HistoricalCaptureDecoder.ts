@@ -310,6 +310,14 @@ export class HistoricalCaptureDecoder {
             input.format,
             OPERATION,
             reply.message,
+            {
+              userMessage: reply.message,
+              remediationAction:
+                "Meet the reported capture format or decoder requirement before retrying.",
+              ...(reply.pointer === ""
+                ? {}
+                : { diagnostics: { pointer: reply.pointer } }),
+            },
           );
         throw new AnalysisOutputError(OPERATION, reply.message, {
           userMessage: `The capture decoder refused a complete reply exceeding ${String(captureBudgets().outputBytes)} bytes: ${reply.message}`,
