@@ -18,6 +18,7 @@
 * **asar:** preserve typed inventory configuration errors ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
+* **desktop:** keep every state-reader close failure in the cleanup composite ([10597e1](https://github.com/morluto/rea/commit/10597e10f233bb7ae1306a441e5770880cb2976a)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
 * **electron:** preserve waits and cancellation through renderer shutdown ([#12972](https://github.com/morluto/rea/issues/12972)) ([2533a8b](https://github.com/morluto/rea/commit/2533a8b32bf2d8e4c052f6ea5c7e616a93660a9f))
 * **electron:** resolve exact local IPC channel values ([#13005](https://github.com/morluto/rea/issues/13005)) ([e66a27c](https://github.com/morluto/rea/commit/e66a27c2f2bb294a0506e6d2d6cf9d2f0125b9e2))
@@ -48,6 +49,11 @@
 * **javascript:** share settled ambient call continuations ([#13010](https://github.com/morluto/rea/issues/13010)) ([2e45687](https://github.com/morluto/rea/commit/2e45687dfde28274a5451223695a14f0ae6e5afd))
 * **mcp:** reduce deferred catalog startup data ([#13039](https://github.com/morluto/rea/issues/13039)) ([8f2b865](https://github.com/morluto/rea/commit/8f2b865c0645aab11a1d5d4c027d34089a925bf2))
 * **web:** normalize each browser redaction marker once ([#13172](https://github.com/morluto/rea/issues/13172)) ([6818b01](https://github.com/morluto/rea/commit/6818b01d5aacfdcc119054fec8d985d7b9ccfb5f))
+
+
+### Code Refactoring
+
+* **verify:** exclude negated .ok checks from the abort-reclassification guard ([a80dc68](https://github.com/morluto/rea/commit/a80dc68318d2b9e2abca08ae5d4eaf1206b83bde)), closes [#11920](https://github.com/morluto/rea/issues/11920)
 
 
 ### Documentation
