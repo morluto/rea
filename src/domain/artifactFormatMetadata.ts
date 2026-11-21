@@ -8,6 +8,11 @@ import {
 } from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
 import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
+import {
+  AUDITD_INLINE_DIAGNOSTIC_LIMIT,
+  AUDITD_INLINE_EVENT_LIMIT,
+  AUDITD_INLINE_EVENT_TYPE_LIMIT,
+} from "./linux/auditdLog.js";
 
 import { jsonRecordSchema } from "./jsonRecord.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -369,6 +374,51 @@ export const ntfsMftMetadataSchema = z.strictObject({
   file_name_count: offset.exactOptional(),
   file_name_incomplete_record_count: offset.exactOptional(),
   attribute_incomplete_record_count: offset.exactOptional(),
+});
+
+/** auditd text-log facts: record and event totals plus a sampled event window. */
+export const auditdLogMetadataSchema = z.strictObject({
+  kind: z.literal("auditd-log"),
+  line_count: offset,
+  record_count: offset,
+  event_count: offset,
+  event_type_counts: z.array(
+    z.strictObject({ type: z.string(), count: offset }),
+  ),
+  malformed_line_count: offset,
+  malformed_lines: z
+    .array(
+      z.strictObject({
+        line: offset,
+        reason: z.string(),
+        excerpt: z.string(),
+      }),
+    )
+    .max(AUDITD_INLINE_DIAGNOSTIC_LIMIT),
+  omitted_malformed_lines: offset,
+  out_of_order_record_count: offset,
+  duplicate_record_count: offset,
+  interleaved_event_count: offset,
+  events: z
+    .array(
+      z.strictObject({
+        event_id: z.string(),
+        event_seconds: offset,
+        event_millis: offset,
+        serial: offset,
+        record_count: offset,
+        record_types: z
+          .array(z.strictObject({ type: z.string(), count: offset }))
+          .max(AUDITD_INLINE_EVENT_TYPE_LIMIT),
+        first_line: offset,
+        last_line: offset,
+        duplicate_record_count: offset,
+        interleaved: z.boolean(),
+      }),
+    )
+    .max(AUDITD_INLINE_EVENT_LIMIT),
+  omitted_events: offset,
+  trailing_bytes: offset,
 });
 
 /**
@@ -1170,6 +1220,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
   ntfsMftMetadataSchema,
+  auditdLogMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   espFlashImageMetadataSchema,
@@ -1341,6 +1392,10 @@ const declarationsByKind: {
   "ntfs-mft": {
     notCompared:
       "Its fields come from the file's own FILE record headers and resident file-name attributes, which content comparison covers.",
+  },
+  "auditd-log": {
+    notCompared:
+      "Its fields come from the file's own record headers, which content comparison covers.",
   },
   dfuse: {
     notCompared:
