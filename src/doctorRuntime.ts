@@ -191,7 +191,11 @@ const readSelectedRegistration = async (
   if (configuration.value.document === undefined) return undefined;
   // Inspecting a project registration does not approve its provider commands.
   // Pass no project-controlled settings to any of the provider probes.
-  if (configuration.value.scope === "project")
+  if (
+    configuration.value.declarations.some(
+      ({ source }) => source.scope === "project",
+    )
+  )
     return { unavailable: "project_scope" };
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,

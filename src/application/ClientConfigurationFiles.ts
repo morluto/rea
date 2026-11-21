@@ -590,7 +590,18 @@ export const readEffectiveClientRegistrationConfiguration = async (
   );
   if (!paths.ok) return paths;
   const candidates = new Map<string, ClientConfigurationDocument>();
-  const admitted = new Set(paths.value.project);
+  const layers = paths.value.filter(
+    ({ userPath }) =>
+      userPath === undefined || userPath === client.openCodeExplicitConfigPath,
+  );
+  const userAliases = paths.value.flatMap(({ path, userPath }) =>
+    userPath === undefined ? [] : [path],
+  );
+  const admitted = new Set(
+    layers.flatMap(({ path, userPath }) =>
+      userPath === undefined ? [path] : [],
+    ),
+  );
   for (const { path, document } of project.candidates ?? []) {
     if (candidates.has(path))
       return err({
@@ -609,16 +620,16 @@ export const readEffectiveClientRegistrationConfiguration = async (
       });
     candidates.set(path, document);
   }
-  if (paths.value.project.length === 0) {
+  if (layers.length === 0) {
     const user = await readEffectiveUserConfiguration(
       client,
       resources,
       platform,
     );
-    return user.ok && paths.value.userAliases.length > 0
+    return user.ok && userAliases.length > 0
       ? ok(
           projectViewOfUserRegistration(
-            { ...user.value, projectUserAliases: paths.value.userAliases },
+            { ...user.value, projectUserAliases: userAliases },
             "evaluated",
           ),
         )
@@ -654,8 +665,21 @@ export const readEffectiveClientRegistrationConfiguration = async (
     }
   }
 
+  const user = await readUserConfigurationSources(client, resources);
+  if (!user.ok) return user;
+  const userByPath = new Map(
+    user.value.map((source) => [source.sourcePath, source]),
+  );
+  const sources = [...user.value];
   const projectSources: ClientConfigurationSource[] = [];
-  for (const path of paths.value.project) {
+  for (const { path, userPath } of layers) {
+    if (userPath !== undefined) {
+      // Preserve this occurrence in native order while retaining the user
+      // file's parsed snapshot and ownership.
+      const source = userByPath.get(userPath);
+      if (source !== undefined) sources.push(source);
+      continue;
+    }
     const candidate = candidates.get(path);
     const configuration =
       candidate === undefined
@@ -663,17 +687,16 @@ export const readEffectiveClientRegistrationConfiguration = async (
         : ok(candidate);
     if (!configuration.ok)
       return err({ ...configuration.error, scope: "project" });
-    if (configuration.value !== undefined)
-      projectSources.push({
-        ...configuration.value,
-        sourcePath: path,
-        scope: "project",
-      });
+    if (configuration.value === undefined) continue;
+    const source = {
+      ...configuration.value,
+      sourcePath: path,
+      scope: "project" as const,
+    };
+    sources.push(source);
+    projectSources.push(source);
   }
 
-  const user = await readUserConfigurationSources(client, resources);
-  if (!user.ok) return user;
-  const sources = [...user.value, ...projectSources];
   const wholeRows =
     client.format === "opencode" &&
     sources.some(({ dialect }) => dialect === "opencode_v2");
@@ -723,11 +746,9 @@ export const readEffectiveClientRegistrationConfiguration = async (
     projectInspection: "evaluated" as const,
     ...(project.mode === "ownership" ? { projectSources } : {}),
     ...(environmentError === undefined ? {} : { environmentError }),
-    ...(paths.value.userAliases.length === 0
-      ? {}
-      : { projectUserAliases: paths.value.userAliases }),
+    ...(userAliases.length === 0 ? {} : { projectUserAliases: userAliases }),
   };
-  if (last === undefined || last.source.scope !== "project")
+  if (last === undefined)
     return ok(
       projectViewOfUserRegistration(
         { document, configPath: client.configPath, ...projectFacts },
@@ -747,7 +768,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
   return ok({
     document,
     configPath: last.source.sourcePath ?? client.configPath,
-    scope: "project",
+    scope: last.source.scope ?? "user",
     launcherScope: launcher.source.scope ?? "user",
     launcherConfigPath: launcher.source.sourcePath ?? client.configPath,
     activationScope: activation.source.scope ?? "user",
@@ -865,22 +886,23 @@ const presentProjectSources = async (
   platform: NodeJS.Platform,
 ): Promise<
   Result<
-    {
-      readonly project: readonly string[];
-      readonly userAliases: readonly string[];
-    },
+    readonly { readonly path: string; readonly userPath?: string }[],
     ClientConfigurationFileError
   >
 > => {
-  const user = new Set(
+  const userPaths = (client.configPaths ?? [client.configPath]).filter(
+    (path) => path !== client.openCodeExplicitConfigPath,
+  );
+  if (client.openCodeExplicitConfigPath !== undefined)
+    userPaths.push(client.openCodeExplicitConfigPath);
+  const user = new Map(
     await Promise.all(
-      (client.configPaths ?? [client.configPath]).map((path) =>
-        physicalPathKey(path, platform),
+      userPaths.map(
+        async (path) => [await physicalPathKey(path, platform), path] as const,
       ),
     ),
   );
-  const project: string[] = [];
-  const userAliases: string[] = [];
+  const project: { path: string; userPath?: string }[] = [];
   for (const candidate of clientProjectConfigurationPaths(
     client,
     projectDirectory,
@@ -897,11 +919,14 @@ const presentProjectSources = async (
         detail: `Project configuration ${candidate} could not be inspected: ${errorMessage(cause)}`,
       });
     }
-    if (user.has(await physicalPathKey(candidate, platform)))
-      userAliases.push(candidate);
-    else project.push(candidate);
+    const userPath = user.get(await physicalPathKey(candidate, platform));
+    project.push(
+      userPath === undefined
+        ? { path: candidate }
+        : { path: candidate, userPath },
+    );
   }
-  return ok({ project, userAliases });
+  return ok(project);
 };
 
 const readPiTrustDocument = async (
@@ -972,9 +997,7 @@ interface ServerDeclaration {
 
 const declaresLauncher = ({ entry }: ServerDeclaration): boolean =>
   isRecord(entry) &&
-  ["command", "url", "type", "transport"].some((key) =>
-    Object.hasOwn(entry, key),
-  );
+  (Object.hasOwn(entry, "command") || Object.hasOwn(entry, "url"));
 
 const serverDeclarations = (
   sources: readonly ClientConfigurationSource[],
@@ -1012,13 +1035,7 @@ export const contributingRegistrationSource = (
       ({ entry }) =>
         isRecord(entry) && Object.keys(entry).some((key) => fields.has(key)),
     ) ??
-    declarations.findLast(
-      ({ entry }) =>
-        isRecord(entry) &&
-        ["command", "args", "type", "transport"].some((key) =>
-          Object.hasOwn(entry, key),
-        ),
-    ) ??
+    declarations.findLast(declaresLauncher) ??
     last
   ).source;
 };

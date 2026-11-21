@@ -1,12 +1,13 @@
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   effectiveClientServer,
   type ClientConfigurationDocument,
 } from "../../../src/application/ClientConfigurationDocument.js";
 import { readEffectiveClientRegistrationConfiguration } from "../../../src/application/ClientConfigurationFiles.js";
+import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -23,29 +24,35 @@ const localServer = (command: string) => ({
 const readReaServer = (document: ClientConfigurationDocument | undefined) =>
   document === undefined ? undefined : effectiveClientServer(document, "rea");
 
-const fixture = async () => {
+const fixture = async (explicitProjectFile = false) => {
   const root = await createTestTempDirectory("rea-opencode-project-layout-");
   const home = join(root, "home");
   const repository = join(root, "repository");
   const projectDirectory = join(repository, "child");
   await mkdir(join(repository, ".git"), { recursive: true });
   await mkdir(projectDirectory);
-  const client = supportedClients(home, process.platform, {}).find(
-    ({ name }) => name === "opencode",
-  );
+  const client = supportedClients(
+    home,
+    process.platform,
+    explicitProjectFile
+      ? { OPENCODE_CONFIG: join(projectDirectory, "opencode.json") }
+      : {},
+  ).find(({ name }) => name === "opencode");
   if (client === undefined)
     throw new Error("OpenCode is missing from the client table");
   return {
     client,
+    home,
     root,
     projectDirectory,
-    read: () =>
+    read: (mode?: "ownership") =>
       readEffectiveClientRegistrationConfiguration(
         client,
         undefined,
         process.platform,
         {
           projectDirectory,
+          ...(mode === undefined ? {} : { mode }),
         },
       ),
   };
@@ -160,5 +167,93 @@ it("keeps OpenCode activation tied to the authored row dialect", async () => {
   expect(readReaServer(migrated.value.document)).toEqual({
     ...user,
     disabled: true,
+  });
+});
+
+it.each(["legacy", "native"] as const)(
+  "preserves an explicit user file's second occurrence in the OpenCode %s project order",
+  async (dialect) => {
+    const { client, projectDirectory, read } = await fixture(true);
+    const ancestor = join(dirname(projectDirectory), "opencode.json");
+    const document = (command: string) => ({
+      mcp:
+        dialect === "native"
+          ? { servers: { rea: localServer(command) } }
+          : { rea: localServer(command) },
+    });
+    await writeConfiguration(client.configPath, document("user"));
+    const ancestorServer = { ...localServer("ancestor"), enabled: false };
+    await writeConfiguration(
+      ancestor,
+      dialect === "native"
+        ? document("ancestor")
+        : { mcp: { rea: ancestorServer } },
+    );
+
+    const result = await read("ownership");
+    if (!result.ok) throw Error(result.error.detail);
+    expect(result.value).toMatchObject({
+      scope: "user",
+      configPath: client.configPath,
+      launcherScope: "user",
+      launcherConfigPath: client.configPath,
+      projectUserAliases: [client.configPath],
+      projectSources: [{ sourcePath: ancestor }],
+    });
+    expect(result.value.activationConfigPath).toBe(
+      dialect === "native" ? client.configPath : ancestor,
+    );
+    expect(readReaServer(result.value.document)).toEqual({
+      ...localServer("user"),
+      ...(dialect === "legacy" ? { disabled: true } : {}),
+    });
+  },
+);
+
+it("attributes an inherited OpenCode launcher to the file declaring the command", async () => {
+  const { client, home, projectDirectory, read } = await fixture();
+  const project = join(projectDirectory, "opencode.json");
+  const user = {
+    type: "local",
+    command: ["npx", "-y", "rea-agents@1.0.0", "mcp"],
+  };
+  await writeConfiguration(client.configPath, { mcp: { rea: user } });
+  await writeConfiguration(project, { mcp: { rea: { type: "local" } } });
+
+  const result = await read();
+  if (!result.ok) throw Error(result.error.detail);
+  expect(result.value).toMatchObject({
+    scope: "project",
+    configPath: project,
+    launcherScope: "user",
+    launcherConfigPath: client.configPath,
+  });
+  expect(readReaServer(result.value.document)).toEqual(user);
+
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue(projectDirectory);
+  try {
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: process.platform,
+      environment: {},
+      selectedClientIds: ["opencode"],
+    });
+    const opencode = statuses.find(({ client: name }) => name === "opencode");
+    expect(opencode).toMatchObject({
+      state: "stale",
+      scope: "project",
+      launcher_scope: "user",
+      config_path: project,
+      remediation: expect.stringContaining("rea setup --client opencode"),
+    });
+  } finally {
+    cwd.mockRestore();
+  }
+
+  await writeConfiguration(project, { mcp: { rea: localServer("project") } });
+  const replacement = await read();
+  if (!replacement.ok) throw Error(replacement.error.detail);
+  expect(replacement.value).toMatchObject({
+    launcherScope: "project",
+    launcherConfigPath: project,
   });
 });
