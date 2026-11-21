@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): c88607d402fe40b71d340fde84956b8a9516966ebe22a1faeb6bc35db251c3c6
+Runtime dependency fingerprint (SHA-256): 59b0607da4d12a77599f26ae884219d36e9a5d8d44f39f8880eb0bf695186770
 
 ===== @babel/helper-string-parser@8.0.6 =====
 Declared license: MIT
@@ -9259,22 +9259,22 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 
-===== frida@17.23.2 =====
+===== frida@17.27.4 =====
 Declared license: LGPL-2.0 WITH WxWindows-exception-3.1
-Archive: https://registry.npmjs.org/frida/-/frida-17.23.2.tgz
-Integrity: sha512-gRCmmTUFdEILyHRN1b66erRoXafwsfWTqXyoBBqkSCFX0Ue7Jhvs/KhA3JO0XrgITNlPd91QAGsFvWzh0mhVgg==
+Archive: https://registry.npmjs.org/frida/-/frida-17.27.4.tgz
+Integrity: sha512-vXuznuWSW24X7RyIPydNarLgCdwwq5VsosdAfgTX81Xe9kM059blT0hk+VSRXoZ8yzIGFSSlgSnyVWvgq8Z2dA==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- Declared metadata and supplemental licensing texts ---
 
 The integrity-verified npm archive and tagged frida-node source omit a standalone license/copyright document. The package declares LGPL-2.0 WITH WxWindows-exception-3.1. No Frida copyright holder or year is inferred.
-The following unchanged Frida 17.23.2 COPYING and GNU Library GPL v2 texts are licensing supplements. The copyright in COPYING belongs to that license document; it is not recovered attribution for the Node binding or every component in its downloaded prebuild.
+The following unchanged Frida 17.27.4 COPYING and GNU Library GPL v2 texts are licensing supplements. The copyright in COPYING belongs to that license document; it is not recovered attribution for the Node binding or every component in its downloaded prebuild.
 
 Authors as declared by upstream package metadata: ["Frida Developers"]
-Frida Node source: https://github.com/frida/frida-node/tree/11d56293686c5494f538247ccf89f08ab57912ef
+Frida Node source: https://github.com/frida/frida-node/tree/3689981b56ba241325323f1df9c123d0ad157961
 License text provenance and SHA-256: licenses/upstream-sources.json
 
---- licenses/frida-17.23.2-COPYING.txt ---
+--- licenses/frida-17.27.4-COPYING.txt ---
 
               wxWindows Library Licence, Version 3.1
               ======================================

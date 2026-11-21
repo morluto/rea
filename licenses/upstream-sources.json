@@ -60,8 +60,8 @@
     "sha256": "e991d81497a85bb24fc6bffae0a3637a6accd6c6bc5ce1f2c5698bd555cf9d49"
   },
   {
-    "file": "licenses/frida-17.23.2-COPYING.txt",
-    "source": "https://raw.githubusercontent.com/frida/frida/9adf8ed33ab6f1122b17399ee96dcbe101b941c9/COPYING",
+    "file": "licenses/frida-17.27.4-COPYING.txt",
+    "source": "https://raw.githubusercontent.com/frida/frida/a93582c832d74de1eaa0ec59994365f6981368db/COPYING",
     "sha256": "5ea1544b51a28bc823b03159190d4108f9fb4f4ef912389f5137c6d295e175b2"
   },
   {

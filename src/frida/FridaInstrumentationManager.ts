@@ -63,7 +63,7 @@ import { sha256Hex } from "../kernel/sha256Hex.js";
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
 
 /**
- * Frida Core 17.23.2 raises this from `getDeviceById` only after the supplied
+ * Frida Core 17.27.4 raises this from `getDeviceById` only after the supplied
  * timeout elapses without a match. A closed manager or backend failure uses a
  * different message and is not this deadline.
  */
