@@ -242,6 +242,14 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
   const { context, record, source, channel, coverage } = input;
   const { finding, file } = record;
   const handlerRange = finding.handler_location ?? finding.location;
+  const basis = ipcChannelBasis(finding);
+  const handlerEvidence = {
+    sha256: file.sha256,
+    path: file.path,
+    range: handlerRange,
+    operation: "observe-ipc-handler",
+    coverage,
+  };
   const handlerKey = `${finding.side}:${finding.operation}:${finding.channel ?? finding.channel_expression}:${javascriptSourceRangeKey(handlerRange)}`;
   const identityKey =
     finding.receiver === undefined
@@ -282,29 +290,23 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
             : { invocation_location: finding.invocation_location }),
         },
         evidence:
-          finding.resolution_basis !== "wrapper-substitution"
-            ? electronFindingEvidence(
-                {
-                  sha256: file.sha256,
-                  path: file.path,
-                  range: handlerRange,
-                  operation: "observe-ipc-handler",
-                  coverage,
-                },
-                finding.loader_authority,
-              )
+          basis === undefined
+            ? electronFindingEvidence(handlerEvidence, finding.loader_authority)
             : staticInferenceEvidence({
-                sha256: file.sha256,
-                path: file.path,
-                range: handlerRange,
-                operation: "observe-ipc-handler",
-                coverage,
+                ...handlerEvidence,
                 ...(finding.loader_authority === "candidate"
-                  ? {
-                      confidence: "low" as const,
-                      limitations: [ELECTRON_CANDIDATE_LIMITATION],
-                    }
+                  ? { confidence: "low" as const }
                   : {}),
+                limitations: [
+                  ...(finding.loader_authority === "candidate"
+                    ? [ELECTRON_CANDIDATE_LIMITATION]
+                    : []),
+                  ...(basis === "static-value"
+                    ? [
+                        "The handler's channel is inferred from the registration's exact static value.",
+                      ]
+                    : []),
+                ],
               }),
       },
     ],
