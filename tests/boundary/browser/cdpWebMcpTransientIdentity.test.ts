@@ -351,32 +351,46 @@ it("rejects discovery when a child commits as a new root", async () => {
   });
 });
 
-it("retains the child ancestry on same-document navigation so a parent detach removes its tools", async () => {
-  const { result } = await discoverWithChildEvents(
-    ["child"],
-    (origin, sessionId) => [
+it("retires registered and transient descendants when their parent detaches", async () => {
+  const { result } = await discoverWithChildEvents([], (origin, sessionId) => {
+    const navigate = (id: string, parentId: string, url: string): CdpEvent => ({
+      method: "Page.frameNavigated",
+      sessionId,
+      params: { frame: { id, parentId, url, loaderId: `loader-${id}` } },
+    });
+    return [
+      navigate("parent", "frame-main", origin + "/parent"),
+      navigate("child", "parent", origin + "/child"),
+      navigate("transient", "parent", "about:blank"),
       {
         method: "WebMCP.toolsAdded",
         sessionId,
         params: {
-          tools: [{ name: "current", frameId: "child", inputSchema: {} }],
+          tools: [
+            { name: "current", frameId: "child" },
+            { name: "root", frameId: "frame-main" },
+          ],
         },
       },
       {
         method: "Page.navigatedWithinDocument",
         sessionId,
-        params: { frameId: "child", url: origin + "/child" },
+        params: { frameId: "child", url: origin + "/child#current" },
       },
       {
         method: "Page.frameDetached",
         sessionId,
-        params: { frameId: "frame-main" },
+        params: { frameId: "parent" },
       },
-    ],
-  );
+    ];
+  });
   if (!result.ok) throw result.error;
-  expect(result.value.tools.items).toEqual([]);
-  expect(result.value.completeness.excluded).toEqual([]);
+  expect(result.value.tools.items).toMatchObject([{ name: "root" }]);
+  expect(result.value.completeness).toMatchObject({
+    status: "complete_within_window",
+    attach_limited_sections: [],
+    excluded: [],
+  });
 });
 
 it("retains the committed loader through same-document updates before a replacement", async () => {
