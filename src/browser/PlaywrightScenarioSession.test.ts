@@ -69,17 +69,6 @@ vi.mock("./CdpTargetSession.js", () => ({
 vi.mock("./PlaywrightScenarioBrowser.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./PlaywrightScenarioBrowser.js")>()),
   openPlaywrightScenarioBrowser: mocks.openBrowser,
-  failBrowserScenarioOperation: async (
-    cleanup: { release(): Promise<void> },
-    cause: unknown,
-  ) => {
-    try {
-      await cleanup.release();
-    } catch (cleanupCause: unknown) {
-      throw new AggregateError([cause, cleanupCause]);
-    }
-    throw cause;
-  },
 }));
 
 vi.mock("./PlaywrightScenarioStorage.js", () => ({
@@ -714,38 +703,33 @@ it("retains a late fallback stop failure for retry", async () => {
 
 it("coalesces concurrent late-stop close retries", async () => {
   const { page, session, transitions } = await prepareLateStopRetry();
+  const heldStop = phaseGate();
+  const stop = vi.fn(async () => {
+    await heldStop.hold();
+    return null;
+  });
+  page.evaluate.mockImplementation(async (script: unknown) =>
+    script === "globalThis.stop()" ? stop() : null,
+  );
+  const firstRetry = session.close();
+  let secondRetry: Promise<unknown> | undefined;
   try {
-    const { promise: heldStop, resolve: finishStop } = deferred();
-    const { promise: startedStop, resolve: stopStarted } = deferred();
-    page.evaluate.mockImplementation(async (script: unknown) => {
-      if (script === "globalThis.stop()") {
-        stopStarted();
-        await heldStop;
-      }
-      return null;
-    });
-    const firstRetry = session.close();
-    await startedStop;
-    const secondRetry = session.close();
-    expect(
-      page.evaluate.mock.calls.filter(
-        ([script]) => script === "globalThis.stop()",
-      ),
-    ).toHaveLength(1);
-    finishStop();
+    await heldStop.reached(firstRetry, "fallback navigation stop");
+    secondRetry = session.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(transitions).toEqual([]);
+    heldStop.release();
     await expect(Promise.all([firstRetry, secondRetry])).resolves.toEqual([
       "disconnected-external",
       "disconnected-external",
     ]);
   } finally {
+    heldStop.release();
     vi.useRealTimers();
+    await Promise.allSettled([firstRetry, secondRetry]);
   }
-
-  expect(
-    page.evaluate.mock.calls.filter(
-      ([script]) => script === "globalThis.stop()",
-    ),
-  ).toHaveLength(1);
+  expect(stop).toHaveBeenCalledOnce();
   expect(transitions).toEqual(["disconnect"]);
 });
 
@@ -753,84 +737,91 @@ it("retains transferred navigation stopping after setup cleanup fails", async ()
   const { cleanup, storage } = fixture();
   const cancellation = new AbortController();
   const setupFailure = new Error("storage initialization failed");
-  storage?.initialize.mockImplementationOnce(async () => {
+  const storageFailure = new Error("storage stop unconfirmed");
+  const policyFailure = new Error("policy stop unconfirmed");
+  storage.initialize.mockImplementationOnce(async () => {
     cancellation.abort();
+    mocks.policySend.mockRejectedValueOnce(policyFailure);
     throw setupFailure;
   });
-  storage?.close.mockRejectedValueOnce(new Error("storage stop unconfirmed"));
-  const policyFailure = new Error("policy stop unconfirmed");
-  let failPolicyStop = true;
-  mocks.policySend.mockImplementation(async (method: string) => {
-    if (method === "Page.stopLoading" && failPolicyStop) {
-      failPolicyStop = false;
-      throw policyFailure;
-    }
-    return policyResponse(method);
-  });
-  let retainedCleanup: AnalysisCleanupLease | undefined;
-  const attached = connectedScenario("block");
+  storage.close.mockRejectedValueOnce(storageFailure);
+  const retainCleanup = vi.fn<(lease: AnalysisCleanupLease) => void>();
 
-  await expect(
-    PlaywrightScenarioSession.open(
-      attached,
-      {},
-      {
-        signal: cancellation.signal,
-        retainCleanup: (close) => {
-          retainedCleanup = close;
+  const failure = await PlaywrightScenarioSession.open(
+    connectedScenario("block"),
+    {},
+    {
+      signal: cancellation.signal,
+      retainCleanup,
+    },
+  ).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    cleanupIncomplete: true,
+    cleanupResources: ["browser_transport"],
+    cause: {
+      errors: [
+        { cause: setupFailure },
+        {
+          reason: "cleanup_failed",
+          cause: { errors: [policyFailure, storageFailure] },
         },
-      },
-    ),
-  ).rejects.toBeInstanceOf(AggregateError);
+      ],
+    },
+  });
   expect(cleanup.close).not.toHaveBeenCalled();
-  if (retainedCleanup === undefined)
-    throw new Error("failed cleanup was not retained");
-  await expect(retainedCleanup.release()).resolves.toBeUndefined();
+  expect(retainCleanup).toHaveBeenCalledOnce();
+  await retainCleanup.mock.calls[0]![0].release();
+  expect(failure).toMatchObject({
+    cleanupIncomplete: false,
+    cleanupResources: [],
+  });
   expect(
     mocks.policySend.mock.calls.filter(
       ([method]) => method === "Page.stopLoading",
     ),
   ).toHaveLength(2);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
+  expect(cleanup.close).toHaveBeenCalledOnce();
 });
 
-it("allows the bounded policy cleanup chain to cross one second", async () => {
+it("uses the fixed cleanup grace for an already-issued policy stop", async () => {
   const { cleanup } = fixture();
   mocks.storage = undefined;
-  const attached = connectedScenario("block", {});
+  const attached = {
+    ...connectedScenario("block", {}),
+    command_timeout_ms: 250,
+  };
   const session = await PlaywrightScenarioSession.open(attached, {}, {});
-  const { promise: stopped, resolve: releaseStop } = deferred();
-  const { promise: started, resolve: stopStarted } = deferred();
+  const stop = phaseGate();
   mocks.policySend.mockImplementation(async (method: string) => {
-    if (method === "Page.stopLoading") {
-      stopStarted();
-      await stopped;
-    }
+    if (method === "Page.stopLoading") await stop.hold();
     return policyResponse(method);
   });
-
   vi.useFakeTimers();
+  const settled = vi.fn();
+  const closing = session.close(true).then(settled, settled);
   try {
-    let settled = false;
-    const closing = session.close(true).then(
-      () => {
-        settled = true;
-        return { ok: true as const };
-      },
-      (cause: unknown) => {
-        settled = true;
-        return { ok: false as const, cause };
-      },
+    await stop.reached(closing, "policy stop");
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(settled).not.toHaveBeenCalled();
+    expect(cleanup.browserClosed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        cleanupIncomplete: true,
+        cause: expect.objectContaining({
+          _tag: "AnalysisTimeoutError",
+          timeoutMs: 5_000,
+        }),
+      }),
     );
-    await started;
-    await vi.advanceTimersByTimeAsync(1_100);
-    expect(settled).toBe(false);
-    releaseStop();
-    await expect(closing).resolves.toEqual({ ok: true });
+    expect(cleanup.browserClosed).toBe(false);
   } finally {
+    stop.release();
     vi.useRealTimers();
+    await closing;
+    await expect(session.close()).resolves.toBe("disconnected-external");
   }
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
+  expect(cleanup.close).toHaveBeenCalledOnce();
 });
 
 it("skips policy restoration for a child without a committed document", async () => {
