@@ -1329,79 +1329,160 @@ describe("web capture diff script inventory coverage", () => {
   );
 });
 
-describe("web capture diff semantics and fingerprints", () => {
-  it("detects accessibility semantics and storage inventory changes", async () => {
-    const browser = await startFakeCdpBrowser({ extraCollections: true });
-    browsers.push(browser);
-    const captured = await new CdpBrowserProvider().inspectPage(
+it("compares retained accessibility and storage facts across incomplete captures", async () => {
+  const browser = await startFakeCdpBrowser({ extraCollections: true });
+  browsers.push(browser);
+  const provider = new CdpBrowserProvider();
+  const inspect = async (selection: {
+    include_accessibility_text: boolean;
+    include_storage_keys?: boolean;
+    include_storage_fingerprints?: boolean;
+  }) => {
+    const result = await provider.inspectPage(
       inspectWebPageInputSchema.parse({
         cdp_endpoint: browser.endpoint,
         allowed_origins: [browser.allowedOrigin],
         target_id: "allowed-page",
         observation_ms: 0,
-        include_accessibility_text: true,
-        include_storage_keys: true,
-        include_storage_fingerprints: true,
+        ...selection,
       }),
     );
-    if (!captured.ok) throw captured.error;
-    const compareAfter = (after: typeof captured.value) =>
-      compareWebCaptures(
-        compareWebCapturesInputSchema.parse({
-          before: { inspection: captured.value },
-          after: { inspection: after },
-        }),
-      );
-    const roleChanged = structuredClone(captured.value);
-    const namedNode = roleChanged.accessibility.nodes[0];
-    if (namedNode === undefined)
-      throw new Error("Expected accessibility nodes");
-    namedNode.role = "menuitem";
+    if (!result.ok) throw result.error;
+    return result.value;
+  };
+  const observed = await inspect({
+    include_accessibility_text: true,
+    include_storage_keys: true,
+    include_storage_fingerprints: true,
+  });
+  const withheld = await inspect({ include_accessibility_text: false });
+  expect(withheld.completeness.policy_filtered_sections).toContain(
+    "accessibility",
+  );
+  expect(withheld.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "accessibility",
+      reason: "not_approved",
+    }),
+  );
 
-    const nameChanged = structuredClone(captured.value);
-    const renamedNode = nameChanged.accessibility.nodes[0];
-    if (renamedNode === undefined)
-      throw new Error("Expected accessibility nodes");
-    renamedNode.name = "Send report";
+  const compare = (after: WebPageInspection) =>
+    compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: observed },
+        after: { inspection: after },
+      }),
+    ).dimensions;
+  const identical = compare(observed);
+  for (const dimension of [identical.accessibility, identical.storage])
+    expect(dimension).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+      changes: [],
+    });
 
-    const stateChanged = structuredClone(captured.value);
-    const stateNode = stateChanged.accessibility.nodes[0];
-    const disabledState = stateNode?.states.find(
+  const edit = (
+    capture: WebPageInspection,
+    change: (copy: WebPageInspection) => void,
+  ) => {
+    const copy = structuredClone(capture);
+    change(copy);
+    return copy;
+  };
+  const changedTree = {
+    status: "changed",
+    total_changes: 1,
+    changes: [{ identity: "accessibility_tree", change: "modified" }],
+  };
+  const unknown = { status: "unknown", total_changes: 0, changes: [] };
+  for (const patch of [{ role: "menuitem" }, { name: "Send report" }]) {
+    const after = edit(observed, ({ accessibility }) => {
+      const node = accessibility.nodes[0];
+      if (node === undefined) throw new Error("Expected accessibility node");
+      Object.assign(node, patch);
+    });
+    expect(compare(after).accessibility).toMatchObject(changedTree);
+  }
+  const stateChanged = edit(observed, ({ accessibility }) => {
+    const state = accessibility.nodes[0]?.states.find(
       ({ name }) => name === "disabled",
     );
-    if (disabledState === undefined)
-      throw new Error("Expected an accessibility state");
-    disabledState.value = true;
-
-    const hierarchyChanged = structuredClone(captured.value);
-    const childNode = hierarchyChanged.accessibility.nodes[1];
-    if (childNode === undefined)
-      throw new Error("Expected an accessibility child");
-    childNode.parent_id = null;
-
-    const storageChanged = structuredClone(captured.value);
-    storageChanged.storage.local_storage_keys.push("new-key");
-
-    for (const after of [
-      roleChanged,
-      nameChanged,
-      stateChanged,
-      hierarchyChanged,
-    ])
-      expect(compareAfter(after).dimensions.accessibility).toMatchObject({
-        status: "changed",
-        changes: [
-          {
-            identity: "accessibility_tree",
-            change: "modified",
-          },
-        ],
-      });
-    expect(compareAfter(storageChanged).dimensions.storage).toMatchObject({
-      status: "changed",
-      changes: [expect.objectContaining({ change: "added" })],
-    });
+    if (state === undefined) throw new Error("Expected the disabled state");
+    state.value = true;
   });
+  expect(compare(stateChanged).accessibility).toMatchObject(changedTree);
+
+  const reparent = ({ accessibility }: WebPageInspection) => {
+    const child = accessibility.nodes[1];
+    if (child === undefined) throw new Error("Expected accessibility child");
+    child.parent_id = null;
+  };
+  expect(compare(edit(observed, reparent)).accessibility).toMatchObject(
+    changedTree,
+  );
+  expect(compare(withheld).accessibility).toMatchObject(unknown);
+  expect(compare(edit(withheld, reparent)).accessibility).toMatchObject(
+    changedTree,
+  );
+  const withoutRole = edit(observed, ({ accessibility }) => {
+    const node = accessibility.nodes[0];
+    if (node === undefined)
+      throw new Error("Expected a node with an observed role");
+    node.role = null;
+  });
+  expect(compare(withoutRole).accessibility).toMatchObject(unknown);
+  expect(compare(edit(withoutRole, reparent)).accessibility).toMatchObject(
+    changedTree,
+  );
+
+  const treeChanged = edit(observed, reparent);
+  const partial = edit(treeChanged, ({ completeness }) => {
+    completeness.truncated_sections.push("accessibility");
+  });
+  const missingNode = edit(treeChanged, ({ accessibility }) => {
+    accessibility.total_nodes++;
+  });
+  expect(compare(partial).accessibility).toMatchObject(unknown);
+  expect(compare(missingNode).accessibility).toMatchObject(unknown);
+
+  const keyAdded = edit(observed, ({ storage }) => {
+    storage.local_storage_keys.push("new-key");
+  });
+  expect(compare(keyAdded).storage.changes).toEqual([
+    { identity: "storage:local_storage:new-key", change: "added" },
+  ]);
+  const fingerprintIndex = observed.storage.content_fingerprints.findIndex(
+    ({ complete, value_sha256 }) => complete && value_sha256 !== null,
+  );
+  const changedFingerprint = edit(observed, ({ storage }) => {
+    const fingerprint = storage.content_fingerprints[fingerprintIndex];
+    if (fingerprint === undefined)
+      throw new Error("Expected a complete storage fingerprint");
+    fingerprint.value_sha256 = "f".repeat(64);
+  });
+  const contentChange = {
+    status: "changed",
+    total_changes: 1,
+    changes: [expect.objectContaining({ change: "modified" })],
+  };
+  expect(compare(changedFingerprint).storage).toMatchObject(contentChange);
+  const omitInventoryProof = ({ storage }: WebPageInspection) => {
+    storage.fingerprints_complete = false;
+  };
+  expect(
+    compare(edit(changedFingerprint, omitInventoryProof)).storage,
+  ).toMatchObject(contentChange);
+  expect(compare(edit(observed, omitInventoryProof)).storage).toMatchObject(
+    unknown,
+  );
+  const unverifiedValue = edit(changedFingerprint, (capture) => {
+    omitInventoryProof(capture);
+    const fingerprint = capture.storage.content_fingerprints[fingerprintIndex];
+    if (fingerprint === undefined)
+      throw new Error("Expected a retained storage fingerprint");
+    fingerprint.complete = false;
+  });
+  expect(compare(unverifiedValue).storage).toMatchObject(unknown);
 });
 
 it("refuses an IndexedDB schema fingerprint without its projection version", async () => {
@@ -1425,120 +1506,6 @@ it("refuses an IndexedDB schema fingerprint without its projection version", asy
       path: ["storage", "content_fingerprints", index, "projection_version"],
     },
   ]);
-});
-
-describe("web capture diff completeness", () => {
-  it("uses complete redacted fingerprints but keeps incomplete evidence unknown", async () => {
-    const browser = await startFakeCdpBrowser({ extraCollections: true });
-    browsers.push(browser);
-    const captured = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-        include_accessibility_text: true,
-        include_storage_keys: true,
-        include_storage_fingerprints: true,
-      }),
-    );
-    if (!captured.ok) throw captured.error;
-    const identical = structuredClone(captured.value);
-    const identity = compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: captured.value },
-        after: { inspection: identical },
-      }),
-    );
-    expect(identity.dimensions.accessibility.status).toBe("unchanged");
-    expect(identity.dimensions.storage).toMatchObject({
-      status: "unchanged",
-      total_changes: 0,
-    });
-
-    const changedFingerprint = structuredClone(captured.value);
-    const fingerprint = changedFingerprint.storage.content_fingerprints.find(
-      ({ complete, value_sha256: valueSha256 }) =>
-        complete && valueSha256 !== null,
-    );
-    if (fingerprint === undefined || fingerprint.value_sha256 === null)
-      throw new Error("Expected a complete content fingerprint");
-    fingerprint.value_sha256 = "f".repeat(64);
-    const storageChanged = compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: captured.value },
-        after: { inspection: changedFingerprint },
-      }),
-    );
-    expect(storageChanged.dimensions.storage).toMatchObject({
-      status: "changed",
-      total_changes: 1,
-      changes: [expect.objectContaining({ change: "modified" })],
-    });
-
-    const incompleteStorage = structuredClone(captured.value);
-    incompleteStorage.storage.fingerprints_complete = false;
-    const storageUnknown = compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: captured.value },
-        after: { inspection: incompleteStorage },
-      }),
-    );
-    expect(storageUnknown.dimensions.storage).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-
-    const evidenceQualityChanged = structuredClone(captured.value);
-    evidenceQualityChanged.storage.fingerprints_complete = false;
-    const incompleteFingerprint =
-      evidenceQualityChanged.storage.content_fingerprints[0];
-    if (incompleteFingerprint === undefined)
-      throw new Error("Expected a content fingerprint");
-    incompleteFingerprint.complete = false;
-    const evidenceOnly = compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: captured.value },
-        after: { inspection: evidenceQualityChanged },
-      }),
-    );
-    expect(evidenceOnly.dimensions.storage).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-
-    const withoutText = structuredClone(captured.value);
-    withoutText.accessibility.text_capture.status = "not_approved";
-    withoutText.accessibility.text_capture.excluded_fields = 1;
-    for (const node of withoutText.accessibility.nodes) {
-      node.name = null;
-      node.description = null;
-    }
-    const missingText = compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: captured.value },
-        after: { inspection: withoutText },
-      }),
-    );
-    expect(missingText.dimensions.accessibility).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-
-    const truncated = structuredClone(captured.value);
-    truncated.accessibility.total_nodes += 1;
-    truncated.completeness.truncated_sections.push("accessibility");
-    const incompleteTree = compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: truncated },
-        after: { inspection: structuredClone(truncated) },
-      }),
-    );
-    expect(incompleteTree.dimensions.accessibility).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-  });
 });
 
 const markSectionsComplete = (
