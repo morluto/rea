@@ -237,21 +237,41 @@ it("retries retained browser cleanup before the one-shot CLI releases its provid
   state.provider = provider;
   try {
     const result = await serveScenario();
-    expect(result.processExitCode).toBe(1);
+    // Cleanup is unconfirmed, but every action completed: the one-shot CLI
+    // returns the completed capture as Evidence instead of failing with
+    // cleanup_incomplete, and leaves the process exit code alone.
+    expect(result.exitCode).toBe(0);
+    expect(result.processExitCode).toBe(savedExitCode);
+    expect(result.output.code).toBeUndefined();
+    expect(result.output.error).toBeUndefined();
     expect(result.output).toMatchObject({
-      code: "cleanup_incomplete",
-      category: "execution_failure",
-      details: {
-        cleanup: "incomplete",
-        resources: ["browser_transport", "browser_profile"],
-        partial_observation: {
-          capture: { browser: { cleanup: "incomplete" } },
-        },
+      predicate_type: "rea.browser-scenario-capture",
+      operation: "capture_browser_scenario",
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: {
+        id: "Fixture Chromium@1",
+        platform: "unknown",
+        architecture: "unknown",
+        isolation: "process",
       },
     });
-    const details = jsonObjectSchema.parse(result.output.details);
-    const partial = jsonObjectSchema.parse(details.partial_observation);
-    expect(jsonObjectSchema.parse(partial.capture).steps).toHaveLength(2);
+    const capture = jsonObjectSchema.parse(result.output.normalized_result);
+    expect(capture).toMatchObject({
+      browser: { cleanup: "incomplete" },
+      completeness: { status: "complete" },
+    });
+    expect(capture.steps).toHaveLength(2);
+    expect(capture.steps).toMatchObject([
+      { step_id: "scenario_start", status: "completed" },
+      { step_id: "wait", status: "completed" },
+    ]);
+    expect(result.output.limitations).toContain(
+      "Browser cleanup could not be confirmed: injected close failure 1. Reported resources may remain: browser_transport, browser_profile.",
+    );
+    expect(result.output.limitations).toContain(
+      "Browser host platform and architecture were not observed.",
+    );
     expect(close).toHaveBeenCalledTimes(1);
     expect(session.closeBrowserCalls).toBe(2);
     expect(session.profileRemovalCalls).toBe(1);

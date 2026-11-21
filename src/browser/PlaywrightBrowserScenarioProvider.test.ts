@@ -757,6 +757,26 @@ describe("PlaywrightBrowserScenarioProvider cleanup", () => {
     });
     expect(session.closeCalls).toBe(1);
   });
+
+  it("returns the completed capture with cleanup incomplete when close fails after every action completed", async () => {
+    const session = new FakeSession("launch", {
+      close: new Error("browser close timed out"),
+    });
+    const provider = new PlaywrightBrowserScenarioProvider(() =>
+      Promise.resolve(session),
+    );
+    const result = await provider.captureScenario(scenario());
+
+    if (!result.ok) throw result.error;
+    expect(result.value.browser.cleanup).toBe("incomplete");
+    expect(
+      result.value.steps.every(({ status }) => status === "completed"),
+    ).toBe(true);
+    expect(result.value.limitations).toContain(
+      "Browser cleanup could not be confirmed: browser close timed out. Reported resources may remain: browser_transport.",
+    );
+    expect(session.closeCalls).toBe(1);
+  });
 });
 
 describe("PlaywrightBrowserScenarioProvider operation failures", () => {
@@ -1120,7 +1140,7 @@ it.each(["launch", "connect"] as const)(
         async () => session,
       );
       const result = await provider.captureScenario(input);
-      expect(result.ok).toBe(!("capture" in failures || "close" in failures));
+      expect(result.ok).toBe(!("capture" in failures));
       const expected = {
         limitations:
           mode === "connect"
@@ -1173,6 +1193,18 @@ it.each([false, true])(
     const provider = new PlaywrightBrowserScenarioProvider(async () => session);
     try {
       const result = await provider.captureScenario(scenario());
+      if (!operationFailed) {
+        // The completed capture is returned with cleanup unconfirmed; the
+        // retained lease still has to resolve through provider close.
+        if (!result.ok) throw new Error("Expected completed capture");
+        expect(result.value.browser.cleanup).toBe("incomplete");
+        await expect(provider.close()).rejects.toMatchObject({
+          cleanupIncomplete: true,
+        });
+        denied = false;
+        await provider.close();
+        return;
+      }
       if (result.ok) throw new Error("Expected retained cleanup");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toEqual(["browser_profile"]);
@@ -1185,16 +1217,14 @@ it.each([false, true])(
       expect(result.error.cleanupIncomplete).toBe(false);
       expect(result.error.cleanupResources).toEqual([]);
       expect(result.error.partialObservation).toBe(partial);
-      if (operationFailed) {
-        let restored = result.error.cleanupPrimary;
-        while (restored?.cleanupPrimary !== undefined)
-          restored = restored.cleanupPrimary;
-        expect(restored).toBe(primary);
-        expect(primary.cause).toBe(reason);
-        expect(projectAnalysisError(result.error)).toMatchObject({
-          code: "cancelled",
-        });
-      }
+      let restored = result.error.cleanupPrimary;
+      while (restored?.cleanupPrimary !== undefined)
+        restored = restored.cleanupPrimary;
+      expect(restored).toBe(primary);
+      expect(primary.cause).toBe(reason);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "cancelled",
+      });
     } finally {
       denied = false;
       await provider.close();
@@ -1202,7 +1232,7 @@ it.each([false, true])(
   },
 );
 
-it("resolves the returned failure after retrying a plain session cleanup capability", async () => {
+it("resolves retained cleanup after retrying a plain session cleanup capability", async () => {
   const session = new FakeSession("launch");
   let denied = true;
   session.close = async () => {
@@ -1212,18 +1242,14 @@ it("resolves the returned failure after retrying a plain session cleanup capabil
   const provider = new PlaywrightBrowserScenarioProvider(async () => session);
   try {
     const result = await provider.captureScenario(scenario());
-    if (result.ok) throw new Error("Expected cleanup failure");
-    expect(result.error.cleanupIncomplete).toBe(true);
+    if (!result.ok) throw new Error("Expected completed capture");
+    expect(result.value.browser.cleanup).toBe("incomplete");
     const failed: unknown = await provider
       .close()
       .catch((cause: unknown) => cause);
     expect(failed).toMatchObject({ cleanupIncomplete: true });
     denied = false;
     await provider.close();
-    expect(result.error).toMatchObject({
-      cleanupIncomplete: false,
-      cleanupResources: [],
-    });
     expect(failed).toMatchObject({
       cleanupIncomplete: false,
       cleanupResources: [],
@@ -1403,6 +1429,16 @@ it.each([false, true])(
       });
       await vi.advanceTimersByTimeAsync(30_000);
       const result = await pending;
+      if (!cancelled) {
+        // Cleanup confirmation timed out after every action completed, so
+        // the completed capture is returned with cleanup unconfirmed; the
+        // late acknowledgement still settles the retained lease.
+        if (!result.ok) throw new Error("Expected completed capture");
+        expect(result.value.browser.cleanup).toBe("incomplete");
+        acknowledge();
+        await owner.cleanupLease.release();
+        return;
+      }
       if (result.ok) throw new Error("Expected timed out cleanup response");
       expect(result.error.cleanupIncomplete).toBe(true);
       const partial = result.error.partialObservation;
