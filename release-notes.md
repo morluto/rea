@@ -32,6 +32,7 @@
 * **javascript:** share widened reference-store propagation ([#12990](https://github.com/morluto/rea/issues/12990)) ([fba5e44](https://github.com/morluto/rea/commit/fba5e44bf5f393dcd6bd3269d88d7101f1586ff0))
 * **reference:** retain physical Git read failure after cleanup refusal ([#12848](https://github.com/morluto/rea/issues/12848)) ([f4937a0](https://github.com/morluto/rea/commit/f4937a04be3148a7f9a191f1114a8210b7264108))
 * **rizin:** report the required inferior terminal field ([#13019](https://github.com/morluto/rea/issues/13019)) ([d84652e](https://github.com/morluto/rea/commit/d84652e55b43ad7c494efe67d8324b35d4a05695))
+* **setup:** keep MCP launchers usable after session cleanup ([#13185](https://github.com/morluto/rea/issues/13185)) ([1587b46](https://github.com/morluto/rea/commit/1587b46a9faa54b1fac925e0d4c827383e80b1ff))
 * **setup:** preserve caller comments on detached DSH aliases ([#13032](https://github.com/morluto/rea/issues/13032)) ([270c3a6](https://github.com/morluto/rea/commit/270c3a6b285b30c71bcd2f57fad451417769840f))
 * **setup:** recognize DSH registrations nested in Cordis groups ([#13037](https://github.com/morluto/rea/issues/13037)) ([9fd8c8d](https://github.com/morluto/rea/commit/9fd8c8d90331a16164a9849d56bf84ed8682b139))
 * **uninstall:** keep emptied DSH inserts from applying overrides ([#13036](https://github.com/morluto/rea/issues/13036)) ([76da8fd](https://github.com/morluto/rea/commit/76da8fd8baa9ffe61be1d772a3cc1d0ac65dbf8b))
