@@ -19,6 +19,7 @@
 * **electron:** preserve waits and cancellation through renderer shutdown ([#12972](https://github.com/morluto/rea/issues/12972)) ([2533a8b](https://github.com/morluto/rea/commit/2533a8b32bf2d8e4c052f6ea5c7e616a93660a9f))
 * **electron:** resolve exact local IPC channel values ([#13005](https://github.com/morluto/rea/issues/13005)) ([e66a27c](https://github.com/morluto/rea/commit/e66a27c2f2bb294a0506e6d2d6cf9d2f0125b9e2))
 * **ghidra:** expose NativeAOT opt-out recovery ([#12923](https://github.com/morluto/rea/issues/12923)) ([753b7e9](https://github.com/morluto/rea/commit/753b7e908c5ab91508cbda7b954aaa8138822712))
+* **gpu:** decode UTF-8 CUBIN kernel symbol names ([#13101](https://github.com/morluto/rea/issues/13101)) ([23cf85e](https://github.com/morluto/rea/commit/23cf85ef24fbc598125d0d3a2cddb42eeb2337b5))
 * **javascript:** preserve Electron identity beside unrelated alias exhaustion ([#12988](https://github.com/morluto/rea/issues/12988)) ([c2870f9](https://github.com/morluto/rea/commit/c2870f91320721222a6157b5728eaff92a6c5a2a))
 * **javascript:** preserve Webpack slots outside finite writes ([#13006](https://github.com/morluto/rea/issues/13006)) ([91a68a8](https://github.com/morluto/rea/commit/91a68a8b7cd374b0b5a09cf5b57b05b8bb304162))
 * **javascript:** share widened reference-store propagation ([#12990](https://github.com/morluto/rea/issues/12990)) ([fba5e44](https://github.com/morluto/rea/commit/fba5e44bf5f393dcd6bd3269d88d7101f1586ff0))
