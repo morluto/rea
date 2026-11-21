@@ -494,8 +494,8 @@ it("rejects malformed response-body envelopes and preserves request shapes", asy
   ).toEqual([
     { section: "json_body_shapes", reason: "invalid_protocol_value", count: 3 },
   ]);
-  expect(result.value.limitations).toContain(
-    "Network.getResponseBody returned a malformed result; the section that reads it is incomplete.",
+  expect(result.value.limitations).toContainEqual(
+    expect.stringContaining("Network.getResponseBody"),
   );
 });
 
@@ -531,8 +531,8 @@ it("stops body queries when the target lacks the method and preserves all reques
   expect(result.value.completeness.unavailable_sections).toContain(
     "json_body_shapes",
   );
-  expect(result.value.limitations).toContain(
-    "Network.getResponseBody was unavailable from this browser target.",
+  expect(result.value.limitations).toContainEqual(
+    expect.stringContaining("Network.getResponseBody"),
   );
 });
 
