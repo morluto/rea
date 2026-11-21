@@ -1054,6 +1054,7 @@ jobs:
           src/contracts/sessionPathInputs.test.ts
           tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts
           tests/boundary/mcp/rawBinaryMcp.test.ts
+          tests/boundary/filesystem/windowsTargetSeparators.test.ts
           tests/boundary/mcp/advertisedDialect.test.ts
           tests/boundary/mcp/absoluteLocalPathSchema.test.ts
           tests/boundary/mcp/toolSchemaValidity.test.ts

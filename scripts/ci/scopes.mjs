@@ -297,6 +297,7 @@ const PATH_SCOPES = {
     "src/contracts/sessionPathInputs.test.ts",
     "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
     "tests/boundary/mcp/rawBinaryMcp.test.ts",
+    "tests/boundary/filesystem/windowsTargetSeparators.test.ts",
     "src/contracts/advertisedDialect*.ts",
     "tests/boundary/mcp/advertisedDialect.test.ts",
     // The advertised absolute-path pattern is host-specific (#7151).
