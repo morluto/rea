@@ -101,18 +101,16 @@ describe("evidence bundle failure classification", () => {
       parameters: {},
       result: { observed: true },
     });
-    const single = safeParseEvidenceBundle(record);
-    expect(single.ok).toBe(false);
-    if (single.ok) return;
-    expect(single.error.kind).toBe("single-record");
-
-    const tampered = safeParseEvidenceBundle({
-      ...record,
-      normalized_result: { observed: false },
+    expect(safeParseEvidenceBundle(record)).toMatchObject({
+      ok: false,
+      error: { kind: "single-record" },
     });
-    expect(tampered.ok).toBe(false);
-    if (tampered.ok) return;
-    expect(tampered.error.kind).toBe("invalid-bundle");
+    expect(
+      safeParseEvidenceBundle({
+        ...record,
+        normalized_result: { observed: false },
+      }),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-bundle" } });
   });
 });
 

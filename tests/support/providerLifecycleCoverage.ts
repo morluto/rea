@@ -482,7 +482,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
-          "cancels queued work and stops active provider work on cancellation",
+          "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
         ),
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
@@ -675,13 +675,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/ida/IdaSessionClient.test.ts",
-          "retains the private workspace and reports cleanup failure when worker release is unverified",
+          "retries failed worker release through the retained connection",
         ),
       ),
       retry: covered(
         test(
-          "src/ida/IdaSessionClient.test.ts",
-          "retries failed worker release through the retained connection before removing its workspace",
+          "tests/boundary/providers/ida/retainedConnectionRetry.test.ts",
+          "retries cleanup through the detached stdio connection",
         ),
       ),
     },
@@ -1609,7 +1609,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "cancels a windowless wait action and cleans up the owned application",
+          "cancels a windowless wait action and cleans up the owned application (%s)",
         ),
       ),
       cleanup: covered(

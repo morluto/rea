@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -251,5 +252,117 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ambiguous_renderer_transmissions: expected === "ambiguous" ? 1 : 0,
       });
     }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "resolves selected local IPC channel values while retaining opaque writes through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-ipc-local-values-");
+    const source = [
+      'const { ipcRenderer } = require("electron");',
+      'const channels = { listen: "autofill.listen", other: "original" };',
+      "const captured = channels.listen;",
+      'const stable = { listen: "autofill.stable" };',
+      "const subscribe = () => ipcRenderer.on(stable.listen, () => {});",
+      "channels.other = unknown;",
+      "ipcRenderer.on(channels.other, () => {});",
+      "channels.listen = unknown;",
+      "ipcRenderer.send(captured);",
+    ].join("\n");
+    await writeFixtureFiles(root, { "preload.cjs": source });
+    const application = await analyzeJavaScriptDirectory(surface, cli, root);
+    const observations = application.graph.nodes
+      .filter(({ kind }) => kind === "ipc-channel")
+      .flatMap(({ observations }) => observations);
+    expect(observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({ channel: "autofill.listen" }),
+          evidence: expect.objectContaining({
+            state: "inferred",
+            artifact: expect.objectContaining({
+              available: true,
+              sha256: createHash("sha256").update(source).digest("hex"),
+            }),
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({
+                source: "preload.cjs",
+                start: expect.objectContaining({ line: 9 }),
+              }),
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            channel: "autofill.stable",
+            operation: "on",
+          }),
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            channel: null,
+            channel_expression: "channels.other",
+          }),
+        }),
+      ]),
+    );
+    const handlers = application.graph.nodes
+      .filter(({ kind }) => kind === "ipc-handler")
+      .flatMap(({ observations }) => observations);
+    expect(handlers).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({ channel: "autofill.stable" }),
+        evidence: expect.objectContaining({
+          state: "inferred",
+          artifact: expect.objectContaining({
+            available: true,
+            sha256: createHash("sha256").update(source).digest("hex"),
+          }),
+          location: expect.objectContaining({
+            available: true,
+            value: expect.objectContaining({
+              source: "preload.cjs",
+              start: expect.objectContaining({ line: 5 }),
+            }),
+          }),
+        }),
+      }),
+    );
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps an ESM channel unknown after its property is overwritten through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-ipc-mutated-channel-");
+    await writeFixtureFiles(root, {
+      "preload.mjs": [
+        'import { ipcRenderer } from "electron";',
+        'const channels = { send: "old" };',
+        "const alias = channels;",
+        "alias.send = unknown;",
+        "ipcRenderer.send(channels.send);",
+      ].join("\n"),
+    });
+    const application = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(application.summary.ipc).toMatchObject({
+      operations: 1,
+      literal_channels: 0,
+      dynamic_channel_operations: 1,
+    });
+    expect(
+      application.graph.nodes
+        .filter(({ kind }) => kind === "ipc-channel")
+        .flatMap(({ observations }) =>
+          observations.map(({ properties }) => properties),
+        ),
+    ).toEqual([
+      expect.objectContaining({
+        channel: null,
+        channel_expression: "channels.send",
+      }),
+    ]);
   },
 );

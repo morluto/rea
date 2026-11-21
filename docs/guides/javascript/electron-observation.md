@@ -157,6 +157,8 @@ REA does not guess an entry point or remove arguments by filename patterns.
 
 `window_index` selects from Playwright's current Page list at the start of each action. REA resolves that Page to its corresponding BrowserWindow once; the action's `target` uses the BrowserWindow's capture-scoped `window_id`, matching the window inventory. Reordering either enumeration after selection does not retarget the action. Handle cleanup failures retain the completed action records and remain owned for provider cleanup retry.
 
+Once REA resolves the required window, the host clock controls the full wait even during a renderer crash.
+
 Run the real fixture verifier with an operator-provided Electron runtime:
 
 ```bash
@@ -202,7 +204,9 @@ never appears, or a `wait` without `window_index` in an app that opens no
 window, remains pending until cancelled. After cancellation, the final state
 read has 5 seconds before REA keeps the initial snapshot instead; the
 cancellation keeps the caller's reason and records that expiry in its
-diagnostics.
+diagnostics. When the caller interrupted an action and the final Inspector read
+fails, REA reports the cancellation with the initial snapshot, the action
+records, and the Inspector failure as a secondary diagnostic.
 The shell policy is owned by `blockedShellResults` in
 `scripts/electron-active-hook-boundaries.cjs`. Its synchronous blocks are:
 `showItemInFolder` returns `undefined` and `writeShortcutLink` returns `false`.
