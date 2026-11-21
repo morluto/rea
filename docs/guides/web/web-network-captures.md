@@ -173,9 +173,9 @@ conflicting repeated reserved parameters remain invalid. Repeated headers with
 implicit binary encoding and `encoding=binary` agree without rewriting either
 header. Invalid declarations remain visible even with explicit framing, and
 declared gRPC bodies still receive credential checks before a MIME refusal.
-An excluded HAR `mimeType` remains unknown for automatic interpretation even
-when a visible Content-Type header exists. That header can still identify the
-transport for credential checks; explicit wire framing remains independent.
+HAR `mimeType` controls automatic interpretation and remains unknown when
+excluded. Each visible Content-Type declaration still informs credential checks,
+including when it disagrees with the HAR MIME field or another header.
 
 Native gRPC admits only data-frame flags 0/1; gRPC-web additionally admits its
 terminal trailer frame. `grpc-web-text` supports independently padded base64
