@@ -63,11 +63,14 @@ const installWithMise = async (
   };
 };
 
-const registerCommand = (entrypointPath: string): readonly string[] =>
+const registerCommand = (
+  entrypointPath: string,
+  environment: NodeJS.ProcessEnv = {},
+): readonly string[] =>
   currentClientRegistrationCommand({
     platform: "linux",
     entrypointPath,
-    environment: {},
+    environment,
   });
 
 const launchFromClient = (command: readonly string[]) =>
@@ -110,7 +113,7 @@ it.skipIf(process.platform === "win32")(
     const before = await installWithMise(installs, "6.7.0");
 
     const command = registerCommand(before.entrypoint);
-    expect(command.slice(-2)).toEqual([before.shim, "mcp"]);
+    expect(command.slice(-3)).toEqual([before.shim, process.execPath, "mcp"]);
     expect(classifyClientRegistrationCommand(command, before.entrypoint)).toBe(
       "owned",
     );
@@ -271,7 +274,7 @@ it.skipIf(process.platform === "win32")(
       content + `exec '${process.execPath}' "$basedir/"'${target}' "$@"\n`,
     );
     const command = registerCommand(entrypoint);
-    expect(command.slice(-2)).toEqual([shim, "mcp"]);
+    expect(command.slice(-3)).toEqual([shim, process.execPath, "mcp"]);
     expect(launchFromClient(command)).toBe("6.7.0");
   },
 );
@@ -335,6 +338,43 @@ it.skipIf(process.platform === "win32")(
       path: "",
       args: ["mcp"],
     });
+  },
+);
+
+it
+  .skipIf(process.platform === "win32")
+  .each([
+    "a symlink through a session directory",
+    "the first Node on setup's PATH",
+  ] as const)(
+  "launches the saved Aube registration after removal of a sibling Node that was %s",
+  async (sibling) => {
+    const home = await createTestTempDirectory("rea-aube-sibling-node-");
+    const { entrypoint, shim } = await installWithMise(
+      join(home, "installs", "rea"),
+      "6.7.0",
+    );
+    const bin = dirname(shim);
+    const interpreter = join(bin, "node");
+    const session = join(home, "fnm_multishells", "123_456");
+    const throughSession = sibling === "a symlink through a session directory";
+    if (throughSession) {
+      await mkdir(session, { recursive: true });
+      const sessionRuntime = join(session, "node");
+      await symlink(process.execPath, sessionRuntime);
+      await rm(interpreter);
+      await symlink(sessionRuntime, interpreter);
+    }
+
+    const command = registerCommand(entrypoint, { PATH: bin });
+    await registerWithClaudeCode(home, command);
+    expect(launchFromClient(command)).toBe("6.7.0");
+
+    await rm(throughSession ? session : interpreter, {
+      recursive: throughSession,
+    });
+    expect(launchFromClient(command)).toBe("6.7.0");
+    expect(await claudeCodeState(home, entrypoint)).toBe("aligned");
   },
 );
 

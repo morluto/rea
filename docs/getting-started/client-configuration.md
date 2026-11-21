@@ -28,12 +28,12 @@ another package from the client's project. Restore the same installation before
 repairing it; an unidentified registration remains untouched. See
 [installation and recovery](installation.md#package-runners-and-global-installation).
 
-A supported Aube v2 package shim can follow the manager's installation after an
-upgrade when it selects the verified Node interpreter independently of the
-client's `PATH`. REA supplies the shim's shell helpers by absolute path. If the shim needs `PATH` to locate Node, setup uses the explicit
-runtime and package script. Refresh that registration after upgrading the
-package, or register a launcher you have verified in the client's environment
-with `rea mcp add --command`.
+For a supported Aube v2 package shim, setup saves a wrapper around the shim so
+the registration can follow the manager's REA installation across upgrades.
+The wrapper supplies shell helpers by absolute path and binds a verified
+absolute Node path for the shim's fallback. The shim can use its own
+interpreter when available and can launch without Node on the client's
+`PATH` if the sibling interpreter is missing or stops resolving.
 
 Setup forwards supported, explicitly selected REA settings into client
 configuration, but does not copy unrelated ambient environment values. To refresh an older registration, preview

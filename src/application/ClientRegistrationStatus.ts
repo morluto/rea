@@ -597,7 +597,10 @@ const registrationAligned = ({
   if (commandFacts.package !== undefined) return "stale";
   // Owning the script does not establish how its shebang interpreter resolves
   // in the client. Setup migrates these launchers without losing ownership.
-  if (commandFacts.launch === "managed_shim") return "aligned";
+  if (commandFacts.launch === "managed_shim")
+    return commandFacts.fallbackRuntimeIdentity === "owned"
+      ? "aligned"
+      : "stale";
   return commandFacts.launch === "runtime_script" && !preferManaged
     ? "aligned"
     : "stale";

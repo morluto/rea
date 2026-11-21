@@ -100,18 +100,10 @@ export const managedClientLauncher = (
     usesTransientLauncherPath(process.execPath, roots)
   )
     return undefined;
-  const runtime = registrationRuntimePath(
-    process.execPath,
-    "node",
-    environment,
-    platform,
-  );
-  if (runtime === undefined) return undefined;
   const launcher = aubeShimLauncher(
     entrypoint,
     PRODUCT_IDENTITY.cliBinary,
     process.execPath,
-    runtime,
   );
   return launcher === undefined ||
     usesTransientLauncherPath(launcher.shim, roots)
@@ -374,10 +366,7 @@ export const transientClientLauncherPaths = (
   const shim = registeredAubeShim(command);
   const paths =
     shim !== undefined
-      ? [
-          shim.shim,
-          ...(shim.fallbackRuntime === undefined ? [] : [shim.fallbackRuntime]),
-        ]
+      ? [shim.shim, shim.fallbackRuntime]
       : command.length === 3 && command[2] === "mcp"
         ? command.slice(0, 2)
         : [];
@@ -440,7 +429,9 @@ export const equivalentClientRegistrationCommands = (
   return (
     prior.entrypoint !== undefined &&
     prior.identity === "owned" &&
-    prior.launch === requestedFacts.launch
+    prior.launch === requestedFacts.launch &&
+    (prior.launch !== "managed_shim" ||
+      prior.fallbackRuntimeIdentity === "owned")
   );
 };
 
@@ -455,6 +446,8 @@ export interface ClientRegistrationCommandFacts {
     | "unknown";
   /** Selected absolute launcher/script path; excludes package and unresolved PATH commands. */
   readonly entrypoint: string | undefined;
+  /** A managed shim's fallback can drift while its primary interpreter still runs. */
+  readonly fallbackRuntimeIdentity?: ClientRegistrationCommandIdentity;
   readonly package:
     | {
         readonly reference: string;
@@ -523,6 +516,10 @@ const inspectDirectRegistrationCommand = (
           ? "unknown"
           : entrypointIdentity(target, currentCommandPath),
       entrypoint: target,
+      fallbackRuntimeIdentity: entrypointIdentity(
+        managed.fallbackRuntime,
+        process.execPath,
+      ),
       package: undefined,
     };
   }

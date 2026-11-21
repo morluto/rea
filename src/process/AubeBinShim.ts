@@ -38,7 +38,6 @@ const SHIM_HELPERS = [
   'dirname() { if [ -x /usr/bin/dirname ]; then /usr/bin/dirname "$@"; else /bin/dirname "$@"; fi; }',
   'readlink() { if [ -x /usr/bin/readlink ]; then /usr/bin/readlink "$@"; else /bin/readlink "$@"; fi; }',
 ];
-const SHIM_BODY = [...SHIM_HELPERS, '. "$0"'].join("\n");
 const SHIM_WITH_NODE = [
   ...SHIM_HELPERS,
   'rea_node="$1"',
@@ -52,16 +51,20 @@ const SHIM_WITH_NODE = [
 
 export interface AubeShimLauncher {
   readonly shim: string;
-  readonly fallbackRuntime?: string;
+  readonly fallbackRuntime: string;
 }
 
 export const aubeShimRegistration = ({
   shim,
   fallbackRuntime,
-}: AubeShimLauncher): readonly string[] =>
-  fallbackRuntime === undefined
-    ? [SHIM_SHELL, "-c", SHIM_BODY, shim, "mcp"]
-    : [SHIM_SHELL, "-c", SHIM_WITH_NODE, shim, fallbackRuntime, "mcp"];
+}: AubeShimLauncher): readonly string[] => [
+  SHIM_SHELL,
+  "-c",
+  SHIM_WITH_NODE,
+  shim,
+  fallbackRuntime,
+  "mcp",
+];
 
 export const registeredAubeShim = (
   command: readonly string[],
@@ -69,8 +72,6 @@ export const registeredAubeShim = (
   const [, , body, shim, argument, last] = command;
   if (command[0] !== SHIM_SHELL || command[1] !== "-c" || shim === undefined)
     return undefined;
-  if (command.length === 5 && body === SHIM_BODY && argument === "mcp")
-    return { shim };
   if (
     command.length === 6 &&
     body === SHIM_WITH_NODE &&
@@ -134,13 +135,12 @@ const sameFile = (left: string, right: string): boolean => {
   }
 };
 
-const inspectAubeShim = (
+/** The script launched by a supported Aube Node shim with its recorded binding. */
+export const aubeShimTarget = (
   shim: string,
   runtime: string,
   fallbackRuntime?: string,
-):
-  | { readonly target: string; readonly fallbackRuntime?: string }
-  | undefined => {
+): string | undefined => {
   if (!isAbsolute(shim)) return undefined;
   const lines = readShim(shim)?.split("\n");
   if (lines?.shift() !== "#!/bin/sh") return undefined;
@@ -194,40 +194,27 @@ const inspectAubeShim = (
       // The shell resolves a Node executable with native traversal. Only the
       // script argument is later normalized by Node itself.
       const localRuntime = appendCallerPath(parent, "node");
-      const usesFallback = !executable(localRuntime);
-      const interpreter = usesFallback ? fallbackRuntime : localRuntime;
+      const interpreter = executable(localRuntime)
+        ? localRuntime
+        : fallbackRuntime;
       if (
         interpreter === undefined ||
         !executable(interpreter) ||
         realpathSync.native(interpreter) !== selectedRuntime
       )
         return undefined;
-      if (usesFallback)
-        return {
-          target: resolve(parent, target),
-          fallbackRuntime: interpreter,
-        };
     }
-    return { target: resolve(parent, target) };
+    return resolve(parent, target);
   } catch {
     return undefined;
   }
 };
 
-/** The script launched by a supported Aube Node shim with its recorded binding. */
-export const aubeShimTarget = (
-  shim: string,
-  runtime: string,
-  fallbackRuntime?: string,
-): string | undefined =>
-  inspectAubeShim(shim, runtime, fallbackRuntime)?.target;
-
 /** The outer generated shim that selects the running installation's script. */
 export const aubeShimLauncher = (
   entrypoint: string,
   name: string,
-  runtime: string,
-  fallbackRuntime: string,
+  installedRuntime: string,
 ): AubeShimLauncher | undefined => {
   if (!isAbsolute(entrypoint) || !shellHelpersAvailable()) return undefined;
   let launcher: AubeShimLauncher | undefined;
@@ -238,13 +225,14 @@ export const aubeShimLauncher = (
   ) {
     if (basename(directory) !== "node_modules") continue;
     const candidate = join(directory, ".bin", name);
-    const inspected = inspectAubeShim(candidate, runtime, fallbackRuntime);
-    if (inspected !== undefined && sameFile(inspected.target, entrypoint)) {
-      launcher =
-        inspected.fallbackRuntime === undefined
-          ? { shim: candidate }
-          : { shim: candidate, fallbackRuntime: inspected.fallbackRuntime };
-    }
+    const target = aubeShimTarget(
+      candidate,
+      installedRuntime,
+      installedRuntime,
+    );
+    // The fallback must survive independently of the shim's sibling Node.
+    if (target !== undefined && sameFile(target, entrypoint))
+      launcher = { shim: candidate, fallbackRuntime: installedRuntime };
   }
   return launcher;
 };
