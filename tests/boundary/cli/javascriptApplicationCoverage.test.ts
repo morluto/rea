@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -134,6 +135,58 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
             entry: "api.ping",
             entry_kind: "bridge-member",
             step_kind: "terminal",
+          }),
+        }),
+      );
+    },
+  );
+}
+
+for (const surface of ["CLI", "stdio MCP"] as const) {
+  cliTest(
+    `retains a Webpack external outside the finite written slots through ${surface}`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-webpack-slot-coverage-");
+      const source = `(() => {
+        const table = {
+          1: module => { module.exports = require("electron"); },
+          2: (module, exports, load) => {
+            const electron = load(1);
+            new electron.BrowserWindow({});
+            electron.ipcMain.handle("ready", () => {});
+          }
+        };
+        function load(key) {
+          const module = { exports: {} };
+          table[key](module, module.exports, load);
+          return module.exports;
+        }
+        load.m = table;
+        const key = flag ? 3 : "4";
+        load.m[key] = module => { module.exports = {}; };
+        load(2);
+      })();`;
+      await writeFixtureFiles(root, { "main.cjs": source });
+      const application = await analyzeJavaScriptDirectory(surface, cli, root);
+      expect(application.summary).toMatchObject({ browser_windows: 1 });
+      const windows = application.graph.nodes
+        .filter(({ kind }) => kind === "browser-window")
+        .flatMap(({ observations }) => observations);
+      expect(windows).toContainEqual(
+        expect.objectContaining({
+          evidence: expect.objectContaining({
+            state: "observed",
+            artifact: expect.objectContaining({
+              available: true,
+              sha256: createHash("sha256").update(source).digest("hex"),
+            }),
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({
+                source: "main.cjs",
+                start: expect.objectContaining({ line: 6 }),
+              }),
+            }),
           }),
         }),
       );
