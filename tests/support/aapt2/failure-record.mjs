@@ -35,7 +35,13 @@ export const createFailureRecorder = ({
     { diagnostics = true, seen = new Set() } = {},
   ) => {
     if (!(cause instanceof Error)) return { message: String(cause) };
-    const record = { name: cause.name, message: cause.message };
+    const commandExited = cause.name === "VerifierCommandExitError";
+    const record = {
+      name: cause.name,
+      message: commandExited
+        ? `Command exited with code ${cause.code}`
+        : cause.message,
+    };
     if (seen.has(cause)) return { ...record, already_recorded: true };
     seen.add(cause);
     if (cause instanceof commandFailure) {
@@ -72,9 +78,8 @@ export const createFailureRecorder = ({
         diagnostics,
         seen,
       });
-    if (cause.name === "VerifierCommandExitError") {
+    if (commandExited) {
       const { exitCode, signal } = cause.snapshot;
-      record.message = `Command exited with code ${cause.code}`;
       record.reason = "process";
       record.snapshot = diagnostics ? cause.snapshot : { exitCode, signal };
       record.collection_failure = false;

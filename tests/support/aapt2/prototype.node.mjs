@@ -522,6 +522,11 @@ else if (args[0] === 'compile') {
           assert.equal(failure.failure.errors[0].snapshot.exitCode, 9);
           assert.equal("stdout" in failure.failure.errors[0].snapshot, false);
           assert.equal(failure.failure.errors[1].code, "EISDIR");
+          assert.match(failure.failure.cause.message, /exited with code 9/u);
+          assert.doesNotMatch(
+            error.snapshot.stderr.text,
+            /controlled compile refusal/u,
+          );
           return true;
         },
       );
