@@ -178,36 +178,35 @@ export class CdpWorkerCapture {
         this.context.sessionId === undefined
       )
         continue;
-      let sessionId: string | undefined;
       try {
-        const result = recordValue(
-          await this.#command(
-            "Target.attachToTarget",
-            { targetId: id, flatten: true },
-            undefined,
-          ),
+        const { sessionId } = await this.context.connection.send(
+          "Target.attachToTarget",
+          { targetId: id, flatten: true },
+          undefined,
+          this.signal,
         );
-        sessionId = cdpStringValue(result?.sessionId);
-        if (sessionId === undefined)
-          throw new BrowserObservationError(
-            this.context.operation,
-            "protocol_error",
-          );
-      } finally {
-        // A browser-level attach can succeed after its reply stops being observed.
-        if (sessionId === undefined) this.requireTransportClose();
+        this.#attach(worker, sessionId);
+      } catch (cause: unknown) {
+        // A correlated rejection created no session. A lost or unusable reply
+        // can leave an attachment that this capture cannot detach.
+        if (!(cause instanceof CdpCommandRejection))
+          this.requireTransportClose();
+        throw cause;
       }
-      this.#attach(worker, sessionId);
     }
     await this.#settle(this.#pendingLifecycle);
   }
 
-  async finish(frameIds: ReadonlySet<string>): Promise<Worker[]> {
+  async drain(): Promise<void> {
     await this.#inventory();
     this.#admissionClosed = true;
     await this.#settle(this.#pendingLifecycle);
     await this.#settle(this.#pendingSources);
+  }
+
+  finish(frameIds: ReadonlySet<string>): Worker[] {
     this.#stopped = true;
+    this.check();
     for (const [id, versions] of this.#versionsByTarget)
       if (
         !this.#workers.has(id) &&
@@ -540,14 +539,6 @@ export class CdpWorkerCapture {
     if (event.domain !== "Target" && event.domain !== "ServiceWorker") {
       if (worker === undefined || !worker.enabled || worker.detached) return;
       if (!this.#canCollect(worker)) return;
-      // During the drain, existing script identities and ownership changes still
-      // protect queued reads, but newly observed work is outside the window.
-      if (
-        this.#admissionClosed &&
-        registered?.method === "Debugger.scriptParsed" &&
-        !worker.sources.has(registered.payload.facts.scriptId ?? "")
-      )
-        return;
     }
     if (!this.#eventBytes.tryCharge(event.wireBytes))
       throw new BrowserObservationError(
@@ -703,6 +694,17 @@ export class CdpWorkerCapture {
         );
       return;
     }
+    const previous = worker.sources.get(script.scriptId);
+    if (this.#admissionClosed && previous === undefined) {
+      // The capture still observes events, but the source queue is sealed.
+      worker.events.completeness.drop("scripts");
+      if (
+        this.context.input.include_script_sources &&
+        supportsJavaScriptSource(script.language)
+      )
+        worker.events.completeness.truncate("script_sources");
+      return;
+    }
     const item: Observation["scripts"][number] = {
       script_id: script.scriptId,
       is_module: script.isModule,
@@ -717,7 +719,6 @@ export class CdpWorkerCapture {
       cdp_hash: script.hash,
       source: sourceExcluded("source capture was not selected"),
     };
-    const previous = worker.sources.get(script.scriptId);
     if (previous !== undefined) {
       if (
         previous.url !== item.url ||

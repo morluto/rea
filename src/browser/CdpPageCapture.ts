@@ -233,10 +233,11 @@ const captureAuthorizedPage = async (
       null,
     );
   await report(context.progress, 3, "Normalizing browser evidence");
-  const workers = (await state.workers?.finish(frameIds)) ?? [];
-  limitations.push(...(state.workers?.limitations ?? []));
+  await state.workers?.drain();
   assertObservedCaptureValid(state);
   await assertCompletedDocument(state);
+  const workers = state.workers?.finish(frameIds) ?? [];
+  limitations.push(...(state.workers?.limitations ?? []));
   // Body IDs were enumerated before asynchronous CDP reads. Events remain
   // enabled through the final capture, so account for eligible responses that
   // arrived while those reads were pending.

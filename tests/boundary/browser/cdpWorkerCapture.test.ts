@@ -218,64 +218,100 @@ it.each([false, true])(
   },
 );
 
-it("drains admitted source reads without admitting another script after the final inventory", async () => {
-  const { browser, provider, input } = await fixture({
-    hangOnCommand: ({ method, sessionId, params }) =>
-      method === "Debugger.getScriptSource" &&
-      sessionId === "worker-own" &&
-      params.scriptId === "1",
-  });
-  const controller = new AbortController();
-  onTestFinished(() => controller.abort());
-  const capture = provider.inspectPage(input, { signal: controller.signal });
-  await waitFor(() => {
+it.each(["JavaScript", "WebAssembly"])(
+  "reports worker %s scripts skipped during the source drain and final document read",
+  async (language) => {
+    const parsed = (origin: string, id: string): CdpEvent => ({
+      method: "Debugger.scriptParsed",
+      sessionId: "worker-own",
+      params: {
+        scriptId: id,
+        executionContextId: 1,
+        url: origin + "/" + id + ".js",
+        hash: id,
+        scriptLanguage: language,
+      },
+    });
+    let releasedSource = false;
+    const { browser, provider, input } = await fixture({
+      eventsBeforeReply: ["Page.getFrameTree"],
+      commandEvents: (command, origin) =>
+        releasedSource && command.method === "Page.getFrameTree"
+          ? [parsed(origin, "final")]
+          : undefined,
+      hangOnCommand: ({ method, sessionId, params }) =>
+        method === "Debugger.getScriptSource" &&
+        sessionId === "worker-own" &&
+        params.scriptId === "1",
+    });
+    const controller = new AbortController();
+    onTestFinished(() => controller.abort());
+    const capture = provider.inspectPage(input, { signal: controller.signal });
+    await waitFor(() => {
+      expect(
+        browser.commands.filter(({ method }) => method === "Target.getTargets")
+          .length,
+      ).toBeGreaterThanOrEqual(2);
+      expect(
+        browser.commands.some(
+          ({ method, sessionId }) =>
+            method === "Debugger.getScriptSource" && sessionId === "worker-own",
+        ),
+      ).toBe(true);
+    });
+    const pending = browser.commands.find(
+      ({ method, sessionId }) =>
+        method === "Debugger.getScriptSource" && sessionId === "worker-own",
+    )!;
+    browser.emitEvent(parsed(browser.allowedOrigin, "later"));
+    browser.emitEvent(parsed("https://foreign.example", "foreign"));
+    releasedSource = true;
+    browser.emitRawMessage(
+      JSON.stringify({
+        id: pending.id,
+        sessionId: pending.sessionId,
+        result: { scriptSource: source },
+      }),
+    );
+    const result = await capture;
+    if (!result.ok) throw result.error;
+    const observation = result.value.workers.find(
+      ({ target_id }) => target_id === "own",
+    )!.observation!;
+    expect(observation.scripts.map(({ script_id }) => script_id)).toEqual([
+      "1",
+    ]);
+    expect(observation.scripts[0]?.source.included).toBe(true);
     expect(
-      browser.commands.filter(({ method }) => method === "Target.getTargets")
-        .length,
-    ).toBeGreaterThanOrEqual(2);
-    expect(
-      browser.commands.some(
+      browser.commands.filter(
         ({ method, sessionId }) =>
           method === "Debugger.getScriptSource" && sessionId === "worker-own",
       ),
-    ).toBe(true);
-  });
-  const pending = browser.commands.find(
-    ({ method, sessionId }) =>
-      method === "Debugger.getScriptSource" && sessionId === "worker-own",
-  )!;
-  browser.emitEvent({
-    method: "Debugger.scriptParsed",
-    sessionId: pending.sessionId,
-    params: {
-      scriptId: "later",
-      executionContextId: 1,
-      url: browser.allowedOrigin + "/later.js",
-      hash: "later",
-      scriptLanguage: "JavaScript",
-    },
-  });
-  browser.emitRawMessage(
-    JSON.stringify({
-      id: pending.id,
-      sessionId: pending.sessionId,
-      result: { scriptSource: source },
-    }),
-  );
-  const result = await capture;
-  if (!result.ok) throw result.error;
-  const scripts = result.value.workers.find(
-    ({ target_id }) => target_id === "own",
-  )!.observation!.scripts;
-  expect(scripts.map(({ script_id }) => script_id)).toEqual(["1"]);
-  expect(scripts[0]?.source.included).toBe(true);
-  expect(
-    browser.commands.some(
-      ({ method, params }) =>
-        method === "Debugger.getScriptSource" && params.scriptId === "later",
-    ),
-  ).toBe(false);
-});
+    ).toHaveLength(1);
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      result.value,
+      provider.identity(),
+    );
+    const coverage = selectScriptCapture(evidence).workerCoverage?.find(
+      ({ target_id }) => target_id === "own",
+    )?.completeness;
+    expect(coverage?.dropped_events.scripts).toBe(2);
+    expect(coverage?.truncated_sections).toContain("scripts");
+    expect(coverage?.truncated_sections.includes("script_sources")).toBe(
+      language === "JavaScript",
+    );
+    expect(
+      parseRuntimeCaptures([evidence])[0]?.scriptsCompleteWithinScope,
+    ).toBe(false);
+    const captured = { inspection: result.value, webmcp: null };
+    expect(
+      compareWebCaptures({ before: captured, after: captured }).dimensions
+        .scripts.status,
+    ).toBe("unknown");
+  },
+);
 
 it("ends page WebSocket evidence before worker teardown", async () => {
   const frame = (payloadData: string): CdpEvent => ({
