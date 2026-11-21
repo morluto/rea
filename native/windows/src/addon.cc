@@ -95,7 +95,8 @@ napi_value failureValue(napi_env env, const Failure& failure) {
                          L" (Win32 " + std::to_wstring(failure.cleanupWin32) + L")";
     }
     auto text = string(env, renderedMessage);
-    napi_value error; napi_create_error(env, nullptr, text, &error);
+    napi_value error;
+    check(napi_create_error(env, nullptr, text, &error));
     const char* code = failure.win32 == ERROR_FILE_NOT_FOUND || failure.win32 == ERROR_PATH_NOT_FOUND ? "ENOENT"
                      : failure.win32 == ERROR_ACCESS_DENIED ? "EACCES" : "ERR_REA_WINDOWS_NATIVE";
     set(env, error, "code", string(env, std::string(code)));
@@ -111,6 +112,29 @@ napi_value failureValue(napi_env env, const Failure& failure) {
     if (failure.runtimeDirectoryUnallocated)
       set(env, error, "runtimeAllocation", string(env, std::string("not-started")));
     return error;
+}
+
+bool exceptionPending(napi_env env) noexcept {
+  bool pending = false;
+  if (napi_is_exception_pending(env, &pending) != napi_ok) return true;
+  return pending;
+}
+
+void deliverFailure(napi_env env, napi_deferred deferred, const Failure& failure) noexcept {
+  if (exceptionPending(env)) return;
+  napi_value error = nullptr;
+  try {
+    error = failureValue(env, failure);
+  } catch (...) {
+    if (exceptionPending(env)) return;
+    napi_value message = nullptr;
+    if (napi_create_string_utf8(env, "Native failure could not be reported", NAPI_AUTO_LENGTH, &message) != napi_ok)
+      return;
+    if (napi_create_error(env, nullptr, message, &error) != napi_ok) return;
+  }
+  if (error == nullptr) return;
+  if (deferred != nullptr) napi_reject_deferred(env, deferred, error);
+  else napi_throw(env, error);
 }
 
 static void cleanupRuntimeContext(void* data) noexcept {
@@ -155,11 +179,15 @@ static napi_value call(napi_env env, napi_callback_info info) {
     if (operation.rfind(L"process_", 0) == 0) return processCall(env, operation, values);
     return filesystemCall(env, operation, values, context);
   } catch (const Failure& failure) {
-    auto error = failureValue(env, failure);
-    napi_throw(env, error);
+    deliverFailure(env, nullptr, failure);
     return nullptr;
   } catch (const std::exception& failure) {
-    napi_throw_error(env, "ERR_REA_WINDOWS_NATIVE", failure.what());
+    if (!exceptionPending(env))
+      napi_throw_error(env, "ERR_REA_WINDOWS_NATIVE", failure.what());
+    return nullptr;
+  } catch (...) {
+    if (!exceptionPending(env))
+      napi_throw_error(env, "ERR_REA_WINDOWS_NATIVE", "Unknown native failure");
     return nullptr;
   }
 }
