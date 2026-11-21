@@ -242,7 +242,10 @@ export const buildUefiEntryPointScaffolding = (
 };
 
 const isBufferLimitExceeded = (err: unknown): boolean => {
-  if (err instanceof RangeError && err.message.includes("maxBuffer")) {
+  if (hostRangeErrorKind(err) === "host-capacity") {
+    return true;
+  }
+  if (err instanceof Error && err.message.includes("maxBuffer")) {
     return true;
   }
   const code = (err as { code?: unknown })?.code;
