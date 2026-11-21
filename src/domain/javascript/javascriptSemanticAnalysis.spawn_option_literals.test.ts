@@ -58,6 +58,21 @@ it.each([
 // Invalid literal paths and argv0 values fail before child creation. Unknown
 // constructor results are covered separately and must retain their candidates.
 it.each([
+  [`cp.spawn("x", [], { cwd: "a\\0b" })`],
+  [`cp.spawn("x", [], { argv0: "a\\0b" })`],
+  [`cp.execFile("x", [], { cwd: "a\\0b" })`],
+  [`cp.execFile("x", [], { argv0: "a\\0b" })`],
+  [`cp.exec("x", { cwd: "a\\0b" })`],
+  [`cp.exec("x", { argv0: "a\\0b" })`],
+  [`cp.fork("x", [], { cwd: "a\\0b" })`],
+  [`cp.fork("x", [], { argv0: "a\\0b" })`],
+  ['cp.spawn("x", [], { cwd: `a\\0b` })'],
+  [`cp.spawn("x", [], { cwd: "ok", cwd: "a\\0b" })`],
+] as const)("emits no spawn for a NUL-containing option: %s", (call) => {
+  expect(spawnsFor(call)).toEqual([]);
+});
+
+it.each([
   [`cp.spawn("x", [], { cwd: 5 })`],
   [`cp.spawn("x", [], { cwd: true })`],
   [`cp.spawn("x", [], { cwd: {} })`],
@@ -89,7 +104,15 @@ it.each([
   // A no-substitution template is the same string to Node.
   ['cp.spawn("x", [], { cwd: `/tmp` })'],
   ['cp.spawn("x", [], { argv0: `x` })'],
+  [`cp.spawn("x", [], { cwd: "a\\0b", cwd: "ok" })`],
 ] as const)("keeps the spawn for an accepted cwd or argv0: %s", (call) => {
+  expect(spawnsFor(call)).toHaveLength(1);
+});
+
+it.each([
+  [`cp.spawn("x", [], { cwd: "a\\0b", ...options })`],
+  [`cp.spawn("x", [], { get cwd() { return "a\\0b" } })`],
+] as const)("keeps uncertain option values: %s", (call) => {
   expect(spawnsFor(call)).toHaveLength(1);
 });
 
