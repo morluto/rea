@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join, posix } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { defaultHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
@@ -1129,6 +1129,59 @@ describe("doctor Linux and Hopper discovery", () => {
     expect(result.healthy).toBe(true);
     expect(result.hopperPath).toBe(path);
   });
+  it.each([
+    { unknown: "HOME", cache: undefined, classification: "unknown" },
+    { unknown: "XDG_CACHE_HOME", cache: undefined, classification: "unknown" },
+    { unknown: "HOME", cache: "/fixture/cache", classification: "healthy" },
+  ])(
+    "audits a known Linux launcher with unresolved $unknown and cache $cache",
+    async ({ unknown, cache, classification }) => {
+      const path = "/fixture/Hopper";
+      const provider = host({ platform: "linux", configuredHopperPath: path });
+      const inspectLinuxHopper = vi.fn(provider.inspectLinuxHopper);
+      const result = await runDoctor(
+        undefined,
+        {
+          ...provider,
+          async forProviderDiagnostics() {
+            return {
+              host: { ...provider, inspectLinuxHopper },
+              configuration: {
+                environment: {
+                  HOPPER_LAUNCHER_PATH: path,
+                  XDG_CACHE_HOME: cache,
+                },
+                unresolved: new Set([unknown]),
+              },
+            };
+          },
+        },
+        { providers: ["hopper"] },
+      );
+      expect(result.hopperPath).toBe(path);
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          name: "hopper",
+          ok: true,
+          detail: path,
+        }),
+      );
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          name: "hopper-version",
+          classification,
+          detail:
+            classification === "healthy"
+              ? path
+              : expect.stringContaining(unknown),
+        }),
+      );
+      expect(inspectLinuxHopper).toHaveBeenCalledTimes(
+        classification === "healthy" ? 1 : 0,
+      );
+    },
+  );
+
   it("reports missing Linux demo-session dependencies", async () => {
     const result = await runDoctor(
       undefined,

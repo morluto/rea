@@ -374,7 +374,8 @@ export interface CliPreExecutionError {
   readonly format: StructuredOutputFormat;
   readonly code:
     | Exclude<CliOutputArgumentValidation, { readonly ok: true }>["code"]
-    | "AMP_PROJECT_SCOPE_UNSUPPORTED";
+    | "AMP_PROJECT_SCOPE_UNSUPPORTED"
+    | "CONFIGURATION_INVALID";
   readonly message: string;
 }
 
