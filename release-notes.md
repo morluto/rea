@@ -19,6 +19,7 @@
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
 * **desktop:** keep every state-reader close failure in the cleanup composite ([10597e1](https://github.com/morluto/rea/commit/10597e10f233bb7ae1306a441e5770880cb2976a)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **desktop:** skip only ASCII whitespace before a desktop entry key ([#13126](https://github.com/morluto/rea/issues/13126)) ([a44e705](https://github.com/morluto/rea/commit/a44e705ad820d24e95577b4f61a3dc633ca4fcb8))
 * **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
 * **electron:** preserve waits and cancellation through renderer shutdown ([#12972](https://github.com/morluto/rea/issues/12972)) ([2533a8b](https://github.com/morluto/rea/commit/2533a8b32bf2d8e4c052f6ea5c7e616a93660a9f))
 * **electron:** resolve exact local IPC channel values ([#13005](https://github.com/morluto/rea/issues/13005)) ([e66a27c](https://github.com/morluto/rea/commit/e66a27c2f2bb294a0506e6d2d6cf9d2f0125b9e2))
