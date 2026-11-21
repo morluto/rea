@@ -33,6 +33,7 @@
 * **verify:** cancel owned DeepSeek Harness commands ([#13035](https://github.com/morluto/rea/issues/13035)) ([42a34f8](https://github.com/morluto/rea/commit/42a34f8a7fea243b1f8e9b3574c814b1d52438b9))
 * **verify:** require confirmed DeepSeek process cleanup ([#13043](https://github.com/morluto/rea/issues/13043)) ([4aed56e](https://github.com/morluto/rea/commit/4aed56eccb68e49f411e472134feafd6b2a7996f))
 * **verify:** require DeepSeek Harness terminal JSON ([#13034](https://github.com/morluto/rea/issues/13034)) ([9b1631a](https://github.com/morluto/rea/commit/9b1631a1d73e44156b5347838198da358341fc34))
+* **website:** improve page loading, image labels, and legacy redirects ([e1c37d6](https://github.com/morluto/rea/commit/e1c37d68a4e44fa2cd3311e49e3980692bc65c00))
 
 
 ### Performance Improvements
