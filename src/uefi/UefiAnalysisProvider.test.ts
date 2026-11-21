@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
+import {
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
 import { SafeOutputTree } from "../resources/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreationFailure.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -2112,4 +2116,98 @@ it("generates correct ABI signature for PEI core entry point including Context p
   );
   expect(scaffold.prototype).toContain("void *Context");
   expect(scaffold.functionDefinition).toContain("void *Context");
+});
+
+it("declares opaque struct types for PEI services and system table to avoid pointer-level inflation", () => {
+  const peimScaffold = buildUefiEntryPointScaffolding(
+    "TestPeim",
+    "TestPeimModule",
+    1024,
+    "PEI",
+    "peim",
+  );
+  expect(peimScaffold.typedefs).toContain("struct _EFI_PEI_SERVICES;");
+  expect(peimScaffold.typedefs).toContain(
+    "typedef struct _EFI_PEI_SERVICES EFI_PEI_SERVICES;",
+  );
+  expect(peimScaffold.typedefs).not.toContain(
+    "typedef void* EFI_PEI_SERVICES;",
+  );
+
+  const dxeScaffold = buildUefiEntryPointScaffolding(
+    "TestDxe",
+    "TestDxeModule",
+    2048,
+    "DXE",
+    "dxe-driver",
+  );
+  expect(dxeScaffold.typedefs).toContain("struct _EFI_SYSTEM_TABLE;");
+  expect(dxeScaffold.typedefs).toContain(
+    "typedef struct _EFI_SYSTEM_TABLE EFI_SYSTEM_TABLE;",
+  );
+  expect(dxeScaffold.typedefs).not.toContain("typedef void* EFI_SYSTEM_TABLE;");
+});
+
+it("discovers Terse Executable (TE / VZ) binaries in directory input mode", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-te-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // Valid TE file header: 0x56, 0x5a ('VZ')
+  const teHeader = Buffer.alloc(128, 0);
+  teHeader[0] = 0x56;
+  teHeader[1] = 0x5a;
+  await writeFile(join(inDir, "sec_core.te"), teHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(inDir, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.name).toBe("sec_core");
+    expect(result.modules[0]?.c_file).toBeDefined();
+    expect(existsSync(result.modules[0]!.c_file!)).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves AnalysisTimeoutError when aborted via timeout deadline", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-timeout-obs-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  const mzHeader = Buffer.alloc(128, 0);
+  mzHeader[0] = 0x4d;
+  mzHeader[1] = 0x5a;
+  await writeFile(join(inDir, "mod1.efi"), mzHeader);
+
+  const controller = new AbortController();
+  const timeoutError = new AnalysisTimeoutError(
+    "decompile_uefi_firmware",
+    5000,
+  );
+  controller.abort(timeoutError);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(decompileRequest(inDir, outDir), {
+      signal: controller.signal,
+    });
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error).toBeInstanceOf(AnalysisTimeoutError);
+    }
+  } finally {
+    await provider.close();
+  }
 });

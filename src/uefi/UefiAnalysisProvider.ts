@@ -32,6 +32,7 @@ import {
 } from "../ports/AnalysisProvider.js";
 import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
 import {
+  AnalysisCancelledError,
   cancelledBy,
   carriedReason,
   AnalysisInputError,
@@ -153,7 +154,8 @@ export const buildUefiEntryPointScaffolding = (
       typedefs: [
         "typedef int64_t EFI_STATUS;",
         "typedef void* EFI_PEI_FILE_HANDLE;",
-        "typedef void* EFI_PEI_SERVICES;",
+        "struct _EFI_PEI_SERVICES;",
+        "typedef struct _EFI_PEI_SERVICES EFI_PEI_SERVICES;",
         "#define EFI_SUCCESS 0",
       ],
       prototype: `EFI_STATUS EFIAPI ${identifier}EntryPoint(EFI_PEI_FILE_HANDLE FileHandle, const EFI_PEI_SERVICES **PeiServices);`,
@@ -212,7 +214,8 @@ export const buildUefiEntryPointScaffolding = (
     typedefs: [
       "typedef int64_t EFI_STATUS;",
       "typedef void* EFI_HANDLE;",
-      "typedef void* EFI_SYSTEM_TABLE;",
+      "struct _EFI_SYSTEM_TABLE;",
+      "typedef struct _EFI_SYSTEM_TABLE EFI_SYSTEM_TABLE;",
       "#define EFI_SUCCESS 0",
     ],
     prototype: `EFI_STATUS EFIAPI ${identifier}EntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);`,
@@ -391,7 +394,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   ): Result<AnalysisExecution, AnalysisError> {
     return {
       ok: false,
-      error: cancelledBy(request.operation, carriedReason(reason)),
+      error:
+        reason instanceof AnalysisTimeoutError
+          ? new AnalysisTimeoutError(request.operation, reason.timeoutMs, {
+              cause: reason,
+            })
+          : cancelledBy(request.operation, carriedReason(reason)),
     };
   }
 
@@ -454,10 +462,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const expire = () => controller.abort(deadlineReason);
     const timer = setTimeout(expire, timeoutMs);
     const parent = options?.signal;
-    const onParentAbort = () =>
-      controller.abort(
-        cancelledBy(request.operation, carriedReason(parent?.reason)),
-      );
+    const onParentAbort = () => {
+      const reason = parent?.reason;
+      if (reason instanceof AnalysisTimeoutError) {
+        controller.abort(reason);
+      } else {
+        controller.abort(cancelledBy(request.operation, carriedReason(reason)));
+      }
+    };
     if (parent?.aborted) onParentAbort();
     else parent?.addEventListener("abort", onParentAbort, { once: true });
     const checkpoint = (): void => {
@@ -1503,24 +1515,44 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         });
       }
       if (signal.aborted) {
-        const cancellation = cancelledBy("decompile_uefi_firmware", signal, {
-          partialObservation:
-            publishedResult !== undefined
-              ? {
-                  kind: "uefi",
-                  result: jsonValueSchema.parse(publishedResult),
-                  provenance: {
-                    path: input.path,
-                    sha256: imageSha256,
-                  },
-                }
-              : undefined,
-        });
+        const partialObservation =
+          publishedResult !== undefined
+            ? {
+                kind: "uefi" as const,
+                result: jsonValueSchema.parse(publishedResult),
+                provenance: {
+                  path: input.path,
+                  sha256: imageSha256,
+                },
+              }
+            : undefined;
+
+        const terminationError: AnalysisError =
+          signal.reason instanceof AnalysisTimeoutError
+            ? new AnalysisTimeoutError(
+                "decompile_uefi_firmware",
+                signal.reason.timeoutMs,
+                {
+                  cause: signal.reason,
+                  partialObservation,
+                },
+              )
+            : cancelledBy("decompile_uefi_firmware", signal, {
+                partialObservation,
+              });
+
         if (establishedError instanceof AnalysisError) {
-          throw analysisErrorWithCancellation(establishedError, cancellation);
+          if (terminationError instanceof AnalysisCancelledError) {
+            throw analysisErrorWithCancellation(
+              establishedError,
+              terminationError,
+            );
+          }
+          establishedError.retainSecondaryFailure(terminationError);
+          throw establishedError;
         }
         if (establishedError === undefined) {
-          throw cancellation;
+          throw terminationError;
         }
       }
     }
