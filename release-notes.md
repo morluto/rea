@@ -359,6 +359,7 @@
 * **wasm:** consolidate WABT output and glue scanner checks ([#12822](https://github.com/morluto/rea/issues/12822)) ([c11e73b](https://github.com/morluto/rea/commit/c11e73bd642cee0e12f0dfd7826d412dd9332506))
 * **web:** consolidate accessibility and storage comparison proofs ([#13085](https://github.com/morluto/rea/issues/13085)) ([3f494e1](https://github.com/morluto/rea/commit/3f494e18fa6aac74199bda740a11c6c94e242d5c))
 * **web:** consolidate artifact cleanup ownership proofs ([#13077](https://github.com/morluto/rea/issues/13077)) ([82224d9](https://github.com/morluto/rea/commit/82224d9f6ccd845a87ff9ff45643c560e4c625f5))
+* **web:** consolidate attached navigation stop checks ([#13143](https://github.com/morluto/rea/issues/13143)) ([ad6e511](https://github.com/morluto/rea/commit/ad6e511b60b6288ce413ff91e4a8ee7302319aaa))
 * **web:** consolidate browser event ownership checks ([#13135](https://github.com/morluto/rea/issues/13135)) ([3eff450](https://github.com/morluto/rea/commit/3eff45097763704a45b9830c6cc15ebaec45828a))
 * **web:** consolidate Browser worker inventory proofs ([#13098](https://github.com/morluto/rea/issues/13098)) ([e6df39b](https://github.com/morluto/rea/commit/e6df39bbba9c434942e742540b41c9e39a368bb3))
 * **web:** consolidate capture completeness proofs ([#13089](https://github.com/morluto/rea/issues/13089)) ([2d9c208](https://github.com/morluto/rea/commit/2d9c2088173067c8004eb379b47e03f1a374b502))
