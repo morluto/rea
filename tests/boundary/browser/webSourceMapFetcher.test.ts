@@ -658,7 +658,7 @@ describe("source-map declared URL policy", () => {
 });
 
 describe("web source-map fetching and validation: enforcing fetch limits and validating responses", () => {
-  it("settles an endless unique-URL redirect chain at the operation deadline", async () => {
+  it("settles an endless unique-URL redirect chain at the selected fetch deadline", async () => {
     let calls = 0;
     const server = createServer((incoming, response) => {
       calls += 1;
@@ -683,9 +683,9 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
         [{ ...request, fetchUrl: url, declaredUrl: url }],
         input({
           allowed_origins: [localOrigin],
-          source_map_fetch_timeout_ms: 100,
+          source_map_fetch_timeout_ms: 250,
         }),
-        undefined,
+        AbortSignal.timeout(2_000),
         { fetch },
       );
       expect(calls).toBeGreaterThan(1);
@@ -696,7 +696,9 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
           {
             status: "fetch_failed",
             artifact: null,
-            limitation: expect.stringContaining("source_map_fetch_timeout_ms"),
+            limitation: expect.stringContaining(
+              "250 ms source_map_fetch_timeout_ms deadline",
+            ),
           },
         ],
       });
@@ -898,59 +900,6 @@ describe("completed source-map cancellation", () => {
       ]);
     },
   );
-});
-
-describe("selected source-map fetch deadline", () => {
-  it("applies a non-default source_map_fetch_timeout_ms from the public input", async () => {
-    let calls = 0;
-    let closed = 0;
-    const server = createServer((incoming, response) => {
-      calls += 1;
-      incoming.on("close", () => {
-        closed += 1;
-      });
-      const next =
-        Number(
-          new URL(incoming.url ?? "/", "http://local").searchParams.get("n") ??
-            "0",
-        ) + 1;
-      response.writeHead(302, { location: `/map?n=${String(next)}` }).end();
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      const address = server.address();
-      if (address === null || typeof address === "string")
-        throw new TypeError("Expected a TCP listener address");
-      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
-      const url = `${localOrigin}/map?n=0`;
-      const result = await fetchWebSourceMapsOk(
-        [{ ...request, fetchUrl: url, declaredUrl: url }],
-        input({
-          source_map_fetch_timeout_ms: 150,
-          allowed_origins: [localOrigin],
-        }),
-        undefined,
-        { fetch },
-      );
-      expect(calls).toBeGreaterThan(1);
-      expect(closed).toBeGreaterThan(0);
-      expect(result.items[0]?.limitation).toContain("150");
-      expect(result.items[0]?.limitation).toContain(
-        "source_map_fetch_timeout_ms",
-      );
-    } finally {
-      server.closeAllConnections();
-      if (server.listening)
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) =>
-            error === undefined ? resolve() : reject(error),
-          );
-        });
-    }
-  });
 });
 
 describe("browser map decoded validation", () => {
@@ -1650,7 +1599,8 @@ describe("source-map set output admission", () => {
   });
 
   it("reserves large failure contexts and reports unprocessed requests as unknown", async () => {
-    const largeDeclaredUrl = `${origin}/${"u".repeat(8 * 1_024 * 1_024)}`;
+    const outputBytes = 32 * 1_024;
+    const largeDeclaredUrl = `${origin}/${"u".repeat(8 * 1_024)}`;
     const requests = [
       request,
       ...Array.from({ length: 5 }, (_, index) => ({
@@ -1661,16 +1611,23 @@ describe("source-map set output admission", () => {
       })),
     ];
     let calls = 0;
-    const result = await fetchWebSourceMapsOk(requests, input(), undefined, {
-      fetch: () => {
-        calls += 1;
-        return Promise.resolve(
-          calls === 1
-            ? validMapResponse()
-            : new Response("not-json", { status: 200 }),
-        );
+    const result = await fetchWebSourceMapsOk(
+      requests,
+      input({
+        source_map_limits: { output_bytes: outputBytes },
+      }),
+      undefined,
+      {
+        fetch: () => {
+          calls += 1;
+          return Promise.resolve(
+            calls === 1
+              ? validMapResponse()
+              : new Response("not-json", { status: 200 }),
+          );
+        },
       },
-    });
+    );
 
     expect(calls).toBe(4);
     expect(result).toMatchObject({
@@ -1689,53 +1646,26 @@ describe("source-map set output admission", () => {
       result.items.slice(1).map(({ declared_url }) => declared_url),
     ).toEqual([largeDeclaredUrl, largeDeclaredUrl, largeDeclaredUrl]);
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
-      32 * 1_024 * 1_024,
+      outputBytes,
     );
   });
 });
 
 describe("expanded source-map evidence budget", () => {
-  it("includes a declared source whose serialized evidence fits", async () => {
-    const source = "x".repeat(4_000);
-    const map = JSON.stringify({
-      version: 3,
-      names: [],
-      sources: [source],
-      mappings: "",
-    });
-    const budget = 11_500;
-    const result = await fetchWebSourceMapsOk(
-      [request],
-      input({ source_map_limits: { output_bytes: budget } }),
-      undefined,
-      { fetch: async () => new Response(map) },
-    );
-    expect(result).toMatchObject({
-      status: "included",
-      items: [
-        {
-          artifact: { text: map },
-          original_sources: [{ source: `${origin}/assets/${source}` }],
-        },
-      ],
-    });
-    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
-      budget,
-    );
-  });
-
   it("bounds expanded mapping evidence across individually valid maps", async () => {
-    const source = `https://sources.example.test/${"x".repeat(1_000)}.ts`;
+    const declaredSource = `${"x".repeat(1_000)}.ts`;
+    const source = `${origin}/assets/${declaredSource}`;
+    const outputBytes = 11_000;
     const map = JSON.stringify({
       version: 3,
       names: [],
-      sources: [source],
+      sources: [declaredSource],
       mappings: "AAAA,CAAA,CAAA,CAAA",
     });
     const second = { ...request, scriptKey: `scr_${"2".repeat(64)}` };
     const result = await fetchWebSourceMapsOk(
       [request, second],
-      input({ source_map_limits: { output_bytes: 11_000 } }),
+      input({ source_map_limits: { output_bytes: outputBytes } }),
       undefined,
       { fetch: async () => new Response(map) },
     );
@@ -1748,6 +1678,8 @@ describe("expanded source-map evidence budget", () => {
         {
           script_key: request.scriptKey,
           status: "included",
+          artifact: { text: map },
+          original_sources: [{ source }],
           mappings: [0, 1, 2, 3].map((generated_column) => ({
             generated_column,
             source,
@@ -1762,6 +1694,9 @@ describe("expanded source-map evidence budget", () => {
         },
       ],
     });
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
+      outputBytes,
+    );
   });
 
   it("applies the output budget to resolved sources after path normalization", async () => {
