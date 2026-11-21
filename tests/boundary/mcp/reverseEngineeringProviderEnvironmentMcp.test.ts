@@ -170,9 +170,10 @@ it("keeps the probe's identification when the command then fails to start", asyn
         probe: '/bin/rm -f "$0"; ',
         banner: "Warning: 123 plugins could not be loaded",
         code: "capability_unavailable",
+        // The launch names the file the lookup found, which it ran.
         diagnostics: {
           boundary: "provider-launch",
-          command: "rizin",
+          command: executable,
           system_code: "ENOENT",
           provider: { id: "rizin", name: "Rizin", version: null },
           provider_identity: "assumed",
