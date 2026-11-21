@@ -2862,7 +2862,7 @@ it("surfaces a ProviderCleanupError with completedObservation when closing scrat
   expect(cleanupErr?.cleanupIncomplete).toBe(false);
 });
 
-it("surfaces a ProviderCleanupError when closing directory sniff file handle fails", async () => {
+it("surfaces a cleanup error with incomplete cleanup when closing directory sniff file handle fails", async () => {
   const root = await createTestTempDirectory("rea-uefi-cleanup-handle-");
   const efiDir = join(root, "extracted");
   await mkdir(efiDir, { recursive: true });
@@ -2875,16 +2875,15 @@ it("surfaces a ProviderCleanupError when closing directory sniff file handle fai
   const spy = vi
     .spyOn(OwnedFileHandle.prototype, "close")
     .mockRejectedValue(new Error("file handle close error"));
-  let cleanupErr: ProviderCleanupError | undefined;
+  let cleanupErr: { cleanupIncomplete?: boolean } | undefined;
   try {
     const executed = await provider.execute(
       decompileRequest(efiDir, join(root, "out")),
     );
     expect(executed.ok).toBe(false);
     if (!executed.ok) {
-      expect(executed.error).toBeInstanceOf(ProviderCleanupError);
-      cleanupErr = executed.error as ProviderCleanupError;
-      expect(cleanupErr.cleanupIncomplete).toBe(true);
+      expect(executed.error.cleanupIncomplete).toBe(true);
+      cleanupErr = executed.error;
     }
   } finally {
     spy.mockRestore();
@@ -4422,4 +4421,108 @@ it("reports and ignores manifest exceeding 16 MiB", async () => {
         lim.includes("firmware_manifest.json") && lim.includes("size limit"),
     ),
   ).toBe(true);
+});
+
+it("caps manifest rows at 10,000 entries and reports limitation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-cap-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const modules = Array.from({ length: 10_050 }, (_, i) => ({
+    payload_file: `valid_${i}.efi`,
+  }));
+  const manifestContent = JSON.stringify({ modules });
+  await writeFile(join(inDir, "firmware_manifest.json"), manifestContent);
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(decompileRequest(inDir, outDir)),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(
+    result.limitations.some(
+      (lim) =>
+        lim.includes("firmware_manifest.json") &&
+        lim.includes("truncated to 10000 entries"),
+    ),
+  ).toBe(true);
+});
+
+it("does not allocate tempRoot when inspectGhidraInstallation rejects", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-reject-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const createSpy = vi.spyOn(PrivateRuntimeRoot, "create");
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: {
+      executable: () => false,
+      readText: () => undefined,
+      probeJava: () => {
+        throw new Error("Simulated Ghidra probe failure");
+      },
+      discoverInstallDirOnPath: () => {
+        throw new Error("Simulated Ghidra probe failure");
+      },
+    },
+  });
+
+  try {
+    const executed = await provider.execute(decompileRequest(inDir, outDir));
+    expect(executed.ok).toBe(false);
+    expect(createSpy).not.toHaveBeenCalled();
+  } finally {
+    createSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("attaches completedObservation when directory reader cleanup fails after publication", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-cleanup-obs-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const { DirectoryArtifactReader } =
+    await import("../resources/DirectoryArtifactReader.js");
+  const closeSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "close")
+    .mockRejectedValue(new Error("Simulated reader close failure"));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(decompileRequest(inDir, outDir));
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error).toBeInstanceOf(ProviderCleanupError);
+      const cleanupErr = executed.error as ProviderCleanupError;
+      expect(cleanupErr.completedObservation).toBeDefined();
+      expect((cleanupErr.completedObservation as any)?.kind).toBe("uefi");
+    }
+  } finally {
+    closeSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("detects machine width as unknown for unlisted architectures and correctly detects LoongArch", () => {
+  // LoongArch32: machine 0x6232
+  const loong32 = createMinimalPeBuffer(0x6232);
+  expect(detectPeTeMachineWidth(loong32)).toBe("32");
+
+  // LoongArch64: machine 0x6264
+  const loong64 = createMinimalPeBuffer(0x6264);
+  expect(detectPeTeMachineWidth(loong64)).toBe("64");
+
+  // Unlisted architecture: 0x9999
+  const unlisted = createMinimalPeBuffer(0x9999);
+  expect(detectPeTeMachineWidth(unlisted)).toBe("unknown");
 });

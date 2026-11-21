@@ -209,21 +209,23 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
           ? "64"
           : "32";
       }
-      if (candidateMachine === 0x0ebc) {
-        return "unknown";
-      }
-      if (candidateMachine === 0x5032) {
+      if (candidateMachine === 0x5032 || candidateMachine === 0x6232) {
         return "32";
       }
-      if (candidateMachine === 0x5064 || candidateMachine === 0x5128) {
+      if (
+        candidateMachine === 0x5064 ||
+        candidateMachine === 0x5128 ||
+        candidateMachine === 0x6264
+      ) {
         return "64";
       }
+      return "unknown";
     }
   } catch {
-    return "64";
+    return "unknown";
   }
 
-  return "64";
+  return "unknown";
 };
 
 export const buildUefiEntryPointScaffolding = (
@@ -1125,10 +1127,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       },
     );
 
-    const tempRoot = await PrivateRuntimeRoot.create({
-      prefix: "rea-uefi-decompile-",
-    });
-
     const ghidraInstallDir = process.env.GHIDRA_INSTALL_DIR;
     const ghidraJavaHome = process.env.JAVA_HOME;
     const ghidraOptions: GhidraInstallationOptions = {
@@ -1159,6 +1157,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         `Configured Ghidra installation is unavailable: ${ghidraInspection.rejection.reason}`,
       );
     }
+
+    const tempRoot = await PrivateRuntimeRoot.create({
+      prefix: "rea-uefi-decompile-",
+    });
 
     const MAX_DISASSEMBLY_MODULE_BYTES = 2 * 1024 * 1024;
     const MAX_DISASSEMBLY_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -2242,6 +2244,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
     const reader = new DirectoryArtifactReader(input.path, "omit");
     let establishedError: unknown | undefined;
+    let publishedResult: UefiDecompileResult | undefined;
+    let dirSha256 = "";
     try {
       let manifestEntry: DirectoryArtifactEntry | undefined;
       const candidateEntries: DirectoryArtifactEntry[] = [];
@@ -2344,7 +2348,22 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             manifestSha256 = sha256Hex(manifestRaw);
             const parsed = JSON.parse(manifestRaw.toString("utf8"));
             if (Array.isArray(parsed?.modules)) {
-              for (let mIdx = 0; mIdx < parsed.modules.length; mIdx++) {
+              const MAX_MANIFEST_MODULES = 10_000;
+              const moduleCount = parsed.modules.length;
+              if (
+                moduleCount > MAX_MANIFEST_MODULES &&
+                limitations.length < 50
+              ) {
+                limitations.push(
+                  `Manifest firmware_manifest.json module count truncated to ${MAX_MANIFEST_MODULES} entries.`,
+                );
+              }
+              const admittedCount = Math.min(moduleCount, MAX_MANIFEST_MODULES);
+              for (let mIdx = 0; mIdx < admittedCount; mIdx++) {
+                if (mIdx % 100 === 0) {
+                  checkpoint();
+                  signal.throwIfAborted();
+                }
                 const m = parsed.modules[mIdx];
                 if (!m || typeof m !== "object") continue;
                 if (typeof m.payload_file !== "string") continue;
@@ -2361,7 +2380,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 if (m.guid !== undefined && m.guid !== null) {
                   if (typeof m.guid === "string" && guidRegex.test(m.guid)) {
                     validGuid = m.guid.toLowerCase();
-                  } else {
+                  } else if (limitations.length < 50) {
                     limitations.push(
                       `Manifest module at index ${mIdx} has invalid GUID format; using payload-derived fallback.`,
                     );
@@ -2373,7 +2392,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 let validName: string | undefined = undefined;
                 if (typeof m.name === "string" && m.name.length > 0) {
                   validName = m.name;
-                } else if (m.name !== undefined) {
+                } else if (m.name !== undefined && limitations.length < 50) {
                   limitations.push(
                     `Manifest module at index ${mIdx} has non-string name; using filename fallback.`,
                   );
@@ -2388,12 +2407,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     )
                   ) {
                     validPhase = upperPhase;
-                  } else {
+                  } else if (limitations.length < 50) {
                     limitations.push(
                       `Manifest module at index ${mIdx} has unrecognized phase "${m.phase}"; using path-derived fallback.`,
                     );
                   }
-                } else if (m.phase !== undefined) {
+                } else if (m.phase !== undefined && limitations.length < 50) {
                   limitations.push(
                     `Manifest module at index ${mIdx} has non-string phase; using path-derived fallback.`,
                   );
@@ -2709,7 +2728,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         });
       }
 
-      const dirSha256 =
+      dirSha256 =
         admittedCandidates.length === 0 && manifestSha256 === null
           ? sha256Hex(Buffer.alloc(0))
           : dirHash.digest("hex");
@@ -2749,7 +2768,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         });
       }
 
-      return await this.#stageAndPublishModules(
+      const publishedExecution = await this.#stageAndPublishModules(
         request,
         dirSha256,
         discoveredModules,
@@ -2760,6 +2779,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         remainingTimeMs,
         reader,
       );
+      publishedResult = publishedExecution.result as UefiDecompileResult;
+      return publishedExecution;
     } catch (cause: unknown) {
       establishedError = cause;
       throw cause;
@@ -2769,14 +2790,52 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         resource: input.path,
         reader,
       });
-      if (released.kind === "failed" && establishedError === undefined) {
-        const cleanupError = new ProviderCleanupError(
+      let cleanupError: ProviderCleanupError | undefined;
+      if (released.kind === "failed") {
+        const completedObservation =
+          publishedResult !== undefined
+            ? {
+                kind: "uefi" as const,
+                result: jsonValueSchema.parse(publishedResult),
+                provenance: {
+                  path: input.path,
+                  sha256: dirSha256,
+                },
+              }
+            : undefined;
+        cleanupError = new ProviderCleanupError(
           UEFI_PROVIDER_IDENTITY.id,
           released.lease.cleanupResources ?? [input.path],
           { reason: errorMessage(released.cause) },
-          { cause: released.cause, operation: "decompile_uefi_firmware" },
+          {
+            cause: released.cause,
+            operation: "decompile_uefi_firmware",
+            ...(completedObservation === undefined
+              ? {}
+              : { completedObservation }),
+          },
         );
         new AnalysisCleanupLeaseGroup(cleanupError, [released.lease]);
+      }
+
+      const primaryError =
+        establishedError instanceof AnalysisError
+          ? establishedError
+          : establishedError !== undefined
+            ? classifyProviderFailure(
+                establishedError,
+                uefiFailureDialect(request.operation, input.path),
+              )
+            : undefined;
+
+      if (cleanupError !== undefined) {
+        if (primaryError !== undefined) {
+          throw analysisErrorWithCleanupDependencies(
+            primaryError,
+            cleanupError,
+            "decompile_uefi_firmware",
+          );
+        }
         throw cleanupError;
       }
     }
