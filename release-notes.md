@@ -7,6 +7,7 @@
 
 ### Features
 
+* **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
 * **website:** publish page-specific previews with the original REA blue ([1dd25d8](https://github.com/morluto/rea/commit/1dd25d87c7ba440b6256c644a556901eac1b3bbb))
 * **website:** recognize contributors in a shared commit-ranked directory ([ba31a11](https://github.com/morluto/rea/commit/ba31a111809e727891c238d1ca5ff9d62f751f0b))
@@ -105,6 +106,7 @@
 * **web:** require root identity in CDP session and runtime captures ([#13186](https://github.com/morluto/rea/issues/13186)) ([4807b31](https://github.com/morluto/rea/commit/4807b31749e7882d3ca4a184174ebc1012ea23c0))
 * **web:** retain CDP scope and request identity during session preparation ([#13188](https://github.com/morluto/rea/issues/13188)) ([5c39019](https://github.com/morluto/rea/commit/5c390198f78f0b867f7e00a6d3830b089dbf80bd))
 * **web:** retain Chromium navigation kind in session evidence ([#13194](https://github.com/morluto/rea/issues/13194)) ([9230f69](https://github.com/morluto/rea/commit/9230f698b34f34c683449fbe34f87fbbbfe34324))
+* **website:** format the favicon link ([#13222](https://github.com/morluto/rea/issues/13222)) ([ff04f31](https://github.com/morluto/rea/commit/ff04f31a4af0c200f05863479c6dce20375fb4f8))
 * **website:** improve page loading, image labels, and legacy redirects ([e1c37d6](https://github.com/morluto/rea/commit/e1c37d68a4e44fa2cd3311e49e3980692bc65c00))
 * **website:** match social preview accents to REA blue ([753321d](https://github.com/morluto/rea/commit/753321dda66d840c58008119a9e6852cd7c64f25))
 * **website:** refresh favicon links and serve a root icon ([b33b674](https://github.com/morluto/rea/commit/b33b6743d9bab514c7131d31e5b28ef645bb59ab))
