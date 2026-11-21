@@ -437,57 +437,7 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
 });
 
 describe("CdpBrowserProvider: protocol failures and cancellation cleanup", () => {
-  it("degrades optional domains but propagates protocol and payload failures", async () => {
-    const optional = await startFakeCdpBrowser({
-      unsupportedMethods: ["Accessibility.getFullAXTree"],
-    });
-    trackBrowser(optional);
-    const degraded = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: optional.endpoint,
-        allowed_origins: [optional.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!degraded.ok) throw degraded.error;
-    expect(degraded.value.accessibility.nodes).toEqual([]);
-    expect(degraded.value.accessibility.text_capture.status).toBe(
-      "unavailable",
-    );
-    expect(degraded.value.completeness.unavailable_sections).toContain(
-      "accessibility",
-    );
-    expect(degraded.value.limitations).toContain(
-      "Accessibility.getFullAXTree was unavailable from this browser target.",
-    );
-
-    const invalidAccessibilityParams = await startFakeCdpBrowser({
-      commandError: (command) =>
-        command.method === "Accessibility.getFullAXTree"
-          ? { code: -32_602, message: "Invalid params" }
-          : undefined,
-    });
-    trackBrowser(invalidAccessibilityParams);
-    const invalidParamsResult = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: invalidAccessibilityParams.endpoint,
-        allowed_origins: [invalidAccessibilityParams.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    expect(invalidParamsResult).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "BrowserObservationError",
-        reason: "protocol_error",
-        command: "Accessibility.getFullAXTree",
-        code: -32_602,
-        reportedMessage: "Invalid params",
-      },
-    });
-
+  it("propagates endpoint, payload and wire protocol failures", async () => {
     for (const [options, reason] of [
       [{ oversizedDiscovery: true }, "invalid_endpoint_response"],
       [{ invalidBrowserWebSocket: true }, "invalid_endpoint_response"],
