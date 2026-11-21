@@ -4,6 +4,8 @@ import {
   type ServerResponse,
 } from "node:http";
 
+import type { Duplex } from "node:stream";
+
 import { WebSocket, WebSocketServer } from "ws";
 
 import { emitEvents } from "./fakeCdpBrowserEvents.js";
@@ -28,6 +30,8 @@ export const startFakeCdpBrowser = async (
     referer: string | undefined;
   }[] = [];
   const sockets = new Set<WebSocket>();
+  // Upgrades a handshake gate holds; close() destroys them.
+  const heldUpgrades = new Set<Duplex>();
   let openedConnections = 0;
   let frameTreeReads = 0;
   let port = 0;
@@ -51,12 +55,22 @@ export const startFakeCdpBrowser = async (
         webSockets.emit("connection", webSocket, request),
       );
     };
-    if (options.handshakeDelayMs === undefined) {
-      accept();
+    if (options.handshakeGate !== undefined) {
+      // Flowing, so a client that abandons the handshake is observed.
+      socket.resume();
+      socket.once("end", () => socket.destroy());
+      heldUpgrades.add(socket);
+      socket.once("close", () => heldUpgrades.delete(socket));
+      void options.handshakeGate.hold(request.url ?? "").then(
+        () => {
+          heldUpgrades.delete(socket);
+          accept();
+        },
+        () => socket.destroy(),
+      );
       return;
     }
-    const timer = setTimeout(accept, options.handshakeDelayMs);
-    socket.once("close", () => clearTimeout(timer));
+    accept();
   });
   webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
     const directPage = request.url?.startsWith("/devtools/page/") === true;
@@ -77,6 +91,7 @@ export const startFakeCdpBrowser = async (
           directPage,
           options,
           sessionState,
+          port,
         )
       )
         return;
@@ -132,6 +147,7 @@ export const startFakeCdpBrowser = async (
     },
     httpRequests,
     async close() {
+      for (const socket of heldUpgrades) socket.destroy();
       for (const socket of sockets) socket.terminate();
       await new Promise<void>((resolve) => webSockets.close(() => resolve()));
       await new Promise<void>((resolve, reject) =>
@@ -165,11 +181,16 @@ const respondToHttpRequest = (
   const portNumber = port();
   if (serveSourceMap(request, response, options)) return;
   const finish = (body: string): void => {
-    if (options.discoveryDelayMs === undefined) {
+    if (options.discoveryGate === undefined) {
       response.end(body);
       return;
     }
-    setTimeout(() => response.end(body), options.discoveryDelayMs);
+    void options.discoveryGate.hold(request.url ?? "").then(
+      () => {
+        if (!response.destroyed) response.end(body);
+      },
+      () => response.destroy(),
+    );
   };
   if (request.url === "/json/version") {
     finish(
@@ -244,9 +265,12 @@ const handleSimulatedWireFault = (
   directPage: boolean,
   options: FakeOptions,
   sessionState: SocketSessionState,
+  port: number,
 ): boolean => {
   const commandError = options.commandError?.(command);
   if (commandError !== undefined) {
+    if (options.eventsBeforeReply?.includes(command.method) === true)
+      sendCommandEvents(socket, command, port, options);
     sendCommandReply(socket, command, { error: commandError });
     if (options.closeAfterMethod === command.method)
       setImmediate(() => socket.close());
@@ -355,15 +379,24 @@ const replyToCommand = (
   const eventsFirst =
     options.eventsBeforeReply?.includes(command.method) === true;
   if (!eventsFirst) reply();
+  sendCommandEvents(socket, command, port, options);
+  if (eventsFirst) reply();
+  if (options.closeAfterMethod === command.method)
+    setImmediate(() => socket.close());
+};
+
+const sendCommandEvents = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+): void => {
   const customEvents = options.commandEvents?.(
     command,
     `http://127.0.0.1:${String(port)}`,
   );
   if (customEvents === undefined) emitEvents(socket, command, port, options);
   else for (const event of customEvents) socket.send(JSON.stringify(event));
-  if (eventsFirst) reply();
-  if (options.closeAfterMethod === command.method)
-    setImmediate(() => socket.close());
 };
 
 const serveSourceMap = (

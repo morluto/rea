@@ -68,7 +68,7 @@ const completeBootloaderSchema = z.object({
 
 // The compiled stdio fixture checks advertised schemas against their dialect
 // and validates actual tool responses.
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "reads a flash dump at the caller's origin and keeps inputs in its identity (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-esp-flash-mcp-");

@@ -7,10 +7,10 @@ import {
   type AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
@@ -34,11 +34,11 @@ import {
   capturedWebManifestIdentity,
   validateSelectedWebScript,
 } from "./ValidateSelectedWebScript.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   WebModuleArtifactPort,
   WebModuleResolutionPort,
-} from "./WebModulePorts.js";
+} from "../ports/WebModulePorts.js";
 
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
@@ -157,11 +157,7 @@ export class WebModuleTraceService {
     let resolutionFailure: AnalysisError | undefined;
     if (literals.length > 0) {
       if (options?.signal?.aborted)
-        return incomplete(
-          new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          }),
-        );
+        return incomplete(cancelledBy(OPERATION, options.signal));
       const request = {
         importerUrl,
         importMap:

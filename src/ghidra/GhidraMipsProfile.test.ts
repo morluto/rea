@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ok } from "../domain/result.js";
@@ -13,6 +13,7 @@ import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import {
+  ghidraMipsElfImageBase,
   ghidraMipsProfileMismatchReason,
   ghidraMipsProfileParameters,
 } from "./GhidraMipsProfile.js";
@@ -171,7 +172,7 @@ describe("bounded Ghidra MIPS admission", () => {
 
   it.each([
     [{ elfClass: 64 }, "ELF32"],
-    [{ type: 3 }, "ET_EXEC and ET_REL"],
+    [{ type: 3 }, "complete dynamic relocation inspection"],
     [{ type: 0xffa0 }, "ET_EXEC and ET_REL"],
     [{ flags: 0x10a23001 }, "separate MIPS ABI flags"],
     [{ flags: 0x70001021 }, "o32"],
@@ -247,9 +248,9 @@ describe("recordless legacy MIPS admission", () => {
   );
 
   it.each([
-    [{ flags: 0x00000001 }, "elf32-exec-mips1-legacy-pinned-v1"],
-    [{ flags: 0x50000001 }, "elf32-exec-arch32-legacy-pinned-v1"],
-    [{ flags: 0x70000001 }, "elf32-exec-arch32-legacy-pinned-v1"],
+    [{ flags: 0x00000001 }, "elf32-exec-mips1-legacy-pinned"],
+    [{ flags: 0x50000001 }, "elf32-exec-arch32-legacy-pinned"],
+    [{ flags: 0x70000001 }, "elf32-exec-arch32-legacy-pinned"],
   ] satisfies [Partial<MipsElfMetadata>, string][])(
     "admits a recordless legacy header (%j) with a pinned 32-bit language",
     async (change, lane) => {
@@ -262,10 +263,10 @@ describe("recordless legacy MIPS admission", () => {
       if (!resolved.ok) throw resolved.error;
       expect(resolved.value.profile?.parameters).toMatchObject({
         mips_support_lane: lane,
-        mips_abi_basis: "inferred-o32-assumption-v1",
+        mips_abi_basis: "inferred-o32-assumption",
         language_id: "MIPS:LE:32:default",
         compiler_spec_id: "default",
-        language_selection: "provider-pinned-v1",
+        language_selection: "provider-pinned",
       });
       const resolvedBig = await ghidra.resolveAnalysisProfile(big);
       if (!resolvedBig.ok) throw resolvedBig.error;
@@ -336,7 +337,7 @@ describe("recordless legacy MIPS admission", () => {
     expect(parameters.language_selection).toBeUndefined();
     expect(parameters.language_id).toBeUndefined();
     expect(parameters).toMatchObject({
-      mips_support_lane: "elf32-exec-arch32-legacy-pinned-v1",
+      mips_support_lane: "elf32-exec-arch32-legacy-pinned",
     });
   });
 
@@ -378,9 +379,9 @@ describe("caller-selected MIPS-I language", () => {
       await installedMipsConfig(),
     );
     expect(profile.parameters).toMatchObject({
-      mips_support_lane: "elf32-exec-mips1-legacy-pinned-v1",
+      mips_support_lane: "elf32-exec-mips1-legacy-pinned",
       language_id: "MIPS:LE:32:16e",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     const health = await client.execute("health", {});
     if (!health.ok) throw health.error;
@@ -449,11 +450,15 @@ const session = async (
   const resolved = await ghidra.resolveAnalysisProfile(profileFor);
   if (!resolved.ok || resolved.value.profile === null)
     throw new Error("expected a MIPS profile");
-  return {
-    counts,
-    profile: resolved.value.profile,
-    client: ghidra.createClient(value, resolved.value.profile),
-  };
+  const client = ghidra.createClient(value, resolved.value.profile);
+  onTestFinished(async () => {
+    try {
+      await client.close();
+    } finally {
+      await ghidra.closeOwnedResources();
+    }
+  });
+  return { counts, profile: resolved.value.profile, client };
 };
 
 describe("legacy profile bindings", () => {
@@ -545,6 +550,8 @@ describe("MIPS16 shared-image profile", () => {
         relocationCount: 14,
         relocationTypes: [0, 3],
         symbolRelativeCount: 0,
+        loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+        prelinkBase: null,
       },
       ...change,
     });
@@ -561,8 +568,8 @@ describe("MIPS16 shared-image profile", () => {
       expect(parameters).toMatchObject({
         language_id: `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
         compiler_spec_id: "default",
-        language_selection: "provider-pinned-v1",
-        mips_support_lane: "elf32-dyn-o32-arch32r2-mips16-local-rel32-v1",
+        language_selection: "provider-pinned",
+        mips_support_lane: "elf32-dyn-o32-arch32r2-mips16-local-rel32",
         mips_elf: { abi_flags: null },
       });
       expect(ghidraProfileLanguageOverride(parameters)).toEqual({
@@ -600,6 +607,8 @@ describe("MIPS16 shared-image profile", () => {
         relocationCount: 1,
         relocationTypes: [3],
         symbolRelativeCount: 1,
+        loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+        prelinkBase: null,
       },
     },
   ] satisfies Partial<MipsElfMetadata>[])(
@@ -665,14 +674,266 @@ describe("MIPS16 shared-image profile", () => {
   });
 });
 
+// Hard-float PIC library as GCC and LLD emit it: noreorder|pic|cpic, o32, r2.
+const library = (change: Partial<MipsElfMetadata> = {}) =>
+  target({
+    type: 3,
+    flags: 0x70001007,
+    ...abi({ fpAbi: 1, flags1: 1 }),
+    sharedLoad: {
+      status: "complete",
+      relocationCount: 314,
+      relocationTypes: [0, 3, 38],
+      symbolRelativeCount: 120,
+      loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+      prelinkBase: null,
+    },
+    ...change,
+  });
+
+describe("MIPS32 shared-image link base", () => {
+  it.each([
+    [[{ headerIndex: 19, virtualAddress: 0x10000 }], "10000"],
+    [
+      [
+        { headerIndex: 3, virtualAddress: 0x30000 },
+        { headerIndex: 19, virtualAddress: 0x20000 },
+        { headerIndex: 20, virtualAddress: 0x10000 },
+      ],
+      "20000",
+    ],
+    [[{ headerIndex: 20, virtualAddress: 0x10000 }], "0"],
+    [[], "0"],
+  ])(
+    "applies Ghidra's first-20-program-headers rule to the recorded loads %j",
+    (loadAddresses, base) => {
+      expect(
+        ghidraMipsElfImageBase(
+          library({
+            sharedLoad: {
+              status: "complete",
+              relocationCount: 1,
+              relocationTypes: [3],
+              symbolRelativeCount: 0,
+              loadAddresses,
+              prelinkBase: null,
+            },
+          }),
+        ),
+      ).toBe(base);
+    },
+  );
+  it("commits the ELF link base only for this lane and refuses a different one", async () => {
+    const highBase = library({
+      sharedLoad: {
+        status: "complete",
+        relocationCount: 2,
+        relocationTypes: [0, 3],
+        symbolRelativeCount: 1,
+        loadAddresses: [{ headerIndex: 0, virtualAddress: 0x2aaa0000 }],
+        prelinkBase: null,
+      },
+    });
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    for (const [value, offset] of [
+      [library(), "0x0"],
+      [highBase, "0x2aaa0000"],
+    ] as const) {
+      const resolved = await ghidra.resolveAnalysisProfile(value);
+      if (!resolved.ok || resolved.value.profile === null)
+        throw new Error("expected shared profile");
+      expect(resolved.value.profile.parameters.elf_image_base).toEqual({
+        offset,
+        selection: "elf-link-base",
+      });
+    }
+    const mips16 = await ghidra.resolveAnalysisProfile(
+      target({
+        type: 3,
+        flags: 0x74001005,
+        abiFlags: null,
+        sharedLoad: {
+          status: "complete",
+          relocationCount: 1,
+          relocationTypes: [3],
+          symbolRelativeCount: 0,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: null,
+        },
+      }),
+    );
+    if (!mips16.ok) throw mips16.error;
+    expect(mips16.value.profile?.parameters).not.toHaveProperty(
+      "elf_image_base",
+    );
+    const { counts, client } = await session(highBase, undefined, library());
+    const health = await client.execute("health", {});
+    expect(health.ok).toBe(false);
+    if (!health.ok)
+      expect(JSON.stringify(health.error.diagnostics)).toContain(
+        "shared-image link base",
+      );
+    expect(counts.starts).toBe(0);
+  });
+  it("keeps link-base imports out of stock checkpoint mode", async () => {
+    const checkpoints = new GhidraProvider(
+      {
+        ...config,
+        ghidraCheckpointDirectory: join(
+          await simulatedInstallDirectory("rea-ghidra-mips-checkpoints-"),
+          "checkpoints",
+        ),
+      },
+      silentLogger,
+      {},
+      host,
+    );
+    try {
+      // A restore would not re-apply the loader's image-base option.
+      expect(await checkpoints.resolveAnalysisProfile(library())).toMatchObject(
+        {
+          ok: false,
+          error: {
+            _tag: "ConfigurationError",
+            settings: [{ setting: "REA_GHIDRA_CHECKPOINT_DIR" }],
+          },
+        },
+      );
+      // A header-selected executable with no committed image base stays eligible.
+      const executable = await checkpoints.resolveAnalysisProfile(target());
+      if (!executable.ok) throw executable.error;
+      expect(executable.value.profile?.parameters).toHaveProperty(
+        "owned_checkpoint",
+      );
+    } finally {
+      await checkpoints.closeOwnedResources();
+    }
+  });
+});
+
+describe("MIPS32 shared-image profile", () => {
+  it("admits a PIC library with symbol-bearing REL32 under its own lane", async () => {
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    expect(ghidra.inspectTargetSupport(library()).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(library());
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected shared profile");
+    expect(resolved.value.profile.parameters).toMatchObject({
+      mips_support_lane: "elf32-dyn-o32-arch32r2-standard",
+      language_id: "auto-from-header",
+      mips_elf: {
+        type: 3,
+        shared_load: { status: "complete", relocation_types: [0, 3, 38] },
+      },
+    });
+  });
+  it("reports GOT and TLS limitations only when TLS slots are declared", async () => {
+    const withTls = await session(library(), undefined);
+    const health = await withTls.client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("External GOT bindings"),
+        expect.stringContaining("Ghidra fills local and global GOT entries"),
+        expect.stringContaining("TLS relocations"),
+      ]),
+    );
+    const withoutTls = await session(
+      library({
+        sharedLoad: {
+          status: "complete",
+          relocationCount: 2,
+          relocationTypes: [0, 3],
+          symbolRelativeCount: 1,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: null,
+        },
+      }),
+      undefined,
+    );
+    const plain = await withoutTls.client.execute("health", {});
+    if (!plain.ok) throw plain.error;
+    expect(plain.value.limitations.join(" ")).not.toContain("TLS relocations");
+  });
+  it.each([
+    [
+      { sharedLoad: { status: "unavailable", reason: "no PT_DYNAMIC" } },
+      "no PT_DYNAMIC",
+    ],
+    [
+      {
+        sharedLoad: {
+          status: "complete",
+          relocationCount: 1,
+          relocationTypes: [3, 5],
+          symbolRelativeCount: 0,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: null,
+        },
+      },
+      "other dynamic relocation types",
+    ],
+    [
+      {
+        sharedLoad: {
+          status: "complete",
+          relocationCount: 1,
+          relocationTypes: [3],
+          symbolRelativeCount: 0,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: 0x40000000,
+        },
+      },
+      "prelink trailer",
+    ],
+    [{ hasInterpreter: true }, "position-independent executables"],
+    [
+      {
+        sharedLoad: {
+          status: "complete",
+          declaresPie: true,
+          relocationCount: 0,
+          relocationTypes: [],
+          symbolRelativeCount: 0,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: null,
+        },
+      },
+      "position-independent executables",
+    ],
+    [{ abiFlags: null }, "inspected ABI flags"],
+    [{ flags: 0x72001007 }, "ET_EXEC and ET_REL"],
+    [{ flags: 0x50001007 }, "32R2"],
+  ] satisfies [Partial<MipsElfMetadata>, string][])(
+    "refuses %j",
+    (change, reason) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      expect(ghidra.inspectTargetSupport(library(change))).toMatchObject({
+        status: "unsupported",
+        reason: expect.stringContaining(reason),
+      });
+    },
+  );
+});
+
 describe("soft-float MIPS storage", () => {
-  it("admits soft-float o32 and commits its storage policy only for it", async () => {
+  it("commits the soft-float o32 policy and reports its session outcome", async () => {
     const soft = target(softFloat);
     const ghidra = new GhidraProvider(config, silentLogger, {}, host);
     expect(ghidra.inspectTargetSupport(soft).status).toBe("supported");
-    const { profile } = await session(soft, report);
+    const { profile, client } = await session(soft, report);
     expect(profile.parameters.mips_soft_float_storage).toBe(
       "o32-soft-float-prototype-v1",
+    );
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("model hard-float o32 only"),
+        expect.stringContaining(
+          "5 functions and 1 function-pointer definitions use __rea_soft_float.",
+        ),
+      ]),
     );
     const hard = await session(target(), undefined);
     expect(hard.profile.parameters).not.toHaveProperty(
@@ -698,29 +959,15 @@ describe("soft-float MIPS storage", () => {
     });
   });
 
-  it("reports the prototype outcome as session limitations", async () => {
-    const { client } = await session(target(softFloat), report);
-    const health = await client.execute("health", {});
-    if (!health.ok) throw health.error;
-    expect(health.value.limitations).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("model hard-float o32 only"),
-        expect.stringContaining(
-          "5 functions and 1 function-pointer definitions use __rea_soft_float.",
-        ),
-      ]),
-    );
-  });
-
   it("admits relocatable objects under their own lane with coordinate limitations", async () => {
     const relocatable = target({ type: 1 });
     const { profile, client } = await session(relocatable, undefined);
     expect(profile.parameters.mips_support_lane).toBe(
-      "elf32-rel-o32-arch32r2-standard-v1",
+      "elf32-rel-o32-arch32r2-standard",
     );
     const executable = await session(target(), undefined);
     expect(executable.profile.parameters.mips_support_lane).toBe(
-      "elf32-exec-o32-arch32r2-standard-v3",
+      "elf32-exec-o32-arch32r2-standard",
     );
     const health = await client.execute("health", {});
     if (!health.ok) throw health.error;

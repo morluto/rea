@@ -140,16 +140,12 @@ const run = async (
   executable = "/not/launched",
   root = "/",
 ) =>
-  processes.run(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      script,
-      JSON.stringify([scenario, executable, root]),
-    ],
-    { timeoutMs: 150_000 },
-  );
+  processes.run(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    script,
+    JSON.stringify([scenario, executable, root]),
+  ]);
 
 const outcome = (result: { readonly stdout: string }): Outcome =>
   JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "") as Outcome;

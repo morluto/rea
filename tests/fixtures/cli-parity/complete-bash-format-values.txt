@@ -1,0 +1,6 @@
+$ COMPLETE=bash rea -- rea inspect-byte-entropy --format ""
+exit: 0
+--- stdout
+toon<0x0b>json<0x0b>yaml<0x0b>md<0x0b>jsonl<0x0b>csv<0x0b>tsv<end>
+--- stderr
+<end>

@@ -1,4 +1,3 @@
-import { MIMEType } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { safeResponseMetadata as projectResponseMetadata } from "./CdpSafeMetadata.js";
@@ -65,24 +64,36 @@ describe("structured COOP and COEP declarations", () => {
         "policies",
         `${origin}/page`,
         {
-          headers: {
-            "Cross-Origin-Opener-Policy": value,
-            "Cross-Origin-Embedder-Policy": value,
-            "Cross-Origin-Resource-Policy":
-              'same-origin; report-to="not-structured"',
-            "X-Content-Type-Options": 'nosniff; report-to="not-structured"',
-          },
+          headers: { "Cross-Origin-Opener-Policy": value },
         },
         new Set([origin]),
       );
-      expect(captured.response.policies).toMatchObject({
-        coop: expected,
-        coep: expected,
-        corp: null,
-        x_content_type_options: null,
-      });
+      expect(captured.response.policies.coop).toBe(expected);
     },
   );
+
+  it("distinguishes malformed field policies from an independent valid declaration", () => {
+    const { response } = safeResponseMetadata(
+      "policies",
+      `${origin}/page`,
+      {
+        headers: {
+          "Cross-Origin-Opener-Policy": 'same-origin; report-to="coop"',
+          "Cross-Origin-Embedder-Policy": "require-corp; report-to=",
+          "Cross-Origin-Resource-Policy":
+            'same-origin; report-to="not-structured"',
+          "X-Content-Type-Options": 'nosniff; report-to="not-structured"',
+        },
+      },
+      new Set([origin]),
+    );
+    expect(response.policies).toMatchObject({
+      coop: "same-origin",
+      coep: null,
+      corp: null,
+      x_content_type_options: null,
+    });
+  });
 });
 
 describe("media type parameter preservation", () => {
@@ -116,15 +127,7 @@ describe("media type parameter preservation", () => {
         new Set([origin]),
       );
 
-      for (const projected of [
-        captured.response.mime_type,
-        captured.response.links[0]?.type,
-      ]) {
-        expect(projected).toBe(expected);
-        expect([...new MIMEType(projected ?? "").params]).toEqual([
-          ...new MIMEType(raw).params,
-        ]);
-      }
+      expect(captured.response.mime_type).toBe(expected);
       expect(captured.response.content_encoding).toBe("gzip");
       expect(captured.response.links).toMatchObject([
         {
@@ -133,6 +136,7 @@ describe("media type parameter preservation", () => {
           context_url: `${origin}/page`,
           context_scope: "approved",
           rel: ["preload", "mcp"],
+          type: expected,
           as: "script",
           crossorigin: "anonymous",
         },
@@ -253,148 +257,127 @@ describe("safe CDP response metadata", () => {
       expect(captured.agentHints).toEqual([]);
     },
   );
+});
 
-  it("retains every parsed header, CSP directive, link, relation, and policy feature", () => {
-    const csp = Array.from(
-      { length: 105 },
-      (_, index) => `x-${String(index)} 'self'`,
-    ).join("; ");
-    const links = Array.from(
-      { length: 105 },
-      (_, index) => `</${String(index)}>; rel="mcp service-desc"`,
-    ).join(", ");
-    const permissions = Array.from(
-      { length: 205 },
-      (_, index) => `feature-${String(index)}=()`,
-    ).join(", ");
-    const headers = Object.fromEntries(
-      Array.from({ length: 501 }, (_, index) => [
-        `x-extra-${String(index)}`,
-        "ok",
-      ]),
-    );
-    const captured = safeResponseMetadata(
-      "request-1",
-      `${origin}/api`,
-      {
-        mimeType: "application/json",
-        headers: {
-          ...headers,
-          "Content-Security-Policy": csp,
-          Link: links,
-          "Permissions-Policy": permissions,
-          "X-Model-Context": "present-after-many-headers",
-        },
+it("retains all projected metadata and hints in a large header inventory", () => {
+  const csp = Array.from(
+    { length: 105 },
+    (_, index) => `x-${String(index)} 'self'`,
+  ).join("; ");
+  const paths = Array.from({ length: 105 }, (_, index) => `/${String(index)}`);
+  const links = paths
+    .map((path) => `<${path}>; rel="mcp service-desc"`)
+    .join(", ");
+  const permissions = Array.from(
+    { length: 205 },
+    (_, index) => `feature-${String(index)}=()`,
+  ).join(", ");
+  const headers = Object.fromEntries(
+    Array.from({ length: 501 }, (_, index) => [
+      `x-extra-${String(index)}`,
+      "ok",
+    ]),
+  );
+  const captured = safeResponseMetadata(
+    "request-1",
+    `${origin}/api`,
+    {
+      mimeType: "application/json",
+      headers: {
+        ...headers,
+        "Content-Security-Policy": csp,
+        Link: links,
+        "Permissions-Policy": permissions,
+        "X-Model-Context": "present-after-many-headers",
       },
-      new Set([origin]),
-    );
+    },
+    new Set([origin]),
+  );
 
-    expect(captured.response.csp.directives).toHaveLength(105);
-    expect(captured.response.links).toHaveLength(105);
-    expect(captured.response.policies.permissions_policy_features).toHaveLength(
-      205,
-    );
-    expect(captured.agentHints).toContainEqual(
-      expect.objectContaining({ declaration: "x-model-context" }),
-    );
-  });
+  expect(captured.response.csp.directives).toHaveLength(105);
+  expect(captured.response.links).toHaveLength(105);
+  expect(captured.response.policies.permissions_policy_features).toHaveLength(
+    205,
+  );
+  expect(captured.agentHints).toEqual([
+    ...paths.map((path) => ({
+      mechanism: "link_rel",
+      declaration: "mcp service-desc",
+      url: origin + path,
+      trust: "page-declared-untrusted",
+    })),
+    {
+      mechanism: "response_header",
+      declaration: "x-model-context",
+      url: null,
+      trust: "page-declared-untrusted",
+    },
+  ]);
 });
 
 describe("safe CDP response metadata CSP sources", () => {
-  it("classifies scheme-less CSP host sources by their own host, not the page origin", () => {
-    const captured = safeResponseMetadata(
+  it("resolves scheme-less CSP hosts in the protected scheme and keeps wildcard scopes external", () => {
+    const { response } = safeResponseMetadata(
       "request-csp",
       `${origin}/api`,
       {
         headers: {
           "Content-Security-Policy":
-            "script-src cdn.example.test *.trusted.test * 'self' https://api.other.test",
+            "script-src cdn.example.test app.example.test private.example.test https://api.other.test *.trusted.test * 'self'",
         },
       },
-      new Set([origin]),
+      new Set([
+        origin,
+        "https://cdn.example.test",
+        "http://private.example.test",
+      ]),
     );
 
-    expect(captured.response.csp.directives).toEqual([
+    expect(response.csp.directives).toEqual([
       {
         name: "script-src",
         sources: [
+          { kind: "approved_origin", value: "https://cdn.example.test" },
+          { kind: "approved_origin", value: origin },
+          { kind: "external_origin", value: null },
           { kind: "external_origin", value: null },
           { kind: "external_origin", value: null },
           { kind: "external_origin", value: null },
           { kind: "keyword", value: "'self'" },
-          { kind: "external_origin", value: null },
         ],
       },
     ]);
   });
 
-  it.each(["\n", "\r\n", ", "])(
-    "parses every policy of a repeated CSP field joined by %j",
-    (delimiter) => {
-      const captured = safeResponseMetadata(
-        "request-csp-repeated",
-        `${origin}/api`,
-        {
-          headers: {
-            "Content-Security-Policy": [
-              "default-src 'self'",
-              "script-src https://private.example.test; img-src data:",
-            ].join(delimiter),
-          },
-        },
-        new Set([origin]),
-      );
-
-      expect(captured.response.csp.directives).toEqual([
-        {
-          name: "default-src",
-          sources: [{ kind: "keyword", value: "'self'" }],
-        },
-        {
-          name: "script-src",
-          sources: [{ kind: "external_origin", value: null }],
-        },
-        { name: "img-src", sources: [{ kind: "scheme", value: "data:" }] },
-      ]);
-    },
-  );
-
-  it("inherits the protected resource scheme for a scheme-less host source", () => {
-    const captured = safeResponseMetadata(
-      "request-csp-scheme",
+  it("preserves CSP policies across field boundaries and ignores repeats within each policy", () => {
+    const { response } = safeResponseMetadata(
+      "request-csp-repeated",
       `${origin}/api`,
       {
         headers: {
           "Content-Security-Policy":
-            "script-src cdn.example.test app.example.test",
-        },
-      },
-      new Set([origin, "https://cdn.example.test"]),
-    );
-
-    expect(captured.response.csp.directives[0]?.sources).toEqual([
-      { kind: "approved_origin", value: "https://cdn.example.test" },
-      { kind: "approved_origin", value: origin },
-    ]);
-  });
-
-  it("ignores a directive repeated within one policy but not across policies", () => {
-    const captured = safeResponseMetadata(
-      "request-csp-duplicate",
-      `${origin}/api`,
-      {
-        headers: {
-          "Content-Security-Policy":
-            "script-src 'self'; Script-Src 'unsafe-inline' 'nonce-abc', script-src data:",
+            "default-src 'self'; script-src 'self'; Script-Src 'unsafe-inline' 'nonce-abc', " +
+            "script-src https://private.example.test; img-src data:\n" +
+            "script-src data:\r\nscript-src 'none'",
         },
       },
       new Set([origin]),
     );
 
-    expect(captured.response.csp).toEqual({
+    expect(response.csp).toEqual({
       directives: [
+        {
+          name: "default-src",
+          sources: [{ kind: "keyword", value: "'self'" }],
+        },
         { name: "script-src", sources: [{ kind: "keyword", value: "'self'" }] },
+        {
+          name: "script-src",
+          sources: [{ kind: "external_origin", value: null }],
+        },
+        { name: "img-src", sources: [{ kind: "scheme", value: "data:" }] },
         { name: "script-src", sources: [{ kind: "scheme", value: "data:" }] },
+        { name: "script-src", sources: [{ kind: "keyword", value: "'none'" }] },
       ],
       nonce_count: 0,
       hash_count: 0,
@@ -430,157 +413,160 @@ describe("safe CDP response metadata CSP sources", () => {
   });
 });
 
-describe("Link header value delimiters", () => {
-  const captureLinks = (link: string) =>
-    safeResponseMetadata(
-      "owned",
-      "https://owned.test/page",
+const captureOwnedLinks = (link: string) =>
+  safeResponseMetadata(
+    "owned",
+    "https://owned.test/page",
+    {
+      headers: { Link: link },
+    },
+    new Set(["https://owned.test"]),
+  ).response.links;
+
+it("retains declarations and untrusted hints across comma, LF, and CRLF field boundaries", () => {
+  const separators = [
+    ["comma", ", "],
+    ["lf", "\n"],
+    ["crlf", "\r\n"],
+  ] as const;
+  const link = separators
+    .map(
+      ([id, separator]) =>
+        `</assets/${id},blue.js>; rel="preload"; type="text/javascript; charset=utf-8"; title="a,b"${separator}</${id}/agent?selected=keep>; rel="mcp service-desc"`,
+    )
+    .join("\n");
+  const { response, agentHints } = safeResponseMetadata(
+    "document-response",
+    `${origin}/page`,
+    { headers: { Link: link } },
+    new Set([origin]),
+  );
+
+  expect(response.links).toMatchObject(
+    separators.flatMap(([id]) => [
       {
-        headers: { Link: link },
+        href: `${origin}/assets/${id},blue.js`,
+        rel: ["preload"],
+        type: "text/javascript; charset=utf-8",
       },
-      new Set(["https://owned.test"]),
-    ).response.links;
-
-  it.each([", ", "\n", "\r\n"])(
-    "preserves repeated field declarations and agent hints joined by %j",
-    (separator) => {
-      const captured = safeResponseMetadata(
-        "document-response",
-        `${origin}/page`,
-        {
-          headers: {
-            Link: [
-              '</assets/red,blue.js>; rel="preload"; type="text/javascript; charset=utf-8"; title="a,b"',
-              '</agent?selected=keep>; rel="mcp service-desc"',
-            ].join(separator),
-          },
-        },
-        new Set([origin]),
-      );
-      expect(captured.response.links).toMatchObject([
-        {
-          href: `${origin}/assets/red,blue.js`,
-          rel: ["preload"],
-          type: "text/javascript; charset=utf-8",
-        },
-        {
-          href: `${origin}/agent?selected=keep`,
-          rel: ["mcp", "service-desc"],
-        },
-      ]);
-      expect(captured.agentHints).toContainEqual({
-        mechanism: "link_rel",
-        declaration: "mcp service-desc",
-        url: `${origin}/agent?selected=keep`,
-        trust: "page-declared-untrusted",
-      });
-    },
+      {
+        href: `${origin}/${id}/agent?selected=keep`,
+        rel: ["mcp", "service-desc"],
+      },
+    ]),
   );
-
-  it.each(["\u00a0", "\u000b", "\u000c", "\u2003", "\ufeff"])(
-    "preserves non-HTTP whitespace %j without inventing agent relations",
-    (separator) => {
-      for (const declaration of [
-        `"alternate${separator}mcp"`,
-        `${separator}mcp${separator}`,
-        `"${separator}mcp${separator}"`,
-      ]) {
-        const captured = safeResponseMetadata(
-          "owned",
-          "https://owned.test/page",
-          { headers: { Link: `</agent>; rel=${declaration}` } },
-          new Set(["https://owned.test"]),
-        );
-        expect(captured.response.links[0]?.rel).toEqual([
-          declaration.replace(/^"|"$/gu, ""),
-        ]);
-        expect(captured.agentHints).toEqual([]);
-      }
-    },
-  );
-
-  it("does not trim non-HTTP whitespace into link or parameter syntax", () => {
-    expect(captureLinks("\u00a0</agent>; rel=mcp")).toEqual([]);
-    const links = captureLinks(
-      "</agent>; \u00a0rel=mcp; rel\u00a0=service-desc",
-    );
-    expect(links[0]?.rel).toEqual([]);
-  });
-
-  it("uses HTTP spaces and tabs for relation and parameter boundaries", () => {
-    const captured = safeResponseMetadata(
-      "owned",
-      "https://owned.test/page",
-      { headers: { Link: '\t</agent>; \trel\t=\t" MCP\t service-desc "\t' } },
-      new Set(["https://owned.test"]),
-    );
-    expect(captured.response.links[0]?.rel).toEqual(["mcp", "service-desc"]);
-    expect(captured.agentHints).toContainEqual({
+  expect(agentHints).toEqual(
+    separators.map(([id]) => ({
       mechanism: "link_rel",
       declaration: "mcp service-desc",
-      url: "https://owned.test/agent",
+      url: `${origin}/${id}/agent?selected=keep`,
       trust: "page-declared-untrusted",
-    });
-  });
+    })),
+  );
+});
 
-  it("keeps delimiters scoped to each CDP field line", () => {
-    const links = captureLinks(
-      '</first>; title="unterminated\n</agent>; rel=mcp',
-    );
-    expect(links.map(({ href }) => href)).toEqual([
-      "https://owned.test/first",
-      "https://owned.test/agent",
-    ]);
-    expect(links[1]?.rel).toEqual(["mcp"]);
-  });
+it("keeps non-HTTP whitespace inside relation tokens", () => {
+  const relations = ["\u00a0", "\u000b", "\u000c", "\u2003", "\ufeff"].flatMap(
+    (separator) => [
+      [`"alternate${separator}mcp"`, `alternate${separator}mcp`],
+      [`${separator}mcp${separator}`, `${separator}mcp${separator}`],
+      [`"${separator}mcp${separator}"`, `${separator}mcp${separator}`],
+    ],
+  );
+  const { response, agentHints } = safeResponseMetadata(
+    "owned",
+    "https://owned.test/page",
+    {
+      headers: {
+        Link: relations
+          .map(
+            ([declaration], index) =>
+              `</agent/${String(index)}>; rel=${declaration}`,
+          )
+          .join("\n"),
+      },
+    },
+    new Set(["https://owned.test"]),
+  );
+  expect(response.links).toMatchObject(
+    relations.map(([, token], index) => ({
+      href: `https://owned.test/agent/${String(index)}`,
+      rel: [token],
+    })),
+  );
+  expect(agentHints).toEqual([]);
+});
 
-  it("preserves commas in URI references and separates later links", () => {
-    const links = captureLinks(
-      '</assets/red,blue.js>; rel="preload"; as=script, </ordinary.js>; rel="modulepreload"',
-    );
-    expect(links.map(({ href }) => href)).toEqual([
-      "https://owned.test/assets/red,blue.js",
-      "https://owned.test/ordinary.js",
-    ]);
-    expect(links[0]?.as).toBe("script");
-  });
+it("does not trim non-HTTP whitespace into link or parameter syntax", () => {
+  expect(captureOwnedLinks("\u00a0</agent>; rel=mcp")).toEqual([]);
+  const links = captureOwnedLinks(
+    "</agent>; \u00a0rel=mcp; rel\u00a0=service-desc",
+  );
+  expect(links[0]?.rel).toEqual([]);
+});
 
-  it("preserves semicolons and commas inside quoted parameter values", () => {
-    const links = captureLinks(
-      '</plugin.js>; rel="preload"; type="text/javascript; charset=utf-8"; title="a,b", </ordinary.js>; rel="modulepreload"',
-    );
-    expect(links).toHaveLength(2);
-    expect(links[0]?.type).toBe("text/javascript; charset=utf-8");
-    expect(links[1]?.href).toBe("https://owned.test/ordinary.js");
-  });
-
-  it("counts quoted-pair escapes rather than treating every preceding slash as an escape", () => {
-    const links = captureLinks(
-      String.raw`</one.js>; title="ends with \\"; rel="preload", </two.js>; rel="modulepreload"`,
-    );
-    expect(links.map(({ href }) => href)).toEqual([
-      "https://owned.test/one.js",
-      "https://owned.test/two.js",
-    ]);
-    expect(links[0]?.rel).toEqual(["preload"]);
-  });
-
-  it("keeps a quoted escaped quote from exposing a delimiter", () => {
-    const links = captureLinks(
-      String.raw`</one.js>; title="quoted \" comma, value"; rel="preload", </two.js>; rel="modulepreload"`,
-    );
-    expect(links).toHaveLength(2);
-    expect(links[0]?.rel).toEqual(["preload"]);
-  });
-
-  it("retains the existing outside-policy classification", () => {
-    const links = captureLinks(
-      '<https://elsewhere.test/red,blue.js>; rel="preload", </ordinary.js>; rel="modulepreload"',
-    );
-    expect(links[0]?.destination_scope).toBe("outside_policy");
-    expect(links[1]?.destination_scope).toBe("approved");
+it("uses HTTP spaces and tabs for relation and parameter boundaries", () => {
+  const captured = safeResponseMetadata(
+    "owned",
+    "https://owned.test/page",
+    { headers: { Link: '\t</agent>; \trel\t=\t" MCP\t service-desc "\t' } },
+    new Set(["https://owned.test"]),
+  );
+  expect(captured.response.links[0]?.rel).toEqual(["mcp", "service-desc"]);
+  expect(captured.agentHints).toContainEqual({
+    mechanism: "link_rel",
+    declaration: "mcp service-desc",
+    url: "https://owned.test/agent",
+    trust: "page-declared-untrusted",
   });
 });
+
+it("keeps delimiters scoped to each CDP field line", () => {
+  const links = captureOwnedLinks(
+    '</first>; title="unterminated\n</agent>; rel=mcp',
+  );
+  expect(links.map(({ href }) => href)).toEqual([
+    "https://owned.test/first",
+    "https://owned.test/agent",
+  ]);
+  expect(links[1]?.rel).toEqual(["mcp"]);
+});
+
+it("preserves URI and quoted delimiters without merging neighboring links", () => {
+  const links = captureOwnedLinks(
+    [
+      '</assets/red,blue.js>; rel="preload"; as=script',
+      '</plugin.js>; rel="preload"; type="text/javascript; charset=utf-8"; title="a,b"',
+      String.raw`</paired-slash.js>; title="ends with \\"; rel="preload"`,
+      String.raw`</escaped-quote.js>; title="quoted \" comma, value"; rel="preload"`,
+      '<https://elsewhere.test/red,blue.js>; rel="preload"',
+      '</ordinary.js>; rel="modulepreload"',
+    ].join(", "),
+  );
+  expect(links).toMatchObject([
+    {
+      href: "https://owned.test/assets/red,blue.js",
+      as: "script",
+      rel: ["preload"],
+    },
+    {
+      href: "https://owned.test/plugin.js",
+      type: "text/javascript; charset=utf-8",
+    },
+    { href: "https://owned.test/paired-slash.js", rel: ["preload"] },
+    { href: "https://owned.test/escaped-quote.js", rel: ["preload"] },
+    {
+      href: "https://elsewhere.test/red,blue.js",
+      destination_scope: "outside_policy",
+    },
+    {
+      href: "https://owned.test/ordinary.js",
+      rel: ["modulepreload"],
+      destination_scope: "approved",
+    },
+  ]);
+});
+
 describe("safe CDP response metadata referrer policy", () => {
   it.each<[string | undefined, string | null]>([
     [
@@ -626,15 +612,11 @@ describe("safe CDP response metadata referrer policy", () => {
       "request-referrer",
       `${origin}/api`,
       {
-        headers: {
-          "Referrer-Policy": raw,
-          "Cross-Origin-Opener-Policy": "same-origin",
-        },
+        headers: { "Referrer-Policy": raw },
       },
       new Set([origin]),
     );
     expect(captured.response.policies.referrer_policy).toBe(expected);
-    expect(captured.response.policies.coop).toBe("same-origin");
   });
 
   it.each<[string | number | undefined, number | null]>([
@@ -791,4 +773,56 @@ describe("response metadata whitespace boundaries", () => {
     expect(captured.response.policies.corp).toBe("same-origin");
     expect(captured.response.policies.referrer_policy).toBe("no-referrer");
   });
+});
+
+describe("cross-origin policy value grammars", () => {
+  const policies = (headers: UnknownRecord) =>
+    safeResponseMetadata(
+      "request-policy-grammar",
+      `${origin}/api`,
+      { headers },
+      new Set([origin]),
+    ).response.policies;
+
+  it.each([
+    // Fetch 3.7 writes the value ABNF with `%s`, so it is case-sensitive and every other
+    // spelling declares no policy; the internal check has nothing to enforce.
+    ["same-origin", "same-origin"],
+    ["same-site", "same-site"],
+    ["cross-origin", "cross-origin"],
+    ["SAME-ORIGIN", null],
+    ["Same-Site", null],
+    ["same-origin-ish", null],
+    ["same_origin", null],
+    // `unsafe-none` is an embedder-policy value; it is never a resource policy.
+    ["unsafe-none", null],
+    ["same-site, same-origin", null],
+  ] as const)(
+    "reports only a grammatical CORP value for %j",
+    (raw, expected) => {
+      expect(policies({ "Cross-Origin-Resource-Policy": raw }).corp).toBe(
+        expected,
+      );
+    },
+  );
+
+  it.each([
+    // Fetch 3.6 declares one case-insensitive value and "determine nosniff" tests values[0]
+    // of the combined header, so a repeated line and a two-member list both still declare it.
+    ["nosniff", "nosniff"],
+    ["NOSNIFF", "nosniff"],
+    [" nosniff ", "nosniff"],
+    ["nosniff\nnosniff", "nosniff"],
+    ["nosniff, sniff", "nosniff"],
+    ["sniff, nosniff", null],
+    ["nosniff-ish", null],
+    ["sniff", null],
+  ] as const)(
+    "reports only a grammatical X-Content-Type-Options value for %j",
+    (raw, expected) => {
+      expect(
+        policies({ "X-Content-Type-Options": raw }).x_content_type_options,
+      ).toBe(expected);
+    },
+  );
 });

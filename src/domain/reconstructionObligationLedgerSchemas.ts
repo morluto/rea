@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "./coverage.js";
 
 import { STABLE_IDENTIFIER_PATTERN } from "./stringPatterns.js";
 
@@ -310,7 +311,7 @@ export const reconstructionObligationLedgerSchema = z
     closure_digest: digestSchema,
     status: z.enum(["ready", "open", "failed", "unknown"]),
     coverage: z.strictObject({
-      status: z.enum(["complete", "partial"]),
+      status: knownCoverageStatusSchema,
     }),
     summary: z.strictObject({
       total: z.int().min(0),

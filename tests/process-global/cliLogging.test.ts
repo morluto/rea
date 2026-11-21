@@ -1,3 +1,4 @@
+import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ArtifactOperationError } from "../../src/domain/artifactOperationError.js";
@@ -23,7 +24,7 @@ import {
   type UninstallHost,
 } from "../../src/application/Uninstall.js";
 import { isUninstallFailure } from "../../src/application/UninstallFailure.js";
-import { CLI_COMMANDS } from "../../src/cliCommandNames.js";
+import { CLI_COMMANDS } from "../../src/contracts/cliCommandNames.js";
 
 const originalExitCode = process.exitCode;
 
@@ -35,13 +36,30 @@ afterEach(() => {
   process.exitCode = originalExitCode;
 });
 
-it("does not treat ordinary error-looking data or nested Evidence as command failure", () => {
-  expect(
-    isCliOperationFailure({
-      code: "configuration_invalid",
-      message: "source data",
+it("logs error-looking source data as a successful command result", async () => {
+  const value = { error: "source data", code: "invalid_request" };
+  const records: unknown[] = [];
+  const logger = pino(
+    { level: "info" },
+    {
+      write: (line) => records.push(JSON.parse(line) as unknown),
+    },
+  );
+  expect(await logCliCommand(logger, "fixture", async () => value)).toEqual(
+    value,
+  );
+  expect(process.exitCode).toBeUndefined();
+  expect(records).toEqual([
+    expect.objectContaining({
+      command: "fixture",
+      level: 30,
+      status: "ok",
+      msg: "CLI command completed",
     }),
-  ).toBe(false);
+  ]);
+});
+
+it("does not classify nested Evidence as command failure", () => {
   expect(
     isCliOperationFailure({
       result: projectAnalysisError(new ConfigurationError("source setting")),

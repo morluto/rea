@@ -8,14 +8,14 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { goBinarySchema } from "../dist/domain/go/goBinary.js";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
-import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../dist/resources/AnalysisCleanupLease.js";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const commands = await createVerifierCommands();
 const compiler = process.env.REA_VERIFY_GO_COMMAND ?? "go";
@@ -25,7 +25,7 @@ if (process.env.REA_VERIFY_GO_COMMAND !== undefined && !isAbsolute(compiler))
   );
 let compilerVersion = null;
 const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({ prefix: "rea-go-verifier-" });
+const root = await VerifierFixture.open({ prefix: "rea-go-verifier-" });
 // Keep Go's directory enumeration below the private root's Windows ownership lease.
 const sourceRoot = join(root.path, "source");
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
@@ -60,7 +60,7 @@ const cleanup = new AnalysisCleanupLease(async () => {
     () => transport?.close(),
     () => commands.close(),
   ]);
-  await root.close();
+  await root.release();
 }, [root.path]);
 const targets = [
   ["linux", "amd64", "elf", 64, "little"],
@@ -390,7 +390,7 @@ async function inspect(mode, path, includeStringLiterals = false) {
   const evidence = parseEvidence(envelope);
   assert.equal(evidence.subject.local_path, path);
   const report = goBinarySchema.parse(evidence.normalized_result);
-  assert.equal(evidence.subject.digest.sha256, report.artifact.sha256);
+  assert.equal(evidence.subject.identity.sha256, report.artifact.sha256);
   return { evidence, report };
 }
 
@@ -450,7 +450,7 @@ async function verify(
     assert.equal(report.format, target[2]);
     assert.equal(report.architecture, target[1]);
     assert.equal(
-      evidence.subject.architecture,
+      evidence.subject.identity.architecture,
       { amd64: "x86_64", 386: "x86", arm64: "arm64", mips: "mips" }[
         target[1]
       ] ?? null,

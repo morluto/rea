@@ -13,6 +13,7 @@ import {
   executeProviderOperation,
   keepIncompleteObservation,
 } from "./ProviderOperationExecution.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 it("projects request-schema issues without exposing the request envelope", async () => {
   const execute = vi.fn();
@@ -133,7 +134,7 @@ it("clears a non-JSON partial from the cleanup primary projection returns after 
   expect(primary.secondaryFailures[0]).toBeInstanceOf(AnalysisOutputError);
   expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
 
-  composed.resolveCleanup();
+  releaseOwnedCleanup(composed);
   expect(projectAnalysisError(composed)).toMatchObject({
     code: "cancelled",
     category: "cancelled",

@@ -1,4 +1,4 @@
-import type { AnalysisOperation } from "./AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,

@@ -6,8 +6,9 @@ import type {
 } from "./binaryTargetTypes.js";
 import {
   declaredElfNoteAlignment,
+  ELF_NOTE_HEADER_BYTES,
   isElfNotePadding,
-  readElfNoteRecord,
+  readElfNoteFrame,
 } from "./native/elfNoteLayout.js";
 
 /** Bound the section read before its declared size can drive allocation; binutils writes 56 bytes. */
@@ -83,27 +84,37 @@ export const parseXtensaInfo = (
     );
   let descriptor: Buffer | undefined;
   let at = 0;
-  while (at + 12 <= contents.length) {
-    const record = readElfNoteRecord(contents, at, littleEndian, alignment);
-    if (!record.ok)
+  while (at + ELF_NOTE_HEADER_BYTES <= contents.length) {
+    const nameStart = at + ELF_NOTE_HEADER_BYTES;
+    const frame = readElfNoteFrame(
+      contents.subarray(at, nameStart),
+      littleEndian,
+      alignment,
+      contents.length - at,
+    );
+    if (!frame.ok)
       return undeclaredXtensaInfo(
-        unavailable(`.xtensa.info is malformed: ${record.error.message}`),
+        unavailable(`.xtensa.info is malformed: ${frame.error.message}`),
       );
-    const { namesz, descsz, type } = record.value;
-    const name = contents.subarray(at + 12, at + 12 + namesz);
+    const { namesz, descsz, type, framing, next } = frame.value;
+    if (framing !== "complete")
+      return undeclaredXtensaInfo(
+        unavailable(
+          ".xtensa.info is malformed: ELF note entry exceeds its table.",
+        ),
+      );
+    const name = contents.subarray(nameStart, nameStart + namesz);
     if (type === XTINFO_TYPE && name.equals(XTINFO_NAME)) {
       if (descriptor !== undefined)
         return undeclaredXtensaInfo(
           unavailable(".xtensa.info holds more than one Xtensa_Info note."),
         );
-      descriptor = contents.subarray(
-        record.value.descriptor,
-        record.value.descriptor + descsz,
-      );
+      const start = at + frame.value.descriptor;
+      descriptor = contents.subarray(start, start + descsz);
     }
-    at = record.value.next;
+    at += next;
   }
-  if (!isElfNotePadding(contents.subarray(at)))
+  if (at < contents.length && !isElfNotePadding(contents.subarray(at)))
     return undeclaredXtensaInfo(
       unavailable(".xtensa.info has trailing non-zero bytes."),
     );

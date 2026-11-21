@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -49,7 +50,7 @@ cliTest.for([
     const before = await call(operation, parameters);
     expect(before.isError).not.toBe(true);
     const initial = parseEvidence(before.structuredContent);
-    expect(initial.subject?.digest.sha256).toBe(
+    expect(fileIdentity(initial.subject).sha256).toBe(
       createHash("sha256").update(original).digest("hex"),
     );
 
@@ -59,11 +60,10 @@ cliTest.for([
     const changedNib = nib.replaceAll("UIViewController", "ChangedController");
     expect(changedNib).not.toBe(nib);
     await writeFile(nibPath, changedNib);
+    const changedPlist =
+      "<plist><dict><key>CFBundleExecutable</key><string>Probe</string><key>Marker</key><string>ChangedController</string></dict></plist>";
     if (operation === "inspect_plist")
-      await writeFile(
-        join(contents, "Info.plist"),
-        "<plist><dict><key>CFBundleExecutable</key><string>Probe</string><key>Marker</key><string>ChangedController</string></dict></plist>",
-      );
+      await writeFile(join(contents, "Info.plist"), changedPlist);
     const stale = await call(operation, parameters);
     expect(parseMcpToolError(stale).error).toMatchObject({
       code:
@@ -77,14 +77,17 @@ cliTest.for([
     const after = await call(operation, parameters);
     expect(after.isError).not.toBe(true);
     const refreshed = parseEvidence(after.structuredContent);
-    expect(refreshed.subject?.digest.sha256).toBe(
+    expect(fileIdentity(refreshed.subject).sha256).toBe(
       createHash("sha256").update(changed).digest("hex"),
     );
     const nibHash = createHash("sha256").update(changedNib).digest("hex");
-    if (operation === "inspect_plist")
-      expect(
-        inspectPlistSchema.parse(refreshed.normalized_result).value,
-      ).toMatchObject({ Marker: "ChangedController" });
+    if (operation === "inspect_plist") {
+      const inspected = inspectPlistSchema.parse(refreshed.normalized_result);
+      expect(inspected.value).toMatchObject({ Marker: "ChangedController" });
+      expect(inspected.source_sha256).toBe(
+        createHash("sha256").update(changedPlist).digest("hex"),
+      );
+    }
     if (operation === "decode_interface_builder") {
       const report = interfaceBuilderAnalysisSchema.parse(
         refreshed.normalized_result,

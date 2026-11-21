@@ -2,7 +2,7 @@
 export const mergeEnvironmentOverrides = <T>(
   existing: Readonly<Record<string, T>>,
   overrides: Readonly<Record<string, T>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Readonly<Record<string, T>> => {
   const selected = new Map<string, readonly [string, T]>();
   for (const layer of [existing, overrides])
@@ -14,10 +14,21 @@ export const mergeEnvironmentOverrides = <T>(
   return Object.freeze(Object.fromEntries(selected.values()));
 };
 
+/** Drop settings a downstream client should inherit from its own defaults. */
+export const omitEnvironmentSettings = <T>(
+  environment: Readonly<Record<string, T>>,
+  settings: ReadonlySet<string> | undefined,
+): Readonly<Record<string, T>> =>
+  settings === undefined || settings.size === 0
+    ? environment
+    : Object.fromEntries(
+        Object.entries(environment).filter(([name]) => !settings.has(name)),
+      );
+
 /** Snapshot selected variables while preserving platform and caller precedence. */
 export const snapshotEnvironment = <T extends string | undefined>(
   environment: Readonly<Record<string, T>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Readonly<Record<string, T>> => {
   const selected = mergeEnvironmentOverrides({}, environment, platform);
   if (platform !== "win32") return selected;

@@ -17,6 +17,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
@@ -68,7 +69,7 @@ const installation = await inspectVerifierGhidraInstallation({
     : { javaHome: process.env.JAVA_HOME }),
 });
 assert.equal(installation.status, "available", JSON.stringify(installation));
-assert.equal(installation.providerVersion, "12.1.4");
+assert.equal(installation.providerVersion, SUPPORTED_GHIDRA_VERSION);
 
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();

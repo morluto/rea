@@ -1,30 +1,22 @@
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
   projectSelectedArtifactFileFailure,
+  projectOwnedArtifactIdentityFailure,
+  projectOwnedArtifactInputFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeCertificatesPort } from "../../application/binaryDiagnostics/PeCertificatesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { PeCertificatesPort } from "../../ports/binaryDiagnostics/PeCertificatesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_CERTIFICATE_ENTRIES,
@@ -108,23 +100,28 @@ const decoderAllowanceFailure = (
   const selected = {
     "asn1-nodes": {
       limits: { max_asn1_values: limit },
-      description: `The PE certificate ASN.1 allowance of ${String(limit)} values per PKCS#7 payload (this release has no runtime override)`,
+      name: "The PE certificate ASN.1 value allowance",
+      unit: "values per PKCS#7 payload",
     },
     "asn1-depth": {
       limits: { max_asn1_depth: limit },
-      description: `The PE certificate ASN.1 allowance of ${String(limit)} nesting levels per PKCS#7 payload (this release has no runtime override)`,
+      name: "The PE certificate ASN.1 nesting allowance",
+      unit: "nesting levels per PKCS#7 payload",
     },
     "decoded-text": {
       limits: { max_decoded_text_bytes: limit },
-      description: `The PE certificate decoded-text allowance of ${String(limit)} bytes per PKCS#7 payload (this release has no runtime override)`,
+      name: "The PE certificate decoded-text allowance",
+      unit: "bytes per PKCS#7 payload",
     },
     "oid-bytes": {
       limits: { max_oid_bytes: limit },
-      description: `The PE certificate OBJECT IDENTIFIER allowance of ${String(limit)} bytes per OID (this release has no runtime override)`,
+      name: "The PE certificate OBJECT IDENTIFIER allowance",
+      unit: "bytes per OID",
     },
     "oid-arc-bytes": {
       limits: { max_oid_arc_bytes: limit },
-      description: `The PE certificate OBJECT IDENTIFIER allowance of ${String(limit)} bytes per base-128 arc (this release has no runtime override)`,
+      name: "The PE certificate OBJECT IDENTIFIER arc allowance",
+      unit: "bytes per base-128 arc",
     },
   }[allowance];
   return new AnalysisResourceConstraintError(
@@ -134,7 +131,10 @@ const decoderAllowanceFailure = (
     selected.limits,
     {
       cause,
-      ...fixedAllowanceOptions(selected.description, "parser"),
+      ...fixedAllowanceOptions(selected.name, "parser", {
+        limit,
+        unit: selected.unit,
+      }),
     },
   );
 };
@@ -144,35 +144,18 @@ const peCertificatesFailurePrimary = (
   input: InspectPeCertificatesInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
-    return new AnalysisUnsupportedTargetError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
+  const inputFailure = projectOwnedArtifactInputFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (inputFailure !== undefined) return inputFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof PeCertificateAsn1Failure &&
@@ -204,18 +187,6 @@ const peCertificatesFailurePrimary = (
                 ),
               }),
         },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
       );
   }
   const fileFailure = projectSelectedArtifactFileFailure(

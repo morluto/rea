@@ -4,10 +4,10 @@ import {
   metadataSignature,
   type SignatureDisplayTypeName,
   type SignatureTypeName,
-} from "../../src/dotnet/ManagedMemberInspectorCore.js";
+} from "../../src/domain/managed/managedMemberInspectorCore.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "../../src/dotnet/ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "../../src/dotnet/ManagedPeReader.js";
+import { readManagedMetadataLayout } from "../../src/domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../../src/domain/managed/managedPeReader.js";
 
 // Supply real metadata rows for the TypeDefOrRef coordinates used by the
 // signature grammar and identity cases.

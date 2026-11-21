@@ -127,11 +127,13 @@ it("keeps a malformed provenance report distinct from the fixed report allowance
   if (!(refusal instanceof ProviderAdapterError))
     throw new Error("Expected a wrapped Wakaru report refusal");
   const projected = projectAnalysisError(refusal);
-  expect(projected.message).toMatch(/rea doctor/iu);
-  expect(projected.message).toMatch(
+  // doctor cannot check Wakaru, so the unclassified failure says so plainly.
+  expect(projected.message).toMatch(/did not classify the failure/iu);
+  expect(projected.remediation.action).toMatch(
     /unchanged request.*not expected to succeed/iu,
   );
-  expect(projected.remediation.action).toBe(projected.message);
+  for (const text of [projected.message, projected.remediation.action])
+    expect(text).not.toMatch(/doctor/iu);
   expect(JSON.stringify(projected)).not.toContain("report allowance");
   expect(JSON.stringify(projected)).not.toContain("no runtime override");
 });

@@ -1,3 +1,4 @@
+import { fileSubjectDisplay, fileIdentity } from "./evidenceSubject.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -19,8 +20,6 @@ export const historicalInventoryEvidence = (
   const inventory = artifactInventoryResultSchema.parse(
     source.normalized_result,
   );
-  if (source.subject === null)
-    throw new TypeError("Inventory has no artifact subject");
   const occurrences = inventory.occurrences.map(alter);
   const graphSha256 = artifactGraphDigest({
     nodes: inventory.nodes,
@@ -30,7 +29,7 @@ export const historicalInventoryEvidence = (
   });
   return createEvidence(
     {
-      path: source.subject.local_path,
+      path: fileSubjectDisplay(source.subject).local_path,
       sha256: inventory.manifest.root_sha256,
       format: inventory.manifest.root_format,
     },
@@ -65,14 +64,12 @@ export const fragmentInventoryEvidence = (
     evidence.normalized_result,
   );
   const subject = evidence.subject;
-  if (subject === null)
-    throw new TypeError("Inventory has no artifact subject");
   return Array.from({ length: count }, (_, index) =>
     createEvidence(
       {
-        path: subject.local_path,
-        sha256: subject.digest.sha256,
-        format: subject.format,
+        path: fileSubjectDisplay(subject).local_path,
+        sha256: fileIdentity(subject).sha256,
+        format: fileIdentity(subject).format,
       },
       evidence.provider,
       {

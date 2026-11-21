@@ -1,26 +1,62 @@
-import { DOMParser, onErrorStopParsing, type Document } from "@xmldom/xmldom";
+import {
+  DOMParser,
+  onErrorStopParsing,
+  type Document,
+  type Element,
+  type Node,
+} from "@xmldom/xmldom";
 import { SaxesParser, type SaxesTagNS } from "saxes";
 import { err, ok, type Result } from "./result.js";
+import {
+  malformedInput,
+  ParseFailureError,
+  unsupportedInput,
+} from "./parseFailure.js";
 
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
 
-class XmlDocumentParseError extends Error {
-  readonly _tag = "XmlDocumentParseError";
-  constructor(
-    readonly reason: "malformed" | "doctype" | "internal-subset",
-    cause?: unknown,
-  ) {
-    super(
-      reason === "doctype"
-        ? "XML document types are unsupported"
-        : reason === "internal-subset"
-          ? "XML document type internal subsets are unsupported"
-          : `XML is not well-formed${cause instanceof Error ? `: ${cause.message}` : ""}`,
-      { cause },
-    );
-  }
-}
+/** Match an element in no namespace, including under an explicit empty default. */
+export const isUnqualifiedXmlElement = (node: Node | null): node is Element =>
+  node !== null &&
+  node.nodeType === 1 &&
+  (node as Element).namespaceURI === null;
+
+const XML_FORMAT = "xml";
+
+/** How XML failed: ill-formed syntax, or a DOCTYPE the policy refuses. */
+export type XmlParseFailure =
+  | ParseFailureError<"malformed">
+  | ParseFailureError<"unsupported">;
+
+const notWellFormed = (cause?: unknown): ParseFailureError<"malformed"> =>
+  malformedInput(
+    XML_FORMAT,
+    `XML is not well-formed${cause instanceof Error ? `: ${cause.message}` : ""}`,
+    { cause },
+  );
+
+/** A DOCTYPE, or its internal subset, that the document policy refuses. */
+const unsupportedDoctype = (
+  field: "doctype" | "internal-subset",
+): ParseFailureError<"unsupported"> =>
+  unsupportedInput(
+    XML_FORMAT,
+    field === "doctype"
+      ? "XML document types are unsupported"
+      : "XML document type internal subsets are unsupported",
+    { field },
+  );
+
+/** A failure the syntax check threw itself. */
+const isXmlFailure = (cause: unknown): cause is XmlParseFailure =>
+  cause instanceof ParseFailureError &&
+  cause.failure.format === XML_FORMAT &&
+  (cause.kind === "malformed" || cause.kind === "unsupported");
+
+/** The failure the syntax check established; any other throw is ill-formed XML. */
+const xmlFailure = (cause: unknown): XmlParseFailure =>
+  isXmlFailure(cause) ? cause : notWellFormed(cause);
 
 /** Whether a DOCTYPE's text, as saxes reports it, opens an internal subset: a `[` outside its quoted literals. */
 const declaresInternalSubset = (declaration: string): boolean =>
@@ -82,7 +118,7 @@ const checkXmlSyntax = (
   listen?.(syntax);
   const checkName = (name: string) => {
     if (nameSupported !== undefined && !nameSupported(name))
-      throw new XmlDocumentParseError("malformed");
+      throw notWellFormed();
   };
   if (nameSupported !== undefined) {
     syntax.on("opentagstart", (tag) => checkName(tag.name));
@@ -92,12 +128,11 @@ const checkXmlSyntax = (
     );
   }
   syntax.on("doctype", (declaration) => {
-    if (doctype === "reject") throw new XmlDocumentParseError("doctype");
+    if (doctype === "reject") throw unsupportedDoctype("doctype");
     if (doctype !== "external") return;
     if (declaresInternalSubset(declaration))
-      throw new XmlDocumentParseError("internal-subset");
-    if (!EXTERNAL_DOCTYPE.test(declaration))
-      throw new XmlDocumentParseError("malformed");
+      throw unsupportedDoctype("internal-subset");
+    if (!EXTERNAL_DOCTYPE.test(declaration)) throw notWellFormed();
     checkName(declaration.trimStart().split(/[ \t\r\n]/u, 1)[0] ?? "");
   });
   syntax.write(source).close();
@@ -142,7 +177,7 @@ export const xmlElementRanges = (
   policy: { readonly doctype: Exclude<DoctypePolicy, "allow"> },
 ): Result<
   readonly { readonly start: number; readonly end: number }[],
-  XmlDocumentParseError
+  XmlParseFailure
 > => {
   const ranges: { start: number; end: number }[] = [];
   // Each open element's start, and whether it was picked.
@@ -180,11 +215,7 @@ export const xmlElementRanges = (
     });
     return ok(ranges.sort((left, right) => left.start - right.start));
   } catch (cause: unknown) {
-    return err(
-      cause instanceof XmlDocumentParseError
-        ? cause
-        : new XmlDocumentParseError("malformed", cause),
-    );
+    return err(xmlFailure(cause));
   }
 };
 
@@ -194,7 +225,7 @@ export const xmlAttributeQuoteRanges = (
 ): Result<
   readonly { readonly start: number; readonly end: number }[],
   {
-    readonly error: XmlDocumentParseError;
+    readonly error: XmlParseFailure;
     readonly ranges: readonly {
       readonly start: number;
       readonly end: number;
@@ -210,24 +241,62 @@ export const xmlAttributeQuoteRanges = (
       syntax.on("attribute", () => {
         const end = syntax.position - 1;
         const quote = source[end];
-        if (quote !== '"' && quote !== "'")
-          throw new XmlDocumentParseError("malformed");
+        if (quote !== '"' && quote !== "'") throw notWellFormed();
         const start = source.lastIndexOf(quote, end - 1);
-        if (start < 0) throw new XmlDocumentParseError("malformed");
+        if (start < 0) throw notWellFormed();
         ranges.push({ start, end });
       });
     });
     return ok(ranges);
   } catch (cause: unknown) {
     return err({
-      error:
-        cause instanceof XmlDocumentParseError
-          ? cause
-          : new XmlDocumentParseError("malformed", cause),
+      error: xmlFailure(cause),
       ranges,
       examined: Math.max(0, (reader?.position ?? 0) - 1),
     });
   }
+};
+
+/**
+ * Stops the stream once counting has passed the limit. It never leaves
+ * countXmlNodes, which returns the count instead of reporting a failure.
+ */
+class StopXmlNodeCount extends Error {}
+
+/**
+ * How many nodes the DOM projection of `source` would hold (elements,
+ * attributes, text, CDATA, comments and processing instructions), read as a
+ * stream without building a document. Counting stops at `limit + 1`, so a
+ * caller can refuse an oversized document before `parseXmlDocument`
+ * allocates its tree. Ill-formed XML returns the nodes read before the
+ * error; `parseXmlDocument` reports the failure itself.
+ */
+export const countXmlNodes = (source: string, limit: number): number => {
+  let nodes = 0;
+  const count = () => {
+    nodes += 1;
+    if (nodes > limit) throw new StopXmlNodeCount();
+  };
+  try {
+    checkXmlSyntax(source, "allow", (syntax) => {
+      // Only the syntax owner's explicit error signal may defer diagnosis to
+      // parseXmlDocument. An unrelated counting failure cannot admit a DOM.
+      syntax.on("error", (cause) => {
+        throw notWellFormed(cause);
+      });
+      syntax.on("opentagstart", count);
+      syntax.on("attribute", count);
+      syntax.on("text", count);
+      syntax.on("cdata", count);
+      syntax.on("comment", count);
+      syntax.on("processinginstruction", count);
+    });
+  } catch (cause: unknown) {
+    if (!(cause instanceof StopXmlNodeCount) && !isXmlFailure(cause))
+      throw cause;
+    // A known count stop, or syntax failure parseXmlDocument reports.
+  }
+  return nodes;
 };
 
 /** One boundary owns strict XML syntax, under a DOCTYPE policy, and the source-located DOM projection. */
@@ -238,7 +307,7 @@ export const parseXmlDocument = (
     readonly lineEndings: "preserve" | "normalize";
     readonly nameSupported?: (name: string) => boolean;
   },
-): Result<Document, XmlDocumentParseError> => {
+): Result<Document, XmlParseFailure> => {
   try {
     checkXmlSyntax(source, policy.doctype, undefined, policy.nameSupported);
     // Saxes owns well-formedness outside DTDs. The DOM parser additionally
@@ -254,11 +323,7 @@ export const parseXmlDocument = (
       }).parseFromString(source, "application/xml"),
     );
   } catch (cause: unknown) {
-    return err(
-      cause instanceof XmlDocumentParseError
-        ? cause
-        : new XmlDocumentParseError("malformed", cause),
-    );
+    return err(xmlFailure(cause));
   }
 };
 

@@ -93,6 +93,8 @@ export const TSHARK_DNS_JSON = JSON.stringify([
 export interface PcapStubToolsOptions {
   readonly failCapinfos?: boolean;
   readonly malformedDnsJson?: boolean;
+  /** The DNS wire pass exits 5 with a stderr diagnostic. */
+  readonly failDnsPass?: boolean;
   readonly dnsJson?: string;
   readonly tsharkJson?: string;
   readonly capinfosText?: string;
@@ -143,6 +145,7 @@ case " $* " in
     case " $* " in *" --no-duplicate-keys "*) ;; *) exit 2 ;; esac
     case " $* " in *" -J frame dns mdns llmnr "*) ;; *) exit 2 ;; esac
     case " $* " in *" -Y dns || mdns || llmnr "*) ;; *) exit 2 ;; esac
+    ${options.failDnsPass ? `printf 'dns pass failed' >&2; exit 5` : ""}
     printf '%s' '${(options.malformedDnsJson ? "{" : (options.dnsJson ?? TSHARK_DNS_JSON)).replace(/'/gu, "'\\''")}'
     exit 0
     ;;

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import {
   reconstructionObligationProofSchema,
   type ReconstructionObligationProof,
@@ -26,7 +27,7 @@ import {
 /** Build controlled fixture Evidence used by reconstruction-ledger scenarios. */
 export const proofEvidence = (id: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     { id: `fixture-${id}`, name: "Fixture verifier", version: "1" },
     {
       predicateType: "rea.fixture-verification",
@@ -42,7 +43,7 @@ export const proofEvidence = (id: string) =>
 export const processEvidence = (
   overrides: Partial<UnverifiedProcessCapture> = {},
 ) =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: {},
@@ -61,7 +62,7 @@ export const boundProofEvidence = (
   authority: "shipped-artifact" | "controlled-replay" = "controlled-replay",
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     { id: `proof-${id}`, name: "Reconstruction proof", version: "1" },
     {
       predicateType: "rea.reconstruction-proof",
@@ -212,7 +213,7 @@ const authorityEvidence = (
   authority: "shipped-artifact" | "controlled-replay",
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "observe",

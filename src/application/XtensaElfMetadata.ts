@@ -9,7 +9,7 @@ import {
 import { readElfTableDeclarations } from "../domain/elfDeclaredRanges.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { observeElfStringTableEntry } from "../domain/elfStringTable.js";
-import { decodeElfSectionNameTable } from "../native/metadata/ElfSectionNameTable.js";
+import { decodeElfSectionNameTable } from "../domain/native/elfSectionNameTable.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const SHT_NOTE = 7;
@@ -85,6 +85,12 @@ function* readSectionNames(
     case "unsupported":
       return err(
         `ELF section names are unavailable because compression type ${String(decoded.compressionType)} is unsupported`,
+      );
+    case "configuration":
+      return err(`ELF section names are unavailable: ${decoded.error.message}`);
+    case "work_limit":
+      return err(
+        `Decoded ELF section names need more Zstandard frames than ${decoded.setting} (${String(decoded.value)}) admits.`,
       );
   }
 }

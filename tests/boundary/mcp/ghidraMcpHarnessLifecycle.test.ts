@@ -4,6 +4,7 @@ import { expect, it, vi } from "vitest";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const failureLeaves = (reason: unknown): unknown[] =>
   reason instanceof AggregateError
@@ -18,7 +19,7 @@ it("reports independent cleanup failures and retries only retained owners", asyn
   let allowProviderClose = false;
   const closeProvider = vi.fn(async () => {
     if (!allowProviderClose) return err(providerFailure);
-    providerFailure.resolveCleanup();
+    releaseOwnedCleanup(providerFailure);
     return ok(null);
   });
   const harness = await connectGhidraMcp("ghidra-harness-close", undefined, {

@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -33,8 +34,8 @@ cliTest(
       expect(mcpEvidence.normalized_result).toEqual(
         cliEvidence.normalized_result,
       );
-      expect(mcpEvidence.subject?.digest.sha256).toBe(sha256);
-      expect(cliEvidence.subject?.digest.sha256).toBe(sha256);
+      expect(fileIdentity(mcpEvidence.subject).sha256).toBe(sha256);
+      expect(fileIdentity(cliEvidence.subject).sha256).toBe(sha256);
       expect(mcpEvidence.normalized_result).toMatchObject({
         coverage: { state: "complete", issues: [] },
       });

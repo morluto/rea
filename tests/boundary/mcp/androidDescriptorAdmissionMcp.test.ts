@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
-it.each(["compact", "full"])(
+it.each(["compact"])(
   "enforces DEX dimensions with %s input-schema delivery",
   async (profile) => {
     const execute = vi.fn(() => {

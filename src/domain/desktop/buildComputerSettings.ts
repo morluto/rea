@@ -5,8 +5,5 @@ export const BUILD_COMPUTER_SETTINGS = [
   "REA_BUILD_COMPUTER_REA_ARCHIVE",
 ] as const;
 
-/** Bundle variable names, excluding the host controls, in the advertised schema too. */
-export const BUNDLE_SETTING_VARIABLE = new RegExp(
-  `^(?!(?:${BUILD_COMPUTER_SETTINGS.join("|")})$)REA_[A-Z0-9_]{1,60}$`,
-  "u",
-);
+/** Bundle variable names; host-control names are excluded separately. */
+export const BUNDLE_SETTING_VARIABLE = /^REA_[A-Z0-9_]{1,60}$/u;

@@ -25,7 +25,7 @@ const writeAdmittedGhidra = async (root: string) => {
     await mkdir(path, { recursive: true });
   await writeFile(
     join(install, "Ghidra/application.properties"),
-    "application.version=12.1.4\napplication.java.min=21\n",
+    "application.version=12.2\napplication.java.min=25\n",
   );
   await writeFile(
     join(install, "support/analyzeHeadless"),
@@ -40,7 +40,7 @@ const writeAdmittedGhidra = async (root: string) => {
   );
   await chmod(native, 0o700);
   const properties = [
-    "java.version = 21.0.11",
+    "java.version = 25.0.1",
     `java.home = ${jdk}`,
     "sun.arch.data.model = 64",
     `os.arch = ${process.arch === "arm64" ? "aarch64" : "amd64"}`,
@@ -75,7 +75,6 @@ const run = async (
   const result = await cli.run({
     arguments: [...arguments_, "--json"],
     environment,
-    timeoutMs: 30_000,
   });
   return { result, report: reportSchema.safeParse(result.json) };
 };

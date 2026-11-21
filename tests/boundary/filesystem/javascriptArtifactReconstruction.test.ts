@@ -16,7 +16,7 @@ import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import type {
   ArtifactEntry,
   ArtifactReader,
-} from "../../../src/artifacts/ArtifactReader.js";
+} from "../../../src/resources/ArtifactReader.js";
 import { writeJavaScriptArtifactFixture } from "../../fixtures/javascriptArtifactApplication.js";
 
 it("reads local source maps as part of static artifact analysis", async () => {

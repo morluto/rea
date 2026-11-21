@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
+import { walkHomeState } from "../../desktop/HomeStateWalker.js";
 import { CheckpointRecorder } from "./DesktopCheckpointRecorder.js";
 
 const unprivileged = process.platform !== "win32" && process.getuid?.() !== 0;
@@ -30,6 +31,7 @@ it.skipIf(process.platform === "win32")(
         maxEntries: 100,
       },
       store,
+      walkHomeState,
     );
     await recorder.record("baseline", "baseline", 0);
     expect(recorder.baselineNonFiles).toContainEqual({
@@ -59,6 +61,7 @@ describe.skipIf(!unprivileged)("CheckpointRecorder", () => {
         maxEntries: 100,
       },
       store,
+      walkHomeState,
     );
     await recorder.record("baseline", "baseline", 0);
     // The directory cannot be listed while the file changes.

@@ -5,7 +5,7 @@ This lane extends native ELF analysis to `EM_XTENSA` targets, such as the
 execute Xtensa code, read flash images or partition tables, or rehost firmware.
 It addresses [#3483](https://github.com/morluto/rea/issues/3483) and follows the
 lane shape of [RISC-V](ghidra-riscv.md) and [PowerPC](../ghidra-ppc.md).
-`npm run verify:ghidra:xtensa` checks it against Ghidra 12.1.4; see
+`npm run verify:ghidra:xtensa` checks it against Ghidra 12.2; see
 [Verification and limits](#verification-and-limits).
 
 ## Admission boundary
@@ -19,7 +19,7 @@ Xtensa `e_flags` carry no ABI. GNU as and ld declare it in the `.xtensa.info`
 section: one `Xtensa_Info` note whose descriptor reads
 `USE_ABSOLUTE_LITERALS=0\nABI=0\n`, where `ABI=0` is the windowed ABI and `ABI=1`
 is call0. `USE_ABSOLUTE_LITERALS=1` declares a configuration whose L32R literals
-are addressed from `LITBASE` (the Extended L32R option), while Ghidra 12.1.4
+are addressed from `LITBASE` (the Extended L32R option), while Ghidra 12.2
 decodes every L32R as PC-relative. REA reads both keys during target resolution
 and records the declarations. It never infers an ABI or literal addressing from
 the family name. Other keys are not interpreted. ESP-IDF builds declare
@@ -31,14 +31,14 @@ guessing a compatible profile:
 | Declaration                                                                                   | Outcome                                                                                                                                                               |
 | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Little-endian ELF32 `ET_EXEC`, known `e_flags`, `ABI=0` (windowed), `USE_ABSOLUTE_LITERALS=0` | admitted, `Xtensa:LE:32:default` + `default`                                                                                                                          |
-| ELF64                                                                                         | refused; Ghidra 12.1.4 ships 32-bit Xtensa languages only                                                                                                             |
+| ELF64                                                                                         | refused; Ghidra 12.2 ships 32-bit Xtensa languages only                                                                                                               |
 | Big-endian                                                                                    | refused; big-endian cores need separate verification                                                                                                                  |
 | `ET_REL`, `ET_DYN`, other `e_type`                                                            | refused; the reason names relocatable, shared, or the numeric `e_type`                                                                                                |
 | `e_flags` bits outside `EF_XTENSA_MACH` (0xf), `XT_INSN` (0x100), `XT_LIT` (0x200)            | refused with the offending bits named                                                                                                                                 |
 | Non-zero `EF_XTENSA_MACH`                                                                     | refused; binutils defines only `E_XTENSA_MACH` (0) and rejects other values                                                                                           |
 | `ABI=1` (call0), as ESP8266 builds declare                                                    | refused; call0 needs its own calling-convention selection and verification                                                                                            |
 | Another `ABI=` value                                                                          | refused with the declared value                                                                                                                                       |
-| `USE_ABSOLUTE_LITERALS=1` (L32R literals addressed from `LITBASE`)                            | refused; Ghidra 12.1.4 decodes L32R as PC-relative                                                                                                                    |
+| `USE_ABSOLUTE_LITERALS=1` (L32R literals addressed from `LITBASE`)                            | refused; Ghidra 12.2 decodes L32R as PC-relative                                                                                                                      |
 | Another `USE_ABSOLUTE_LITERALS=` value                                                        | refused with the declared value                                                                                                                                       |
 | No `.xtensa.info`, or no `ABI=` or `USE_ABSOLUTE_LITERALS=` key                               | refused; neither the windowed ABI nor PC-relative literals are inferred                                                                                               |
 | Unreadable or malformed `.xtensa.info`                                                        | refused with the reason, for example no section table, a compressed section, a malformed note or an `sh_addralign` other than up to 4 or 8, which GNU readelf rejects |
@@ -51,7 +51,7 @@ release has no runtime override, and runtime analysis settings do not raise it.
 
 ## Why the language is pinned
 
-In the Ghidra 12.1.4 sources, `xtensa.ldefs` defines `Xtensa:LE:32:default` and
+In the Ghidra 12.2 sources, `xtensa.ldefs` defines `Xtensa:LE:32:default` and
 `Xtensa:BE:32:default`, each with one compiler specification whose id is
 `default`; there is no `gcc` id. The default prototype in `xtensa.cspec` models
 windowed calls, and `xtensa.opinion` maps ELF machine 94 to this processor. Header
@@ -76,9 +76,10 @@ configuration, the compiler, or instruction conformance.
 
 ## Ghidra limitations
 
-These limitations belong to Ghidra 12.1.4, and REA does not work around them.
-REA reproduced the first one; each of the others is reported in an upstream
-Ghidra issue or derived from the 12.1.4 Xtensa language sources:
+These limitations belong to Ghidra's Xtensa language, whose SLEIGH and
+compiler specification sources are the same in 12.2 as in 12.1.4. REA does not
+work around them. REA reproduced the first one on 12.1.4; each of the others is reported in an upstream
+Ghidra issue or derived from those Xtensa language sources:
 
 - Measured by REA: `SALT` and `SALTU`, which ESP32-S3 builds use, decode as bad
   instructions, so disassembly stops there and later calls in the same function
@@ -89,7 +90,7 @@ Ghidra issue or derived from the 12.1.4 Xtensa language sources:
   ([Ghidra #2164](https://github.com/NationalSecurityAgency/ghidra/issues/2164)).
 - Reported upstream: FLIX bundles are not decoded
   ([#6342](https://github.com/NationalSecurityAgency/ghidra/issues/6342)).
-- Derived from the 12.1.4 sources, which define no `ee.*` instructions: ESP32-S3
+- Derived from the sources, which define no `ee.*` instructions: ESP32-S3
   PIE vector instructions are not decoded.
 - Reported upstream: zero-overhead loops are mis-modeled, so functions that use
   `loop`, `loopnez` or `loopgtz` can decompile incorrectly
@@ -100,7 +101,7 @@ Ghidra issue or derived from the 12.1.4 Xtensa language sources:
 
 ## What to expect with ESP-IDF apps
 
-REA measured these costs with Ghidra 12.1.4 on Linux x64, using ESP-IDF 5.5
+REA measured these costs with Ghidra 12.1.4 (no longer accepted) on Linux x64, using ESP-IDF 5.5
 application ELFs with DWARF: a 16 MB ESP32 build and a 48 MB ESP32-S3 build.
 Times depend on the host.
 
@@ -129,7 +130,7 @@ Times depend on the host.
 
 ## Verification and limits
 
-Run `npm run verify:ghidra:xtensa` with Ghidra 12.1.4, JDK 21+ and GNU or LLVM
+Run `npm run verify:ghidra:xtensa` with Ghidra 12.2, JDK 25+ and GNU or LLVM
 `readelf` (`REA_XTENSA_READELF` selects one). The lane writes its base fixture
 from annotated instruction bytes, so it needs no Xtensa compiler, and never
 executes target code. It checks:
@@ -153,7 +154,7 @@ literal holding it. In decompiled code it checks that the caller
 passes the global and 5 through `call8` and returns the result, and that the
 callee returns `value * factor` plus the constant.
 
-REA also measured Ghidra 12.1.4 on ESP-IDF 5.5.2 `hello_world` builds (Espressif
+REA also measured Ghidra 12.1.4 (no longer accepted) on ESP-IDF 5.5.2 `hello_world` builds (Espressif
 GCC 14.2.0, default `-Og`), with Ghidra's DWARF analyzer disabled so that
 signatures come from decompilation, and compared the results with DWARF:
 
