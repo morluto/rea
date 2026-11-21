@@ -995,7 +995,12 @@ export class CdpWorkerCapture {
           worker.events.completeness.unavailable("workers");
       }
       for (const domain of ["Runtime", "Debugger", "Network"] as const) {
-        if (!this.#canCollect(worker)) return;
+        if (!this.#canCollect(worker)) {
+          worker.item.observation.limitations.push(
+            "Worker domain setup was interrupted when the session detached or page control ended. Coverage remains incomplete for this observation.",
+          );
+          return;
+        }
         stage = `${domain}.enable`;
         const result = await this.#command(
           stage,

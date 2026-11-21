@@ -1628,6 +1628,83 @@ it.each([undefined, null, "", 42])(
   },
 );
 
+it("retains the coverage gap when service worker control returns after interrupted setup", async () => {
+  const version = (controls: boolean): CdpEvent => ({
+    method: "ServiceWorker.workerVersionUpdated",
+    sessionId: "session-1",
+    params: {
+      versions: [
+        {
+          targetId: "service",
+          controlledClients: controls ? ["allowed-page"] : [],
+          status: "activated",
+        },
+      ],
+    },
+  });
+  const { browser, input, provider } = await fixture({
+    eventsBeforeReply: [
+      "Runtime.enable",
+      "ServiceWorker.enable",
+      "Target.setAutoAttach",
+    ],
+    commandEvents(command, origin) {
+      if (command.method === "ServiceWorker.enable") return [version(true)];
+      if (
+        command.method === "Target.setAutoAttach" &&
+        command.params.autoAttach === true
+      ) {
+        if (command.sessionId !== "session-1") return [];
+        return [
+          {
+            method: "Target.attachedToTarget",
+            sessionId: "session-1",
+            params: {
+              sessionId: "worker-service",
+              targetInfo: {
+                targetId: "service",
+                type: "service_worker",
+                url: origin + "/service.js",
+                attached: true,
+              },
+            },
+          },
+        ];
+      }
+      if (
+        command.method === "Runtime.enable" &&
+        command.sessionId === "worker-service"
+      )
+        return [version(false)];
+      return undefined;
+    },
+  });
+  const result = await provider.inspectPage(input, {
+    progress: {
+      report: async ({ completed }) => {
+        if (completed === 2) browser.emitEvent(version(true));
+      },
+    },
+  });
+  if (!result.ok) throw result.error;
+  const observation = result.value.workers.find(
+    ({ target_id }) => target_id === "service",
+  )!.observation!;
+  expect(
+    observation.lifecycle
+      .filter(({ event }) => event === "version")
+      .map(({ controls_page }) => controls_page),
+  ).toEqual([true, false, true]);
+  expect(observation.completeness.unavailable_sections).toEqual(
+    expect.arrayContaining(["scripts", "script_sources", "network_requests"]),
+  );
+  expect(
+    observation.limitations.some((reason) =>
+      reason.includes("domain setup was interrupted"),
+    ),
+  ).toBe(true);
+});
+
 it.each([false, true, null])(
   "retains service worker client evidence before attachment (controls page: %s)",
   async (controls) => {

@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { writeFile, readFile, mkdtemp, rm } from "node:fs/promises";
 import { chromium } from "playwright-core";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { startRuntimeFixtureBrowser } from "./browser-runtime-fixture-lifecycle.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { startWorkerSite } from "../fixtures/browser-worker-site.mjs";
@@ -116,12 +116,14 @@ export async function verifyBrowserWorkers(
       target,
       true,
     );
-    transport = new StdioClientTransport({
+    transport = await createOwnedMcpStdioTransport({
       command: process.execPath,
-      args: [entrypoint, "mcp"],
-      stderr: "pipe",
-      env: { ...process.env, REA_LOG_LEVEL: "silent" },
+      arguments: [entrypoint, "mcp"],
+      hostEnvironment: { ...process.env, REA_LOG_LEVEL: "silent" },
+      expectedCommand: null,
+      sweepTokenOwnedProcesses: true,
     });
+    commands.adopt(transport, "worker verifier MCP process");
     client = new Client({ name: "worker-verifier", version: "1" });
     await client.connect(transport);
     const catalog = await client.listTools();
@@ -437,9 +439,9 @@ export async function verifyBrowserWorkers(
       cancellationRecovery: true,
     };
   }, [
-    () => commands?.close(),
     () => client?.close(),
     () => transport?.close(),
+    () => commands?.close(),
     () => browser?.close(),
     () => fixture?.close(),
     () => site.close(),
