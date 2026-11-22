@@ -259,9 +259,9 @@ export abstract class BinarySessionRecords {
       target,
       profile,
       target === undefined
-        ? this.#records.exportEvidenceBundle()
+        ? this.#records.immutableEvidenceBundle()
         : evidenceBundleForTarget(
-            this.#records.exportEvidenceBundle(),
+            this.#records.immutableEvidenceBundle(),
             target.sha256,
           ),
     );
