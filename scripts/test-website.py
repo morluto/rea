@@ -540,6 +540,44 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
                 with self.subTest(message=message):
                     self.assertIn(f"{page.relative_to(site)}: {message}", diagnostics)
 
+    def test_repository_fragments_use_rendered_headings_and_html_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "website").mkdir()
+            (root / "docs").mkdir()
+            (root / "docs/guide.md").write_text(dedent("""\
+                ````markdown
+                ```
+                # Example heading
+                <span id="example-id"></span>
+                ```
+                ````
+
+                Guide heading
+                -------------
+
+                ## Read [the guide](another-guide.md) with `rea`
+
+                <p id="block-id">A block anchor.</p>
+
+                An <span id="inline-id">inline anchor</span>.
+            """), encoding="utf-8")
+            page = root / "website/README.md"
+            page.write_text(dedent("""\
+                [Setext](../docs/guide.md#guide-heading)
+                [Formatted](../docs/guide.md#read-the-guide-with-rea)
+                [Block ID](../docs/guide.md#block-id)
+                [Inline ID](../docs/guide.md#inline-id)
+                [Fenced heading](../docs/guide.md#example-heading)
+                [Fenced ID](../docs/guide.md#example-id)
+            """), encoding="utf-8")
+
+            source = page.relative_to(root)
+            self.assertEqual(VERIFY.check_repository_links(root), [
+                f"{source}: missing Markdown fragment: ../docs/guide.md#example-heading",
+                f"{source}: missing Markdown fragment: ../docs/guide.md#example-id",
+            ])
+
     def test_repository_links_preserve_targets_and_containment_through_aliased_roots(self):
         with tempfile.TemporaryDirectory() as directory:
             container = Path(directory)
