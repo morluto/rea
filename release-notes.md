@@ -404,6 +404,7 @@
 * **mcp:** consolidate browser provider probe ownership checks ([#13166](https://github.com/morluto/rea/issues/13166)) ([96d88a6](https://github.com/morluto/rea/commit/96d88a67c31da87bf470629e9c90fcddb8d275fc))
 * **mcp:** consolidate browser source boundary checks ([#13234](https://github.com/morluto/rea/issues/13234)) ([2e83fbd](https://github.com/morluto/rea/commit/2e83fbd394fcae313b58767d4c028f23a4c33935))
 * **mcp:** consolidate debugger retirement evidence checks ([#13014](https://github.com/morluto/rea/issues/13014)) ([72a8ae0](https://github.com/morluto/rea/commit/72a8ae01a3cb006b8ff5320a92177d4841b801af))
+* **mcp:** consolidate deferred runtime and recorder cleanup ([#13247](https://github.com/morluto/rea/issues/13247)) ([051658d](https://github.com/morluto/rea/commit/051658daa15aa2fd952692eaab1b64198c2f2591))
 * **mcp:** consolidate derived operation progress coverage ([#12778](https://github.com/morluto/rea/issues/12778)) ([3caa46f](https://github.com/morluto/rea/commit/3caa46f980bbc1d9ef9e1f25b4e046cfc0d03ca9))
 * **mcp:** consolidate JavaScript Evidence transport checks ([#13055](https://github.com/morluto/rea/issues/13055)) ([9a388af](https://github.com/morluto/rea/commit/9a388afdfca3acbb7a4dc849b047e5c5faf4e906))
 * **mcp:** consolidate reduced output schema proof at the SDK boundary ([#12823](https://github.com/morluto/rea/issues/12823)) ([40c6dad](https://github.com/morluto/rea/commit/40c6dade8eb608141ec62dd90a8ee4195d52fbd8))
