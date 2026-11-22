@@ -1015,7 +1015,12 @@ const winningLebs = (
   return { lebs, stale, interrupted };
 };
 
-/** The layout volume's LEB 0 and LEB 1 PEBs, as `winningLebs` selects them. */
+/**
+ * The layout volume's usable LEB 0 and LEB 1 PEBs, as `winningLebs` selects
+ * them. A layout LEB whose surviving winner is an unverified wear-leveling
+ * copy (its data CRC failed with no verified copy to fall back to) returns
+ * null so it is excluded before choosing the volume table.
+ */
 export const ubiLayoutVolumePebs = (
   pebs: readonly UbiPeb[],
   verifiedCopies: ReadonlySet<number>,
@@ -1023,7 +1028,11 @@ export const ubiLayoutVolumePebs = (
   const layout = winningLebs(pebs, verifiedCopies).lebs.get(
     UBI_LAYOUT_VOLUME_ID,
   );
-  return [layout?.get(0)?.peb ?? null, layout?.get(1)?.peb ?? null];
+  const usable = (lnum: 0 | 1): number | null => {
+    const winner = layout?.get(lnum);
+    return winner === undefined || winner.unverified ? null : winner.peb;
+  };
+  return [usable(0), usable(1)];
 };
 
 const volumePath = (name: string, id: number, used: Set<string>): string => {

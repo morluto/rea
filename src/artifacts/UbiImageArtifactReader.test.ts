@@ -14,10 +14,16 @@ import {
   ubiImage,
   ubiLayoutPebs,
   ubiLebData,
+  ubiVolumeTable,
+  ubiVolumeTableSlots,
   UBI_FIXTURE_KERNEL,
+  type UbiFixturePeb,
   type UbiFixtureVolumeRecord,
 } from "../domain/firmware/ubiImage.fixture.js";
-import { UBI_IMAGE_LIMITATIONS } from "../domain/firmware/ubiImage.js";
+import {
+  UBI_IMAGE_LIMITATIONS,
+  UBI_LAYOUT_VOLUME_ID,
+} from "../domain/firmware/ubiImage.js";
 import { zipArchive } from "../domain/desktop/zipArchive.fixture.js";
 import { classifyArtifactBytesAtPath } from "../../tests/fixtures/artifactClassification.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -312,6 +318,116 @@ it("serves the older LEB copy when a newer wear-leveling copy fails its data CRC
     expect(reader.formatMetadata()).toMatchObject({ stale_leb_copy_count: 1 });
   } finally {
     await reader.close();
+  }
+});
+
+const unverifiedLayoutLeb = (
+  lnum: 0 | 1,
+  table: Buffer,
+  firstSqnum: bigint,
+): readonly UbiFixturePeb[] => [
+  {
+    kind: "leb",
+    volId: UBI_LAYOUT_VOLUME_ID,
+    lnum,
+    data: table,
+    sqnum: firstSqnum,
+    volType: "dynamic",
+    copyFlag: true,
+    dataCrc: 0,
+  },
+  {
+    kind: "leb",
+    volId: UBI_LAYOUT_VOLUME_ID,
+    lnum,
+    data: table,
+    sqnum: firstSqnum + 1n,
+    volType: "dynamic",
+    copyFlag: true,
+    dataCrc: 0,
+  },
+];
+
+it("falls back to layout LEB 1 when layout LEB 0 is unverified", async () => {
+  const slots = ubiVolumeTableSlots();
+  const staleTable = ubiVolumeTable(
+    [{ id: 0, name: "stale", type: "dynamic", reservedPebs: 1 }],
+    slots,
+  );
+  const soundTable = ubiVolumeTable(
+    [{ id: 0, name: "current", type: "dynamic", reservedPebs: 4 }],
+    slots,
+  );
+  const fallbackPath = await writeCarrier(
+    "layout-fallback.ubi",
+    ubiImage([
+      ...unverifiedLayoutLeb(0, staleTable, 1n),
+      {
+        kind: "leb",
+        volId: UBI_LAYOUT_VOLUME_ID,
+        lnum: 1,
+        data: soundTable,
+        sqnum: 3n,
+        volType: "dynamic",
+      },
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: ubiLebData(0x43, "CURRENT"),
+        sqnum: 4n,
+      },
+    ]),
+  );
+  const fallbackReader = new UbiImageArtifactReader(fallbackPath);
+  try {
+    const entries = [];
+    for await (const entry of fallbackReader.entries()) entries.push(entry);
+    expect(entries).toMatchObject([{ path: "volumes/current" }]);
+    expect(fallbackReader.formatMetadata()).toMatchObject({
+      volume_table_copies_found: 1,
+      volume_table_copies_valid: 1,
+      volume_table_copies_agree: null,
+      volume_table_source_leb: 1,
+      stale_leb_copy_count: 1,
+    });
+    const bytes = await buffer(await fallbackReader.open(entries[0]!));
+    expect(bytes.subarray(0, 7).toString("latin1")).toBe("CURRENT");
+  } finally {
+    await fallbackReader.close();
+  }
+});
+
+it("refuses an image whose layout LEBs are both unverified wear-leveling copies", async () => {
+  const slots = ubiVolumeTableSlots();
+  const staleTable = ubiVolumeTable(
+    [{ id: 0, name: "stale", type: "dynamic", reservedPebs: 1 }],
+    slots,
+  );
+  const soundTable = ubiVolumeTable(
+    [{ id: 0, name: "current", type: "dynamic", reservedPebs: 4 }],
+    slots,
+  );
+  const refusedPath = await writeCarrier(
+    "layout-unverified.ubi",
+    ubiImage([
+      ...unverifiedLayoutLeb(0, staleTable, 1n),
+      ...unverifiedLayoutLeb(1, soundTable, 3n),
+    ]),
+  );
+  const refusedReader = new UbiImageArtifactReader(refusedPath);
+  try {
+    const readEntries = async () => {
+      for await (const _entry of refusedReader.entries()) {
+        // exhausted to trigger preparation
+      }
+    };
+    await expect(readEntries()).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("no valid volume table"),
+    });
+  } finally {
+    await refusedReader.close();
   }
 });
 

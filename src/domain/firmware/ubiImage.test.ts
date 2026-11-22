@@ -27,6 +27,7 @@ import {
   ubiSpacingCheckRange,
   ubiVolumeTableBytes,
   UBI_IMAGE_LIMITATIONS,
+  UBI_LAYOUT_VOLUME_ID,
   type UbiImage,
   type UbiImageParseError,
   type UbiPeb,
@@ -735,6 +736,106 @@ describe("interrupted wear-leveling copies", () => {
       extractRefusal: "unverified_copy",
     });
     expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.unverifiedCopy);
+  });
+});
+
+describe("unverified wear-leveling copies of the layout volume", () => {
+  const unverifiedLayoutLeb = (
+    lnum: 0 | 1,
+    table: Uint8Array,
+    firstSqnum: bigint,
+  ): readonly UbiFixturePeb[] => [
+    {
+      kind: "leb",
+      volId: UBI_LAYOUT_VOLUME_ID,
+      lnum,
+      data: table,
+      sqnum: firstSqnum,
+      volType: "dynamic",
+      copyFlag: true,
+      dataCrc: 0,
+    },
+    {
+      kind: "leb",
+      volId: UBI_LAYOUT_VOLUME_ID,
+      lnum,
+      data: table,
+      sqnum: firstSqnum + 1n,
+      volType: "dynamic",
+      copyFlag: true,
+      dataCrc: 0,
+    },
+  ];
+
+  it("ignores an unverified layout LEB 0 and uses the sound layout LEB 1 table", () => {
+    const slots = ubiVolumeTableSlots();
+    const staleTable = ubiVolumeTable(
+      [{ id: 0, name: "stale", type: "dynamic", reservedPebs: 1 }],
+      slots,
+    );
+    const soundTable = ubiVolumeTable(
+      [{ id: 0, name: "current", type: "dynamic", reservedPebs: 4 }],
+      slots,
+    );
+    const bytes = ubiImage([
+      ...unverifiedLayoutLeb(0, staleTable, 1n),
+      {
+        kind: "leb",
+        volId: UBI_LAYOUT_VOLUME_ID,
+        lnum: 1,
+        data: soundTable,
+        sqnum: 3n,
+        volType: "dynamic",
+      },
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: ubiLebData(0x43, "CURRENT"),
+        sqnum: 4n,
+      },
+    ]);
+    const parsed = image(bytes);
+    expect(parsed.volumeTable).toMatchObject({
+      copiesFound: 1,
+      copiesValid: 1,
+      copiesAgree: null,
+      sourceLnum: 1,
+    });
+    expect(parsed.volumes).toMatchObject([
+      {
+        id: 0,
+        name: "current",
+        reservedPebs: 4,
+        mappedLebCount: 1,
+        dataBytes: 1920,
+        extractRefusal: null,
+      },
+    ]);
+    expect(parsed.interruptedCopyCount).toBe(1);
+    expect(parsed.limitations).toContain(
+      UBI_IMAGE_LIMITATIONS.volumeTableSingleCopy,
+    );
+    expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.interruptedCopy);
+    expect(reassemble(bytes, "current").subarray(0, 7).toString("latin1")).toBe(
+      "CURRENT",
+    );
+  });
+
+  it("refuses the image when both layout LEBs are unverified wear-leveling copies", () => {
+    const slots = ubiVolumeTableSlots();
+    const table = ubiVolumeTable(RECORDS, slots);
+    const bytes = ubiImage([
+      ...unverifiedLayoutLeb(0, table, 1n),
+      ...unverifiedLayoutLeb(1, table, 3n),
+    ]);
+    expect(parse(bytes)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "malformed",
+        message: expect.stringContaining("no valid volume table"),
+      },
+    });
   });
 });
 
