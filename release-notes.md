@@ -620,6 +620,7 @@
 * **il2cpp:** consolidate section geometry and prefix checks ([#12863](https://github.com/morluto/rea/issues/12863)) ([7e2e4d4](https://github.com/morluto/rea/commit/7e2e4d41f5d0e0d17682576f8b0a5a220bfee070))
 * **installer:** isolate release selection and consolidate dry-run coverage ([06ffe5c](https://github.com/morluto/rea/commit/06ffe5c63e64e3f89876bb7189fc51e471713549))
 * **install:** isolate installer fixtures from ambient configuration ([#12810](https://github.com/morluto/rea/issues/12810)) ([06ffe5c](https://github.com/morluto/rea/commit/06ffe5c63e64e3f89876bb7189fc51e471713549))
+* **javascript:** consolidate public loader authority coverage ([#13567](https://github.com/morluto/rea/issues/13567)) ([503e134](https://github.com/morluto/rea/commit/503e134ec136febd6d198167fcd931da185f914c))
 * **javascript:** consolidate source map acceptance fixtures ([#13056](https://github.com/morluto/rea/issues/13056)) ([66d1bb1](https://github.com/morluto/rea/commit/66d1bb13dcb0722134e698d91c3a9da8d5a21ec4))
 * **javascript:** cover array holes, nested spreads and an empty spread before an argument in kill signals ([909d470](https://github.com/morluto/rea/commit/909d4702f22c2976e96bcac309043de02aeba62e))
 * **javascript:** cover the inline-HTML unavailable scope through the public CLI ([3eae4de](https://github.com/morluto/rea/commit/3eae4de89fa22e0b253131a5df7b9ba45bf6a886))
