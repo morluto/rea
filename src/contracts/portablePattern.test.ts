@@ -47,11 +47,12 @@ const ALPHABET = [
   "n",
 ];
 
-// Each character appears in both positions with every other character.
+// Cover each pair and the final class boundary in ^\S\W\D$.
 const samples = [
   "",
   ...ALPHABET,
   ...ALPHABET.flatMap((left) => ALPHABET.map((right) => left + right)),
+  ...ALPHABET.map((last) => `x/${last}`),
 ];
 const bmpSamples = samples.filter(
   (value) => !/[\u{10000}-\u{10FFFF}]/u.test(value),
