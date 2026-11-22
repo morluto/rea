@@ -1206,13 +1206,76 @@ it("reports a subject whose digest is not a valid OCI digest", async () => {
         ),
       }),
     );
-  expect(report.images.map((image) => image.digest)).toContain(
-    manifest.digest,
-  );
+  expect(report.images.map((image) => image.digest)).toContain(manifest.digest);
   expect(
     report.blobs.find((entry) => entry.digest === manifest.layer)?.referenced,
   ).toBe(true);
   expect(report.coverage.status).not.toBe("complete");
+});
+
+it("walks the blob stored under index.json's digest as its own index", async () => {
+  const root = await createTestTempDirectory("rea-oci-root-digest-blob-");
+  await writeOciImageLayoutFixture(root);
+  const child = await putLayerManifest(root, "root-digest-blob-layer");
+  // A damaged nested index: its file is not named by its own digest, so it
+  // can name index.json's digest without a hash cycle.
+  const nestedDigest = `sha256:${"ab".repeat(32)}`;
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  index.manifests.push({
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    digest: nestedDigest,
+    size: 1,
+  });
+  const indexJson = `${JSON.stringify(index)}\n`;
+  await writeFile(indexPath, indexJson);
+  const rootDigest = `sha256:${createHash("sha256").update(indexJson).digest("hex")}`;
+  const blobIndexJson = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: [
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        digest: child.digest,
+        size: Buffer.byteLength(child.json),
+      },
+    ],
+  });
+  await writeFile(
+    join(root, "blobs", "sha256", rootDigest.slice("sha256:".length)),
+    blobIndexJson,
+  );
+  await writeFile(
+    join(root, "blobs", "sha256", nestedDigest.slice("sha256:".length)),
+    JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests: [
+        {
+          mediaType: "application/vnd.oci.image.index.v1+json",
+          digest: rootDigest,
+          size: Buffer.byteLength(blobIndexJson),
+        },
+      ],
+    }),
+  );
+  const report = await inspectLayout(root);
+  expect(report.images.map((image) => image.digest)).toContain(child.digest);
+  for (const digest of [child.digest, child.config, child.layer]) {
+    const row = report.blobs.find((entry) => entry.digest === digest);
+    expect(row?.referenced).toBe(true);
+    expect(row?.hashed).toBe(true);
+  }
+  expect(
+    report.findings.filter((finding) => finding.kind === "unreferenced_blob"),
+  ).toEqual([]);
+  expect(
+    report.indexes
+      .find((entry) => entry.digest === rootDigest && entry.depth === 2)
+      ?.entries.map((entry) => entry.digest),
+  ).toEqual([child.digest]);
 });
 
 it("walks a chain of manifest subjects iteratively in owner-first order", async () => {

@@ -1393,9 +1393,10 @@ const inventoryOciImageLayout = async (
     mediaType: string,
     document: JsonDocument,
     depth: number,
+    identity: string = traversalKey(digest),
   ): Promise<void> => {
-    if (visited.has(traversalKey(digest))) return;
-    visited.add(traversalKey(digest));
+    if (visited.has(identity)) return;
+    visited.add(identity);
     chargeDescriptor();
     if (depth > input.max_index_depth) {
       referenceGraphTruncated = true;
@@ -1702,8 +1703,16 @@ const inventoryOciImageLayout = async (
     nonempty(indexRoot.media_type) ??
     "application/vnd.oci.image.index.v1+json";
   const rootDigest = `sha256:${indexDocument.sha256}`;
-  queuedIndexes.add(traversalKey(rootDigest));
-  await walkIndex(rootDigest, topMediaType, indexDocument, 0);
+  // index.json is its own file, not the blob stored under its digest. A
+  // descriptor naming that digest reads and walks the blob, whose bytes may
+  // differ, so the root keeps a traversal identity outside the blob keys.
+  await walkIndex(
+    rootDigest,
+    topMediaType,
+    indexDocument,
+    0,
+    "root:index.json",
+  );
   // Cursor, not shift(): many index references would otherwise make draining
   // the breadth-first queue quadratic.
   for (let cursor = 0; cursor < indexQueue.length; cursor += 1) {
@@ -2110,8 +2119,7 @@ const inventoryOciImageLayout = async (
     findings,
     coverage: {
       status: coverageStatus,
-      entries_examined:
-        traversal.current.examinedEntries ?? entries.length,
+      entries_examined: traversal.current.examinedEntries ?? entries.length,
       blobs_hashed: blobsHashed,
       json_bytes_read: jsonBytesRead,
     },
