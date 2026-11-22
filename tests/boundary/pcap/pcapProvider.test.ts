@@ -993,3 +993,31 @@ it("reports partial DNS coverage when raw extraction fails without selected DNS 
     "DNS wire identity extraction was unavailable",
   );
 });
+
+it("skips the second tshark DNS pass when base dissection observes no DNS, mDNS, or LLMNR traffic", async () => {
+  const base: { _source: { layers: Record<string, unknown> } }[] =
+    JSON.parse(TSHARK_JSON);
+  for (const packet of base) {
+    packet._source.layers["frame.protocols"] = ["eth:ethertype:ip:tcp:tls"];
+    for (const key of Object.keys(packet._source.layers)) {
+      if (key === "dns" || key === "dns_raw" || key.startsWith("dns."))
+        delete packet._source.layers[key];
+    }
+  }
+  const { provider, root } = await providerWith({
+    malformedDnsJson: true,
+    tsharkJson: JSON.stringify(base),
+  });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    coverage: "complete",
+    packet_count: base.length,
+    dns_queries: [],
+    dns_query_count: 0,
+  });
+  expect(result.value.limitations).toEqual([]);
+});
