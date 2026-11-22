@@ -371,6 +371,72 @@ for (const scope of ["outside", "user"] as const) {
   );
 }
 
+for (const aliasedClient of ["opencode", "pi"] as const) {
+  cliTest(
+    `project uninstall ignores an unrelated ${aliasedClient} user alias`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-project-uninstall-unrelated-alias-",
+      );
+      const home = join(root, "home");
+      const project = join(root, "selected");
+      const piDirectory = join(project, ".pi");
+      const piPath = join(piDirectory, "mcp.json");
+      const openCodePath = join(project, "opencode.json");
+      const alias = aliasedClient === "pi" ? piPath : openCodePath;
+      const selected = aliasedClient === "pi" ? openCodePath : piPath;
+      const environment = await registrationEnvironment(
+        home,
+        aliasedClient === "pi"
+          ? { PI_CODING_AGENT_DIR: piDirectory }
+          : { OPENCODE_CONFIG: openCodePath },
+      );
+      const original = await put(
+        alias,
+        aliasedClient === "pi"
+          ? { mcpServers: { rea: { command: "unrelated" } } }
+          : { mcp: { servers: { peer: openCodePeer } } },
+      );
+      const run = () =>
+        cli.run({
+          arguments: ["uninstall", "--project", project, "--json"],
+          environment,
+          cwd: root,
+        });
+      const noOp = await run();
+      expect(noOp.exitCode, noOp.stdout).toBe(0);
+      if (aliasedClient === "opencode")
+        await put(join(home, ".pi", "agent", "trust.json"), {
+          [project]: true,
+        });
+      const selectedOriginal = await put(
+        selected,
+        aliasedClient === "pi"
+          ? { mcp: { servers: { rea: openCodeRegistration } } }
+          : { mcpServers: { rea: piRegistration } },
+      );
+      const removed = await run();
+      expect(removed.exitCode, removed.stdout).toBe(0);
+      expect(removed.json).toMatchObject({
+        status: "complete",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            configuration_path: selected,
+            status: "removed",
+          }),
+        ]),
+      });
+      expect(await readFile(`${selected}.rea.backup`, "utf8")).toBe(
+        selectedOriginal,
+      );
+      expect(await readFile(alias, "utf8")).toBe(original);
+      await expect(readFile(`${alias}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+}
+
 cliTest(
   "project uninstall removes an owned launcher with invalid REA environment settings",
   async ({ cli }) => {

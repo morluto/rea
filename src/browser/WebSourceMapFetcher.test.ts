@@ -10,6 +10,7 @@ import {
   phaseArrival,
   phaseGate,
 } from "../../tests/support/lifecycleHarness.js";
+import { testWaitDeadline } from "../../tests/support/testWait.js";
 
 const input = analyzeWebBundleInputSchema.parse({
   cdp_endpoint: "http://127.0.0.1:9222",
@@ -593,62 +594,84 @@ it("does not mistake an independent body AbortError for a falsy caller cancellat
 });
 
 it("keeps actual stalled HTTP headers and body deadlines local to their maps", async () => {
-  const served: string[] = [];
-  const headersReceived: string[] = [];
+  const headers = phaseArrival();
+  const body = phaseArrival();
   const server = createServer((request, response) => {
-    if (request.url !== undefined) served.push(request.url);
-    if (request.url === "/body") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.write('{"version":3,');
-    }
+    if (request.url === "/headers") headers.arrive();
+    else if (request.url === "/body")
+      response
+        .writeHead(200, { "content-type": "application/json" })
+        .write('{"version":3,');
   });
+  const listening = once(server, "listening");
   server.listen(0, "127.0.0.1");
-  await once(server, "listening");
+  await listening;
   const address = server.address();
   if (address === null || typeof address === "string")
     throw new Error("Expected TCP address");
   const origin = `http://127.0.0.1:${address.port}`;
-  try {
-    const results = await Promise.all(
-      ["headers", "body"].map(async (stage) => {
-        const url = `${origin}/${stage}`;
-        return fetchWebSourceMaps(
-          [{ ...request, declaredUrl: url, fetchUrl: url }],
-          {
-            ...input,
-            allowed_origins: [origin],
-            source_map_fetch_timeout_ms: 1000,
-          },
-          undefined,
-          {
-            fetch: async (url, options) => {
-              const response = await fetch(url, options);
-              headersReceived.push(stage);
-              return response;
-            },
-          },
-        );
-      }),
+  const deadline = 13_700;
+  const controller = new AbortController();
+  const signal = AbortSignal.any([
+    controller.signal,
+    AbortSignal.timeout(testWaitDeadline()),
+  ]);
+  const capture = (stage: "headers" | "body") => {
+    const url = `${origin}/${stage}`;
+    return fetchWebSourceMaps(
+      [{ ...request, declaredUrl: url, fetchUrl: url }],
+      {
+        ...input,
+        allowed_origins: [origin],
+        source_map_fetch_timeout_ms: deadline,
+      },
+      signal,
+      {
+        fetch: async (url, options) => {
+          const response = await fetch(url, options);
+          if (stage === "body") body.arrive();
+          return response;
+        },
+      },
     );
-    expect(served.sort()).toEqual(["/body", "/headers"]);
-    expect(headersReceived).toEqual(["body"]);
-    for (const result of results)
-      expect(result).toMatchObject({
+  };
+
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  const waitingForHeaders = capture("headers");
+  const waitingForBody = capture("body");
+  try {
+    await headers.reached(waitingForHeaders, "request before response headers");
+    await body.reached(
+      waitingForBody,
+      "headers before remaining response body",
+    );
+    await vi.advanceTimersByTimeAsync(deadline);
+    const limitation = expect.stringContaining(
+      `${deadline} ms source_map_fetch_timeout_ms deadline`,
+    );
+    for (const [pending, effectiveUrl] of [
+      [waitingForHeaders, null],
+      [waitingForBody, `${origin}/body`],
+    ] as const)
+      expect(await pending).toMatchObject({
         ok: true,
         value: {
           items: [
-            {
-              status: "fetch_failed",
-              limitation: expect.stringContaining("deadline"),
-            },
+            { status: "fetch_failed", effective_url: effectiveUrl, limitation },
           ],
         },
       });
   } finally {
-    server.closeAllConnections();
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
+    controller.abort();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
+      });
+    } finally {
+      await Promise.allSettled([waitingForHeaders, waitingForBody]);
+      vi.useRealTimers();
+    }
   }
 });
 
