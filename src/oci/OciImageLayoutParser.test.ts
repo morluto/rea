@@ -3417,3 +3417,136 @@ it("describes an unusable descriptor size without serializing it", async () => {
     expect(message.length).toBeLessThan(300);
   }
 });
+
+const rewriteManifestDocument = async (
+  root: string,
+  edit: (manifest: Record<string, unknown>) => void,
+): Promise<string> => {
+  const written = await writeOciImageLayoutFixture(root);
+  const [, hex] = written.manifestDigest.split(":");
+  const manifest = JSON.parse(
+    await readFile(join(root, "blobs", "sha256", hex ?? ""), "utf8"),
+  ) as Record<string, unknown>;
+  edit(manifest);
+  const manifestJson = `${JSON.stringify(manifest)}\n`;
+  const digest = await putOciBlob(root, manifestJson);
+  await unlink(join(root, "blobs", "sha256", hex ?? ""));
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  index.manifests[0] = {
+    ...index.manifests[0],
+    digest,
+    size: Buffer.byteLength(manifestJson),
+  };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  return digest;
+};
+
+it("diagnoses a manifest whose own mediaType conflicts with its descriptor", async () => {
+  const root = await createTestTempDirectory("rea-oci-manifest-conflict-");
+  const digest = await rewriteManifestDocument(root, (manifest) => {
+    manifest.mediaType = "application/vnd.oci.image.index.v1+json";
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      digest,
+      message: expect.stringContaining(
+        '"application/vnd.oci.image.index.v1+json"',
+      ),
+    }),
+  ]);
+  // The readable facts are kept under the admitted descriptor type.
+  expect(report.images).toEqual([
+    expect.objectContaining({
+      digest,
+      media_type: "application/vnd.oci.image.manifest.v1+json",
+      architecture: "amd64",
+      layers: [expect.objectContaining({ present: true })],
+    }),
+  ]);
+});
+
+it("diagnoses a manifest that declares an unknown media type", async () => {
+  const root = await createTestTempDirectory("rea-oci-manifest-unknown-");
+  const digest = await rewriteManifestDocument(root, (manifest) => {
+    manifest.mediaType = "application/vnd.example.unknown";
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    expect.objectContaining({ kind: "unknown_media_type", digest }),
+  ]);
+  expect(report.images).toHaveLength(1);
+});
+
+it("accepts a referenced manifest that omits its optional mediaType", async () => {
+  const root = await createTestTempDirectory("rea-oci-manifest-omitted-");
+  const digest = await rewriteManifestDocument(root, (manifest) => {
+    delete manifest.mediaType;
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([]);
+  expect(report.images).toEqual([
+    expect.objectContaining({
+      digest,
+      media_type: "application/vnd.oci.image.manifest.v1+json",
+    }),
+  ]);
+});
+
+it("diagnoses a nested index whose own mediaType conflicts with its descriptor", async () => {
+  const root = await createTestTempDirectory("rea-oci-index-conflict-");
+  const written = await writeOciImageLayoutFixture(root);
+  const nestedJson = `${JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    manifests: [
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        digest: written.manifestDigest,
+        size: written.manifestSize,
+      },
+    ],
+  })}\n`;
+  const nested = await putOciBlob(root, nestedJson);
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests: [
+        {
+          mediaType: "application/vnd.oci.image.index.v1+json",
+          digest: nested,
+          size: Buffer.byteLength(nestedJson),
+        },
+      ],
+    })}\n`,
+  );
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      digest: nested,
+      message: expect.stringContaining(
+        '"application/vnd.oci.image.manifest.v1+json"',
+      ),
+    }),
+  ]);
+  // The nested index is still modeled and its entries still walked.
+  expect(report.indexes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        digest: nested,
+        media_type: "application/vnd.oci.image.index.v1+json",
+        depth: 1,
+      }),
+    ]),
+  );
+  expect(report.images).toEqual([
+    expect.objectContaining({ digest: written.manifestDigest }),
+  ]);
+});

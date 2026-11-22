@@ -61,6 +61,9 @@ export class OciImageLayoutRefusal extends ParseFailureError {
   }
 }
 
+/** Traversal identity of index.json, kept outside the blob digest keys. */
+const ROOT_INDEX_IDENTITY = "root:index.json";
+
 const BASE_LIMITATIONS = [
   OCI_IMAGE_LAYOUT_LIMITATIONS.directoryOnly,
   OCI_IMAGE_LAYOUT_LIMITATIONS.noLayerContents,
@@ -1388,6 +1391,45 @@ const inventoryOciImageLayout = async (
       await walkManifest(descriptor.digest, descriptor.media_type, ownerDepth);
   };
 
+  // A referenced index or manifest may repeat its media type in its own
+  // optional mediaType member. A present declaration is checked against the
+  // descriptor type the walk admitted it under, so conflicting format
+  // evidence is diagnosed; the members are still read and reported.
+  const checkDeclaredMediaType = (
+    owner: string,
+    digest: string,
+    admitted: string,
+    document: Record<string, unknown>,
+  ): void => {
+    const declared: unknown = document.mediaType;
+    if (declared === undefined) return;
+    if (typeof declared !== "string") {
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${owner} ${digest} mediaType is not a string; the descriptor media type ${JSON.stringify(admitted)} is kept.`,
+        digest,
+      );
+      return;
+    }
+    if (declared === admitted) return;
+    if (!isOciKnownMediaType(declared)) {
+      recordFinding(
+        findings,
+        "unknown_media_type",
+        `${owner} ${digest} declares unknown media type ${JSON.stringify(declared)}; it was referenced as ${JSON.stringify(admitted)}.`,
+        digest,
+      );
+      return;
+    }
+    recordFinding(
+      findings,
+      "malformed_blob_json",
+      `${owner} ${digest} declares media type ${JSON.stringify(declared)}, which conflicts with its descriptor media type ${JSON.stringify(admitted)}.`,
+      digest,
+    );
+  };
+
   const walkIndex = async (
     digest: string,
     mediaType: string,
@@ -1418,6 +1460,9 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
+    // The root index.json is admitted under its own declaration.
+    if (identity !== ROOT_INDEX_IDENTITY)
+      checkDeclaredMediaType("Index", digest, mediaType, document.value);
     await rememberSubject("Index", digest, document.value.subject, depth);
     const schemaVersion =
       typeof document.value.schemaVersion === "number" &&
@@ -1524,6 +1569,7 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
+    checkDeclaredMediaType("Manifest", digest, mediaType, document.value);
     await rememberSubject("Manifest", digest, document.value.subject, depth);
     // config is required; a manifest without one is as damaged as one whose
     // config descriptor cannot be modeled.
@@ -1711,7 +1757,7 @@ const inventoryOciImageLayout = async (
     topMediaType,
     indexDocument,
     0,
-    "root:index.json",
+    ROOT_INDEX_IDENTITY,
   );
   // Cursor, not shift(): many index references would otherwise make draining
   // the breadth-first queue quadratic.
