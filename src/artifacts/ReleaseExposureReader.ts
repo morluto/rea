@@ -2668,7 +2668,10 @@ const readPdb = (state: ScanState, bytes: Buffer, imagePath: string): void => {
       if (record.pdbPath !== null) pushSample(state.pdbPaths, record.pdbPath);
       else if (
         state.pdbPathBytes.length < MAX_RELEASE_EXPOSURE_SAMPLES &&
-        !state.pdbPathBytes.some(({ image_path }) => image_path === imagePath)
+        !state.pdbPathBytes.some(
+          ({ image_path, bytes_hex }) =>
+            image_path === imagePath && bytes_hex === record.pdbPathBytesHex,
+        )
       )
         state.pdbPathBytes.push({
           image_path: imagePath,

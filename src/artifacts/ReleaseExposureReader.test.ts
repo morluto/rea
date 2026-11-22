@@ -3658,6 +3658,55 @@ describe("ReleaseExposureReader native members named as maps", () => {
   });
 });
 
+it("retains distinct decoded and opaque paths from same-name compressed PE members", async () => {
+  const root = await createTestTempDirectory("rea-release-duplicate-pe-");
+  const paths = ["C:\\build\\first.pdb", "C:\\build\\second.pdb"];
+  const opaque = ["433a5ce92e706462", "433a5cea2e706462"] as const;
+  const firstOpaque = Buffer.from(opaque[0], "hex");
+  const records = [
+    { name: "other.dll", pdbPath: firstOpaque },
+    ...[...paths, firstOpaque, firstOpaque, Buffer.from(opaque[1], "hex")].map(
+      (pdbPath) => ({ name: "same.dll", pdbPath }),
+    ),
+  ];
+  const file = join(root, "app");
+  await writeFile(
+    file,
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 310,
+      members: records.map(({ name, pdbPath }) => ({
+        name,
+        typeCode: "b",
+        compress: true,
+        payload: Buffer.concat([
+          pe(0x8664, 64, 0x0002, false, { pdbPath }),
+          Buffer.alloc(4096),
+        ]),
+      })),
+    }),
+  );
+  const scanned = await inspect(file);
+  expect(scanned.pdb.paths).toEqual(paths);
+  expect(scanned.pdb).toMatchObject({
+    examined: 6,
+    failed: 0,
+    image_paths: ["other.dll", "same.dll"],
+  });
+  expect(scanned.pdb.path_bytes).toEqual([
+    { image_path: "other.dll", bytes_hex: opaque[0], encoding: "unknown" },
+    ...opaque.map((bytes_hex) => ({
+      image_path: "same.dll",
+      bytes_hex,
+      encoding: "unknown",
+    })),
+  ]);
+  expect(scanned.extractable).toMatchObject({
+    readable_members: 6,
+    unreadable_members: 0,
+  });
+});
+
 describe("ReleaseExposureReader unexpanded package PE reads", () => {
   it("reads a native member by its bytes when its name says text", async () => {
     const root = await bundled([
@@ -3695,35 +3744,6 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
       );
     },
   );
-
-  it("retains each compressed duplicate entry across PE reads", async () => {
-    const root = await createTestTempDirectory("rea-release-duplicate-pe-");
-    const paths = ["C:\\build\\first.pdb", "C:\\build\\second.pdb"];
-    const file = join(root, "app");
-    await writeFile(
-      file,
-      cArchiveExecutable({
-        layout: "2.1",
-        pythonVersion: 310,
-        members: paths.map((pdbPath) => ({
-          name: "same.dll",
-          typeCode: "b",
-          compress: true,
-          payload: Buffer.concat([
-            pe(0x8664, 64, 0x0002, false, { pdbPath }),
-            Buffer.alloc(4096),
-          ]),
-        })),
-      }),
-    );
-    const scanned = await inspect(file);
-    expect(scanned.pdb.paths).toEqual(paths);
-    expect(scanned.pdb).toMatchObject({ examined: 2, failed: 0 });
-    expect(scanned.extractable).toMatchObject({
-      readable_members: 2,
-      unreadable_members: 0,
-    });
-  });
 
   it("omits a packaged native image from the language readers visibly", async () => {
     const elf = Buffer.alloc(64);
