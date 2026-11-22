@@ -318,6 +318,7 @@
 * **apk:** consolidate signature capacity checks at their boundaries ([#12789](https://github.com/morluto/rea/issues/12789)) ([d766ab5](https://github.com/morluto/rea/commit/d766ab56dc43ab18130ca50f038c24891cc0fd75))
 * **apk:** consolidate signature refusal coverage ([d766ab5](https://github.com/morluto/rea/commit/d766ab56dc43ab18130ca50f038c24891cc0fd75))
 * **apple:** consolidate bundle resource CLI coverage ([#12936](https://github.com/morluto/rea/issues/12936)) ([12ac054](https://github.com/morluto/rea/commit/12ac0541f68268e6562807e1168ca62d0efd9d7f))
+* **apple:** consolidate dylib resolution contract checks ([#13424](https://github.com/morluto/rea/issues/13424)) ([8925ec4](https://github.com/morluto/rea/commit/8925ec461e0f36d8109c8226650d5714c6da4bf5))
 * **artifacts:** consolidate extraction publication coverage ([#12825](https://github.com/morluto/rea/issues/12825)) ([a71ae07](https://github.com/morluto/rea/commit/a71ae07ffb5390ecf8373ee72775c51d2fdc99fc))
 * **artifacts:** consolidate inventory view coverage ([#12871](https://github.com/morluto/rea/issues/12871)) ([5486394](https://github.com/morluto/rea/commit/5486394715d13e0224bed43d74bad0669d0fa8f3))
 * **artifacts:** consolidate keyed archive scalar delivery coverage ([7f41107](https://github.com/morluto/rea/commit/7f411078a3ddd85d570bc1ed5050ecb372be7a38))
