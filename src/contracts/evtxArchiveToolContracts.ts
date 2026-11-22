@@ -2,7 +2,7 @@ import {
   evtxArchiveCompleteDeliveryShape,
   evtxArchiveSummaryDeliveryShape,
 } from "../domain/analysisView/evtxArchiveView.js";
-import { evtxArchiveSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
+import { evtxArchiveSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/evtxArchiveSummarySchema.js";
 import { evtxArchiveSchema } from "../domain/evtxArchive/evtxArchive.js";
 import { inspectEvtxArchiveInputSchema } from "../domain/evtxArchive/evtxArchiveQuery.js";
 import { presentRootDiscriminator } from "../domain/schemaAnnotations.js";
