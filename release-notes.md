@@ -492,6 +492,7 @@
 * **deno:** consolidate remote paths and region limits ([#13410](https://github.com/morluto/rea/issues/13410)) ([466c552](https://github.com/morluto/rea/commit/466c552d16a3a83bd4216b4531e3f7f189cb766e))
 * **desktop:** consolidate archive task and reader coverage ([#13419](https://github.com/morluto/rea/issues/13419)) ([ec56d1b](https://github.com/morluto/rea/commit/ec56d1b020702dce16fda4b3da512da694fb1c33))
 * **desktop:** consolidate library resolution and closure coverage ([#13443](https://github.com/morluto/rea/issues/13443)) ([e193596](https://github.com/morluto/rea/commit/e193596a608d5711ff534a3d87fddf0ea5b8762b))
+* **desktop:** consolidate passive loader identity and ownership checks ([#13544](https://github.com/morluto/rea/issues/13544)) ([84958d6](https://github.com/morluto/rea/commit/84958d6473bc42b9d2aec0344f490775ce537751))
 * **desktop:** keep TryExec regression independent of ID masking group ([b3dfd53](https://github.com/morluto/rea/commit/b3dfd5305dc254e177d16ce1675a672857b0b391))
 * **desktop:** verify cancellation before releasing the guest ([#12812](https://github.com/morluto/rea/issues/12812)) ([c94f275](https://github.com/morluto/rea/commit/c94f275667e8d9402d34bcddb61abe0393302685))
 * **docs:** isolate README drift cases and remove duplicate checks ([ce52580](https://github.com/morluto/rea/commit/ce5258043c47483d2c8db9a3c0b8f369542bed73))
