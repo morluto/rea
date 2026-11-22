@@ -178,7 +178,12 @@ describe.skipIf(jdk === undefined)(
         }
       }
     });
+  },
+);
 
+describe.skipIf(jdk === undefined)(
+  "ReaGhidraBridge literalCandidateMatcher edge cases",
+  () => {
     it("requires both the folded ASCII run and a non-ASCII value for mixed literal candidates", async () => {
       const stdout = await runBridgeProbe(
         requireProbe(),
