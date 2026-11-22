@@ -347,10 +347,8 @@ class PckCursor {
       throw formatFailure("directory entry exceeds the pack");
   }
   async bytes(length: number): Promise<Buffer> {
-    this.requireBytes(length);
-    if (length > this.options.limits.directory_bytes / 18)
-      throw metadataLimit(this.options.limits, length * 18);
     if (length > DIRECTORY_CHUNK_BYTES) {
+      this.#requireRead(length);
       // A large valid virtual path is bounded by retained representation, not
       // the host filesystem's PATH_MAX. Only this path receives a larger read.
       const value = await readArtifactFileBytes(
@@ -363,26 +361,16 @@ class PckCursor {
       this.position += length;
       return value;
     }
-    const offset = this.position - this.#bufferStart;
-    if (offset < 0 || offset + length > this.#buffer.length) {
-      this.#buffer = await readArtifactFileBytes(
-        this.handle,
-        this.position,
-        Math.min(DIRECTORY_CHUNK_BYTES, this.end - this.position),
-        this.end,
-        this.options.signal,
-      );
-      this.#bufferReader = new BinaryReader(this.#buffer, true, "godot-pck");
-      this.#bufferStart = this.position;
-    }
-    const start = this.position - this.#bufferStart;
-    this.position += length;
+    const start = await this.#ensureBuffered(length);
     return this.#buffer.subarray(start, start + length);
   }
-  async #ensureBuffered(length: number): Promise<number> {
+  #requireRead(length: number): void {
     this.requireBytes(length);
     if (length > this.options.limits.directory_bytes / 18)
       throw metadataLimit(this.options.limits, length * 18);
+  }
+  async #ensureBuffered(length: number): Promise<number> {
+    this.#requireRead(length);
     const offset = this.position - this.#bufferStart;
     if (offset < 0 || offset + length > this.#buffer.length) {
       this.#buffer = await readArtifactFileBytes(
