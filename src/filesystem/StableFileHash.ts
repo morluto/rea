@@ -24,10 +24,11 @@ export interface StableFileHashOptions {
   readonly onChunk?: (chunk: Buffer) => void;
 }
 
-export interface StableFileObservation {
+export interface StableFileIdentity extends StableFileFingerprint {
   readonly state: RegularFileState;
-  readonly sha256: string;
-  readonly bytes: number;
+}
+
+export interface StableFileObservation extends StableFileIdentity {
   /** The first two bytes, read from the same descriptor and stream as the hash. */
   readonly prefix: Buffer;
 }
@@ -60,30 +61,41 @@ export const hashStableFile = async (
   path: string,
   options: StableFileHashOptions,
 ): Promise<{ readonly sha256: string; readonly bytes: number }> => {
-  return await readStableFile(path, options, false);
+  return await readStableFile(path, options, "digest");
 };
 
 /** Hash a stable file and capture exactly its first two bytes from that read. */
 export const observeStableFile = (
   path: string,
   options: StableFileHashOptions,
-): Promise<StableFileObservation> => readStableFile(path, options, true);
+): Promise<StableFileObservation> => readStableFile(path, options, "prefix");
+
+/** Hash and retain the identity of the same verified opened descriptor. */
+export const observeStableFileIdentity = (
+  path: string,
+  options: StableFileHashOptions,
+): Promise<StableFileIdentity> => readStableFile(path, options, "identity");
 
 function readStableFile(
   path: string,
   options: StableFileHashOptions,
-  includePrefix: false,
+  mode: "digest",
 ): Promise<StableFileFingerprint>;
 function readStableFile(
   path: string,
   options: StableFileHashOptions,
-  includePrefix: true,
+  mode: "prefix",
 ): Promise<StableFileObservation>;
+function readStableFile(
+  path: string,
+  options: StableFileHashOptions,
+  mode: "identity",
+): Promise<StableFileIdentity>;
 async function readStableFile(
   path: string,
   options: StableFileHashOptions,
-  includePrefix: boolean,
-): Promise<StableFileFingerprint | StableFileObservation> {
+  mode: "digest" | "identity" | "prefix",
+): Promise<StableFileFingerprint | StableFileIdentity | StableFileObservation> {
   try {
     return await withOwnedRegularFile(path, options, async (source) => {
       const { prefix, ...fingerprint } = await hashStableRegularFileDescriptor(
@@ -91,16 +103,19 @@ async function readStableFile(
         path,
         {
           symlinks: "follow",
-          prefixBytes: includePrefix ? STABLE_FILE_PREFIX_BYTES : 0,
+          prefixBytes: mode === "prefix" ? STABLE_FILE_PREFIX_BYTES : 0,
           ...(options.signal === undefined ? {} : { signal: options.signal }),
           ...(options.onChunk === undefined
             ? {}
             : { onChunk: options.onChunk }),
         },
       );
-      return includePrefix
-        ? { ...fingerprint, prefix, state: regularFileState(source.initial) }
-        : fingerprint;
+      if (mode === "digest") return fingerprint;
+      const identity = {
+        ...fingerprint,
+        state: regularFileState(source.initial),
+      };
+      return mode === "prefix" ? { ...identity, prefix } : identity;
     });
   } catch (cause: unknown) {
     if (
