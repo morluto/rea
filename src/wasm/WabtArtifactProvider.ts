@@ -262,6 +262,24 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       input.command_timeout_ms !== undefined
         ? "request"
         : options?.commandTimeoutSource;
+    const classifyFailure = (cause: unknown) =>
+      classifyProviderFailure(
+        cause,
+        wabtFailureDialect(
+          phase,
+          phase === "artifact" ? artifactInput.path : input.path,
+          {
+            commandTimeoutMs,
+            ...(commandTimeoutSource === undefined
+              ? {}
+              : { commandTimeoutSource }),
+            limits,
+            inputField: artifactInput.field,
+            observedOutput: capturedOutput,
+            ...(versionProbe === undefined ? {} : { versionProbe }),
+          },
+        ),
+      );
     try {
       if (isAborted(options?.signal))
         throw cancelledBy(OPERATION, options.signal);
@@ -284,10 +302,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           );
           const path = selection.resolvedPath;
           await access(path, constants.X_OK);
-          const [initialStat, binary] = await Promise.all([
-            stat(path, { bigint: true }),
-            readIdentity(path, limits.toolBytes),
-          ]);
+          const initialStat = await stat(path, { bigint: true });
+          const binary = await readIdentity(path, limits.toolBytes);
           return {
             tool,
             path,
@@ -315,10 +331,22 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         selection: ArtifactCommandPath;
         initialStat: BigIntStats;
       }[] = [];
+      let admissionFailure: AnalysisError | undefined;
       for (const settled of settledTools) {
-        if (settled.status === "rejected") throw settled.reason;
-        commands.push(settled.value);
+        if (settled.status === "fulfilled") {
+          commands.push(settled.value);
+          continue;
+        }
+        const failure = classifyFailure(settled.reason);
+        if (admissionFailure === undefined) admissionFailure = failure;
+        else if (failure.cleanupIncomplete)
+          admissionFailure = analysisErrorWithCleanupDependencies(
+            admissionFailure,
+            failure,
+            OPERATION,
+          );
       }
+      if (admissionFailure !== undefined) throw admissionFailure;
       const root = await this.createRuntime();
       runtime = new WabtRuntime(root);
       const snapshotPath = join(root.path, "module.wasm");
@@ -723,23 +751,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         }),
       );
     } catch (cause: unknown) {
-      const failure = classifyProviderFailure(
-        cause,
-        wabtFailureDialect(
-          phase,
-          phase === "artifact" ? artifactInput.path : input.path,
-          {
-            commandTimeoutMs,
-            ...(commandTimeoutSource === undefined
-              ? {}
-              : { commandTimeoutSource }),
-            limits,
-            inputField: artifactInput.field,
-            observedOutput: capturedOutput,
-            ...(versionProbe === undefined ? {} : { versionProbe }),
-          },
-        ),
-      );
+      const failure = classifyFailure(cause);
       if (failure.partialObservation === undefined) {
         const partial = acquiredEvidence();
         if (partial !== undefined) failure.retainPartialObservation(partial);
