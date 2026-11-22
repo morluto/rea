@@ -397,6 +397,8 @@
 * **artifacts:** reuse the positional reader for iNES prefixes ([#13481](https://github.com/morluto/rea/issues/13481)) ([b6ffec4](https://github.com/morluto/rea/commit/b6ffec43adeec2d7b57ef49b894425e8b0d36d0a))
 * **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
+* **domain/pe:** unify Asn1BerFailure and PeBinaryFailure ([#13652](https://github.com/morluto/rea/issues/13652)) ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
+* **domain/pe:** unify Asn1BerFailure and PeBinaryFailure onto shared owners ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
 * **elf:** read GNU property words through BinaryReader ([add4faf](https://github.com/morluto/rea/commit/add4faf2ad7aeb38d6d8c0e8619e238f01e6a5c1)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **environment:** retain the latest replay interference event ([#13408](https://github.com/morluto/rea/issues/13408)) ([b96e2e1](https://github.com/morluto/rea/commit/b96e2e10e751f1026a6a828503b3709e6795897f))
 * **environment:** scan replay observations without copying the timeline ([#13409](https://github.com/morluto/rea/issues/13409)) ([54121e2](https://github.com/morluto/rea/commit/54121e2f2a3d461fdf30ba1b5ee31fd3a35656b0))
